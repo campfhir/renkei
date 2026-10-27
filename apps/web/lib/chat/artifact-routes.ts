@@ -120,14 +120,14 @@ export async function renameArtifactRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const filename = typeof body.filename === 'string' ? body.filename.trim() : '';
   if (!filename) return jsonError(400, 'invalid', 'Give the file a name');
   const access = await resolveArtifactAccess(session.subject, artifactId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
   if (access.role !== 'owner') return actError('FORBIDDEN');
-  await renameArtifact(db, { ownerSubject: session.subject, artifactId, filename });
+  await renameArtifact({ ownerSubject: session.subject, artifactId, filename });
   return NextResponse.json({ ok: true });
 }
 
@@ -138,7 +138,7 @@ export async function replaceArtifactRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const access = await resolveArtifactAccess(session.subject, artifactId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
   if (access.role !== 'owner') return actError('FORBIDDEN');
@@ -155,7 +155,7 @@ export async function replaceArtifactRoute(
       `Files are limited to ${Math.round(maxBytes / 1_048_576)} MB.`
     );
   }
-  const replaced = await replaceArtifactBytes(db, {
+  const replaced = await replaceArtifactBytes({
     access,
     bytes,
     contentType:
@@ -167,7 +167,7 @@ export async function replaceArtifactRoute(
     redactor: settings ? createOutboundRedactor(settings) : null,
   });
   if (!replaced.ok) return actError(replaced.err.type);
-  deferDigest(db, session.subject, [replaced.val], after);
+  deferDigest(session.subject, [replaced.val], after);
   return NextResponse.json({ ok: true, extractStatus: replaced.val.extractStatus });
 }
 
@@ -178,11 +178,11 @@ export async function deleteArtifactRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const access = await resolveArtifactAccess(session.subject, artifactId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
   if (access.role === 'owner') {
-    await deleteArtifact(db, access.row);
+    await deleteArtifact(access.row);
     return NextResponse.json({ ok: true, outcome: 'deleted' });
   }
   if (access.role === 'use') {
@@ -199,11 +199,11 @@ export async function deleteArtifactRoute(
 export async function startOcrRoute(request: NextRequest, artifactId: string): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const access = await resolveArtifactAccess(session.subject, artifactId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
   if (access.role !== 'owner') return actError('FORBIDDEN');
-  const refusal = ocrRefusalFor(access) ?? (await claimArtifactOcr(db, artifactId));
+  const refusal = ocrRefusalFor(access) ?? (await claimArtifactOcr(artifactId));
   if (refusal) {
     const message: Record<OcrRefusal, string> = {
       unsupported: 'OCR reads PDFs and images only.',
@@ -213,7 +213,7 @@ export async function startOcrRoute(request: NextRequest, artifactId: string): P
     const status = refusal === 'unconfigured' ? 503 : refusal === 'running' ? 409 : 422;
     return jsonError(status, refusal, message[refusal]);
   }
-  after(() => runArtifactOcr(db, artifactId, session.subject));
+  after(() => runArtifactOcr(artifactId, session.subject));
   return NextResponse.json({ ok: true }, { status: 202 });
 }
 
@@ -229,12 +229,12 @@ export async function impactRoute(request: NextRequest, artifactId: string): Pro
 export async function transferRoute(request: NextRequest, artifactId: string): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const newOwnerSubject =
     typeof body.newOwnerSubject === 'string' ? body.newOwnerSubject.trim() : '';
   if (!newOwnerSubject) return jsonError(400, 'invalid', 'Choose a person');
-  const result = await transferArtifact(db, {
+  const result = await transferArtifact({
     ownerSubject: session.subject,
     artifactId,
     newOwnerSubject,
@@ -246,7 +246,7 @@ export async function transferRoute(request: NextRequest, artifactId: string): P
 export async function copyRoute(request: NextRequest, artifactId: string): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const settingsResult = await getOrgSettings();
   const settings = settingsResult.ok ? settingsResult.val : null;
@@ -254,7 +254,7 @@ export async function copyRoute(request: NextRequest, artifactId: string): Promi
     typeof body.attachProjectId === 'string' && isUuid(body.attachProjectId)
       ? body.attachProjectId
       : null;
-  const result = await copyArtifact(db, {
+  const result = await copyArtifact({
     actorSubject: session.subject,
     artifactId,
     filename: typeof body.filename === 'string' && body.filename.trim() ? body.filename : null,
@@ -269,7 +269,7 @@ export async function copyRoute(request: NextRequest, artifactId: string): Promi
       : actError(result.err.type);
   }
   // A copy of an undigested file is digested as the copier's own.
-  deferDigest(db, session.subject, [result.val], after);
+  deferDigest(session.subject, [result.val], after);
   return NextResponse.json({ ok: true, artifactId: result.val.id }, { status: 201 });
 }
 
@@ -291,7 +291,7 @@ export async function addArtifactGrantRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const granteeSubject = typeof body.granteeSubject === 'string' ? body.granteeSubject.trim() : '';
   if (!granteeSubject) return jsonError(400, 'invalid', 'Choose a person');
@@ -299,7 +299,7 @@ export async function addArtifactGrantRoute(
   void isGrantRole;
   const expiresAt = parseExpiry(body.expiresAt);
   if (expiresAt === undefined) return jsonError(400, 'invalid', 'Invalid expiry');
-  const result = await shareArtifact(db, {
+  const result = await shareArtifact({
     ownerSubject: session.subject,
     artifactId,
     granteeSubject,
@@ -361,11 +361,11 @@ export async function attachArtifactRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const artifactId = typeof body.artifactId === 'string' ? body.artifactId : '';
   if (!isUuid(artifactId) || !isUuid(projectId)) return jsonError(404, 'not-found', 'No such file');
-  const result = await attachToProject(db, {
+  const result = await attachToProject({
     actorSubject: session.subject,
     artifactId,
     projectId,
@@ -382,11 +382,11 @@ export async function setArtifactModeRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   if (!isReferenceMode(body.mode)) return jsonError(400, 'invalid', 'Say always or on_demand');
   if (!isUuid(artifactId) || !isUuid(projectId)) return jsonError(404, 'not-found', 'No such file');
-  const result = await setProjectArtifactMode(db, {
+  const result = await setProjectArtifactMode({
     actorSubject: session.subject,
     artifactId,
     projectId,
@@ -403,9 +403,9 @@ export async function detachArtifactRoute(
 ): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   if (!isUuid(artifactId) || !isUuid(projectId)) return jsonError(404, 'not-found', 'No such file');
-  const result = await detachFromProject(db, {
+  const result = await detachFromProject({
     actorSubject: session.subject,
     artifactId,
     projectId,

@@ -36,7 +36,7 @@ maybe('image usage ledger', () => {
       .execute();
 
     const base = { surface: 'images', provider: 'openai', model: 'gpt-image-1' };
-    await recordImageUsage(db, {
+    await recordImageUsage({
       ...base,
       subject: ann,
       imageBytes: 3_000_000,
@@ -45,7 +45,7 @@ maybe('image usage ledger', () => {
       inputTokens: 61,
       outputTokens: 4160,
     });
-    await recordImageUsage(db, {
+    await recordImageUsage({
       ...base,
       subject: ann,
       imageBytes: 1_000_000,
@@ -54,7 +54,7 @@ maybe('image usage ledger', () => {
       inputTokens: 40,
       outputTokens: 1000,
     });
-    await recordImageUsage(db, {
+    await recordImageUsage({
       surface: 'flux',
       provider: 'openai',
       model: 'FLUX.2-flex',
@@ -210,7 +210,7 @@ maybe('image usage ledger', () => {
   it('never throws when a row cannot be written', async () => {
     // A size the column cannot hold breaks the insert; the picture must still reach the person.
     await expect(
-      recordImageUsage(db, {
+      recordImageUsage({
         surface: 'images',
         provider: 'openai',
         model: 'm',

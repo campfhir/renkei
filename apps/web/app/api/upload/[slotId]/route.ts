@@ -17,9 +17,9 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { hashUploadToken } from '@/lib/mcp-tools/upload-slots';
+import { getDataStore } from '@renkei/db';
+import { claimedUploadSlotOf, hashUploadToken } from '@/lib/mcp-tools/upload-slots';
+import { isUuid } from '@/lib/uuid';
 import { completeUploadSlot } from '@/lib/upload-executors';
 import { logger } from '@/lib/logger';
 
@@ -28,25 +28,20 @@ export async function GET(
   { params }: { params: Promise<{ slotId: string }> }
 ): Promise<Response> {
   const { slotId } = await params;
-  const dbResult = getDatabase();
-  const slot = dbResult.ok
-    ? await dbResult.val
-        .selectFrom('upload_slots')
-        .select(['id', 'filename', 'kind', 'status', 'expires_at'])
-        .where('id', '=', slotId)
-        .executeTakeFirst()
-    : undefined;
+  const slot = isUuid(slotId)
+    ? await getDataStore()
+        .uploadSlots.get(slotId)
+        .catch(() => null)
+    : null;
 
   // The page renders regardless (a missing slot still explains itself) —
   // but only ever non-secret fields.
-  const heading = slot
-    ? `Upload “${slot.filename}”`
-    : 'Upload link not found';
+  const heading = slot ? `Upload “${slot.filename}”` : 'Upload link not found';
   const note = !slot
     ? 'This upload link does not exist. Request a new one.'
     : slot.status !== 'pending'
       ? `This upload is already ${slot.status}.`
-      : new Date(slot.expires_at).getTime() < Date.now()
+      : slot.expiresAt.getTime() < Date.now()
         ? 'This upload link has expired. Request a new one.'
         : 'Pick the file and upload. The link is single-use.';
   const disabled = !slot || slot.status !== 'pending';
@@ -98,46 +93,27 @@ export async function POST(
     );
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ ok: false, detail: 'Database unavailable.' }, { status: 500 });
-  }
-  const db = dbResult.val;
+  const store = getDataStore();
 
   // Atomic single-use claim; the flip to 'completed' doubles as the busy
   // marker (the executor's outcome overwrites result/status detail below).
-  const claimed = await db
-    .updateTable('upload_slots')
-    .set({ status: 'completed', completed_at: sql`NOW()` })
-    .where('id', '=', slotId)
-    .where('token_hash', '=', hashUploadToken(token))
-    .where('status', '=', 'pending')
-    .where('expires_at', '>', sql<Date>`NOW()`)
-    .returning([
-      'id',
-      'subject',
-      'account_id',
-      'kind',
-      'destination',
-      'filename',
-      'content_type',
-      'max_bytes',
-    ])
-    .executeTakeFirst();
-  if (!claimed) {
+  const record = isUuid(slotId)
+    ? await store.uploadSlots.claim(slotId, { tokenHash: hashUploadToken(token) })
+    : null;
+  if (!record) {
     // Wrong token, expired, already used, or no such slot — one answer.
     return NextResponse.json(
-      { ok: false, detail: 'This upload link is not valid (wrong token, expired, or already used).' },
+      {
+        ok: false,
+        detail: 'This upload link is not valid (wrong token, expired, or already used).',
+      },
       { status: 410 }
     );
   }
+  const claimed = claimedUploadSlotOf(record);
 
   const finish = async (ok: boolean, detail: string, status = 200): Promise<Response> => {
-    await db
-      .updateTable('upload_slots')
-      .set({ status: ok ? 'completed' : 'failed', result: detail, completed_at: sql`NOW()` })
-      .where('id', '=', claimed.id)
-      .execute();
+    await store.uploadSlots.finish(claimed.id, { ok, detail });
     return NextResponse.json({ ok, detail }, { status });
   };
 
@@ -154,18 +130,14 @@ export async function POST(
     total += value.byteLength;
     if (total > claimed.max_bytes) {
       await reader.cancel().catch(() => undefined);
-      return finish(
-        false,
-        `The file exceeds this upload's ${claimed.max_bytes}-byte limit.`,
-        413
-      );
+      return finish(false, `The file exceeds this upload's ${claimed.max_bytes}-byte limit.`, 413);
     }
     chunks.push(value);
   }
   if (total === 0) return finish(false, 'The request body was empty.', 400);
   const bytes = Buffer.concat(chunks);
 
-  const outcome = await completeUploadSlot(db, claimed, bytes);
+  const outcome = await completeUploadSlot(claimed, bytes);
   logger.info('upload slot {slotId} {status}: {detail}', {
     component: 'upload/route',
     slotId: claimed.id,
@@ -173,5 +145,8 @@ export async function POST(
     status: outcome.ok ? 'completed' : 'failed',
     detail: outcome.detail,
   });
-  return NextResponse.json({ ok: outcome.ok, detail: outcome.detail }, { status: outcome.ok ? 200 : 502 });
+  return NextResponse.json(
+    { ok: outcome.ok, detail: outcome.detail },
+    { status: outcome.ok ? 200 : 502 }
+  );
 }

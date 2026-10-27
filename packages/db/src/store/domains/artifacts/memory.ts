@@ -1,7 +1,7 @@
 import { compareAsc, like, orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
 import { artifactFromRow, likePattern } from './record';
-import type { ArtifactStore, LibraryFilter } from './types';
+import type { ArtifactChatSelection, ArtifactStore, LibraryFilter } from './types';
 
 type Artifact = Row<'artifacts'>;
 
@@ -30,6 +30,15 @@ function digestMatches(row: Artifact, query: string): boolean {
 export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
   const artifactId = (value: string) => tables.param('artifacts', 'id', value);
   const oldestFirst = (rows: Artifact[]) => orderBy(rows, [(r) => r.created_at], [(r) => r.id]);
+  const inChat = (selection: ArtifactChatSelection) => {
+    if (selection.artifactIds.length === 0) return [];
+    const chat = tables.param('artifacts', 'chat_id', selection.chatId);
+    const wanted = new Set(selection.artifactIds.map(artifactId));
+    return tables.select(
+      'artifacts',
+      (r) => r.owner_subject === selection.ownerSubject && r.chat_id === chat && wanted.has(r.id)
+    );
+  };
   const withReference = (reference: Row<'artifact_references'>) => {
     const artifact = tables.first('artifacts', (a) => a.id === reference.artifact_id);
     return artifact
@@ -262,6 +271,194 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       if (ids.length === 0) return 0;
       const wanted = new Set(ids.map(artifactId));
       return tables.select('artifacts', (r) => wanted.has(r.id)).length;
+    },
+    async listNeedingOcr(selection) {
+      return oldestFirst(inChat(selection).filter((r) => r.extract_status === 'needs_ocr')).map(
+        artifactFromRow
+      );
+    },
+    async listUnsent(selection) {
+      return oldestFirst(inChat(selection).filter((r) => r.message_id === null)).map((r) => ({
+        ...artifactFromRow(r),
+        extractedText: r.extracted_text,
+      }));
+    },
+    async create(input) {
+      return artifactFromRow(
+        tables.insert('artifacts', {
+          id: input.id,
+          owner_subject: input.ownerSubject,
+          chat_id: input.chatId,
+          message_id: input.messageId,
+          origin: input.origin,
+          key_kind: input.keyKind,
+          key_ref: input.keyRef,
+          blob_key: input.blobKey,
+          filename: input.filename,
+          content_type: input.contentType,
+          size_bytes: input.sizeBytes,
+          extracted_text: input.extractedText,
+          extract_status: input.extractStatus,
+          digest_status: input.digestStatus,
+        })
+      );
+    },
+    async update(id, patch) {
+      const wanted = artifactId(id);
+      return (
+        tables.update('artifacts', (r) => r.id === wanted, {
+          key_kind: patch.keyKind,
+          key_ref: patch.keyRef,
+          extracted_text: patch.extractedText,
+          extract_status: patch.extractStatus,
+          digest_status: patch.digestStatus,
+          ocr_started_at: patch.ocrStartedAt,
+          ocr_finished_at: patch.ocrFinishedAt,
+          ocr_millis: patch.ocrMillis,
+          ocr_pages: patch.ocrPages,
+          updated_at: patch.updatedAt ?? new Date(),
+        }).length > 0
+      );
+    },
+    async rename(input) {
+      const wanted = artifactId(input.artifactId);
+      return (
+        tables.update(
+          'artifacts',
+          (r) => r.id === wanted && r.owner_subject === input.ownerSubject,
+          { filename: input.filename, updated_at: new Date() }
+        ).length > 0
+      );
+    },
+    async delete(id) {
+      const wanted = artifactId(id);
+      return tables.delete('artifacts', (r) => r.id === wanted).length > 0;
+    },
+    async transferOwnership(id, newOwnerSubject) {
+      const wanted = artifactId(id);
+      const grantOf = (g: Row<'resource_access_grants'>) =>
+        g.resource_kind === 'artifact' && g.resource_id === wanted;
+      tables.update('artifacts', (r) => r.id === wanted, {
+        owner_subject: newOwnerSubject,
+        updated_at: new Date(),
+      });
+      tables.delete(
+        'resource_access_grants',
+        (g) => grantOf(g) && g.grantee_subject === newOwnerSubject
+      );
+      tables.update('resource_access_grants', grantOf, { owner_subject: newOwnerSubject });
+    },
+    async adoptContent(targetId, sourceId) {
+      const target = artifactId(targetId);
+      const sourceKey = artifactId(sourceId);
+      const source = tables.first('artifacts', (r) => r.id === sourceKey);
+      if (!source) return false;
+      const changed = tables.update('artifacts', (r) => r.id === target, {
+        blob_key: source.blob_key,
+        filename: source.filename,
+        content_type: source.content_type,
+        size_bytes: source.size_bytes,
+        extracted_text: source.extracted_text,
+        extract_status: source.extract_status,
+        summary: null,
+        keywords: [],
+        search_vector: null,
+        digest_status: source.digest_status,
+        updated_at: new Date(),
+      });
+      if (changed.length === 0) return false;
+      tables.delete('artifacts', (r) => r.id === sourceKey);
+      return true;
+    },
+    async storeDigest(id, digest) {
+      const wanted = artifactId(id);
+      tables.update(
+        'artifacts',
+        (r) => r.id === wanted,
+        digest
+          ? {
+              summary: digest.summary,
+              keywords: digest.keywords,
+              digest_status: 'done',
+              // Stands in for the tsvector: digestMatches reads the summary
+              // and keywords, and only whether this is set.
+              search_vector: [...digest.keywords, digest.summary].join(' '),
+              updated_at: new Date(),
+            }
+          : { digest_status: 'failed', updated_at: new Date() }
+      );
+    },
+    async copyDigest(input) {
+      const target = artifactId(input.targetId);
+      const sourceKey = artifactId(input.sourceId);
+      const source = tables.first('artifacts', (r) => r.id === sourceKey);
+      tables.update('artifacts', (r) => r.id === target, {
+        summary: input.summary,
+        keywords: input.keywords,
+        search_vector: source?.search_vector ?? null,
+        digest_status: 'done',
+      });
+    },
+    async claimDigest(id, staleBefore) {
+      const wanted = artifactId(id);
+      return (
+        tables.update(
+          'artifacts',
+          (r) =>
+            r.id === wanted &&
+            (r.digest_status === 'pending' ||
+              (r.digest_status === 'running' && r.updated_at.getTime() < staleBefore.getTime())),
+          { digest_status: 'running', updated_at: new Date() }
+        ).length > 0
+      );
+    },
+    async claimOcr(id, now, staleBefore) {
+      const wanted = artifactId(id);
+      return (
+        tables.update(
+          'artifacts',
+          (r) =>
+            r.id === wanted &&
+            (r.ocr_started_at === null || r.ocr_started_at.getTime() < staleBefore.getTime()),
+          { ocr_started_at: now, updated_at: now }
+        ).length > 0
+      );
+    },
+    async addReference(input) {
+      const row = tables.upsert(
+        'artifact_references',
+        {
+          artifact_id: input.artifactId,
+          project_id: input.projectId,
+          mode: input.mode,
+          added_by: input.addedBy,
+        },
+        ['artifact_id', 'project_id'],
+        { mode: input.mode }
+      );
+      if (!row) throw new Error('artifact reference upsert returned nothing');
+      return row.id;
+    },
+    async setReferenceMode(input) {
+      const project = tables.param('artifact_references', 'project_id', input.projectId);
+      const wanted = artifactId(input.artifactId);
+      return (
+        tables.update(
+          'artifact_references',
+          (r) => r.artifact_id === wanted && r.project_id === project,
+          { mode: input.mode }
+        ).length > 0
+      );
+    },
+    async removeReference(input) {
+      const project = tables.param('artifact_references', 'project_id', input.projectId);
+      const wanted = artifactId(input.artifactId);
+      return (
+        tables.delete(
+          'artifact_references',
+          (r) => r.artifact_id === wanted && r.project_id === project
+        ).length > 0
+      );
     },
   };
 }

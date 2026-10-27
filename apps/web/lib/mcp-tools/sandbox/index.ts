@@ -83,7 +83,6 @@ import { registerSandboxImageTools, sandboxImageModels } from './images';
 import { DOCUMENT_SCRIPT_LINE, registerSandboxScriptTools } from './scripts';
 import { claimPendingUploadSlotByOwner } from '../upload-slots';
 import { completeUploadSlot, finalizeUploadSlot } from '@/lib/upload-executors';
-import { getDatabase } from '@renkei/db';
 import {
   fsReadFile,
   clientFailure as fileshareClientFailure,
@@ -561,25 +560,15 @@ export async function registerSandboxTools(
       const claimed = await claimPendingUploadSlotByOwner(context, str(args.uploadId));
       if (!claimed.ok) return errText(claimed.error);
 
-      // claimPendingUploadSlotByOwner already proved the database is
-      // reachable (it just claimed the slot through it); this second call
-      // only fails on a connection lost in the instant since, which leaves
-      // the slot claimed-but-unfinalized — the same edge case
-      // /api/upload/[slotId] already accepts between its own claim and
-      // finish.
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
-
       if (read.val.bytes.byteLength > claimed.val.max_bytes) {
-        const outcome = await finalizeUploadSlot(db, claimed.val, {
+        const outcome = await finalizeUploadSlot(claimed.val, {
           ok: false,
           detail: `The staged file exceeds this upload's ${claimed.val.max_bytes}-byte limit.`,
         });
         return errText(outcome.detail);
       }
 
-      const outcome = await completeUploadSlot(db, claimed.val, Buffer.from(read.val.bytes));
+      const outcome = await completeUploadSlot(claimed.val, Buffer.from(read.val.bytes));
       return outcome.ok ? textResult(outcome.detail) : errText(outcome.detail);
     }
   );

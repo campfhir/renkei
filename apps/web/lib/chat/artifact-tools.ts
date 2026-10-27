@@ -254,7 +254,7 @@ export function artifactAttachTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be attached.');
       if (!context.projectId) return errorResult('This chat is not in a project.');
       const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
-      const result = await attachToProject(context.db, {
+      const result = await attachToProject({
         actorSubject: context.subject,
         artifactId: id,
         projectId: context.projectId,
@@ -314,7 +314,7 @@ export function artifactShareTool(): LocalTool {
         .where('email', '=', email)
         .executeTakeFirst();
       if (!person) return errorResult(`Nobody in the directory has the email ${email}.`);
-      const result = await shareArtifact(context.db, {
+      const result = await shareArtifact({
         ownerSubject: context.subject,
         artifactId: id,
         granteeSubject: person.subject,
@@ -375,7 +375,7 @@ export function artifactRenameTool(): LocalTool {
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
-      const renamed = await renameArtifact(context.db, {
+      const renamed = await renameArtifact({
         ownerSubject: context.subject,
         artifactId: row.id,
         filename: newName,
@@ -420,7 +420,7 @@ export function artifactDeleteTool(): LocalTool {
           `${row.filename} is used by ${users.join(', ')}. Deleting it would remove it for everyone, so it was not deleted. Hand it over or detach it on the Artifacts page first.`
         );
       }
-      const deleted = await deleteArtifact(context.db, row);
+      const deleted = await deleteArtifact(row);
       if (!deleted) return errorResult(`${row.filename} could not be deleted.`);
       return textResult(`Deleted ${row.filename}.`);
     },
@@ -463,7 +463,7 @@ export function artifactDescribeTool(): LocalTool {
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file in this chat; name one by its file name or id.');
-      await storeDigest(context.db, row.id, digest);
+      await storeDigest(row.id, digest);
       return textResult(`Described ${row.filename} for the Artifacts search.`, {
         attachmentId: row.id,
       });

@@ -95,3 +95,4 @@ export type * from './domains/tool-usage';
 export type * from './domains/knowledge-chunks';
 export type * from './domains/pending-signins';
 export type * from './domains/webhook-subscriptions';
+export type * from './domains/upload-slots';

@@ -12,8 +12,7 @@
  * the caller already resolved (reads — artifact-access.ts).
  */
 
-import type { Kysely } from 'kysely';
-import { getDataStore, type ArtifactRecord, type DB, type ProjectArtifactRecord } from '@renkei/db';
+import { getDataStore, type ArtifactRecord, type ProjectArtifactRecord } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { LlmContentBlock } from '@renkei/agent-llm';
@@ -137,66 +136,6 @@ export interface ProjectArtifactRow extends AttachmentRow {
   addedBy: string;
 }
 
-const COLUMNS = [
-  'id',
-  'owner_subject',
-  'chat_id',
-  'message_id',
-  'blob_key',
-  'filename',
-  'content_type',
-  'size_bytes',
-  'extract_status',
-  'origin',
-  'key_kind',
-  'key_ref',
-  'summary',
-  'keywords',
-  'digest_status',
-  'created_at',
-  'updated_at',
-] as const;
-
-function rowOf(raw: {
-  id: string;
-  owner_subject: string;
-  chat_id: string | null;
-  message_id: string | null;
-  blob_key: string;
-  filename: string;
-  content_type: string;
-  size_bytes: string | number | bigint;
-  extract_status: string;
-  origin: string;
-  key_kind: string;
-  key_ref: string | null;
-  summary: string | null;
-  keywords: string[];
-  digest_status: string;
-  created_at: Date;
-  updated_at: Date;
-}): AttachmentRow {
-  return {
-    id: raw.id,
-    ownerSubject: raw.owner_subject,
-    chatId: raw.chat_id,
-    messageId: raw.message_id,
-    blobKey: raw.blob_key,
-    filename: raw.filename,
-    contentType: raw.content_type,
-    sizeBytes: Number(raw.size_bytes),
-    extractStatus: raw.extract_status,
-    origin: raw.origin,
-    keyKind: raw.key_kind === 'chat' || raw.key_kind === 'chat_project' ? raw.key_kind : 'artifact',
-    keyRef: raw.key_ref,
-    summary: raw.summary,
-    keywords: raw.keywords,
-    digestStatus: raw.digest_status,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
-  };
-}
-
 /** A store record as the chat's modules hold an attachment. */
 function recordOf(record: ArtifactRecord): AttachmentRow {
   return {
@@ -304,40 +243,29 @@ async function extract(
  * start, so nothing looks in flight after it has stopped.
  */
 export async function ocrOne(
-  db: Kysely<DB>,
   row: AttachmentRow,
   redactor: OutboundRedactor | null,
   cipher: ContentCipher
 ): Promise<string> {
+  const store = getDataStore();
   const startedAt = Date.now();
-  await db
-    .updateTable('artifacts')
-    .set({ ocr_started_at: new Date(startedAt), updated_at: new Date() })
-    .where('id', '=', row.id)
-    .execute();
+  await store.artifacts.update(row.id, { ocrStartedAt: new Date(startedAt) });
   let status: string;
   try {
-    status = await ocrAttempt(db, row, redactor, cipher, startedAt);
+    status = await ocrAttempt(row, redactor, cipher, startedAt);
   } catch (error) {
-    await db
-      .updateTable('artifacts')
-      .set({ ocr_started_at: null, updated_at: new Date() })
-      .where('id', '=', row.id)
-      .execute();
+    await store.artifacts.update(row.id, { ocrStartedAt: null });
     throw error;
   }
   if (status !== 'done') {
     // A re-read that finds nothing leaves the text it already had in place.
     const keepsText = status === 'none' && row.extractStatus === 'done';
-    await db
-      .updateTable('artifacts')
-      .set(
-        (status === 'ocr_failed' || status === 'none') && !keepsText
-          ? { ocr_started_at: null, extract_status: status, updated_at: new Date() }
-          : { ocr_started_at: null, updated_at: new Date() }
-      )
-      .where('id', '=', row.id)
-      .execute();
+    await store.artifacts.update(
+      row.id,
+      (status === 'ocr_failed' || status === 'none') && !keepsText
+        ? { ocrStartedAt: null, extractStatus: status }
+        : { ocrStartedAt: null }
+    );
   }
   return status;
 }
@@ -359,7 +287,6 @@ function logOcrFailure(row: AttachmentRow, outcome: 'failed' | 'deferred', reaso
 }
 
 async function ocrAttempt(
-  db: Kysely<DB>,
   row: AttachmentRow,
   redactor: OutboundRedactor | null,
   cipher: ContentCipher,
@@ -417,20 +344,16 @@ async function ocrAttempt(
     return NEEDS_OCR;
   }
   const finishedAt = Date.now();
-  await db
-    .updateTable('artifacts')
-    .set({
-      extracted_text: sealed.val,
-      extract_status: 'done',
-      digest_status: 'pending',
-      ocr_started_at: null,
-      ocr_finished_at: new Date(finishedAt),
-      ocr_millis: finishedAt - startedAt,
-      ocr_pages: ocr.val.pagesProcessed,
-      updated_at: new Date(finishedAt),
-    })
-    .where('id', '=', row.id)
-    .execute();
+  await getDataStore().artifacts.update(row.id, {
+    extractedText: sealed.val,
+    extractStatus: 'done',
+    digestStatus: 'pending',
+    ocrStartedAt: null,
+    ocrFinishedAt: new Date(finishedAt),
+    ocrMillis: finishedAt - startedAt,
+    ocrPages: ocr.val.pagesProcessed,
+    updatedAt: new Date(finishedAt),
+  });
   return 'done';
 }
 
@@ -440,29 +363,23 @@ async function ocrAttempt(
  * this after a mass upload and repeats it for whatever is still
  * needs_ocr, so it is safe to call twice and to interrupt.
  */
-export async function ocrChatAttachments(
-  db: Kysely<DB>,
-  input: {
-    ownerSubject: string;
-    chatId: string;
-    attachmentIds: string[];
-    redactor: OutboundRedactor | null;
-    /** The chat's cipher: the text lands under the chat's key. */
-    cipher: ContentCipher;
-  }
-): Promise<Array<{ id: string; extractStatus: string }>> {
+export async function ocrChatAttachments(input: {
+  ownerSubject: string;
+  chatId: string;
+  attachmentIds: string[];
+  redactor: OutboundRedactor | null;
+  /** The chat's cipher: the text lands under the chat's key. */
+  cipher: ContentCipher;
+}): Promise<Array<{ id: string; extractStatus: string }>> {
   const ids = input.attachmentIds.filter(isUuid);
-  if (ids.length === 0) return [];
+  if (ids.length === 0 || !isUuid(input.chatId)) return [];
   const rows = (
-    await db
-      .selectFrom('artifacts')
-      .select(COLUMNS)
-      .where('owner_subject', '=', input.ownerSubject)
-      .where('chat_id', '=', input.chatId)
-      .where('extract_status', '=', NEEDS_OCR)
-      .where('id', 'in', ids)
-      .execute()
-  ).map(rowOf);
+    await getDataStore().artifacts.listNeedingOcr({
+      ownerSubject: input.ownerSubject,
+      chatId: input.chatId,
+      artifactIds: ids,
+    })
+  ).map(recordOf);
   const results: Array<{ id: string; extractStatus: string }> = [];
   let next = 0;
   const lane = async () => {
@@ -470,7 +387,7 @@ export async function ocrChatAttachments(
       const row = rows[next++];
       results.push({
         id: row.id,
-        extractStatus: await ocrOne(db, row, input.redactor, input.cipher),
+        extractStatus: await ocrOne(row, input.redactor, input.cipher),
       });
     }
   };
@@ -478,27 +395,24 @@ export async function ocrChatAttachments(
   return results;
 }
 
-export async function createAttachment(
-  db: Kysely<DB>,
-  input: {
-    /** Chosen ahead when the row's own key is minted first (artifact-library.ts). */
-    id?: string;
-    ownerSubject: string;
-    chatId: string | null;
-    filename: string;
-    contentType: string;
-    bytes: Uint8Array;
-    maxBytes: number;
-    redactor: OutboundRedactor | null;
-    /** The cipher the bytes and the text are sealed under — the key `key` names. */
-    cipher: ContentCipher;
-    /** Which key `cipher` is: the chat's (a plain chat upload) or the artifact's own. */
-    key: { kind: 'chat'; ref: string } | { kind: 'artifact' };
-    /** A file a tool produced hangs off the tool-results row it came with. */
-    origin?: 'upload' | 'model';
-    messageId?: string | null;
-  }
-): Promise<Result<AttachmentRow, AttachmentError>> {
+export async function createAttachment(input: {
+  /** Chosen ahead when the row's own key is minted first (artifact-library.ts). */
+  id?: string;
+  ownerSubject: string;
+  chatId: string | null;
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+  maxBytes: number;
+  redactor: OutboundRedactor | null;
+  /** The cipher the bytes and the text are sealed under — the key `key` names. */
+  cipher: ContentCipher;
+  /** Which key `cipher` is: the chat's (a plain chat upload) or the artifact's own. */
+  key: { kind: 'chat'; ref: string } | { kind: 'artifact' };
+  /** A file a tool produced hangs off the tool-results row it came with. */
+  origin?: 'upload' | 'model';
+  messageId?: string | null;
+}): Promise<Result<AttachmentRow, AttachmentError>> {
   if (input.bytes.byteLength > input.maxBytes) return err('TOO_LARGE' as const);
   const store = await resolveTenantBlobStore();
   if (!store.ok) return err('UNCONFIGURED' as const);
@@ -522,29 +436,24 @@ export async function createAttachment(
   const put = await store.val.putObject(key.val, sealedBytes.val, SEALED_CONTENT_TYPE);
   if (!put.ok) return err('STORE' as const, { message: put.err.message });
   try {
-    const inserted = await db
-      .insertInto('artifacts')
-      .values({
-        id,
-        owner_subject: input.ownerSubject,
-        chat_id: input.chatId,
-        message_id: input.messageId ?? null,
-        origin: input.origin ?? 'upload',
-        key_kind: input.key.kind,
-        key_ref: input.key.kind === 'chat' ? input.key.ref : null,
-        blob_key: key.val,
-        filename,
-        content_type: contentType,
-        size_bytes: input.bytes.byteLength,
-        extracted_text: sealedText,
-        extract_status: extracted.status,
-        // Text to digest for the search index, once the row is there.
-        digest_status:
-          sealedText !== null || isDescribablePicture(contentType) ? 'pending' : 'none',
-      })
-      .returning(COLUMNS)
-      .executeTakeFirstOrThrow();
-    return ok(rowOf(inserted));
+    const inserted = await getDataStore().artifacts.create({
+      id,
+      ownerSubject: input.ownerSubject,
+      chatId: input.chatId,
+      messageId: input.messageId ?? null,
+      origin: input.origin ?? 'upload',
+      keyKind: input.key.kind,
+      keyRef: input.key.kind === 'chat' ? input.key.ref : null,
+      blobKey: key.val,
+      filename,
+      contentType,
+      sizeBytes: input.bytes.byteLength,
+      extractedText: sealedText,
+      extractStatus: extracted.status,
+      // Text to digest for the search index, once the row is there.
+      digestStatus: sealedText !== null || isDescribablePicture(contentType) ? 'pending' : 'none',
+    });
+    return ok(recordOf(inserted));
   } catch (error) {
     // Never leave bytes without a row: the sweep would not know about them.
     await store.val.deleteObject(key.val);
@@ -692,54 +601,34 @@ export async function listReferencesOf(
 }
 
 /** Attaches (or re-attaches, keeping the row) an artifact to a project. */
-export async function addProjectReference(
-  db: Kysely<DB>,
-  input: { artifactId: string; projectId: string; mode: ReferenceMode; addedBy: string }
-): Promise<{ referenceId: string }> {
-  const row = await db
-    .insertInto('artifact_references')
-    .values({
-      artifact_id: input.artifactId,
-      project_id: input.projectId,
-      mode: input.mode,
-      added_by: input.addedBy,
-    })
-    .onConflict((oc) => oc.columns(['artifact_id', 'project_id']).doUpdateSet({ mode: input.mode }))
-    .returning('id')
-    .executeTakeFirstOrThrow();
-  return { referenceId: row.id };
+export async function addProjectReference(input: {
+  artifactId: string;
+  projectId: string;
+  mode: ReferenceMode;
+  addedBy: string;
+}): Promise<{ referenceId: string }> {
+  return { referenceId: await getDataStore().artifacts.addReference(input) };
 }
 
-export async function setReferenceMode(
-  db: Kysely<DB>,
-  input: { artifactId: string; projectId: string; mode: ReferenceMode }
-): Promise<boolean> {
-  const result = await db
-    .updateTable('artifact_references')
-    .set({ mode: input.mode })
-    .where('artifact_id', '=', input.artifactId)
-    .where('project_id', '=', input.projectId)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+export async function setReferenceMode(input: {
+  artifactId: string;
+  projectId: string;
+  mode: ReferenceMode;
+}): Promise<boolean> {
+  return getDataStore().artifacts.setReferenceMode(input);
 }
 
 /** Detaches an artifact from a project; the artifact itself stays. */
-export async function removeProjectReference(
-  db: Kysely<DB>,
-  input: { artifactId: string; projectId: string }
-): Promise<boolean> {
-  const result = await db
-    .deleteFrom('artifact_references')
-    .where('artifact_id', '=', input.artifactId)
-    .where('project_id', '=', input.projectId)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows) > 0;
+export async function removeProjectReference(input: {
+  artifactId: string;
+  projectId: string;
+}): Promise<boolean> {
+  return getDataStore().artifacts.removeReference(input);
 }
 
 /** Deletes the row and then the bytes; a missing object is not a failure. */
-export async function deleteAttachment(db: Kysely<DB>, row: AttachmentRow): Promise<boolean> {
-  const result = await db.deleteFrom('artifacts').where('id', '=', row.id).executeTakeFirst();
-  if (Number(result.numDeletedRows) === 0) return false;
+export async function deleteAttachment(row: AttachmentRow): Promise<boolean> {
+  if (!(await getDataStore().artifacts.delete(row.id))) return false;
   const store = await resolveTenantBlobStore();
   if (store.ok) await store.val.deleteObject(row.blobKey);
   return true;
@@ -752,31 +641,26 @@ export async function deleteAttachment(db: Kysely<DB>, row: AttachmentRow): Prom
  * — the OpenAI dialect degrades those to a placeholder in its adapter.
  */
 export async function attachmentPromptBlocks(
-  db: Kysely<DB>,
   ownerSubject: string,
   chatId: string,
   attachmentIds: string[],
   cipher: ContentCipher
 ): Promise<LlmContentBlock[]> {
   const ids = attachmentIds.filter(isUuid);
-  if (ids.length === 0) return [];
-  const rows = await db
-    .selectFrom('artifacts')
-    .select([...COLUMNS, 'extracted_text'])
-    .where('owner_subject', '=', ownerSubject)
-    .where('chat_id', '=', chatId)
-    .where('message_id', 'is', null)
-    .where('id', 'in', ids)
-    .orderBy('created_at', 'asc')
-    .execute();
+  if (ids.length === 0 || !isUuid(chatId)) return [];
+  const rows = await getDataStore().artifacts.listUnsent({
+    ownerSubject,
+    chatId,
+    artifactIds: ids,
+  });
   const settings = await getOrgSettings();
   const threshold = settings.ok ? settings.val.massUploadThreshold : 10;
-  if (rows.length > threshold) return [massUploadManifest(rows.map(rowOf))];
+  if (rows.length > threshold) return [massUploadManifest(rows.map(recordOf))];
   const blocks: LlmContentBlock[] = [];
   for (const raw of rows) {
-    const row = rowOf(raw);
+    const row = recordOf(raw);
     const oversize = row.sizeBytes > PROMPT_FILE_MAX_BYTES;
-    const text = !oversize && raw.extracted_text ? openText(raw.extracted_text, cipher) : null;
+    const text = !oversize && raw.extractedText ? openText(raw.extractedText, cipher) : null;
     const excerpt = text ? text.slice(0, INLINE_EXCERPT_CHARS) : null;
     const clipped = text !== null && text.length > INLINE_EXCERPT_CHARS;
     blocks.push({

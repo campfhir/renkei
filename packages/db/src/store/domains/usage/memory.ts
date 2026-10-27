@@ -352,6 +352,33 @@ export function memoryUsage(tables: MemoryTables): UsageStore {
       });
     },
 
+    async recordImage(usage) {
+      tables.insert('image_usage', {
+        subject: usage.subject,
+        surface: usage.surface,
+        provider: usage.provider,
+        model: usage.model,
+        images: 1,
+        image_bytes: usage.imageBytes,
+        width: usage.width,
+        height: usage.height,
+        input_tokens: usage.inputTokens,
+        output_tokens: usage.outputTokens,
+      });
+    },
+
+    async recordVoice(usage) {
+      tables.insert('voice_usage', {
+        subject: usage.subject,
+        kind: usage.kind,
+        characters: usage.characters,
+        audio_ms: usage.audioMs,
+        provider: usage.provider,
+        voice: usage.voice,
+        locale: usage.locale,
+      });
+    },
+
     async personTotals(subject, window) {
       const calls = llmCalls(window, subject);
       const chat = calls.filter((r) => r.purpose === 'chat');

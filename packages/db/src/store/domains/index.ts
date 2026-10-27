@@ -57,6 +57,7 @@ import { toolUsage } from './tool-usage';
 import { knowledgeChunks } from './knowledge-chunks';
 import { pendingSignins } from './pending-signins';
 import { webhookSubscriptions } from './webhook-subscriptions';
+import { uploadSlots } from './upload-slots';
 
 export const DOMAINS = {
   sessions,
@@ -112,4 +113,5 @@ export const DOMAINS = {
   knowledgeChunks,
   pendingSignins,
   webhookSubscriptions,
+  uploadSlots,
 };

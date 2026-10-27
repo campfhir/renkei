@@ -23,7 +23,7 @@ const MAX_IDS_PER_REQUEST = 12;
 export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
 
   const body: unknown = await request.json().catch(() => null);
   const record = typeof body === 'object' && body !== null ? body : {};
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
 
   const settings = await getOrgSettings();
-  const results = await ocrChatAttachments(db, {
+  const results = await ocrChatAttachments({
     ownerSubject: session.subject,
     chatId,
     attachmentIds: ids,
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   // Text that just arrived by OCR wants its digest for the search index.
   const done = results.filter((result) => result.extractStatus === 'done').map((r) => r.id);
   if (done.length > 0) {
-    deferDigest(db, session.subject, await getAttachments(done), after);
+    deferDigest(session.subject, await getAttachments(done), after);
   }
   return NextResponse.json({ results });
 }

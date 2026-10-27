@@ -104,8 +104,7 @@ export function registerSandboxImageTools(
   const recordUsage =
     deps.recordUsage ??
     (async (subject: string, report: ImageUsageReport) => {
-      const db = getDatabase();
-      if (db.ok) await recordImageUsageRow(db.val, { ...report, subject });
+      await recordImageUsageRow({ ...report, subject });
     });
 
   server.registerTool(

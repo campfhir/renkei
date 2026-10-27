@@ -56,7 +56,7 @@ export async function DELETE(
   const { attachmentId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const projectId = new URL(request.url).searchParams.get('projectId');
   const access = await resolveArtifactAccess(
     session.subject,
@@ -65,12 +65,12 @@ export async function DELETE(
   );
   if (!access) return jsonError(404, 'not-found', 'No such file');
   if (access.role === 'owner' && !projectId) {
-    await deleteArtifact(db, access.row);
+    await deleteArtifact(access.row);
     return NextResponse.json({ ok: true, detached: false });
   }
   const target = projectId && isUuid(projectId) ? projectId : access.projectId;
   if (!target) return jsonError(404, 'not-found', 'No such file');
-  const detached = await detachFromProject(db, {
+  const detached = await detachFromProject({
     actorSubject: session.subject,
     artifactId: access.row.id,
     projectId: target,

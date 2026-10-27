@@ -9,8 +9,7 @@
  * never come near this file; only how much of each.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 export type VoiceUsageKind = 'speech' | 'transcription';
@@ -43,23 +42,17 @@ export function wavDurationMs(byteLength: number, sampleRate = 16_000): number {
   return Math.max(0, Math.round(((byteLength - header) * 1000) / bytesPerSecond));
 }
 
-export async function recordVoiceUsage(
-  db: Kysely<DB>,
-  input: RecordVoiceUsageInput
-): Promise<void> {
+export async function recordVoiceUsage(input: RecordVoiceUsageInput): Promise<void> {
   try {
-    await db
-      .insertInto('voice_usage')
-      .values({
-        subject: input.subject,
-        kind: input.kind,
-        characters: Math.max(0, Math.round(input.characters ?? 0)),
-        audio_ms: Math.max(0, Math.round(input.audioMs ?? 0)),
-        provider: input.provider.slice(0, 32),
-        voice: input.voice ? input.voice.slice(0, 120) : null,
-        locale: input.locale ? input.locale.slice(0, 16) : null,
-      })
-      .execute();
+    await getDataStore().usage.recordVoice({
+      subject: input.subject,
+      kind: input.kind,
+      characters: Math.max(0, Math.round(input.characters ?? 0)),
+      audioMs: Math.max(0, Math.round(input.audioMs ?? 0)),
+      provider: input.provider.slice(0, 32),
+      voice: input.voice ? input.voice.slice(0, 120) : null,
+      locale: input.locale ? input.locale.slice(0, 16) : null,
+    });
   } catch (error) {
     logger.warn('voice usage not recorded', {
       component: 'web/voice-usage',

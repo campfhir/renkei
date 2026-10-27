@@ -150,6 +150,30 @@ export interface NewDocumentUsage {
   outputTokens: number;
 }
 
+/** One picture an image model drew (image_usage), as the caller bounded it. */
+export interface NewImageUsage {
+  subject: string;
+  surface: string;
+  provider: string;
+  model: string;
+  imageBytes: number;
+  width: number | null;
+  height: number | null;
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** One call to the speech service (voice_usage), as the caller bounded it. */
+export interface NewVoiceUsage {
+  subject: string;
+  kind: string;
+  characters: number;
+  audioMs: number;
+  provider: string;
+  voice: string | null;
+  locale: string | null;
+}
+
 export interface UtilizationTotals {
   inputTokens: number;
   outputTokens: number;
@@ -234,6 +258,10 @@ export interface UsageStore {
   /** Document work by kind, by kind. */
   documentByKind(window: UsageWindow, owner: string | null): Promise<DocumentKindTotals[]>;
   recordDocument(usage: NewDocumentUsage): Promise<void>;
+  /** One picture drawn, now. */
+  recordImage(usage: NewImageUsage): Promise<void>;
+  /** One speech-service call, now. */
+  recordVoice(usage: NewVoiceUsage): Promise<void>;
   /** One person's totals across the three ledgers. */
   personTotals(subject: string, window: UsageWindow): Promise<UtilizationTotals>;
   /** One person's series, ascending by bucket key. */

@@ -17,9 +17,8 @@
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { sql } from 'kysely';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore, type UploadSlotRecord } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import type { MCPToolContext } from './common';
 
@@ -62,27 +61,25 @@ export async function createUploadSlot(
       error: 'PUBLIC_BASE_URL is not configured — the server cannot mint upload endpoints.',
     };
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
-
   const uploadId = randomUUID();
   const token = randomBytes(32).toString('base64url');
   const maxBytes = file.maxBytes ?? context.maxAttachmentBytes ?? DEFAULT_UPLOAD_MAX_BYTES;
-  await dbResult.val
-    .insertInto('upload_slots')
-    .values({
+  try {
+    await getDataStore().uploadSlots.create({
       id: uploadId,
-      token_hash: hashUploadToken(token),
+      tokenHash: hashUploadToken(token),
       subject: context.subject,
-      account_id: context.accountId,
+      accountId: context.accountId,
       kind,
-      destination: JSON.stringify(destination),
+      destination,
       filename: file.filename,
-      content_type: file.contentType ?? null,
-      max_bytes: maxBytes,
-      expires_at: new Date(Date.now() + UPLOAD_SLOT_TTL_MS),
-    })
-    .execute();
+      contentType: file.contentType ?? null,
+      maxBytes,
+      expiresAt: new Date(Date.now() + UPLOAD_SLOT_TTL_MS),
+    });
+  } catch {
+    return { ok: false, error: 'Database unavailable.' };
+  }
 
   const url = `${base.replace(/\/$/, '')}/api/upload/${uploadId}`;
   const minutes = Math.round(UPLOAD_SLOT_TTL_MS / 60_000);
@@ -108,6 +105,20 @@ export interface ClaimedUploadSlot {
   max_bytes: number;
 }
 
+/** A claimed slot as the executors take it. */
+export function claimedUploadSlotOf(record: UploadSlotRecord): ClaimedUploadSlot {
+  return {
+    id: record.id,
+    subject: record.subject,
+    account_id: record.accountId,
+    kind: record.kind,
+    destination: record.destination,
+    filename: record.filename,
+    content_type: record.contentType,
+    max_bytes: record.maxBytes,
+  };
+}
+
 /**
  * Claim a pending slot by OWNERSHIP rather than by its bearer token — the
  * authorization sandbox_send_to_upload uses. Every other claim (the public
@@ -126,33 +137,14 @@ export async function claimPendingUploadSlotByOwner(
   uploadId: string
 ): Promise<{ ok: true; val: ClaimedUploadSlot } | { ok: false; error: string }> {
   if (!context.subject) return { ok: false, error: 'No signed-in identity on this request.' };
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
-  const claimed = await dbResult.val
-    .updateTable('upload_slots')
-    .set({ status: 'completed', completed_at: sql`NOW()` })
-    .where('id', '=', uploadId)
-    .where('subject', '=', context.subject)
-    .where('status', '=', 'pending')
-    .where('expires_at', '>', sql<Date>`NOW()`)
-    .returning([
-      'id',
-      'subject',
-      'account_id',
-      'kind',
-      'destination',
-      'filename',
-      'content_type',
-      'max_bytes',
-    ])
-    .executeTakeFirst();
+  const claimed = await getDataStore().uploadSlots.claim(uploadId, { subject: context.subject });
   if (!claimed) {
     return {
       ok: false,
       error: 'No pending upload with that id for you (wrong id, expired, or already used).',
     };
   }
-  return { ok: true, val: claimed };
+  return { ok: true, val: claimedUploadSlotOf(claimed) };
 }
 
 /**
@@ -187,23 +179,13 @@ export function registerUploadStatusTool(server: McpServer, context: MCPToolCont
           isError: true,
         };
       }
-      const dbResult = getDatabase();
-      if (!dbResult.ok) {
-        return {
-          content: [{ type: 'text' as const, text: 'Database unavailable.' }],
-          isError: true,
-        };
-      }
-      const slot = await dbResult.val
-        .selectFrom('upload_slots')
-        .select(['id', 'kind', 'filename', 'status', 'result', 'expires_at', 'completed_at'])
-        .where('id', '=', uploadId)
-        .where('subject', '=', context.subject)
-        .executeTakeFirst();
+      const found = await getDataStore().uploadSlots.get(uploadId);
+      // Scoped by subject: a foreign upload id reads as no upload at all.
+      const slot = found && found.subject === context.subject ? found : null;
       if (!slot) {
         return { content: [{ type: 'text' as const, text: 'No such upload.' }], isError: true };
       }
-      const expired = slot.status === 'pending' && new Date(slot.expires_at).getTime() < Date.now();
+      const expired = slot.status === 'pending' && slot.expiresAt.getTime() < Date.now();
       const lines = [
         `Upload ${slot.id} ("${slot.filename}", ${slot.kind}): ${expired ? 'expired' : slot.status}.`,
         ...(slot.result ? [slot.result] : []),
