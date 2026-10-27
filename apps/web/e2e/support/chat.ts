@@ -65,10 +65,7 @@ export async function renameChat(
   expect(renamed.ok(), await renamed.text()).toBe(true);
 }
 
-export async function readChat(
-  request: APIRequestContext,
-  chatId: string
-): Promise<ChatReadBack> {
+export async function readChat(request: APIRequestContext, chatId: string): Promise<ChatReadBack> {
   const response = await request.get(`/api/chat/chats/${chatId}`);
   expect(response.ok(), await response.text()).toBe(true);
   return response.json();
@@ -110,10 +107,9 @@ export async function settled(
     const ask = turn.pendingPermission;
     if (options.allow && ask && !answered.has(ask.toolUseId)) {
       answered.add(ask.toolUseId);
-      const decided = await request.post(
-        `/api/chat/chats/${chatId}/turns/${turn.id}/permission`,
-        { data: { toolUseId: ask.toolUseId, decision: 'once' } }
-      );
+      const decided = await request.post(`/api/chat/chats/${chatId}/turns/${turn.id}/permission`, {
+        data: { toolUseId: ask.toolUseId, decision: 'once' },
+      });
       expect(decided.ok(), await decided.text()).toBe(true);
       continue;
     }

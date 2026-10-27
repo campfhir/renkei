@@ -52,7 +52,12 @@ test.describe('git-host tool cards in an ordinary chat', () => {
                 { name: 'github_list_branches', input: { owner: 'acme', repo: 'demo' } },
                 {
                   name: 'github_read_file',
-                  input: { owner: 'acme', repo: 'demo', path: 'src/timeout.ts', ref: 'fix/timeout' },
+                  input: {
+                    owner: 'acme',
+                    repo: 'demo',
+                    path: 'src/timeout.ts',
+                    ref: 'fix/timeout',
+                  },
                 },
               ],
             },

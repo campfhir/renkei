@@ -96,7 +96,9 @@ test.describe('chat compaction', () => {
       await expect(call.locator('> summary svg path').first()).toHaveAttribute('d', PACKAGE_ICON_D);
       await call.locator('> summary').click();
       await expect(call.getByText(/Folded \d+ earlier message/)).toBeVisible();
-      await expect(page.getByText('Done — the earlier back-and-forth is now a summary.')).toBeVisible();
+      await expect(
+        page.getByText('Done — the earlier back-and-forth is now a summary.')
+      ).toBeVisible();
     } finally {
       await removeModel(page.request, modelId);
     }

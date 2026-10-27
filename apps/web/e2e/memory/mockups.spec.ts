@@ -124,7 +124,11 @@ test.beforeEach(async ({ page, person: _person }, testInfo) => {
               },
               {
                 name: 'chat_show_mockup',
-                input: { title: 'Broken try', format: 'react', source: 'export default () => <div>;' },
+                input: {
+                  title: 'Broken try',
+                  format: 'react',
+                  source: 'export default () => <div>;',
+                },
               },
             ],
           },
@@ -150,7 +154,6 @@ function inlineFrame(page: Page, title: string) {
 const zoomLabel = (page: Page) => page.getByTestId('mockup-zoom');
 const zoomPercent = async (page: Page) =>
   Number.parseInt((await zoomLabel(page).innerText()) ?? '0');
-
 
 test('a reply’s mockups are drawn inline, each in its format, and a refused call draws none', async ({
   page,

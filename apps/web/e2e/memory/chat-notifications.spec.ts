@@ -58,7 +58,7 @@ test('notifications — mark all as read reaches rows past the page, show more l
   );
   await shareAgentsWith(request, person, names);
   const row = (n: number) =>
-    page.getByText(new RegExp(`"Notification ${String(n).padStart(3, "0")} `));
+    page.getByText(new RegExp(`"Notification ${String(n).padStart(3, '0')} `));
 
   await page.goto(`/notifications`);
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
@@ -197,10 +197,7 @@ test('notifications — select and delete through the menu', async ({
   await expect(main.getByText(first.headline)).toHaveCount(0);
 });
 
-test('preferences — acts enumerated per connector', async ({
-  page,
-  person: _person,
-}, testInfo) => {
+test('preferences — acts enumerated per connector', async ({ page, person: _person }, testInfo) => {
   await page.goto(`/preferences`);
   await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
 

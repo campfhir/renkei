@@ -295,7 +295,11 @@ function sendAnthropic(response, body, step) {
   frame({ type: 'message_start', message: { usage: { ...usage, output_tokens: 1 } } });
   blocks.forEach((block, index) => {
     if (block.type === 'thinking') {
-      frame({ type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '' } });
+      frame({
+        type: 'content_block_start',
+        index,
+        content_block: { type: 'thinking', thinking: '' },
+      });
       frame({
         type: 'content_block_delta',
         index,

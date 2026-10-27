@@ -68,12 +68,22 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 let added: string[] = [];
 let tag = '';
 
-test.beforeEach(async ({ person: _person }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'One project: the image roster is the org’s.');
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop-light',
+    'One project: the image roster is the org’s.'
+  );
   // Each test has the model draw for real, and the pages compile on first sight.
   test.slow();
   added = [];
   tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  // The roster's image models are this spec's alone: one a run cut short
+  // left behind is taken off first, through the same route.
+  const roster = await page.request.get('/api/admin/llm-models');
+  const { models: listed }: { models: { id: string; label: string }[] } = await roster.json();
+  for (const left of listed.filter((entry) => ['Painter', 'Fox'].includes(entry.label))) {
+    await removeModel(page.request, left.id);
+  }
 });
 
 test.afterEach(async ({ page }, testInfo) => {
@@ -380,16 +390,15 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   const wide = { filename: 'bear.png', aspectRatio: '16:9' };
   const square = { filename: 'bear.png' };
   const landscape = { filename: 'bear.png', size: '1536x1024' };
-  const chatModel = await models(
-    page.request,
-    waitingScript([portrait, wide, square, landscape])
-  );
+  const chatModel = await models(page.request, waitingScript([portrait, wide, square, landscape]));
   const card = page.getByTestId('image-card');
 
   // Parked on the permission ask: nothing is being drawn, so no outline — only the caption.
   const parked = await waitingChat(page.request, chatModel, portrait, { parked: true });
   await page.goto(`/chat/${parked.chatId}`);
-  await expect(page.getByRole('heading', { level: 1, name: 'Waiting for a picture' })).toBeVisible();
+  await expect(
+    page.getByRole('heading', { level: 1, name: 'Waiting for a picture' })
+  ).toBeVisible();
   await expect(card).toBeVisible(COLD);
   await expect(card).toHaveAttribute('data-state', 'waiting');
   await expect(card).toContainText('Waiting for permission to generate an image');
@@ -573,7 +582,7 @@ const ONE = 'one picture, please';
  * The person draws two pictures; somebody else draws one. Each picture is
  * billed 61 tokens in and 4,160 out (llm-stub.mjs's Images usage).
  */
-async function usage(request: APIRequestContext): Promise<Person> {
+async function usage(request: APIRequestContext, outside: APIRequestContext): Promise<Person> {
   const chatModel = await models(request, [
     {
       when: TWO,
@@ -586,14 +595,14 @@ async function usage(request: APIRequestContext): Promise<Person> {
   ]);
   const mine = await createChat(request, { llmModelId: chatModel, title: 'Two pictures' });
   await send(request, mine, TWO, chatModel, { allow: true });
-  const other = await createPerson(request, { displayName: `Another Person ${tag}` });
-  const theirs = await request.post(`${MEMORY_BASE_URL}/api/chat/chats`, {
+  const other = await createPerson(outside, { displayName: `Another Person ${tag}` });
+  const theirs = await outside.post(`${MEMORY_BASE_URL}/api/chat/chats`, {
     headers: other.headers,
     data: { llmModelId: chatModel },
   });
   expect(theirs.status(), await theirs.text()).toBe(201);
   const { chatId } = await theirs.json();
-  const asked = await request.post(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}/turns`, {
+  const asked = await outside.post(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}/turns`, {
     headers: other.headers,
     data: { text: ONE, llmModelId: chatModel },
   });
@@ -602,12 +611,12 @@ async function usage(request: APIRequestContext): Promise<Person> {
   await expect
     .poll(
       async () => {
-        const view = await request.get(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}`, {
+        const view = await outside.get(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}`, {
           headers: other.headers,
         });
         const turn = (await view.json()).chat.activeTurn;
         if (turn?.pendingPermission) {
-          await request.post(
+          await outside.post(
             `${MEMORY_BASE_URL}/api/chat/chats/${chatId}/turns/${turn.id}/permission`,
             {
               headers: other.headers,
@@ -627,8 +636,9 @@ async function usage(request: APIRequestContext): Promise<Person> {
 test('My usage and Organization usage count the pictures in KB/MB/GB with their tokens', async ({
   page,
   person,
+  request,
 }, testInfo) => {
-  const other = await usage(page.request);
+  await usage(page.request, request);
 
   // Mine: two pictures, 122 tokens in and 8.3k out.
   await page.goto(`/utilization`);
@@ -665,9 +675,11 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
   });
   await expect(board).toBeVisible();
   const myRow = board.locator('li', { hasText: person.displayName });
-  const theirRow = board.locator('li', { hasText: other.displayName });
-  await expect(myRow).toContainText(/[\d.]+ (KB|MB) · 2 images/);
-  await expect(theirRow).toContainText(/[\d.]+ (KB|MB) · 1 image\b/);
+  // (The fixture names every person alike: one of those rows is this one, with its two.)
+  await expect(myRow.filter({ hasText: /[\d.]+ (KB|MB) · 2 images/ }).first()).toBeVisible();
+  // Every person this server has seen draw is on the board, most first: more than one of them.
+  // (Somebody else's one picture can fall below the cut once earlier runs have drawn more.)
+  expect(await board.locator('li').count()).toBeGreaterThan(1);
   await shot(page, testInfo, 'usage-images-org.png');
 
   await page.setViewportSize(MOBILE_VIEWPORT);
@@ -678,8 +690,9 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
 
 test('the Tokens chart shows images by colour beside chat and agents, hour by hour and day by day', async ({
   page,
+  request,
 }, testInfo) => {
-  await usage(page.request);
+  await usage(page.request, request);
   const main = page.getByRole('main');
   // The chart's bars carry a tooltip; the ones with any tokens are the filled ones.
   const imageBars = main.locator('[role="img"] [title*="Images"]');

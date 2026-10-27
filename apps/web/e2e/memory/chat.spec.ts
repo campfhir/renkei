@@ -153,13 +153,17 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({
     await page.goto(`/chat/${chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
     // The project the chat sits in reads as a subheading under the name.
-    await expect(page.locator('header').getByRole('link', { name: 'Sprint hygiene' })).toBeVisible();
+    await expect(
+      page.locator('header').getByRole('link', { name: 'Sprint hygiene' })
+    ).toBeVisible();
 
     // The app menu's Chat section lists the chat in the column beside the
     // page. The row's name runs on into its project line, and the archived
     // twin's into "(archived)": anchor the title and rule the twin out.
     const rowName = new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?! \\(archived)`);
-    const row = page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: rowName });
+    const row = page
+      .getByRole('navigation', { name: 'Chats' })
+      .getByRole('link', { name: rowName });
     await expect(row).toBeVisible();
     // The row names the chat's project underneath, and leads with the mark
     // of a chat in a chat project (a code project's chats get another).
