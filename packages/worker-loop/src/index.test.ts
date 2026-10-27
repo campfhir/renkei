@@ -5,7 +5,13 @@
  * a handler polls to decide to do that.
  */
 
-import { createEventLoop, MessageReleased, type EventLoop, type LoopMessage } from './index';
+import {
+  createEventLoop,
+  MessageReleased,
+  wakeOnSignal,
+  type EventLoop,
+  type LoopMessage,
+} from './index';
 
 const logger = { debug() {}, warn() {}, error() {} };
 
@@ -82,5 +88,39 @@ describe('createEventLoop release', () => {
     expect(loop.stopping).toBe(true);
     expect(claims).toBe(3);
     expect(stops).toEqual([false, false, false]);
+  });
+});
+
+describe('wakeOnSignal', () => {
+  function fakeWake() {
+    const waits: { since: number; ms: number }[] = [];
+    const wake = {
+      version: 0,
+      wait: async (since: number, ms: number) => {
+        waits.push({ since, ms });
+      },
+    };
+    return { wake, waits };
+  }
+
+  it('waits on the version read just before the claim that found nothing', async () => {
+    const { wake, waits } = fakeWake();
+    const wakeable = wakeOnSignal(wake, async () => {
+      // A message lands while the claim is in flight.
+      wake.version = 7;
+      return null;
+    });
+    wake.version = 3;
+    await wakeable.claim();
+    await wakeable.sleep(1_000);
+    expect(waits).toEqual([{ since: 3, ms: 1_000 }]);
+  });
+
+  it('keeps the short sleep between busy claims a plain timer', async () => {
+    const { wake, waits } = fakeWake();
+    const wakeable = wakeOnSignal(wake, async () => 'message');
+    await wakeable.claim();
+    await wakeable.sleep(1);
+    expect(waits).toEqual([]);
   });
 });

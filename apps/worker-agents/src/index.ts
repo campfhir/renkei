@@ -17,11 +17,9 @@
 
 import { checkDataStore, closeDataStore } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
-import { agentJobsQueue, webhookEventsQueue } from '@renkei/queue';
-import { createEventLoop, schedulePeriodicSweep } from '@renkei/worker-loop';
-import { createAgentRunHandler } from './engine';
-import { createActionsHandler } from './actions';
-import { createDraftHandler } from './draft';
+import { agentJobsQueue } from '@renkei/queue';
+import { schedulePeriodicSweep } from '@renkei/worker-loop';
+import { createAgentJobsConsumer } from './consumer';
 import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
 import {
   createChatRetentionSweep,
@@ -29,9 +27,7 @@ import {
   CHAT_JANITOR_INTERVAL_MS,
   CHAT_RETENTION_INTERVAL_MS,
 } from './chat-sweep';
-import { createOptimizeHandler } from './optimize';
 import { createOptimizationSweep, OPTIMIZATION_SWEEP_INTERVAL_MS } from './optimization-sweep';
-import { createFinalizeHook } from './finalize';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
 import {
@@ -81,29 +77,7 @@ async function main(): Promise<void> {
   watchLogLevel(logger);
 
   if (!checkDataStore().ok) throw new Error('Database unavailable at boot');
-  const handleDraft = createDraftHandler({ webBaseUrl: webBaseUrl() });
-  const handleOptimize = createOptimizeHandler({ webBaseUrl: webBaseUrl() });
-  // Set by the signal handler below and read by the engine at every
-  // checkpoint: a run in flight is handed back to the queue at the next
-  // one (step, model call, tool call) rather than run to its end — or
-  // killed mid-call by the container's stop timeout, which used to leave
-  // its job `processing` until the 30-minute lease expired.
-  let stopRequested = false;
-  const handleRun = createAgentRunHandler({
-    webBaseUrl: webBaseUrl(),
-    // Accepted batches go onto our own queue, for the action executor.
-    actionsProducer: queue.producer,
-    // Chained agents go back onto OUR queue; failure notifications go to
-    // the interactive worker's, which owns the connector delivery paths.
-    onFinalized: createFinalizeHook(queue.producer, webhookEventsQueue().producer),
-    stopRequested: () => stopRequested,
-  });
-  // The only path an agent's changes are made by: accepted batches, under
-  // a token of their own, the run handed back when they are done.
-  const handleActions = createActionsHandler({
-    webBaseUrl: webBaseUrl(),
-    runProducer: queue.producer,
-  });
+  const consumer = createAgentJobsConsumer({ webBaseUrl: webBaseUrl() });
 
   // Every sweep is replica-safe: the schedule advance is optimistically
   // locked, retention and the janitor are idempotent.
@@ -208,39 +182,12 @@ async function main(): Promise<void> {
     ),
   ];
 
-  const loop = createEventLoop({
-    claim: () => queue.consumer.claim(),
-    complete: (event, outcome) => queue.consumer.complete(event, outcome),
-    fail: (event, error) => queue.consumer.fail(event, error),
-    // A run the engine hands back on shutdown goes straight back to
-    // pending — no attempt spent, no backoff, no lease to wait out.
-    release: (event) => queue.consumer.release(event),
-    // Runs enqueue under a per-agent fairness lane (`agents:{agentId}`);
-    // the bare `agents` form still matches so rows enqueued before lanes
-    // existed drain normally.
-    handlerFor: (event) => {
-      const ours = event.source === 'agents' || event.source.startsWith('agents:');
-      if (!ours) return undefined;
-      if (event.type === 'run') return handleRun;
-      // An accepted action batch — executed apart from the run that staged it.
-      if (event.type === 'actions') return handleActions;
-      // Drafting from prose: durable so the browser tab need not survive it.
-      if (event.type === 'draft') return handleDraft;
-      // Failure analysis + revision brief: durable for the same reason.
-      if (event.type === 'optimize') return handleOptimize;
-      return undefined;
-    },
-    logger,
-    label: 'worker-agents/loop',
-  });
-
   const shutdown = (signal: string): void => {
     logger.info('{signal} received, handing the current run back at its next checkpoint', {
       component: 'worker-agents/loop',
       signal,
     });
-    stopRequested = true;
-    loop.stop();
+    consumer.stop();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
@@ -248,7 +195,7 @@ async function main(): Promise<void> {
   logger.info('started {application} {version} (agent_jobs queue)', {
     component: 'worker-agents/loop',
   });
-  await loop.run();
+  await consumer.loop.run();
   for (const stop of stopSweeps) stop();
   logger.info('stopped', { component: 'worker-agents/loop' });
   await logger.flush();

@@ -21,6 +21,7 @@ export {
 } from './store/registry';
 export { MEMORY_DATA_STORE, memoryDataStoreRequested } from './store/selection';
 export { createMemoryDataStore, type MemoryDataStore, type MemorySeed } from './store/memory';
+export type { QueueSignal } from './store/memory/signals';
 export {
   MemoryTables,
   MemoryStoreError,

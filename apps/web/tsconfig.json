@@ -54,6 +54,8 @@
       "@renkei/delegate-client": ["../../packages/delegate-client/src/index.ts"],
       "@renkei/worker-delegate": ["../../apps/worker-delegate/src/server.ts"],
       "@renkei/worker-delegate/embedded": ["../../apps/worker-delegate/src/embedded.ts"],
+      "@renkei/worker-agents/embedded": ["../../apps/worker-agents/src/embedded.ts"],
+      "@renkei/worker/embedded": ["../../apps/worker/src/embedded.ts"],
       "@renkei/user-prefs": ["../../packages/user-prefs/src/index.ts"],
       "@renkei/user-prefs/prefs": ["../../packages/user-prefs/src/prefs.ts"],
       "@renkei/gates": ["../../packages/gates/src/index.ts"],

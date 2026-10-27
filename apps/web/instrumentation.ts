@@ -41,13 +41,17 @@ export async function register() {
     // needs no database (playwright.memory.config.ts). Nothing here then
     // has a database to reach — no log table, no schema to check, no turn
     // or apply-job rows to recover — so boot stops after registering it.
-    // Fixtures arrive per spec through app/api/test/data-store. The
-    // delegate runs in this process too (lib/memory-delegate.ts), on the
-    // same store: imported only here, so nothing of it loads on Postgres.
+    // Specs stage their data through the app's own routes, signed in
+    // through app/api/test/session. The delegate runs in this process too
+    // (lib/memory-delegate.ts), on the same store, and so do the agents
+    // worker's consumer and the event dispatcher (lib/memory-workers.ts):
+    // imported only here, so nothing of them loads on Postgres.
     if (memoryDataStoreRequested()) {
       registerDataStore(createMemoryDataStore());
       const { startMemoryDelegate } = await import('@/lib/memory-delegate');
       await startMemoryDelegate();
+      const { startMemoryWorkers } = await import('@/lib/memory-workers');
+      startMemoryWorkers();
       watchLogLevel(logger);
       globalMarks.__renkeiPgLogAdapterAttached = true;
       logger.warn('Running on the IN-MEMORY data store: nothing is persisted', {

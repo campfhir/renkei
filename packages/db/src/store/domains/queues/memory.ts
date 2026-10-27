@@ -1,4 +1,5 @@
 import { compareAsc, orderBy } from '../../memory/order';
+import { wakeQueue } from '../../memory/signals';
 import type { MemoryTables, Row } from '../../memory/tables';
 import type { QueueClaimOptions, QueueDeadLetterTable, QueueStore, QueueTable } from './types';
 
@@ -71,6 +72,7 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
         payload: JSON.stringify(message.payload),
         ordering_key: key,
       });
+      wakeQueue(tables, table);
     },
     async discardPending(table, type, match) {
       if (match.length === 0) throw new Error('discardPending needs a predicate');
@@ -178,6 +180,7 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
           updated_at: at,
         })
       );
+      wakeQueue(tables, table);
     },
 
     async retry(table, id, error, delaySeconds) {
@@ -269,6 +272,7 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
         }))
       );
       tables.delete(DEAD_LETTERS[table], (r) => keys.has(r.id));
+      if (moved.length > 0) wakeQueue(tables, table);
       return moved.length;
     },
 

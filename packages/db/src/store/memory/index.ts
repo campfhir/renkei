@@ -1,5 +1,7 @@
 import { DOMAINS } from '../domains';
 import type { DataStore } from '../types';
+import type { QueueTable } from '../domains/queues/types';
+import { queueSignal, type QueueSignal } from './signals';
 import { MemoryTables, type TableRows } from './tables';
 
 /**
@@ -21,6 +23,11 @@ export interface MemoryDataStore extends DataStore {
    * those.
    */
   reset(subject?: string): void;
+  /**
+   * The in-process notify of one queue table (./signals.ts): what a
+   * consumer running in this process waits on instead of a poll interval.
+   */
+  queueSignal(table: QueueTable): QueueSignal;
 }
 
 /** Fixture rows by table — the memory store's seed, and the differential suite's. */
@@ -38,6 +45,9 @@ export function createMemoryDataStore(tables: MemoryTables = new MemoryTables())
     tables,
     async seed(fixtures: TableRows, options: { replace?: boolean } = {}) {
       tables.seed(fixtures, options);
+    },
+    queueSignal(table: QueueTable) {
+      return queueSignal(tables, table);
     },
     reset(subject?: string) {
       if (subject === undefined) {
