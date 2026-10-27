@@ -4,6 +4,8 @@
  * ../domain.ts) and one line here and one in ./scenarios.ts.
  */
 
+import { batchJobSchedules } from './batch-job-schedules';
+import { batchJobs } from './batch-jobs';
 import { coachMarks } from './coach-marks';
 import { identities } from './identities';
 import { notifications } from './notifications';
@@ -28,4 +30,6 @@ export const DOMAINS = {
   jiraSpaceTemplates,
   adminChangeQueue,
   salesforceGrants,
+  batchJobs,
+  batchJobSchedules,
 };

@@ -51,7 +51,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     if (!dbResult.ok) throw new Error('database unavailable for batch discovery');
     const db = dbResult.val;
 
-    const batch = batchJobId ? await store.getBatch(db, batchJobId) : undefined;
+    const batch = batchJobId ? await store.getBatch(batchJobId) : undefined;
     if (!batch) {
       logger.warn('batch {batchJobId} not found; dropping discover message', {
         component: COMPONENT,
@@ -64,12 +64,12 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
       if (batch.status === 'discovering') {
         // A previous delivery died mid-discovery — do NOT re-run (would
         // create duplicate items). Finalize and let the caller start over.
-        await finalize(db, store.failBatch(db, batch.id, 'worker restarted mid-discovery'));
+        await finalize(db, store.failBatch(batch.id, 'worker restarted mid-discovery'));
       }
       return; // Terminal, or just finalized: a redelivery is an idempotent no-op.
     }
 
-    const claimed = await store.beginDiscovery(db, batch.id);
+    const claimed = await store.beginDiscovery(batch.id);
     if (!claimed) return; // Lost the claim race to a concurrent delivery.
     // The claim is the moment the batch begins work — and the one moment
     // it begins, so "started" is announced exactly once too.
@@ -77,7 +77,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
 
     const kind = getBatchJobKind(claimed.kind);
     if (!kind) {
-      await finalize(db, store.failBatch(db, claimed.id, `Unknown batch kind "${claimed.kind}".`));
+      await finalize(db, store.failBatch(claimed.id, `Unknown batch kind "${claimed.kind}".`));
       return;
     }
 
@@ -87,12 +87,12 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     } catch (error) {
       await finalize(
         db,
-        store.failBatch(db, claimed.id, error instanceof Error ? error.message : String(error))
+        store.failBatch(claimed.id, error instanceof Error ? error.message : String(error))
       );
       return;
     }
     if (!discovered.ok) {
-      await finalize(db, store.failBatch(db, claimed.id, discovered.error ?? 'Discovery failed.'));
+      await finalize(db, store.failBatch(claimed.id, discovered.error ?? 'Discovery failed.'));
       return;
     }
 
@@ -103,14 +103,14 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     // the batch page can list under "Skipped" with their reason — it is
     // just never enqueued, and never counted as work to wait for.
     for (const itemPayload of skippedItems) {
-      await store.insertItem(db, claimed.id, itemPayload, {
+      await store.insertItem(claimed.id, itemPayload, {
         status: 'skipped',
         result: { skipped: true, reason: str(itemPayload.skipReason) || 'already-processed' },
       });
     }
 
     if (items.length === 0) {
-      await finalize(db, store.completeEmptyBatch(db, claimed.id, skippedItems.length));
+      await finalize(db, store.completeEmptyBatch(claimed.id, skippedItems.length));
       return;
     }
 
@@ -120,7 +120,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     // chunk this if a batch's discovery phase becomes the bottleneck.
     let created = 0;
     for (const itemPayload of items) {
-      const item = await store.insertItem(db, claimed.id, itemPayload);
+      const item = await store.insertItem(claimed.id, itemPayload);
       await enqueueItem(producer, claimed.id, item.id);
       created += 1;
     }
@@ -128,7 +128,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     // already landed — see activateBatch — so it goes through finalize too.
     await finalize(
       db,
-      store.activateBatch(db, claimed.id, created + skippedItems.length, skippedItems.length)
+      store.activateBatch(claimed.id, created + skippedItems.length, skippedItems.length)
     );
     logger.info('batch {batchJobId} discovered {count} item(s), skipped {skipped}', {
       component: COMPONENT,
@@ -148,8 +148,8 @@ export function createBatchItemHandler(): EventHandler {
     if (!dbResult.ok) throw new Error('database unavailable for batch item');
     const db = dbResult.val;
 
-    const batch = batchJobId ? await store.getBatch(db, batchJobId) : undefined;
-    const item = itemId ? await store.getItem(db, itemId) : undefined;
+    const batch = batchJobId ? await store.getBatch(batchJobId) : undefined;
+    const item = itemId ? await store.getItem(itemId) : undefined;
     if (!batch || !item || item.batch_id !== batch.id) {
       logger.warn('batch item {itemId} not found; dropping message', {
         component: COMPONENT,
@@ -165,7 +165,7 @@ export function createBatchItemHandler(): EventHandler {
         // item work may bill per call (OCR does) — finalize as failed.
         await finalize(
           db,
-          store.recordItemOutcome(db, batch.id, item.id, {
+          store.recordItemOutcome(batch.id, item.id, {
             ok: false,
             error: 'worker restarted mid-item',
           })
@@ -174,14 +174,14 @@ export function createBatchItemHandler(): EventHandler {
       return; // Terminal: a redelivery is an idempotent no-op.
     }
 
-    const claimed = await store.claimItem(db, item.id);
+    const claimed = await store.claimItem(item.id);
     if (!claimed) return; // Lost the claim race to a concurrent delivery.
 
     const kind = getBatchJobKind(batch.kind);
     if (!kind) {
       await finalize(
         db,
-        store.recordItemOutcome(db, batch.id, claimed.id, {
+        store.recordItemOutcome(batch.id, claimed.id, {
           ok: false,
           error: `Unknown batch kind "${batch.kind}".`,
         })
@@ -198,6 +198,6 @@ export function createBatchItemHandler(): EventHandler {
     // Whichever item lands last finalizes the batch and announces it —
     // `finalize` is outside the try so an announcement problem is never
     // recorded as the item having failed.
-    await finalize(db, store.recordItemOutcome(db, batch.id, claimed.id, outcome));
+    await finalize(db, store.recordItemOutcome(batch.id, claimed.id, outcome));
   };
 }

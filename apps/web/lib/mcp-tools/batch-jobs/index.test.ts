@@ -31,7 +31,13 @@ jest.mock('@renkei/sandbox-client', () => ({
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDatabase } from '@renkei/db';
-import { createBatch, getBatch, listBatches, listItems, enqueueDiscover } from '@renkei/batch-jobs-store';
+import {
+  createBatch,
+  getBatch,
+  listBatches,
+  listItems,
+  enqueueDiscover,
+} from '@renkei/batch-jobs-store';
 import { batchJobsQueue } from '@renkei/queue';
 import { listConnectedShares } from '@renkei/connector-fileshares';
 import { callMistralOcr, resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
@@ -55,7 +61,10 @@ const listConnectedSharesMock = listConnectedShares as jest.Mock;
 
 /** One connected share, with the exposure its owner chose on the Connectors page. */
 function connected(id: string, toolAccess: 'read' | 'read_write', allowDelete: boolean) {
-  return { share: { id, name: `Share ${id}` }, connection: { username: 'alice', toolAccess, allowDelete } };
+  return {
+    share: { id, name: `Share ${id}` },
+    connection: { username: 'alice', toolAccess, allowDelete },
+  };
 }
 const callMistralOcrMock = callMistralOcr as jest.Mock;
 const resolveMistralOcrConfigMock = resolveMistralOcrConfig as jest.Mock;
@@ -83,7 +92,10 @@ beforeEach(() => {
   jest.clearAllMocks();
   getDatabaseMock.mockReturnValue({ ok: true, val: FAKE_DB });
   batchJobsQueueMock.mockReturnValue({ producer: 'the-producer' });
-  listConnectedSharesMock.mockResolvedValue({ ok: true, val: [connected('share-1', 'read', false)] });
+  listConnectedSharesMock.mockResolvedValue({
+    ok: true,
+    val: [connected('share-1', 'read', false)],
+  });
 });
 
 describe('batch_start_document_pipeline', () => {
@@ -98,7 +110,7 @@ describe('batch_start_document_pipeline', () => {
       grouping: { strategy: 'whole-file' },
     });
 
-    expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
+    expect(createBatchMock).toHaveBeenCalledWith({
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
@@ -163,7 +175,6 @@ describe('batch_start_document_pipeline', () => {
     });
 
     expect(createBatchMock).toHaveBeenCalledWith(
-      FAKE_DB,
       expect.objectContaining({
         config: expect.objectContaining({
           skipProcessed: false,
@@ -225,10 +236,15 @@ describe('batch_list_jobs', () => {
 });
 
 describe('batch_list_items', () => {
-  it('scopes by the batch\'s owning subject before listing items', async () => {
+  it("scopes by the batch's owning subject before listing items", async () => {
     getBatchMock.mockResolvedValue({ id: 'batch-1', subject: 'auth0|alice' });
     listItemsMock.mockResolvedValue([
-      { id: 'item-1', payload: { documentKey: 'inv-7' }, status: 'succeeded', result: { sandboxFileId: 'file-1' } },
+      {
+        id: 'item-1',
+        payload: { documentKey: 'inv-7' },
+        status: 'succeeded',
+        result: { sandboxFileId: 'file-1' },
+      },
     ]);
     const handlers = registerAll();
 
@@ -251,7 +267,10 @@ describe('sandbox_ocr_file', () => {
   });
 
   it('returns the OCR text on success', async () => {
-    resolveMistralOcrConfigMock.mockResolvedValue({ ok: true, val: { endpoint: 'x', model: 'm', apiKey: 'k' } });
+    resolveMistralOcrConfigMock.mockResolvedValue({
+      ok: true,
+      val: { endpoint: 'x', model: 'm', apiKey: 'k' },
+    });
     sbReadFileMock.mockResolvedValue({
       ok: true,
       val: { filename: 'report.pdf', contentType: 'application/pdf', bytes: new Uint8Array([1]) },
@@ -268,7 +287,10 @@ describe('sandbox_ocr_file', () => {
   });
 
   it('truncates a very long OCR result with a note', async () => {
-    resolveMistralOcrConfigMock.mockResolvedValue({ ok: true, val: { endpoint: 'x', model: 'm', apiKey: 'k' } });
+    resolveMistralOcrConfigMock.mockResolvedValue({
+      ok: true,
+      val: { endpoint: 'x', model: 'm', apiKey: 'k' },
+    });
     sbReadFileMock.mockResolvedValue({
       ok: true,
       val: { filename: 'report.pdf', contentType: 'application/pdf', bytes: new Uint8Array([1]) },

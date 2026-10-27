@@ -53,3 +53,5 @@ export type * from './domains/jira-changes';
 export type * from './domains/jira-space-templates';
 export type * from './domains/admin-change-queue';
 export type * from './domains/salesforce-grants';
+export type * from './domains/batch-jobs';
+export type * from './domains/batch-job-schedules';

@@ -1,5 +1,6 @@
 /**
- * Postgres access for batch_job_schedules — the recurring recipe a batch is
+ * batch_job_schedules, through the data store
+ * (`getDataStore().batchJobSchedules`) — the recurring recipe a batch is
  * defined once against, mirroring agents/agent_triggers' split adapted to
  * batch jobs' simpler shape (one recurring definition, no event/api/agent
  * trigger kinds). Each firing creates an ordinary `batch_jobs` row tagged
@@ -12,12 +13,12 @@
  * advance-then-fire the sweep needs live in apps/worker (mirroring
  * apps/worker-agents/src/schedule-sweep.ts, which does its own raw queries
  * rather than going through a store abstraction) — this file is CRUD only.
+ *
+ * Names are unique across the organization: a clashing create or rename
+ * rejects with `isDuplicateScheduleName(error)` true.
  */
 
-import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type BatchJobScheduleRecord } from '@renkei/db';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -37,38 +38,31 @@ export interface BatchJobScheduleRow {
   created_at: Date;
 }
 
-const SCHEDULE_COLUMNS = [
-  'id',
-  'subject',
-  'name',
-  'kind',
-  'config',
-  'schedule_config',
-  'enabled',
-  'next_run_at',
-  'last_fired_at',
-  'last_error',
-  'created_at',
-] as const;
-
-function scheduleOf(row: {
-  id: string;
-  subject: string;
-  name: string;
-  kind: string;
-  config: unknown;
-  schedule_config: unknown;
-  enabled: boolean;
-  next_run_at: Date | null;
-  last_fired_at: Date | null;
-  last_error: string | null;
-  created_at: Date;
-}): BatchJobScheduleRow {
+function scheduleOf(record: BatchJobScheduleRecord): BatchJobScheduleRow {
   return {
-    ...row,
-    config: isRecord(row.config) ? row.config : {},
-    schedule_config: isRecord(row.schedule_config) ? row.schedule_config : {},
+    id: record.id,
+    subject: record.subject,
+    name: record.name,
+    kind: record.kind,
+    config: isRecord(record.config) ? record.config : {},
+    schedule_config: isRecord(record.scheduleConfig) ? record.scheduleConfig : {},
+    enabled: record.enabled,
+    next_run_at: record.nextRunAt,
+    last_fired_at: record.lastFiredAt,
+    last_error: record.lastError,
+    created_at: record.createdAt,
   };
+}
+
+/** The refusal a create or rename gets when another schedule already has that name. */
+export function isDuplicateScheduleName(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const constraint = 'constraint' in error ? error.constraint : undefined;
+  const message = 'message' in error ? error.message : undefined;
+  return (
+    constraint === 'batch_job_schedules_name' ||
+    (typeof message === 'string' && message.includes('batch_job_schedules_name'))
+  );
 }
 
 export interface CreateScheduleInput {
@@ -81,49 +75,27 @@ export interface CreateScheduleInput {
   nextRunAt: Date;
 }
 
-export async function createSchedule(
-  db: Kysely<DB>,
-  input: CreateScheduleInput
-): Promise<BatchJobScheduleRow> {
-  const row = await db
-    .insertInto('batch_job_schedules')
-    .values({
-      id: randomUUID(),
+export async function createSchedule(input: CreateScheduleInput): Promise<BatchJobScheduleRow> {
+  return scheduleOf(
+    await getDataStore().batchJobSchedules.create({
       subject: input.subject,
       name: input.name,
       kind: input.kind,
-      config: JSON.stringify(input.config),
-      schedule_config: JSON.stringify(input.scheduleConfig),
-      next_run_at: input.nextRunAt,
+      config: input.config,
+      scheduleConfig: input.scheduleConfig,
+      nextRunAt: input.nextRunAt,
     })
-    .returning(SCHEDULE_COLUMNS)
-    .executeTakeFirstOrThrow();
-  return scheduleOf(row);
+  );
 }
 
-export async function getSchedule(
-  db: Kysely<DB>,
-  scheduleId: string
-): Promise<BatchJobScheduleRow | undefined> {
-  const row = await db
-    .selectFrom('batch_job_schedules')
-    .select(SCHEDULE_COLUMNS)
-    .where('id', '=', scheduleId)
-    .executeTakeFirst();
-  return row ? scheduleOf(row) : undefined;
+export async function getSchedule(scheduleId: string): Promise<BatchJobScheduleRow | undefined> {
+  const record = await getDataStore().batchJobSchedules.get(scheduleId);
+  return record ? scheduleOf(record) : undefined;
 }
 
-export async function listSchedules(
-  db: Kysely<DB>,
-  subject: string
-): Promise<BatchJobScheduleRow[]> {
-  const rows = await db
-    .selectFrom('batch_job_schedules')
-    .select(SCHEDULE_COLUMNS)
-    .where('subject', '=', subject)
-    .orderBy('name')
-    .execute();
-  return rows.map(scheduleOf);
+/** By name (ties by id). */
+export async function listSchedules(subject: string): Promise<BatchJobScheduleRow[]> {
+  return (await getDataStore().batchJobSchedules.list(subject)).map(scheduleOf);
 }
 
 export interface UpdateScheduleInput {
@@ -136,35 +108,13 @@ export interface UpdateScheduleInput {
 }
 
 export async function updateSchedule(
-  db: Kysely<DB>,
   scheduleId: string,
   input: UpdateScheduleInput
 ): Promise<BatchJobScheduleRow | undefined> {
-  const row = await db
-    .updateTable('batch_job_schedules')
-    .set({
-      ...(input.name !== undefined ? { name: input.name } : {}),
-      ...(input.config !== undefined ? { config: JSON.stringify(input.config) } : {}),
-      ...(input.scheduleConfig !== undefined
-        ? { schedule_config: JSON.stringify(input.scheduleConfig) }
-        : {}),
-      ...(input.nextRunAt !== undefined ? { next_run_at: input.nextRunAt } : {}),
-      ...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', scheduleId)
-    .returning(SCHEDULE_COLUMNS)
-    .executeTakeFirst();
-  return row ? scheduleOf(row) : undefined;
+  const record = await getDataStore().batchJobSchedules.update(scheduleId, input);
+  return record ? scheduleOf(record) : undefined;
 }
 
-export async function deleteSchedule(
-  db: Kysely<DB>,
-  scheduleId: string
-): Promise<boolean> {
-  const result = await db
-    .deleteFrom('batch_job_schedules')
-    .where('id', '=', scheduleId)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0) > 0;
+export async function deleteSchedule(scheduleId: string): Promise<boolean> {
+  return getDataStore().batchJobSchedules.delete(scheduleId);
 }

@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listSchedules } from '@renkei/batch-jobs-store';
@@ -15,10 +14,7 @@ export default async function BatchJobSchedulesPage(): Promise<React.ReactNode> 
     redirect(signInUrl(`/batch-jobs/schedules`));
   }
 
-  const dbResult = getDatabase();
-  const schedules = dbResult.ok
-    ? await listSchedules(dbResult.val, session.subject)
-    : [];
+  const schedules = await listSchedules(session.subject);
 
   return (
     <div className="mx-auto max-w-3xl">

@@ -21,8 +21,6 @@ const createBatchMock = createBatch as jest.Mock;
 const enqueueDiscoverMock = enqueueDiscover as jest.Mock;
 const batchJobsQueueMock = batchJobsQueue as jest.Mock;
 
-const FAKE_DB = {};
-
 beforeEach(() => {
   jest.clearAllMocks();
   batchJobsQueueMock.mockReturnValue({ producer: 'the-producer' });
@@ -32,7 +30,7 @@ describe('startDocumentOcrPipeline', () => {
   it('creates a batch with the config shape document-ocr-pipeline expects and enqueues discovery', async () => {
     createBatchMock.mockResolvedValue({ id: 'batch-1' });
 
-    const batch = await startDocumentOcrPipeline(FAKE_DB as never, {
+    const batch = await startDocumentOcrPipeline({
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       shareId: 'share-1',
@@ -40,7 +38,7 @@ describe('startDocumentOcrPipeline', () => {
       grouping: { strategy: 'whole-file' },
     });
 
-    expect(createBatchMock).toHaveBeenCalledWith(FAKE_DB, {
+    expect(createBatchMock).toHaveBeenCalledWith({
       subject: 'auth0|alice',
       name: 'Inbox OCR',
       kind: 'document-ocr-pipeline',
@@ -62,15 +60,17 @@ describe('startDocumentOcrPipeline', () => {
   it('defaults a missing/empty path to the share root', async () => {
     createBatchMock.mockResolvedValue({ id: 'batch-2' });
 
-    await startDocumentOcrPipeline(FAKE_DB as never, {
+    await startDocumentOcrPipeline({
       subject: 'auth0|alice',
       name: 'Scanner dump',
       shareId: 'share-1',
-      grouping: { strategy: 'filename-pattern', pattern: '^(?<documentKey>.+)-p(?<page>\\d+)\\.tif$' },
+      grouping: {
+        strategy: 'filename-pattern',
+        pattern: '^(?<documentKey>.+)-p(?<page>\\d+)\\.tif$',
+      },
     });
 
     expect(createBatchMock).toHaveBeenCalledWith(
-      FAKE_DB,
       expect.objectContaining({ config: expect.objectContaining({ path: '/' }) })
     );
   });

@@ -50,12 +50,11 @@ export default async function EditBatchJobSchedulePage({
     redirect(signInUrl(`/batch-jobs/schedules/${scheduleId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const schedule = await getSchedule(dbResult.val, scheduleId);
+  const schedule = await getSchedule(scheduleId);
   if (!schedule || schedule.subject !== session.subject) notFound();
 
-  const calendars = await loadCalendarOptions(dbResult.val);
+  const dbResult = getDatabase();
+  const calendars = dbResult.ok ? await loadCalendarOptions(dbResult.val) : [];
   const fallbackScheduleConfig: ScheduleConfig = {
     recurrences: [{ every: 'day', at: '09:00' }],
     timezone: 'UTC',

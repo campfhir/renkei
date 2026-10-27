@@ -2,7 +2,6 @@ import React from 'react';
 import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { batchKindLabel, getBatch, listItems } from '@renkei/batch-jobs-store';
@@ -48,20 +47,16 @@ export default async function BatchJobDetailPage({
     redirect(signInUrl(`/batch-jobs/${batchId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const batch = await getBatch(dbResult.val, batchId);
+  const batch = await getBatch(batchId);
   // A batch owned by someone else reads as "not found" — same discipline
   // batch_get_job uses (id alone is not an existence oracle).
   if (!batch || batch.subject !== session.subject) notFound();
 
   const filter = ITEM_STATUS_TABS.some((tab) => tab === status) ? status : undefined;
-  const items = await listItems(dbResult.val, batch.id, { limit: 200, status: filter });
+  const items = await listItems(batch.id, { limit: 200, status: filter });
 
   const tabHref = (tabStatus?: string) =>
-    tabStatus
-      ? `/batch-jobs/${batchId}?status=${tabStatus}`
-      : `/batch-jobs/${batchId}`;
+    tabStatus ? `/batch-jobs/${batchId}?status=${tabStatus}` : `/batch-jobs/${batchId}`;
 
   return (
     <div className="mx-auto max-w-3xl">

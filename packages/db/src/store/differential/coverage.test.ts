@@ -34,3 +34,14 @@ describe('differential coverage', () => {
     }
   );
 });
+
+describe('memory tables', () => {
+  it('fills a jsonb column’s array default, as Postgres does', () => {
+    const store = createMemoryDataStore();
+    const row = store.tables.insert('schedule_calendars', {
+      id: '00000000-0000-4000-8000-000000000001',
+      name: 'Holidays',
+    });
+    expect(row.dates).toEqual([]);
+  });
+});
