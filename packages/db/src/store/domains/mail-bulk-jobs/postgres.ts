@@ -99,5 +99,31 @@ export function postgresMailBulkJobs(db: () => Kysely<DB>): MailBulkJobStore {
         .where('id', '=', id)
         .execute();
     },
+    async failStalled(minutes, error) {
+      const stalled = await db()
+        .updateTable('mail_bulk_jobs')
+        .set({
+          status: 'failed',
+          last_error: error,
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('status', '=', 'running')
+        .where('updated_at', '<', sql<Date>`NOW() - make_interval(mins => ${minutes})`)
+        .executeTakeFirst();
+      return Number(stalled.numUpdatedRows ?? 0);
+    },
+    async pruneFinished(days, limit) {
+      const deleted = await sql<{ id: string }>`
+        DELETE FROM mail_bulk_jobs WHERE id IN (
+          SELECT id FROM mail_bulk_jobs
+          WHERE status IN ('succeeded', 'partial', 'failed')
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      return deleted.rows.length;
+    },
   };
 }

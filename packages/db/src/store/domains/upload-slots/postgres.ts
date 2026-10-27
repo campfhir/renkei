@@ -63,5 +63,26 @@ export function postgresUploadSlots(db: () => Kysely<DB>): UploadSlotStore {
         .where('id', '=', slotId)
         .execute();
     },
+    async expireStale() {
+      const result = await db()
+        .updateTable('upload_slots')
+        .set({ status: 'expired' })
+        .where('status', '=', 'pending')
+        .where('expires_at', '<', sql<Date>`NOW()`)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0);
+    },
+    async pruneSettled(days, limit) {
+      const deleted = await sql<{ id: string }>`
+        DELETE FROM upload_slots WHERE id IN (
+          SELECT id FROM upload_slots
+          WHERE status IN ('completed', 'failed', 'expired')
+            AND created_at < NOW() - make_interval(days => ${days})
+          ORDER BY created_at, id
+          LIMIT ${limit}
+        ) RETURNING id
+      `.execute(db());
+      return deleted.rows.length;
+    },
   };
 }

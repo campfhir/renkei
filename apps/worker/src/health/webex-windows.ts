@@ -15,8 +15,7 @@
  * than thirty days times every room, most of which would be empty.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { WebexClient } from '@renkei/connector-webex';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { enqueueKnowledgeEvent } from '../enqueue';
@@ -45,46 +44,30 @@ export interface WindowSweepDeps {
 
 /** Any opted-in watcher of the tenant, for marks that did not record one. */
 async function anyWatcherSubject(): Promise<string | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('subject')
-    .where('provider', '=', 'webex')
-    .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
-    .orderBy('updated_at', 'desc')
-    .executeTakeFirst();
-  return row?.subject ?? null;
+  const [grant] = await getDataStore().providerGrants.listWithMetadata(
+    'webex',
+    { equals: { allSpaces: 'true' } },
+    { newestFirst: true, limit: 1 }
+  );
+  return grant?.subject ?? null;
 }
 
 async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
   const enqueue = deps.enqueue ?? enqueueKnowledgeEvent;
   const now = (deps.now ?? (() => new Date()))();
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
-  const db = dbResult.val;
+  const windows = getDataStore().webexDirtyWindows;
 
-  const rows = await db
-    .selectFrom('webex_dirty_windows')
-    .select(['room_id', 'day', 'subject', 'marked_at'])
-    .where('marked_at', '<=', new Date(now.getTime() - QUIET_MS))
-    .orderBy('marked_at')
-    .limit(MAX_WINDOWS_PER_PASS)
-    .execute();
+  const rows = await windows.listQuiet(new Date(now.getTime() - QUIET_MS), MAX_WINDOWS_PER_PASS);
 
   for (const row of rows) {
     const subject = row.subject ?? (await anyWatcherSubject());
     if (!subject) {
       // Nobody in this org can read the room any more. Drop the mark:
       // keeping it would re-select it every pass forever.
-      await db
-        .deleteFrom('webex_dirty_windows')
-        .where('room_id', '=', row.room_id)
-        .where('day', '=', row.day)
-        .execute();
+      await windows.delete(row.roomId, row.day);
       logger.info('no opted-in watcher; window {roomId}/{day} dropped', {
         component: COMPONENT,
-        roomId: row.room_id,
+        roomId: row.roomId,
         day: row.day,
       });
       continue;
@@ -93,15 +76,15 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
     try {
       await enqueue(
         'ingest.webex-window',
-        { provider: 'webex', roomId: row.room_id, day: row.day, subject },
+        { provider: 'webex', roomId: row.roomId, day: row.day, subject },
         // Rebuilds of one room stay serial; different rooms embed in parallel.
-        `webex/${row.room_id}`,
+        `webex/${row.roomId}`,
         { strict: true }
       );
     } catch (error) {
       logger.error('could not enqueue window {roomId}/{day}: {error}', {
         component: COMPONENT,
-        roomId: row.room_id,
+        roomId: row.roomId,
         day: row.day,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -109,12 +92,7 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
     }
     // Only the mark we read: a message that arrived meanwhile re-marked
     // the row with a newer marked_at, and that rebuild is still owed.
-    await db
-      .deleteFrom('webex_dirty_windows')
-      .where('room_id', '=', row.room_id)
-      .where('day', '=', row.day)
-      .where('marked_at', '=', row.marked_at)
-      .execute();
+    await windows.delete(row.roomId, row.day, { markedAt: row.markedAt });
   }
 }
 
@@ -122,21 +100,16 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
   const makeClient =
     deps.makeClient ?? ((auth: AuthedFetch) => new WebexClient(auth, { lane: 'background' }));
   const resolveAccess = deps.resolveAccess ?? resolveWebexUserAccessByAccount;
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
-  const db = dbResult.val;
+  const store = getDataStore();
 
-  const grants = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'subject'])
-    .where('provider', '=', 'webex')
-    .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
-    .where(sql<boolean>`metadata->>'windowsBackfilledAt' IS NULL`)
-    .limit(MAX_BACKFILLS_PER_PASS)
-    .execute();
+  const grants = await store.providerGrants.listWithMetadata(
+    'webex',
+    { equals: { allSpaces: 'true' }, missing: ['windowsBackfilledAt'] },
+    { limit: MAX_BACKFILLS_PER_PASS }
+  );
 
   for (const grant of grants) {
-    const access = await resolveAccess(grant.provider_account_id);
+    const access = await resolveAccess(grant.accountId);
     if (!access) continue; // token trouble; the webhook sweep will say so
     const client = makeClient(access.auth);
 
@@ -157,45 +130,27 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
         recent.val.filter((m) => m.created && m.text).map((m) => windowDayOf(m.created))
       );
       for (const day of days) {
-        await db
-          .insertInto('webex_dirty_windows')
-          .values({
-            room_id: room.id,
-            day,
-            subject: access.subject,
-            marked_at: sql`NOW()`,
-          })
-          .onConflict((oc) => oc.columns(['room_id', 'day']).doNothing())
-          .execute();
+        await store.webexDirtyWindows.markIfAbsent(room.id, day, access.subject);
         marked += 1;
       }
     }
 
-    await db
-      .updateTable('provider_grants')
-      .set({
-        metadata: sql`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({
-          windowsBackfilledAt: new Date().toISOString(),
-        })}::jsonb`,
-      })
-      .where('provider', '=', 'webex')
-      .where('provider_account_id', '=', grant.provider_account_id)
-      .execute();
+    await store.providerGrants.mergeMetadata(
+      'webex',
+      grant.accountId,
+      { windowsBackfilledAt: new Date().toISOString() },
+      { touch: false }
+    );
     logger.info('backfill: marked {marked} window(s) across {rooms} room(s) for {subject}', {
       component: COMPONENT,
       marked,
       rooms: rooms.val.length,
-      subject: grant.subject ?? grant.provider_account_id,
+      subject: grant.subject ?? grant.accountId,
     });
   }
 }
 
 export async function sweepWebexWindows(deps: WindowSweepDeps = {}): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.error('database unavailable', { component: COMPONENT });
-    return;
-  }
   await backfillNewWatchers(deps);
   await enqueueDirtyWindows(deps);
 }

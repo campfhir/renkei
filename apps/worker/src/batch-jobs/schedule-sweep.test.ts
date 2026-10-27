@@ -39,7 +39,11 @@ maybe('batch-job schedule sweep', () => {
 
   async function seedSchedule(
     scheduleConfig: Record<string, unknown> = { recurrences: [{ every: 'hour' }], timezone: 'UTC' },
-    config: Record<string, unknown> = { shareId: randomUUID(), path: '/', grouping: { strategy: 'whole-file' } }
+    config: Record<string, unknown> = {
+      shareId: randomUUID(),
+      path: '/',
+      grouping: { strategy: 'whole-file' },
+    }
   ): Promise<string> {
     const id = randomUUID();
     await db
@@ -61,7 +65,7 @@ maybe('batch-job schedule sweep', () => {
   it('fires a due schedule once, advances it, and creates a batch', async () => {
     const scheduleId = await seedSchedule();
     const queue = new InMemoryQueue();
-    await createBatchScheduleSweep(db, queue.producer)();
+    await createBatchScheduleSweep(queue.producer)();
 
     const batches = await db
       .selectFrom('batch_jobs')
@@ -88,8 +92,8 @@ maybe('batch-job schedule sweep', () => {
     // Both sweeps read the same due row before either advances it — the
     // worst-case interleaving two replicas can produce.
     await Promise.all([
-      createBatchScheduleSweep(db, queue.producer)(),
-      createBatchScheduleSweep(db, queue.producer)(),
+      createBatchScheduleSweep(queue.producer)(),
+      createBatchScheduleSweep(queue.producer)(),
     ]);
 
     const batches = await db
@@ -104,7 +108,7 @@ maybe('batch-job schedule sweep', () => {
     const scheduleId = await seedSchedule({ recurrence: { every: 'never' }, timezone: 'UTC' });
 
     const queue = new InMemoryQueue();
-    await createBatchScheduleSweep(db, queue.producer)();
+    await createBatchScheduleSweep(queue.producer)();
 
     const schedule = await db
       .selectFrom('batch_job_schedules')

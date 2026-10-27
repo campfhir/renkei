@@ -83,6 +83,8 @@ import { delegateAccessEvents } from './delegate-access-events';
 import { delegateGitTickets } from './delegate-git-tickets';
 import { sealedEnvelopes } from './sealed-envelopes';
 import { legacyEnvelopes } from './legacy-envelopes';
+import { advisoryLocks } from './advisory-locks';
+import { agentTriggerFirings } from './agent-trigger-firings';
 
 export const DOMAINS = {
   sessions,
@@ -164,4 +166,6 @@ export const DOMAINS = {
   delegateGitTickets,
   sealedEnvelopes,
   legacyEnvelopes,
+  advisoryLocks,
+  agentTriggerFirings,
 };

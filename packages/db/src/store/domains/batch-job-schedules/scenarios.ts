@@ -169,4 +169,72 @@ export const batchJobScheduleScenarios: Scenario<DataStore>[] = [
       await outcome(store.batchJobSchedules.calendarDates('nope')),
     ],
   },
+  {
+    method: 'batchJobSchedules.listDue',
+    name: 'enabled and due, anyone’s, soonest first (ties by id); limited; future and off skipped',
+    fixture: {
+      batch_job_schedules: [
+        ...fixture.batch_job_schedules,
+        schedule(6, 'cy', 'Later', { next_run_at: '2099-01-01T00:00:00.000Z' }),
+        schedule(7, 'cy', 'Tied', { next_run_at: at(61) }),
+      ],
+    },
+    run: async (store) => [
+      (await store.batchJobSchedules.listDue(10)).map((s) => s.id),
+      (await store.batchJobSchedules.listDue(2)).map((s) => s.id),
+      (await store.batchJobSchedules.listDue(10))[0],
+    ],
+  },
+  {
+    method: 'batchJobSchedules.advance',
+    name: 'only while next run is still the observed one; fired stamped',
+    fixture,
+    run: async (store) => {
+      const next = new Date('2026-06-01T02:00:00.000Z');
+      const won = await store.batchJobSchedules.advance(id(1), new Date(at(61)), next);
+      const lost = await store.batchJobSchedules.advance(id(1), new Date(at(61)), next);
+      const missing = await store.batchJobSchedules.advance(MISSING, new Date(at(61)), next);
+      const read = await store.batchJobSchedules.get(id(1));
+      return {
+        won,
+        lost,
+        missing,
+        nextRunAt: read?.nextRunAt,
+        fired: read?.lastFiredAt !== null,
+        other: (await store.batchJobSchedules.get(id(4)))?.lastFiredAt,
+      };
+    },
+  },
+  {
+    method: 'batchJobSchedules.clearError',
+    name: 'the error cleared; others keep theirs',
+    fixture: {
+      batch_job_schedules: [
+        schedule(3, 'ann', 'alpha', { last_error: 'No share' }),
+        schedule(8, 'ann', 'beta', { last_error: 'Other' }),
+      ],
+    },
+    run: async (store) => {
+      await store.batchJobSchedules.clearError(id(3));
+      return [
+        (await store.batchJobSchedules.get(id(3)))?.lastError,
+        (await store.batchJobSchedules.get(id(8)))?.lastError,
+      ];
+    },
+  },
+  {
+    method: 'batchJobSchedules.recordError',
+    name: 'the message recorded; disable turns it off, otherwise left on',
+    fixture,
+    run: async (store) => {
+      await store.batchJobSchedules.recordError(id(1), 'Malformed', { disable: true });
+      await store.batchJobSchedules.recordError(id(4), 'Share gone');
+      await store.batchJobSchedules.recordError(MISSING, 'nobody');
+      const view = async (n: number) => {
+        const s = await store.batchJobSchedules.get(id(n));
+        return s && { lastError: s.lastError, enabled: s.enabled };
+      };
+      return [await view(1), await view(4), await view(3)];
+    },
+  },
 ];

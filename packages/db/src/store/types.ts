@@ -121,3 +121,5 @@ export type * from './domains/delegate-access-events';
 export type * from './domains/delegate-git-tickets';
 export type * from './domains/sealed-envelopes';
 export type * from './domains/legacy-envelopes';
+export type * from './domains/advisory-locks';
+export type * from './domains/agent-trigger-firings';

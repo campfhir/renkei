@@ -14,7 +14,7 @@
  * of either process can be added without coordination.
  */
 
-import { closeDataStore, getDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { eventsQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
@@ -179,32 +179,31 @@ async function main(): Promise<void> {
     ),
     ...(() => {
       // Row hygiene: fail stalled mail runs, expire/prune upload slots.
-      const dbResult = getDatabase();
-      return dbResult.ok
+      return checkDataStore().ok
         ? [
             schedulePeriodicSweep(
               'mail bulk jobs',
               'mailjobs/sweep',
               MAIL_JOBS_SWEEP_INTERVAL_MS,
-              createMailJobsSweep(dbResult.val)
+              createMailJobsSweep()
             ),
             schedulePeriodicSweep(
               'upload slots',
               'uploadslots/sweep',
               UPLOAD_SLOTS_SWEEP_INTERVAL_MS,
-              createUploadSlotsSweep(dbResult.val)
+              createUploadSlotsSweep()
             ),
             schedulePeriodicSweep(
               'agent trigger firings',
               'agentfirings/sweep',
               AGENT_FIRINGS_SWEEP_INTERVAL_MS,
-              createAgentFiringsSweep(dbResult.val)
+              createAgentFiringsSweep()
             ),
             schedulePeriodicSweep(
               'sent WebEx messages',
               'webexsent/sweep',
               WEBEX_SENT_SWEEP_INTERVAL_MS,
-              createWebexSentSweep(dbResult.val)
+              createWebexSentSweep()
             ),
           ]
         : [];

@@ -24,8 +24,7 @@
  * beyond it.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getPublicBaseUrl, getOrgSettings } from '@renkei/settings';
 import { logger } from '../logger';
 import {
@@ -66,21 +65,13 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     return;
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.error('database unavailable', { component: 'webex/webhook-health' });
-    return;
-  }
-  const db = dbResult.val;
+  const store = getDataStore();
 
-  let grantRows: Array<{ provider_account_id: string; metadata: unknown }>;
+  let grantRows: Array<{ accountId: string; metadata: unknown }>;
   try {
-    grantRows = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'metadata'])
-      .where('provider', '=', 'webex')
-      .where(sql<boolean>`metadata->>'allSpaces' = 'true'`)
-      .execute();
+    grantRows = await store.providerGrants.listWithMetadata('webex', {
+      equals: { allSpaces: 'true' },
+    });
   } catch (error) {
     logger.error('could not enumerate opted-in grants: {error}', {
       component: 'webex/webhook-health',
@@ -125,7 +116,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       continue; // checked recently enough; leave this grant's token quota alone
     }
 
-    const access = await resolveAccess(row.provider_account_id);
+    const access = await resolveAccess(row.accountId);
     if (!access) {
       logger.warn('opted-in grant has no usable token; webhook may rot', {
         component: 'webex/webhook-health',
@@ -134,22 +125,19 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     }
 
     const reconciled = await ensureWebexWebhooks(makeClient(access.auth), {
-      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.provider_account_id),
+      targetUrl: webexUserWebhookTargetUrl(baseUrl, row.accountId),
       secret,
     });
     // Recorded regardless of outcome — including a 429 — so a failing check
     // backs off to the same per-tenant interval instead of retrying (and
     // likely failing again) on every future wake of the outer sweep.
-    await db
-      .updateTable('provider_grants')
-      .set({
-        metadata: sql`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({
-          webhookHealthCheckedAt: now.toISOString(),
-        })}::jsonb`,
-      })
-      .where('provider', '=', 'webex')
-      .where('provider_account_id', '=', row.provider_account_id)
-      .execute();
+    // Bookkeeping, not use: updated_at stays put (touch: false).
+    await store.providerGrants.mergeMetadata(
+      'webex',
+      row.accountId,
+      { webhookHealthCheckedAt: now.toISOString() },
+      { touch: false }
+    );
 
     if (!reconciled.ok) {
       logger.error('WebEx API error; will retry in {minutes}m: {kind} {message}', {

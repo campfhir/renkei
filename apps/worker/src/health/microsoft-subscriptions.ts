@@ -11,13 +11,11 @@
  * stall the sweep for the rest.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { deleteGraphSubscription, listGraphSubscriptions } from '@renkei/connector-microsoft';
 import type { AuthedFetch } from '@renkei/delegate-client';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { logger } from '../logger';
 import { resolveMicrosoftAccess } from '../handlers/microsoft-access';
 import { ensureMicrosoftSubscriptions, runSubscriptionSync } from '../handlers/microsoft-sync';
@@ -36,7 +34,6 @@ const STALE_SYNC_MS = 6 * 60 * 60 * 1000;
  * which is where it already was.
  */
 async function reapOrphanedGraphSubscriptions(
-  db: Kysely<DB>,
   accountId: string,
   auth: AuthedFetch,
   baseUrl: string
@@ -51,14 +48,9 @@ async function reapOrphanedGraphSubscriptions(
   }
 
   const known = new Set(
-    (
-      await db
-        .selectFrom('webhook_subscriptions')
-        .select('subscription_id')
-        .where('provider', '=', MICROSOFT)
-        .where('account_id', '=', accountId)
-        .execute()
-    ).flatMap((row) => (row.subscription_id ? [row.subscription_id] : []))
+    (await getDataStore().webhookSubscriptions.listForAccount(MICROSOFT, accountId)).flatMap(
+      (row) => (row.subscriptionId ? [row.subscriptionId] : [])
+    )
   );
 
   for (const subscription of listed.val) {
@@ -84,20 +76,11 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
     return;
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.error('database unavailable', { component: COMPONENT });
-    return;
-  }
-  const db = dbResult.val;
+  const store = getDataStore();
 
-  let grants: Array<{ provider_account_id: string }>;
+  let grants: Array<{ accountId: string }>;
   try {
-    grants = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id'])
-      .where('provider', '=', MICROSOFT)
-      .execute();
+    grants = await store.providerGrants.listWithMetadata(MICROSOFT);
   } catch (error) {
     logger.error('could not enumerate microsoft grants: {error}', {
       component: COMPONENT,
@@ -108,22 +91,18 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
 
   // Rows whose grant vanished (deleted outside the disconnect route) serve
   // nobody and would never renew — drop them.
-  const grantKeys = new Set(grants.map((g) => g.provider_account_id));
-  const allRows = await db
-    .selectFrom('webhook_subscriptions')
-    .select(['id', 'account_id'])
-    .where('provider', '=', MICROSOFT)
-    .execute();
+  const grantKeys = new Set(grants.map((g) => g.accountId));
+  const allRows = await store.webhookSubscriptions.listForProvider(MICROSOFT);
   for (const row of allRows) {
-    if (!grantKeys.has(row.account_id)) {
-      await db.deleteFrom('webhook_subscriptions').where('id', '=', row.id).execute();
+    if (!grantKeys.has(row.accountId)) {
+      await store.webhookSubscriptions.delete(row.id);
       logger.warn('dropped orphaned subscription row (grant gone)', {
         component: COMPONENT,
       });
     }
   }
 
-  for (const { provider_account_id: accountId } of grants) {
+  for (const { accountId } of grants) {
     try {
       const access = await resolveMicrosoftAccess(accountId);
       const rows = await ensureMicrosoftSubscriptions(access, baseUrl);
@@ -142,19 +121,24 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       // one Entra app registration is commonly shared by several
       // deployments, and a dev box reaping by table-absence alone would
       // happily delete production's subscriptions.
-      await reapOrphanedGraphSubscriptions(db, accountId, access.auth, baseUrl);
+      await reapOrphanedGraphSubscriptions(accountId, access.auth, baseUrl);
 
       const staleBefore = Date.now() - STALE_SYNC_MS;
-      const stale = await db
-        .selectFrom('webhook_subscriptions')
-        .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-        .where('provider', '=', MICROSOFT)
-        .where('account_id', '=', accountId)
-        .where('updated_at', '<', new Date(staleBefore))
-        .execute();
+      const stale = await store.webhookSubscriptions.listStale(
+        MICROSOFT,
+        accountId,
+        new Date(staleBefore)
+      );
       for (const row of stale) {
         if (!desiredIds.has(row.id)) continue;
-        const synced = await runSubscriptionSync(access, row);
+        const synced = await runSubscriptionSync(access, {
+          id: row.id,
+          resource: row.resource,
+          subscription_id: row.subscriptionId,
+          client_state: row.clientState,
+          expires_at: row.expiresAt,
+          delta_link: row.deltaLink,
+        });
         if (synced.changed > 0 || synced.removed > 0) {
           // Loud on purpose: catch-up finding changes means notifications
           // were being missed until now.

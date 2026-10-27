@@ -515,6 +515,37 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
         });
       return orderBy(chained, [(r) => r.triggerId]);
     },
+    async listEventTriggers(event) {
+      const agentsById = new Map(
+        tables
+          .select('agents', (r) => r.enabled && r.owner_subject === event.ownerSubject)
+          .map((r) => [r.id, r])
+      );
+      const triggers = tables.select(
+        'agent_triggers',
+        (r) =>
+          r.kind === 'event' &&
+          r.enabled &&
+          r.event_source === event.source &&
+          r.event_type === event.type &&
+          agentsById.has(r.agent_id)
+      );
+      return orderBy(triggers, [(r) => r.id]).flatMap((trigger) => {
+        const agent = agentsById.get(trigger.agent_id);
+        if (!agent) return [];
+        return [
+          {
+            triggerId: trigger.id,
+            agentId: trigger.agent_id,
+            config: trigger.config,
+            ownerSubject: agent.owner_subject,
+            instructions: agent.instructions,
+            tools: agent.tools,
+            llmModelId: agent.llm_model_id,
+          },
+        ];
+      });
+    },
     async markTriggerFailed(triggerId, error) {
       const id = tables.param('agent_triggers', 'id', triggerId);
       tables.update('agent_triggers', (r) => r.id === id, {

@@ -1,13 +1,7 @@
 import { metadataText } from '../knowledge-chunks/metadata-filter';
-import { like, orderBy } from '../../memory/order';
+import { like, orderBy, page } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
-import {
-  grantSummaryFromRow,
-  jsonbConcat,
-  prefixPattern,
-  sealedGrantFromRow,
-  sealedGrantValues,
-} from './record';
+import { grantSummaryFromRow, jsonbConcat, prefixPattern, sealedGrantFromRow, sealedGrantValues } from './record';
 import type { ProviderGrantStore } from './types';
 
 export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
@@ -28,13 +22,13 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
     async deleteForProvider(provider) {
       return tables.delete('provider_grants', (r) => r.provider === provider).length;
     },
-    async mergeMetadata(provider, accountId, patch) {
+    async mergeMetadata(provider, accountId, patch, { touch = true } = {}) {
       return tables.update(
         'provider_grants',
         (r) => r.provider === provider && r.provider_account_id === accountId,
         (r) => ({
           metadata: JSON.stringify(jsonbConcat(r.metadata, patch)),
-          updated_at: new Date(),
+          ...(touch ? { updated_at: new Date() } : {}),
         })
       ).length;
     },
@@ -156,6 +150,42 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
       );
       const [row] = orderBy(rows, [(r) => r.provider_account_id]);
       return row ? grantSummaryFromRow(row) : null;
+    },
+    async listWithMetadata(provider, filter = {}, options = {}) {
+      const equals = Object.entries(filter.equals ?? {});
+      const missing = filter.missing ?? [];
+      const rows = tables.select(
+        'provider_grants',
+        (r) =>
+          r.provider === provider &&
+          equals.every(([key, value]) => metadataText(r.metadata, key) === value) &&
+          missing.every((key) => metadataText(r.metadata, key) === null)
+      );
+      const sorted = options.newestFirst
+        ? orderBy(rows, [(r) => r.updated_at, 'desc'], [(r) => r.provider_account_id])
+        : orderBy(rows, [(r) => r.provider_account_id]);
+      return page(sorted, options.limit).map(grantSummaryFromRow);
+    },
+    async listStaleExpired(days, limit) {
+      const cutoff = Date.now() - days * 24 * 60 * 60_000;
+      return page(
+        orderBy(
+          tables.select('provider_grants', (r) => r.expires_at.getTime() < cutoff),
+          [(r) => r.provider],
+          [(r) => r.provider_account_id]
+        ),
+        limit
+      ).map((r) => ({ provider: r.provider, accountId: r.provider_account_id }));
+    },
+    async deleteIfStale(provider, accountId, days) {
+      const cutoff = Date.now() - days * 24 * 60 * 60_000;
+      return tables.delete(
+        'provider_grants',
+        (r) =>
+          r.provider === provider &&
+          r.provider_account_id === accountId &&
+          r.expires_at.getTime() < cutoff
+      ).length;
     },
   };
 }

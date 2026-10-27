@@ -55,5 +55,45 @@ export function postgresBatchJobSchedules(db: () => Kysely<DB>): BatchJobSchedul
         .executeTakeFirst();
       return row ? row.dates : undefined;
     },
+    async listDue(limit) {
+      const rows = await db()
+        .selectFrom('batch_job_schedules')
+        .select(SCHEDULE_COLUMNS)
+        .where('enabled', '=', true)
+        .where('next_run_at', 'is not', null)
+        .where('next_run_at', '<=', sql<Date>`NOW()`)
+        .orderBy('next_run_at')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map(scheduleFromRow);
+    },
+    async advance(scheduleId, observed, next) {
+      const advanced = await db()
+        .updateTable('batch_job_schedules')
+        .set({ next_run_at: next, last_fired_at: sql`NOW()`, updated_at: sql`NOW()` })
+        .where('id', '=', scheduleId)
+        .where('next_run_at', '=', observed)
+        .executeTakeFirst();
+      return Number(advanced.numUpdatedRows ?? 0) > 0;
+    },
+    async clearError(scheduleId) {
+      await db()
+        .updateTable('batch_job_schedules')
+        .set({ last_error: null, updated_at: sql`NOW()` })
+        .where('id', '=', scheduleId)
+        .execute();
+    },
+    async recordError(scheduleId, message, { disable = false } = {}) {
+      await db()
+        .updateTable('batch_job_schedules')
+        .set({
+          last_error: message,
+          updated_at: sql`NOW()`,
+          ...(disable ? { enabled: false } : {}),
+        })
+        .where('id', '=', scheduleId)
+        .execute();
+    },
   };
 }

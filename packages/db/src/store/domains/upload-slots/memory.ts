@@ -1,3 +1,4 @@
+import { orderBy, page } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
 import { uploadSlotFromRow } from './record';
 import type { UploadSlotStore } from './types';
@@ -51,6 +52,33 @@ export function memoryUploadSlots(tables: MemoryTables): UploadSlotStore {
       tables.update('upload_slots', (r) => r.id === wanted, {
         destination: JSON.stringify(destination),
       });
+    },
+    async expireStale() {
+      const now = Date.now();
+      return tables.update(
+        'upload_slots',
+        (r) => r.status === 'pending' && r.expires_at.getTime() < now,
+        { status: 'expired' }
+      ).length;
+    },
+    async pruneSettled(days, limit) {
+      const cutoff = Date.now() - days * 24 * 60 * 60_000;
+      const doomed = new Set(
+        page(
+          orderBy(
+            tables.select(
+              'upload_slots',
+              (r) =>
+                ['completed', 'failed', 'expired'].includes(r.status) &&
+                r.created_at.getTime() < cutoff
+            ),
+            [(r) => r.created_at],
+            [(r) => r.id]
+          ),
+          limit
+        ).map((r) => r.id)
+      );
+      return tables.delete('upload_slots', (r) => doomed.has(r.id)).length;
     },
   };
 }

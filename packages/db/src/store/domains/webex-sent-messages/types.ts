@@ -7,4 +7,10 @@ export interface WebexSentMessageStore {
   record(messageId: string, accountId: string | null): Promise<void>;
   /** Whether the message is on the ledger, and for which account. */
   find(messageId: string): Promise<{ messageId: string; accountId: string | null } | null>;
+  /**
+   * Delete up to `limit` entries recorded more than `days` days ago (by
+   * the database's clock), oldest first (ties by message id); returns how
+   * many went.
+   */
+  pruneOlderThan(days: number, limit: number): Promise<number>;
 }

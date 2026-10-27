@@ -34,4 +34,24 @@ export interface KnowledgeReindexRunStore {
   resume(id: string): Promise<number>;
   /** Fail a run with this error, whatever its status. */
   markFailed(id: string, error: string): Promise<void>;
+  /** One run, whatever its kind; null when there is none. */
+  get(id: string): Promise<KnowledgeReindexRunRecord | null>;
+  /** The first batch began: `running`, started now. */
+  markRunning(id: string): Promise<void>;
+  /** The chain stopped on an error: `failed` with it, finished now. */
+  failRun(id: string, error: string): Promise<void>;
+  /**
+   * One batch's progress: the tallies added to the run's, the cursor
+   * replaced, and with `done`, the run `done` and finished now.
+   */
+  recordProgress(
+    id: string,
+    progress: {
+      processed: number;
+      skipped: number;
+      failed: number;
+      cursor: string | null;
+      done: boolean;
+    }
+  ): Promise<void>;
 }

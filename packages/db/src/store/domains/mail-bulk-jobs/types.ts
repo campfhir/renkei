@@ -50,4 +50,16 @@ export interface MailBulkJobStore {
   ): Promise<void>;
   /** The job ends in `status`, finished now; `lastError` is written when given. */
   finish(id: string, outcome: { status: string; lastError?: string }): Promise<void>;
+  /**
+   * Fail every `running` job whose row has not moved for `minutes`
+   * minutes (by the database's clock) with `error`, finished now; returns
+   * how many.
+   */
+  failStalled(minutes: number, error: string): Promise<number>;
+  /**
+   * Delete up to `limit` finished jobs (succeeded, partial, failed)
+   * created more than `days` days ago, oldest first (ties by id); returns
+   * how many went.
+   */
+  pruneFinished(days: number, limit: number): Promise<number>;
 }

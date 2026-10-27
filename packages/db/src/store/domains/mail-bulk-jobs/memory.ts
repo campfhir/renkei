@@ -1,6 +1,7 @@
 import type { MemoryTables } from '../../memory/tables';
 import { mailBulkJobFromRow, mailBulkJobValues } from './postgres';
 import type { MailBulkJobStore } from './types';
+import { orderBy, page } from '../../memory/order';
 
 export function memoryMailBulkJobs(tables: MemoryTables): MailBulkJobStore {
   const idOf = (id: string) => tables.param('mail_bulk_jobs', 'id', id);
@@ -53,6 +54,34 @@ export function memoryMailBulkJobs(tables: MemoryTables): MailBulkJobStore {
         finished_at: now,
         updated_at: now,
       });
+    },
+    async failStalled(minutes, error) {
+      const now = new Date();
+      const cutoff = now.getTime() - minutes * 60_000;
+      return tables.update(
+        'mail_bulk_jobs',
+        (r) => r.status === 'running' && r.updated_at.getTime() < cutoff,
+        { status: 'failed', last_error: error, finished_at: now, updated_at: now }
+      ).length;
+    },
+    async pruneFinished(days, limit) {
+      const cutoff = Date.now() - days * 24 * 60 * 60_000;
+      const doomed = new Set(
+        page(
+          orderBy(
+            tables.select(
+              'mail_bulk_jobs',
+              (r) =>
+                ['succeeded', 'partial', 'failed'].includes(r.status) &&
+                r.created_at.getTime() < cutoff
+            ),
+            [(r) => r.created_at],
+            [(r) => r.id]
+          ),
+          limit
+        ).map((r) => r.id)
+      );
+      return tables.delete('mail_bulk_jobs', (r) => doomed.has(r.id)).length;
     },
   };
 }

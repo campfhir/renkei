@@ -81,6 +81,8 @@ import { delegateGitTicketScenarios } from './delegate-git-tickets/scenarios';
 import { sealedEnvelopeScenarios } from './sealed-envelopes/scenarios';
 import { legacyEnvelopeScenarios } from './legacy-envelopes/scenarios';
 import { agentRunOwnershipScenarios } from './agent-runs/ownership-scenarios';
+import { advisoryLockScenarios } from './advisory-locks/scenarios';
+import { agentTriggerFiringScenarios } from './agent-trigger-firings/scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
@@ -170,4 +172,6 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...sealedEnvelopeScenarios,
   ...legacyEnvelopeScenarios,
   ...agentRunOwnershipScenarios,
+  ...advisoryLockScenarios,
+  ...agentTriggerFiringScenarios,
 ];

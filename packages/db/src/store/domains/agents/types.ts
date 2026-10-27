@@ -287,6 +287,16 @@ export interface AgentStore extends AgentSweepStore {
    * caller, by trigger id.
    */
   listChainTargets(callerAgentId: string): Promise<AgentChainTargetRecord[]>;
+  /**
+   * The enabled event triggers of `ownerSubject`'s enabled agents that
+   * listen for this source and type, with what a run needs from the agent
+   * (ties by trigger id). The event fan-out reads them on every event.
+   */
+  listEventTriggers(event: {
+    source: string;
+    type: string;
+    ownerSubject: string;
+  }): Promise<AgentEventTriggerRecord[]>;
   /** Record why a trigger could not fire; when it last fired stays as it was. */
   markTriggerFailed(triggerId: string, error: string): Promise<void>;
 }
@@ -307,5 +317,18 @@ export interface AgentChainTargetRecord {
   ownerSubject: string;
   instructions: string;
   tools: Json;
+  llmModelId: string | null;
+}
+
+/** An event trigger that matched, with its agent's run definition. */
+export interface AgentEventTriggerRecord {
+  triggerId: string;
+  agentId: string;
+  /** As stored (jsonb). */
+  config: unknown;
+  ownerSubject: string;
+  instructions: string;
+  /** As stored (jsonb). */
+  tools: unknown;
   llmModelId: string | null;
 }

@@ -41,8 +41,7 @@
  * own cursor exactly as it would for any other stopped run.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { contentEncryptionKey } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
@@ -103,24 +102,14 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         : []
     );
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const db = dbResult.val;
+    const runs = getDataStore().knowledgeReindexRuns;
 
-    const run = await db
-      .selectFrom('knowledge_reindex_runs')
-      .select(['status'])
-      .where('id', '=', runId)
-      .executeTakeFirst();
+    const run = await runs.get(runId);
     // A run the admin no longer has (deleted, or already ended) is done.
     if (!run || (run.status !== 'queued' && run.status !== 'running')) return 'skipped';
 
     const fail = async (message: string): Promise<void> => {
-      await db
-        .updateTable('knowledge_reindex_runs')
-        .set({ status: 'failed', last_error: message, finished_at: sql`NOW()` })
-        .where('id', '=', runId)
-        .execute();
+      await runs.failRun(runId, message);
       logger.warn('reindex {kind} run {runId} failed: {error}', {
         component: COMPONENT,
         kind,
@@ -130,11 +119,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     };
 
     if (run.status === 'queued') {
-      await db
-        .updateTable('knowledge_reindex_runs')
-        .set({ status: 'running', started_at: sql`NOW()` })
-        .where('id', '=', runId)
-        .execute();
+      await runs.markRunning(runId);
     }
 
     const keyResult = contentEncryptionKey();
@@ -181,12 +166,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
         await fail('keyword enrichment is off, or the organization has no default model');
         return;
       }
-      const batch = await extractKeywordsBatch(
-        extractor,
-        key,
-        BATCH_LIMIT.keywords,
-        skip
-      );
+      const batch = await extractKeywordsBatch(extractor, key, BATCH_LIMIT.keywords, skip);
       if (!batch.ok) {
         await fail(storeFailure(batch.err.message));
         return;
@@ -204,17 +184,13 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
       }
     }
 
-    await db
-      .updateTable('knowledge_reindex_runs')
-      .set({
-        processed: sql`processed + ${outcome.processed}`,
-        skipped: sql`skipped + ${outcome.skipped}`,
-        failed: sql`failed + ${outcome.failed}`,
-        cursor: outcome.cursor,
-        ...(outcome.done ? { status: 'done', finished_at: sql`NOW()` } : {}),
-      })
-      .where('id', '=', runId)
-      .execute();
+    await runs.recordProgress(runId, {
+      processed: outcome.processed,
+      skipped: outcome.skipped,
+      failed: outcome.failed,
+      cursor: outcome.cursor,
+      done: outcome.done,
+    });
 
     if (outcome.done) {
       logger.info('reindex {kind} run {runId} finished', {
@@ -233,11 +209,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     // kept either way (the update above already committed it); pausing only
     // stops the NEXT link from being enqueued. Resuming re-arms the chain
     // from the row's own cursor.
-    const current = await db
-      .selectFrom('knowledge_reindex_runs')
-      .select('status')
-      .where('id', '=', runId)
-      .executeTakeFirst();
+    const current = await runs.get(runId);
     if (current?.status !== 'running') {
       logger.info('reindex {kind} run {runId} paused', {
         component: COMPONENT,

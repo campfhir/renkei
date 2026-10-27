@@ -1,9 +1,9 @@
-import { like, orderBy, page } from '../../memory/order';
-import type { MemoryTables, Row } from '../../memory/tables';
+import { like, orderBy, page, compareAsc } from '../../memory/order';
 import { metadataMatches, metadataText } from './metadata-filter';
 import { escapeLike, liveSources, objectChunkFromRow, withoutNul } from './postgres';
 import type { ChunkCandidate, ChunkFilters, ChunkSource, KnowledgeChunkStore } from './types';
 import { jsonbConcat } from '../provider-grants/record';
+import { MemoryStoreError, type MemoryTables, type Row } from '../../memory/tables';
 
 type Chunk = Row<'knowledge_chunks'>;
 
@@ -277,6 +277,68 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
           new Date(r.source_at).getTime() >= from &&
           new Date(r.source_at).getTime() < to
       ).length;
+    },
+    async listUnsearchable(limit) {
+      const rows = tables.select('knowledge_chunks', (r) => r.search_text === null);
+      return page(orderBy(rows, [(r) => r.id]), limit).map(objectChunkFromRow);
+    },
+    async setSearchText(id, search) {
+      const key = tables.param('knowledge_chunks', 'id', id);
+      tables.update('knowledge_chunks', (r) => r.id === key, {
+        search_text: search
+          ? [search.title, search.keywords, search.content].join(' ').toLowerCase()
+          : '',
+      });
+    },
+    async listMultiChunk(after, limit) {
+      const rows = tables.select('knowledge_chunks', (r) => {
+        const count = metadataText(r.metadata, 'chunkCount');
+        if (count === null) return false;
+        if (!/^\s*[+-]?[0-9]+\s*$/.test(count)) {
+          throw new MemoryStoreError(
+            '22P02',
+            `invalid input syntax for type integer: "${count}"`,
+            'knowledge_chunks'
+          );
+        }
+        return Number.parseInt(count, 10) > 1;
+      });
+      const from = after === null ? null : tables.param('knowledge_chunks', 'id', after);
+      return page(
+        orderBy(
+          rows.filter((r) => from === null || compareAsc(r.id, from) > 0),
+          [(r) => r.id]
+        ),
+        limit
+      ).map(objectChunkFromRow);
+    },
+    async setEmbedding(id, embedding) {
+      const key = tables.param('knowledge_chunks', 'id', id);
+      tables.update('knowledge_chunks', (r) => r.id === key, {
+        embedding: `[${embedding.join(',')}]`,
+      });
+    },
+    async listObjectsWithoutKeywords(limit) {
+      const objects = new Map<string, { provider: string; objectRef: string }>();
+      for (const row of tables.select('knowledge_chunks', (r) => r.keywords === null)) {
+        const objectRef = row.ref_id.replace(/#[0-9]{4}$/, '');
+        objects.set(JSON.stringify([row.provider, objectRef]), {
+          provider: row.provider,
+          objectRef,
+        });
+      }
+      return page(orderBy([...objects.values()], [(o) => o.provider], [(o) => o.objectRef]), limit);
+    },
+    async listContentWithoutPrefix(prefix, limit) {
+      const rows = tables.select('knowledge_chunks', (r) => !r.content.startsWith(prefix));
+      return page(orderBy(rows, [(r) => r.id]), limit).map((r) => ({
+        id: r.id,
+        content: r.content,
+      }));
+    },
+    async setContent(id, content) {
+      const key = tables.param('knowledge_chunks', 'id', id);
+      tables.update('knowledge_chunks', (r) => r.id === key, { content });
     },
   };
 }

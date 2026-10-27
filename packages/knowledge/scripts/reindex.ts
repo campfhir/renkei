@@ -25,7 +25,7 @@
  *   DATABASE_URL=postgres://… pnpm reindex --lexical --keywords --embed
  */
 
-import { getDatabase, closeDatabase } from '@renkei/db';
+import { closeDatabase } from '@renkei/db';
 import { contentEncryptionKey } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
@@ -153,7 +153,7 @@ async function main(): Promise<void> {
   }
   const key = keyResult.val;
 
-  if (!getDatabase().ok) {
+  if (!process.env.DATABASE_URL) {
     console.error('Database unavailable — set DATABASE_URL.');
     process.exit(1);
   }

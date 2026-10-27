@@ -73,7 +73,7 @@
  *     organization will ever have workspaces or scripts on.
  */
 
-import { checkDataStore, closeDataStore, getDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore } from '@renkei/db';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
@@ -202,10 +202,6 @@ async function main(): Promise<void> {
 
   const ready = checkDataStore();
   if (!ready.ok) fatal(`database unavailable: ${String(ready.err)}`);
-  // Transitional: the stores below still take a handle until they read
-  // through the data store; this goes with the last of them.
-  const dbResult = getDatabase();
-  if (!dbResult.ok) fatal(`database unavailable: ${String(dbResult.err)}`);
 
   await ensureDataRoot();
 

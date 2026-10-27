@@ -21,4 +21,14 @@ export interface WebexDirtyWindowStore {
   markDirty(roomId: string, day: string, subject: string | null): Promise<void>;
   /** One window's mark, or null when it is not dirty. */
   find(roomId: string, day: string): Promise<WebexDirtyWindowRecord | null>;
+  /** Marks made at or before `markedBefore`, oldest first (ties by room, then day), at most `limit`. */
+  listQuiet(markedBefore: Date, limit: number): Promise<WebexDirtyWindowRecord[]>;
+  /**
+   * Drop a mark; with `markedAt`, only if it has not been re-marked since
+   * (compared to the millisecond, the precision a record carries).
+   * Returns how many went (0 or 1).
+   */
+  delete(roomId: string, day: string, options?: { markedAt?: Date }): Promise<number>;
+  /** Mark a window now for `subject`, unless it is already marked (then nothing changes). */
+  markIfAbsent(roomId: string, day: string, subject: string | null): Promise<void>;
 }

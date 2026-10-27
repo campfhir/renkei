@@ -54,6 +54,20 @@ export interface WebhookSubscriptionStore {
     id: string,
     round: { cursor: string | null; changed: number; syncStatus: string }
   ): Promise<void>;
+  /** Every subscription on a provider, whoever's, by account, then resource, then id. */
+  listForProvider(provider: string): Promise<WebhookSubscriptionRecord[]>;
+  /** Drop one subscription row; returns how many went (0 or 1). */
+  delete(id: string): Promise<number>;
+  /**
+   * One account's subscriptions on a provider whose row has not been
+   * updated since `updatedBefore` — notifications have gone quiet — with
+   * what a catch-up sync needs, by resource then id.
+   */
+  listStale(
+    provider: string,
+    accountId: string,
+    updatedBefore: Date
+  ): Promise<WebhookSubscriptionStaleRecord[]>;
 }
 
 /** A new subscription row: the clientState its deliveries must carry back. */
@@ -83,4 +97,14 @@ export interface WebhookSubscriptionSyncRecord {
 export interface WebhookSubscriptionProviderPatch {
   subscriptionId?: string | null;
   expiresAt?: Date | null;
+}
+
+/** A subscription a stale sweep reads: enough to re-subscribe or drop it. */
+export interface WebhookSubscriptionStaleRecord {
+  id: string;
+  resource: string;
+  subscriptionId: string | null;
+  clientState: string;
+  expiresAt: Date | null;
+  deltaLink: string | null;
 }

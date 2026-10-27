@@ -84,6 +84,18 @@ export interface ContentWatchStore {
   ): Promise<void>;
   /** Drop the cursor so the next round enumerates from scratch; status 'syncing'. */
   restartCursor(id: string): Promise<void>;
+  /**
+   * Enabled watches, whoever owns them, never synced or last synced before
+   * `dueBefore`: never-synced first, then the stalest (ties by id), at
+   * most `limit` — the poll sweep's candidates.
+   */
+  listDue(dueBefore: Date, limit: number): Promise<ContentWatchDueRecord[]>;
+  /**
+   * A poll failed: status `error` with the message as given, and synced
+   * now all the same, so a broken watch is retried on the
+   * normal cadence rather than every pass.
+   */
+  recordSyncFailure(id: string, message: string): Promise<void>;
 }
 
 /** A watch's poller state, as the pollers keep it. */
@@ -106,4 +118,16 @@ export interface ContentWatchOwner {
 export interface ContentWatchScopeCount {
   scope: string | null;
   objects: number;
+}
+
+/** A watch as the poller needs it: its scope, owner account and cursor. */
+export interface ContentWatchDueRecord {
+  id: string;
+  provider: string;
+  accountId: string;
+  scopeType: string;
+  scopeKey: string;
+  scopeLabel: string | null;
+  cursor: string | null;
+  lastSyncedAt: Date | null;
 }

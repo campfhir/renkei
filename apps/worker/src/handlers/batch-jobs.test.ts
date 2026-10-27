@@ -7,7 +7,6 @@
  * item per discovered payload, in order.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('../batch-jobs/store', () => ({
   getBatch: jest.fn(),
   beginDiscovery: jest.fn(),
@@ -37,7 +36,6 @@ const { announceBatchStarted, announceBatchFinished } = jest.requireMock<{
   announceBatchFinished: jest.Mock;
 }>('../batch-jobs/lifecycle');
 
-const { getDatabase: getDatabaseMock } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const store = jest.requireMock<{
   getBatch: jest.Mock;
   beginDiscovery: jest.Mock;
@@ -52,7 +50,6 @@ const store = jest.requireMock<{
 const { getBatchJobKind } = jest.requireMock<{ getBatchJobKind: jest.Mock }>('../batch-jobs/kinds');
 const { enqueueItem } = jest.requireMock<{ enqueueItem: jest.Mock }>('../batch-jobs/enqueue');
 
-const FAKE_DB = {};
 
 function event(type: string, payload: Record<string, string>): ClaimedEvent {
   return { id: 'evt-1', source: 'batch', type, payload, attempts: 1 };
@@ -74,7 +71,6 @@ function batch(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  getDatabaseMock.mockReturnValue({ ok: true, val: FAKE_DB });
 });
 
 describe('discover handler', () => {
@@ -218,7 +214,7 @@ describe('discover handler', () => {
       await handler(event('discover', { batchJobId: 'batch-1' }));
 
       expect(announceBatchStarted).toHaveBeenCalledTimes(1);
-      expect(announceBatchStarted).toHaveBeenCalledWith(FAKE_DB, claimed);
+      expect(announceBatchStarted).toHaveBeenCalledWith(claimed);
     });
 
     it('says nothing when the claim was lost', async () => {
@@ -240,7 +236,7 @@ describe('discover handler', () => {
       await handler(event('discover', { batchJobId: 'batch-1' }));
 
       expect(announceBatchFinished).toHaveBeenCalledTimes(1);
-      expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+      expect(announceBatchFinished).toHaveBeenCalledWith(finished);
     });
 
     it('announces a discovery failure as a finish', async () => {
@@ -254,7 +250,7 @@ describe('discover handler', () => {
 
       await handler(event('discover', { batchJobId: 'batch-1' }));
 
-      expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, failed);
+      expect(announceBatchFinished).toHaveBeenCalledWith(failed);
     });
 
     it('does not announce when the store says the batch was already terminal', async () => {
@@ -359,7 +355,7 @@ describe('item handler', () => {
     store.recordItemOutcome.mockResolvedValueOnce(finished);
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
     expect(announceBatchFinished).toHaveBeenCalledTimes(1);
-    expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+    expect(announceBatchFinished).toHaveBeenCalledWith(finished);
   });
 
   it('announces a finish reached through the mid-item crash guard too', async () => {
@@ -370,6 +366,6 @@ describe('item handler', () => {
 
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
 
-    expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+    expect(announceBatchFinished).toHaveBeenCalledWith(finished);
   });
 });

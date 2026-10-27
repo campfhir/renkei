@@ -94,6 +94,37 @@ const notesFixture = {
   ],
 };
 
+/** Rows for the reindex sweeps: some unsearchable, some multi-chunk, some keyword-less, some plaintext. */
+const reindexFixture = {
+  knowledge_chunks: [
+    {
+      ...chunk(51, 'reindex', 'doc-1#0001', [1, 0, 0], { metadata: { chunkCount: 2 } }),
+      content: 'renc1:a',
+    },
+    {
+      ...chunk(52, 'reindex', 'doc-1#0002', [0.9, 0.1, 0], { metadata: { chunkCount: '2' } }),
+      content: 'plain one',
+    },
+    {
+      ...chunk(53, 'reindex', 'doc-2', [0, 1, 0], {
+        metadata: { chunkCount: 1 },
+        searchText: 'already',
+      }),
+      content: 'plain two',
+      keywords: ['k'],
+    },
+    {
+      ...chunk(54, 'alpha', 'Z-9#0001', [0, 1, 0], { searchText: 'indexed' }),
+      content: 'renc_x',
+    },
+    {
+      ...chunk(55, 'reindex', 'doc-3#12345', [0, 0.5, 0.5], { metadata: { chunkCount: 3 } }),
+      content: 'renc1:b',
+      keywords: ['k'],
+    },
+  ],
+};
+
 export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
   {
     method: 'knowledgeChunks.listRecent',
@@ -397,6 +428,112 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
         webex: (await store.knowledgeChunks.listByRefPrefix('webex', 'room')).map((c) => c.refId),
         zoom: (await store.knowledgeChunks.listByRefPrefix('zoom', 'room')).map((c) => c.refId),
       };
+    },
+  },
+  {
+    method: 'knowledgeChunks.listUnsearchable',
+    name: 'chunks without a lexical entry, by id, limited',
+    fixture: reindexFixture,
+    run: async (store) => [
+      (await store.knowledgeChunks.listUnsearchable(10)).map((c) => c.id),
+      await store.knowledgeChunks.listUnsearchable(1),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.setSearchText',
+    name: 'a rebuilt entry is searchable, an empty one matches nothing; both leave the backlog',
+    fixture: reindexFixture,
+    run: async (store) => {
+      await store.knowledgeChunks.setSearchText(id(51), {
+        title: 'Printer runbook',
+        keywords: 'hardware',
+        content: 'zebra toner',
+        config: 'english',
+      });
+      await store.knowledgeChunks.setSearchText(id(52), null);
+      const hits = await store.knowledgeChunks.searchHybrid(
+        { ...none, sources: [{ provider: 'reindex' }] },
+        { ...search, vector: [1, 0, 0], text: 'zebra' }
+      );
+      return {
+        backlog: (await store.knowledgeChunks.listUnsearchable(10)).map((c) => c.id),
+        lexical: hits
+          .filter((hit) => hit.lexicalHit)
+          .map((hit) => hit.refId)
+          .sort(),
+      };
+    },
+  },
+  {
+    method: 'knowledgeChunks.listMultiChunk',
+    name: 'chunkCount above one, after the cursor, by id; limited; past the end',
+    fixture: reindexFixture,
+    run: async (store) => [
+      (await store.knowledgeChunks.listMultiChunk(null, 10)).map((c) => c.id),
+      (await store.knowledgeChunks.listMultiChunk(id(51), 10)).map((c) => c.id),
+      await store.knowledgeChunks.listMultiChunk(null, 1),
+      await store.knowledgeChunks.listMultiChunk(id(99), 10),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.listMultiChunk',
+    name: 'a non-integer chunk count is refused, as the integer cast is',
+    fixture: {
+      knowledge_chunks: [
+        {
+          ...chunk(61, 'reindex', 'odd', [1, 0, 0]),
+          metadata: JSON.stringify({ chunkCount: 'two' }),
+        },
+      ],
+    },
+    run: async (store) =>
+      store.knowledgeChunks.listMultiChunk(null, 10).then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      ),
+  },
+  {
+    method: 'knowledgeChunks.setEmbedding',
+    name: 'the new vector is what the semantic arm measures',
+    fixture: reindexFixture,
+    run: async (store) => {
+      await store.knowledgeChunks.setEmbedding(id(53), [0, 0, 1]);
+      const nearest = await store.knowledgeChunks.searchHybrid(
+        { ...none, sources: [{ provider: 'reindex' }] },
+        { ...search, vector: [0, 0, 1], overfetch: 1 }
+      );
+      return nearest.map((hit) => ({ refId: hit.refId, distance: Math.round(hit.distance * 1e6) }));
+    },
+  },
+  {
+    method: 'knowledgeChunks.listObjectsWithoutKeywords',
+    name: 'objects (chunk suffix stripped) with a keyword-less chunk, by provider then ref; limited',
+    fixture: reindexFixture,
+    run: async (store) => [
+      await store.knowledgeChunks.listObjectsWithoutKeywords(10),
+      await store.knowledgeChunks.listObjectsWithoutKeywords(2),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.listContentWithoutPrefix',
+    name: 'content not starting with the prefix, by id; limited; the prefix is literal',
+    fixture: reindexFixture,
+    run: async (store) => [
+      await store.knowledgeChunks.listContentWithoutPrefix('renc1:', 10),
+      await store.knowledgeChunks.listContentWithoutPrefix('renc1:', 1),
+      (await store.knowledgeChunks.listContentWithoutPrefix('renc_', 10)).map((c) => c.id),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.setContent',
+    name: 'content replaced; the chunk leaves the plaintext backlog',
+    fixture: reindexFixture,
+    run: async (store) => {
+      await store.knowledgeChunks.setContent(id(52), 'renc1:sealed');
+      return [
+        (await store.knowledgeChunks.listContentWithoutPrefix('renc1:', 10)).map((c) => c.id),
+        (await store.knowledgeChunks.objectChunks('reindex', 'doc-1')).map((c) => c.content),
+      ];
     },
   },
 ];

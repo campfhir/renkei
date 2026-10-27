@@ -58,13 +58,15 @@ export interface ProviderGrantStore {
   deleteForProvider(provider: string): Promise<number>;
   /**
    * Lay `patch`'s keys over one grant's metadata (jsonb `||`, so a
-   * concurrent writer's other keys survive) and touch `updated_at`;
-   * returns how many rows changed (0 or 1).
+   * concurrent writer's other keys survive) and touch `updated_at` —
+   * unless `touch` is false (a sweep's bookkeeping, which must not make
+   * the grant look recently used); returns how many rows changed (0 or 1).
    */
   mergeMetadata(
     provider: string,
     accountId: string,
-    patch: Record<string, unknown>
+    patch: Record<string, unknown>,
+    options?: { touch?: boolean }
   ): Promise<number>;
   /** One grant by provider and account id, whoever holds it; null when there is none. */
   find(provider: string, accountId: string): Promise<ProviderGrantSummaryRecord | null>;
@@ -144,4 +146,27 @@ export interface ProviderGrantStore {
    * the bridge.
    */
   findByHolderEmail(provider: string, email: string): Promise<ProviderGrantSummaryRecord | null>;
+  /**
+   * Every grant on one provider, whoever holds it, narrowed by metadata:
+   * `equals` keys whose `metadata ->> key` is exactly the value, `missing`
+   * keys absent (or JSON null). By account id — or, `newestFirst`, most
+   * recently updated first (ties by account id) — at most `limit`.
+   */
+  listWithMetadata(
+    provider: string,
+    filter?: { equals?: Record<string, string>; missing?: string[] },
+    options?: { newestFirst?: boolean; limit?: number }
+  ): Promise<ProviderGrantSummaryRecord[]>;
+  /**
+   * Grants, on any provider, whose expiry is more than `days` days past
+   * (by the database's clock) — abandoned: a live grant's expiry keeps
+   * moving forward. By provider, then account id, at most `limit`.
+   */
+  listStaleExpired(days: number, limit: number): Promise<{ provider: string; accountId: string }[]>;
+  /**
+   * Delete one grant only if it is still more than `days` days past its
+   * expiry — a refresh that landed since the listing wins. Returns how
+   * many went (0 or 1).
+   */
+  deleteIfStale(provider: string, accountId: string, days: number): Promise<number>;
 }
