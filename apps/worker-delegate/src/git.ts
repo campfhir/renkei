@@ -27,8 +27,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { Readable } from 'node:stream';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { sendJson, str } from '@renkei/worker-kit';
 import type { Grants } from './grants';
@@ -99,7 +98,6 @@ function sameHash(a: string, b: string): boolean {
 
 export class GitTickets {
   constructor(
-    private readonly db: Kysely<DB>,
     private readonly grants: Grants,
     private readonly dial: GitDialer = nodeGitDialer
   ) {}
@@ -127,18 +125,15 @@ export class GitTickets {
     const id = randomUUID();
     const secret = randomBytes(24).toString('hex');
     const expiresAt = new Date(Date.now() + GIT_TICKET_TTL_MS);
-    await this.db
-      .insertInto('delegate_git_tickets')
-      .values({
-        id,
-        subject,
-        provider,
-        host: host.host,
-        write,
-        secret_hash: hashSecret(secret),
-        expires_at: expiresAt,
-      })
-      .execute();
+    await getDataStore().delegateGitTickets.insert({
+      id,
+      subject,
+      provider,
+      host: host.host,
+      write,
+      secretHash: hashSecret(secret),
+      expiresAt,
+    });
     void this.sweep();
     sendJson(response, 200, {
       ticket: `${id}.${secret}`,
@@ -170,16 +165,12 @@ export class GitTickets {
     if (verb !== 'info/refs' && method !== 'POST')
       return refuse(response, 405, 'method_not_allowed');
 
-    const ticket = await this.db
-      .selectFrom('delegate_git_tickets')
-      .select(['subject', 'provider', 'host', 'write', 'secret_hash', 'expires_at'])
-      .where('id', '=', id)
-      .executeTakeFirst();
+    const ticket = await getDataStore().delegateGitTickets.find(id);
     if (
       !ticket ||
-      !sameHash(ticket.secret_hash, hashSecret(secret)) ||
+      !sameHash(ticket.secretHash, hashSecret(secret)) ||
       ticket.host !== host ||
-      ticket.expires_at.getTime() <= Date.now()
+      ticket.expiresAt.getTime() <= Date.now()
     ) {
       return refuse(response, 404, 'not_found');
     }
@@ -225,10 +216,7 @@ export class GitTickets {
   /** Expired tickets go as new ones are issued; nothing waits on this. */
   private async sweep(): Promise<void> {
     try {
-      await this.db
-        .deleteFrom('delegate_git_tickets')
-        .where('expires_at', '<', new Date(Date.now() - 60_000))
-        .execute();
+      await getDataStore().delegateGitTickets.deleteExpired(new Date(Date.now() - 60_000));
     } catch {
       // The next issue tries again.
     }

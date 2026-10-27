@@ -69,6 +69,12 @@ import { mailBulkJobs } from './mail-bulk-jobs';
 import { webexSentMessages } from './webex-sent-messages';
 import { toolSurface } from './tool-surface';
 import { contentWatches } from './content-watches';
+import { resourceKeys } from './resource-keys';
+import { delegateSigningKeys } from './delegate-signing-keys';
+import { delegateAccessEvents } from './delegate-access-events';
+import { delegateGitTickets } from './delegate-git-tickets';
+import { sealedEnvelopes } from './sealed-envelopes';
+import { legacyEnvelopes } from './legacy-envelopes';
 
 export const DOMAINS = {
   sessions,
@@ -136,4 +142,10 @@ export const DOMAINS = {
   webexSentMessages,
   toolSurface,
   contentWatches,
+  resourceKeys,
+  delegateSigningKeys,
+  delegateAccessEvents,
+  delegateGitTickets,
+  sealedEnvelopes,
+  legacyEnvelopes,
 };

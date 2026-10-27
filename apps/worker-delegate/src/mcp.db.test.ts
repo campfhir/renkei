@@ -128,10 +128,8 @@ describeDb('mcp/prepare', () => {
   }
 
   async function prepare(serverId: string, assertPublic = async () => undefined) {
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
     const out = capture();
-    await new McpPreparer(db.val, key, fetchImpl, assertPublic).prepare(
+    await new McpPreparer(key, fetchImpl, assertPublic).prepare(
       { serverId, redirectUri: REDIRECT },
       out.response
     );

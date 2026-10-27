@@ -63,9 +63,9 @@ maybe('searchChatMessages', () => {
     db = result.val;
     // The keys are minted in this process: it registers a delegate instance
     // of its own and enrolls the person as their browser would.
-    const instance = await registerTestInstance(db);
+    const instance = await registerTestInstance();
     instanceId = instance.id;
-    await enrollTestPerson(db, {
+    await enrollTestPerson({
       subject,
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });
@@ -84,7 +84,7 @@ maybe('searchChatMessages', () => {
           updated_at: new Date(updatedAt),
         })
         .execute();
-      const key = await createResourceKey(db, { kind: 'chat', resourceId: id }, subject);
+      const key = await createResourceKey({ kind: 'chat', resourceId: id }, subject);
       if (!key.ok) throw new Error('no chat key');
       ciphers.set(id, resourceCipher(key.val));
     }

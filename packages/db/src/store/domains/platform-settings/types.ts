@@ -12,4 +12,6 @@ export interface PlatformSettingStore {
    * this call wrote it.
    */
   insertIfAbsent(key: string, value: unknown): Promise<boolean>;
+  /** Replace the value stored under `key`; how many rows changed (0 when it has none). */
+  update(key: string, value: unknown): Promise<number>;
 }

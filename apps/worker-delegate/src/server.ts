@@ -33,8 +33,7 @@
  */
 
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   createResourceKey,
   delegationStatus,
@@ -85,7 +84,6 @@ import { GitTickets, type GitDialer } from './git';
 import type { InstanceSigner } from './signing';
 
 export interface DelegateServerDeps {
-  db: Kysely<DB>;
   /** TOKEN_ENCRYPTION_KEY: opens the org-wide connector configs a refresh needs. */
   encryptionKey: Buffer;
   /**
@@ -192,13 +190,12 @@ function targetOf(body: Record<string, unknown>): string | undefined {
 }
 
 export function createDelegateServer(deps: DelegateServerDeps): Server {
-  const { db } = deps;
   const logger = deps.logger ?? silentDelegateLogger;
-  const grants = new Grants(db, deps.encryptionKey, logger, deps.fetchImpl);
-  const mcp = new McpPreparer(db, deps.encryptionKey, deps.fetchImpl);
-  const forwarder = new Forwarder(db, grants, deps.fetchImpl);
-  const git = new GitTickets(db, grants, deps.gitDialer);
-  const access = new AccessLog(db, logger);
+  const grants = new Grants(deps.encryptionKey, logger, deps.fetchImpl);
+  const mcp = new McpPreparer(deps.encryptionKey, deps.fetchImpl);
+  const forwarder = new Forwarder(grants, deps.fetchImpl);
+  const git = new GitTickets(grants, deps.gitDialer);
+  const access = new AccessLog(logger);
   const apiKeys: NamedApiKey[] = deps.apiKeys.map((entry) =>
     typeof entry === 'string' ? { name: 'web', key: entry } : entry
   );
@@ -208,13 +205,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   /** Whether the run named belongs to the person the op is about: the agents worker's binding. */
   async function runBelongsTo(runId: string, subject: string): Promise<boolean> {
     if (!/^[0-9a-f-]{36}$/i.test(runId)) return false;
-    const row = await db
-      .selectFrom('agent_runs')
-      .select('id')
-      .where('id', '=', runId)
-      .where('owner_subject', '=', subject)
-      .executeTakeFirst();
-    return row !== undefined;
+    return getDataStore().agentRuns.isOwnedBy(runId, subject);
   }
 
   /**
@@ -300,7 +291,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       if (!delegation || !publicKey || !wrappedPrivateKey || !wrappedAutomationKey) {
         return sendError(response, 'bad_request');
       }
-      const enrolled = await enroll(db, {
+      const enrolled = await enroll({
         ...delegation,
         publicKey,
         wrappedPrivateKey,
@@ -317,14 +308,14 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'keys/delegate': async (body, response) => {
       const delegation = delegationInputOf(body);
       if (!delegation) return sendError(response, 'bad_request');
-      const stored = await storeDelegations(db, delegation);
+      const stored = await storeDelegations(delegation);
       if (!stored.ok) return sendError(response, stored.err.type);
       sendJson(response, 200, { ok: true });
     },
     'keys/revoke-automation': async (body, response) => {
       const subject = str(body.subject);
       if (!subject) return sendError(response, 'bad_request');
-      sendJson(response, 200, { revoked: await revokeAutomation(db, subject) });
+      sendJson(response, 200, { revoked: await revokeAutomation(subject) });
     },
     'keys/rotate': async (body, response) => {
       const delegation = delegationInputOf(body);
@@ -333,7 +324,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       if (!delegation || !wrappedPrivateKey || !wrappedAutomationKey) {
         return sendError(response, 'bad_request');
       }
-      const rotated = await rotateUserKey(db, {
+      const rotated = await rotateUserKey({
         ...delegation,
         wrappedPrivateKey,
         wrappedAutomationKey,
@@ -344,10 +335,10 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'keys/shred': async (body, response) => {
       const subject = str(body.subject);
       if (!subject) return sendError(response, 'bad_request');
-      sendJson(response, 200, { shredded: await shredUserKey(db, subject) });
+      sendJson(response, 200, { shredded: await shredUserKey(subject) });
     },
     'keys/census': async (body, response) => {
-      sendJson(response, 200, await enrollmentCensus(db));
+      sendJson(response, 200, await enrollmentCensus());
     },
 
     // ── resource keys ──────────────────────────────────────────────────────
@@ -355,7 +346,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const ref = refOf(body);
       const ownerSubject = str(body.ownerSubject);
       if (!ref || !ownerSubject) return sendError(response, 'bad_request');
-      const key = await ensureResourceKey(db, ref, ownerSubject, {
+      const key = await ensureResourceKey(ref, ownerSubject, {
         automation: body.automation === true,
       });
       if (!key.ok) return sendError(response, key.err.type);
@@ -365,7 +356,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const ref = refOf(body);
       const ownerSubject = str(body.ownerSubject);
       if (!ref || !ownerSubject) return sendError(response, 'bad_request');
-      const key = await createResourceKey(db, ref, ownerSubject, {
+      const key = await createResourceKey(ref, ownerSubject, {
         automation: body.automation === true,
       });
       if (!key.ok) return sendError(response, key.err.type);
@@ -375,7 +366,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const ref = refOf(body);
       const subject = str(body.subject);
       if (!ref || !subject) return sendError(response, 'bad_request');
-      const key = await openResourceKey(db, ref, subject);
+      const key = await openResourceKey(ref, subject);
       if (!key.ok) return sendError(response, key.err.type);
       sendJson(response, 200, keyView(key.val));
     },
@@ -393,7 +384,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
         if (!resourceId || !subject) return sendError(response, 'bad_request');
         entries.push({ resourceId, subject });
       }
-      const opened = await openResourceKeys(db, kind, entries);
+      const opened = await openResourceKeys(kind, entries);
       const keys: Record<string, { id: string; key: string }> = {};
       for (const [resourceId, key] of opened) keys[resourceId] = keyView(key);
       sendJson(response, 200, { keys });
@@ -403,7 +394,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const fromSubject = str(body.fromSubject);
       const toSubject = str(body.toSubject);
       if (!ref || !fromSubject || !toSubject) return sendError(response, 'bad_request');
-      const shared = await shareResourceKey(db, ref, fromSubject, toSubject);
+      const shared = await shareResourceKey(ref, fromSubject, toSubject);
       if (!shared.ok) return sendError(response, shared.err.type);
       sendJson(response, 200, { ok: true });
     },
@@ -413,7 +404,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const parentKind = kindOf(body.parentKind);
       const parentId = str(body.parentResourceId);
       if (!ref || !bySubject || !parentKind || !parentId) return sendError(response, 'bad_request');
-      const wrapped = await wrapResourceKeyUnder(db, ref, bySubject, {
+      const wrapped = await wrapResourceKeyUnder(ref, bySubject, {
         kind: parentKind,
         resourceId: parentId,
       });
@@ -424,7 +415,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const ref = refOf(body);
       const subject = str(body.subject);
       if (!ref || !subject) return sendError(response, 'bad_request');
-      const granted = await grantAutomationAccess(db, ref, subject);
+      const granted = await grantAutomationAccess(ref, subject);
       if (!granted.ok) return sendError(response, granted.err.type);
       sendJson(response, 200, { ok: true });
     },
@@ -432,23 +423,23 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       const ref = refOf(body);
       const subject = str(body.subject);
       if (!ref || !subject) return sendError(response, 'bad_request');
-      sendJson(response, 200, { revoked: await revokeResourceKey(db, ref, subject) });
+      sendJson(response, 200, { revoked: await revokeResourceKey(ref, subject) });
     },
     'resource-key/delete': async (body, response) => {
       const ref = refOf(body);
       if (!ref) return sendError(response, 'bad_request');
-      await deleteResourceKey(db, ref);
+      await deleteResourceKey(ref);
       sendJson(response, 200, { ok: true });
     },
     'resource-key/has': async (body, response) => {
       const ref = refOf(body);
       if (!ref) return sendError(response, 'bad_request');
-      sendJson(response, 200, { exists: await hasResourceKey(db, ref) });
+      sendJson(response, 200, { exists: await hasResourceKey(ref) });
     },
     'resource-key/holders': async (body, response) => {
       const ref = refOf(body);
       if (!ref) return sendError(response, 'bad_request');
-      sendJson(response, 200, { holders: await listResourceKeyHolders(db, ref) });
+      sendJson(response, 200, { holders: await listResourceKeyHolders(ref) });
     },
 
     // ── person-only values ─────────────────────────────────────────────────
@@ -487,7 +478,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
 
     // ── maintenance ────────────────────────────────────────────────────────
     'maintenance/prune-orphan-keys': async (_body, response) => {
-      sendJson(response, 200, { pruned: await pruneOrphanResourceKeys(db) });
+      sendJson(response, 200, { pruned: await pruneOrphanResourceKeys() });
     },
 
     // ── provider grants (tokens never leave this process; see grants.ts) ───

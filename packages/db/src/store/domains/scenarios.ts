@@ -66,6 +66,13 @@ import { mailBulkJobScenarios } from './mail-bulk-jobs/scenarios';
 import { webexSentMessageScenarios } from './webex-sent-messages/scenarios';
 import { toolSurfaceScenarios } from './tool-surface/scenarios';
 import { contentWatchScenarios } from './content-watches/scenarios';
+import { resourceKeyScenarios } from './resource-keys/scenarios';
+import { delegateSigningKeyScenarios } from './delegate-signing-keys/scenarios';
+import { delegateAccessEventScenarios } from './delegate-access-events/scenarios';
+import { delegateGitTicketScenarios } from './delegate-git-tickets/scenarios';
+import { sealedEnvelopeScenarios } from './sealed-envelopes/scenarios';
+import { legacyEnvelopeScenarios } from './legacy-envelopes/scenarios';
+import { agentRunOwnershipScenarios } from './agent-runs/ownership-scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
@@ -136,4 +143,11 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webexSentMessageScenarios,
   ...toolSurfaceScenarios,
   ...contentWatchScenarios,
+  ...resourceKeyScenarios,
+  ...delegateSigningKeyScenarios,
+  ...delegateAccessEventScenarios,
+  ...delegateGitTicketScenarios,
+  ...sealedEnvelopeScenarios,
+  ...legacyEnvelopeScenarios,
+  ...agentRunOwnershipScenarios,
 ];

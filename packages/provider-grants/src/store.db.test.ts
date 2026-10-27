@@ -35,9 +35,9 @@ maybe('provider grant store under per-user keys', () => {
     if (!result.ok) throw new Error('no database');
     // The owner holds a key, as their browser would have enrolled them, with
     // a session delegation to this test's own delegate instance.
-    const instance = await registerTestInstance(result.val);
+    const instance = await registerTestInstance();
     instanceId = instance.id;
-    await enrollTestPerson(result.val, {
+    await enrollTestPerson({
       subject,
       instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
     });

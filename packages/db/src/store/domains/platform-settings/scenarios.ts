@@ -31,4 +31,18 @@ export const platformSettingScenarios: Scenario<DataStore>[] = [
       await store.platformSettings.get('vapid_keys'),
     ],
   },
+  {
+    method: 'platformSettings.update',
+    name: 'replaces a stored value; a missing key changes nothing',
+    fixture,
+    run: async (store) => [
+      await store.platformSettings.update('vapid_keys', {
+        publicKey: 'pub',
+        encryptedPrivateKey: 'v2',
+      }),
+      await store.platformSettings.update('missing', 1),
+      await store.platformSettings.get('vapid_keys'),
+      await store.platformSettings.get('missing'),
+    ],
+  },
 ];
