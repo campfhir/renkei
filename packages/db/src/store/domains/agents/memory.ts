@@ -146,8 +146,25 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
         updated_at: new Date(),
       });
     },
+    async setEnabled(agentId, enabled) {
+      const id = uuid(agentId);
+      const [row] = tables.update('agents', (r) => r.id === id, {
+        enabled,
+        updated_at: new Date(),
+      });
+      return row ? { name: row.name } : null;
+    },
     async listTriggers(agentId) {
       return triggersOf(String(uuid(agentId)));
+    },
+    async markTriggerFired(triggerId) {
+      const id = tables.param('agent_triggers', 'id', triggerId);
+      const now = new Date();
+      tables.update('agent_triggers', (r) => r.id === id, {
+        last_fired_at: now,
+        last_error: null,
+        updated_at: now,
+      });
     },
     async applyTriggerChanges(agentId, changes) {
       const id = String(uuid(agentId));

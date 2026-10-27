@@ -106,6 +106,47 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
       return row ? { id: row.id, status: row.status, ownerSubject: row.owner_subject } : null;
     },
+    async findRestartSource({ agentId, runId: wanted, ownerSubject }) {
+      const id = runId(wanted);
+      const agent = agentOf(agentId);
+      const row = tables.first(
+        'agent_runs',
+        (r) => r.id === id && r.agent_id === agent && r.owner_subject === ownerSubject
+      );
+      return row
+        ? {
+            id: row.id,
+            status: row.status,
+            triggerKind: row.trigger_kind,
+            triggerId: row.trigger_id,
+            initialState: row.initial_state,
+          }
+        : null;
+    },
+    async forceCancel(wanted, { bySubject, errorKind, error }) {
+      const id = runId(wanted);
+      const now = new Date();
+      const claimed = tables.update(
+        'agent_runs',
+        (r) => r.id === id && LIVE.includes(r.status),
+        (row) => ({
+          status: 'canceled',
+          error_kind: errorKind,
+          error,
+          finished_at: now,
+          updated_at: now,
+          cancel_requested_at: row.cancel_requested_at ?? now,
+          cancel_requested_by: row.cancel_requested_by ?? bySubject,
+        })
+      );
+      if (claimed.length === 0) return false;
+      tables.update('agent_run_steps', (r) => r.run_id === id && r.status === 'running', {
+        status: 'canceled',
+        finished_at: now,
+        updated_at: now,
+      });
+      return true;
+    },
     async requestCancel(wanted, bySubject) {
       const id = runId(wanted);
       const now = new Date();

@@ -6,7 +6,10 @@
  * manual, api, chained) gets the same "already in progress?" pause.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/db', () => ({
+  ...jest.requireActual<object>('@renkei/db'),
+  getDatabase: jest.fn(() => ({ ok: true, val: {} })),
+}));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ resolveAgentAccess: jest.fn() }));
 jest.mock('@renkei/agents/runs', () => ({
@@ -16,9 +19,9 @@ jest.mock('@renkei/agents/runs', () => ({
 jest.mock('@renkei/queue', () => ({ agentJobsQueue: jest.fn(() => ({ producer: {} })) }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
@@ -32,39 +35,31 @@ const { createAgentRun: mockCreateAgentRun, findInProgressRun: mockFindInProgres
 const AGENT_ID = '00000000-0000-4000-8000-000000000001';
 const RUN_ID = '00000000-0000-4000-8000-000000000002';
 
-const AGENT_ROW = {
-  id: AGENT_ID,
-  owner_subject: 'alice',
-  instructions: '## Goal\n\nGo.',
-  tools: [],
-  llm_model_id: null,
-};
-
-function runRow(triggerKind: string) {
-  return {
-    id: RUN_ID,
-    status: 'succeeded',
-    initial_state: null,
-    trigger_id: null,
-    trigger_kind: triggerKind,
-  };
-}
-
-/** `agent_runs` resolves the old run, `agents` the target agent. */
-function stubDb(oldRun: unknown) {
-  function chainOf(row: unknown) {
-    const self = {
-      where: () => self,
-      executeTakeFirst: async () => row,
-    };
-    return self;
-  }
-  const chain = {
-    selectFrom: (table: string) => ({
-      select: () => chainOf(table === 'agent_runs' ? oldRun : AGENT_ROW),
-    }),
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: chain });
+/** The old run and its agent, as the route reads them through the data store. */
+async function seedStore(triggerKind: string) {
+  const store = createMemoryDataStore();
+  await store.seed({
+    agents: [
+      {
+        id: AGENT_ID,
+        owner_subject: 'alice',
+        name: 'Portfolio Updater',
+        instructions: '## Goal\n\nGo.',
+        tools: JSON.stringify([]),
+        llm_model_id: null,
+      },
+    ],
+    agent_runs: [
+      {
+        id: RUN_ID,
+        agent_id: AGENT_ID,
+        owner_subject: 'alice',
+        status: 'succeeded',
+        trigger_kind: triggerKind,
+      },
+    ],
+  });
+  registerDataStore(store);
 }
 
 function request(body: unknown): NextRequest {
@@ -74,6 +69,7 @@ function request(body: unknown): NextRequest {
   });
 }
 
+afterEach(() => resetDataStore());
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -89,7 +85,7 @@ function params() {
 
 describe('POST rerun — concurrency guard', () => {
   it('refuses a scheduled run’s rerun when another run is already in progress', async () => {
-    stubDb(runRow('schedule'));
+    await seedStore('schedule');
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
     const response = await POST(request({}), params());
@@ -101,7 +97,7 @@ describe('POST rerun — concurrency guard', () => {
   });
 
   it('skips the check entirely for an event-triggered run — it already tolerates concurrency', async () => {
-    stubDb(runRow('event'));
+    await seedStore('event');
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
     const response = await POST(request({}), params());
@@ -112,7 +108,7 @@ describe('POST rerun — concurrency guard', () => {
   });
 
   it('proceeds for a scheduled run once confirm: true is sent', async () => {
-    stubDb(runRow('schedule'));
+    await seedStore('schedule');
     mockFindInProgressRun.mockResolvedValue({ id: 'run-3', status: 'running' });
 
     const response = await POST(request({ confirm: true }), params());
@@ -123,7 +119,7 @@ describe('POST rerun — concurrency guard', () => {
   });
 
   it('proceeds for a manual run when nothing else is in progress', async () => {
-    stubDb(runRow('manual'));
+    await seedStore('manual');
 
     const response = await POST(request({}), params());
 

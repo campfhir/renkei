@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { auditEventValues } from './record';
+import { auditEventValues, platformEventFromRow, platformEventValues } from './record';
 import type { AuditEventStore } from './types';
 
 export function postgresAuditEvents(db: () => Kysely<DB>): AuditEventStore {
@@ -40,6 +40,19 @@ export function postgresAuditEvents(db: () => Kysely<DB>): AuditEventStore {
         actorDisplayName: row.display_name ?? null,
         actorEmail: row.email ?? null,
       }));
+    },
+    async recordPlatform(event) {
+      await db().insertInto('platform_audit_log').values(platformEventValues(event)).execute();
+    },
+    async listPlatformFor(resourceId) {
+      const rows = await db()
+        .selectFrom('platform_audit_log')
+        .selectAll()
+        .where('resource_id', '=', resourceId)
+        .orderBy('created_at', 'desc')
+        .orderBy('id', 'desc')
+        .execute();
+      return rows.map(platformEventFromRow);
     },
   };
 }

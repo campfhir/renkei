@@ -519,4 +519,121 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
       await store.agentRuns.findRunAgent(id(99)),
     ],
   },
+  {
+    method: 'agentRuns.findRestartSource',
+    name: 'scoped to agent and owner; the trigger input as stored',
+    fixture,
+    run: async (store) => [
+      await store.agentRuns.findRestartSource({
+        agentId: id(1),
+        runId: id(11),
+        ownerSubject: 'ann',
+      }),
+      await store.agentRuns.findRestartSource({
+        agentId: id(1),
+        runId: id(13),
+        ownerSubject: 'ann',
+      }),
+      await store.agentRuns.findRestartSource({
+        agentId: id(1),
+        runId: id(11),
+        ownerSubject: 'bob',
+      }),
+      await store.agentRuns.findRestartSource({
+        agentId: id(2),
+        runId: id(11),
+        ownerSubject: 'ann',
+      }),
+      await store.agentRuns.findRestartSource({
+        agentId: id(1),
+        runId: id(99),
+        ownerSubject: 'ann',
+      }),
+    ],
+  },
+  {
+    method: 'agentRuns.forceCancel',
+    name: 'live runs only; running attempts closed, other attempts and runs untouched',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(11, 1, 'ann', 1, { status: 'running' }),
+        run(12, 1, 'ann', 2, {
+          status: 'waiting',
+          cancel_requested_at: at(3),
+          cancel_requested_by: 'ann',
+        }),
+        run(13, 1, 'ann', 3, { status: 'succeeded' }),
+        run(14, 1, 'ann', 4, { status: 'running' }),
+      ],
+      agent_run_steps: [
+        {
+          id: id(21),
+          run_id: id(11),
+          step_id: 'turn',
+          step_index: 0,
+          attempt: 1,
+          status: 'succeeded',
+        },
+        {
+          id: id(22),
+          run_id: id(11),
+          step_id: 'turn-2',
+          step_index: 1,
+          attempt: 1,
+          status: 'running',
+        },
+        {
+          id: id(23),
+          run_id: id(12),
+          step_id: 'pause',
+          step_index: 0,
+          attempt: 1,
+          status: 'waiting',
+        },
+        {
+          id: id(24),
+          run_id: id(14),
+          step_id: 'turn',
+          step_index: 0,
+          attempt: 1,
+          status: 'running',
+        },
+      ],
+    },
+    run: async (store) => {
+      const input = { bySubject: 'admin', errorKind: 'force_halted', error: 'Force-halted.' };
+      const claims = [
+        await store.agentRuns.forceCancel(id(11), input),
+        await store.agentRuns.forceCancel(id(11), input),
+        await store.agentRuns.forceCancel(id(12), input),
+        await store.agentRuns.forceCancel(id(13), input),
+        await store.agentRuns.forceCancel(id(99), input),
+      ];
+      const runs = await Promise.all(
+        [11, 12, 13, 14].map(async (n) => {
+          const detail = await store.agentRuns.findDetail({
+            agentId: id(1),
+            runId: id(n),
+            ownerSubject: 'ann',
+            audience: 'owner',
+          });
+          return detail
+            ? {
+                status: detail.status,
+                errorKind: detail.errorKind,
+                error: detail.error,
+                finished: detail.finishedAt !== null,
+                steps: detail.steps.map((step) => ({
+                  stepIndex: step.stepIndex,
+                  status: step.status,
+                  finished: step.finishedAt !== null,
+                })),
+              }
+            : null;
+        })
+      );
+      return { claims, runs };
+    },
+  },
 ];

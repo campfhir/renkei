@@ -8,19 +8,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
 import { suggestCleanerScript } from '@/lib/email-sanitizer/suggest-script';
 import { isContentKind } from '@/lib/email-sanitizer/content-kinds';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
   const body: unknown = await request.json().catch(() => null);
   const payload: { text?: unknown; instructions?: unknown; kind?: unknown } =
@@ -30,7 +24,6 @@ export async function POST(
   }
 
   const result = await suggestCleanerScript(
-    dbResult.val,
     payload.text,
     typeof payload.instructions === 'string' ? payload.instructions : '',
     isContentKind(payload.kind) ? payload.kind : 'msg'

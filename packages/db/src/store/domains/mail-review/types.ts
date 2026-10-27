@@ -1,8 +1,9 @@
 /**
  * The email classification log — the one sanitizer table that carries
  * message content (a bounded excerpt). Every read here but the
- * content-free sender counts is scoped by owner; there is no method that
- * lists across owners. `ownerUpn` arrives lower-cased from the caller.
+ * content-free sender counts and the operator's rule-suggestion evidence
+ * (`suggestionEvidence`, excerpts only, never shown back to anyone) is
+ * scoped by owner. `ownerUpn` arrives lower-cased from the caller.
  */
 export interface ClassificationEntryRecord {
   id: string;
@@ -33,6 +34,17 @@ export interface OwnClassificationRecord {
   excerpt: string;
   overrideAction: string | null;
   createdAt: Date;
+}
+
+/** What the operator's rule-suggestion pass learns from, across every owner's log. */
+export interface MailReviewSuggestionEvidenceRecord {
+  /** Rows someone corrected, newest correction first (ties by id), at most `limit`. */
+  corrected: { excerpt: string; category: string; overrideCategory: string }[];
+  /**
+   * Uncorrected rows the classifier was unsure about, newest first (ties by
+   * id), filling up to `limit` together with `corrected`.
+   */
+  unsure: { excerpt: string; category: string }[];
 }
 
 export interface MailReviewStore {
@@ -75,4 +87,6 @@ export interface MailReviewStore {
    * window are flagged for review — the admin's template health. By sender key.
    */
   needsReviewCounts(lookbackDays: number): Promise<{ senderKey: string; count: number }[]>;
+  /** The corrections and unsure rows a rule-suggestion pass reads, at most `limit` in all. */
+  suggestionEvidence(limit: number): Promise<MailReviewSuggestionEvidenceRecord>;
 }

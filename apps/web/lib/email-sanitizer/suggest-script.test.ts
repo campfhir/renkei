@@ -29,14 +29,11 @@ jest.mock('@renkei/agent-llm', () => ({
   })),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { suggestCleanerScript } from './suggest-script';
+// The lib never touches the database beyond the handle it passes to
+// resolveAgentLlm (mocked), so an empty one suffices.
+jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 
-// The lib never touches the db beyond resolveAgentLlm (mocked), so an
-// empty object suffices.
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-const db = {} as Kysely<DB>;
+import { suggestCleanerScript } from './suggest-script';
 
 const SAMPLE = [
   'Hi team, the deploy is done.',
@@ -53,7 +50,7 @@ describe('suggestCleanerScript', () => {
       rationale: 'Drops the fixed social-links row.',
     });
 
-    const result = await suggestCleanerScript(db, SAMPLE, '');
+    const result = await suggestCleanerScript(SAMPLE, '');
     if ('error' in result) throw new Error(result.error);
     expect(result.name).toBe('Strip social row');
     // The server already ran it — the admin sees the before/after instantly.
@@ -62,7 +59,7 @@ describe('suggestCleanerScript', () => {
 
   it('rejects a draft that does not compile as a function', async () => {
     modelReply = JSON.stringify({ name: 'x', script: "'not a function'", rationale: 'r' });
-    const result = await suggestCleanerScript(db, SAMPLE, '');
+    const result = await suggestCleanerScript(SAMPLE, '');
     expect('error' in result && result.error).toContain('does not compile');
   });
 
@@ -72,7 +69,7 @@ describe('suggestCleanerScript', () => {
       script: "(email) => { throw new Error('boom'); }",
       rationale: 'r',
     });
-    const result = await suggestCleanerScript(db, SAMPLE, '');
+    const result = await suggestCleanerScript(SAMPLE, '');
     expect('error' in result && result.error).toContain('failed on your own sample');
   });
 });

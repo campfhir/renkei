@@ -1,6 +1,6 @@
 import { orderBy, page } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
-import { auditEventValues } from './record';
+import { auditEventValues, platformEventFromRow, platformEventValues } from './record';
 import type { AuditEventStore } from './types';
 
 export function memoryAuditEvents(tables: MemoryTables): AuditEventStore {
@@ -34,6 +34,16 @@ export function memoryAuditEvents(tables: MemoryTables): AuditEventStore {
           actorEmail: identity?.email ?? null,
         };
       });
+    },
+    async recordPlatform(event) {
+      tables.insert('platform_audit_log', platformEventValues(event));
+    },
+    async listPlatformFor(resourceId) {
+      return orderBy(
+        tables.select('platform_audit_log', (r) => r.resource_id === resourceId),
+        [(r) => r.created_at, 'desc'],
+        [(r) => r.id, 'desc']
+      ).map(platformEventFromRow);
     },
   };
 }

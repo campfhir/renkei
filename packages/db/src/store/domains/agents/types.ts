@@ -165,10 +165,17 @@ export interface AgentStore {
   ): Promise<void>;
   /** Mark the description stale (a re-describe is about to run). */
   markDescriptionStale(agentId: string): Promise<void>;
+  /**
+   * Turn any agent on or off (the operator's switch, no owner scope);
+   * returns its name, or null when there is no such agent.
+   */
+  setEnabled(agentId: string, enabled: boolean): Promise<{ name: string } | null>;
   /** The agent's trigger rows, oldest first (ties by id). */
   listTriggers(agentId: string): Promise<AgentTriggerRecord[]>;
   /** Apply a reconcile: updates, inserts and deletes of this agent's triggers, all or none. */
   applyTriggerChanges(agentId: string, changes: AgentTriggerChanges): Promise<void>;
+  /** Stamp a trigger as fired now, clearing its last error. */
+  markTriggerFired(triggerId: string): Promise<void>;
 
   /** The grant admitting `granteeSubject` to the agent, if it has not expired. */
   findActiveGrant(agentId: string, granteeSubject: string): Promise<AgentActiveGrantRecord | null>;

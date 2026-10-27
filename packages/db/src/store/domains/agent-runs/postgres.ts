@@ -169,6 +169,52 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
       const row = await query.executeTakeFirst();
       return row ? { id: row.id, status: row.status, ownerSubject: row.owner_subject } : null;
     },
+    async findRestartSource({ agentId, runId, ownerSubject }) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(['id', 'status', 'initial_state', 'trigger_id', 'trigger_kind'])
+        .where('agent_id', '=', agentId)
+        .where('id', '=', runId)
+        .where('owner_subject', '=', ownerSubject)
+        .executeTakeFirst();
+      return row
+        ? {
+            id: row.id,
+            status: row.status,
+            triggerKind: row.trigger_kind,
+            triggerId: row.trigger_id,
+            initialState: row.initial_state,
+          }
+        : null;
+    },
+    async forceCancel(runId, { bySubject, errorKind, error }) {
+      return db()
+        .transaction()
+        .execute(async (trx) => {
+          const claimed = await trx
+            .updateTable('agent_runs')
+            .set({
+              status: 'canceled',
+              error_kind: errorKind,
+              error,
+              finished_at: sql`NOW()`,
+              updated_at: sql`NOW()`,
+              cancel_requested_at: sql`COALESCE(cancel_requested_at, NOW())`,
+              cancel_requested_by: sql`COALESCE(cancel_requested_by, ${bySubject})`,
+            })
+            .where('id', '=', runId)
+            .where('status', 'in', [...LIVE_STATUSES])
+            .executeTakeFirst();
+          if (Number(claimed.numUpdatedRows ?? 0) === 0) return false;
+          await trx
+            .updateTable('agent_run_steps')
+            .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+            .where('run_id', '=', runId)
+            .where('status', '=', 'running')
+            .execute();
+          return true;
+        });
+    },
     async requestCancel(runId, bySubject) {
       const claimed = await db()
         .updateTable('agent_runs')

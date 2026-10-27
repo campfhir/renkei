@@ -18,8 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDatabase, getDataStore, type AgentRecord } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
@@ -47,48 +46,27 @@ function overBurst(): boolean {
   return false;
 }
 
-interface AgentRow {
-  id: string;
-  owner_subject: string;
-  name: string;
-  instructions: string;
-  tools: unknown;
-  llm_model_id: string | null;
-  enabled: boolean;
-}
-
-async function agentById(db: Kysely<DB>, agentId: string): Promise<AgentRow | null> {
+async function agentById(agentId: string): Promise<AgentRecord | null> {
   // Callers paste this id into external tools; a malformed one (glued-on
   // punctuation from an autolinker) is "no such agent", not a 22P02 → 500.
   if (!isUuid(agentId)) return null;
-  const row = await db
-    .selectFrom('agents')
-    .select(['id', 'owner_subject', 'name', 'instructions', 'tools', 'llm_model_id', 'enabled'])
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  return row ?? null;
+  return getDataStore().agents.find(agentId);
 }
 
-/** The api-kind trigger row whose stored digest matches the presented key. */
-async function apiTriggerForKey(
-  db: Kysely<DB>,
-  agentId: string,
-  key: string
-): Promise<string | null> {
-  const rows = await db
-    .selectFrom('agent_triggers')
-    .select(['id', 'config'])
-    .where('agent_id', '=', agentId)
-    .where('kind', '=', 'api')
-    .where('enabled', '=', true)
-    .execute();
+/** The enabled api-kind trigger whose stored digest matches the presented key. */
+function apiTriggerForKey(agent: AgentRecord, key: string): string | null {
   const digest = sha256Hex(key);
-  for (const row of rows) {
+  for (const trigger of agent.triggers) {
+    if (trigger.kind !== 'api' || !trigger.enabled) continue;
     const config: { keyHash?: unknown } =
-      typeof row.config === 'object' && row.config !== null && !Array.isArray(row.config)
-        ? row.config
+      typeof trigger.config === 'object' &&
+      trigger.config !== null &&
+      !Array.isArray(trigger.config)
+        ? trigger.config
         : {};
-    if (typeof config.keyHash === 'string' && digestsMatch(config.keyHash, digest)) return row.id;
+    if (typeof config.keyHash === 'string' && digestsMatch(config.keyHash, digest)) {
+      return trigger.id;
+    }
   }
   return null;
 }
@@ -99,11 +77,7 @@ export async function POST(
 ): Promise<NextResponse> {
   const { agentId } = await params;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const agent = await agentById(db, agentId);
+  const agent = await agentById(agentId);
   // The two auth paths resolve to (triggerId, triggeredBy) or a response.
   let triggerId: string | null = null;
   let triggeredBy: string | undefined;
@@ -114,7 +88,7 @@ export async function POST(
     // a 403.
     if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
     if (
-      agent.owner_subject !== session.subject &&
+      agent.ownerSubject !== session.subject &&
       !(await hasActiveGrant(agentId, session.subject))
     ) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -125,7 +99,7 @@ export async function POST(
     if (!key || !agent) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
-    triggerId = await apiTriggerForKey(db, agentId, key);
+    triggerId = apiTriggerForKey(agent, key);
     if (!triggerId) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     }
@@ -161,6 +135,12 @@ export async function POST(
     }
   }
 
+  // Starting the run is @renkei/agents' own, which still takes the
+  // database handle.
+  const dbResult = getDatabase();
+  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  const db = dbResult.val;
+
   // A machine caller (API key, schedule, event, chain) never sees this —
   // those already run concurrently by design, serialized only by the
   // queue's ordering key. This is purely the "Run now" button's own
@@ -184,9 +164,9 @@ export async function POST(
 
   const result = await createAgentRun(db, agentJobsQueue().producer, {
     agentId,
-    ownerSubject: agent.owner_subject,
+    ownerSubject: agent.ownerSubject,
     definition: agentDefinitionOf(agent),
-    llmModelId: agent.llm_model_id,
+    llmModelId: agent.llmModelId,
     triggerId,
     triggerKind: triggerId ? 'api' : 'manual',
     triggeredBySubject: triggeredBy,
@@ -202,11 +182,7 @@ export async function POST(
   }
 
   if (triggerId) {
-    await db
-      .updateTable('agent_triggers')
-      .set({ last_fired_at: sql`NOW()`, last_error: null, updated_at: sql`NOW()` })
-      .where('id', '=', triggerId)
-      .execute();
+    await getDataStore().agents.markTriggerFired(triggerId);
   }
 
   return NextResponse.json({ runId: result.val.runId }, { status: 202 });

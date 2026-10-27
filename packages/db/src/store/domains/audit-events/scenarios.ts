@@ -71,4 +71,76 @@ export const auditEventScenarios: Scenario<DataStore>[] = [
       return { again, rows: await store.auditEvents.listRecent(3) };
     },
   },
+  {
+    method: 'auditEvents.listPlatformFor',
+    name: "one resource's rows, newest first, ties by id desc; others invisible",
+    fixture: {
+      platform_audit_log: [
+        {
+          id: id(21),
+          event_type: 'agent.disabled_by_admin',
+          actor_id: 'ann',
+          resource_id: 'r1',
+          created_at: at(1),
+        },
+        {
+          id: id(22),
+          event_type: 'agent.enabled_by_admin',
+          actor_id: 'ann',
+          resource_id: 'r1',
+          details: { n: 1 },
+          created_at: at(2),
+        },
+        {
+          id: id(23),
+          event_type: 'agent.disabled_by_admin',
+          actor_id: null,
+          resource_id: 'r1',
+          created_at: at(2),
+        },
+        {
+          id: id(24),
+          event_type: 'agent.disabled_by_admin',
+          actor_id: 'bob',
+          resource_id: 'r2',
+          created_at: at(3),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.auditEvents.listPlatformFor('r1'),
+      await store.auditEvents.listPlatformFor('r9'),
+    ],
+  },
+  {
+    method: 'auditEvents.recordPlatform',
+    name: 'appends with details round-tripped; refuses a duplicate id',
+    run: async (store) => {
+      const event = {
+        id: id(31),
+        eventType: 'agent.disabled_by_admin',
+        actorId: 'ann',
+        resourceId: 'r1',
+        details: {},
+      };
+      await store.auditEvents.recordPlatform(event);
+      await store.auditEvents.recordPlatform({
+        ...event,
+        id: id(32),
+        details: null,
+        actorId: null,
+      });
+      const again = await store.auditEvents.recordPlatform(event).then(
+        () => 'accepted',
+        () => 'refused'
+      );
+      const rows = await store.auditEvents.listPlatformFor('r1');
+      return {
+        again,
+        rows: rows
+          .map(({ createdAt: _createdAt, ...row }) => row)
+          .sort((a, b) => (a.id < b.id ? -1 : 1)),
+      };
+    },
+  },
 ];

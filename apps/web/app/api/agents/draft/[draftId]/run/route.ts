@@ -20,7 +20,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { parseAgentDefinition } from '@renkei/agents';
 import { getBearerToken, resolveAccessToken } from '@/lib/mcp-token';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
@@ -70,10 +69,6 @@ export async function POST(
   const record = await resolveAccessToken(token, 'agent');
   if (!record) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // Owner-scoped by the TOKEN's subject: this is what stops a token minted
   // for one person from drafting with another person's tool catalog.
   const draft = await getDraft(record.subject, draftId);
@@ -96,7 +91,7 @@ export async function POST(
     const otherAgents = suggestTriggers ? await listAgentNames(record.subject) : [];
 
     const tools = await listAvailableTools(record.subject);
-    const drafted = await draftAgentFromProse(db, draft.request.text, tools, {
+    const drafted = await draftAgentFromProse(draft.request.text, tools, {
       current,
       triggerVars: parseTriggerVars(draft.request.triggerVars),
       suggestTriggers,

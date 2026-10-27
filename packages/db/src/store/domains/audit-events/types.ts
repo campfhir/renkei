@@ -25,9 +25,35 @@ export interface NewAuditEvent {
   createdAt?: Date;
 }
 
+/**
+ * One row of the deployment-scoped platform log (platform_audit_log): the
+ * installation's own record of operator acts, beside the tenant trail.
+ */
+export interface PlatformAuditEventRecord {
+  id: string;
+  eventType: string;
+  actorId: string | null;
+  resourceId: string | null;
+  details: unknown;
+  createdAt: Date;
+}
+
+export interface NewPlatformAuditEvent {
+  id: string;
+  eventType: string;
+  actorId: string | null;
+  resourceId: string | null;
+  /** Stored as jsonb; null for none. */
+  details: Record<string, unknown> | null;
+}
+
 export interface AuditEventStore {
   /** Append one event; a duplicate id is refused (23505). */
   record(event: NewAuditEvent): Promise<void>;
   /** The newest `limit` events, newest first, ties by id descending. */
   listRecent(limit: number): Promise<AuditEventRecord[]>;
+  /** Append one platform-log row; a duplicate id is refused (23505). */
+  recordPlatform(event: NewPlatformAuditEvent): Promise<void>;
+  /** The platform-log rows about one resource, newest first, ties by id descending. */
+  listPlatformFor(resourceId: string): Promise<PlatformAuditEventRecord[]>;
 }

@@ -136,6 +136,25 @@ export interface AgentRunStore {
     ownerSubject?: string;
   }): Promise<{ id: string; status: string; ownerSubject: string } | null>;
   /**
+   * What starting a run again from this one reads: its status, how it was
+   * triggered, and its trigger input — scoped to the agent and owner.
+   */
+  findRestartSource(options: {
+    agentId: string;
+    runId: string;
+    ownerSubject: string;
+  }): Promise<RunRestartSourceRecord | null>;
+  /**
+   * The operator's override: a live run straight to canceled with the
+   * given error, the cancel request recorded (kept when one was already
+   * there), and its running attempt rows closed out as canceled, in one
+   * transaction. False when the run was no longer live.
+   */
+  forceCancel(
+    runId: string,
+    input: { bySubject: string; errorKind: string; error: string }
+  ): Promise<boolean>;
+  /**
    * Flag a live run (queued, running, waiting) for cancellation, once:
    * false when it was already flagged or is no longer live.
    */
@@ -183,6 +202,15 @@ export interface AgentRunStore {
     maxFailures: number;
     maxTools: number;
   }): Promise<OptimizationEvidenceRecord>;
+}
+
+export interface RunRestartSourceRecord {
+  id: string;
+  status: string;
+  triggerKind: string;
+  triggerId: string | null;
+  /** The trigger.* variables the run started with, as stored. */
+  initialState: Json | null;
 }
 
 export interface OptimizationEvidenceRecord {

@@ -14,8 +14,7 @@
  * proposes, a person enables.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDatabase } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
   runCleanerScript,
@@ -100,7 +99,6 @@ function promptOf(sample: string, instructions: string, kind: CleanerScriptKind)
 }
 
 export async function suggestCleanerScript(
-  db: Kysely<DB>,
   rawSample: string,
   rawInstructions: string,
   kind: CleanerScriptKind = 'msg'
@@ -111,7 +109,10 @@ export async function suggestCleanerScript(
   }
   const instructions = rawInstructions.trim().slice(0, 2_000);
 
-  const llmResult = await resolveAgentLlm(db, null);
+  // The model roster is the agent-llm package's to read, from the database.
+  const db = getDatabase();
+  if (!db.ok) return { error: 'The database is unavailable.' };
+  const llmResult = await resolveAgentLlm(db.val, null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

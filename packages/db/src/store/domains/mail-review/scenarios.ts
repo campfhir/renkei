@@ -231,4 +231,40 @@ export const mailReviewScenarios: Scenario<DataStore>[] = [
     name: 'empty',
     run: async (store) => store.mailReview.needsReviewCounts(7),
   },
+  {
+    method: 'mailReview.suggestionEvidence',
+    name: 'corrections newest first, then unsure rows to fill; ties by id; bounded',
+    fixture: {
+      email_classification_log: [
+        log(1, 'ann@x.test', 'human', at(1), {
+          override_category: 'marketing',
+          overridden_at: at(10),
+        }),
+        log(2, 'bob@x.test', 'marketing', at(2), {
+          override_category: 'human',
+          overridden_at: at(12),
+        }),
+        log(3, 'ann@x.test', 'human', at(3), {
+          override_category: 'system_notification',
+          overridden_at: at(10),
+          needs_review: true,
+        }),
+        log(4, 'ann@x.test', 'human', at(4), { needs_review: true }),
+        log(5, 'bob@x.test', 'marketing', at(6), { needs_review: true }),
+        log(6, 'bob@x.test', 'human', at(6), { needs_review: true }),
+        log(7, 'ann@x.test', 'human', at(7)),
+      ],
+    },
+    run: async (store) => [
+      await store.mailReview.suggestionEvidence(10),
+      await store.mailReview.suggestionEvidence(4),
+      await store.mailReview.suggestionEvidence(2),
+    ],
+  },
+  {
+    method: 'mailReview.suggestionEvidence',
+    name: 'nothing to learn from',
+    fixture: { email_classification_log: [log(1, 'ann@x.test', 'human', at(1))] },
+    run: async (store) => store.mailReview.suggestionEvidence(10),
+  },
 ];

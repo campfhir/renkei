@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * What must hold: a run that already finished refuses; the status flip is a
  * one-way claim guarded the same way requestRunCancellation's is (a race in
@@ -9,113 +8,121 @@
  * the timeline does not show a "Running" attempt under a Canceled run.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { forceHaltRun } from './force-halt';
-
 jest.mock('@renkei/agents/runs', () => ({
   recordAgentRunOutcome: jest.fn(async () => ({ ok: true })),
 }));
+jest.mock('./run-jobs', () => ({ discardRunJobs: jest.fn(async () => undefined) }));
+jest.mock('@renkei/db', () => ({
+  ...jest.requireActual<object>('@renkei/db'),
+  getDatabase: jest.fn(() => ({ ok: true, val: {} })),
+}));
 
-function stubDb(options: {
-  row?: unknown;
-  updated?: number;
-  calls?: { table: string; op: 'select' | 'update' | 'delete' }[];
-  sets?: Record<string, unknown>[];
-}): Kysely<DB> {
-  let currentTable = '';
-  let currentOp: 'select' | 'update' | 'delete' = 'select';
-  const chain = {
-    selectFrom: (table: string) => {
-      currentTable = table;
-      currentOp = 'select';
-      options.calls?.push({ table, op: 'select' });
-      return chain;
-    },
-    updateTable: (table: string) => {
-      currentTable = table;
-      currentOp = 'update';
-      options.calls?.push({ table, op: 'update' });
-      return chain;
-    },
-    deleteFrom: (table: string) => {
-      currentTable = table;
-      currentOp = 'delete';
-      options.calls?.push({ table, op: 'delete' });
-      return chain;
-    },
-    select: () => chain,
-    set: (values: Record<string, unknown>) => {
-      options.sets?.push({ ...values, __table: currentTable });
-      return chain;
-    },
-    where: () => chain,
-    execute: async () => undefined,
-    executeTakeFirst: async () => {
-      if (
-        currentTable === 'agent_runs' &&
-        currentOp === 'update' &&
-        options.updated !== undefined
-      ) {
-        return { numUpdatedRows: BigInt(options.updated) };
-      }
-      return options.row;
-    },
-  };
-  return chain as unknown as Kysely<DB>;
-}
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type DataStore,
+} from '@renkei/db';
+import { forceHaltRun } from './force-halt';
+
+const { discardRunJobs: mockDiscardRunJobs } = jest.requireMock<{ discardRunJobs: jest.Mock }>(
+  './run-jobs'
+);
+const { recordAgentRunOutcome: mockRecordOutcome } = jest.requireMock<{
+  recordAgentRunOutcome: jest.Mock;
+}>('@renkei/agents/runs');
+
+const AGENT_ID = '00000000-0000-4000-8000-0000000000a1';
+const RUN_ID = '00000000-0000-4000-8000-0000000000b1';
 
 const input = {
-  agentId: 'agent-1',
-  runId: 'run-1',
+  agentId: AGENT_ID,
+  runId: RUN_ID,
   haltedBySubject: 'admin@example.com',
 };
 
+async function storeWith(status: string | null): Promise<DataStore> {
+  const store = createMemoryDataStore();
+  await store.seed({
+    agents: [{ id: AGENT_ID, owner_subject: 'alice', name: 'Stuck agent' }],
+    agent_runs:
+      status === null
+        ? []
+        : [
+            {
+              id: RUN_ID,
+              agent_id: AGENT_ID,
+              owner_subject: 'alice',
+              trigger_kind: 'manual',
+              status,
+            },
+          ],
+    agent_run_steps:
+      status === null
+        ? []
+        : [
+            {
+              id: '00000000-0000-4000-8000-0000000000c1',
+              run_id: RUN_ID,
+              step_id: 'turn',
+              step_index: 0,
+              attempt: 1,
+              status: 'running',
+            },
+          ],
+  });
+  registerDataStore(store);
+  return store;
+}
+
+async function runOf(store: DataStore) {
+  return store.agentRuns.findDetail({
+    agentId: AGENT_ID,
+    runId: RUN_ID,
+    ownerSubject: 'alice',
+    audience: 'owner',
+  });
+}
+
+afterEach(() => {
+  resetDataStore();
+  jest.clearAllMocks();
+});
+
 describe('forceHaltRun', () => {
   it('reports not-found for a run that does not exist in this tenant/agent', async () => {
-    const result = await forceHaltRun(stubDb({ row: undefined }), input);
-    expect(result).toEqual({ outcome: 'not-found' });
+    await storeWith(null);
+    expect(await forceHaltRun(input)).toEqual({ outcome: 'not-found' });
+    expect(await forceHaltRun({ ...input, agentId: RUN_ID })).toEqual({ outcome: 'not-found' });
   });
 
   it('refuses a run that already reached a terminal status', async () => {
-    const result = await forceHaltRun(
-      stubDb({ row: { id: 'run-1', status: 'succeeded', owner_subject: 'alice' } }),
-      input
-    );
-    expect(result).toEqual({ outcome: 'already-final', status: 'succeeded' });
+    await storeWith('succeeded');
+    expect(await forceHaltRun(input)).toEqual({ outcome: 'already-final', status: 'succeeded' });
+    expect(mockDiscardRunJobs).not.toHaveBeenCalled();
   });
 
   it('treats a lost claim (finished in the gap) as already-final, not an error', async () => {
-    const result = await forceHaltRun(
-      stubDb({ row: { id: 'run-1', status: 'running', owner_subject: 'alice' }, updated: 0 }),
-      input
-    );
-    expect(result).toEqual({ outcome: 'already-final', status: 'running' });
+    const store = await storeWith('running');
+    registerDataStore({
+      ...store,
+      agentRuns: { ...store.agentRuns, forceCancel: async () => false },
+    });
+    expect(await forceHaltRun(input)).toEqual({ outcome: 'already-final', status: 'running' });
+    expect(mockDiscardRunJobs).not.toHaveBeenCalled();
   });
 
-  it('halts a running run and clears its agent_jobs row', async () => {
-    const calls: { table: string; op: 'select' | 'update' | 'delete' }[] = [];
-    const sets: Record<string, unknown>[] = [];
-    const result = await forceHaltRun(
-      stubDb({
-        row: { id: 'run-1', status: 'running', owner_subject: 'alice' },
-        updated: 1,
-        calls,
-        sets,
-      }),
-      input
+  it('halts a running run, closes its attempt and clears its agent_jobs row', async () => {
+    const store = await storeWith('running');
+    expect(await forceHaltRun(input)).toEqual({ outcome: 'halted' });
+
+    const run = await runOf(store);
+    expect(run).toMatchObject({ status: 'canceled', errorKind: 'force_halted' });
+    expect(run?.steps.map((step) => step.status)).toEqual(['canceled']);
+    expect(mockDiscardRunJobs).toHaveBeenCalledWith(RUN_ID);
+    expect(mockRecordOutcome).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ runId: RUN_ID, ownerSubject: 'alice', status: 'canceled' })
     );
-    expect(result).toEqual({ outcome: 'halted' });
-
-    const runUpdate = sets.find((s) => s.__table === 'agent_runs');
-    expect(runUpdate).toMatchObject({ status: 'canceled', error_kind: 'force_halted' });
-
-    const jobUpdate = sets.find((s) => s.__table === 'agent_jobs');
-    expect(jobUpdate).toMatchObject({ status: 'skipped' });
-
-    const stepUpdate = sets.find((s) => s.__table === 'agent_run_steps');
-    expect(stepUpdate).toMatchObject({ status: 'canceled' });
-
-    expect(calls).toContainEqual({ table: 'agent_jobs_dead_letters', op: 'delete' });
   });
 });

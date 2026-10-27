@@ -108,5 +108,43 @@ export function memoryMailReview(tables: MemoryTables): MailReviewStore {
         count: rows.length,
       }));
     },
+    async suggestionEvidence(limit) {
+      const corrected = page(
+        orderBy(
+          tables.select('email_classification_log', (r) => r.override_category !== null),
+          [(r) => r.overridden_at, 'desc'],
+          [(r) => r.id]
+        ),
+        limit
+      );
+      const unsure =
+        corrected.length < limit
+          ? page(
+              orderBy(
+                tables.select(
+                  'email_classification_log',
+                  (r) => r.needs_review && r.override_category === null
+                ),
+                [(r) => r.created_at, 'desc'],
+                [(r) => r.id]
+              ),
+              limit - corrected.length
+            )
+          : [];
+      return {
+        corrected: corrected.flatMap((row) =>
+          row.override_category === null
+            ? []
+            : [
+                {
+                  excerpt: row.excerpt,
+                  category: row.category,
+                  overrideCategory: row.override_category,
+                },
+              ]
+        ),
+        unsure: unsure.map((row) => ({ excerpt: row.excerpt, category: row.category })),
+      };
+    },
   };
 }

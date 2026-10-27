@@ -584,4 +584,41 @@ export const agentScenarios: Scenario<DataStore>[] = [
       (await store.agents.memorySlice(id(2), 10)).entries.length,
     ],
   },
+  {
+    method: 'agents.setEnabled',
+    name: "any owner's agent, by id; a missing one is null; a read after shows it",
+    fixture,
+    run: async (store) => {
+      const results = [
+        await store.agents.setEnabled(id(4), false),
+        await store.agents.setEnabled(id(2), true),
+        await store.agents.setEnabled(id(99), true),
+      ];
+      const after = await Promise.all(
+        [id(4), id(2), id(1)].map(async (agentId) => {
+          const found = await store.agents.find(agentId);
+          return found ? { id: found.id, enabled: found.enabled } : null;
+        })
+      );
+      const malformed = await store.agents.setEnabled('not-a-uuid', true).then(
+        () => 'accepted',
+        (error: unknown) => refusal(error)
+      );
+      return { results, after, malformed };
+    },
+  },
+  {
+    method: 'agents.markTriggerFired',
+    name: 'stamps the one trigger and clears its error; others untouched',
+    fixture,
+    run: async (store) => {
+      await store.agents.markTriggerFired(id(12));
+      await store.agents.markTriggerFired(id(98));
+      return (await store.agents.listTriggers(id(1))).map((trigger) => ({
+        id: trigger.id,
+        fired: trigger.lastFiredAt !== null,
+        lastError: trigger.lastError,
+      }));
+    },
+  },
 ];

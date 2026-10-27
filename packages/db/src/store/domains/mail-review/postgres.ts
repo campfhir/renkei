@@ -112,5 +112,41 @@ export function postgresMailReview(db: () => Kysely<DB>): MailReviewStore {
           : [{ senderKey: row.sender_key, count: Number(row.needs_review_count) }]
       );
     },
+    async suggestionEvidence(limit) {
+      const corrected = await db()
+        .selectFrom('email_classification_log')
+        .select(['excerpt', 'category', 'override_category'])
+        .where('override_category', 'is not', null)
+        .orderBy('overridden_at', 'desc')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      const unsure =
+        corrected.length < limit
+          ? await db()
+              .selectFrom('email_classification_log')
+              .select(['excerpt', 'category'])
+              .where('needs_review', '=', true)
+              .where('override_category', 'is', null)
+              .orderBy('created_at', 'desc')
+              .orderBy('id')
+              .limit(limit - corrected.length)
+              .execute()
+          : [];
+      return {
+        corrected: corrected.flatMap((row) =>
+          row.override_category === null
+            ? []
+            : [
+                {
+                  excerpt: row.excerpt,
+                  category: row.category,
+                  overrideCategory: row.override_category,
+                },
+              ]
+        ),
+        unsure: unsure.map((row) => ({ excerpt: row.excerpt, category: row.category })),
+      };
+    },
   };
 }

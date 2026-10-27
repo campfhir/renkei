@@ -6,7 +6,10 @@
  * machine caller (API key) never sees this at all, confirm or not.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/db', () => ({
+  ...jest.requireActual<object>('@renkei/db'),
+  getDatabase: jest.fn(() => ({ ok: true, val: {} })),
+}));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ hasActiveGrant: jest.fn(async () => false) }));
 jest.mock('@renkei/agents/runs', () => ({
@@ -16,9 +19,9 @@ jest.mock('@renkei/agents/runs', () => ({
 jest.mock('@renkei/queue', () => ({ agentJobsQueue: jest.fn(() => ({ producer: {} })) }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
@@ -28,29 +31,23 @@ const { createAgentRun: mockCreateAgentRun, findInProgressRun: mockFindInProgres
   );
 const AGENT_ID = '00000000-0000-4000-8000-000000000001';
 
-const AGENT_ROW = {
-  id: AGENT_ID,
-  owner_subject: 'alice',
-  name: 'Portfolio Updater',
-  instructions: '## Goal\n\nGo.',
-  tools: [],
-  llm_model_id: null,
-  enabled: true,
-};
-
-/** `agents` is the only table this route still reads directly. */
-function stubDb() {
-  const chain = {
-    selectFrom: (table: string) => {
-      const row = table === 'agents' ? AGENT_ROW : undefined;
-      return {
-        select: () => ({
-          where: () => ({ executeTakeFirst: async () => row }),
-        }),
-      };
-    },
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: chain });
+/** The agent this route reads through the data store. */
+async function seedStore() {
+  const store = createMemoryDataStore();
+  await store.seed({
+    agents: [
+      {
+        id: AGENT_ID,
+        owner_subject: 'alice',
+        name: 'Portfolio Updater',
+        instructions: '## Goal\n\nGo.',
+        tools: JSON.stringify([]),
+        llm_model_id: null,
+        enabled: true,
+      },
+    ],
+  });
+  registerDataStore(store);
 }
 
 function request(body: unknown): NextRequest {
@@ -60,10 +57,11 @@ function request(body: unknown): NextRequest {
   });
 }
 
+afterEach(() => resetDataStore());
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
-  stubDb();
+  await seedStore();
   mockGetSession.mockResolvedValue({ subject: 'alice' });
   mockCreateAgentRun.mockResolvedValue({ ok: true, val: { runId: 'new-run' } });
   mockFindInProgressRun.mockResolvedValue(null);

@@ -173,8 +173,24 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
         .where('id', '=', agentId)
         .execute();
     },
+    async setEnabled(agentId, enabled) {
+      const row = await db()
+        .updateTable('agents')
+        .set({ enabled, updated_at: sql`NOW()` })
+        .where('id', '=', agentId)
+        .returning(['name'])
+        .executeTakeFirst();
+      return row ? { name: row.name } : null;
+    },
     async listTriggers(agentId) {
       return (await triggersOf([agentId])).get(agentId) ?? [];
+    },
+    async markTriggerFired(triggerId) {
+      await db()
+        .updateTable('agent_triggers')
+        .set({ last_fired_at: sql`NOW()`, last_error: null, updated_at: sql`NOW()` })
+        .where('id', '=', triggerId)
+        .execute();
     },
     async applyTriggerChanges(agentId, changes) {
       await db()
