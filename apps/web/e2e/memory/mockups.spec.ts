@@ -6,67 +6,30 @@
  * width; and the document behind each one is locked down (no network, no
  * cookies) because the model wrote it.
  *
- * Seeded straight into the tables, sealed the way the app seals them (same
- * as widget-card.spec.ts). The mockup documents are real — served by the
- * real route, compiled by the real esbuild, styled by the real Tailwind
- * runtime — nothing here is mocked: no vendor is involved.
- *
- * Read-only, so ids per Playwright project (not a tenant of its own) are
- * enough: the projects share one database, and each reseeds only its own
- * chat.
+ * The turn really runs: the scripted stand-in model
+ * (e2e/support/stub-model.ts) calls chat_show_mockup four times, and the
+ * app's own tool takes three and refuses the one that does not compile.
+ * The mockup documents are real — served by the real route, compiled by
+ * the real esbuild, styled by the real Tailwind runtime — nothing here is
+ * mocked: no vendor is involved.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { keyFor } from './keys';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel } from '../support/stub-model';
+import { createChat, send } from '../support/chat';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 /** The first hit on a route compiles it (`next dev` builds lazily): the 5s default is not enough. */
 const COLD = { timeout: 30_000 };
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    chatId: `dddddddd-dddd-4ddd-8ddd-dddddddddd${digit}1`,
-    turnId: `dddddddd-dddd-4ddd-8ddd-dddddddddd${digit}2`,
-    modelId: `dddddddd-dddd-4ddd-8ddd-dddddddddd${digit}3`,
-    title: `Design the settings screen (${digit})`,
-    modelLabel: `Mockup model ${digit}`,
-    settingsCall: `toolu_mockup_settings_${digit}`,
-    heroCall: `toolu_mockup_hero_${digit}`,
-    logoCall: `toolu_mockup_logo_${digit}`,
-    brokenCall: `toolu_mockup_broken_${digit}`,
-  };
-}
-type Ids = ReturnType<typeof idsFor>;
-
-/** `@renkei/crypto`'s content envelope, reproduced (see chat.spec.ts's note). */
-function secretbox(plaintext: string, encoded: string): string {
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
-const sealSecret = (plaintext: string) =>
-  secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
+const PROMPT = 'Show me the settings screen, a landing hero and a logo.';
 
 const SETTINGS_SOURCE = `import { useState } from 'react';
 
@@ -113,107 +76,16 @@ const LOGO_SOURCE = `<svg viewBox="0 0 200 80" width="200" height="80" xmlns="ht
   <text x="100" y="50" font-family="sans-serif" font-size="28" font-weight="700" fill="#fff" text-anchor="middle">renkei</text>
 </svg>`;
 
-async function seedChat(client: Client, ids: Ids): Promise<void> {
-  await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-  await client.query(
-    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
-    [ids.modelId, ids.modelLabel, 'http://127.0.0.1:8092/anthropic', sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
-  );
-  await client.query(
-    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
-    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
-  );
-  const chatKey = await keyFor(client, {
-    kind: 'chat',
-    resourceId: ids.chatId,
-    ownerSubject: E2E_SUBJECT,
-  });
-  await client.query(
-    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
-    [ids.turnId, ids.chatId, ids.modelId]
-  );
-  const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
-    {
-      seq: 1,
-      role: 'user',
-      kind: 'prompt',
-      blocks: [{ type: 'text', text: 'Show me the settings screen, a landing hero and a logo.' }],
-    },
-    {
-      seq: 2,
-      role: 'assistant',
-      kind: 'assistant',
-      blocks: [
-        { type: 'text', text: 'Here are three mockups.' },
-        {
-          type: 'tool_use',
-          id: ids.settingsCall,
-          name: 'chat_show_mockup',
-          input: { title: 'Settings page', format: 'react', source: SETTINGS_SOURCE },
-        },
-        {
-          type: 'tool_use',
-          id: ids.heroCall,
-          name: 'chat_show_mockup',
-          input: { title: 'Mobile hero', format: 'html', source: HERO_SOURCE, width: 390 },
-        },
-        {
-          type: 'tool_use',
-          id: ids.logoCall,
-          name: 'chat_show_mockup',
-          input: { title: 'Logo', format: 'svg', source: LOGO_SOURCE, width: 320 },
-        },
-        {
-          type: 'tool_use',
-          id: ids.brokenCall,
-          name: 'chat_show_mockup',
-          input: { title: 'Broken try', format: 'react', source: 'export default () => <div>;' },
-        },
-      ],
-    },
-    {
-      seq: 3,
-      role: 'user',
-      kind: 'tool_results',
-      blocks: [
-        {
-          type: 'tool_result',
-          toolUseId: ids.settingsCall,
-          content: 'Showed “Settings page” inline in the chat.',
-        },
-        {
-          type: 'tool_result',
-          toolUseId: ids.heroCall,
-          content: 'Showed “Mobile hero” inline in the chat.',
-        },
-        {
-          type: 'tool_result',
-          toolUseId: ids.logoCall,
-          content: 'Showed “Logo” inline in the chat.',
-        },
-        {
-          type: 'tool_result',
-          toolUseId: ids.brokenCall,
-          content: 'The component did not compile:\nline 1:30 — Unexpected end of file',
-          isError: true,
-        },
-      ],
-    },
-  ];
-  for (const row of rows) {
-    const assistant = row.role === 'assistant';
-    await client.query(
-      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
-      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
-    );
-  }
+interface Ids {
+  chatId: string;
+  title: string;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
     path: path.join(
       import.meta.dirname,
+      '..',
       '..',
       'test-results',
       'screens',
@@ -224,20 +96,51 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-let client: Client;
 let ids: Ids;
+let modelId = '';
 
-// eslint-disable-next-line no-empty-pattern -- Playwright reads fixtures off the first parameter's destructuring; this one needs none
-test.beforeEach(async ({}, testInfo) => {
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  ids = idsFor(testInfo.project.name);
-  await seedChat(client, ids);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  modelId = await addStubModel(page.request, tag, {
+    script: [
+      {
+        when: PROMPT,
+        steps: [
+          {
+            text: 'Here are three mockups.',
+            tools: [
+              {
+                name: 'chat_show_mockup',
+                input: { title: 'Settings page', format: 'react', source: SETTINGS_SOURCE },
+              },
+              {
+                name: 'chat_show_mockup',
+                input: { title: 'Mobile hero', format: 'html', source: HERO_SOURCE, width: 390 },
+              },
+              {
+                name: 'chat_show_mockup',
+                input: { title: 'Logo', format: 'svg', source: LOGO_SOURCE, width: 320 },
+              },
+              {
+                name: 'chat_show_mockup',
+                input: { title: 'Broken try', format: 'react', source: 'export default () => <div>;' },
+              },
+            ],
+          },
+          { text: 'Pick the one you like.' },
+        ],
+      },
+    ],
+  });
+  const title = `Design the settings screen ${tag}`;
+  const chatId = await createChat(page.request, { llmModelId: modelId, title });
+  await send(page.request, chatId, PROMPT, modelId);
+  ids = { chatId, title };
 });
 
-test.afterEach(async () => {
-  await client?.end();
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.project.name === 'desktop-light') await removeModel(page.request, modelId);
 });
 
 function inlineFrame(page: Page, title: string) {
@@ -247,6 +150,7 @@ function inlineFrame(page: Page, title: string) {
 const zoomLabel = (page: Page) => page.getByTestId('mockup-zoom');
 const zoomPercent = async (page: Page) =>
   Number.parseInt((await zoomLabel(page).innerText()) ?? '0');
+
 
 test('a reply’s mockups are drawn inline, each in its format, and a refused call draws none', async ({
   page,

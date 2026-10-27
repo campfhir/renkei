@@ -13,20 +13,21 @@
  * file per spec: voice.spec.ts's single utterance stays as it is.
  */
 
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
+import { test, expect } from './fixtures';
+import { removeModel } from '../support/stub-model';
 import {
-  CHAT_ID,
   CHAT_TITLE,
   RESULTS,
   UTTERANCE,
   mockVendor,
-  seedVoice,
   shot,
+  stageVoice,
   wav,
-} from './voice-fixtures';
+  type VoiceChat,
+} from '../support/voice';
 
 const FAKE_MIC = path.join(RESULTS, 'voice-barge-in-fake-mic.wav');
 
@@ -53,12 +54,12 @@ mkdirSync(RESULTS, { recursive: true });
 writeFileSync(FAKE_MIC, fakeMicrophone());
 
 test.use({
+  // The speech service and the chat's model are an operator's to stage.
+  roles: ['renkei-user', 'renkei-operator'],
   permissions: ['microphone'],
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here; the pinned Chromium runs every project.
   browserName: 'chromium',
   launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
     args: [
       '--no-sandbox',
       '--use-fake-ui-for-media-stream',
@@ -69,14 +70,14 @@ test.use({
   },
 });
 
-test.beforeAll(async () => {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await seedVoice(client);
-  } finally {
-    await client.end();
-  }
+let voice: VoiceChat;
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
+});
+
+test.afterEach(async ({ page }) => {
+  await removeModel(page.request, voice.modelId);
 });
 
 test('talking while the reply is worked out queues the next message instead of stopping it', async ({
@@ -88,7 +89,7 @@ test('talking while the reply is worked out queues the next message instead of s
   page.on('request', (request) => {
     if (/\/turns\/[^/]+\/cancel$/.test(request.url())) cancels += 1;
   });
-  await page.goto(`/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();

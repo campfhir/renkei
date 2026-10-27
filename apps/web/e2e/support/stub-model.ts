@@ -6,22 +6,88 @@
  * default, and a spec names it on what it runs (an agent's or a chat's
  * `llmModelId`) instead of relying on the org default.
  *
+ * A `script` makes it a scripted model: what it answers each chat turn —
+ * text, reasoning, tool calls, usage, a delay — rides on its base URL
+ * (llm-stub.mjs's header), so a turn the app really runs leaves exactly
+ * the rows a spec needs.
+ *
  * The caller must be an operator (`roles: ['renkei-user', 'renkei-operator']`).
  */
 
 import type { APIRequestContext } from '@playwright/test';
 import { LLM_STUB_BASE_URL } from '../memory/constants';
 
-export async function addStubModel(request: APIRequestContext, tag: string): Promise<string> {
+/** One model response: llm-stub.mjs plays these in order, a tool round trip apart. */
+export interface StubStep {
+  text?: string;
+  reasoning?: string;
+  tools?: { name: string; input?: Record<string, unknown> }[];
+  usage?: { input: number; output: number; cached?: number };
+  /** Held this long before answering. */
+  delayMs?: number;
+}
+
+export interface StubReply {
+  /** Text the person's last message contains; absent, any message. */
+  when?: string;
+  /** Also answer requests offering no tools (the one-shot title and summary calls). */
+  untooled?: boolean;
+  steps: StubStep[];
+}
+
+export interface StubModelOptions {
+  script?: StubReply[];
+  /**
+   * The wire dialect: 'openai' (the default) or 'anthropic', for signed
+   * thinking and the composer's thinking switch. Anthropic needs a script.
+   */
+  provider?: 'openai' | 'anthropic';
+  /** Default `Stub model <tag>`. */
+  label?: string;
+  contextWindow?: number;
+  /**
+   * An image model instead of a chat one: `images` is answered by
+   * llm-stub.mjs's Images endpoint; `flux` is a roster entry only.
+   */
+  image?: { apiSurface: 'images' | 'flux'; model: string };
+}
+
+export function stubBaseUrl(
+  script?: StubReply[],
+  provider: 'openai' | 'anthropic' = 'openai'
+): string {
+  const encoded = Buffer.from(JSON.stringify({ replies: script ?? [] })).toString('base64url');
+  if (provider === 'anthropic') {
+    return `${LLM_STUB_BASE_URL.replace(/\/v1$/, '')}/anthropic/script/${encoded}`;
+  }
+  if (!script) return LLM_STUB_BASE_URL;
+  return `${LLM_STUB_BASE_URL}/script/${encoded}`;
+}
+
+export async function addStubModel(
+  request: APIRequestContext,
+  tag: string,
+  options: StubModelOptions = {}
+): Promise<string> {
   const response = await request.post('/api/admin/llm-models', {
     data: {
-      label: `Stub model ${tag}`,
-      provider: 'openai',
-      model: 'stub-model',
-      baseUrl: LLM_STUB_BASE_URL,
+      label: options.label ?? `Stub model ${tag}`,
+      provider: options.provider ?? 'openai',
+      // An Anthropic model's name picks its generation (thinking, limits).
+      model:
+        options.image?.model ??
+        (options.provider === 'anthropic' ? 'claude-sonnet-4-5' : 'stub-model'),
+      baseUrl: stubBaseUrl(options.script, options.provider),
       apiKey: 'stub-key',
       enabled: true,
       isDefault: false,
+      ...(options.contextWindow ? { contextWindow: options.contextWindow } : {}),
+      ...(options.image
+        ? {
+            apiSurface: options.image.apiSurface,
+            ...(options.image.apiSurface === 'flux' ? { apiVersion: 'preview' } : {}),
+          }
+        : {}),
     },
   });
   const body: unknown = await response.json();
