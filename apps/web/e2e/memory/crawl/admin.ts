@@ -107,8 +107,8 @@ export const adminPages: CrawlPage[] = [
         },
       ],
     }),
-    // The leaderboard names the person whose chat spent the tokens.
-    expectText: /Memory Tester/,
+    // The seeded turn's tokens, on the chat surface.
+    expectText: '4.3k in · 1.2k out',
   },
   { path: '/admin/grants', expectText: 'Access' },
   { path: '/admin/redaction', expectText: 'Sensitive data' },
