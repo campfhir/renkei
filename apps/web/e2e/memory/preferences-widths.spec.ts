@@ -1,21 +1,14 @@
 /**
  * The preferences page at four widths.
  *
- * The act lists are laid out with CONTAINER queries, so what decides the
- * column count is the panel's own width — page max-width minus card and
- * panel padding — not the viewport. That indirection is exactly what makes
- * it worth looking at rather than reasoning about: the number below each
- * viewport is measured from the rendered grid, not assumed.
+ * Each connector's kinds of action open as a table — a row per kind, a
+ * column per channel — inside a panel whose width is the page's, not the
+ * viewport's. What is measured is that nothing in it spills out sideways,
+ * at a phone's width as at an ultrawide's.
  */
 
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { test, expect } from './fixtures';
 
 const WIDTHS = [
   { name: 'mobile', width: 390, height: 844 },
@@ -25,7 +18,10 @@ const WIDTHS = [
 ];
 
 for (const size of WIDTHS) {
-  test(`preferences at ${size.name} (${size.width}px)`, async ({ page }, testInfo) => {
+  test(`preferences at ${size.name} (${size.width}px)`, async ({
+    page,
+    person: _person,
+  }, testInfo) => {
     await page.setViewportSize({ width: size.width, height: size.height });
     await page.goto(`/preferences`);
     await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
@@ -37,45 +33,46 @@ for (const size of WIDTHS) {
     await expect(group.getByRole('heading', { name: 'Things your agents do' })).toBeVisible();
     await expect(group.getByRole('heading', { name: 'Pop-ups' })).toBeVisible();
 
-    // Columns are grouped by the left edge of each item; nothing may spill
-    // out of the viewport sideways.
+    // Each connector's kinds of action are a table of rows (one per kind,
+    // a column per channel); nothing may spill out of the viewport sideways.
     const measure = async (connector: string) => {
       await page.locator('details', { hasText: connector }).first().locator('summary').click();
       return page.evaluate(() => {
-        const items = [...document.querySelectorAll('details[open] ul li')];
-        const lefts = new Set(items.map((li) => Math.round(li.getBoundingClientRect().left)));
+        const rows = [...document.querySelectorAll('details[open] table tbody tr')];
+        // A table wider than a phone scrolls inside its own region (the
+        // table's parent): that region is what must fit.
+        const regions = [...document.querySelectorAll('details[open] table')].map(
+          (table) => table.parentElement
+        );
         return {
-          columns: lefts.size,
-          items: items.length,
+          rows: rows.length,
           overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
-          clipped: items.some((li) => li.getBoundingClientRect().right > window.innerWidth),
+          clipped: regions.some(
+            (region) => (region?.getBoundingClientRect().right ?? 0) > window.innerWidth + 1
+          ),
         };
       });
     };
 
     const jira = await measure('Jira');
-    expect(jira.items).toBeGreaterThan(20);
+    expect(jira.rows).toBeGreaterThanOrEqual(4);
     expect(jira.overflow).toBe(false);
     expect(jira.clipped).toBe(false);
-    expect(jira.columns).toBeGreaterThanOrEqual(size.width < 500 ? 1 : 2);
-
     await page.locator('details', { hasText: 'Jira' }).first().locator('summary').click();
 
-    // WebEx has three acts. Three columns of one item each is not a
-    // layout, so the ceiling has to come down with the list length.
     const webex = await measure('WebEx');
-    expect(webex.items).toBe(3);
-    expect(webex.columns).toBe(1);
+    expect(webex.rows).toBeGreaterThan(0);
+    expect(webex.overflow).toBe(false);
+    expect(webex.clipped).toBe(false);
     await page.locator('details', { hasText: 'WebEx' }).first().locator('summary').click();
-    await page.locator('details', { hasText: 'Jira' }).first().locator('summary').click();
-
-    console.log(`${size.name} ${size.width}px → Jira ${jira.columns}, WebEx ${webex.columns}`);
 
     await page.screenshot({
       path: path.join(
         import.meta.dirname,
         '..',
+        '..',
         'test-results',
+        'memory',
         'screens',
         testInfo.project.name,
         `prefs-${size.name}.png`

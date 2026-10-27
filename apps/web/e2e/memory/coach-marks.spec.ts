@@ -6,68 +6,32 @@
  * one; "Don't show tutorials" and the page's switch both stop tours
  * starting unasked; and the operator's report shows the rows.
  *
- * Signs in as a subject of its own — one per project, since the three
- * projects run side by side against one database — so the shared `e2e`
- * person (tours switched off by the seed) keeps every other spec free of
- * overlays, and this spec's rows are its own to assert on.
+ * One person per project walks the whole file (the tests build on each
+ * other's progress), signed in through the suite's sign-in route with
+ * the tours left on — every other spec's person has them off — and read
+ * back through the coach-mark and preference routes the engine itself
+ * reports to. The tours switch is organization-wide, so the file holds
+ * the suite's shared lock on it (coach-marks-off.spec.ts flips it).
  */
 
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SLUG } from './seed';
+import { randomUUID } from 'node:crypto';
+import { test as base, expect, request as playwrightRequest } from '@playwright/test';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import { MEMORY_BASE_URL } from './constants';
+import { createPerson, signIn, type Person } from '../support/person';
+import { holdShared, type Release } from '../support/org-lock';
 
-test.describe.configure({ mode: 'serial' });
-
-/** This project's own person and session — stable, so the cookie can be set before the rows are. */
-const subjectFor = (project: string) => `e2e-coach-${project}@example.com`;
-function sessionIdFor(project: string): string {
-  const hex = createHash('sha1').update(`coach-marks:${project}`).digest('hex');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
-}
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-  // Every context this spec opens is this project's person, not the shared
-  // e2e user: the cookie has the same name as storageState's, so it wins.
-  // eslint-disable-next-line no-empty-pattern
-  storageState: async ({}, use, testInfo) => {
-    await use({
-      cookies: [
-        {
-          name: `renkei_session`,
-          value: sessionIdFor(testInfo.project.name),
-          domain: '127.0.0.1',
-          path: '/',
-          expires: -1,
-          httpOnly: true,
-          secure: false,
-          sameSite: 'Lax',
-        },
-      ],
-      origins: [],
-    });
-  },
-});
+base.describe.configure({ mode: 'serial', timeout: 120_000 });
 
 const CARD = 'coach-mark';
+const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   // The spotlight slides between steps (a 200ms transition): let it land.
   await page.waitForTimeout(350);
   await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      `${name}.png`
-    ),
+    path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
     // The overlay is fixed to the viewport; a full-page resize would move it.
     fullPage: false,
   });
@@ -79,59 +43,61 @@ async function expectNoTour(page: Page): Promise<void> {
   await expect(page.getByTestId(CARD)).toHaveCount(0);
 }
 
-interface ProgressRow {
-  status: string;
-  step_reached: number;
-  steps_total: number;
-  view_count: number;
-  completed_count: number;
-  dismissed_count: number;
-}
+// One person for the whole walk — the tests build on each other's
+// progress — made once per project with the tours left on, and the
+// suite's lock on the org-wide tours switch held throughout.
+let api: APIRequestContext;
+let person: Person;
+let release: Release;
 
-let client: Client;
-let subject: string;
-
-async function progressOf(tourId: string): Promise<ProgressRow | null> {
-  const result = await client.query<ProgressRow>(
-    `SELECT status, step_reached, steps_total, view_count, completed_count, dismissed_count\n       FROM coach_mark_progress\n      WHERE subject = $1 AND tour_id = $2`,
-    [subject, tourId]
-  );
-  return result.rows[0] ?? null;
-}
-
-async function autoStartPref(): Promise<boolean | null> {
-  const result = await client.query<{ value: { autoStart?: boolean } }>(
-    `SELECT value FROM user_preferences\n      WHERE subject = $1 AND key = 'coach_marks'`,
-    [subject]
-  );
-  return result.rows[0]?.value.autoStart ?? null;
-}
+const test = base.extend<{ signedIn: Person }>({
+  signedIn: async ({ page }, use) => {
+    await signIn(page.context(), person);
+    await use(person);
+  },
+});
 
 // eslint-disable-next-line no-empty-pattern
-test.beforeAll(async ({}, testInfo) => {
-  subject = subjectFor(testInfo.project.name);
-  client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
+base.beforeAll(async ({}, testInfo) => {
+  release = await holdShared('tours');
+  api = await playwrightRequest.newContext({ baseURL: MEMORY_BASE_URL });
+  person = await createPerson(api, {
+    roles: ['renkei-user', 'renkei-operator'],
+    // Unique, so the report's row is this run's person and no earlier one's.
+    displayName: `Coach Tester ${testInfo.project.name.replace('desktop-', '')} ${randomUUID().slice(0, 6)}`,
+    coachMarks: true,
+  });
+});
 
-  // A clean slate for this person: no rows, no preference, a fresh session.
-  await client.query('DELETE FROM coach_mark_progress WHERE subject = $1', [subject]);
-  await client.query('DELETE FROM user_preferences WHERE subject = $1', [subject]);
-  await client.query('DELETE FROM sessions WHERE subject = $1', [subject]);
-  // No identities row on purpose: the usage screenshots count the tenant's
-  // identities and expect the seed's one. The report names this person by
-  // subject instead, which is what it does for anyone the spine lacks.
-  await client.query(
-    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
-    [sessionIdFor(testInfo.project.name), subject, ['renkei-user', 'renkei-operator']]
+base.afterAll(async () => {
+  await api?.dispose();
+  await release?.();
+});
+
+/** The person's row for one tour, as the coach-mark route reads it back. */
+async function progressOf(tourId: string): Promise<Record<string, unknown> | null> {
+  const response = await api.get('/api/coach-marks', { headers: person.headers });
+  const body: unknown = await response.json();
+  const rows =
+    typeof body === 'object' && body !== null && 'progress' in body && Array.isArray(body.progress)
+      ? body.progress
+      : [];
+  const row: unknown = rows.find(
+    (entry: unknown) =>
+      typeof entry === 'object' && entry !== null && 'tourId' in entry && entry.tourId === tourId
   );
-});
+  return typeof row === 'object' && row !== null ? { ...row } : null;
+}
 
-test.afterAll(async () => {
-  await client.end();
-});
+async function autoStartPref(): Promise<unknown> {
+  const response = await api.get('/api/preferences', { headers: person.headers });
+  const body = await response.json();
+  return body.coachMarks?.autoStart ?? null;
+}
 
 test('the welcome tour greets a newcomer on the home page and records a completion', async ({
   page,
+  signedIn: _signedIn,
 }, testInfo) => {
   await page.goto(`/`);
   const card = page.getByTestId(CARD);
@@ -188,11 +154,11 @@ test('the welcome tour greets a newcomer on the home page and records a completi
     .poll(() => progressOf('welcome'), { message: 'the completion is recorded' })
     .toMatchObject({
       status: 'completed',
-      step_reached: 5,
-      steps_total: 6,
-      view_count: 1,
-      completed_count: 1,
-      dismissed_count: 0,
+      stepReached: 5,
+      stepsTotal: 6,
+      viewCount: 1,
+      completedCount: 1,
+      dismissedCount: 0,
     });
 
   // Finished means finished: it does not come back. The next home-page
@@ -209,7 +175,10 @@ test('the welcome tour greets a newcomer on the home page and records a completi
   await expectNoTour(page);
 });
 
-test('skipping a tour records the dismissal and where it happened', async ({ page }, testInfo) => {
+test('skipping a tour records the dismissal and where it happened', async ({
+  page,
+  signedIn: _signedIn,
+}, testInfo) => {
   await page.goto(`/agents`);
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
@@ -228,11 +197,11 @@ test('skipping a tour records the dismissal and where it happened', async ({ pag
     .poll(() => progressOf('agents'))
     .toMatchObject({
       status: 'dismissed',
-      step_reached: 1,
-      steps_total: 3,
-      view_count: 1,
-      completed_count: 0,
-      dismissed_count: 1,
+      stepReached: 1,
+      stepsTotal: 3,
+      viewCount: 1,
+      completedCount: 0,
+      dismissedCount: 1,
     });
 
   await page.reload();
@@ -240,7 +209,7 @@ test('skipping a tour records the dismissal and where it happened', async ({ pag
   await expectNoTour(page);
 });
 
-test('Escape skips as well', async ({ page }) => {
+test('Escape skips as well', async ({ page, signedIn: _signedIn }) => {
   await page.goto(`/connectors`);
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
@@ -251,12 +220,13 @@ test('Escape skips as well', async ({ page }) => {
     .poll(() => progressOf('connectors'))
     .toMatchObject({
       status: 'dismissed',
-      dismissed_count: 1,
+      dismissedCount: 1,
     });
 });
 
 test('the Tutorials page lists every tour with its state and replays one', async ({
   page,
+  signedIn: _signedIn,
 }, testInfo) => {
   await page.goto(`/agents`);
   await page.getByRole('button', { name: 'Account menu' }).click();
@@ -282,7 +252,7 @@ test('the Tutorials page lists every tour with its state and replays one', async
   await page.getByTestId('tutorial-welcome').getByRole('button', { name: 'Replay' }).click();
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
-  await expect(page).toHaveURL(new RegExp(`/${E2E_SLUG}$`));
+  await expect(page).toHaveURL(/\/$/);
   await expect(card).toHaveAttribute('data-coach-tour', 'welcome');
   await expect(card.getByRole('button', { name: "Don't show tutorials" })).toHaveCount(0);
   await shot(page, testInfo, 'coach-replay');
@@ -294,15 +264,16 @@ test('the Tutorials page lists every tour with its state and replays one', async
     .poll(() => progressOf('welcome'))
     .toMatchObject({
       status: 'dismissed',
-      view_count: 2,
-      completed_count: 1,
-      dismissed_count: 1,
+      viewCount: 2,
+      completedCount: 1,
+      dismissedCount: 1,
     });
 
   // Start, for a tour never taken: the chat's, which begins on a fresh thread.
   await page.goto(`/tutorials`);
   await page.getByTestId('tutorial-chat').getByRole('button', { name: 'Start' }).click();
-  await expect(card).toBeVisible();
+  // A fresh thread is made on the way: the first visit compiles the chat.
+  await expect(card).toBeVisible({ timeout: 30_000 });
   await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}`));
   await expect(card).toHaveAttribute('data-coach-tour', 'chat');
   await expect(card).toHaveAttribute('data-coach-step', 'composer');
@@ -322,12 +293,13 @@ test('the Tutorials page lists every tour with its state and replays one', async
     .poll(() => progressOf('chat'))
     .toMatchObject({
       status: 'completed',
-      completed_count: 1,
+      completedCount: 1,
     });
 });
 
 test('"Don\'t show tutorials" and the switch both stop tours starting unasked', async ({
   page,
+  signedIn: _signedIn,
 }, testInfo) => {
   // The operator console's tour has not been seen: it starts, and the
   // offer to stop them all is taken.
@@ -347,13 +319,9 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
   await expect(toggle).not.toBeChecked();
   await shot(page, testInfo, 'coach-tutorials-off');
 
-  // Off: a tour never taken (the agents' was skipped; reset it) stays away.
-  await client.query('DELETE FROM coach_mark_progress WHERE subject = $1 AND tour_id = $2', [
-    subject,
-    'agents',
-  ]);
-  await page.goto(`/agents`);
-  await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
+  // Off: a tour never taken (the Preferences page's) stays away.
+  await page.goto(`/preferences`);
+  await expect(page.getByRole('heading', { level: 1, name: 'Preferences' })).toBeVisible();
   await expectNoTour(page);
 
   // On again: it comes.
@@ -361,49 +329,54 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
   await toggle.click();
   await expect(toggle).toBeChecked();
   await expect.poll(() => autoStartPref()).toBe(true);
-  await page.goto(`/agents`);
+  await page.goto(`/preferences`);
   await expect(card).toBeVisible();
-  await expect(card).toHaveAttribute('data-coach-tour', 'agents');
+  await expect(card).toHaveAttribute('data-coach-tour', 'preferences');
   await card.getByRole('button', { name: 'Skip tour' }).click();
   await expect(card).toHaveCount(0);
-  await expect.poll(() => progressOf('agents')).toMatchObject({ status: 'dismissed' });
+  await expect.poll(() => progressOf('preferences')).toMatchObject({ status: 'dismissed' });
 });
 
-test('the operator report shows who viewed, finished and skipped', async ({ page }, testInfo) => {
+test('the operator report shows who viewed, finished and skipped', async ({
+  page,
+  signedIn: _signedIn,
+}, testInfo) => {
   await page.goto(`/admin/tutorials`);
   await expect(page.getByRole('heading', { level: 1, name: 'Tutorials' })).toBeVisible();
-  // The report has a tour of its own, and this person may still have
-  // auto-start on: let it greet, then skip it, so the table below is
-  // clickable. The table was rendered before the skip, so its numbers are
-  // the ones asserted here.
-  await page.waitForTimeout(1200);
-  if ((await page.getByTestId('coach-mark').count()) > 0) {
-    await page.keyboard.press('Escape');
-    await expect(page.getByTestId('coach-mark')).toHaveCount(0);
-  }
+  // The report has a tour of its own, and this person has auto-start on
+  // again: let it greet, skip it, and read the report once the skip is
+  // recorded, so the numbers below count it.
+  const card = page.getByTestId(CARD);
+  await expect(card).toHaveAttribute('data-coach-tour', 'admin-tutorials', { timeout: 15_000 });
+  await page.keyboard.press('Escape');
+  await expect(card).toHaveCount(0);
+  await expect.poll(() => progressOf('admin-tutorials')).toMatchObject({ status: 'dismissed' });
+  await page.reload();
+  await expect(page.getByRole('heading', { level: 1, name: 'Tutorials' })).toBeVisible();
   // The totals count everyone in the tenant — the other projects' people
   // included — so the assertion is on this person's own row.
-  const row = page.getByTestId('tutorial-person').filter({ hasText: subject });
+  const row = page.getByTestId('tutorial-person').filter({ hasText: person.displayName });
   await expect(row).toHaveCount(1);
-  // chat completed; welcome (replayed, then skipped), agents, connectors
-  // (Escape) and admin ("don't show") skipped.
+  // chat completed; welcome (replayed, then skipped), shortcuts, agents,
+  // connectors (Escape), admin ("don't show"), preferences and this
+  // report's own tour skipped.
   await expect(row.getByTestId('person-completed')).toHaveText('1');
-  await expect(row.getByTestId('person-skipped')).toHaveText('4');
+  await expect(row.getByTestId('person-skipped')).toHaveText('7');
   await expect(row.getByTestId('person-in-progress')).toHaveText('0');
   await expect(row.getByText('Welcome to Renkei')).toBeVisible();
   await expect(page.getByTestId('tour-totals-welcome')).toBeVisible();
   await shot(page, testInfo, 'coach-admin-report');
 
-  // Five tours seen, four chips in the row: the fifth is behind "+1",
+  // Eight tours seen, four chips in the row: the rest are behind "+4",
   // which opens every tour as a table.
   const more = row.getByTestId('person-tours-more');
-  await expect(more).toHaveText('+1');
+  await expect(more).toHaveText('+4');
   await more.click();
   const dialog = page.getByRole('dialog');
   // Rendered twice — a table for a desktop, a card list for a phone —
   // and one of the two is on screen.
   const rows = dialog.getByTestId('person-tour').filter({ visible: true });
-  await expect(rows).toHaveCount(5);
+  await expect(rows).toHaveCount(8);
   await expect(rows.filter({ hasText: 'Chat' })).toContainText('Completed');
   await shot(page, testInfo, 'coach-admin-report-person');
   await page.keyboard.press('Escape');

@@ -247,7 +247,13 @@ const handler = async (request: NextRequest): Promise<Response> => {
       availability.webSearchAvailable ||
       availability.mcpServers.length > 0;
 
-    if (grants.length === 0 && !anyOtherConnector) {
+    // The connect-Jira pointer is for an MCP client a person points here.
+    // An agent-runner token (an agent run, a chat turn) never shows it to
+    // anyone, and its owner still has Renkei's own tools — cards, agents,
+    // the sandbox — which the tool catalog offers them with nothing
+    // connected: serving the pointer instead left an agent built with
+    // card_create unable to call it ("not available to this agent").
+    if (grants.length === 0 && !anyOtherConnector && tokenRecord.application !== 'agent') {
       // Nothing connected at all — serve only the jira_connect pointer.
       const mcpHandler = createMcpHandler(
         async (server: McpServer) => {

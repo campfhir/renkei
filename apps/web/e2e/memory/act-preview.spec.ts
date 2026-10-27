@@ -3,10 +3,14 @@
  * the preview every act tool without a hand-written one draws in chat, one
  * layout per kind of act (act-card.ts).
  *
- * Seeded straight into the tables like directory-action-preview.spec.ts —
- * the real widget route, the real built bundle, the real chat thread; only
- * the confirm button's `tools/call` is mocked at the browser edge, since
- * for real it would reach Jira.
+ * The real widget route, the real built bundle, the real chat thread: the
+ * person asks in a chat on the stand-in model and the turn runs for real;
+ * what the vendors' preview tools would have answered the model with —
+ * they need the person's Jira, GitHub, Microsoft… grants, which only an
+ * OAuth sign-in makes — is handed to the page as that turn's rows at the
+ * stream's browser edge (e2e/support/tool-cards.ts). The confirm button's
+ * `tools/call` is answered there too, since for real it would reach Jira;
+ * the note and the model's reply after it are real.
  *
  * Proves:
  *  - a comment card shows the comment where it will land, lets the person
@@ -17,65 +21,23 @@
  *    for review) and none overflows a phone-width viewport.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { keyFor } from './keys';
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { LLM_STUB_REPLY } from './constants';
+import { addStubModel, removeModel } from '../support/stub-model';
+import { createChat, sendForCards, widgetUri } from '../support/tool-cards';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const COLD = { timeout: 30_000 };
-const STUB_MODEL_BASE_URL = 'http://127.0.0.1:8092/anthropic';
-
-function widgetUri(generatedFile: string, name: string): string {
-  const source = readFileSync(
-    path.join(import.meta.dirname, '..', 'lib', 'mcp-widgets', 'generated', generatedFile),
-    'utf8'
-  );
-  const match = source.match(/_HASH: string = "([0-9a-f]+)"/);
-  if (!match) throw new Error(`No hash constant found in ${generatedFile}`);
-  return `ui://widget/${name}.${match[1]}.html`;
-}
+const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 const ACT_PREVIEW_URI = widgetUri('act-preview.ts', 'act-preview');
 
-function idsFor(project: string, variant: '1' | '2' | '3' | '4') {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    chatId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeee${variant}${digit}1`,
-    turnId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeee${variant}${digit}2`,
-    modelId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeee${variant}${digit}3`,
-    title: `Act preview (${variant}${digit})`,
-    modelLabel: `Act preview model ${variant}${digit}`,
-  };
-}
-type Ids = ReturnType<typeof idsFor>;
+// Staging the stand-in model on the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-function secretbox(plaintext: string, encoded: string): string {
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
-const sealSecret = (plaintext: string) =>
-  secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
-
-/** One seeded preview: the tool the model called and the card it answered with. */
+/** One preview: the tool the model called and the card it answered with. */
 interface SeededCard {
   tool: string;
   input: Record<string, unknown>;
@@ -94,7 +56,7 @@ function card(
     input,
     card: {
       kind: 'act',
-      previewId: `e2e-act-${process.pid}-${nextPreview}-${Date.now()}`,
+      previewId: `e2e-act-${nextPreview}-${randomUUID()}`,
       tone: 'neutral',
       confirmTool: `${tool.replace(/_preview$/, '')}_confirm`,
       confirmArgs: input,
@@ -414,94 +376,38 @@ function gallery(): SeededCard[] {
   ];
 }
 
-async function seedChat(client: Client, ids: Ids, cards: SeededCard[]): Promise<void> {
-  await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-  await client.query(
-    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)
-     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
-    [
-      ids.modelId,
-      ids.modelLabel,
-      STUB_MODEL_BASE_URL,
-      sealSecret(JSON.stringify({ apiKey: 'e2e' })),
-    ]
-  );
-  await client.query(
-    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)
-     VALUES ($1, $2, $3, $4, NOW())`,
-    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
-  );
-  const chatKey = await keyFor(client, {
-    kind: 'chat',
-    resourceId: ids.chatId,
-    ownerSubject: E2E_SUBJECT,
+/** A chat of the person's own on the stand-in model, the cards shown as the reply. */
+async function openCardChat(
+  page: Page,
+  testInfo: TestInfo,
+  cards: SeededCard[]
+): Promise<{ modelId: string; title: string }> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
+  const title = `Act preview (${tag})`;
+  const chatId = await createChat(page.request, { modelId, title });
+  await page.goto(`/chat/${chatId}`);
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible(COLD);
+  await sendForCards(page, {
+    chatId,
+    modelId,
+    prompt: 'Do these for me.',
+    assistantText: 'Here are previews — nothing changes until you confirm.',
+    cards: cards.map((seeded, index) => ({
+      toolUseId: `toolu_act_${index}`,
+      tool: seeded.tool,
+      input: seeded.input,
+      content: 'Awaiting the user’s decision on the preview card.',
+      uiResourceUri: ACT_PREVIEW_URI,
+      structuredContent: seeded.card,
+    })),
   });
-  await client.query(
-    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)
-     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
-    [ids.turnId, ids.chatId, ids.modelId]
-  );
-  const toolUseId = (index: number) => `toolu_act_${ids.chatId.slice(-5)}_${index}`;
-  const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
-    { seq: 1, role: 'user', kind: 'prompt', blocks: [{ type: 'text', text: 'Do these for me.' }] },
-    {
-      seq: 2,
-      role: 'assistant',
-      kind: 'assistant',
-      blocks: [
-        { type: 'text', text: 'Here are previews — nothing changes until you confirm.' },
-        ...cards.map((seeded, index) => ({
-          type: 'tool_use',
-          id: toolUseId(index),
-          name: seeded.tool,
-          input: seeded.input,
-        })),
-      ],
-    },
-    {
-      seq: 3,
-      role: 'user',
-      kind: 'tool_results',
-      blocks: cards.map((seeded, index) => ({
-        type: 'tool_result',
-        toolUseId: toolUseId(index),
-        content: 'Awaiting the user’s decision on the preview card.',
-        uiResourceUri: ACT_PREVIEW_URI,
-        structuredContent: seeded.card,
-      })),
-    },
-  ];
-  for (const row of rows) {
-    const assistant = row.role === 'assistant';
-    await client.query(
-      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)
-       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
-      [
-        ids.chatId,
-        ids.turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? ids.modelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-      ]
-    );
-  }
+  return { modelId, title };
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      name
-    ),
+    path: path.join(RESULTS, 'screens', testInfo.project.name, name),
     fullPage: true,
   });
 }
@@ -532,31 +438,13 @@ async function waitForCardHeightBelow(page: Page, maxHeight: number): Promise<vo
   await expect.poll(() => cardHeight(page), COLD).toBeLessThan(maxHeight);
 }
 
-async function decisionTurn(
-  client: Client,
-  chatId: string
-): Promise<{ status: string; noteTurnId: string | null } | null> {
-  const { rows } = await client.query<{ status: string; note_turn_id: string | null }>(
-    `SELECT t.status, m.turn_id AS note_turn_id
-       FROM chat_messages m
-       LEFT JOIN chat_turns t ON t.id = m.turn_id
-      WHERE m.chat_id = $1 AND m.kind = 'note'
-      ORDER BY m.seq DESC LIMIT 1`,
-    [chatId]
-  );
-  const row = rows[0];
-  return row ? { status: row.status, noteTurnId: row.note_turn_id } : null;
-}
-
 test('a comment card shows the comment, takes the person’s rewrite, and confirms THEIR words', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const ids = idsFor(testInfo.project.name, '1');
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
   try {
-    await seedChat(client, ids, [commentCard()]);
     const confirmCall: { value: { name: unknown; arguments: unknown } | null } = { value: null };
     await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
       confirmCall.value = route.request().postDataJSON();
@@ -571,8 +459,7 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
       });
     });
 
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+    ({ modelId } = await openCardChat(page, testInfo, [commentCard()]));
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
     await expect(frame.locator('.card-title')).toHaveText('Comment on PROJ-12', COLD);
@@ -601,28 +488,23 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
     await expect(
       noteLine(page, 'The user confirmed "Comment on PROJ-12" on the preview card')
     ).toBeVisible(COLD);
-    await expect(page.getByText('Stub model: I saw')).toBeVisible(COLD);
-    await expect
-      .poll(() => decisionTurn(client, ids.chatId), COLD)
-      .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
+    // The decision opened a turn of its own, and the model answered it.
+    await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
   } finally {
-    await client.end();
+    if (modelId) await removeModel(page.request, modelId);
   }
 });
 
-test('cancelling a card runs nothing', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const ids = idsFor(testInfo.project.name, '2');
+test('cancelling a card runs nothing', async ({ page, person: _person }, testInfo) => {
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
   try {
-    await seedChat(client, ids, [commentCard()]);
     let confirmed = false;
     await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
       confirmed = true;
       await route.abort();
     });
-    await page.goto(`/chat/${ids.chatId}`);
+    ({ modelId } = await openCardChat(page, testInfo, [commentCard()]));
     const frame = page.frameLocator('iframe[title="Preview card"]');
     await expect(frame.locator('.card-title')).toHaveText('Comment on PROJ-12', COLD);
     await frame.getByRole('button', { name: 'Cancel' }).click();
@@ -632,20 +514,19 @@ test('cancelling a card runs nothing', async ({ page }, testInfo) => {
     ).toBeVisible(COLD);
     expect(confirmed).toBe(false);
   } finally {
-    await client.end();
+    if (modelId) await removeModel(page.request, modelId);
   }
 });
 
-test('every kind of card draws, and none overflows a phone', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const ids = idsFor(testInfo.project.name, '3');
+test('every kind of card draws, and none overflows a phone', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
   const cards = gallery();
+  let modelId: string | null = null;
   try {
-    await seedChat(client, ids, cards);
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+    ({ modelId } = await openCardChat(page, testInfo, cards));
 
     const frames = page.locator('iframe[title="Preview card"]');
     await expect(frames).toHaveCount(cards.length, COLD);
@@ -663,9 +544,7 @@ test('every kind of card draws, and none overflows a phone', async ({ page }, te
       await frames.nth(index).scrollIntoViewIfNeeded();
       await frames.nth(index).screenshot({
         path: path.join(
-          import.meta.dirname,
-          '..',
-          'test-results',
+          RESULTS,
           'screens',
           testInfo.project.name,
           `act-preview-${String(index + 1).padStart(2, '0')}-${seeded.tool.replace(/_preview$/, '')}.png`
@@ -686,6 +565,6 @@ test('every kind of card draws, and none overflows a phone', async ({ page }, te
     }
     await shot(page, testInfo, 'act-preview-gallery-mobile.png');
   } finally {
-    await client.end();
+    if (modelId) await removeModel(page.request, modelId);
   }
 });

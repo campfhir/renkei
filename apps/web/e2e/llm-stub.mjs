@@ -9,6 +9,17 @@
  *                               the reply is that tool call, so the run
  *                               ends `done` with the fixed summary; any
  *                               other request gets the fixed text.
+ *
+ * A scripted reply, for a spec that needs the model to do something in
+ * particular (stage actions, ask a question, call a read tool): put
+ *
+ *   [[stub-script]][{"tool":"ask_person","args":{…}},{"text":"…"}][[/stub-script]]
+ *
+ * anywhere in what the model is sent — an agent's instructions, a chat
+ * message. Reply n (n = the assistant messages already in the request)
+ * is step n: a `tool` step is that one tool call with its `args` (and
+ * `text` beside it, if given), a `text` step that text alone. Past the last step, or with no script at all,
+ * the reply is the default above.
  *   GET  /v1/models             one model, `stub-model`
  *   GET  /health
  *
@@ -44,9 +55,56 @@ function offersFinishRun(body) {
   );
 }
 
+const SCRIPT = /\[\[stub-script\]\]([\s\S]*?)\[\[\/stub-script\]\]/;
+
+function textOf(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('\n');
+  }
+  return '';
+}
+
+/** The scripted step for this request, or null for the default reply. */
+function scriptedStep(body) {
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  for (const entry of messages) {
+    const match = SCRIPT.exec(textOf(entry?.content));
+    if (!match) continue;
+    let steps;
+    try {
+      steps = JSON.parse(match[1]);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(steps)) return null;
+    const replied = messages.filter((m) => m?.role === 'assistant').length;
+    return steps[replied] ?? null;
+  }
+  return null;
+}
+
+let nextCall = 0;
+
 const USAGE = { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 };
 
 function message(body) {
+  const step = scriptedStep(body);
+  if (step && typeof step.tool === 'string') {
+    nextCall += 1;
+    return {
+      role: 'assistant',
+      content: typeof step.text === 'string' ? step.text : null,
+      tool_calls: [
+        {
+          id: `call_stub_${nextCall}`,
+          type: 'function',
+          function: { name: step.tool, arguments: JSON.stringify(step.args ?? {}) },
+        },
+      ],
+    };
+  }
+  if (step && typeof step.text === 'string') return { role: 'assistant', content: step.text };
   if (!offersFinishRun(body)) return { role: 'assistant', content: STUB_REPLY };
   return {
     role: 'assistant',
@@ -82,6 +140,7 @@ function sendStream(response, body) {
     );
   const reply = message(body);
   if (reply.tool_calls) {
+    if (reply.content) chunk({ role: 'assistant', content: reply.content });
     chunk({
       role: 'assistant',
       tool_calls: reply.tool_calls.map((call, index) => ({ index, ...call })),
@@ -89,7 +148,7 @@ function sendStream(response, body) {
     chunk({}, 'tool_calls', USAGE);
   } else {
     chunk({ role: 'assistant', content: '' });
-    for (const word of STUB_REPLY.split(/(?<= )/)) chunk({ content: word });
+    for (const word of reply.content.split(/(?<= )/)) chunk({ content: word });
     chunk({}, 'stop', USAGE);
   }
   response.write('data: [DONE]\n\n');
