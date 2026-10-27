@@ -32,7 +32,6 @@ jest.mock('@/lib/sandbox/service-client', () => ({
   sbWriteFile: jest.fn(),
   sbDeleteFile: jest.fn(),
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn(() => ({ ok: true, val: {} })) }));
 jest.mock('@/lib/chat/models', () => ({ listImageModels: jest.fn(async () => []) }));
 
 import { err, ok } from '@campfhir/safe-functions/helpers';

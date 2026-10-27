@@ -6,10 +6,6 @@
  * manual, api, chained) gets the same "already in progress?" pause.
  */
 
-jest.mock('@renkei/db', () => ({
-  ...jest.requireActual<object>('@renkei/db'),
-  getDatabase: jest.fn(() => ({ ok: true, val: {} })),
-}));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({ resolveAgentAccess: jest.fn() }));
 jest.mock('@renkei/agents/runs', () => ({

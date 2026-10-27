@@ -7,10 +7,6 @@
  * be presentable as the whole. The rest is plumbing.
  */
 
-// The orchestrator reaches ../common for withPresentationHint, which pulls in
-// @renkei/db and its ESM kysely import that jest's CJS runtime cannot parse.
-// Stubbed rather than migrated, matching the other tool suites here.
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn(() => ({ ok: false })) }));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,

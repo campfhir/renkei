@@ -6,7 +6,6 @@
  * that matter are the ones proving each honours the right notion of time.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn(() => ({ ok: false })) }));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,

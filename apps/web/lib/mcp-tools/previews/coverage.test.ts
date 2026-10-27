@@ -15,15 +15,6 @@
 
 const fetchSpy = jest.fn();
 
-jest.mock('kysely', () => ({
-  sql: Object.assign(() => ({ as: () => ({}) }), {
-    raw: () => ({}),
-    join: () => ({}),
-    ref: () => ({}),
-    lit: () => ({}),
-  }),
-}));
-
 jest.mock('@/lib/logger', () => ({
   logger: {
     info: jest.fn(),
@@ -65,22 +56,6 @@ jest.mock('@renkei/db', () => ({
     },
   }),
   memoryDataStoreRequested: () => false,
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: (_table: string) => {
-        const chain = {
-          select: () => chain,
-          where: () => chain,
-          limit: () => chain,
-          executeTakeFirst: async () => GRANT,
-          // Every grant of a provider (Salesforce: one per connected org).
-          execute: async () => [GRANT],
-        };
-        return chain;
-      },
-    },
-  }),
 }));
 
 jest.mock('@renkei/settings', () => ({

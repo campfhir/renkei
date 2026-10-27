@@ -4,7 +4,6 @@
  * requester is told), and only while it waits for review.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/admin-changes/notify', () => ({ notifyChangeOutcome: jest.fn() }));
 jest.mock('@/lib/jira-admin/change-requests', () => ({

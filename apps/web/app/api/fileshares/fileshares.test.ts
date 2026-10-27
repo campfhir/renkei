@@ -10,7 +10,6 @@
 jest.mock('@/lib/session', () => ({
   getSessionFromRequest: jest.fn(async () => ({ subject: 'auth0|alice' })),
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/settings', () => ({
   getOrgSettings: async () => ({ ok: true, val: { maxAttachmentBytes: 1024 } }),
 }));

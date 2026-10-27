@@ -6,7 +6,6 @@
  */
 
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/connector-fileshares', () => ({ listConnectedShares: jest.fn() }));
 jest.mock('@/lib/batch-jobs/start-document-ocr-pipeline', () => ({
   startDocumentOcrPipeline: jest.fn(),

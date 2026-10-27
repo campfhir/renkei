@@ -9,18 +9,8 @@
  * catalog entry fails the suite rather than the admin.
  *
  * The mocks exist only so `registry.ts` can be imported: registration code
- * pulls in every tool module, and several of those touch kysely or the
- * database at module scope. Nothing here runs a query.
+ * pulls in every tool module. Nothing here reads stored data.
  */
-
-jest.mock('kysely', () => ({
-  sql: Object.assign(() => ({ as: () => ({}) }), {
-    raw: () => ({}),
-    join: () => ({}),
-    ref: () => ({}),
-    lit: () => ({}),
-  }),
-}));
 
 jest.mock('@/lib/logger', () => ({
   logger: {
@@ -32,8 +22,6 @@ jest.mock('@/lib/logger', () => ({
   },
   secure: (value: unknown) => value,
 }));
-
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false, err: 'DB_ERROR' }) }));
 
 jest.mock('@renkei/settings', () => ({
   getOrgSettings: async () => ({ ok: true, val: { readOnly: false, disabledConnectors: [] } }),

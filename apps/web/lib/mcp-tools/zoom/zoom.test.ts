@@ -13,15 +13,6 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,
 }));
-// index.ts's OWN import of withPresentationHint from ../common transitively
-// pulls in @renkei/db (via tenant-operations.ts) for an export this file
-// never touches — and @renkei/db imports kysely, ESM-only and untransformed
-// here. No zoom tool writes to the database (unlike WebEx's capture_message,
-// which needs a real DB mock for its own test), so this exists purely to
-// short-circuit that chain before it reaches kysely.
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: false, error: 'unused in this suite' }),
-}));
 // Replaced wholesale, not via requireActual: the real zoom-auth.ts imports
 // @renkei/db for OTHER exports this file never touches, and @renkei/db
 // imports kysely, which is ESM-only and untransformed here. Only

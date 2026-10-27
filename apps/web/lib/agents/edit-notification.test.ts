@@ -27,13 +27,6 @@ jest.mock('@/lib/mcp-tools/graph/client', () => ({
 jest.mock('@/lib/webex-user-access', () => ({ resolveWebexUserAccess: jest.fn() }));
 jest.mock('@/lib/identity', () => ({ getIdentityDisplay: jest.fn() }));
 
-// The App row goes to the data store (a memory one here); push delivery
-// needs the database, which these tests do not have.
-jest.mock('@renkei/db', () => ({
-  ...jest.requireActual<object>('@renkei/db'),
-  getDatabase: () => ({ ok: false }),
-}));
-
 import { notifyAgentEdited } from './edit-notification';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
 import { authedFetch } from '@renkei/delegate-client';
