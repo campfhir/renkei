@@ -43,3 +43,10 @@ export function isLabelConflict(error: unknown): boolean {
       (typeof message === 'string' && message.includes(LABEL_CONSTRAINT)))
   );
 }
+
+/** `coalesce(settings->>'apiSurface', '') in ('images', 'flux')`, in JavaScript. */
+export function isImageSurface(settings: unknown): boolean {
+  if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) return false;
+  const surface: unknown = Reflect.get(settings, 'apiSurface');
+  return surface === 'images' || surface === 'flux';
+}

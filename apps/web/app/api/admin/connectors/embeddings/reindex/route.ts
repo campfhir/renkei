@@ -27,7 +27,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { embeddingJobsQueue } from '@renkei/queue';
 import { getOrgSettings } from '@renkei/settings';
 import { isReindexKind, REINDEX_KINDS, resolveEmbeddingProvider } from '@renkei/knowledge';
@@ -58,25 +58,7 @@ function iso(value: Date | string | null): string | null {
 }
 
 async function listRuns(): Promise<ReindexRunView[]> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return [];
-  const rows = await dbResult.val
-    .selectFrom('knowledge_reindex_runs')
-    .select([
-      'id',
-      'kind',
-      'status',
-      'processed',
-      'skipped',
-      'failed',
-      'last_error',
-      'created_at',
-      'started_at',
-      'finished_at',
-    ])
-    .orderBy('created_at', 'desc')
-    .limit(RECENT_RUNS)
-    .execute();
+  const rows = await getDataStore().knowledgeReindexRuns.listRecent(RECENT_RUNS);
   return rows.flatMap((row) =>
     isReindexKind(row.kind)
       ? [
@@ -87,19 +69,17 @@ async function listRuns(): Promise<ReindexRunView[]> {
             processed: row.processed,
             skipped: row.skipped,
             failed: row.failed,
-            lastError: row.last_error,
-            createdAt: iso(row.created_at) ?? '',
-            startedAt: iso(row.started_at),
-            finishedAt: iso(row.finished_at),
+            lastError: row.lastError,
+            createdAt: iso(row.createdAt) ?? '',
+            startedAt: iso(row.startedAt),
+            finishedAt: iso(row.finishedAt),
           },
         ]
       : []
   );
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -120,9 +100,7 @@ async function unmetPrerequisite(kind: ReindexKind): Promise<string | null> {
   return null;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -134,27 +112,21 @@ export async function POST(
       { status: 400 }
     );
   }
-  const rawAction = typeof body === 'object' && body !== null ? Reflect.get(body, 'action') : undefined;
+  const rawAction =
+    typeof body === 'object' && body !== null ? Reflect.get(body, 'action') : undefined;
   const action = rawAction === 'pause' || rawAction === 'resume' ? rawAction : 'start';
-  const rawRunId = typeof body === 'object' && body !== null ? Reflect.get(body, 'runId') : undefined;
+  const rawRunId =
+    typeof body === 'object' && body !== null ? Reflect.get(body, 'runId') : undefined;
   const runId = typeof rawRunId === 'string' ? rawRunId : '';
   if (action !== 'start' && !runId) {
     return NextResponse.json({ error: 'runId is required.' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
+  const runs = getDataStore().knowledgeReindexRuns;
 
   if (action === 'pause') {
-    const updated = await db
-      .updateTable('knowledge_reindex_runs')
-      .set({ status: 'paused' })
-      .where('id', '=', runId)
-      .where('kind', '=', kind)
-      .where('status', 'in', ['queued', 'running'])
-      .executeTakeFirst();
-    if (Number(updated.numUpdatedRows ?? 0) === 0) {
+    const updated = await runs.pause(runId, kind);
+    if (updated === 0) {
       return NextResponse.json({ error: `No active ${kind} reindex to pause.` }, { status: 409 });
     }
     recordAuditEvent({
@@ -170,12 +142,7 @@ export async function POST(
     const unmet = await unmetPrerequisite(kind);
     if (unmet) return NextResponse.json({ error: unmet }, { status: 400 });
 
-    const run = await db
-      .selectFrom('knowledge_reindex_runs')
-      .select(['status', 'cursor'])
-      .where('id', '=', runId)
-      .where('kind', '=', kind)
-      .executeTakeFirst();
+    const run = await runs.find(runId, kind);
     if (!run || (run.status !== 'paused' && run.status !== 'failed')) {
       return NextResponse.json(
         { error: `No paused or failed ${kind} reindex to resume.` },
@@ -183,13 +150,8 @@ export async function POST(
       );
     }
 
-    const updated = await db
-      .updateTable('knowledge_reindex_runs')
-      .set({ status: 'queued', last_error: null, finished_at: null })
-      .where('id', '=', runId)
-      .where('status', 'in', ['paused', 'failed'])
-      .executeTakeFirst();
-    if (Number(updated.numUpdatedRows ?? 0) === 0) {
+    const updated = await runs.resume(runId);
+    if (updated === 0) {
       return NextResponse.json(
         { error: `No paused or failed ${kind} reindex to resume.` },
         { status: 409 }
@@ -203,11 +165,7 @@ export async function POST(
       orderingKey: `reindex/${runId}`,
     });
     if (!enqueued.ok) {
-      await db
-        .updateTable('knowledge_reindex_runs')
-        .set({ status: 'failed', last_error: 'could not enqueue the resumed batch' })
-        .where('id', '=', runId)
-        .execute();
+      await runs.markFailed(runId, 'could not enqueue the resumed batch');
       return NextResponse.json({ error: 'Could not resume the reindex.' }, { status: 500 });
     }
 
@@ -223,21 +181,13 @@ export async function POST(
   const unmet = await unmetPrerequisite(kind);
   if (unmet) return NextResponse.json({ error: unmet }, { status: 400 });
 
-  const active = await db
-    .selectFrom('knowledge_reindex_runs')
-    .select('id')
-    .where('kind', '=', kind)
-    .where('status', 'in', ['queued', 'running'])
-    .executeTakeFirst();
+  const active = await runs.findActive(kind);
   if (active) {
     return NextResponse.json({ error: `A ${kind} reindex is already running.` }, { status: 409 });
   }
 
   const newRunId = randomUUID();
-  await db
-    .insertInto('knowledge_reindex_runs')
-    .values({ id: newRunId, kind, requested_by: access.subject })
-    .execute();
+  await runs.create({ id: newRunId, kind, requestedBy: access.subject });
 
   const enqueued = await embeddingJobsQueue().producer.enqueue({
     source: 'knowledge:reindex',
@@ -246,11 +196,7 @@ export async function POST(
     orderingKey: `reindex/${newRunId}`,
   });
   if (!enqueued.ok) {
-    await db
-      .updateTable('knowledge_reindex_runs')
-      .set({ status: 'failed', last_error: 'could not enqueue the first batch' })
-      .where('id', '=', newRunId)
-      .execute();
+    await runs.markFailed(newRunId, 'could not enqueue the first batch');
     return NextResponse.json({ error: 'Could not start the reindex.' }, { status: 500 });
   }
 

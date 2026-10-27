@@ -351,7 +351,7 @@ async function boundSession(
   trx: Kysely<DB> | Transaction<DB>,
   input: DelegationInput
 ): Promise<Result<{ expiresAt: Date }, 'SESSION_MISMATCH'>> {
-  const session = await verifySession(trx, input.subject, input.sessionId);
+  const session = await verifySession(input.subject, input.sessionId);
   return session ? ok(session) : err('SESSION_MISMATCH' as const);
 }
 
@@ -450,7 +450,12 @@ export async function enroll(
     const version = (existing?.version ?? 0) + 1;
     let migrated = { grants: 0, values: 0 };
     if (existing) {
-      const legacy = legacyKekOf(existing, await legacyKeyDomain(trx), input.subject, input.passphrase);
+      const legacy = legacyKekOf(
+        existing,
+        await legacyKeyDomain(trx),
+        input.subject,
+        input.passphrase
+      );
       if (!legacy.ok) return legacy;
       const moved = await moveSealedRows(
         trx,
@@ -519,7 +524,7 @@ export async function storeDelegations(
 ): Promise<Result<void, DelegateError>> {
   const vault = keyVault();
   if (!vault) return err('NO_VAULT' as const);
-  const row = await readKeyRow(db, input.subject);
+  const row = await readKeyRow(input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
   if (input.session.length === 0 && !input.revokeSession) {
@@ -547,10 +552,7 @@ export async function storeDelegations(
 }
 
 /** Revoke every automation delegation: the person's agents pause until their next sign-in. */
-export async function revokeAutomation(
-  db: Kysely<DB>,
-  subject: string
-): Promise<number> {
+export async function revokeAutomation(db: Kysely<DB>, subject: string): Promise<number> {
   const result = await db
     .deleteFrom('key_delegations')
     .where('subject', '=', subject)
@@ -574,11 +576,11 @@ export async function rotateUserKey(
   db: Kysely<DB>,
   input: RotateInput
 ): Promise<Result<{ version: number; moved: number }, RotateError>> {
-  const current = await getKeyRing(db, input.subject, 'session');
+  const current = await getKeyRing(input.subject, 'session');
   if (!current.ok) return current;
   const ring = current.val;
   if (!ring.userKey) return err('NEEDS_SESSION' as const);
-  const row = await readKeyRow(db, input.subject);
+  const row = await readKeyRow(input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   const next = openOwnDelegation(input.session, {
     public_key: row.public_key,
@@ -617,10 +619,7 @@ export async function rotateUserKey(
       // Every other session's delegation carries the OLD key: gone, so those
       // browsers re-seal (from their own copy of the key, which they must
       // first replace through device approval or by typing the new key).
-      await trx
-        .deleteFrom('key_delegations')
-        .where('subject', '=', input.subject)
-        .execute();
+      await trx.deleteFrom('key_delegations').where('subject', '=', input.subject).execute();
       await writeDelegations(trx, input, session.val.expiresAt);
       return ok({ version, moved: moved.val.grants + moved.val.values });
     });
@@ -631,10 +630,7 @@ export async function rotateUserKey(
  * made for them — including boxes sealed to their public key — is deleted,
  * so nothing stored for them can be opened by anyone, Renkei included.
  */
-export async function shredUserKey(
-  db: Kysely<DB>,
-  subject: string
-): Promise<boolean> {
+export async function shredUserKey(db: Kysely<DB>, subject: string): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
     await trx
       .deleteFrom('resource_key_grants')

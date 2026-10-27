@@ -29,6 +29,37 @@ function item(n: number, batchId: string, minute: number, fields: Record<string,
   };
 }
 
+const SHARE = id(800);
+const OTHER_SHARE = id(801);
+
+const share = (n: string) => ({
+  id: n,
+  name: `Share ${n.slice(-3)}`,
+  protocol: 'smb',
+  host: 'files.example.test',
+  case_insensitive: true,
+});
+
+const processed = (n: number, shareId: string, hash: string, path: string) => ({
+  id: id(700 + n),
+  share_id: shareId,
+  content_hash: hash,
+  path,
+  size: 10 * n,
+  modified_at: n === 3 ? null : at(n),
+});
+
+const ledger = {
+  file_shares: [share(SHARE), share(OTHER_SHARE)],
+  batch_jobs: [{ id: id(1), subject: 'ann', kind: 'document-ocr-pipeline' }],
+  batch_processed_files: [
+    processed(1, SHARE, 'hash-a', '/in/a.pdf'),
+    processed(2, SHARE, 'hash-b', '/in/b.pdf'),
+    processed(3, SHARE, 'hash-c', '/in/c.pdf'),
+    processed(4, OTHER_SHARE, 'hash-c', '/in/a.pdf'),
+  ],
+};
+
 const fixture = {
   batch_job_schedules: [
     {
@@ -299,5 +330,51 @@ export const batchJobScenarios: Scenario<DataStore>[] = [
       empty: await store.batchJobs.listItems(id(1)),
       missing: await store.batchJobs.listItems(MISSING),
     }),
+  },
+  {
+    method: 'batchJobs.findProcessedByPath',
+    name: 'rows at these paths on this share, by path',
+    fixture: ledger,
+    run: async (store) => [
+      await store.batchJobs.findProcessedByPath(SHARE, ['/in/b.pdf', '/in/a.pdf', '/in/none.pdf']),
+      await store.batchJobs.findProcessedByPath(OTHER_SHARE, ['/in/a.pdf']),
+      await store.batchJobs.findProcessedByPath(SHARE, []),
+    ],
+  },
+  {
+    method: 'batchJobs.findProcessedHashes',
+    name: 'known hashes on this share only, sorted',
+    fixture: ledger,
+    run: async (store) => [
+      await store.batchJobs.findProcessedHashes(SHARE, ['hash-b', 'hash-z', 'hash-a', 'hash-c']),
+      await store.batchJobs.findProcessedHashes(OTHER_SHARE, ['hash-a', 'hash-c']),
+      await store.batchJobs.findProcessedHashes(SHARE, []),
+    ],
+  },
+  {
+    method: 'batchJobs.recordProcessedFiles',
+    name: 'new hashes inserted, a known hash follows its moved file',
+    fixture: ledger,
+    run: async (store) => {
+      await store.batchJobs.recordProcessedFiles(SHARE, id(1), [
+        { contentHash: 'hash-a', path: '/in/moved.pdf', size: 11, modifiedAt: new Date(at(9)) },
+        {
+          contentHash: 'hash-new',
+          path: '/in/new.pdf',
+          size: 5,
+          modifiedAt: null,
+          documentKey: 'doc-new',
+        },
+      ]);
+      await store.batchJobs.recordProcessedFiles(SHARE, id(1), []);
+      return [
+        await store.batchJobs.findProcessedByPath(SHARE, [
+          '/in/a.pdf',
+          '/in/moved.pdf',
+          '/in/new.pdf',
+        ]),
+        await store.batchJobs.findProcessedHashes(SHARE, ['hash-a', 'hash-new']),
+      ];
+    },
   },
 ];

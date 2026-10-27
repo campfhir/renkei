@@ -501,7 +501,7 @@ export async function startCompactionTurn(
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
 
-  const llmResult = await resolveAgentLlm(db, chat.llmModelId ?? null);
+  const llmResult = await resolveAgentLlm(chat.llmModelId ?? null);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),

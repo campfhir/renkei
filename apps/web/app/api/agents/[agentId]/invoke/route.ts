@@ -168,7 +168,7 @@ export async function POST(
   // noticing a run from a minute ago is still going, gets asked instead
   // of silently piling up a second run behind the first.
   if (triggerId === null && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -182,7 +182,7 @@ export async function POST(
     }
   }
 
-  const result = await createAgentRun(db, agentJobsQueue().producer, {
+  const result = await createAgentRun(agentJobsQueue().producer, {
     agentId,
     ownerSubject: agent.owner_subject,
     definition: agentDefinitionOf(agent),

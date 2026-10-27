@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 
 /**
@@ -18,10 +18,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * routes already use, rather than carrying a second auth scheme that never
  * worked.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function GET(request: NextRequest): Promise<NextResponse> {
   // Roles come from the server-side session, never from a client-supplied
   // header or cookie.
   const session = await getSessionFromRequest(request);
@@ -29,12 +26,6 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const userRoles = new Set(session.roles);
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
 
   try {
     // renkei-operator: the whole tenant.
@@ -54,18 +45,15 @@ export async function GET(
     // nothing for a caller to point at another user. A grant with a NULL
     // subject predates per-user ownership and never matches.
     if (userRoles.has('renkei-user')) {
-      const grant = await db
-        .selectFrom('provider_grants')
-        .select('provider_account_id')
-        .where('provider', '=', 'atlassian')
-        .where('subject', '=', session.subject)
-        .executeTakeFirst();
+      const [grant] = await getDataStore().providerGrants.listForSubject(session.subject, {
+        provider: 'atlassian',
+      });
 
       if (!grant) {
         return NextResponse.json({ error: 'No Jira grant for this user' }, { status: 403 });
       }
 
-      const accountId = grant.provider_account_id;
+      const accountId = grant.accountId;
 
       // A caller may still name an account, but only their own: silently
       // serving their own logs under someone else's id would misreport whose

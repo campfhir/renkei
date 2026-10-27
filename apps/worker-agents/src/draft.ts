@@ -88,7 +88,7 @@ export function createDraftHandler(deps: {
       return 'skipped';
     }
 
-    const token = await mintRunToken(deps.db, {
+    const token = await mintRunToken({
       subject: owner.subject,
       // Drafting acts as the PERSON, not as an agent — there is usually no
       // agent yet, and even when revising one the draft is the author's work.
@@ -118,7 +118,7 @@ export function createDraftHandler(deps: {
       });
       return undefined;
     } finally {
-      await revokeRunToken(deps.db, token);
+      await revokeRunToken(token);
     }
   };
 }

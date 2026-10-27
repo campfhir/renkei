@@ -82,7 +82,7 @@ export async function autoTitleChat(
       ...(input.llm.temperature !== undefined ? { temperature: input.llm.temperature } : {}),
     });
     if (!completion.ok) throw new Error(completion.err.message ?? 'the model failed');
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject: input.subject,
       agentId: null,
       purpose: 'context_window',

@@ -123,7 +123,7 @@ export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
         .executeTakeFirst();
       if (Number(advanced.numUpdatedRows ?? 0) === 0) continue;
 
-      const result = await createAgentRun(db, producer, {
+      const result = await createAgentRun(producer, {
         agentId: row.agent_id,
         ownerSubject: row.owner_subject,
         definition: agentDefinitionOf(row),

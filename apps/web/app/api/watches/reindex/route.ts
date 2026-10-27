@@ -19,8 +19,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { deleteChunksByMetadata } from '@renkei/knowledge';
 import { embeddingJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
@@ -50,9 +49,7 @@ const QUEUED_WORK: Record<string, { type: string; scopePath: string[] }> = {
   sharepoint: { type: 'ingest.document', scopePath: ['scopeKey'] },
 };
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -65,19 +62,11 @@ export async function POST(
     return NextResponse.json({ error: 'provider and scopeKey are required' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
+  const watches = getDataStore().contentWatches;
 
   // Ownership is the authorization: a watch belongs to the subject whose
   // grant polls it, so only that person can rebuild it.
-  const watch = await db
-    .selectFrom('content_watches')
-    .select(['id', 'scope_label'])
-    .where('subject', '=', session.subject)
-    .where('provider', '=', provider)
-    .where('scope_key', '=', scopeKey)
-    .executeTakeFirst();
+  const watch = await watches.findForSubject(session.subject, provider, scopeKey);
   if (!watch) return NextResponse.json({ error: 'No such watch' }, { status: 404 });
 
   const purged = await deleteChunksByMetadata(provider, metadataKey, scopeKey);
@@ -111,26 +100,14 @@ export async function POST(
   // Cursor cleared last: if the purge failed above we never got here, so a
   // watch can't end up with its content gone AND its cursor still claiming
   // the content is current.
-  await db
-    .updateTable('content_watches')
-    .set({
-      cursor: null,
-      total_items: 0,
-      last_run_items: 0,
-      sync_status: 'syncing',
-      last_error: null,
-      // Null, not NOW(): the sweep treats never-synced watches as due
-      // immediately, so the rebuild starts on the next pass rather than
-      // waiting out a full interval.
-      last_synced_at: null,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', watch.id)
-    .execute();
+  // Null last_synced_at, not NOW(): the sweep treats never-synced watches
+  // as due immediately, so the rebuild starts on the next pass rather than
+  // waiting out a full interval.
+  await watches.resetForRebuild(watch.id);
 
   return NextResponse.json({
     purged: purged.val,
     discarded: discarded.val,
-    label: watch.scope_label ?? scopeKey,
+    label: watch.scopeLabel ?? scopeKey,
   });
 }

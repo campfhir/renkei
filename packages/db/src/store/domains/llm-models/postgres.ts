@@ -1,7 +1,11 @@
-import { sql, type Kysely } from 'kysely';
+import { sql, type Kysely, type SqlBool } from 'kysely';
 import type { DB } from '../../../db.types';
 import { isLabelConflict, llmModelFromRow, llmModelValues } from './record';
 import type { LlmModelStore } from './types';
+
+// The twins of @renkei/agent-llm's chat/image split.
+const imageSurface = sql<SqlBool>`coalesce(settings->>'apiSurface', '') in ('images', 'flux')`;
+const chatSurface = sql<SqlBool>`coalesce(settings->>'apiSurface', '') not in ('images', 'flux')`;
 
 export function postgresLlmModels(db: () => Kysely<DB>): LlmModelStore {
   return {
@@ -74,6 +78,26 @@ export function postgresLlmModels(db: () => Kysely<DB>): LlmModelStore {
         if (isLabelConflict(error)) return 'duplicate-label';
         throw error;
       }
+    },
+    async findEnabledChatModel(id) {
+      let query = db()
+        .selectFrom('llm_model_configs')
+        .selectAll()
+        .where('enabled', '=', true)
+        .where(chatSurface);
+      query = id ? query.where('id', '=', id) : query.where('is_default', '=', true);
+      const row = await query.orderBy('id').executeTakeFirst();
+      return row ? llmModelFromRow(row) : null;
+    },
+    async findEnabledImageModel(id) {
+      let query = db()
+        .selectFrom('llm_model_configs')
+        .selectAll()
+        .where('enabled', '=', true)
+        .where(imageSurface);
+      if (id) query = query.where('id', '=', id);
+      const row = await query.orderBy('label', 'asc').orderBy('id').executeTakeFirst();
+      return row ? llmModelFromRow(row) : null;
     },
     async delete(id) {
       const result = await db()

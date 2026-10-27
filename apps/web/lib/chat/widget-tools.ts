@@ -95,7 +95,7 @@ export async function confirmWidgetTool(
   const descriptor = catalog.find((entry) => entry.name === input.name);
   if (!descriptor?.appOnly) return { ok: false, reason: 'not-a-card-tool' };
 
-  const token = await mintRunToken(db, {
+  const token = await mintRunToken({
     subject: input.subject,
     agentId: null,
     ttlSeconds: CALL_TTL_SECONDS,
@@ -113,7 +113,7 @@ export async function confirmWidgetTool(
   } catch {
     return { ok: false, reason: 'call-failed' };
   } finally {
-    await revokeRunToken(db, token);
+    await revokeRunToken(token);
   }
 }
 

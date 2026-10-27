@@ -25,8 +25,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { contentEncryptionKey, isUserSealed, revealContent } from '@renkei/crypto';
 import { delegateClient, type KeyOpError } from '@renkei/delegate-client';
 
@@ -68,13 +67,9 @@ export interface AgentMemory {
 }
 
 /** The agent's owner — whose automation key the memory is sealed under. */
-async function ownerSubjectOf(db: Kysely<DB>, agentId: string): Promise<string | null> {
-  const row = await db
-    .selectFrom('agents')
-    .select('owner_subject')
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  return row?.owner_subject ?? null;
+async function ownerSubjectOf(agentId: string): Promise<string | null> {
+  const agent = await getDataStore().agents.find(agentId);
+  return agent?.ownerSubject ?? null;
 }
 
 /**
@@ -132,36 +127,18 @@ function clip(text: string, max: number): string {
 
 /** The newest slice of an agent's memory, bounded for injection. */
 export async function readAgentMemory(
-  db: Kysely<DB>,
   agentId: string,
   limits: { maxEntries?: number } = {}
 ): Promise<AgentMemory> {
   const maxEntries = limits.maxEntries ?? MEMORY_INJECT_MAX_ENTRIES;
-  const rows = await db
-    .selectFrom('agent_memories')
-    .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-    .where('agent_id', '=', agentId)
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .limit(maxEntries + 1)
-    .execute();
-
-  let summaryRow = rows.find((row) => row.kind === 'summary') ?? null;
   // The summary sorts by its last-compaction time and may fall outside the
-  // newest-N window once entries pile up — fetch it explicitly then.
-  if (summaryRow === null) {
-    summaryRow =
-      (await db
-        .selectFrom('agent_memories')
-        .select(['id', 'kind', 'content', 'created_at', 'updated_at'])
-        .where('agent_id', '=', agentId)
-        .where('kind', '=', 'summary')
-        .executeTakeFirst()) ?? null;
-  }
-  const entryRows = rows.filter((row) => row.kind === 'entry').slice(0, maxEntries);
+  // newest-N window once entries pile up — the slice fetches it either way.
+  const slice = await getDataStore().agents.memorySlice(agentId, maxEntries);
+  const summaryRow = slice.summary;
+  const entryRows = slice.entries;
   if (summaryRow === null && entryRows.length === 0) return { ...NO_MEMORY };
 
-  const owner = await ownerSubjectOf(db, agentId);
+  const owner = slice.ownerSubject;
   if (owner === null) return { ...NO_MEMORY, unavailable: 'NO_USER_KEY' };
   const opened = await openContents(owner, [
     ...(summaryRow ? [summaryRow.content] : []),
@@ -171,11 +148,11 @@ export async function readAgentMemory(
   const offset = summaryRow ? 1 : 0;
   return {
     summary: summaryRow ? opened.contents[0] : null,
-    summaryUpdatedAt: summaryRow ? summaryRow.updated_at : null,
+    summaryUpdatedAt: summaryRow ? summaryRow.updatedAt : null,
     entries: entryRows.map((row, index) => ({
       id: row.id,
       content: opened.contents[index + offset],
-      createdAt: row.created_at,
+      createdAt: row.createdAt,
     })),
     unavailable: null,
   };
@@ -193,64 +170,44 @@ export async function readAgentMemory(
  * tables already hold duplicates and the only race — two concurrent runs
  * remembering the same thing — is benign and folded by compaction.
  */
-export async function appendAgentMemory(
-  db: Kysely<DB>,
-  input: { agentId: string; content: string; runId?: string }
-): Promise<{ inserted: boolean }> {
+export async function appendAgentMemory(input: {
+  agentId: string;
+  content: string;
+  runId?: string;
+}): Promise<{ inserted: boolean }> {
   const content = clip(input.content.trim(), MEMORY_ENTRY_MAX_CHARS);
   if (!content) return { inserted: false };
-  const owner = await ownerSubjectOf(db, input.agentId);
+  const owner = await ownerSubjectOf(input.agentId);
   if (owner === null) return { inserted: false };
   // The duplicate check reads the agent's entries back through the owner's
   // key: two seals of one text differ byte for byte, so equality has to be
   // judged on the plaintext. Bounded by MEMORY_HARD_CAP, one delegate call.
-  const existing = await readAgentMemory(db, input.agentId, {
-    maxEntries: MEMORY_HARD_CAP,
-  });
+  const existing = await readAgentMemory(input.agentId, { maxEntries: MEMORY_HARD_CAP });
   if (existing.unavailable !== null) return { inserted: false };
   if (existing.entries.some((entry) => entry.content === content)) return { inserted: false };
   const sealed = await sealContent(owner, content);
   if (!sealed.ok) return { inserted: false };
-  await db
-    .insertInto('agent_memories')
-    .values({
-      id: randomUUID(),
-      agent_id: input.agentId,
-      kind: 'entry',
-      content: sealed.sealed,
-      run_id: input.runId ?? null,
-    })
-    .execute();
+  await getDataStore().agents.addMemoryEntry({
+    id: randomUUID(),
+    agentId: input.agentId,
+    content: sealed.sealed,
+    runId: input.runId ?? null,
+  });
   return { inserted: true };
 }
 
 /** Replace (or create) the agent's one rolling summary. */
-export async function writeAgentMemorySummary(
-  db: Kysely<DB>,
-  agentId: string,
-  content: string
-): Promise<void> {
+export async function writeAgentMemorySummary(agentId: string, content: string): Promise<void> {
   const clipped = clip(content.trim(), MEMORY_SUMMARY_MAX_CHARS);
-  const owner = await ownerSubjectOf(db, agentId);
+  const owner = await ownerSubjectOf(agentId);
   if (owner === null) throw new Error('agent not found: no owner to seal the summary for');
   const sealed = await sealContent(owner, clipped);
   if (!sealed.ok) throw new Error(`memory summary could not be sealed: ${sealed.reason}`);
-  await db
-    .insertInto('agent_memories')
-    .values({
-      id: randomUUID(),
-      agent_id: agentId,
-      kind: 'summary',
-      content: sealed.sealed,
-    })
-    .onConflict((oc) =>
-      // The partial unique index (agent_id WHERE kind='summary').
-      oc
-        .column('agent_id')
-        .where('kind', '=', 'summary')
-        .doUpdateSet({ content: sealed.sealed, updated_at: sql`NOW()` })
-    )
-    .execute();
+  await getDataStore().agents.saveMemorySummary({
+    id: randomUUID(),
+    agentId,
+    content: sealed.sealed,
+  });
 }
 
 /**
@@ -313,19 +270,16 @@ export const AGENT_NOTES_INJECT_MAX_NOTES = 50;
  * search is off; chunk rows collapse to one note each (first chunk wins,
  * which carries the opening of the content).
  */
-export async function renderAgentKnowledgeNotes(db: Kysely<DB>, agentId: string): Promise<string> {
+export async function renderAgentKnowledgeNotes(agentId: string): Promise<string> {
   const keyResult = contentEncryptionKey();
   const contentKey = keyResult.ok ? keyResult.val : null;
-  const rows = await db
-    .selectFrom('knowledge_chunks')
-    .select(['ref_id', 'metadata', 'content', 'source_at'])
-    .where('provider', '=', 'note')
-    .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
-    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
-    .orderBy('source_at', 'desc')
-    .orderBy('ref_id')
-    .limit(AGENT_NOTES_INJECT_MAX_NOTES * 4)
-    .execute();
+  const rows = (
+    await getDataStore().agents.recentNoteChunks(agentId, {
+      provider: 'note',
+      scope: AGENT_NOTE_SCOPE,
+      limit: AGENT_NOTES_INJECT_MAX_NOTES * 4,
+    })
+  ).map((chunk) => ({ ref_id: chunk.refId, metadata: chunk.metadata, content: chunk.content }));
 
   const lines: string[] = [];
   let spent = 0;
@@ -395,22 +349,9 @@ export function renderAgentMemory(memory: AgentMemory): string {
  * confirmation at all.
  */
 export async function countAgentMemory(
-  db: Kysely<DB>,
   agentId: string
 ): Promise<{ entries: number; hasSummary: boolean }> {
-  const rows = await db
-    .selectFrom('agent_memories')
-    .select(['kind', ({ fn }) => fn.countAll<string>().as('count')])
-    .where('agent_id', '=', agentId)
-    .groupBy('kind')
-    .execute();
-  let entries = 0;
-  let hasSummary = false;
-  for (const row of rows) {
-    if (row.kind === 'summary') hasSummary = Number(row.count) > 0;
-    else entries += Number(row.count);
-  }
-  return { entries, hasSummary };
+  return getDataStore().agents.countMemory(agentId);
 }
 
 /** What forgetAgentMemory was asked to drop. */
@@ -444,13 +385,12 @@ export interface AgentMemoryForgetResult {
  * slate passes { kind: 'all' }.
  */
 export async function forgetAgentMemory(
-  db: Kysely<DB>,
   agentId: string,
   target: AgentMemoryTarget
 ): Promise<AgentMemoryForgetResult> {
   if (target.kind === 'all') {
-    const before = await countAgentMemory(db, agentId);
-    await db.deleteFrom('agent_memories').where('agent_id', '=', agentId).execute();
+    const before = await countAgentMemory(agentId);
+    await getDataStore().agents.clearMemory(agentId);
     return {
       entriesDeleted: before.entries,
       summaryCleared: before.hasSummary,
@@ -459,14 +399,10 @@ export async function forgetAgentMemory(
   }
 
   if (target.kind === 'summary') {
-    const deleted = await db
-      .deleteFrom('agent_memories')
-      .where('agent_id', '=', agentId)
-      .where('kind', '=', 'summary')
-      .executeTakeFirst();
+    const deleted = await getDataStore().agents.deleteMemorySummary(agentId);
     return {
       entriesDeleted: 0,
-      summaryCleared: Number(deleted.numDeletedRows ?? 0) > 0,
+      summaryCleared: deleted > 0,
       missingIds: [],
     };
   }
@@ -484,24 +420,9 @@ export async function forgetAgentMemory(
     return { entriesDeleted: 0, summaryCleared: false, missingIds: malformed };
   }
 
-  // Which of them are actually this agent's, read before the delete so the
-  // caller can name the ones that were not.
-  const found = await db
-    .selectFrom('agent_memories')
-    .select(['id'])
-    .where('agent_id', '=', agentId)
-    .where('kind', '=', 'entry')
-    .where('id', 'in', wellFormed)
-    .execute();
-  const foundIds = found.map((row) => row.id);
-  if (foundIds.length > 0) {
-    await db
-      .deleteFrom('agent_memories')
-      .where('agent_id', '=', agentId)
-      .where('kind', '=', 'entry')
-      .where('id', 'in', foundIds)
-      .execute();
-  }
+  // Which of them were actually this agent's, so the caller can name the
+  // ones that were not.
+  const foundIds = await getDataStore().agents.deleteMemoryEntries(agentId, wellFormed);
   const foundSet = new Set(foundIds);
   return {
     entriesDeleted: foundIds.length,

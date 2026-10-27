@@ -71,7 +71,6 @@ export function notifyAgentEdited(input: {
       const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
       if (dbResult.ok && keyResult.ok) {
         void sendPush(
-          dbResult.val,
           input.ownerSubject,
           keyResult.val,
           { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },

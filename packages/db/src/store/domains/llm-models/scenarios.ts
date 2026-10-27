@@ -21,6 +21,18 @@ const fixture = {
   llm_model_configs: [row(1, 'Sonnet', true), row(2, 'haiku'), row(3, 'Opus'), row(4, 'opus')],
 };
 
+const surfaceFixture = {
+  llm_model_configs: [
+    row(1, 'Sonnet', true),
+    row(2, 'haiku'),
+    row(3, 'Opus'),
+    { ...row(5, 'Painter'), settings: { apiSurface: 'images' } },
+    { ...row(6, 'Flux'), settings: { apiSurface: 'flux' } },
+    { ...row(7, 'Off image'), settings: { apiSurface: 'images' }, enabled: false },
+    { ...row(8, 'Responses'), settings: { apiSurface: 'responses' } },
+  ],
+};
+
 const input = (label: string, isDefault: boolean) => ({
   label,
   provider: 'openai',
@@ -87,6 +99,29 @@ export const llmModelScenarios: Scenario<DataStore>[] = [
       await store.llmModels.delete(id(1)),
       await store.llmModels.delete(id(1)),
       await shape(store),
+    ],
+  },
+  {
+    method: 'llmModels.findEnabledChatModel',
+    name: 'by id or the default; disabled and image models never answer',
+    fixture: surfaceFixture,
+    run: async (store) =>
+      Promise.all(
+        [null, id(1), id(2), id(3), id(5), id(9)].map(
+          async (key) => (await store.llmModels.findEnabledChatModel(key))?.label ?? null
+        )
+      ),
+  },
+  {
+    method: 'llmModels.findEnabledImageModel',
+    name: 'by id or the first by label; chat models never answer',
+    fixture: surfaceFixture,
+    run: async (store) => [
+      (await store.llmModels.findEnabledImageModel(null))?.label ?? null,
+      (await store.llmModels.findEnabledImageModel(id(6)))?.label ?? null,
+      (await store.llmModels.findEnabledImageModel(id(1)))?.label ?? null,
+      (await store.llmModels.findEnabledImageModel(id(7)))?.label ?? null,
+      await store.llmModels.findEnabledImageModel(id(5)),
     ],
   },
 ];

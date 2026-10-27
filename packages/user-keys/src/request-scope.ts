@@ -17,8 +17,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 export interface KeyRequestScope {
   /** The caller the bearer key named. */
@@ -51,17 +50,11 @@ export interface SessionCheck {
  * null, and the op that named it is refused (`SESSION_MISMATCH`).
  */
 export async function verifySession(
-  db: Kysely<DB>,
   subject: string,
   sessionId: string
 ): Promise<SessionCheck | null> {
   if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return null;
-  const row = await db
-    .selectFrom('sessions')
-    .select('expires_at')
-    .where('id', '=', sessionId)
-    .where('subject', '=', subject)
-    .where('expires_at', '>', new Date())
-    .executeTakeFirst();
-  return row ? { expiresAt: row.expires_at } : null;
+  const row = await getDataStore().sessions.find(sessionId);
+  if (!row || row.subject !== subject || row.expiresAt.getTime() <= Date.now()) return null;
+  return { expiresAt: row.expiresAt };
 }

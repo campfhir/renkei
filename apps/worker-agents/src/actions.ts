@@ -199,7 +199,7 @@ export function createActionsHandler(deps: ActionsDeps) {
     const failedEarlier = () => results.some((result) => result.outcome !== 'succeeded');
     let canceledMidway = false;
     if (results.length < actions.length && !failedEarlier()) {
-      const token = await mint(db, {
+      const token = await mint({
         subject: batch.owner_subject,
         agentId: batch.agent_id,
         ttlSeconds: TOKEN_TTL_SECONDS,
@@ -288,7 +288,7 @@ export function createActionsHandler(deps: ActionsDeps) {
           }
         }
       } finally {
-        await revoke(db, token);
+        await revoke(token);
       }
     }
 

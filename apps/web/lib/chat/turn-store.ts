@@ -88,7 +88,7 @@ export function createTurnStore(
       await interruptSubagentRunsOfTurn(db, scope.turnId);
     },
     async recordUsage(usage, model, durationMs) {
-      await recordLlmCall(db, {
+      await recordLlmCall({
         subject: scope.subject,
         agentId: null,
         purpose: 'chat',

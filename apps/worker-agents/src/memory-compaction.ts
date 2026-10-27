@@ -111,7 +111,7 @@ async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string)
     return;
   }
 
-  const llmResult = await resolveAgentLlm(db, agentRow.llm_model_id);
+  const llmResult = await resolveAgentLlm(agentRow.llm_model_id);
   if (!llmResult.ok) {
     throw new Error(llmResult.err.message ?? `no model to compact with (${llmResult.err.type})`);
   }
@@ -159,7 +159,7 @@ async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string)
   // Summary FIRST, then the deletes: a crash between the two leaves the
   // folded entries present AND summarized — duplication the next fold
   // collapses — never a hole.
-  await writeAgentMemorySummary(db, agentId, summary);
+  await writeAgentMemorySummary(agentId, summary);
   await db
     .deleteFrom('agent_memories')
     .where(

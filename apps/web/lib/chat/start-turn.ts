@@ -234,7 +234,7 @@ export async function startChatTurn(
     input.llmModelId !== undefined && input.llmModelId !== null && isUuid(input.llmModelId)
       ? input.llmModelId
       : (chat.llmModelId ?? null);
-  const llmResult = await resolveAgentLlm(db, requestedModel);
+  const llmResult = await resolveAgentLlm(requestedModel);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),

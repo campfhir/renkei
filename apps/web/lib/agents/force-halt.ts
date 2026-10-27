@@ -113,7 +113,7 @@ export async function forceHaltRun(
 
   // Best-effort, same posture as the janitor: the status flip above is what
   // matters, the usage/history ledger is secondary.
-  await recordAgentRunOutcome(db, {
+  await recordAgentRunOutcome({
     agentId: input.agentId,
     runId: input.runId,
     ownerSubject: run.owner_subject,

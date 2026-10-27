@@ -157,7 +157,7 @@ describe('dispatch and serialization', () => {
       ],
     });
     expect(mocked.serviceListFolder).toHaveBeenCalledWith(
-      expect.objectContaining({ db: expect.anything() }),
+      {},
       TARGET,
       '/docs'
     );

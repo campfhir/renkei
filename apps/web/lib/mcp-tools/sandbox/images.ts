@@ -209,7 +209,7 @@ export function registerSandboxImageTools(
       if (!choice) return errText('No image model is available.');
       const db = getDatabase();
       if (!db.ok) return errText('Database unavailable.');
-      const resolved = await resolve(db.val, choice.id);
+      const resolved = await resolve(choice.id);
       if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {
         return errText(
           `The image model "${choice.label}" cannot be used right now (it is disabled or its configuration is incomplete). An administrator needs to check it.`

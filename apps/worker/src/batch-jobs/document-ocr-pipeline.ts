@@ -276,7 +276,6 @@ async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOut
   // per file. A file that fails it is not "new" — it is merely "read me and
   // hash me", which item time does.
   const recorded = await findProcessedByPath(
-    db,
     config.shareId,
     entries.map((entry) => entry.path)
   );
@@ -441,7 +440,7 @@ async function runItem(
   const contentHashes = files.map((file) => file.contentHash);
 
   if (config.skipProcessed) {
-    const known = await findProcessedHashes(db, shareId, contentHashes);
+    const known = await findProcessedHashes(shareId, contentHashes);
     if (files.every((file) => known.has(file.contentHash))) {
       return {
         ok: true,
@@ -489,7 +488,6 @@ async function runItem(
     // document now.
     try {
       await recordProcessedFiles(
-        db,
         shareId,
         batch.id,
         files.map((file) => ({

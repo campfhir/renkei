@@ -206,7 +206,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   if (plan.kind === 'finish') return end(plan.status, turn.error, seed);
 
   if (!chat) return end('interrupted', 'The chat is gone.', seed);
-  const llmResult = await resolveAgentLlm(db, turn.llmModelId);
+  const llmResult = await resolveAgentLlm(turn.llmModelId);
   if (!llmResult.ok) {
     return end(
       'failed',

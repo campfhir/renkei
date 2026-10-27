@@ -75,7 +75,6 @@ async function notify(input: {
   const db = getDatabase();
   if (!db.ok) return;
   void sendPush(
-    db.val,
     input.subject,
     keyResult.val,
     {

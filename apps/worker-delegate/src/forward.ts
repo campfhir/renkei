@@ -273,7 +273,7 @@ export class Forwarder {
   ): Promise<
     { ok: true; value: unknown } | { ok: false; status: number; type: string; message?: string }
   > {
-    const opened = await openForSubject(this.db, subject, ciphertext);
+    const opened = await openForSubject(subject, ciphertext);
     if (!opened.ok) {
       if (
         opened.err.type === 'NEEDS_DELEGATION' ||

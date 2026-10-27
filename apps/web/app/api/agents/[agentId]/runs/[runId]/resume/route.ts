@@ -68,7 +68,7 @@ export async function POST(
   // runs several at once by design; a scheduled/manual one is the case
   // where a second run in flight deserves a beat before proceeding.
   if (run.trigger_kind !== 'event' && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -82,7 +82,7 @@ export async function POST(
     }
   }
 
-  const resumed = await resumeAgentRun(db, agentJobsQueue().producer, {
+  const resumed = await resumeAgentRun(agentJobsQueue().producer, {
     agentId,
     runId,
     ownerSubject: access.ownerSubject,

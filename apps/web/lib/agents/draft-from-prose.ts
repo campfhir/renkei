@@ -447,7 +447,7 @@ export async function draftAgentFromProse(
   const guardrails = options.guardrails?.trim() || null;
   const offerGuardrails = guardrails === null;
 
-  const llmResult = await resolveAgentLlm(db, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) return { error: 'No model is configured for this organization yet.' };
   const llm = llmResult.val;
   const settings = await getOrgSettings();

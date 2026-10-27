@@ -56,7 +56,6 @@ export function notifyChatReplyDesktop(input: {
       : 0;
     if (presenceWindowSeconds > 0) {
       const watchedLive = await wasRecentlyWatchingChat(
-        dbResult.val,
         input.ownerSubject,
         input.chatId,
         presenceWindowSeconds
@@ -84,7 +83,6 @@ export function notifyChatReplyDesktop(input: {
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
       void sendPush(
-        dbResult.val,
         input.ownerSubject,
         keyResult.val,
         {

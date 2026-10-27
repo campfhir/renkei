@@ -97,7 +97,7 @@ export async function POST(
   // (or manual, api, chained) run is the case someone reruns expecting
   // ONE thing to happen, so a second one already going is worth a beat.
   if (run.trigger_kind !== 'event' && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -118,7 +118,7 @@ export async function POST(
       ? { ...run.initial_state }
       : undefined;
 
-  const created = await createAgentRun(db, agentJobsQueue().producer, {
+  const created = await createAgentRun(agentJobsQueue().producer, {
     agentId,
     ownerSubject: agent.owner_subject,
     definition: agentDefinitionOf(agent),

@@ -8,8 +8,6 @@
  * before a model sees them (ids must not become an existence oracle).
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AdManagerCredentials } from './credentials';
@@ -45,7 +43,6 @@ export async function resolveInstance(
  * none has nothing to open it with and answers `not_connected`.
  */
 export async function resolveTarget(
-  db: Kysely<DB>,
   target: SubjectTarget,
   provided?: AdManagerCredentials | null
 ): Promise<Result<ResolvedTarget, ResolveError>> {
@@ -58,7 +55,7 @@ export async function resolveTarget(
   if (!ciphertext.ok) return err('store' as const);
   if (ciphertext.val === null) return err('not_connected' as const);
 
-  const credentials = await openCredentialsForSubject(db, target.subject, ciphertext.val);
+  const credentials = await openCredentialsForSubject(target.subject, ciphertext.val);
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ instance: instance.val, credentials: credentials.val });
 }

@@ -88,6 +88,53 @@ export interface CardRecord {
   suggestedAction: Json | null;
 }
 
+/** A run as created, before anything has claimed it (status 'queued'). */
+export interface AgentRunNewInput {
+  id: string;
+  agentId: string;
+  ownerSubject: string;
+  triggerId: string | null;
+  triggerKind: string;
+  triggeredBySubject: string | null;
+  parentRunId: string | null;
+  /** Ancestor agent ids; `depth` is its length. */
+  lineage: string[];
+  definitionSnapshot: unknown;
+  llmModelId: string | null;
+  initialState: Record<string, unknown> | null;
+}
+
+/** A run's durable log row (agent_run_log). */
+export interface AgentRunLogRecord {
+  runId: string;
+  agentId: string;
+  ownerSubject: string;
+  triggerKind: string;
+  status: string;
+  createdAt: Date;
+  finishedAt: Date | null;
+  errorKind: string | null;
+  outcomeCode: string | null;
+  error: string | null;
+  inputTokens: number;
+  outputTokens: number;
+  toolCalls: number;
+  attempts: number;
+}
+
+/** How a run ended, for its durable run-log row (agent_run_log). */
+export interface AgentRunOutcomeInput {
+  runId: string;
+  agentId: string;
+  ownerSubject: string;
+  status: string;
+  /** Already clipped by the caller; null unless the run failed. */
+  errorKind: string | null;
+  error: string | null;
+  /** Keep only the newest failed attempt's outcome code (clipped to 64). */
+  failed: boolean;
+}
+
 export interface AgentRunStore {
   /**
    * One agent's retained runs, newest first (ties by id), at most `limit`.
@@ -183,6 +230,53 @@ export interface AgentRunStore {
     maxFailures: number;
     maxTools: number;
   }): Promise<OptimizationEvidenceRecord>;
+  /** How many runs were created after `since`. */
+  countCreatedSince(since: Date): Promise<number>;
+  /** Insert a run in status 'queued'. */
+  createQueued(run: AgentRunNewInput): Promise<void>;
+  /** Drop a run (a queued row whose message never landed); returns how many went. */
+  deleteRun(runId: string): Promise<number>;
+  /** The durable run log's row for a new run (agent_run_log). */
+  logRunCreated(entry: {
+    runId: string;
+    agentId: string;
+    ownerSubject: string;
+    triggerKind: string;
+    status: string;
+  }): Promise<void>;
+  /** The agent's newest run still queued or running (ties by id, descending). */
+  findInProgress(agentId: string): Promise<{ id: string; status: string } | null>;
+  /** The run as a resume needs it, when it is this agent's and this owner's. */
+  findForResume(
+    runId: string,
+    agentId: string,
+    ownerSubject: string
+  ): Promise<{ status: string; error: string | null; errorKind: string | null } | null>;
+  /**
+   * Put a FAILED run back to 'queued': failure, timing, budget and cancel
+   * flags cleared, the resume recorded (time, who, count + 1, guidance,
+   * the failure it replaces). False when the run was not failed.
+   */
+  markResumed(
+    runId: string,
+    resume: { resumedBy: string; guidance: string | null; failure: string | null }
+  ): Promise<boolean>;
+  /** Undo a resume whose message never landed: a still-'queued' run back to failed. */
+  restoreFailure(
+    runId: string,
+    failure: { error: string | null; errorKind: string | null }
+  ): Promise<void>;
+  /** One run's log row. */
+  findRunLog(runId: string): Promise<AgentRunLogRecord | null>;
+  /** The run log says the run is in flight again (queued, unfinished). */
+  markLogQueued(runId: string): Promise<void>;
+  /**
+   * Finalize the run's log row: its outcome plus what its attempts
+   * (agent_run_steps) cost — summed tokens and tool calls, the attempt
+   * count, and for a failure the newest failed attempt's outcome code.
+   * An upsert: the row is written even when creation's insert was missed.
+   */
+  recordOutcome(outcome: AgentRunOutcomeInput): Promise<void>;
 }
 
 export interface OptimizationEvidenceRecord {

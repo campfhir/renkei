@@ -111,7 +111,7 @@ export async function suggestCleanerScript(
   }
   const instructions = rawInstructions.trim().slice(0, 2_000);
 
-  const llmResult = await resolveAgentLlm(db, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

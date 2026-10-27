@@ -290,7 +290,7 @@ maybe('agent run engine', () => {
     const finalized: FinalizedRun[] = [];
     const clock = { now: Date.now() };
     const tokens = new Map<string, string[]>();
-    const mintToken = async (_db: unknown, params: { tools: string[] }) => {
+    const mintToken = async (params: { tools: string[] }) => {
       const token = `token-${minted.length}`;
       minted.push(params.tools);
       tokens.set(token, params.tools);
@@ -997,7 +997,7 @@ maybe('agent run engine', () => {
     await h.handler({ payload: { runId } });
     expect((await runOf(runId)).status).toBe('failed');
 
-    const resumed = await resumeAgentRun(db, h.producer, {
+    const resumed = await resumeAgentRun(h.producer, {
       agentId,
       runId,
       ownerSubject: subject,

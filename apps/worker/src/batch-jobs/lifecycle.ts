@@ -198,7 +198,6 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
       const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
       if (keyResult.ok) {
         void sendPush(
-          db,
           batch.subject,
           keyResult.val,
           {

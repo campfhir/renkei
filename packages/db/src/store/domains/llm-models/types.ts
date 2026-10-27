@@ -40,4 +40,15 @@ export interface LlmModelStore {
   ): Promise<'updated' | 'not-found' | 'duplicate-label'>;
   /** False when there was no such model. */
   delete(id: string): Promise<boolean>;
+  /**
+   * The enabled CHAT model (settings.apiSurface not 'images'/'flux') with
+   * this id; with null, the org default among them (ties by id). Null when
+   * none answers.
+   */
+  findEnabledChatModel(id: string | null): Promise<LlmModelConfigRecord | null>;
+  /**
+   * The enabled IMAGE model (settings.apiSurface 'images' or 'flux') with
+   * this id; with null, the first by label (ties by id).
+   */
+  findEnabledImageModel(id: string | null): Promise<LlmModelConfigRecord | null>;
 }

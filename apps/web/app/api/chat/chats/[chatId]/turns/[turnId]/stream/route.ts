@@ -91,7 +91,7 @@ export async function GET(
     // chat_presence is not behind the data store yet: the database is
     // reached for here, lazily, and a store without one just skips it.
     try {
-      void pingChatPresence(context.db, session.subject, chatId).catch(() => {});
+      void pingChatPresence(session.subject, chatId).catch(() => {});
     } catch {
       // No database: no presence to record.
     }

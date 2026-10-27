@@ -550,6 +550,27 @@ export function postgresUsage(db: () => Kysely<DB>): UsageStore {
       }));
     },
 
+    async recordLlmCall(call) {
+      await db()
+        .insertInto('llm_calls')
+        .values({
+          subject: call.subject,
+          agent_id: call.agentId,
+          run_id: call.runId,
+          step_id: call.stepId,
+          purpose: call.purpose,
+          input_tokens: call.inputTokens,
+          output_tokens: call.outputTokens,
+          cache_read_input_tokens: call.cacheReadInputTokens,
+          cache_write_input_tokens: call.cacheWriteInputTokens,
+          llm_model_id: call.llmModelId,
+          provider: call.provider,
+          model: call.model,
+          duration_ms: call.durationMs,
+        })
+        .execute();
+    },
+
     async recordDocument(usage) {
       await db()
         .insertInto('document_usage')

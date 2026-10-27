@@ -29,6 +29,56 @@ const fixture = {
   ],
 };
 
+const chat = (n: number) => `00000000-0000-4000-8000-1000000000${String(n).padStart(2, '0')}`;
+
+const pushFixture = {
+  push_subscriptions: [
+    {
+      id: id(21),
+      subject: 'ann',
+      endpoint: 'https://push.test/ann-2',
+      p256dh: 'p2',
+      auth: 'a2',
+      created_at: at(1),
+    },
+    {
+      id: id(22),
+      subject: 'ann',
+      endpoint: 'https://push.test/ann-1',
+      p256dh: 'p1',
+      auth: 'a1',
+      created_at: at(1),
+    },
+    {
+      id: id(23),
+      subject: 'ann',
+      endpoint: 'https://push.test/ann-0',
+      p256dh: 'p0',
+      auth: 'a0',
+      created_at: at(2),
+    },
+    {
+      id: id(24),
+      subject: 'bob',
+      endpoint: 'https://push.test/bob-1',
+      p256dh: 'pb',
+      auth: 'ab',
+      created_at: at(1),
+    },
+  ],
+};
+
+const presenceFixture = {
+  chats: [
+    { id: chat(1), owner_subject: 'ann' },
+    { id: chat(2), owner_subject: 'bob' },
+  ],
+  chat_presence: [
+    { subject: 'ann', chat_id: chat(1), updated_at: at(3) },
+    { subject: 'bob', chat_id: chat(2), updated_at: at(2) },
+  ],
+};
+
 export const notificationScenarios: Scenario<DataStore>[] = [
   {
     method: 'notifications.list',
@@ -111,5 +161,106 @@ export const notificationScenarios: Scenario<DataStore>[] = [
       );
       return { again, rows: await store.notifications.list('ann', { limit: 5 }) };
     },
+  },
+  {
+    method: 'notifications.find',
+    name: 'own row only; another person or an unknown id reads null',
+    fixture,
+    run: async (store) => [
+      await store.notifications.find('ann', id(1)),
+      await store.notifications.find('bob', id(1)),
+      await store.notifications.find('ann', id(99)),
+    ],
+  },
+  {
+    method: 'notifications.savePushSubscription',
+    name: 'insert, then a repeat endpoint re-points the row in place',
+    fixture: pushFixture,
+    run: async (store) => {
+      await store.notifications.savePushSubscription('ann', {
+        endpoint: 'https://push.test/new',
+        p256dh: 'p-new',
+        auth: 'a-new',
+      });
+      await store.notifications.savePushSubscription('ann', {
+        endpoint: 'https://push.test/bob-1',
+        p256dh: 'p-moved',
+        auth: 'a-moved',
+      });
+      return {
+        ann: (await store.notifications.listPushSubscriptions('ann')).map((s) => [
+          s.endpoint,
+          s.p256dh,
+          s.auth,
+        ]),
+        bob: await store.notifications.listPushSubscriptions('bob'),
+      };
+    },
+  },
+  {
+    method: 'notifications.deletePushSubscription',
+    name: 'own endpoint only',
+    fixture: pushFixture,
+    run: async (store) => [
+      await store.notifications.deletePushSubscription('ann', 'https://push.test/bob-1'),
+      await store.notifications.deletePushSubscription('ann', 'https://push.test/ann-1'),
+      await store.notifications.listPushSubscriptions('ann'),
+      await store.notifications.listPushSubscriptions('bob'),
+    ],
+  },
+  {
+    method: 'notifications.deletePushSubscriptionByEndpoint',
+    name: 'whoever holds it; an unknown endpoint deletes nothing',
+    fixture: pushFixture,
+    run: async (store) => [
+      await store.notifications.deletePushSubscriptionByEndpoint('https://push.test/bob-1'),
+      await store.notifications.deletePushSubscriptionByEndpoint('https://push.test/none'),
+      await store.notifications.listPushSubscriptions('bob'),
+    ],
+  },
+  {
+    method: 'notifications.listPushSubscriptions',
+    name: 'oldest first, ties by endpoint, per person',
+    fixture: pushFixture,
+    run: async (store) => [
+      await store.notifications.listPushSubscriptions('ann'),
+      await store.notifications.listPushSubscriptions('bob'),
+      await store.notifications.listPushSubscriptions('nobody'),
+    ],
+  },
+  {
+    method: 'notifications.pingChatPresence',
+    name: 'inserts, then moves the one row forward',
+    fixture: presenceFixture,
+    run: async (store) => {
+      await store.notifications.pingChatPresence('ann', chat(2), new Date(at(5)));
+      await store.notifications.pingChatPresence('ann', chat(1), new Date(at(9)));
+      return [
+        await store.notifications.wasWatchingChat('ann', chat(1), new Date(at(8))),
+        await store.notifications.wasWatchingChat('ann', chat(2), new Date(at(4))),
+        await store.notifications.wasWatchingChat('ann', chat(2), new Date(at(5))),
+      ];
+    },
+  },
+  {
+    method: 'notifications.wasWatchingChat',
+    name: 'strictly after the cutoff, own row only',
+    fixture: presenceFixture,
+    run: async (store) => [
+      await store.notifications.wasWatchingChat('ann', chat(1), new Date(at(2))),
+      await store.notifications.wasWatchingChat('ann', chat(1), new Date(at(3))),
+      await store.notifications.wasWatchingChat('bob', chat(1), new Date(at(0))),
+      await store.notifications.wasWatchingChat('ann', chat(3), new Date(at(0))),
+    ],
+  },
+  {
+    method: 'notifications.deleteChatPresenceBefore',
+    name: 'strictly older rows go',
+    fixture: presenceFixture,
+    run: async (store) => [
+      await store.notifications.deleteChatPresenceBefore(new Date(at(3))),
+      await store.notifications.wasWatchingChat('ann', chat(1), new Date(at(0))),
+      await store.notifications.wasWatchingChat('bob', chat(2), new Date(at(0))),
+    ],
   },
 ];

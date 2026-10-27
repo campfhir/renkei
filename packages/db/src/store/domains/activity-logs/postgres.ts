@@ -1,5 +1,9 @@
 import type { Kysely } from 'kysely';
-import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
+import {
+  PostgresAdapter,
+  PsqlE2ERegistrationStore,
+  type LoggerTables,
+} from '@campfhir/bored-logs/adapters/psql';
 import type { DB } from '../../../db.types';
 import type { ActivityLogStore } from './types';
 
@@ -12,6 +16,21 @@ export function postgresActivityLogs(db: () => Kysely<DB>): ActivityLogStore {
       }).query(options);
       if (!result.ok) throw new Error(result.err.message || 'Failed to query logs');
       return result.val;
+    },
+    writer(options = {}) {
+      return new PostgresAdapter({
+        db: db(),
+        level: options.level ?? 'info',
+        ...(options.cipher
+          ? { encrypt: options.cipher.encrypt, decrypt: options.cipher.decrypt }
+          : {}),
+      });
+    },
+    shippingRegistrations() {
+      // The registration table is bored-logs' own (migration 004_e2e_clients)
+      // and lives in this same database, outside the generated DB types.
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      return new PsqlE2ERegistrationStore(db() as unknown as Kysely<LoggerTables>);
     },
     async grantNamesByAccountIds(accountIds) {
       if (accountIds.length === 0) return [];

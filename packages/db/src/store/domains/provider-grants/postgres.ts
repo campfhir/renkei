@@ -1,6 +1,11 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { grantSummaryFromRow, prefixPattern } from './record';
+import {
+  grantSummaryFromRow,
+  prefixPattern,
+  sealedGrantFromRow,
+  sealedGrantValues,
+} from './record';
 import type { ProviderGrantStore } from './types';
 
 export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore {
@@ -46,6 +51,97 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .where('provider_account_id', '=', accountId)
         .executeTakeFirst();
       return Number(result.numUpdatedRows ?? 0);
+    },
+    async findSealed(provider, accountId) {
+      const row = await db()
+        .selectFrom('provider_grants')
+        .select([
+          'provider',
+          'provider_account_id',
+          'subject',
+          'display_name',
+          'requested_scopes',
+          'granted_scopes',
+          'metadata',
+          'client_id',
+          'encrypted_access_token',
+          'encrypted_refresh_token',
+          'expires_at',
+        ])
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .executeTakeFirst();
+      return row ? sealedGrantFromRow(row) : null;
+    },
+    async upsertSealed(provider, grant) {
+      const now = new Date();
+      const values = sealedGrantValues(provider, grant, now);
+      await db()
+        .insertInto('provider_grants')
+        .values(values)
+        .onConflict((oc) =>
+          oc.columns(['provider', 'provider_account_id']).doUpdateSet({
+            encrypted_access_token: values.encrypted_access_token,
+            encrypted_refresh_token: grant.keepStoredRefreshToken
+              ? sql`provider_grants.encrypted_refresh_token`
+              : values.encrypted_refresh_token,
+            expires_at: values.expires_at,
+            requested_scopes: values.requested_scopes,
+            granted_scopes: values.granted_scopes,
+            metadata: values.metadata,
+            updated_at: now,
+            subject: values.subject,
+          })
+        )
+        .execute();
+    },
+    async updateSealedTokens(provider, accountId, tokens) {
+      const result = await db()
+        .updateTable('provider_grants')
+        .set({
+          encrypted_access_token: tokens.encryptedAccessToken,
+          encrypted_refresh_token: tokens.encryptedRefreshToken,
+          expires_at: tokens.expiresAt,
+          updated_at: new Date(),
+          ...(tokens.grantedScopes ? { granted_scopes: tokens.grantedScopes } : {}),
+        })
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0);
+    },
+    async delete(provider, accountId) {
+      const result = await db()
+        .deleteFrom('provider_grants')
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async acquireRefreshLock(provider, accountId, at) {
+      const inserted = await db()
+        .insertInto('provider_refresh_locks')
+        .values({ provider, account_id: accountId, locked_at: at })
+        .onConflict((oc) => oc.doNothing())
+        .returning('provider')
+        .executeTakeFirst();
+      return inserted !== undefined;
+    },
+    async findRefreshLock(provider, accountId) {
+      const row = await db()
+        .selectFrom('provider_refresh_locks')
+        .select('locked_at')
+        .where('provider', '=', provider)
+        .where('account_id', '=', accountId)
+        .executeTakeFirst();
+      return row ? row.locked_at : null;
+    },
+    async releaseRefreshLock(provider, accountId) {
+      await db()
+        .deleteFrom('provider_refresh_locks')
+        .where('provider', '=', provider)
+        .where('account_id', '=', accountId)
+        .execute();
     },
   };
 }

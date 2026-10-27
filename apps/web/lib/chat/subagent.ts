@@ -26,8 +26,6 @@
  * stamped in the ledger with the model that actually answered.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   resolveAgentLlm,
   streamOrComplete,
@@ -114,7 +112,6 @@ export interface SubagentModelChoice {
 }
 
 export type ResolveSubagentLlm = (
-  db: Kysely<DB>,
   modelConfigId: string
 ) => Promise<Result<ResolvedLlm, ResolveLlmError>>;
 
@@ -222,7 +219,7 @@ export async function pickSubagentLlm(
     };
   }
   if (choice.id === turnLlm.modelConfigId) return { ok: true, llm: turnLlm };
-  const resolved = await resolve(context.db, choice.id);
+  const resolved = await resolve(choice.id);
   // resolveAgentLlm falls back to the org default when the row no longer
   // resolves; that is not what was asked for, so say so.
   if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {

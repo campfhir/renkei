@@ -1,4 +1,11 @@
-import type { DecryptFn, EncryptFn, LogQueryOptions, LogRow } from '@campfhir/bored-logs';
+import type {
+  DecryptFn,
+  EncryptFn,
+  LogAdapter,
+  LogQueryOptions,
+  LogRow,
+} from '@campfhir/bored-logs';
+import type { E2ERegistrationStore } from '@campfhir/bored-logs/server';
 
 /** encrypt/decrypt for secure()-stored attributes; both or neither, as the adapter wants them. */
 export interface LogCipher {
@@ -34,4 +41,23 @@ export interface ActivityLogStore {
   grantNamesByAccountIds(
     accountIds: string[]
   ): Promise<{ providerAccountId: string; displayName: string }[]>;
+  /**
+   * A logging adapter that writes records into the log tables — what the
+   * log-shipping ingest route hands its sink. Records below `level`
+   * (default 'info') are dropped; with a cipher, secure() values are stored
+   * encrypted. Postgres is bored-logs' own PostgresAdapter (batched; call
+   * `flush` to write now, `close` to stop its timers). Memory writes each
+   * record as it arrives and agrees with the adapter on null, string,
+   * number, boolean, Date and JSON attributes and the shipper's
+   * application/version; it does not truncate long keys or move oversized
+   * values to the blob table.
+   */
+  writer(options?: { level?: string; cipher?: LogCipher }): LogAdapter;
+  /**
+   * Where log shippers' E2E registrations live. Postgres is bored-logs'
+   * PsqlE2ERegistrationStore (log_e2e_clients); memory keeps them in this
+   * store instance, gone with the process — as bored-logs' own default
+   * store does.
+   */
+  shippingRegistrations(): E2ERegistrationStore;
 }

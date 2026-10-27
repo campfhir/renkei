@@ -134,30 +134,30 @@ maybe('image generation models', () => {
 
   it('never resolves an image model as a chat model, by id or as the default', async () => {
     for (const imageModel of [imageId, fluxId]) {
-      const byId = await resolveAgentLlm(db, imageModel);
+      const byId = await resolveAgentLlm(imageModel);
       // An override that is not a chat model falls back to the org default.
       expect(byId.ok && byId.val.modelConfigId).toBe(chatId);
     }
-    const fallback = await resolveAgentLlm(db, null);
+    const fallback = await resolveAgentLlm(null);
     expect(fallback.ok && fallback.val.modelConfigId).toBe(chatId);
   });
 
   it('resolves an image model with its key, and only an enabled image model', async () => {
     // The first by label is the FLUX row, and its surface travels with it.
-    const first = await resolveImageModel(db, null);
+    const first = await resolveImageModel(null);
     expect(first.ok && first.val).toMatchObject({
       modelConfigId: fluxId,
       label: 'Fox',
       config: { apiKey: 'sk-test', model: 'FLUX.2-flex', surface: 'flux' },
     });
-    const named = await resolveImageModel(db, imageId);
+    const named = await resolveImageModel(imageId);
     expect(named.ok && named.val).toMatchObject({
       modelConfigId: imageId,
       config: { model: 'gpt-image-1', surface: 'images' },
     });
 
     for (const notAnImageModel of [chatId, anthropicId, offImageId]) {
-      const refused = await resolveImageModel(db, notAnImageModel);
+      const refused = await resolveImageModel(notAnImageModel);
       expect(!refused.ok && refused.err.type).toBe('NO_MODEL');
     }
   });
@@ -168,7 +168,7 @@ maybe('image generation models', () => {
       .set({ enabled: false })
       .where('id', 'in', [imageId, fluxId])
       .execute();
-    const result = await resolveImageModel(db, null);
+    const result = await resolveImageModel(null);
     expect(!result.ok && result.err.type).toBe('NO_MODEL');
   });
 });

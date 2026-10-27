@@ -5,9 +5,7 @@ import {
   createLogRegistrationHandler,
   type E2EKeyPairJwk,
 } from '@campfhir/bored-logs/server';
-import type { Kysely } from 'kysely';
-import type { LoggerTables } from '@campfhir/bored-logs/adapters/psql';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 import type { LogCipher } from '@/lib/log-encryption';
 
@@ -42,22 +40,18 @@ export function getLogShipping(): Promise<LogShippingHandlers | null> {
 }
 
 async function build(): Promise<LogShippingHandlers | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.error('Log shipping unavailable: no database', {
+  let store: ReturnType<typeof getDataStore>;
+  try {
+    store = getDataStore();
+  } catch (error) {
+    logger.error('Log shipping unavailable: no data store', {
       component: 'web/log-ingest',
-      error: String(dbResult.err),
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }
 
-  // Dynamic import for the same reason instrumentation.ts uses one: the psql
-  // adapter reaches ESM-only kysely helpers that must stay out of graphs
-  // (jest, client) that can't parse them.
-  const { PostgresAdapter, PsqlE2ERegistrationStore } =
-    await import('@campfhir/bored-logs/adapters/psql');
-
-  // A dedicated sink with ONLY the Postgres adapter: shipped records are
+  // A dedicated sink with ONLY the log-table adapter: shipped records are
   // already printed on their own application's console, so echoing them
   // through this app's ConsoleAdapter would double every line in
   // `docker logs`. ingest() preserves the shipper's application/version, so
@@ -78,23 +72,13 @@ async function build(): Promise<LogShippingHandlers | null> {
   }
 
   const sink = createLogger({});
-  sink.addAdapter(
-    new PostgresAdapter({
-      db: dbResult.val,
-      level: 'info',
-      encrypt: cipher.encrypt,
-      decrypt: cipher.decrypt,
-    })
-  );
+  sink.addAdapter(store.activityLogs.writer({ level: 'info', cipher }));
 
   const context = createE2EServerContext({
     // Durable registrations (migration 004_e2e_clients, applied by
     // adapter.migrate() at boot): shippers survive a server bounce without
-    // re-registering, and multiple web instances share one registry. The
-    // store is typed against the bored-logs tables, which live in this same
-    // database — hence the cast.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-    store: new PsqlE2ERegistrationStore(dbResult.val as unknown as Kysely<LoggerTables>),
+    // re-registering, and multiple web instances share one registry.
+    store: store.activityLogs.shippingRegistrations(),
     keys: parseServerKeys(),
   });
 

@@ -46,6 +46,25 @@ export interface ChunkCandidate {
   lexicalHit: boolean | null;
 }
 
+/** One chunk as an ingest writes it; `content` arrives sealed, the rest plaintext. */
+export interface KnowledgeChunkUpsert {
+  provider: string;
+  refId: string;
+  metadata: Record<string, unknown>;
+  /** As stored (encrypted at rest). */
+  content: string;
+  embedding: readonly number[];
+  keywords: string[] | null;
+  /**
+   * The lexical index's inputs, in plaintext: title (weight A), keywords
+   * (B), chunk text (C), under the text search configuration `config`.
+   * Postgres builds the tsvector; memory keeps the words lower-cased,
+   * which is all its lexical arm reads.
+   */
+  search: { title: string; keywords: string; content: string; config: string };
+  sourceAt: Date | null;
+}
+
 /**
  * The knowledge index (`knowledge_chunks`), read for retrieval. It only
  * proposes: every candidate still goes through the live ACL gate in
@@ -88,4 +107,48 @@ export interface KnowledgeChunkStore {
       efSearch: number;
     }
   ): Promise<ChunkCandidate[]>;
+
+  /**
+   * Write one chunk, replacing the stored one with the same (provider,
+   * ref id) — metadata, content, embedding, keywords, lexical entry and
+   * source date all — and keeping its id and creation time.
+   */
+  upsert(chunk: KnowledgeChunkUpsert): Promise<void>;
+  /**
+   * Delete one object's chunks — the bare ref id and every `refId#…` — or,
+   * `prefixOnly`, every ref id starting with `refId`. Returns how many went.
+   */
+  deleteObject(
+    provider: string,
+    refId: string,
+    options?: { prefixOnly?: boolean }
+  ): Promise<number>;
+  /** Delete the provider's chunks whose `metadata ->> key` is `value`; returns how many. */
+  deleteByMetadata(provider: string, key: string, value: string): Promise<number>;
+  /**
+   * Delete a scope's chunks (`metadata ->> scope.key` = value) whose epoch
+   * (`metadata ->> epoch.key`) is anything but `epoch.value`, missing
+   * included; returns how many.
+   */
+  deleteStaleScope(
+    provider: string,
+    scope: { key: string; value: string },
+    epoch: { key: string; value: string }
+  ): Promise<number>;
+  /** The metadata of the named objects' chunks (bare ref ids and their `#` chunks), by ref id. */
+  objectMetadata(
+    provider: string,
+    refIds: readonly string[]
+  ): Promise<{ refId: string; metadata: unknown }[]>;
+  /**
+   * The smallest cosine distance from `vector` to a chunk under
+   * `refIdPrefix`, created at or after `since`, other than `excludeRefId`
+   * and its `#` chunks; null when there is none. Postgres asks pgvector;
+   * memory computes the distance in JavaScript, agreeing to about six
+   * digits (see searchHybrid).
+   */
+  nearestDistance(
+    vector: readonly number[],
+    scope: { refIdPrefix: string; excludeRefId: string; since: Date }
+  ): Promise<number | null>;
 }

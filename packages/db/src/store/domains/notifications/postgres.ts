@@ -51,5 +51,82 @@ export function postgresNotifications(db: () => Kysely<DB>): NotificationStore {
         .values(notificationValues(notification))
         .execute();
     },
+    async find(subject, id) {
+      const row = await db()
+        .selectFrom('agent_notifications')
+        .selectAll()
+        .where('subject', '=', subject)
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row ? notificationFromRow(row) : null;
+    },
+    async savePushSubscription(subject, subscription) {
+      await db()
+        .insertInto('push_subscriptions')
+        .values({
+          id: globalThis.crypto.randomUUID(),
+          subject,
+          endpoint: subscription.endpoint,
+          p256dh: subscription.p256dh,
+          auth: subscription.auth,
+        })
+        .onConflict((oc) =>
+          oc.columns(['endpoint']).doUpdateSet({
+            subject,
+            p256dh: subscription.p256dh,
+            auth: subscription.auth,
+          })
+        )
+        .execute();
+    },
+    async deletePushSubscription(subject, endpoint) {
+      const result = await db()
+        .deleteFrom('push_subscriptions')
+        .where('subject', '=', subject)
+        .where('endpoint', '=', endpoint)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async deletePushSubscriptionByEndpoint(endpoint) {
+      const result = await db()
+        .deleteFrom('push_subscriptions')
+        .where('endpoint', '=', endpoint)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async listPushSubscriptions(subject) {
+      const rows = await db()
+        .selectFrom('push_subscriptions')
+        .select(['endpoint', 'p256dh', 'auth'])
+        .where('subject', '=', subject)
+        .orderBy('created_at')
+        .orderBy('endpoint')
+        .execute();
+      return rows.map((row) => ({ endpoint: row.endpoint, p256dh: row.p256dh, auth: row.auth }));
+    },
+    async pingChatPresence(subject, chatId, at) {
+      await db()
+        .insertInto('chat_presence')
+        .values({ subject, chat_id: chatId, updated_at: at })
+        .onConflict((oc) => oc.columns(['subject', 'chat_id']).doUpdateSet({ updated_at: at }))
+        .execute();
+    },
+    async wasWatchingChat(subject, chatId, since) {
+      const row = await db()
+        .selectFrom('chat_presence')
+        .select('chat_id')
+        .where('subject', '=', subject)
+        .where('chat_id', '=', chatId)
+        .where('updated_at', '>', since)
+        .executeTakeFirst();
+      return row !== undefined;
+    },
+    async deleteChatPresenceBefore(before) {
+      const result = await db()
+        .deleteFrom('chat_presence')
+        .where('updated_at', '<', before)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
   };
 }

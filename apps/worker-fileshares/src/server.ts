@@ -273,7 +273,7 @@ function makeJsonHandlers(
 }
 
 export function createFileshareServer(deps: FileshareServerDeps): Server {
-  const serviceDeps: ServiceDeps = { db: deps.db };
+  const serviceDeps: ServiceDeps = {};
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const jsonHandlers = makeJsonHandlers(transferLimit);
 

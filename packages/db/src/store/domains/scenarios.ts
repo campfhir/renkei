@@ -53,6 +53,12 @@ import { personalAccountScenarios } from './personal-account/scenarios';
 import { activityLogScenarios } from './activity-logs/scenarios';
 import { toolUsageScenarios } from './tool-usage/scenarios';
 import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
+import { platformSettingScenarios } from './platform-settings/scenarios';
+import { userKeyScenarios } from './user-keys/scenarios';
+import { queueScenarios } from './queues/scenarios';
+import { runTokenScenarios } from './run-tokens/scenarios';
+import { knowledgeReindexRunScenarios } from './knowledge-reindex-runs/scenarios';
+import { contentWatchScenarios } from './content-watches/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -106,4 +112,10 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...activityLogScenarios,
   ...toolUsageScenarios,
   ...knowledgeChunkScenarios,
+  ...platformSettingScenarios,
+  ...userKeyScenarios,
+  ...queueScenarios,
+  ...runTokenScenarios,
+  ...knowledgeReindexRunScenarios,
+  ...contentWatchScenarios,
 ];

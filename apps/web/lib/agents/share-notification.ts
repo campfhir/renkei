@@ -57,7 +57,6 @@ export function notifyAgentShared(input: {
       const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
       if (dbResult.ok && keyResult.ok) {
         void sendPush(
-          dbResult.val,
           input.granteeSubject,
           keyResult.val,
           { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },

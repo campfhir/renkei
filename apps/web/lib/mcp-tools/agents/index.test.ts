@@ -965,7 +965,7 @@ describe('agent_memory_forget', () => {
       entryIds: ['mem-1', 'mem-9'],
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith('agent-1', {
       kind: 'entries',
       entryIds: ['mem-1', 'mem-9'],
     });
@@ -1012,7 +1012,7 @@ describe('agent_memory_forget', () => {
       confirm: true,
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith('agent-1', {
       kind: 'all',
     });
     expect(result.content[0]?.text).toContain('12 entries and the rolling summary forgotten');
@@ -1067,7 +1067,7 @@ describe('agent_memory_forget', () => {
       summary: true,
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith('agent-1', {
       kind: 'summary',
     });
     expect(result.content[0]?.text).toContain('Rolling summary cleared.');
@@ -1109,7 +1109,6 @@ describe('agent_run_now', () => {
     // Recorded as the manual run it is, with the state a scheduled run gets
     // so trigger.scheduledFor binds the same way.
     expect(runNowMock.createAgentRun).toHaveBeenCalledWith(
-      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         agentId: 'agent-1',
@@ -1269,7 +1268,6 @@ describe('agent_run_now', () => {
       expect(result.isError).toBeUndefined();
       expect(result.content[0]?.text).toContain('runId: run-7');
       expect(runNowMock.createAgentRun).toHaveBeenCalledWith(
-        expect.anything(),
         expect.anything(),
         expect.objectContaining({
           agentId: 'agent-1',
@@ -1475,7 +1473,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
 
     expect(result.isError).toBeUndefined();
     expect(runs.resumeAgentRun).toHaveBeenCalledWith(
-      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         agentId: 'agent-1',

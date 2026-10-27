@@ -127,7 +127,7 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
         .where('status', 'in', ['queued', 'running'])
         .execute();
       // The run log must agree: an abandoned run is a failed run there too.
-      await recordAgentRunOutcome(db, {
+      await recordAgentRunOutcome({
         agentId: run.agent_id,
         runId: run.id,
         ownerSubject: run.owner_subject,
@@ -226,9 +226,9 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
  * table nothing reads past a fixed, generous age, not a retention policy
  * an org has a reason to tune.
  */
-export function createChatPresenceSweep(db: Kysely<DB>) {
+export function createChatPresenceSweep(_db: Kysely<DB>) {
   return async function sweep(): Promise<void> {
-    const deleted = await deleteStaleChatPresence(db, CHAT_PRESENCE_MAX_AGE_MS);
+    const deleted = await deleteStaleChatPresence(CHAT_PRESENCE_MAX_AGE_MS);
     if (deleted > 0) {
       logger.info('pruned {count} stale chat presence row(s)', {
         component: 'worker-agents/chat-presence-sweep',

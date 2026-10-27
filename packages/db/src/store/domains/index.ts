@@ -55,6 +55,12 @@ import { personalAccount } from './personal-account';
 import { activityLogs } from './activity-logs';
 import { toolUsage } from './tool-usage';
 import { knowledgeChunks } from './knowledge-chunks';
+import { platformSettings } from './platform-settings';
+import { userKeys } from './user-keys';
+import { queues } from './queues';
+import { runTokens } from './run-tokens';
+import { knowledgeReindexRuns } from './knowledge-reindex-runs';
+import { contentWatches } from './content-watches';
 
 export const DOMAINS = {
   sessions,
@@ -108,4 +114,10 @@ export const DOMAINS = {
   activityLogs,
   toolUsage,
   knowledgeChunks,
+  platformSettings,
+  userKeys,
+  queues,
+  runTokens,
+  knowledgeReindexRuns,
+  contentWatches,
 };

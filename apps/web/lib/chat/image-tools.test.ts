@@ -61,7 +61,7 @@ interface Doc {
 const documentsOf = (meta: Record<string, unknown>): Doc[] =>
   Array.isArray(meta.renkeiDocuments) ? (meta.renkeiDocuments as Doc[]) : [];
 
-const resolveOk = jest.fn(async (_db: unknown, _tenant: string, id: string | null) =>
+const resolveOk = jest.fn(async (id: string | null) =>
   ok({
     modelConfigId: id ?? 'img-1',
     label: 'x',
@@ -233,7 +233,7 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-2');
+    expect(resolveOk).toHaveBeenLastCalledWith('img-2');
   });
 
   it('falls back to the first when the saved one is gone, or none is saved', async () => {
@@ -241,9 +241,9 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith('img-1');
     await tool(returning()).execute({ filename: 'a.png' }, context());
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith('img-1');
   });
 
   it('says so when the chosen model cannot be used right now', async () => {
@@ -395,7 +395,7 @@ describe('chat_generate_image — a size the model will not draw', () => {
   });
 
   it('gives FLUX no auto rung, and reports every size tried when all are rejected', async () => {
-    const flux = jest.fn(async (_db: unknown, _t: string, id: string | null) =>
+    const flux = jest.fn(async (id: string | null) =>
       ok({
         modelConfigId: id ?? 'img-1',
         label: 'x',

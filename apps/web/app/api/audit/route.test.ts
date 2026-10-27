@@ -8,44 +8,40 @@
  * anything they send.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GET } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
 
-
-interface Recorded {
-  filters: Array<[string, string, unknown]>;
+function grant(provider: string, accountId: string, subject: string | null) {
+  return {
+    provider,
+    provider_account_id: accountId,
+    client_id: 'client',
+    display_name: accountId,
+    subject,
+    encrypted_access_token: 'sealed',
+    encrypted_refresh_token: 'sealed',
+    expires_at: new Date('2026-01-01T00:00:00Z'),
+  };
 }
 
-function stubDb(row: Record<string, unknown> | undefined) {
-  const recorded: Recorded = { filters: [] };
-  const chain = {
-    select() {
-      return chain;
-    },
-    where(column: string, op: string, value: unknown) {
-      recorded.filters.push([column, op, value]);
-      return chain;
-    },
-    async executeTakeFirst() {
-      return row;
-    },
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: { selectFrom: () => chain } });
-  return recorded;
+/** A memory store holding these grants. */
+async function storeWith(rows: ReturnType<typeof grant>[]) {
+  const store = createMemoryDataStore();
+  await store.seed({ provider_grants: rows });
+  registerDataStore(store);
+  return store;
 }
 
 function request(query = ''): NextRequest {
   return new NextRequest(`http://localhost/api/audit${query}`);
 }
-
 
 function session(subject: string, roles: string[]) {
   return {
@@ -58,23 +54,22 @@ function session(subject: string, roles: string[]) {
 
 describe('GET /api/audit', () => {
   beforeEach(() => {
-    mockGetDatabase.mockReset();
     mockGetSession.mockReset();
   });
+  afterEach(() => resetDataStore());
 
   it('rejects a caller with no session', async () => {
     mockGetSession.mockResolvedValue(null);
-    stubDb(undefined);
+    await storeWith([grant('atlassian', 'acc-a', 'user-a@example.com')]);
 
     const response = await GET(request('?accountId=acc-a'));
 
     expect(response.status).toBe(401);
-    expect(mockGetDatabase).not.toHaveBeenCalled();
   });
 
   it('ignores an x-operator-key header, which is no longer an auth mechanism', async () => {
     mockGetSession.mockResolvedValue(null);
-    stubDb(undefined);
+    await storeWith([]);
 
     const headed = new NextRequest(`http://localhost/api/audit`, {
       headers: { 'x-operator-key': 'anything' },
@@ -86,7 +81,7 @@ describe('GET /api/audit', () => {
 
   it('gives an operator the organization-wide log context', async () => {
     mockGetSession.mockResolvedValue(session('op@example.com', ['renkei-operator']));
-    stubDb(undefined);
+    await storeWith([]);
 
     const body = await (await GET(request())).json();
 
@@ -96,21 +91,21 @@ describe('GET /api/audit', () => {
 
   it("derives a user's account id from their session, not the query string", async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    const recorded = stubDb({ provider_account_id: 'acc-a' });
+    await storeWith([
+      grant('atlassian', 'acc-other', 'user-b@example.com'),
+      grant('zoom', 'acc-zoom', 'user-a@example.com'),
+      grant('atlassian', 'acc-a', 'user-a@example.com'),
+    ]);
 
     const body = await (await GET(request())).json();
 
-    expect(recorded.filters).toEqual([
-      ['provider', '=', 'atlassian'],
-      ['subject', '=', 'user-a@example.com'],
-    ]);
     expect(body.accountId).toBe('acc-a');
     expect(body.logContext).toBe('mcp:acc-a');
   });
 
   it('refuses a user asking for another account', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    stubDb({ provider_account_id: 'acc-a' });
+    await storeWith([grant('atlassian', 'acc-a', 'user-a@example.com')]);
 
     const response = await GET(request('?accountId=acc-b'));
 
@@ -122,7 +117,7 @@ describe('GET /api/audit', () => {
 
   it('allows a user naming their own account', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    stubDb({ provider_account_id: 'acc-a' });
+    await storeWith([grant('atlassian', 'acc-a', 'user-a@example.com')]);
 
     const response = await GET(request('?accountId=acc-a'));
 
@@ -131,7 +126,7 @@ describe('GET /api/audit', () => {
 
   it('refuses a user with no grant', async () => {
     mockGetSession.mockResolvedValue(session('user-c@example.com', ['renkei-user']));
-    stubDb(undefined);
+    await storeWith([]);
 
     const response = await GET(request());
 
@@ -140,7 +135,7 @@ describe('GET /api/audit', () => {
 
   it('refuses a session carrying no recognised role', async () => {
     mockGetSession.mockResolvedValue(session('nobody@example.com', []));
-    stubDb({ provider_account_id: 'acc-a' });
+    await storeWith([grant('atlassian', 'acc-a', 'user-a@example.com')]);
 
     const response = await GET(request());
 

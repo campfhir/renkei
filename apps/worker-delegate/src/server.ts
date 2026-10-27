@@ -257,7 +257,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
         }
       }
       if (sessionId) {
-        if (!subject || !(await verifySession(db, subject, sessionId))) {
+        if (!subject || !(await verifySession(subject, sessionId))) {
           sendError(response, 'SESSION_MISMATCH', "the session named is not this person's");
           return finish();
         }
@@ -274,7 +274,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
   const handlers: Record<string, Handler> = {
     // ── the person's keys ──────────────────────────────────────────────────
     'keys/instances': async (_body, response) => {
-      const instances = await liveInstances(db);
+      const instances = await liveInstances();
       const signer = (await deps.signer) ?? null;
       sendJson(response, 200, {
         instances,
@@ -285,7 +285,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     'keys/status': async (body, response) => {
       const subject = str(body.subject);
       if (!subject) return sendError(response, 'bad_request');
-      const status = await delegationStatus(db, subject, str(body.sessionId) || undefined);
+      const status = await delegationStatus(subject, str(body.sessionId) || undefined);
       sendJson(response, 200, {
         ...status,
         enrolledAt: iso(status.enrolledAt),
@@ -459,7 +459,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       if (!subject || !values) return sendError(response, 'bad_request');
       const sealed: string[] = [];
       for (const value of values) {
-        const result = await sealForSubject(db, subject, value, scope);
+        const result = await sealForSubject(subject, value, scope);
         if (!result.ok) return sendError(response, result.err.type);
         sealed.push(result.val);
       }
@@ -473,7 +473,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       // missing or not delegated fails the whole batch, since nothing would open.
       const opened: (string | null)[] = [];
       for (const value of stored) {
-        const result = await openForSubject(db, subject, value);
+        const result = await openForSubject(subject, value);
         if (result.ok) {
           opened.push(result.val);
         } else if (result.err.type === 'DECRYPTION_ERROR') {

@@ -139,7 +139,7 @@ export async function fanOutAgentEvents(
       if (!claimed) continue;
     }
 
-    const result = await createAgentRun(db, producer, {
+    const result = await createAgentRun(producer, {
       agentId: trigger.agent_id,
       ownerSubject: trigger.owner_subject,
       definition: agentDefinitionOf(trigger),

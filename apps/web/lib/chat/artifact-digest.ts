@@ -187,7 +187,7 @@ export async function digestText(
   try {
     let llm = input.llm;
     if (!llm) {
-      const resolved = await resolveAgentLlm(db, null);
+      const resolved = await resolveAgentLlm(null);
       if (!resolved.ok) {
         logger.debug('artifact digest skipped: {reason}', {
           component: 'chat/artifact-digest',
@@ -226,7 +226,7 @@ export async function digestText(
       });
       return back('pending');
     }
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject: input.subject,
       agentId: null,
       purpose: 'artifact_digest',
@@ -370,7 +370,7 @@ export async function digestPendingArtifacts(
       continue;
     }
     if (!llm) {
-      const resolved = await resolveAgentLlm(db, null);
+      const resolved = await resolveAgentLlm(null);
       if (!resolved.ok) {
         await setDigestStatus(db, row.id, 'pending');
         return;

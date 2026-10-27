@@ -48,5 +48,68 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
     async insert(notification) {
       tables.insert('agent_notifications', notificationValues(notification));
     },
+    async find(subject, id) {
+      const wanted = tables.param('agent_notifications', 'id', id);
+      const row = tables.first(
+        'agent_notifications',
+        (r) => r.subject === subject && r.id === wanted
+      );
+      return row ? notificationFromRow(row) : null;
+    },
+    async savePushSubscription(subject, subscription) {
+      tables.upsert(
+        'push_subscriptions',
+        {
+          id: globalThis.crypto.randomUUID(),
+          subject,
+          endpoint: subscription.endpoint,
+          p256dh: subscription.p256dh,
+          auth: subscription.auth,
+        },
+        ['endpoint'],
+        { subject, p256dh: subscription.p256dh, auth: subscription.auth }
+      );
+    },
+    async deletePushSubscription(subject, endpoint) {
+      return tables.delete(
+        'push_subscriptions',
+        (r) => r.subject === subject && r.endpoint === endpoint
+      ).length;
+    },
+    async deletePushSubscriptionByEndpoint(endpoint) {
+      return tables.delete('push_subscriptions', (r) => r.endpoint === endpoint).length;
+    },
+    async listPushSubscriptions(subject) {
+      const rows = tables.select('push_subscriptions', (r) => r.subject === subject);
+      return orderBy(rows, [(r) => r.created_at], [(r) => r.endpoint]).map((row) => ({
+        endpoint: row.endpoint,
+        p256dh: row.p256dh,
+        auth: row.auth,
+      }));
+    },
+    async pingChatPresence(subject, chatId, at) {
+      tables.upsert(
+        'chat_presence',
+        { subject, chat_id: chatId, updated_at: at },
+        ['subject', 'chat_id'],
+        { updated_at: at }
+      );
+    },
+    async wasWatchingChat(subject, chatId, since) {
+      const wanted = tables.param('chat_presence', 'chat_id', chatId);
+      return (
+        tables.first(
+          'chat_presence',
+          (r) =>
+            r.subject === subject &&
+            r.chat_id === wanted &&
+            r.updated_at.getTime() > since.getTime()
+        ) !== undefined
+      );
+    },
+    async deleteChatPresenceBefore(before) {
+      return tables.delete('chat_presence', (r) => r.updated_at.getTime() < before.getTime())
+        .length;
+    },
   };
 }

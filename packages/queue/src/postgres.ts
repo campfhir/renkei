@@ -18,7 +18,7 @@
  */
 
 import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDatabase, getDataStore, type QueueTable } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type {
   QueuePurger,
@@ -83,6 +83,18 @@ interface DeadLetterRow {
   dead_at: Date;
 }
 
+const QUEUE_TABLES: readonly QueueTable[] = [
+  'events',
+  'embedding_jobs',
+  'agent_jobs',
+  'batch_job_messages',
+];
+
+/** The data store's name for this queue's live table; producers only reach those. */
+function queueTable(table: string): QueueTable | null {
+  return QUEUE_TABLES.find((known) => known === table) ?? null;
+}
+
 export function createPostgresQueue(config: PostgresQueueConfig): Queue {
   // Identifier fragments are built lazily, per call: constructing a queue
   // must stay side-effect free so importing a module that wires one up
@@ -95,33 +107,16 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
 
   const producer: QueueProducer = {
     async enqueue(message: QueueMessageInput) {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
+      const table = queueTable(config.table);
+      if (!table) return err('QUEUE_ERROR' as const, { message: `unknown queue ${config.table}` });
       try {
-        const key = message.orderingKey ?? null;
-        if (message.coalesce && key !== null) {
-          // INSERT ... SELECT ... WHERE NOT EXISTS keeps the check and the
-          // insert in one statement; two producers racing can still both
-          // insert, which costs one redundant round, never a lost one.
-          await sql`
-            INSERT INTO ${live()} (id, source, type, payload, ordering_key)
-            SELECT gen_random_uuid(), ${message.source}, ${message.type},
-                   ${JSON.stringify(message.payload)}::jsonb, ${key}
-            WHERE NOT EXISTS (
-              SELECT 1 FROM ${live()} q
-              WHERE q.source = ${message.source}
-                AND q.type = ${message.type}
-                AND q.ordering_key = ${key}
-                AND q.status = 'pending'
-            )
-          `.execute(dbResult.val);
-          return ok();
-        }
-        await sql`
-          INSERT INTO ${live()} (id, source, type, payload, ordering_key)
-          VALUES (gen_random_uuid(), ${message.source}, ${message.type},
-                  ${JSON.stringify(message.payload)}::jsonb, ${key})
-        `.execute(dbResult.val);
+        await getDataStore().queues.enqueue(table, {
+          source: message.source,
+          type: message.type,
+          payload: message.payload,
+          orderingKey: message.orderingKey ?? null,
+          coalesce: message.coalesce,
+        });
         return ok();
       } catch (error) {
         return err('QUEUE_ERROR' as const, {
@@ -338,30 +333,16 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
 
   const purger: QueuePurger = {
     async discardPending(type, match) {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return err('QUEUE_ERROR' as const, { message: 'database unavailable' });
       if (match.length === 0) {
         // Refused rather than treated as "match everything": a predicate that
         // silently widened to the whole queue would be a catastrophe wearing
         // the clothes of a no-op.
         return err('QUEUE_ERROR' as const, { message: 'discardPending needs a predicate' });
       }
-
-      // `#>>` walks a path and compares as text, so one form covers both a
-      // top-level key and a nested one. Values are bound, never interpolated.
-      const predicates = match.map(
-        (entry) => sql`payload #>> ${sql.val(entry.path)} = ${entry.value}`
-      );
-
+      const table = queueTable(config.table);
+      if (!table) return err('QUEUE_ERROR' as const, { message: `unknown queue ${config.table}` });
       try {
-        const result = await sql`
-          DELETE FROM ${live()}
-           WHERE type = ${type}
-             -- Pending only: a claimed message is being worked right now.
-             AND status = 'pending'
-             AND ${sql.join(predicates, sql` AND `)}
-        `.execute(dbResult.val);
-        return ok(Number(result.numAffectedRows ?? 0));
+        return ok(await getDataStore().queues.discardPending(table, type, match));
       } catch (error) {
         return err('QUEUE_ERROR' as const, {
           message: error instanceof Error ? error.message : String(error),

@@ -346,7 +346,7 @@ export async function resolveChatToolSurface(
     };
   }
 
-  const token = await mintRunToken(db, {
+  const token = await mintRunToken({
     subject: input.subject,
     agentId: null,
     ttlSeconds: input.ttlSeconds,
@@ -356,7 +356,7 @@ export async function resolveChatToolSurface(
   const release = async () => {
     if (released) return;
     released = true;
-    await revokeRunToken(db, token);
+    await revokeRunToken(token);
   };
   const mcp = new HttpMcpClient(internalMcpEndpoint(), token, {
     clientName: 'renkei-chat',

@@ -169,5 +169,61 @@ export function postgresBatchJobs(db: () => Kysely<DB>): BatchJobStore {
       if (options.limit) query = query.limit(options.limit);
       return (await query.execute()).map(itemFromRow);
     },
+    async findProcessedByPath(shareId, paths) {
+      if (paths.length === 0) return [];
+      const rows = await db()
+        .selectFrom('batch_processed_files')
+        .select(['content_hash', 'path', 'size', 'modified_at'])
+        .where('share_id', '=', shareId)
+        .where('path', 'in', [...paths])
+        .orderBy('path')
+        .orderBy('id')
+        .execute();
+      return rows.map((row) => ({
+        contentHash: row.content_hash,
+        path: row.path,
+        size: row.size,
+        modifiedAt: row.modified_at ? new Date(row.modified_at) : null,
+      }));
+    },
+    async findProcessedHashes(shareId, hashes) {
+      if (hashes.length === 0) return [];
+      const rows = await db()
+        .selectFrom('batch_processed_files')
+        .select('content_hash')
+        .where('share_id', '=', shareId)
+        .where('content_hash', 'in', [...hashes])
+        .orderBy('content_hash')
+        .execute();
+      return rows.map((row) => row.content_hash);
+    },
+    async recordProcessedFiles(shareId, batchId, files) {
+      if (files.length === 0) return;
+      await db()
+        .insertInto('batch_processed_files')
+        .values(
+          files.map((file) => ({
+            id: globalThis.crypto.randomUUID(),
+            share_id: shareId,
+            content_hash: file.contentHash,
+            path: file.path,
+            size: file.size,
+            modified_at: file.modifiedAt,
+            batch_id: batchId,
+            document_key: file.documentKey ?? null,
+          }))
+        )
+        .onConflict((oc) =>
+          oc.columns(['share_id', 'content_hash']).doUpdateSet({
+            path: sql`excluded.path`,
+            size: sql`excluded.size`,
+            modified_at: sql`excluded.modified_at`,
+            batch_id: sql`excluded.batch_id`,
+            document_key: sql`excluded.document_key`,
+            processed_at: sql`NOW()`,
+          })
+        )
+        .execute();
+    },
   };
 }

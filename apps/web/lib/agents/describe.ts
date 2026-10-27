@@ -130,7 +130,7 @@ export async function generateAgentDescription(agent: {
   // The model roster is the agent-llm package's to read, from the database.
   const db = getDatabase();
   if (!db.ok) return failed('database unavailable');
-  const llmResult = await resolveAgentLlm(db.val, agent.llmModelId);
+  const llmResult = await resolveAgentLlm(agent.llmModelId);
   if (!llmResult.ok) return failed(llmResult.err.type);
   const llm = llmResult.val;
 
