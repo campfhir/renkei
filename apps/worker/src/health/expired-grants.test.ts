@@ -5,57 +5,49 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase, type DB } from '@renkei/db';
-import type { Kysely } from 'kysely';
+import { getDataStore } from '@renkei/db';
 import { sweepExpiredGrants, GRANT_STALE_DAYS } from './expired-grants';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('sweepExpiredGrants', () => {
-  let db: Kysely<DB>;
   const staleAccount = `stale-${randomUUID().slice(0, 8)}`;
   const freshAccount = `fresh-${randomUUID().slice(0, 8)}`;
 
-  function grantRow(accountId: string, expiresAt: Date) {
-    return {
-      provider: 'atlassian',
-      provider_account_id: accountId,
-      client_id: 'client-1',
-      display_name: 'Test User',
-      encrypted_access_token: 'v1.a.b.c',
-      encrypted_refresh_token: 'v1.a.b.c',
-      expires_at: expiresAt,
-    };
+  /** A connect's write: the tokens arrive sealed (opaque here, never opened). */
+  async function connect(accountId: string, expiresAt: Date): Promise<void> {
+    await getDataStore().providerGrants.upsertSealed('atlassian', {
+      accountId,
+      clientId: 'client-1',
+      displayName: 'Test User',
+      subject: `grant-owner-${accountId}`,
+      encryptedAccessToken: 'v1.a.b.c',
+      encryptedRefreshToken: 'v1.a.b.c',
+      keepStoredRefreshToken: false,
+      expiresAt,
+      requestedScopes: [],
+      grantedScopes: null,
+      metadata: {},
+    });
   }
 
   beforeAll(async () => {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('no database');
-    db = dbResult.val;
     const staleMs = (GRANT_STALE_DAYS + 1) * 24 * 60 * 60_000;
-    await db
-      .insertInto('provider_grants')
-      .values([
-        grantRow(staleAccount, new Date(Date.now() - staleMs)),
-        // Expired an hour ago — the everyday state of a healthy grant
-        // between uses; deleting it would destroy a working refresh token.
-        grantRow(freshAccount, new Date(Date.now() - 60 * 60_000)),
-      ])
-      .execute();
+    await connect(staleAccount, new Date(Date.now() - staleMs));
+    // Expired an hour ago — the everyday state of a healthy grant between
+    // uses; deleting it would destroy a working refresh token.
+    await connect(freshAccount, new Date(Date.now() - 60 * 60_000));
   });
 
   afterAll(async () => {
+    await getDataStore().providerGrants.delete('atlassian', freshAccount);
   });
 
   it('deletes abandoned grants and spares recently-expired ones', async () => {
     await sweepExpiredGrants();
 
-    const remaining = await db
-      .selectFrom('provider_grants')
-      .select('provider_account_id')
-      .execute();
-    const accounts = remaining.map((row) => row.provider_account_id);
-    expect(accounts).not.toContain(staleAccount);
-    expect(accounts).toContain(freshAccount);
+    const grants = getDataStore().providerGrants;
+    expect(await grants.find('atlassian', staleAccount)).toBeNull();
+    expect(await grants.find('atlassian', freshAccount)).not.toBeNull();
   });
 });

@@ -28,7 +28,6 @@
  */
 
 // The handlers read and write through a real memory data store.
-jest.mock('@renkei/db', () => ({ ...jest.requireActual('@renkei/db'), getDatabase: jest.fn() }));
 jest.mock('@renkei/settings', () => ({
   getPublicBaseUrl: jest.fn(() => 'https://renkei.example.com'),
 }));

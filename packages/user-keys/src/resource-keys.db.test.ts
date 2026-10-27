@@ -10,8 +10,7 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   decryptWithResourceKey,
   encryptWithResourceKey,
@@ -56,38 +55,52 @@ import {
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('held keys and the resource key store', () => {
-  let db: Kysely<DB>;
   let instance: TestInstance;
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const friend = `friend-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
-  const chatId = randomUUID();
-  const projectId = randomUUID();
-  const projectChatId = randomUUID();
-  const ref = { kind: 'chat' as const, resourceId: chatId };
-  const projectRef = { kind: 'chat_project' as const, resourceId: projectId };
-  const projectChatRef = { kind: 'chat' as const, resourceId: projectChatId };
+  let chatId = '';
+  let projectId = '';
+  let projectChatId = '';
+  let ref = { kind: 'chat' as const, resourceId: '' };
+  let projectRef = { kind: 'chat_project' as const, resourceId: '' };
+  let projectChatRef = { kind: 'chat' as const, resourceId: '' };
   let ownerKeys: BrowserKeys;
   let ownerSession: string;
   let friendKeys: BrowserKeys;
+  let friendSession: string;
   const targets = () => [{ id: instance.id, publicKey: instance.pair.publicKey }];
 
+  /** A new chat the way the chat page starts one. */
+  async function newChat(ownerSubject: string): Promise<string> {
+    return getDataStore().chats.create({
+      ownerSubject,
+      projectId: null,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
+  }
+
+  /** The person signs out: their session delegation goes with the session. */
+  async function signOut(sessionId: string): Promise<void> {
+    await getDataStore().sessions.delete(sessionId);
+  }
+
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await db
-      .insertInto('chats')
-      .values([
-        { id: chatId, owner_subject: owner },
-        { id: projectChatId, owner_subject: owner },
-      ])
-      .execute();
-    await db
-      .insertInto('chat_projects')
-      .values({ id: projectId, owner_subject: owner, name: 'P' })
-      .execute();
+    chatId = await newChat(owner);
+    projectChatId = await newChat(owner);
+    projectId = await getDataStore().chatProjects.create({
+      ownerSubject: owner,
+      name: 'P',
+      description: null,
+      toolConfig: null,
+    });
+    ref = { kind: 'chat', resourceId: chatId };
+    projectRef = { kind: 'chat_project', resourceId: projectId };
+    projectChatRef = { kind: 'chat', resourceId: projectChatId };
     instance = await registerTestInstance();
     const enrolledOwner = await enrollTestPerson({
       subject: owner,
@@ -95,24 +108,23 @@ maybe('held keys and the resource key store', () => {
     });
     ownerKeys = enrolledOwner.keys;
     ownerSession = enrolledOwner.sessionId;
-    friendKeys = (await enrollTestPerson({ subject: friend, instances: targets() })).keys;
+    const enrolledFriend = await enrollTestPerson({ subject: friend, instances: targets() });
+    friendKeys = enrolledFriend.keys;
+    friendSession = enrolledFriend.sessionId;
   });
 
   afterAll(async () => {
     setKeyVault(null);
-    await db.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
+    await getDataStore().userKeys.deleteInstance(instance.id);
   });
 
   it('enrolls: the row holds only wrapped keys and a public key, and the ring opens from the delegation', async () => {
-    const row = await db
-      .selectFrom('user_encryption_keys')
-      .selectAll()
-      .where('subject', '=', owner)
-      .executeTakeFirstOrThrow();
+    const row = await getDataStore().userKeys.findKeyRow(owner);
+    if (!row) throw new Error('no key row');
     expect(row.mode).toBe('held');
-    expect(row.public_key).toBe(ownerKeys.pair.publicKey.toString('base64'));
-    expect(row.wrapped_private_key).not.toContain(ownerKeys.pair.privateKey.toString('base64'));
-    expect(row.wrapped_automation_key).not.toContain(ownerKeys.automationKey.toString('base64'));
+    expect(row.publicKey).toBe(ownerKeys.pair.publicKey.toString('base64'));
+    expect(row.wrappedPrivateKey).not.toContain(ownerKeys.pair.privateKey.toString('base64'));
+    expect(row.wrappedAutomationKey).not.toContain(ownerKeys.automationKey.toString('base64'));
     const ring = await getKeyRing(owner);
     expect(ring.ok && ring.val.scope).toBe('session');
     expect(ring.ok && ring.val.userKey?.equals(ownerKeys.userKey)).toBe(true);
@@ -208,8 +220,7 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('opens many at once, each as a named person', async () => {
-    const otherChat = randomUUID();
-    await db.insertInto('chats').values({ id: otherChat, owner_subject: friend }).execute();
+    const otherChat = await newChat(friend);
     const friends = await createResourceKey({ ...ref, resourceId: otherChat }, friend);
     expect(friends.ok).toBe(true);
     const opened = await openResourceKeys('chat', [
@@ -224,8 +235,7 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('an automation delegation alone opens what was wrapped for it and nothing else', async () => {
-    // The person signs out: their session delegation goes with the session.
-    await db.deleteFrom('sessions').where('id', '=', ownerSession).execute();
+    await signOut(ownerSession);
     const ring = await getKeyRing(owner);
     expect(ring.ok && ring.val.scope).toBe('automation');
     expect(ring.ok && ring.val.userKey).toBeNull();
@@ -234,8 +244,7 @@ maybe('held keys and the resource key store', () => {
     const sessionOnly = await getKeyRing(owner, 'session');
     expect(!sessionOnly.ok && sessionOnly.err.type).toBe('NEEDS_SESSION');
     // An agent minting a chat for them while they are away wraps under the automation key.
-    const agentChat = randomUUID();
-    await db.insertInto('chats').values({ id: agentChat, owner_subject: owner }).execute();
+    const agentChat = await newChat(owner);
     const minted = await createResourceKey({ ...ref, resourceId: agentChat }, owner);
     expect(minted.ok).toBe(true);
     expect(
@@ -253,7 +262,7 @@ maybe('held keys and the resource key store', () => {
     expect(minted.ok && reopened.ok && reopened.val.key.equals(minted.val.key)).toBe(true);
     // And can let agents at the plain chat, which then opens under automation alone.
     expect((await grantAutomationAccess(ref, owner)).ok).toBe(true);
-    await db.deleteFrom('sessions').where('id', '=', ownerSession).execute();
+    await signOut(ownerSession);
     const viaAutomation = await openResourceKey(ref, owner);
     expect(viaAutomation.ok).toBe(true);
     ownerSession = await delegateTestSession({
@@ -288,7 +297,7 @@ maybe('held keys and the resource key store', () => {
     const wrongPerson = await openForSubject(friend, credential.val);
     expect(!wrongPerson.ok && wrongPerson.err.type).toBe('DECRYPTION_ERROR');
     // Away: the credential still opens (automation), the memory does not (session only).
-    await db.deleteFrom('sessions').where('id', '=', ownerSession).execute();
+    await signOut(ownerSession);
     expect((await openForSubject(owner, credential.val)).ok).toBe(true);
     const away = await openForSubject(owner, memory.val);
     expect(!away.ok && away.err.type).toBe('NEEDS_SESSION');
@@ -306,15 +315,7 @@ maybe('held keys and the resource key store', () => {
     const status = await delegationStatus(friend);
     expect(status.automationInstances).toEqual([]);
     expect(status.sessionInstances).toEqual([instance.id]);
-    const friendSession = await db
-      .selectFrom('key_delegations')
-      .select('session_id')
-      .where('subject', '=', friend)
-      .executeTakeFirstOrThrow();
-    await db
-      .deleteFrom('sessions')
-      .where('id', '=', friendSession.session_id ?? '')
-      .execute();
+    await signOut(friendSession);
     const away = await getKeyRing(friend);
     expect(!away.ok && away.err.type).toBe('NEEDS_DELEGATION');
     await delegateTestSession({
@@ -329,10 +330,12 @@ maybe('held keys and the resource key store', () => {
     const memory = await sealForSubject(owner, 'remember this', 'session');
     expect(before.ok && memory.ok).toBe(true);
     if (!before.ok || !memory.ok) return;
-    await db
-      .insertInto('chat_user_memories')
-      .values({ owner_subject: owner, kind: 'entry', content: memory.val })
-      .execute();
+    await getDataStore().userMemory.append({
+      ownerSubject: owner,
+      content: memory.val,
+      chatId: null,
+      keep: 50,
+    });
     const next: BrowserKeys = { ...ownerKeys, userKey: randomBytes(32) };
     const sealed = sealDelegations(next, { instances: targets() });
     const rotated = await rotateUserKey({
@@ -348,11 +351,8 @@ maybe('held keys and the resource key store', () => {
     ownerKeys = next;
     const after = await openResourceKey(ref, owner);
     expect(after.ok && after.val.key.equals(before.val.key)).toBe(true);
-    const stored = await db
-      .selectFrom('chat_user_memories')
-      .select('content')
-      .where('owner_subject', '=', owner)
-      .executeTakeFirstOrThrow();
+    const [stored] = await getDataStore().userMemory.list(owner, 1);
+    if (!stored) throw new Error('memory entry gone');
     expect(stored.content).not.toBe(memory.val);
     const reopened = await openForSubject(owner, stored.content);
     expect(reopened.ok && reopened.val).toBe('remember this');
@@ -381,9 +381,8 @@ maybe('held keys and the resource key store', () => {
 
   it('a person from before enrolls with everything moved off the managed key', async () => {
     process.env.USER_KEY_ENCRYPTION_KEY ??= randomBytes(32).toString('base64');
-    const legacyChat = randomUUID();
     const legacy = `legacy-${suiteId.slice(0, 8)}`;
-    await db.insertInto('chats').values({ id: legacyChat, owner_subject: legacy }).execute();
+    const legacyChat = await newChat(legacy);
     const legacyRef = { kind: 'chat' as const, resourceId: legacyChat };
     const key = await legacyEnsureResourceKey(legacyRef, legacy);
     expect(key.ok).toBe(true);
@@ -391,22 +390,20 @@ maybe('held keys and the resource key store', () => {
     const token = await legacySealForSubject(legacy, 'tok');
     expect(token.ok).toBe(true);
     if (!token.ok) return;
-    await db
-      .insertInto('provider_grants')
-      .values({
-        provider: 'atlassian',
-        provider_account_id: `acct-${legacy}`,
-        subject: legacy,
-        client_id: 'c',
-        display_name: 'L',
-        encrypted_access_token: token.val,
-        encrypted_refresh_token: token.val,
-        expires_at: new Date(),
-        requested_scopes: [],
-        granted_scopes: [],
-        metadata: '{}',
-      })
-      .execute();
+    // A grant connected back then: its tokens sealed under the managed key.
+    await getDataStore().providerGrants.upsertSealed('atlassian', {
+      accountId: `acct-${legacy}`,
+      clientId: 'c',
+      displayName: 'L',
+      subject: legacy,
+      encryptedAccessToken: token.val,
+      encryptedRefreshToken: token.val,
+      keepStoredRefreshToken: false,
+      expiresAt: new Date(),
+      requestedScopes: [],
+      grantedScopes: [],
+      metadata: {},
+    });
     const beforeEnroll = await getKeyRing(legacy);
     expect(!beforeEnroll.ok && beforeEnroll.err.type).toBe('NOT_ENROLLED');
     expect((await delegationStatus(legacy)).legacy).toBe(true);
@@ -414,13 +411,10 @@ maybe('held keys and the resource key store', () => {
     await enrollTestPerson({ subject: legacy, instances: targets() });
     const opened = await openResourceKey(legacyRef, legacy);
     expect(opened.ok && opened.val.key.equals(key.val.key)).toBe(true);
-    const grant = await db
-      .selectFrom('provider_grants')
-      .select('encrypted_access_token')
-      .where('subject', '=', legacy)
-      .executeTakeFirstOrThrow();
-    expect(grant.encrypted_access_token).not.toBe(token.val);
-    const reopened = await openForSubject(legacy, grant.encrypted_access_token);
+    const grant = await getDataStore().providerGrants.findSealed('atlassian', `acct-${legacy}`);
+    if (!grant) throw new Error('grant gone');
+    expect(grant.encryptedAccessToken).not.toBe(token.val);
+    const reopened = await openForSubject(legacy, grant.encryptedAccessToken);
     expect(reopened.ok && reopened.val).toBe('tok');
     expect((await enrollmentCensus()).managed).toBe(0);
   });
@@ -432,9 +426,7 @@ maybe('held keys and the resource key store', () => {
     const gone = await getKeyRing(owner);
     expect(!gone.ok && gone.err.type).toBe('NO_USER_KEY');
     expect(await listResourceKeyHolders(ref)).toEqual([]);
-    expect(
-      await db.selectFrom('key_delegations').select('id').where('subject', '=', owner).execute()
-    ).toEqual([]);
+    expect(await getDataStore().userKeys.delegationsOf(owner, new Date())).toEqual([]);
     // A box sealed to a shredded person's public key would be inert anyway; none is left.
     expect(sealToPublicKey(ownerKeys.pair.publicKey, randomBytes(32)).startsWith('sbox1:')).toBe(
       true
@@ -445,10 +437,8 @@ maybe('held keys and the resource key store', () => {
     await deleteResourceKey(projectChatRef);
     expect(await listResourceKeyHolders(projectChatRef)).toEqual([]);
     const orphan = randomUUID();
-    await db
-      .insertInto('resource_keys')
-      .values({ resource_kind: 'chat', resource_id: orphan })
-      .execute();
+    // A key minted for a chat that never came to be (or was deleted around it).
+    await getDataStore().resourceKeys.insertIfAbsent('chat', orphan);
     expect(await pruneOrphanResourceKeys()).toBeGreaterThanOrEqual(1);
   });
 });

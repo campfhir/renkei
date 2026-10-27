@@ -5,9 +5,6 @@
  * with its own head, and whose precomputed vector depends on that).
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: jest.fn() }));
-
 import { chunkContext, titleOf, embeddingInput } from './context';
 import { embeddingInputs } from './chunking';
 

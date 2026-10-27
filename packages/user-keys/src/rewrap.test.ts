@@ -1,15 +1,19 @@
 /**
- * The rotation sweep against a real database (skipped without
- * DATABASE_URL): rows sealed under the old key — as `v1`, and as `v2`
+ * The rotation sweep: rows sealed under the old key — as `v1`, and as `v2`
  * naming the old key — move to `v2` under the new key and still open;
  * rows already under the new key are left alone; a row no key of the
  * ring opens is reported and untouched; a dry run changes nothing; and a
  * second run finds nothing left to do.
+ *
+ * The sweep walks every sealed column of the deployment, and its counts
+ * are exact, so it runs over a memory store holding only this test's rows
+ * (the paging itself is the sealedEnvelopes domain's, covered by its
+ * differential scenarios against Postgres). Rows are written with the
+ * calls the settings pages make; the ciphertext stays opaque to the store.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import {
   decrypt,
   encrypt,
@@ -20,10 +24,7 @@ import {
 } from '@renkei/crypto';
 import { rewrapAll, rewrapRingsFromEnv, type RewrapRings } from './rewrap';
 
-const maybe = process.env.DATABASE_URL ? describe : describe.skip;
-
-maybe('rewrap under the current key of the ring', () => {
-  let db: Kysely<DB>;
+describe('rewrap under the current key of the ring', () => {
   const oldEncoded = randomBytes(32).toString('base64');
   const newEncoded = randomBytes(32).toString('base64');
   const strangerEncoded = randomBytes(32).toString('base64');
@@ -33,113 +34,79 @@ maybe('rewrap under the current key of the ring', () => {
   const stranger = parseKeyring(strangerEncoded);
   if (!oldBare.ok || !oldRing.ok || !newRing.ok || !stranger.ok) throw new Error('keys');
   const rings: RewrapRings = { token: newRing.val, content: newRing.val, sandbox: newRing.val };
-  const oidcId = randomUUID();
   const modelId = randomUUID();
-  const envSecretId = randomUUID();
   const ruleIds: string[] = [];
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
+    registerDataStore(createMemoryDataStore());
+    const store = getDataStore();
     // v1 under the old key (a bare key writes v1, as every row from before rings is).
-    await db
-      .insertInto('oidc_config')
-      .values({
-        id: oidcId,
-        issuer: 'https://idp.test',
-        client_id: 'client',
-        client_secret: encrypt('oidc-secret', oldBare.val),
-      })
-      .execute();
+    await store.oidcConfig.save({
+      id: randomUUID(),
+      issuer: 'https://idp.test',
+      clientId: 'client',
+      clientSecret: encrypt('oidc-secret', oldBare.val),
+      operatorIdpValue: null,
+      userIdpValue: null,
+      groupsClaim: null,
+    });
     // v2 naming the old key.
-    await db
-      .insertInto('llm_model_configs')
-      .values({
-        id: modelId,
-        provider: 'openai',
-        model: 'gpt-test',
-        label: 'test',
-        encrypted_secrets: encrypt(JSON.stringify({ apiKey: 'sk-test' }), oldRing.val),
-      })
-      .execute();
+    await store.llmModels.create(modelId, {
+      label: 'test',
+      provider: 'openai',
+      model: 'gpt-test',
+      baseUrl: null,
+      settings: {},
+      encryptedSecrets: encrypt(JSON.stringify({ apiKey: 'sk-test' }), oldRing.val),
+      enabled: true,
+      isDefault: false,
+    });
     // A composite-key table: one row under the old key, one already current.
-    await db
-      .insertInto('connector_configs')
-      .values([
-        {
-          connector: 'rewrap-old',
-          encrypted_secrets: encrypt(JSON.stringify({ s: 'old' }), oldBare.val),
-        },
-        {
-          connector: 'rewrap-current',
-          encrypted_secrets: encrypt(JSON.stringify({ s: 'current' }), newRing.val),
-        },
-      ])
-      .execute();
+    await store.connectorConfigs.upsert({
+      connector: 'rewrap-old',
+      enabled: true,
+      settings: {},
+      encryptedSecrets: encrypt(JSON.stringify({ s: 'old' }), oldBare.val),
+    });
+    await store.connectorConfigs.upsert({
+      connector: 'rewrap-current',
+      enabled: true,
+      settings: {},
+      encryptedSecrets: encrypt(JSON.stringify({ s: 'current' }), newRing.val),
+    });
     // Prefixed envelopes on the sandbox ring; one sealed under a key no ring holds.
-    await db
-      .insertInto('sandbox_env_secrets')
-      .values({
-        id: envSecretId,
-        subject: 'alice',
-        name: 'NPM_TOKEN',
-        sealed: `env1.${encrypt('npm-token', oldBare.val)}`,
-      })
-      .execute();
-    const rules = await db
-      .insertInto('code_service_image_rules')
-      .values([
-        {
-          pattern: 'rewrap.test/old/*',
-          registry_username: 'u',
-          registry_sealed: `reg1.${encrypt('pull-token', oldRing.val)}`,
-        },
-        {
-          pattern: 'rewrap.test/stranger/*',
-          registry_username: 'u',
-          registry_sealed: `reg1.${encrypt('lost', stranger.val)}`,
-        },
-      ])
-      .returning('id')
-      .execute();
-    ruleIds.push(...rules.map((r) => r.id));
+    await store.sandboxEnvSecrets.upsert({
+      id: randomUUID(),
+      subject: 'alice',
+      name: 'NPM_TOKEN',
+      sealed: `env1.${encrypt('npm-token', oldBare.val)}`,
+      updatedAt: new Date(),
+    });
+    for (const [pattern, sealed] of [
+      ['rewrap.test/old/*', `reg1.${encrypt('pull-token', oldRing.val)}`],
+      ['rewrap.test/stranger/*', `reg1.${encrypt('lost', stranger.val)}`],
+    ] as const) {
+      const rule = await store.codeServiceImageRules.insert({
+        pattern,
+        note: null,
+        registryUsername: 'u',
+        registrySealed: sealed,
+      });
+      ruleIds.push(rule.id);
+    }
   });
 
-  afterAll(async () => {
-    await db.deleteFrom('code_service_image_rules').execute();
-    await db.deleteFrom('sandbox_env_secrets').execute();
-    await db.deleteFrom('connector_configs').execute();
-    await db.deleteFrom('llm_model_configs').execute();
-    await db.deleteFrom('oidc_config').execute();
-  });
+  afterAll(() => resetDataStore());
 
   async function stored() {
-    const oidc = await db
-      .selectFrom('oidc_config')
-      .select('client_secret')
-      .where('id', '=', oidcId)
-      .executeTakeFirstOrThrow();
-    const model = await db
-      .selectFrom('llm_model_configs')
-      .select('encrypted_secrets')
-      .where('id', '=', modelId)
-      .executeTakeFirstOrThrow();
-    const connectors = await db
-      .selectFrom('connector_configs')
-      .select(['connector', 'encrypted_secrets'])
-      .orderBy('connector')
-      .execute();
-    const env = await db
-      .selectFrom('sandbox_env_secrets')
-      .select('sealed')
-      .where('id', '=', envSecretId)
-      .executeTakeFirstOrThrow();
-    const rules = await db
-      .selectFrom('code_service_image_rules')
-      .select(['pattern', 'registry_sealed'])
-      .orderBy('pattern')
-      .execute();
+    const store = getDataStore();
+    const oidc = await store.oidcConfig.get();
+    const model = await store.llmModels.get(modelId);
+    if (!oidc || !model) throw new Error('fixture rows missing');
+    const connectors = await store.connectorConfigs.list();
+    const [env] = await store.sandboxEnvSecrets.listSealed('alice');
+    if (!env) throw new Error('fixture env secret missing');
+    const rules = await store.codeServiceImageRules.listForMatching();
     return { oidc, model, connectors, env, rules };
   }
 
@@ -167,17 +134,17 @@ maybe('rewrap under the current key of the ring', () => {
     });
     const after = await stored();
     const current = keyId(newRing.val);
-    expect(envelopeKeyId(after.oidc.client_secret)).toBe(current);
-    expect(decrypt(after.oidc.client_secret, newRing.val)).toEqual({
+    expect(envelopeKeyId(after.oidc.clientSecret)).toBe(current);
+    expect(decrypt(after.oidc.clientSecret, newRing.val)).toEqual({
       ok: true,
       val: 'oidc-secret',
     });
-    expect(envelopeKeyId(after.model.encrypted_secrets)).toBe(current);
-    expect(decrypt(after.model.encrypted_secrets, newRing.val)).toEqual({
+    expect(envelopeKeyId(after.model.encryptedSecrets)).toBe(current);
+    expect(decrypt(after.model.encryptedSecrets, newRing.val)).toEqual({
       ok: true,
       val: JSON.stringify({ apiKey: 'sk-test' }),
     });
-    expect(after.connectors.map((c) => envelopeKeyId(c.encrypted_secrets))).toEqual([
+    expect(after.connectors.map((c) => envelopeKeyId(c.encryptedSecrets))).toEqual([
       current,
       current,
     ]);
@@ -188,8 +155,8 @@ maybe('rewrap under the current key of the ring', () => {
     });
     // The row under the stranger's key is reported and untouched.
     const [oldRule, strangerRule] = after.rules;
-    expect(envelopeKeyId(oldRule!.registry_sealed!.slice('reg1.'.length))).toBe(current);
-    expect(envelopeKeyId(strangerRule!.registry_sealed!.slice('reg1.'.length))).toBe(
+    expect(envelopeKeyId(oldRule?.registrySealed?.slice('reg1.'.length) ?? '')).toBe(current);
+    expect(envelopeKeyId(strangerRule?.registrySealed?.slice('reg1.'.length) ?? '')).toBe(
       keyId(stranger.val)
     );
     const rules = report.targets['code_service_image_rules.registry_sealed'];

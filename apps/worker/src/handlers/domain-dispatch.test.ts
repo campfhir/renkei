@@ -5,7 +5,6 @@
  * only here because Microsoft's knowledge writes live in its sync round.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/queue', () => ({
   agentJobsQueue: jest.fn(() => ({ producer: { enqueue: jest.fn() } })),
 }));
@@ -18,11 +17,9 @@ jest.mock('../logger', () => ({
   logger: { info: jest.fn(), debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 
-import { ok } from '@campfhir/safe-functions/helpers';
 import { createDomainDispatchHandler } from './domain-dispatch';
 import type { ClaimedEvent } from '../queue';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { logger: mockLogger } = jest.requireMock<{
   logger: { info: jest.Mock; debug: jest.Mock };
 }>('../logger');
@@ -69,7 +66,6 @@ function mailEvent(): ClaimedEvent {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetDatabase.mockReturnValue(ok({ fake: 'db' }));
   mockFanOut.mockResolvedValue({ started: [], filtered: 0 });
   mockMarkDirty.mockResolvedValue(undefined);
 });

@@ -4,8 +4,6 @@
  * only — every way of being unconfigured yields null, never an error.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: jest.fn() }));
 jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn() }));
 jest.mock('@renkei/agent-llm', () => ({ resolveAgentLlm: jest.fn() }));
 
@@ -21,7 +19,6 @@ import {
   MAX_KEYWORDS,
 } from './keywords';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getOrgSettings: mockOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
   '@renkei/settings'
 );
@@ -150,7 +147,6 @@ describe('createLlmKeywordExtractor', () => {
 describe('resolveKeywordExtractor', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockGetDatabase.mockReturnValue({ ok: true, val: {} });
     mockOrgSettings.mockResolvedValue(
       ok({ knowledgeKeywordEnrichment: true, knowledgeKeywordMinChars: 500 })
     );
