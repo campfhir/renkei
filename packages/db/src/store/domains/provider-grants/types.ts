@@ -120,4 +120,11 @@ export interface ProviderGrantStore {
   /** When the lock was taken, or null when nobody holds it. */
   findRefreshLock(provider: string, accountId: string): Promise<Date | null>;
   releaseRefreshLock(provider: string, accountId: string): Promise<void>;
+
+  /**
+   * A grant by provider account id alone, on whichever provider (the first
+   * by provider name when several share the id); null when there is none.
+   * For naming the person behind a connector-side row in a log line.
+   */
+  findByAccount(accountId: string): Promise<ProviderGrantSummaryRecord | null>;
 }

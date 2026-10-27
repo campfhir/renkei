@@ -1,7 +1,6 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
-import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
-import { getDatabase } from '@renkei/db';
+import { checkDataStore, createLogAdapter } from '@renkei/db';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 import packageJson from '../package.json';
 
@@ -68,11 +67,11 @@ export async function attachPersistentLogging(): Promise<void> {
     return;
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const ready = checkDataStore();
+  if (!ready.ok) {
     logger.error('Could not attach Postgres log adapter; logging to console only', {
       component: 'worker/logging',
-      error: String(dbResult.err),
+      error: String(ready.err),
     });
     return;
   }
@@ -88,12 +87,19 @@ export async function attachPersistentLogging(): Promise<void> {
     );
     process.exit(1);
   }
-  const adapter = new PostgresAdapter({
-    db: dbResult.val,
+  const built = await createLogAdapter({
     level: 'info',
     encrypt: cipher.encrypt,
     decrypt: cipher.decrypt,
   });
+  if (!built.ok) {
+    logger.error('Could not attach Postgres log adapter; logging to console only', {
+      component: 'worker/logging',
+      error: String(built.err),
+    });
+    return;
+  }
+  const adapter = built.val;
   try {
     // Idempotent (CREATE IF NOT EXISTS) — safe on every boot, and what keeps
     // the log tables current across bored-logs upgrades.

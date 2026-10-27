@@ -1,7 +1,6 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
-import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
-import { getDatabase } from '@renkei/db';
+import { checkDataStore, createLogAdapter } from '@renkei/db';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 
 /**
@@ -65,11 +64,11 @@ export function createWorkerLogger(options: WorkerLoggerOptions) {
       return;
     }
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) {
+    const ready = checkDataStore();
+    if (!ready.ok) {
       logger.error('Could not attach Postgres log adapter; logging to console only', {
         component: `${component}/logging`,
-        error: String(dbResult.err),
+        error: String(ready.err),
       });
       return;
     }
@@ -85,12 +84,19 @@ export function createWorkerLogger(options: WorkerLoggerOptions) {
       );
       process.exit(1);
     }
-    const adapter = new PostgresAdapter({
-      db: dbResult.val,
+    const built = await createLogAdapter({
       level: 'info',
       encrypt: cipher.encrypt,
       decrypt: cipher.decrypt,
     });
+    if (!built.ok) {
+      logger.error('Could not attach Postgres log adapter; logging to console only', {
+        component: `${component}/logging`,
+        error: String(built.err),
+      });
+      return;
+    }
+    const adapter = built.val;
     try {
       await adapter.migrate();
     } catch (error) {
@@ -106,10 +112,13 @@ export function createWorkerLogger(options: WorkerLoggerOptions) {
   function attachHttpShipping(endpoint: string): void {
     const apiKey = process.env.LOG_SHIP_API_KEY;
     if (!apiKey) {
-      logger.error('LOG_SHIP_ENDPOINT is set but LOG_SHIP_API_KEY is not; logging to console only', {
-        component: `${component}/logging`,
-        endpoint,
-      });
+      logger.error(
+        'LOG_SHIP_ENDPOINT is set but LOG_SHIP_API_KEY is not; logging to console only',
+        {
+          component: `${component}/logging`,
+          endpoint,
+        }
+      );
       return;
     }
 

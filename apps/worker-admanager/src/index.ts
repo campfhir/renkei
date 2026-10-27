@@ -35,9 +35,8 @@ void runWorker({
   defaultPort: 8095,
   logger,
   attachPersistentLogging,
-  createServer: ({ db, apiKeys }) =>
+  createServer: ({ apiKeys }) =>
     createAdManagerServer({
-      db,
       apiKeys,
       legacyProductName: async () => {
         const settings = await getOrgSettings();

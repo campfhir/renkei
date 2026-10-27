@@ -17,7 +17,6 @@ const ROOT = join(__dirname, '..');
 
 /** Repo-relative (to apps/web) paths that may hold the database handle, and why. */
 const ALLOWED: Record<string, string> = {
-  'instrumentation.ts': 'hands the pg handle to the bored-logs log adapter (infrastructure)',
   'lib/test-support/delegate.ts': 'test support for the *.db.test.ts suites',
 };
 

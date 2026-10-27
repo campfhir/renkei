@@ -26,8 +26,6 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
@@ -48,7 +46,6 @@ import type { ServiceDeps, ServiceError, SubjectTarget } from '@renkei/connector
 import { logger } from './logger';
 
 export interface FileshareServerDeps {
-  db: Kysely<DB>;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**

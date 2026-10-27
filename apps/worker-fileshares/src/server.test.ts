@@ -26,8 +26,6 @@ jest.mock('@renkei/connector-fileshares', () => {
   };
 });
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createFileshareServer } from './server';
@@ -48,7 +46,6 @@ let base: string;
 
 beforeAll(async () => {
   server = createFileshareServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     maxTransferBytes: async () => 1024,
   });
@@ -105,7 +102,6 @@ describe('authentication', () => {
 
   it('refuses everything when no keys are configured', async () => {
     const closed = createFileshareServer({
-      db: {} as Kysely<DB>,
       apiKeys: [],
     });
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));

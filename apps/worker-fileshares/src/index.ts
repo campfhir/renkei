@@ -28,5 +28,5 @@ void runWorker({
   defaultPort: 8090,
   logger,
   attachPersistentLogging,
-  createServer: ({ db, apiKeys }) => createFileshareServer({ db, apiKeys }),
+  createServer: ({ apiKeys }) => createFileshareServer({ apiKeys }),
 });

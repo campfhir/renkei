@@ -1736,9 +1736,6 @@ importers:
       '@renkei/db':
         specifier: workspace:*
         version: link:../db
-      kysely:
-        specifier: ^0.29.7
-        version: 0.29.7
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0
@@ -1955,9 +1952,6 @@ importers:
       '@renkei/settings':
         specifier: workspace:*
         version: link:../settings
-      kysely:
-        specifier: ^0.29.7
-        version: 0.29.7
     devDependencies:
       '@types/jest':
         specifier: ^30.0.0

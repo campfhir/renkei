@@ -141,7 +141,7 @@ export async function sweepContentWatches(): Promise<void> {
       const scope = watch.scope_label ?? watch.scope_key;
       // The grant behind this watch names the person whose credential it
       // polls with — the one the indexed content is attributable to.
-      const actor = await actorForAccount(db, watch.account_id);
+      const actor = await actorForAccount(watch.account_id);
       const fields = {
         component: COMPONENT,
         provider: watch.provider,

@@ -199,5 +199,14 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .where('account_id', '=', accountId)
         .execute();
     },
+    async findByAccount(accountId) {
+      const row = await db()
+        .selectFrom('provider_grants')
+        .select(SUMMARY_COLUMNS)
+        .where('provider_account_id', '=', accountId)
+        .orderBy('provider')
+        .executeTakeFirst();
+      return row ? grantSummaryFromRow(row) : null;
+    },
   };
 }

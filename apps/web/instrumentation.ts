@@ -1,8 +1,9 @@
 import type { Instrumentation } from 'next';
 import { logger } from '@/lib/logger';
 import {
+  checkDataStore,
+  createLogAdapter,
   createMemoryDataStore,
-  getDatabase,
   memoryDataStoreRequested,
   registerDataStore,
 } from '@renkei/db';
@@ -60,13 +61,11 @@ export async function register() {
     // import without expecting a background DB-polling timer to start.
     watchLogLevel(logger);
 
-    const { PostgresAdapter } = await import('@campfhir/bored-logs/adapters/psql');
-
-    const dbResult = getDatabase();
-    if (!dbResult.ok) {
+    const ready = checkDataStore();
+    if (!ready.ok) {
       logger.error('Failed to initialize database for bored-logs', {
         component: 'web/instrumentation',
-        error: String(dbResult.err),
+        error: String(ready.err),
       });
       return;
     }
@@ -86,8 +85,9 @@ export async function register() {
       process.exit(1);
     }
 
-    const adapter = new PostgresAdapter({
-      db: dbResult.val,
+    // The adapter rides @renkei/db's own connection: this process never
+    // holds the handle.
+    const built = await createLogAdapter({
       level: 'info',
       encrypt: cipher.encrypt,
       decrypt: cipher.decrypt,
@@ -99,6 +99,14 @@ export async function register() {
         }
       },
     });
+    if (!built.ok) {
+      logger.error('Failed to initialize database for bored-logs', {
+        component: 'web/instrumentation',
+        error: String(built.err),
+      });
+      return;
+    }
+    const adapter = built.val;
 
     // Idempotent (CREATE IF NOT EXISTS) — brings a table set created by an
     // older bored-logs up to the current schema on every boot.

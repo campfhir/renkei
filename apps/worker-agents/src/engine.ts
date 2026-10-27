@@ -466,11 +466,11 @@ export function requestLogFieldOf(
 
 /** The owner's name for a log line — total: a run never fails over a display name. */
 async function describeActor(
-  db: Kysely<DB>,
+  _db: Kysely<DB>,
   subject: string | null | undefined
 ): Promise<{ subject: string; displayName: string }> {
   try {
-    return await describeActorRaw(db, subject);
+    return await describeActorRaw(subject);
   } catch {
     return { subject: subject ?? '(none)', displayName: subject ?? '(none)' };
   }

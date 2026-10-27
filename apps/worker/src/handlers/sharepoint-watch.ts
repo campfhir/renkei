@@ -137,10 +137,7 @@ export async function runDriveWatchSync(
   const candidateRefIds = entries
     .filter((entry) => !isDeleted(entry) && !isContainer(entry) && str(entry.id))
     .map((entry) => sharepointRefId(driveId, str(entry.id)));
-  const stored = await readObjectMetadataBatch(
-    SHAREPOINT_KNOWLEDGE_PROVIDER,
-    candidateRefIds
-  );
+  const stored = await readObjectMetadataBatch(SHAREPOINT_KNOWLEDGE_PROVIDER, candidateRefIds);
   const known = stored.ok ? stored.val : new Map<string, Record<string, unknown>>();
 
   const orderingKey = `sharepoint/${driveId}`;
@@ -265,7 +262,7 @@ export async function runDriveWatchSync(
     .where('id', '=', row.id)
     .execute();
 
-  const actor = await actorForAccount(db, row.account_id);
+  const actor = await actorForAccount(row.account_id);
   const fields = {
     component: COMPONENT,
     scope: row.scope_label ?? driveId,
