@@ -10,6 +10,16 @@ import { notifications } from './notifications';
 import { sessions } from './sessions';
 import { settings } from './settings';
 import { userPreferences } from './user-preferences';
+import { resourceGrants } from './resource-grants';
+import { chats } from './chats';
+import { chatThreads } from './chat-threads';
+import { chatProjects } from './chat-projects';
+import { promptLibraries } from './prompt-libraries';
+import { userMemory } from './user-memory';
+import { artifacts } from './artifacts';
+import { codeProjects } from './code-projects';
+import { codeTemplates } from './code-templates';
+import { chatModels } from './chat-models';
 
 export const DOMAINS = {
   sessions,
@@ -18,4 +28,14 @@ export const DOMAINS = {
   settings,
   coachMarks,
   notifications,
+  resourceGrants,
+  chats,
+  chatThreads,
+  chatProjects,
+  promptLibraries,
+  userMemory,
+  artifacts,
+  codeProjects,
+  codeTemplates,
+  chatModels,
 };
