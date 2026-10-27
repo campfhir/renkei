@@ -1,10 +1,13 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
 import Link from 'next/link';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getAgentForAdmin } from '@/lib/agents/runs-view';
-import { getAgentTokenUsage, getAgentToolUsage, getTokenUsageByModel } from '@/lib/agents/agent-usage';
+import {
+  getAgentTokenUsage,
+  getAgentToolUsage,
+  getTokenUsageByModel,
+} from '@/lib/agents/agent-usage';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import AgentUsagePanel from '@/components/agent-usage-panel';
@@ -29,17 +32,13 @@ export default async function AdminAgentDetailPage({
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
-
-  const agent = await getAgentForAdmin(db, agentId);
+  const agent = await getAgentForAdmin(agentId);
   if (!agent) notFound();
 
   const [tokenUsage, byModel, toolUsage] = await Promise.all([
-    getAgentTokenUsage(db, agentId),
-    getTokenUsageByModel(db, agentId),
-    getAgentToolUsage(db, agentId, TOOL_USAGE_WINDOW_DAYS),
+    getAgentTokenUsage(agentId),
+    getTokenUsageByModel(agentId),
+    getAgentToolUsage(agentId, TOOL_USAGE_WINDOW_DAYS),
   ]);
 
   return (

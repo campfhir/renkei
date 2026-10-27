@@ -8,7 +8,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getDraft } from '@/lib/agents/draft-store';
 
@@ -20,10 +19,7 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const draft = await getDraft(dbResult.val, session.subject, draftId);
+  const draft = await getDraft(session.subject, draftId);
   // Someone else's draft and a draft that never existed get the same answer,
   // which is the only one that does not confirm the id.
   if (!draft) return NextResponse.json({ error: 'No such draft' }, { status: 404 });

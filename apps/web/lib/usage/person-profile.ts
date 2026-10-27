@@ -50,7 +50,7 @@ export async function getPersonProfile(
       .where('subject', '=', subject)
       .orderBy('provider')
       .executeTakeFirst(),
-    listAgentsForOwner(db, subject),
+    listAgentsForOwner(subject),
     db
       .selectFrom('sessions')
       .select(sql<Date | null>`max(last_used_at)`.as('last_used_at'))

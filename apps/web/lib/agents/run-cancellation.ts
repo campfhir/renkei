@@ -12,8 +12,8 @@
  * once, same reasoning as decideApproval/answerQuestion.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { isUuid } from '@/lib/uuid';
 import type { QueueProducer } from '@renkei/queue';
 
 export type RequestCancelRunResult =
@@ -22,7 +22,6 @@ export type RequestCancelRunResult =
   | { outcome: 'not-found' };
 
 export async function requestRunCancellation(
-  db: Kysely<DB>,
   producer: QueueProducer,
   input: {
     agentId: string;
@@ -33,13 +32,13 @@ export async function requestRunCancellation(
     canceledBySubject: string;
   }
 ): Promise<RequestCancelRunResult> {
-  const run = await db
-    .selectFrom('agent_runs')
-    .select(['id', 'status'])
-    .where('id', '=', input.runId)
-    .where('agent_id', '=', input.agentId)
-    .where('owner_subject', '=', input.ownerSubject)
-    .executeTakeFirst();
+  if (!isUuid(input.runId) || !isUuid(input.agentId)) return { outcome: 'not-found' };
+  const runs = getDataStore().agentRuns;
+  const run = await runs.findStatus({
+    agentId: input.agentId,
+    runId: input.runId,
+    ownerSubject: input.ownerSubject,
+  });
   if (!run) return { outcome: 'not-found' };
   if (
     run.status === 'succeeded' ||
@@ -52,18 +51,8 @@ export async function requestRunCancellation(
 
   // The one-way claim: first request wins, a repeat click or a second
   // caller racing it is a no-op rather than a second wake.
-  const claimed = await db
-    .updateTable('agent_runs')
-    .set({
-      cancel_requested_at: sql`NOW()`,
-      cancel_requested_by: input.canceledBySubject,
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', input.runId)
-    .where('cancel_requested_at', 'is', null)
-    .where('status', 'in', ['queued', 'running', 'waiting'])
-    .executeTakeFirst();
-  if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+  const claimed = await runs.requestCancel(input.runId, input.canceledBySubject);
+  if (!claimed) {
     // Already requested, or it reached a terminal status in the gap above
     // — either way there is nothing more for this call to do.
     return { outcome: 'canceling' };

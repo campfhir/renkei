@@ -11,8 +11,14 @@
  * not show.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB, Json } from '@renkei/db';
+import {
+  getDataStore,
+  type AgentAdminRecord,
+  type Json,
+  type RunAudience,
+  type RunDetailRecord,
+  type RunSummaryRecord,
+} from '@renkei/db';
 import {
   mergeOpenedDetail,
   parseAgentDefinition,
@@ -116,63 +122,22 @@ function iso(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
 
-interface RunRow {
-  id: string;
-  status: string;
-  trigger_kind: string;
-  error_kind: string | null;
-  error: string | null;
-  created_at: Date;
-  started_at: Date | null;
-  finished_at: Date | null;
-  resume_count: number;
-  resumed_at: Date | null;
-}
-
-function summaryOf(row: RunRow): RunSummary {
+function summaryOf(row: RunSummaryRecord): RunSummary {
   return {
     id: row.id,
     status: row.status,
-    triggerKind: row.trigger_kind,
-    errorKind: row.error_kind,
+    triggerKind: row.triggerKind,
+    errorKind: row.errorKind,
     error: row.error,
-    createdAt: row.created_at.toISOString(),
-    startedAt: iso(row.started_at),
-    finishedAt: iso(row.finished_at),
+    createdAt: row.createdAt.toISOString(),
+    startedAt: iso(row.startedAt),
+    finishedAt: iso(row.finishedAt),
     durationMs:
-      row.started_at && row.finished_at
-        ? row.finished_at.getTime() - row.started_at.getTime()
-        : null,
-    resumeCount: row.resume_count,
-    resumedAt: iso(row.resumed_at),
+      row.startedAt && row.finishedAt ? row.finishedAt.getTime() - row.startedAt.getTime() : null,
+    resumeCount: row.resumeCount,
+    resumedAt: iso(row.resumedAt),
   };
 }
-
-const RUN_COLUMNS = [
-  'id',
-  'status',
-  'trigger_kind',
-  'error_kind',
-  'error',
-  'created_at',
-  'started_at',
-  'finished_at',
-  'resume_count',
-  'resumed_at',
-] as const;
-
-/**
- * The trigger payload, for the admin path only — and only on a failed run.
- *
- * A CASE rather than a filter in TypeScript, for the same reason
- * FAILED_SNAPSHOT is one: content an admin may not see never leaves the
- * database, so no later refactor can accidentally surface it. `runDetail`
- * applies the same rule again when it sets `initialStateRedacted`; the two
- * agreeing is the point, not duplication to remove.
- */
-const FAILED_INITIAL_STATE = sql<Json | null>`
-  case when status = 'failed' then initial_state end
-`.as('initial_state');
 
 /**
  * Every status a run can be in — the one authoritative list. The runs
@@ -194,61 +159,48 @@ export function isRunStatus(value: string | undefined): value is RunStatus {
   return RUN_STATUSES.some((status) => status === value);
 }
 
-/** A user's search text as a literal ILIKE pattern — wildcards escaped. */
-function likePattern(q: string): string {
-  return `%${q.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+interface RunListOptions {
+  status?: RunStatus;
+  /**
+   * Free-text search. The owner sees everything about their own runs, so
+   * the search may read content: the error text, the trigger kind, and
+   * the trigger input (the payload the run started from — the thing a
+   * person actually remembers about "that particular run"); an admin's
+   * matches the input only on failed runs — a match count over healthy
+   * runs' content would leak by side channel what the admin cannot read.
+   * A pasted run id matches exactly.
+   */
+  q?: string;
+  limit?: number;
+}
+
+async function listRuns(
+  agentId: string,
+  ownerSubject: string | null,
+  audience: RunAudience,
+  options: RunListOptions
+): Promise<RunSummary[]> {
+  if (!isUuid(agentId)) return [];
+  const q = options.q?.trim();
+  const rows = await getDataStore().agentRuns.list({
+    agentId,
+    ownerSubject,
+    audience,
+    ...(options.status ? { status: options.status } : {}),
+    ...(q ? { q } : {}),
+    ...(q && isUuid(q) ? { matchId: q } : {}),
+    limit: options.limit ?? 50,
+  });
+  return rows.map(summaryOf);
 }
 
 export async function listRunsForOwner(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string,
-  options: {
-    status?: RunStatus;
-    /** Free-text search; see the predicate below for what it matches. */
-    q?: string;
-    limit?: number;
-  } = {}
+  options: RunListOptions = {}
 ): Promise<RunSummary[]> {
-  if (!isUuid(agentId)) return [];
-  let query = db
-    .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS])
-    .where('owner_subject', '=', ownerSubject)
-    .where('agent_id', '=', agentId);
-  if (options.status) query = query.where('status', '=', options.status);
-  const q = options.q?.trim();
-  if (q) {
-    // The owner sees everything about their own runs, so the search may
-    // read content: the error text, the trigger kind, and the trigger
-    // input (the payload the run started from — the thing a person
-    // actually remembers about "that particular run"). A pasted run id
-    // matches exactly. Unindexed ILIKE on purpose: one agent's retained
-    // runs are bounded by the retention sweep and the LIMIT below.
-    const pattern = likePattern(q);
-    query = query.where((eb) =>
-      eb.or([
-        eb('error', 'ilike', pattern),
-        eb('trigger_kind', 'ilike', pattern),
-        eb(sql<string>`initial_state::text`, 'ilike', pattern),
-        ...(isUuid(q) ? [eb('id', '=', q)] : []),
-      ])
-    );
-  }
-  const rows = await query
-    .orderBy('created_at', 'desc')
-    .limit(options.limit ?? 50)
-    .execute();
-  return rows.map((row) => summaryOf(row));
+  return listRuns(agentId, ownerSubject, 'owner', options);
 }
-
-/**
- * The owner's resume note, for the admin path only on a failed run — the
- * same CASE shape FAILED_INITIAL_STATE uses, for the same reason.
- */
-const FAILED_RESUME_GUIDANCE = sql<string | null>`
-  case when status = 'failed' then resume_guidance end
-`.as('resume_guidance');
 
 /**
  * Attempt rows with their sealed content opened AS THE RUN'S OWNER
@@ -284,95 +236,44 @@ async function openAttemptDetails<T extends { detail: Json | null }>(
   });
 }
 
-async function runDetail(
-  db: Kysely<DB>,
-  runRow: RunRow & {
-    owner_subject: string;
-    definition_snapshot: Json | null;
-    initial_state: Json | null;
-    resume_guidance: string | null;
-    active_ms: string | number;
-  },
-  audience: 'owner' | 'admin'
-): Promise<RunDetail> {
-  const storedRows = await db
-    .selectFrom('agent_run_steps')
-    .select([
-      'step_id',
-      'step_index',
-      'attempt',
-      'iteration',
-      'status',
-      'outcome',
-      'outcome_code',
-      'tool_call_count',
-      'detail',
-      'started_at',
-      'finished_at',
-    ])
-    .where('run_id', '=', runRow.id)
-    // Iteration between index and attempt: a looped step's rounds stay
-    // grouped under its block, in execution order. All-zero iterations
-    // (every pre-v3 run) sort identically to the old query.
-    .orderBy('step_index')
-    .orderBy('iteration')
-    .orderBy('attempt')
-    .execute();
+async function runDetail(record: RunDetailRecord, audience: RunAudience): Promise<RunDetail> {
+  const storedRows = record.steps;
   // THE visibility rule: content for the owner always; for an admin only
   // when the RUN failed (troubleshooting is their job, reading a working
   // agent's content is not). A run's turns are one conversation, so the
   // rule is the run's, not the turn's. Only what this audience may see is
   // opened: an admin's view of a working run never asks the delegate.
-  const contentVisible = audience === 'owner' || runRow.status === 'failed';
+  const contentVisible = audience === 'owner' || record.status === 'failed';
   const contentRows = contentVisible ? storedRows : [];
   const openedById = new Map(
-    (await openAttemptDetails(runRow.owner_subject, contentRows)).map(
-      (row) => [`${row.step_id}:${row.iteration}:${row.attempt}`, row.detail] as const
+    (await openAttemptDetails(record.ownerSubject, contentRows)).map(
+      (row) => [`${row.stepId}:${row.iteration}:${row.attempt}`, row.detail] as const
     )
   );
   const attemptRows = storedRows.map((row) => ({
     ...row,
-    detail: openedById.get(`${row.step_id}:${row.iteration}:${row.attempt}`) ?? row.detail,
+    detail: openedById.get(`${row.stepId}:${row.iteration}:${row.attempt}`) ?? row.detail,
   }));
 
-  const batchRows = await db
-    .selectFrom('agent_action_batches')
-    .select([
-      'id',
-      'turn',
-      'status',
-      'review_reason',
-      'accepted_by',
-      'summary',
-      'actions',
-      'results',
-      'comment',
-      'created_at',
-      'finished_at',
-    ])
-    .where('run_id', '=', runRow.id)
-    .orderBy('turn')
-    .execute();
-
   return {
-    ...summaryOf(runRow),
-    definition: parseAgentDefinition(runRow.definition_snapshot),
-    activeMs: Number(runRow.active_ms ?? 0),
-    ...(contentVisible && runRow.initial_state !== null
-      ? { initialState: runRow.initial_state }
+    ...summaryOf(record),
+    definition: parseAgentDefinition(record.definitionSnapshot),
+    activeMs: record.activeMs,
+    ...(contentVisible && record.initialState !== null
+      ? { initialState: record.initialState }
       : {}),
     initialStateRedacted: !contentVisible,
-    resumeGuidance: contentVisible ? runRow.resume_guidance : null,
-    batches: batchRows.map((row) => {
+    resumeGuidance: contentVisible ? record.resumeGuidance : null,
+    batches: record.batches.map((row) => {
       const actions = parseStoredActions(row.actions);
       return {
         id: row.id,
         turn: row.turn,
         status: row.status,
-        reviewReason: row.review_reason,
-        acceptedBy: row.accepted_by,
-        createdAt: row.created_at.toISOString(),
-        finishedAt: iso(row.finished_at),
+        reviewReason: row.reviewReason,
+        acceptedBy: row.acceptedBy,
+        createdAt: row.createdAt.toISOString(),
+        finishedAt: iso(row.finishedAt),
         actionCount: actions.length,
         ...(contentVisible
           ? {
@@ -384,106 +285,61 @@ async function runDetail(
           : {}),
       };
     }),
-    attempts: attemptRows.map((row) => {
-      return {
-        stepId: row.step_id,
-        stepIndex: row.step_index,
-        attempt: row.attempt,
-        iteration: row.iteration,
-        status: row.status,
-        outcome: row.outcome,
-        outcomeCode: row.outcome_code,
-        toolCallCount: row.tool_call_count,
-        startedAt: iso(row.started_at),
-        finishedAt: iso(row.finished_at),
-        ...(contentVisible && row.detail !== null ? { detail: row.detail } : {}),
-        redacted: !contentVisible,
-      };
-    }),
+    attempts: attemptRows.map((row) => ({
+      stepId: row.stepId,
+      stepIndex: row.stepIndex,
+      attempt: row.attempt,
+      iteration: row.iteration,
+      status: row.status,
+      outcome: row.outcome,
+      outcomeCode: row.outcomeCode,
+      toolCallCount: row.toolCallCount,
+      startedAt: iso(row.startedAt),
+      finishedAt: iso(row.finishedAt),
+      ...(contentVisible && row.detail !== null ? { detail: row.detail } : {}),
+      redacted: !contentVisible,
+    })),
   };
 }
 
 export async function getRunForOwner(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string,
   runId: string
 ): Promise<RunDetail | null> {
   if (!isUuid(agentId) || !isUuid(runId)) return null;
-  const row = await db
-    .selectFrom('agent_runs')
-    .select([
-      ...RUN_COLUMNS,
-      'owner_subject',
-      'definition_snapshot',
-      'initial_state',
-      'resume_guidance',
-      'active_ms',
-    ])
-    .where('owner_subject', '=', ownerSubject)
-    .where('agent_id', '=', agentId)
-    .where('id', '=', runId)
-    .executeTakeFirst();
-  if (!row) return null;
-  return runDetail(db, row, 'owner');
+  const record = await getDataStore().agentRuns.findDetail({
+    agentId,
+    runId,
+    ownerSubject,
+    audience: 'owner',
+  });
+  return record ? runDetail(record, 'owner') : null;
 }
 
 /** Admin oversight: any agent's runs, statuses always, content on failures. */
 export async function listRunsForAdmin(
-  db: Kysely<DB>,
   agentId: string,
-  options: { status?: RunStatus; q?: string; limit?: number } = {}
+  options: RunListOptions = {}
 ): Promise<RunSummary[]> {
-  if (!isUuid(agentId)) return [];
-  let query = db
-    .selectFrom('agent_runs')
-    .select([...RUN_COLUMNS])
-    .where('agent_id', '=', agentId);
-  if (options.status) query = query.where('status', '=', options.status);
-  const q = options.q?.trim();
-  if (q) {
-    // The admin search obeys the same content rule as FAILED_INITIAL_STATE:
-    // trigger input is matched only on failed runs — a match count over
-    // healthy runs' content would leak by side channel what the admin
-    // cannot read. Error text and a pasted run id are always fair game.
-    const pattern = likePattern(q);
-    query = query.where((eb) =>
-      eb.or([
-        eb('error', 'ilike', pattern),
-        eb('trigger_kind', 'ilike', pattern),
-        eb(sql<string>`case when status = 'failed' then initial_state::text end`, 'ilike', pattern),
-        ...(isUuid(q) ? [eb('id', '=', q)] : []),
-      ])
-    );
-  }
-  const rows = await query
-    .orderBy('created_at', 'desc')
-    .limit(options.limit ?? 50)
-    .execute();
-  return rows.map((row) => summaryOf(row));
+  return listRuns(agentId, null, 'admin', options);
 }
 
-export async function getRunForAdmin(
-  db: Kysely<DB>,
-  agentId: string,
-  runId: string
-): Promise<RunDetail | null> {
+/**
+ * Admin run detail. The store withholds the trigger payload and resume
+ * note of a non-failed run from this audience at the query itself, so
+ * content an admin may not see never leaves the database; runDetail
+ * applies the same rule again to the turns and batches.
+ */
+export async function getRunForAdmin(agentId: string, runId: string): Promise<RunDetail | null> {
   if (!isUuid(agentId) || !isUuid(runId)) return null;
-  const row = await db
-    .selectFrom('agent_runs')
-    .select([
-      ...RUN_COLUMNS,
-      'owner_subject',
-      'definition_snapshot',
-      FAILED_INITIAL_STATE,
-      FAILED_RESUME_GUIDANCE,
-      'active_ms',
-    ])
-    .where('agent_id', '=', agentId)
-    .where('id', '=', runId)
-    .executeTakeFirst();
-  if (!row) return null;
-  return runDetail(db, row, 'admin');
+  const record = await getDataStore().agentRuns.findDetail({
+    agentId,
+    runId,
+    ownerSubject: null,
+    audience: 'admin',
+  });
+  return record ? runDetail(record, 'admin') : null;
 }
 
 export interface AdminAgentRow {
@@ -500,106 +356,45 @@ export interface AdminAgentDetail extends AdminAgentRow {
   description: string | null;
 }
 
-/** One agent, for the admin detail page — the single-row sibling of listAgentsForAdmin. */
-export async function getAgentForAdmin(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<AdminAgentDetail | null> {
-  if (!isUuid(agentId)) return null;
-  const agent = await db
-    .selectFrom('agents as a')
-    .leftJoin('identities as i', (join) =>
-      join.onRef('i.subject', '=', 'a.owner_subject')
-    )
-    .select([
-      'a.id',
-      'a.name',
-      'a.owner_subject',
-      'a.enabled',
-      'a.description',
-      'a.description_status',
-      'i.email',
-    ])
-    .where('a.id', '=', agentId)
-    .executeTakeFirst();
-  if (!agent) return null;
-
-  const lastRun = await db
-    .selectFrom('agent_runs')
-    .select('created_at')
-    .where('agent_id', '=', agentId)
-    .orderBy('created_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-
+function adminRowOf(record: AgentAdminRecord): AdminAgentDetail {
   return {
-    id: agent.id,
-    name: agent.name,
-    ownerSubject: agent.owner_subject,
-    ownerEmail: agent.email,
-    enabled: agent.enabled,
-    description: agent.description,
-    descriptionStatus: agent.description_status,
-    lastRunAt: lastRun ? lastRun.created_at.toISOString() : null,
+    id: record.id,
+    name: record.name,
+    ownerSubject: record.ownerSubject,
+    ownerEmail: record.ownerEmail,
+    enabled: record.enabled,
+    description: record.description,
+    descriptionStatus: record.descriptionStatus,
+    lastRunAt: iso(record.lastRunAt),
   };
+}
+
+/** One agent, for the admin detail page — the single-row sibling of listAgentsForAdmin. */
+export async function getAgentForAdmin(agentId: string): Promise<AdminAgentDetail | null> {
+  if (!isUuid(agentId)) return null;
+  const record = await getDataStore().agents.findForAdmin(agentId);
+  return record ? adminRowOf(record) : null;
 }
 
 /**
  * Every agent in the org, or every agent owned by one person — the shared
- * query behind the oversight list and the per-person view on Organization usage. Run and
- * failure tallies come from the run log (agent_run_log) on the page itself,
+ * query behind the oversight list and the per-person view on Organization
+ * usage. Run and failure tallies come from the run log (agent_run_log),
  * not from here: run ROWS are pruned by retention, the log is not.
- *
- * `ownerSubject: null` means every agent in the tenant; a subject narrows to
- * just theirs. Same "null is the only way to widen" shape `getAgentUsageSummaries`
- * already uses, for the same reason.
  */
-async function listAgentRows(
-  db: Kysely<DB>,
-  ownerSubject: string | null
-): Promise<AdminAgentRow[]> {
-  let query = db
-    .selectFrom('agents as a')
-    .leftJoin('identities as i', (join) =>
-      join.onRef('i.subject', '=', 'a.owner_subject')
-    )
-    .select(['a.id', 'a.name', 'a.owner_subject', 'a.enabled', 'a.description_status', 'i.email'])
-    ;
-  if (ownerSubject !== null) query = query.where('a.owner_subject', '=', ownerSubject);
-  const agents = await query.orderBy('a.name').execute();
-
-  const rows: AdminAgentRow[] = [];
-  for (const agent of agents) {
-    const lastRun = await db
-      .selectFrom('agent_runs')
-      .select('created_at')
-      .where('agent_id', '=', agent.id)
-      .orderBy('created_at', 'desc')
-      .limit(1)
-      .executeTakeFirst();
-    rows.push({
-      id: agent.id,
-      name: agent.name,
-      ownerSubject: agent.owner_subject,
-      ownerEmail: agent.email,
-      enabled: agent.enabled,
-      descriptionStatus: agent.description_status,
-      lastRunAt: lastRun ? lastRun.created_at.toISOString() : null,
-    });
-  }
-  return rows;
+async function listAgentRows(ownerSubject: string | null): Promise<AdminAgentRow[]> {
+  const records = await getDataStore().agents.listForAdmin({ ownerSubject });
+  return records.map((record) => {
+    const { description: _description, ...row } = adminRowOf(record);
+    return row;
+  });
 }
 
-export async function listAgentsForAdmin(
-  db: Kysely<DB>
-): Promise<AdminAgentRow[]> {
-  return listAgentRows(db, null);
+export async function listAgentsForAdmin(): Promise<AdminAgentRow[]> {
+  return listAgentRows(null);
 }
 
 /** One person's own agents — the per-person view on Organization usage. */
-export async function listAgentsForOwner(
-  db: Kysely<DB>,
-  ownerSubject: string
-): Promise<AdminAgentRow[]> {
-  return listAgentRows(db, ownerSubject);
+export async function listAgentsForOwner(ownerSubject: string): Promise<AdminAgentRow[]> {
+  return listAgentRows(ownerSubject);
 }

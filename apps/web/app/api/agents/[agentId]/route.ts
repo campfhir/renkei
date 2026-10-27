@@ -12,7 +12,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { deleteAgent, getAgent } from '@/lib/agents/store';
@@ -28,10 +27,7 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json({ agent: access.agent });
 }
@@ -44,21 +40,18 @@ export async function PUT(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   const body = await request.json().catch(() => null);
   const parsed = parseAgentPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // The shared save path (normalize → validate → persist → audit); the
   // summary is written AFTER the response — the builder polls meanwhile.
   // A grantee's save is scoped to the owner: audited as the actor, and the
   // owner is notified per their preference (edit-notification.ts).
-  const result = await saveAgent(dbResult.val, session.subject, parsed, {
+  const result = await saveAgent(session.subject, parsed, {
     agentId,
     defer: after,
     ...(access.viewerIsOwner ? {} : { ownerSubject: access.ownerSubject }),
@@ -74,7 +67,7 @@ export async function PUT(
     );
   }
 
-  const agent = await getAgent(dbResult.val, access.ownerSubject, agentId);
+  const agent = await getAgent(access.ownerSubject, agentId);
   return NextResponse.json({
     agent,
     apiKeys: result.apiKeys,
@@ -90,13 +83,10 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // Fetched first: after the cascade there is no row left to name in the
   // audit trail, and "deleted agent <uuid>" tells an operator nothing.
-  const existing = await getAgent(dbResult.val, session.subject, agentId);
-  const deleted = await deleteAgent(dbResult.val, session.subject, agentId);
+  const existing = await getAgent(session.subject, agentId);
+  const deleted = await deleteAgent(session.subject, agentId);
   if (!deleted) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   recordAuditEvent({
     actorSubject: session.subject,

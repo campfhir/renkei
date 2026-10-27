@@ -48,3 +48,8 @@ export type * from './domains/user-preferences';
 export type * from './domains/settings';
 export type * from './domains/coach-marks';
 export type * from './domains/notifications';
+export type * from './domains/agents';
+export type * from './domains/agent-runs';
+export type * from './domains/agent-usage';
+export type * from './domains/agent-optimizations';
+export type * from './domains/agent-drafts';

@@ -9,8 +9,7 @@
  * being reachable at that moment.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDatabase } from '@renkei/db';
 import { describeSchedule, type TriggerDraft } from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
@@ -109,29 +108,29 @@ export function parseAgentReviewReply(
  * Generate and persist the description for a just-saved agent. Returns
  * what it stored so the save route can include it in the response.
  */
-export async function generateAgentDescription(
-  db: Kysely<DB>,
-  agent: {
-    id: string;
-    name: string;
-    instructions: string;
-    tools: string[];
-    triggers: TriggerDraft[];
-    llmModelId: string | null;
-    guardrails?: string | null;
-  }
-): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
+export async function generateAgentDescription(agent: {
+  id: string;
+  name: string;
+  instructions: string;
+  tools: string[];
+  triggers: TriggerDraft[];
+  llmModelId: string | null;
+  guardrails?: string | null;
+}): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
   const failed = async (reason: string) => {
     logger.debug('agent description generation skipped: {reason}', {
       component: 'agents/describe',
       agentId: agent.id,
       reason,
     });
-    await saveDescription(db, agent.id, { status: 'failed' });
+    await saveDescription(agent.id, { status: 'failed' });
     return { description: null, reviewNotes: [] };
   };
 
-  const llmResult = await resolveAgentLlm(db, agent.llmModelId);
+  // The model roster is the agent-llm package's to read, from the database.
+  const db = getDatabase();
+  if (!db.ok) return failed('database unavailable');
+  const llmResult = await resolveAgentLlm(db.val, agent.llmModelId);
   if (!llmResult.ok) return failed(llmResult.err.type);
   const llm = llmResult.val;
 
@@ -192,7 +191,7 @@ export async function generateAgentDescription(
     const parsed = parseAgentReviewReply(text);
     if (!parsed) return failed('unparseable reply');
 
-    await saveDescription(db, agent.id, {
+    await saveDescription(agent.id, {
       status: 'ok',
       description: parsed.summary,
       reviewNotes: parsed.concerns,

@@ -84,7 +84,7 @@ maybe('token usage by model and by run', () => {
   it('splits the whole org by model, chat and optimizer spend included', async () => {
     // Organization-wide, so other suites' rows in a shared database sit
     // beside these; the two models only this suite records are exact.
-    const rows = await getTokenUsageByModel(db, null);
+    const rows = await getTokenUsageByModel(null);
     const shaped = rows.map((row) => [
       row.provider,
       row.model,
@@ -105,18 +105,18 @@ maybe('token usage by model and by run', () => {
   });
 
   it('narrows to one agent, leaving the chat out', async () => {
-    const rows = await getTokenUsageByModel(db, agentId);
+    const rows = await getTokenUsageByModel(agentId);
     expect(rows.map((row) => [row.model, row.input.allTime])).toEqual([
       ['claude-big', 1_200],
       ['gpt-small', 1_000],
       [null, 7],
     ]);
-    expect(await getTokenUsageByModel(db, [])).toEqual([]);
+    expect(await getTokenUsageByModel([])).toEqual([]);
   });
 
   it('totals one run at a time for a listing, absent when the ledger has nothing', async () => {
     const other = randomUUID();
-    const byRun = await getTokenUsageByRun(db, [runId, other]);
+    const byRun = await getTokenUsageByRun([runId, other]);
     expect(byRun[runId]).toEqual({
       input: 1_207,
       output: 33,
@@ -125,11 +125,11 @@ maybe('token usage by model and by run', () => {
       calls: 3,
     });
     expect(byRun[other]).toBeUndefined();
-    expect(await getTokenUsageByRun(db, [])).toEqual({});
+    expect(await getTokenUsageByRun([])).toEqual({});
   });
 
   it('splits one run by model', async () => {
-    const rows = await getRunTokenUsage(db, runId);
+    const rows = await getRunTokenUsage(runId);
     expect(
       rows.map((row) => [
         row.model,
@@ -143,6 +143,6 @@ maybe('token usage by model and by run', () => {
       ['claude-big', 1_200, 30, 900, 40, 2],
       [null, 7, 3, 0, 0, 1],
     ]);
-    expect(await getRunTokenUsage(db, randomUUID())).toEqual([]);
+    expect(await getRunTokenUsage(randomUUID())).toEqual([]);
   });
 });

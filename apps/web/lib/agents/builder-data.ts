@@ -3,16 +3,20 @@
  * caller's tool projection (the SAME list the MCP route serves — no new
  * endpoint, the usage-page pattern), their other agents for chained
  * triggers, and the org's enabled model roster for the per-agent override.
+ *
+ * The model roster and the holiday calendars belong to other areas (chat
+ * models, schedule calendars) and are read through their own loaders;
+ * without a database those read as empty rather than failing the page.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { chatModelsOnly } from '@renkei/agent-llm';
-import { isBlackoutEntry, type BlackoutEntry } from '@renkei/agents';
+import { getDatabase } from '@renkei/db';
+import type { BlackoutEntry } from '@renkei/agents';
 import { DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getOrgSettings } from '@renkei/settings';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { listAgents } from '@/lib/agents/store';
+import { listChatModels } from '@/lib/chat/models';
+import { loadCalendarOptions } from '@/lib/schedule-calendars';
 
 export interface BuilderData {
   tools: ToolDescriptor[];
@@ -34,48 +38,30 @@ export interface BuilderData {
 }
 
 export async function loadBuilderData(
-  db: Kysely<DB>,
   subject: string,
   excludeAgentId?: string
 ): Promise<BuilderData> {
-  const [tools, agents, modelRows, settings, calendarRows] = await Promise.all([
+  const db = getDatabase();
+  const [tools, agents, modelRows, settings, calendars] = await Promise.all([
     listAvailableTools(subject),
-    listAgents(db, subject),
-    db
-      .selectFrom('llm_model_configs')
-      .select(['id', 'label', 'is_default'])
-      .where('enabled', '=', true)
-      // An agent runs on a chat model; an image generation model cannot answer.
-      .where(chatModelsOnly)
-      .orderBy('label')
-      .execute(),
+    listAgents(subject),
+    // An agent runs on a chat model; an image generation model cannot answer.
+    db.ok ? listChatModels(db.val) : Promise.resolve([]),
     getOrgSettings(),
-    db
-      .selectFrom('schedule_calendars')
-      .select(['id', 'name', 'dates'])
-      .orderBy('name')
-      .execute(),
+    db.ok ? loadCalendarOptions(db.val) : Promise.resolve([]),
   ]);
+  const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
   return {
     tools,
     otherAgents: agents
       .filter((agent) => agent.id !== excludeAgentId)
       .map((agent) => ({ id: agent.id, name: agent.name })),
-    models: modelRows.map((model) => ({
-      id: model.id,
-      label: model.label,
-      isDefault: model.is_default,
-    })),
-    runLimits: {
-      minutes: (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS).agentRunTimeoutMinutes,
-      toolCalls: (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS).agentRunToolCallBudget,
-    },
-    actApprovalPolicy: (settings.ok ? settings.val : DEFAULT_ORG_SETTINGS)
-      .agentActStepsRequireApproval,
-    calendars: calendarRows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      dates: Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [],
-    })),
+    // The picker lists models by label (the chat roster puts the default first).
+    models: [...modelRows]
+      .sort((left, right) => left.label.localeCompare(right.label))
+      .map((model) => ({ id: model.id, label: model.label, isDefault: model.isDefault })),
+    runLimits: { minutes: org.agentRunTimeoutMinutes, toolCalls: org.agentRunToolCallBudget },
+    actApprovalPolicy: org.agentActStepsRequireApproval,
+    calendars,
   };
 }

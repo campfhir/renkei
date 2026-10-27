@@ -17,8 +17,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import { AGENT_NOTE_SCOPE } from '@renkei/agents/memory';
 import {
@@ -65,40 +64,29 @@ export type NoteKeywords = readonly string[] | null | undefined;
 
 export type AgentNoteError = 'DB_ERROR' | 'NOT_FOUND' | 'EMBEDDINGS_OFF' | 'EMBEDDING_FAILED';
 
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-}
-
 function baseRefOf(refId: string): string {
   const hash = refId.indexOf('#');
   return hash > 0 ? refId.slice(0, hash) : refId;
 }
 
-/** Every chunk of this agent's notes, owner-scoped, ordered for rebuild. */
-async function agentNoteChunks(db: Kysely<DB>, agentId: string) {
-  return db
-    .selectFrom('knowledge_chunks')
-    .select(['ref_id', 'metadata', 'content', 'keywords', 'source_at'])
-    .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
-    .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
-    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
-    .orderBy('ref_id')
-    .execute();
+/** Which knowledge chunks are this agent's notes: the note provider, with the membership scope. */
+const NOTE_SCOPE = { provider: NOTE_KNOWLEDGE_PROVIDER, scope: AGENT_NOTE_SCOPE };
+
+/** Every chunk of this agent's notes, ordered for rebuild. */
+async function agentNoteChunks(agentId: string) {
+  return getDataStore().agents.listNoteChunks(agentId, NOTE_SCOPE);
 }
 
 /** The agent's notes, newest first, content rebuilt from ordered chunks. */
-export async function listAgentNotes(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<AgentNote[]> {
-  const rows = await agentNoteChunks(db, agentId);
+export async function listAgentNotes(agentId: string): Promise<AgentNote[]> {
+  const rows = await agentNoteChunks(agentId);
   const keyResult = contentEncryptionKey();
   const contentKey = keyResult.ok ? keyResult.val : null;
   const notes = new Map<string, AgentNote>();
   for (const row of rows) {
     // Each CHUNK is its own ciphertext — decrypt before concatenating.
     const content = revealContent(row.content, contentKey);
-    const baseRef = baseRefOf(row.ref_id);
+    const baseRef = baseRefOf(row.refId);
     const slash = baseRef.indexOf('/');
     const noteId = slash > 0 ? baseRef.slice(slash + 1) : baseRef;
     const existing = notes.get(noteId);
@@ -120,7 +108,7 @@ export async function listAgentNotes(
         ? row.keywords.filter((keyword): keyword is string => typeof keyword === 'string')
         : [],
       authoredBy: metadata.authoredBy === 'agent' ? 'agent' : 'user',
-      sourceAt: row.source_at ? new Date(row.source_at).toISOString() : null,
+      sourceAt: row.sourceAt ? new Date(row.sourceAt).toISOString() : null,
     });
   }
   return [...notes.values()].sort((a, b) => (b.sourceAt ?? '').localeCompare(a.sourceAt ?? ''));
@@ -131,16 +119,13 @@ export async function listAgentNotes(
  * run carries it. `ownerEmail` is the AGENT OWNER's recorded email — the
  * ref prefix the author-only verifier admits.
  */
-export async function createAgentNote(
-  db: Kysely<DB>,
-  input: {
-    agentId: string;
-    ownerEmail: string;
-    title: string;
-    content: string;
-    keywords?: NoteKeywords;
-  }
-): Promise<{ noteId: string } | AgentNoteError> {
+export async function createAgentNote(input: {
+  agentId: string;
+  ownerEmail: string;
+  title: string;
+  content: string;
+  keywords?: NoteKeywords;
+}): Promise<{ noteId: string } | AgentNoteError> {
   const embedder = await resolveEmbeddingProvider();
   if (!embedder) return 'EMBEDDINGS_OFF';
 
@@ -172,39 +157,21 @@ export async function createAgentNote(
 }
 
 /** The note must exist, belong to the owner, AND be this agent's. */
-async function noteExists(
-  db: Kysely<DB>,
-  agentId: string,
-  refId: string
-): Promise<boolean> {
-  const row = await db
-    .selectFrom('knowledge_chunks')
-    .select(['ref_id'])
-    .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
-    .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
-    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
-    .where((eb) =>
-      eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
-    )
-    .limit(1)
-    .executeTakeFirst();
-  return row !== undefined;
+async function noteExists(agentId: string, refId: string): Promise<boolean> {
+  return getDataStore().agents.noteExists(agentId, refId, NOTE_SCOPE);
 }
 
 /** Full replacement — the panel edits title and content together. */
-export async function updateAgentNote(
-  db: Kysely<DB>,
-  input: {
-    agentId: string;
-    ownerEmail: string;
-    noteId: string;
-    title: string;
-    content: string;
-    keywords?: NoteKeywords;
-  }
-): Promise<'OK' | AgentNoteError> {
+export async function updateAgentNote(input: {
+  agentId: string;
+  ownerEmail: string;
+  noteId: string;
+  title: string;
+  content: string;
+  keywords?: NoteKeywords;
+}): Promise<'OK' | AgentNoteError> {
   const refId = noteRefId(input.ownerEmail, input.noteId);
-  if (!(await noteExists(db, input.agentId, refId))) return 'NOT_FOUND';
+  if (!(await noteExists(input.agentId, refId))) return 'NOT_FOUND';
 
   const embedder = await resolveEmbeddingProvider();
   if (!embedder) return 'EMBEDDINGS_OFF';
@@ -247,52 +214,38 @@ export async function updateAgentNote(
  * deliberately NOT copied anywhere in the copy flow — notes are the
  * agent's reference material, memory is its lived history.
  */
-export async function copyAgentNotes(
-  db: Kysely<DB>,
-  input: {
-    sourceAgentId: string;
-    targetAgentId: string;
-    targetOwnerEmail: string;
-  }
-): Promise<number> {
-  const rows = await db
-    .selectFrom('knowledge_chunks')
-    .select(['ref_id'])
-    .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
-    .where(sql<boolean>`metadata ->> 'agentId' = ${input.sourceAgentId}`)
-    .where(sql<boolean>`metadata ->> 'scope' = ${AGENT_NOTE_SCOPE}`)
-    .execute();
-  const baseRefs = [...new Set(rows.map((row) => baseRefOf(row.ref_id)))];
+export async function copyAgentNotes(input: {
+  sourceAgentId: string;
+  targetAgentId: string;
+  targetOwnerEmail: string;
+}): Promise<number> {
+  const store = getDataStore().agents;
+  const rows = await store.listNoteChunks(input.sourceAgentId, NOTE_SCOPE);
+  const baseRefs = [...new Set(rows.map((row) => baseRefOf(row.refId)))];
 
   for (const oldBase of baseRefs) {
-    const newBase = noteRefId(input.targetOwnerEmail, randomUUID());
     // Every derived column rides along — the vector, the lexical entry
     // and the extracted keywords are all functions of content that is
     // byte-identical here, so copying them is exact and spares the
     // embedder and the model a second pass. Leaving any of them out would
     // hand the recipient a note that search can only half-find.
-    await sql`
-      INSERT INTO knowledge_chunks
-        (id, provider, ref_id, metadata, content, embedding,
-         keywords, search_text, source_at)
-      SELECT gen_random_uuid(), provider,
-             replace(ref_id, ${oldBase}, ${newBase}),
-             jsonb_set(metadata, '{agentId}', to_jsonb(${input.targetAgentId}::text)),
-             content, embedding, keywords, search_text, source_at
-      FROM knowledge_chunks
-      WHERE provider = ${NOTE_KNOWLEDGE_PROVIDER}
-        AND (ref_id = ${oldBase} OR ref_id LIKE ${oldBase} || '#%')
-    `.execute(db);
+    await store.copyNoteChunks({
+      provider: NOTE_KNOWLEDGE_PROVIDER,
+      baseRef: oldBase,
+      newBase: noteRefId(input.targetOwnerEmail, randomUUID()),
+      targetAgentId: input.targetAgentId,
+    });
   }
   return baseRefs.length;
 }
 
-export async function deleteAgentNote(
-  db: Kysely<DB>,
-  input: { agentId: string; ownerEmail: string; noteId: string }
-): Promise<'OK' | AgentNoteError> {
+export async function deleteAgentNote(input: {
+  agentId: string;
+  ownerEmail: string;
+  noteId: string;
+}): Promise<'OK' | AgentNoteError> {
   const refId = noteRefId(input.ownerEmail, input.noteId);
-  if (!(await noteExists(db, input.agentId, refId))) return 'NOT_FOUND';
+  if (!(await noteExists(input.agentId, refId))) return 'NOT_FOUND';
   const deleted = await deleteObjectChunks(NOTE_KNOWLEDGE_PROVIDER, refId);
   return deleted.ok ? 'OK' : 'DB_ERROR';
 }
@@ -308,24 +261,21 @@ export async function deleteAgentNote(
  * `all` re-reads the list rather than trusting ids from the client, so a
  * purge cannot be aimed at anything outside this agent.
  */
-export async function deleteAgentNotes(
-  db: Kysely<DB>,
-  input: {
-    agentId: string;
-    ownerEmail: string;
-    noteIds?: string[];
-    all?: boolean;
-  }
-): Promise<{ deleted: number; missing: number; failed: number }> {
+export async function deleteAgentNotes(input: {
+  agentId: string;
+  ownerEmail: string;
+  noteIds?: string[];
+  all?: boolean;
+}): Promise<{ deleted: number; missing: number; failed: number }> {
   const ids = input.all
-    ? (await listAgentNotes(db, input.agentId)).map((note) => note.noteId)
+    ? (await listAgentNotes(input.agentId)).map((note) => note.noteId)
     : (input.noteIds ?? []);
 
   let deleted = 0;
   let missing = 0;
   let failed = 0;
   for (const noteId of ids) {
-    const outcome = await deleteAgentNote(db, {
+    const outcome = await deleteAgentNote({
       agentId: input.agentId,
       ownerEmail: input.ownerEmail,
       noteId,

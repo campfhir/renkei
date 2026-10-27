@@ -15,23 +15,16 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
-import { getDatabase } from '@renkei/db';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { extractAgentDefinition } from '@/lib/agents/import-markdown';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { saveAgent } from '@/lib/agents/save';
+import { agentNamesLike } from '@/lib/agents/store';
 
 /** The exported name, or the first "(imported)"-suffixed variant free. */
-async function availableName(db: Kysely<DB>, wanted: string): Promise<string> {
+async function availableName(wanted: string): Promise<string> {
   const base = wanted.trim().slice(0, 180) || 'Imported agent';
-  const rows = await db
-    .selectFrom('agents')
-    .select('name')
-    .where('name', 'like', `${base}%`)
-    .execute();
-  const taken = new Set(rows.map((row) => row.name));
+  const taken = new Set(await agentNamesLike(base));
   if (!taken.has(base)) return base;
   if (!taken.has(`${base} (imported)`)) return `${base} (imported)`;
   let suffix = 2;
@@ -39,15 +32,9 @@ async function availableName(db: Kysely<DB>, wanted: string): Promise<string> {
   return `${base} (imported ${suffix})`;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
 
   const body: unknown = await request.json().catch(() => null);
   const payload: { markdown?: unknown } =
@@ -62,7 +49,6 @@ export async function POST(
   const definition = extracted.definition;
 
   const name = await availableName(
-    db,
     typeof definition.name === 'string' ? definition.name : 'Imported agent'
   );
   const parsed = parseAgentPayload({
@@ -78,9 +64,12 @@ export async function POST(
   });
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const result = await saveAgent(db, session.subject, parsed, { defer: after });
+  const result = await saveAgent(session.subject, parsed, { defer: after });
   if (result.outcome === 'invalid') {
-    return NextResponse.json({ error: 'The definition does not validate.', issues: result.issues }, { status: 422 });
+    return NextResponse.json(
+      { error: 'The definition does not validate.', issues: result.issues },
+      { status: 422 }
+    );
   }
   if (result.outcome !== 'saved') {
     return NextResponse.json({ error: 'Could not import the agent.' }, { status: 500 });

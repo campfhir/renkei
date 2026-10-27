@@ -237,6 +237,10 @@ export class MemoryTables {
           const next = (this.serials.get(key) ?? 0) + 1;
           this.serials.set(key, next);
           value = next;
+        } else if (schema.type === 'json' || schema.type === 'jsonb') {
+          // A jsonb default is already JSON ('[]'::jsonb): as text, so an
+          // array default is not read as a Postgres array literal.
+          value = JSON.stringify(d.value);
         } else value = copyValue(d.value);
       }
       row[column] = normalize(table, column, schema, value);

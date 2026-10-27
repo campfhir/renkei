@@ -2,9 +2,8 @@ import BackLink from '@/components/back-link';
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { isRunStatus, listRunsForAdmin } from '@/lib/agents/runs-view';
+import { getAgentForAdmin, isRunStatus, listRunsForAdmin } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../../../agents/run-timeline';
 import RunsSearch from '../../../../agents/runs-search';
 import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
@@ -27,18 +26,11 @@ export default async function AdminAgentRunsPage({
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
-  const agent = await db
-    .selectFrom('agents')
-    .select(['name'])
-    .where('id', '=', agentId)
-    .executeTakeFirst();
+  const agent = await getAgentForAdmin(agentId);
   if (!agent) notFound();
   const filter = isRunStatus(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
-  const runs = await listRunsForAdmin(db, agentId, {
+  const runs = await listRunsForAdmin(agentId, {
     status: filter,
     ...(query ? { q: query } : {}),
   });

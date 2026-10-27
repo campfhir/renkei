@@ -231,8 +231,7 @@ export async function getUsageReport(
       const rows = await db
         .selectFrom('tool_calls')
         .leftJoin('identities', (join) =>
-          join
-            .onRef('identities.subject', '=', 'tool_calls.subject')
+          join.onRef('identities.subject', '=', 'tool_calls.subject')
         )
         .select([
           'tool_calls.subject as subject',
@@ -269,9 +268,7 @@ export async function getUsageReport(
     // caller's own top five come free whenever the view IS their own; the
     // extra query happens only for an operator looking tenant-wide, who is
     // the one person whose two answers differ.
-    const myTop = tenantWide
-      ? await topToolsFor(db, since, ownSubject)
-      : tools.slice(0, TOP_TOOLS);
+    const myTop = tenantWide ? await topToolsFor(db, since, ownSubject) : tools.slice(0, TOP_TOOLS);
     // Role, never requested scope: an operator viewing their own calls still
     // gets the org comparison, and a non-operator gets it in no view at all.
     // Asking for it as a parameter cannot make it appear.
@@ -288,11 +285,7 @@ export async function getUsageReport(
       .sort((left, right) => right.errors - left.errors)
       .slice(0, TOP_TOOLS);
 
-    const byAgent = await getAgentUsageSummaries(
-      db,
-      tenantWide ? null : ownSubject,
-      days
-    );
+    const byAgent = await getAgentUsageSummaries(tenantWide ? null : ownSubject, days);
 
     return {
       scope,
@@ -438,10 +431,7 @@ export async function getToolDetail(
 
     let failureQuery = db
       .selectFrom('tool_calls')
-      .leftJoin('identities', (join) =>
-        join
-          .onRef('identities.subject', '=', 'tool_calls.subject')
-      )
+      .leftJoin('identities', (join) => join.onRef('identities.subject', '=', 'tool_calls.subject'))
       .select([
         'tool_calls.started_at as started_at',
         'tool_calls.duration_ms as duration_ms',

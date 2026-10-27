@@ -5,8 +5,7 @@
  * keyed by owner rather than filtered after the fact.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB, Json } from '@renkei/db';
+import { getDataStore, type AgentOptimizationRecord, type Json } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { parseOptimizationReport, type OptimizationReport } from './optimization-report';
 
@@ -45,118 +44,60 @@ function requestOf(value: Json): OptimizationRequest {
   };
 }
 
-interface Row {
-  id: string;
-  agent_id: string;
-  status: string;
-  request: Json;
-  result: Json | null;
-  error: string | null;
-  error_detail: string | null;
-  input_tokens: number;
-  output_tokens: number;
-  created_at: Date;
-  finished_at: Date | null;
-  applied_at: Date | null;
-}
-
-function viewOf(row: Row): AgentOptimization {
+function viewOf(row: AgentOptimizationRecord): AgentOptimization {
   return {
     id: row.id,
-    agentId: row.agent_id,
+    agentId: row.agentId,
     status: statusOf(row.status),
     request: requestOf(row.request),
     result: row.result === null ? null : parseOptimizationReport(row.result),
     error: row.error,
-    errorDetail: row.error_detail,
-    inputTokens: row.input_tokens,
-    outputTokens: row.output_tokens,
-    createdAt: row.created_at.toISOString(),
-    finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
-    appliedAt: row.applied_at ? row.applied_at.toISOString() : null,
+    errorDetail: row.errorDetail,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    createdAt: row.createdAt.toISOString(),
+    finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
+    appliedAt: row.appliedAt ? row.appliedAt.toISOString() : null,
   };
 }
 
-const COLUMNS = [
-  'id',
-  'agent_id',
-  'status',
-  'request',
-  'result',
-  'error',
-  'error_detail',
-  'input_tokens',
-  'output_tokens',
-  'created_at',
-  'finished_at',
-  'applied_at',
-] as const;
-
 /** Start a pass. The queue job that does the work is enqueued by the caller. */
-export async function createOptimization(
-  db: Kysely<DB>,
-  params: { ownerSubject: string; agentId: string; request: OptimizationRequest }
-): Promise<string> {
-  const row = await db
-    .insertInto('agent_optimizations')
-    .values({
-      owner_subject: params.ownerSubject,
-      agent_id: params.agentId,
-      status: 'queued',
-      request: JSON.stringify(params.request),
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
-  return row.id;
+export async function createOptimization(params: {
+  ownerSubject: string;
+  agentId: string;
+  request: OptimizationRequest;
+}): Promise<string> {
+  return getDataStore().agentOptimizations.create({
+    ownerSubject: params.ownerSubject,
+    agentId: params.agentId,
+    request: { windowDays: params.request.windowDays },
+  });
 }
 
 /** One pass, for its owner. Null for anyone else — the same answer as "none". */
 export async function getOptimization(
-  db: Kysely<DB>,
   ownerSubject: string,
   optimizationId: string
 ): Promise<AgentOptimization | null> {
   if (!isUuid(optimizationId)) return null;
-  const row = await db
-    .selectFrom('agent_optimizations')
-    .select(COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', optimizationId)
-    .executeTakeFirst();
+  const row = await getDataStore().agentOptimizations.find(ownerSubject, optimizationId);
   return row ? viewOf(row) : null;
 }
 
 /** The newest pass for an agent, whatever its status — what the page shows. */
 export async function latestOptimization(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string
 ): Promise<AgentOptimization | null> {
   if (!isUuid(agentId)) return null;
-  const row = await db
-    .selectFrom('agent_optimizations')
-    .select(COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .where('agent_id', '=', agentId)
-    .orderBy('created_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
+  const row = await getDataStore().agentOptimizations.latest(ownerSubject, agentId);
   return row ? viewOf(row) : null;
 }
 
 /** A pass still queued or running for this agent — one at a time is plenty. */
-export async function inFlightOptimization(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<{ id: string } | null> {
-  const row = await db
-    .selectFrom('agent_optimizations')
-    .select('id')
-    .where('agent_id', '=', agentId)
-    .where('status', 'in', ['queued', 'running'])
-    .orderBy('created_at', 'desc')
-    .executeTakeFirst();
-  return row ?? null;
+export async function inFlightOptimization(agentId: string): Promise<{ id: string } | null> {
+  if (!isUuid(agentId)) return null;
+  return getDataStore().agentOptimizations.inFlight(agentId);
 }
 
 /**
@@ -164,18 +105,11 @@ export async function inFlightOptimization(
  * queue row a no-op rather than a second model call — the draft claim's
  * shape, for the same reason.
  */
-export async function claimOptimization(db: Kysely<DB>, optimizationId: string): Promise<boolean> {
-  const result = await db
-    .updateTable('agent_optimizations')
-    .set({ status: 'running', attempts: (eb) => eb('attempts', '+', 1), updated_at: new Date() })
-    .where('id', '=', optimizationId)
-    .where('status', '=', 'queued')
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+export async function claimOptimization(optimizationId: string): Promise<boolean> {
+  return getDataStore().agentOptimizations.claim(optimizationId);
 }
 
 export async function finishOptimization(
-  db: Kysely<DB>,
   optimizationId: string,
   outcome:
     | {
@@ -185,30 +119,32 @@ export async function finishOptimization(
       }
     | { status: 'failed'; error: string; detail?: string | null }
 ): Promise<void> {
-  await db
-    .updateTable('agent_optimizations')
-    .set(
-      outcome.status === 'succeeded'
-        ? {
-            status: 'succeeded',
-            result: JSON.stringify(outcome.result),
-            input_tokens: outcome.usage.inputTokens,
-            output_tokens: outcome.usage.outputTokens,
-            error: null,
-            error_detail: null,
-            finished_at: new Date(),
-            updated_at: new Date(),
-          }
-        : {
-            status: 'failed',
-            error: outcome.error.slice(0, 2000),
-            error_detail: outcome.detail ? outcome.detail.slice(0, 4000) : null,
-            finished_at: new Date(),
-            updated_at: new Date(),
-          }
-    )
-    .where('id', '=', optimizationId)
-    .execute();
+  await getDataStore().agentOptimizations.finish(
+    optimizationId,
+    outcome.status === 'succeeded'
+      ? {
+          status: 'succeeded',
+          result: reportJson(outcome.result),
+          inputTokens: outcome.usage.inputTokens,
+          outputTokens: outcome.usage.outputTokens,
+        }
+      : {
+          status: 'failed',
+          error: outcome.error.slice(0, 2000),
+          detail: outcome.detail ? outcome.detail.slice(0, 4000) : null,
+        }
+  );
+}
+
+/** The report as the JSON it is stored as. */
+function reportJson(report: OptimizationReport): Json {
+  const json: Json = JSON.parse(JSON.stringify(report));
+  return json;
+}
+
+/** Remove a pass whose job could not be queued. */
+export async function deleteOptimization(optimizationId: string): Promise<void> {
+  await getDataStore().agentOptimizations.delete(optimizationId);
 }
 
 /**
@@ -217,19 +153,9 @@ export async function finishOptimization(
  * second column, and `applied_at` says it happened.
  */
 export async function markOptimizationApplied(
-  db: Kysely<DB>,
   ownerSubject: string,
   optimizationId: string,
   draftId: string
 ): Promise<void> {
-  await db
-    .updateTable('agent_optimizations')
-    .set({
-      result: sql`COALESCE(result, '{}'::jsonb) || ${JSON.stringify({ draftId })}::jsonb`,
-      applied_at: new Date(),
-      updated_at: new Date(),
-    })
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', optimizationId)
-    .execute();
+  await getDataStore().agentOptimizations.markApplied(ownerSubject, optimizationId, draftId);
 }

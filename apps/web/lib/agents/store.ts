@@ -17,13 +17,18 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB, Json } from '@renkei/db';
+import {
+  getDatabase,
+  getDataStore,
+  type AgentRecord,
+  type AgentTriggerChanges,
+  type AgentTriggerRecord,
+  type Json,
+} from '@renkei/db';
 import {
   blackoutPredicate,
   computeNextRunForSchedule,
   agentDefinitionOf,
-  isBlackoutEntry,
   parseScheduleConfig,
   serializeScheduleConfig,
   normalizeMatchForEvent,
@@ -33,6 +38,7 @@ import {
 } from '@renkei/agents';
 import { hashToken, generateSecret } from '@/lib/mcp-token';
 import { isUuid } from '@/lib/uuid';
+import { loadCalendarOptions } from '@/lib/schedule-calendars';
 
 export interface TriggerPayload {
   /** Present when the builder is editing an existing trigger row. */
@@ -83,18 +89,6 @@ export interface MintedApiKey {
   key: string;
 }
 
-interface TriggerRow {
-  id: string;
-  kind: string;
-  event_source: string | null;
-  event_type: string | null;
-  config: Json;
-  enabled: boolean;
-  next_run_at: Date | null;
-  last_fired_at: Date | null;
-  last_error: string | null;
-}
-
 function iso(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
@@ -103,7 +97,9 @@ function iso(value: Date | null): string | null {
  * Row → draft. The row's config is our own write, but it round-trips
  * through jsonb, so read it defensively rather than trusting the cast.
  */
-function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | null } | null {
+function draftOfRow(
+  row: AgentTriggerRecord
+): { draft: TriggerDraft; keyHint: string | null } | null {
   const config: {
     match?: unknown;
     callerAgentId?: unknown;
@@ -115,7 +111,7 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
       : {};
   switch (row.kind) {
     case 'event': {
-      const eventId = `${row.event_source}/${row.event_type}`;
+      const eventId = `${row.eventSource}/${row.eventType}`;
       if (!triggerEventById(eventId)) return null;
       return {
         draft: {
@@ -162,26 +158,7 @@ function draftOfRow(row: TriggerRow): { draft: TriggerDraft; keyHint: string | n
   }
 }
 
-async function triggersOf(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<StoredTrigger[]> {
-  const rows = await db
-    .selectFrom('agent_triggers')
-    .select([
-      'id',
-      'kind',
-      'event_source',
-      'event_type',
-      'config',
-      'enabled',
-      'next_run_at',
-      'last_fired_at',
-      'last_error',
-    ])
-    .where('agent_id', '=', agentId)
-    .orderBy('created_at')
-    .execute();
+function storedTriggers(rows: AgentTriggerRecord[]): StoredTrigger[] {
   return rows.flatMap((row) => {
     const parsed = draftOfRow(row);
     if (!parsed) return [];
@@ -190,109 +167,47 @@ async function triggersOf(
         id: row.id,
         draft: parsed.draft,
         enabled: row.enabled,
-        lastFiredAt: iso(row.last_fired_at),
-        lastError: row.last_error,
-        nextRunAt: iso(row.next_run_at),
+        lastFiredAt: iso(row.lastFiredAt),
+        lastError: row.lastError,
+        nextRunAt: iso(row.nextRunAt),
         keyHint: parsed.keyHint,
       },
     ];
   });
 }
 
-interface AgentRow {
-  id: string;
-  name: string;
-  description: string | null;
-  description_status: string;
-  review_notes: Json | null;
-  instructions: string;
-  tools: Json;
-  steps_version: number;
-  llm_model_id: string | null;
-  enabled: boolean;
-  guardrails: string | null;
-  can_ask_questions: boolean;
-  auto_accept_actions: boolean;
-  created_at: Date;
-  updated_at: Date;
-}
-
-async function toStored(
-  db: Kysely<DB>,
-  row: AgentRow
-): Promise<StoredAgent | null> {
-  const definition = agentDefinitionOf(row);
+function toStored(record: AgentRecord): StoredAgent {
+  const definition = agentDefinitionOf(record);
   return {
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    descriptionStatus: row.description_status,
-    reviewNotes: row.review_notes,
+    id: record.id,
+    name: record.name,
+    description: record.description,
+    descriptionStatus: record.descriptionStatus,
+    reviewNotes: record.reviewNotes,
     instructions: definition.instructions,
     tools: definition.tools,
-    revision: row.steps_version,
-    llmModelId: row.llm_model_id,
-    enabled: row.enabled,
-    guardrails: row.guardrails,
-    canAskQuestions: row.can_ask_questions,
-    autoAcceptActions: row.auto_accept_actions,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
-    triggers: await triggersOf(db, row.id),
+    revision: record.stepsVersion,
+    llmModelId: record.llmModelId,
+    enabled: record.enabled,
+    guardrails: record.guardrails,
+    canAskQuestions: record.canAskQuestions,
+    autoAcceptActions: record.autoAcceptActions,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+    triggers: storedTriggers(record.triggers),
   };
 }
 
-const AGENT_COLUMNS = [
-  'id',
-  'name',
-  'description',
-  'description_status',
-  'review_notes',
-  'instructions',
-  'tools',
-  'steps_version',
-  'llm_model_id',
-  'enabled',
-  'guardrails',
-  'can_ask_questions',
-  'auto_accept_actions',
-  'created_at',
-  'updated_at',
-] as const;
-
-export async function listAgents(
-  db: Kysely<DB>,
-  ownerSubject: string
-): Promise<StoredAgent[]> {
-  const rows = await db
-    .selectFrom('agents')
-    .select(AGENT_COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .orderBy('created_at', 'desc')
-    .execute();
-  const agents: StoredAgent[] = [];
-  for (const row of rows) {
-    const stored = await toStored(db, row);
-    if (stored) agents.push(stored);
-  }
-  return agents;
+export async function listAgents(ownerSubject: string): Promise<StoredAgent[]> {
+  return (await getDataStore().agents.list(ownerSubject)).map(toStored);
 }
 
-export async function getAgent(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  agentId: string
-): Promise<StoredAgent | null> {
+export async function getAgent(ownerSubject: string, agentId: string): Promise<StoredAgent | null> {
   // The id usually arrives from a URL; a malformed one (pasted link with
   // glued-on punctuation) is "no such agent", not a 22P02 → 500.
   if (!isUuid(agentId)) return null;
-  const row = await db
-    .selectFrom('agents')
-    .select(AGENT_COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  return row ? toStored(db, row) : null;
+  const record = await getDataStore().agents.find(agentId, { ownerSubject });
+  return record ? toStored(record) : null;
 }
 
 /**
@@ -303,18 +218,23 @@ export async function getAgent(
  * resolveAgentAccess, never through this.
  */
 export async function getAgentWithOwner(
-  db: Kysely<DB>,
   agentId: string
 ): Promise<{ agent: StoredAgent; ownerSubject: string } | null> {
   if (!isUuid(agentId)) return null;
-  const row = await db
-    .selectFrom('agents')
-    .select([...AGENT_COLUMNS, 'owner_subject'])
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  if (!row) return null;
-  const agent = await toStored(db, row);
-  return agent ? { agent, ownerSubject: row.owner_subject } : null;
+  const record = await getDataStore().agents.find(agentId);
+  return record ? { agent: toStored(record), ownerSubject: record.ownerSubject } : null;
+}
+
+/** One owner's agents as {id, name}, by name — name→id lookups that need no definitions. */
+export async function listAgentNames(
+  ownerSubject: string
+): Promise<{ id: string; name: string }[]> {
+  return getDataStore().agents.listNames(ownerSubject);
+}
+
+/** Every agent name matching `prefix%` (LIKE; the prefix's own wildcards act). */
+export async function agentNamesLike(prefix: string): Promise<string[]> {
+  return getDataStore().agents.namesLike(prefix);
 }
 
 /**
@@ -410,18 +330,15 @@ function rowFieldsOf(
  * tomorrow every time the agent was merely renamed.
  */
 async function reconcileTriggers(
-  db: Kysely<DB>,
   agentId: string,
   payloads: TriggerPayload[]
 ): Promise<MintedApiKey[]> {
-  const existingRows = await db
-    .selectFrom('agent_triggers')
-    .select(['id', 'kind', 'config', 'next_run_at'])
-    .where('agent_id', '=', agentId)
-    .execute();
+  const store = getDataStore().agents;
+  const existingRows = await store.listTriggers(agentId);
   const existingById = new Map(existingRows.map((row) => [row.id, row]));
   const keptIds = new Set<string>();
   const minted: MintedApiKey[] = [];
+  const changes: AgentTriggerChanges = { update: [], insert: [], remove: [] };
 
   // Resolve the org's calendars once for the whole reconcile: schedule
   // rows both verify their calendarId against this tenant's set (ownership
@@ -429,13 +346,7 @@ async function reconcileTriggers(
   // fold the dates into next_run_at.
   const calendars = new Map<string, BlackoutEntry[]>();
   if (payloads.some((payload) => payload.draft.kind === 'schedule')) {
-    const rows = await db
-      .selectFrom('schedule_calendars')
-      .select(['id', 'dates'])
-      .execute();
-    for (const row of rows) {
-      calendars.set(row.id, Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : []);
-    }
+    for (const calendar of await scheduleCalendars()) calendars.set(calendar.id, calendar.dates);
   }
 
   for (const payload of payloads) {
@@ -465,57 +376,53 @@ async function reconcileTriggers(
       // The unchanged-schedule check compares what WOULD be stored against
       // what IS stored, both in canonical form.
       let nextRunAt = fields.next_run_at;
-      if (payload.draft.kind === 'schedule' && match.next_run_at) {
+      if (payload.draft.kind === 'schedule' && match.nextRunAt) {
         const stored = parseScheduleConfig(match.config);
         if (
           stored &&
           serializeScheduleConfig(stored) === fields.config &&
-          match.next_run_at.getTime() > Date.now()
+          match.nextRunAt.getTime() > Date.now()
         ) {
-          nextRunAt = match.next_run_at;
+          nextRunAt = match.nextRunAt;
         }
       }
-      await db
-        .updateTable('agent_triggers')
-        .set({
-          event_source: fields.event_source,
-          event_type: fields.event_type,
-          config: fields.config,
-          enabled: payload.enabled,
-          next_run_at: nextRunAt,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', match.id)
-        .execute();
+      changes.update.push({
+        id: match.id,
+        eventSource: fields.event_source,
+        eventType: fields.event_type,
+        config: fields.config,
+        enabled: payload.enabled,
+        nextRunAt,
+      });
     } else {
       const id = randomUUID();
       keptIds.add(id);
-      await db
-        .insertInto('agent_triggers')
-        .values({
-          id,
-          agent_id: agentId,
-          kind: payload.draft.kind,
-          event_source: fields.event_source,
-          event_type: fields.event_type,
-          config: fields.config,
-          enabled: payload.enabled,
-          next_run_at: fields.next_run_at,
-        })
-        .execute();
+      changes.insert.push({
+        id,
+        kind: payload.draft.kind,
+        eventSource: fields.event_source,
+        eventType: fields.event_type,
+        config: fields.config,
+        enabled: payload.enabled,
+        nextRunAt: fields.next_run_at,
+      });
       if (fields.mintedKey) minted.push({ triggerId: id, key: fields.mintedKey });
     }
   }
 
-  const removed = existingRows.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
-  if (removed.length > 0) {
-    await db
-      .deleteFrom('agent_triggers')
-      .where('id', 'in', removed)
-      .execute();
-  }
-
+  changes.remove = existingRows.filter((row) => !keptIds.has(row.id)).map((row) => row.id);
+  await store.applyTriggerChanges(agentId, changes);
   return minted;
+}
+
+/**
+ * The org's holiday calendars. They belong to the schedule-calendars
+ * area, whose own loader reads them (loadCalendarOptions).
+ */
+async function scheduleCalendars(): Promise<{ id: string; dates: BlackoutEntry[] }[]> {
+  const db = getDatabase();
+  if (!db.ok) throw new Error(db.err.type);
+  return loadCalendarOptions(db.val);
 }
 
 export interface SaveAgentInput {
@@ -531,40 +438,34 @@ export interface SaveAgentInput {
 }
 
 export async function createAgent(
-  db: Kysely<DB>,
   ownerSubject: string,
   input: SaveAgentInput
 ): Promise<{ agentId: string; apiKeys: MintedApiKey[] } | 'NAME_TAKEN'> {
   const agentId = randomUUID();
-  try {
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: ownerSubject,
-        name: input.name,
-        instructions: input.instructions,
-        tools: JSON.stringify(input.tools),
-        llm_model_id: input.llmModelId,
-        enabled: input.enabled,
-        guardrails: input.guardrails,
-        can_ask_questions: input.canAskQuestions,
-        auto_accept_actions: input.autoAcceptActions,
-        description_status: 'stale',
-      })
-      .execute();
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('agents_name')) {
-      return 'NAME_TAKEN';
-    }
-    throw error;
-  }
-  const apiKeys = await reconcileTriggers(db, agentId, input.triggers);
+  const created = await getDataStore().agents.create({
+    id: agentId,
+    ownerSubject,
+    ...definitionOf(input),
+  });
+  if (created === 'NAME_TAKEN') return 'NAME_TAKEN';
+  const apiKeys = await reconcileTriggers(agentId, input.triggers);
   return { agentId, apiKeys };
 }
 
+function definitionOf(input: SaveAgentInput) {
+  return {
+    name: input.name,
+    instructions: input.instructions,
+    tools: input.tools,
+    llmModelId: input.llmModelId,
+    enabled: input.enabled,
+    guardrails: input.guardrails,
+    canAskQuestions: input.canAskQuestions,
+    autoAcceptActions: input.autoAcceptActions,
+  };
+}
+
 export async function updateAgent(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string,
   input: SaveAgentInput,
@@ -577,74 +478,43 @@ export async function updateAgent(
     markDescriptionStale?: boolean;
   } = {}
 ): Promise<{ apiKeys: MintedApiKey[] } | 'NOT_FOUND' | 'NAME_TAKEN'> {
-  try {
-    const updated = await db
-      .updateTable('agents')
-      .set({
-        name: input.name,
-        instructions: input.instructions,
-        tools: JSON.stringify(input.tools),
-        steps_version: sql`steps_version + 1`,
-        llm_model_id: input.llmModelId,
-        enabled: input.enabled,
-        guardrails: input.guardrails,
-        can_ask_questions: input.canAskQuestions,
-        auto_accept_actions: input.autoAcceptActions,
-        ...(options.markDescriptionStale === false ? {} : { description_status: 'stale' }),
-        updated_at: sql`NOW()`,
-      })
-      .where('owner_subject', '=', ownerSubject)
-      .where('id', '=', agentId)
-      .executeTakeFirst();
-    if (Number(updated.numUpdatedRows ?? 0) === 0) return 'NOT_FOUND';
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('agents_name')) {
-      return 'NAME_TAKEN';
-    }
-    throw error;
-  }
-  const apiKeys = await reconcileTriggers(db, agentId, input.triggers);
+  if (!isUuid(agentId)) return 'NOT_FOUND';
+  const updated = await getDataStore().agents.update(ownerSubject, agentId, definitionOf(input), {
+    markDescriptionStale: options.markDescriptionStale !== false,
+  });
+  if (updated !== 'UPDATED') return updated;
+  const apiKeys = await reconcileTriggers(agentId, input.triggers);
   return { apiKeys };
 }
 
-export async function deleteAgent(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  agentId: string
-): Promise<boolean> {
+export async function deleteAgent(ownerSubject: string, agentId: string): Promise<boolean> {
+  if (!isUuid(agentId)) return false;
   // Runs and steps cascade; triggers cascade. The FK graph is the delete.
-  const result = await db
-    .deleteFrom('agents')
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0) > 0;
+  return getDataStore().agents.delete(ownerSubject, agentId);
 }
 
 /** Persist a generated description; advisory, so failures are the caller's to log. */
 export async function saveDescription(
-  db: Kysely<DB>,
   agentId: string,
   outcome:
     | { status: 'ok'; description: string; reviewNotes: { issue: string; fix?: string }[] }
     | { status: 'failed' }
 ): Promise<void> {
-  if (outcome.status === 'ok') {
-    await db
-      .updateTable('agents')
-      .set({
-        description: outcome.description,
-        review_notes: JSON.stringify(outcome.reviewNotes),
-        description_status: 'ok',
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', agentId)
-      .execute();
-  } else {
-    await db
-      .updateTable('agents')
-      .set({ description_status: 'failed', updated_at: sql`NOW()` })
-      .where('id', '=', agentId)
-      .execute();
-  }
+  await getDataStore().agents.saveDescription(
+    agentId,
+    outcome.status === 'ok'
+      ? {
+          status: 'ok',
+          description: outcome.description,
+          reviewNotes: outcome.reviewNotes.map((note) =>
+            note.fix === undefined ? { issue: note.issue } : { issue: note.issue, fix: note.fix }
+          ),
+        }
+      : { status: 'failed' }
+  );
+}
+
+/** Mark the description stale — a re-describe is about to run and clients poll for it. */
+export async function markDescriptionStale(agentId: string): Promise<void> {
+  await getDataStore().agents.markDescriptionStale(agentId);
 }

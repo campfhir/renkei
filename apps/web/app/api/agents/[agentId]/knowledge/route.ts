@@ -9,7 +9,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -30,14 +29,10 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  return NextResponse.json({ notes: await listAgentNotes(db, agentId) });
+  return NextResponse.json({ notes: await listAgentNotes(agentId) });
 }
 
 export async function POST(
@@ -48,11 +43,7 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const payload = parseNotePayload(await request.json().catch(() => null));
@@ -74,7 +65,7 @@ export async function POST(
     );
   }
 
-  const created = await createAgentNote(db, {
+  const created = await createAgentNote({
     agentId,
     ownerEmail,
     title: payload.title,
@@ -118,11 +109,7 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const ownerEmail = await getIdentityEmail(access.ownerSubject);
@@ -140,7 +127,7 @@ export async function DELETE(
     return NextResponse.json({ error: 'Give noteIds, or all: true' }, { status: 400 });
   }
 
-  const result = await deleteAgentNotes(db, {
+  const result = await deleteAgentNotes({
     agentId,
     ownerEmail: ownerEmail.val,
     ...(all ? { all } : { noteIds }),

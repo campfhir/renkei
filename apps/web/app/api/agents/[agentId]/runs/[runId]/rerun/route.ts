@@ -53,7 +53,7 @@ export async function POST(
   // Access is structural on both halves: the caller must resolve to the
   // agent (owner, or grantee through an unexpired grant), and the run must
   // be that agent's, in this tenant.
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const run = await db

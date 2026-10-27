@@ -11,8 +11,6 @@
  */
 
 import { after } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   normalizeAgentDraft,
   validateAgentDraft,
@@ -39,7 +37,6 @@ export type SaveAgentResult =
     };
 
 export async function saveAgent(
-  db: Kysely<DB>,
   subject: string,
   parsed: { input: SaveAgentInput; draft: AgentDraft; refreshDescription: boolean },
   options: {
@@ -79,7 +76,7 @@ export async function saveAgent(
 
   if (options.dryRun) {
     if (options.agentId !== undefined) {
-      const existing = await getAgent(db, owner, options.agentId);
+      const existing = await getAgent(owner, options.agentId);
       if (!existing) return { outcome: 'not-found' };
     }
     return { outcome: 'valid-dry-run', normalized };
@@ -100,7 +97,7 @@ export async function saveAgent(
   };
 
   if (options.agentId === undefined) {
-    const result = await createAgent(db, subject, savedInput);
+    const result = await createAgent(subject, savedInput);
     if (result === 'NAME_TAKEN') return nameTaken;
     recordAuditEvent({
       actorSubject: subject,
@@ -109,7 +106,7 @@ export async function saveAgent(
       targetLabel: normalized.name,
     });
     defer(() =>
-      generateAgentDescription(db, {
+      generateAgentDescription({
         id: result.agentId,
         name: normalized.name,
         instructions: normalized.instructions,
@@ -129,7 +126,7 @@ export async function saveAgent(
   }
 
   const agentId = options.agentId;
-  const existing = await getAgent(db, owner, agentId);
+  const existing = await getAgent(owner, agentId);
   if (!existing) return { outcome: 'not-found' };
   // Compared NORMALIZED-to-normalized: a round-tripped save that changed
   // nothing the author can see must not read as a content change — the
@@ -164,7 +161,7 @@ export async function saveAgent(
   // real edit or the builder's re-check button, not on every save.
   const needsDescription = parsed.refreshDescription || describedChanged;
 
-  const result = await updateAgent(db, owner, agentId, savedInput, {
+  const result = await updateAgent(owner, agentId, savedInput, {
     markDescriptionStale: needsDescription,
   });
   if (result === 'NOT_FOUND') return { outcome: 'not-found' };
@@ -206,7 +203,7 @@ export async function saveAgent(
 
   if (needsDescription) {
     defer(() =>
-      generateAgentDescription(db, {
+      generateAgentDescription({
         id: agentId,
         name: normalized.name,
         instructions: normalized.instructions,

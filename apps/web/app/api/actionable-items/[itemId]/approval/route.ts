@@ -15,7 +15,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { decideApproval } from '@/lib/agents/approvals';
@@ -42,17 +41,11 @@ export async function POST(
   }
   const comment = typeof body.comment === 'string' ? body.comment : '';
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-
-  const result = await decideApproval(
-    dbResult.val,
-    agentJobsQueue().producer,
-    session.subject,
-    { cardId: itemId, decision: body.decision, comment }
-  );
+  const result = await decideApproval(agentJobsQueue().producer, session.subject, {
+    cardId: itemId,
+    decision: body.decision,
+    comment,
+  });
 
   switch (result.outcome) {
     case 'comment-too-long':

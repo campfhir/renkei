@@ -1,6 +1,5 @@
 import React from 'react';
-import { getDatabase } from '@renkei/db';
-import { readAgentMemory } from '@renkei/agents/memory';
+import { readAgentMemoryView } from '@/lib/agents/memory-view';
 import ClearMemoryButton from './clear-memory-button';
 import { unavailableMarker } from '@/lib/chat/content-crypto';
 import { unavailableReasonOf } from '@/lib/chat/chat-keys';
@@ -21,15 +20,10 @@ export default async function MemoryPanel({
 }: {
   agentId: string;
 }): Promise<React.ReactNode> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-
   // Sealed under the owner's automation key; opened through the delegate
   // (readAgentMemory). A key that is not available renders the chat's
   // locked-row marker rather than envelopes.
-  const memory = await readAgentMemory(dbResult.val, agentId, {
-    maxEntries: MAX_SHOWN_ENTRIES,
-  });
+  const memory = await readAgentMemoryView(agentId, MAX_SHOWN_ENTRIES);
   if (memory.unavailable) {
     return (
       <p className="text-sm text-amber-700 dark:text-amber-400" data-testid="memory-unavailable">

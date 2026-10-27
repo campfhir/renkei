@@ -34,38 +34,33 @@ export async function POST(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const db = dbResult.val;
 
-  const optimization = await getOptimization(db, record.subject, optimizationId);
+  const optimization = await getOptimization(record.subject, optimizationId);
   if (!optimization) return NextResponse.json({ error: 'No such optimization' }, { status: 404 });
 
-  if (!(await claimOptimization(db, optimizationId))) {
+  if (!(await claimOptimization(optimizationId))) {
     return NextResponse.json({ status: optimization.status, alreadyClaimed: true });
   }
 
   try {
-    const agent = await getAgent(db, record.subject, optimization.agentId);
+    const agent = await getAgent(record.subject, optimization.agentId);
     if (!agent) {
-      await finishOptimization(db, optimizationId, {
+      await finishOptimization(optimizationId, {
         status: 'failed',
         error: 'The agent no longer exists.',
       });
       return NextResponse.json({ status: 'failed' });
     }
 
-    const outcome = await optimizeAgent(
-      db,
-      record.subject,
-      agent,
-      optimization.request.windowDays
-    );
+    const outcome = await optimizeAgent(record.subject, agent, optimization.request.windowDays);
     if ('error' in outcome) {
-      await finishOptimization(db, optimizationId, {
+      await finishOptimization(optimizationId, {
         status: 'failed',
         error: outcome.error,
         detail: outcome.detail ?? null,
       });
       return NextResponse.json({ status: 'failed' });
     }
-    await finishOptimization(db, optimizationId, {
+    await finishOptimization(optimizationId, {
       status: 'succeeded',
       result: outcome.report,
       usage: outcome.usage,
@@ -90,7 +85,7 @@ export async function POST(
       optimizationId,
       error: message,
     });
-    await finishOptimization(db, optimizationId, { status: 'failed', error: message });
+    await finishOptimization(optimizationId, { status: 'failed', error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

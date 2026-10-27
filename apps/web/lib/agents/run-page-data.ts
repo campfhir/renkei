@@ -6,8 +6,7 @@
  * own copy of the pause-card query.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { parseFormNodes, type FormNode } from '@renkei/agents';
 import { getRunForOwner, type RunDetail } from './runs-view';
 
@@ -34,13 +33,12 @@ function formFieldOf(suggestedAction: unknown): unknown {
 }
 
 export async function getOwnerRunPageData(
-  db: Kysely<DB>,
   ownerSubject: string,
   viewerIsOwner: boolean,
   agentId: string,
   runId: string
 ): Promise<OwnerRunPageData | null> {
-  const run = await getRunForOwner(db, ownerSubject, agentId, runId);
+  const run = await getRunForOwner(ownerSubject, agentId, runId);
   if (!run) return null;
 
   // The run page mirrors the home-page pause card while the run waits, so
@@ -49,15 +47,7 @@ export async function getOwnerRunPageData(
   // grantee reads the timeline without it.
   const pauseCardRow =
     viewerIsOwner && run.status === 'waiting'
-      ? await db
-          .selectFrom('actionable_items')
-          .select(['id', 'kind', 'status', 'summary', 'suggested_action'])
-          .where('run_id', '=', runId)
-          .where((eb) => eb.or([eb('kind', '=', 'approval'), eb('kind', '=', 'question')]))
-          .where('status', '=', 'suggested')
-          .where('owner_subject', '=', ownerSubject)
-          .orderBy('created_at', 'desc')
-          .executeTakeFirst()
+      ? await getDataStore().agentRuns.findPauseCard(runId, ownerSubject)
       : null;
 
   return {
@@ -72,7 +62,7 @@ export async function getOwnerRunPageData(
       : null,
     questionForm:
       pauseCardRow?.kind === 'question'
-        ? parseFormNodes(formFieldOf(pauseCardRow.suggested_action))
+        ? parseFormNodes(formFieldOf(pauseCardRow.suggestedAction))
         : [],
   };
 }

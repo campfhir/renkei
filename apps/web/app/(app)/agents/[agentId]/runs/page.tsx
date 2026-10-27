@@ -2,7 +2,6 @@ import BackLink from '@/components/back-link';
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -36,15 +35,13 @@ export default async function AgentRunsPage({
     redirect(signInUrl(`/agents/${agentId}/runs`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
 
   const filter = isRunStatus(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
-  const runs = await listRunsForOwner(dbResult.val, access.ownerSubject, agentId, {
+  const runs = await listRunsForOwner(access.ownerSubject, agentId, {
     status: filter,
     ...(query ? { q: query } : {}),
   });

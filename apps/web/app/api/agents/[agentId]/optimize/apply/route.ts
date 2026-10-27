@@ -11,12 +11,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { triggerVariableDescriptors } from '@renkei/agents';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
-import { createDraft } from '@/lib/agents/draft-store';
+import { createDraft, deleteDraft } from '@/lib/agents/draft-store';
 import { getOptimization, markOptimizationApplied } from '@/lib/agents/optimization-store';
 import { logger } from '@/lib/logger';
 
@@ -28,11 +27,7 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.viewerIsOwner) {
     return NextResponse.json({ error: 'Only the owner can revise this agent.' }, { status: 403 });
@@ -43,7 +38,7 @@ export async function POST(
   const payload: { optimizationId?: unknown } =
     typeof body === 'object' && body !== null ? body : {};
   const optimizationId = typeof payload.optimizationId === 'string' ? payload.optimizationId : '';
-  const optimization = await getOptimization(db, session.subject, optimizationId);
+  const optimization = await getOptimization(session.subject, optimizationId);
   if (!optimization || optimization.agentId !== agentId) {
     return NextResponse.json({ error: 'No such report' }, { status: 404 });
   }
@@ -63,7 +58,7 @@ export async function POST(
     brief,
   ].join('\n');
 
-  const draftId = await createDraft(db, {
+  const draftId = await createDraft({
     ownerSubject: session.subject,
     agentId,
     request: {
@@ -92,13 +87,13 @@ export async function POST(
       draftId,
       error: enqueued.err.message ?? 'unknown',
     });
-    await db.deleteFrom('agent_drafts').where('id', '=', draftId).execute();
+    await deleteDraft(draftId);
     return NextResponse.json(
       { error: 'Could not start drafting. Try again in a moment.' },
       { status: 503 }
     );
   }
 
-  await markOptimizationApplied(db, session.subject, optimizationId, draftId);
+  await markOptimizationApplied(session.subject, optimizationId, draftId);
   return NextResponse.json({ draftId, status: 'queued' }, { status: 202 });
 }
