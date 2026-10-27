@@ -33,7 +33,7 @@
  * waiting run leaves it untouched too.
  */
 
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { discardRunJobs } from './run-jobs';
 
@@ -76,19 +76,15 @@ export async function forceHaltRun(input: {
   await discardRunJobs(input.runId);
 
   // Best-effort, same posture as the janitor: the status flip above is what
-  // matters, the usage/history ledger is secondary. The ledger write is
-  // @renkei/agents' own, which still takes the database handle.
-  const db = getDatabase();
-  if (db.ok) {
-    await recordAgentRunOutcome(db.val, {
-      agentId: input.agentId,
-      runId: input.runId,
-      ownerSubject: run.ownerSubject,
-      status: 'canceled',
-      errorKind: 'force_halted',
-      error: FORCE_HALT_ERROR,
-    });
-  }
+  // matters, the usage/history ledger is secondary.
+  await recordAgentRunOutcome({
+    agentId: input.agentId,
+    runId: input.runId,
+    ownerSubject: run.ownerSubject,
+    status: 'canceled',
+    errorKind: 'force_halted',
+    error: FORCE_HALT_ERROR,
+  });
 
   return { outcome: 'halted' };
 }

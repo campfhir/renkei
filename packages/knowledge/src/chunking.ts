@@ -12,9 +12,8 @@
  * bare-refId row.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { upsertChunkRow } from './ingest';
 import type { KnowledgeChunkInput } from './ingest';
@@ -100,21 +99,8 @@ export async function deleteObjectChunks(
   refId: string,
   options: { prefixOnly?: boolean } = {}
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const pattern = options.prefixOnly ? `${escapeLike(refId)}%` : `${escapeLike(refId)}#%`;
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .deleteFrom('knowledge_chunks')
-        .where('provider', '=', provider)
-        .where((eb) =>
-          options.prefixOnly
-            ? eb('ref_id', 'like', pattern)
-            : eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', pattern)])
-        )
-        .execute(),
+    () => getDataStore().knowledgeChunks.deleteObject(provider, refId, options),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
@@ -135,20 +121,12 @@ export async function deleteChunksByMetadata(
   key: string,
   value: string
 ): Promise<Result<number, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .deleteFrom('knowledge_chunks')
-        .where('provider', '=', provider)
-        .where(sql<boolean>`metadata ->> ${key} = ${value}`)
-        .executeTakeFirst(),
+    () => getDataStore().knowledgeChunks.deleteByMetadata(provider, key, value),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
-  return ok(Number(result.val.numDeletedRows ?? 0));
+  return ok(result.val);
 }
 
 /**
@@ -165,28 +143,16 @@ export async function readObjectMetadataBatch(
   refIds: readonly string[]
 ): Promise<Result<Map<string, Record<string, unknown>>, 'DB_ERROR'>> {
   if (refIds.length === 0) return ok(new Map());
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const patterns = refIds.map((refId) => `${escapeLike(refId)}#%`);
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('knowledge_chunks')
-        .select(['ref_id', 'metadata'])
-        .where('provider', '=', provider)
-        .where((eb) =>
-          eb.or([eb('ref_id', 'in', [...refIds]), sql<boolean>`ref_id LIKE ANY(${patterns})`])
-        )
-        .execute(),
+    () => getDataStore().knowledgeChunks.objectMetadata(provider, refIds),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
 
   const byRefId = new Map<string, Record<string, unknown>>();
   for (const row of result.val) {
-    const hash = row.ref_id.indexOf('#');
-    const base = hash > 0 ? row.ref_id.slice(0, hash) : row.ref_id;
+    const hash = row.refId.indexOf('#');
+    const base = hash > 0 ? row.refId.slice(0, hash) : row.refId;
     if (byRefId.has(base)) continue;
     const metadata = row.metadata;
     if (typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)) {
@@ -211,21 +177,12 @@ export async function deleteStaleScopeChunks(
   scope: { key: string; value: string },
   epoch: { key: string; value: string }
 ): Promise<Result<number, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .deleteFrom('knowledge_chunks')
-        .where('provider', '=', provider)
-        .where(sql<boolean>`metadata ->> ${scope.key} = ${scope.value}`)
-        .where(sql<boolean>`metadata ->> ${epoch.key} IS DISTINCT FROM ${epoch.value}`)
-        .executeTakeFirst(),
+    () => getDataStore().knowledgeChunks.deleteStaleScope(provider, scope, epoch),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
-  return ok(Number(result.val.numDeletedRows ?? 0));
+  return ok(result.val);
 }
 
 export function escapeLike(value: string): string {

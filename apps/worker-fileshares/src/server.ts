@@ -138,9 +138,7 @@ type JsonHandler = (
   response: ServerResponse
 ) => Promise<void>;
 
-function makeJsonHandlers(
-  transferLimit: () => Promise<number>
-): Record<string, JsonHandler> {
+function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, JsonHandler> {
   return {
     async list(deps, body, response) {
       const target = targetOf(body);
@@ -273,7 +271,7 @@ function makeJsonHandlers(
 }
 
 export function createFileshareServer(deps: FileshareServerDeps): Server {
-  const serviceDeps: ServiceDeps = { db: deps.db };
+  const serviceDeps: ServiceDeps = {};
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const jsonHandlers = makeJsonHandlers(transferLimit);
 

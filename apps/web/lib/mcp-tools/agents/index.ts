@@ -1411,7 +1411,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const agent = access.agent;
 
       if (runRow.trigger_kind !== 'event' && args.confirm !== true) {
-        const inProgress = await findInProgressRun(db, agent.id);
+        const inProgress = await findInProgressRun(agent.id);
         if (inProgress) {
           return errText(
             `"${agent.name}" already has a run ${inProgress.status} (runId: ${inProgress.id}). ` +
@@ -1420,7 +1420,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
       }
 
-      const resumed = await resumeAgentRun(db, agentJobsQueue().producer, {
+      const resumed = await resumeAgentRun(agentJobsQueue().producer, {
         agentId: agent.id,
         runId,
         ownerSubject: access.ownerSubject,
@@ -1603,7 +1603,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       // agent-run caller is already refused above, so this is always a
       // human or API-key caller deciding for themselves.
       if (args.confirm !== true) {
-        const inProgress = await findInProgressRun(db, agent.id);
+        const inProgress = await findInProgressRun(agent.id);
         if (inProgress) {
           return errText(
             `"${agent.name}" already has a run ${inProgress.status} (runId: ${inProgress.id}). ` +
@@ -1615,7 +1615,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       // Recorded as the manual run it is (trigger_id stays null) — the owner
       // started it, so it is not an externally triggered run for approvals.
-      const result = await createAgentRun(db, agentJobsQueue().producer, {
+      const result = await createAgentRun(agentJobsQueue().producer, {
         agentId: agent.id,
         ownerSubject: access.ownerSubject,
         definition: agentDefinitionOf(agent),
@@ -1669,7 +1669,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (!access) return errText(NOT_FOUND);
       const agent = access.agent;
 
-      const memory = await readAgentMemory(dbResult.val, agent.id, {
+      const memory = await readAgentMemory(agent.id, {
         maxEntries: 100,
       });
       if (memory.unavailable) {
@@ -1770,7 +1770,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const agent = access.agent;
 
       if (all) {
-        const held = await countAgentMemory(db, agent.id);
+        const held = await countAgentMemory(agent.id);
         if (held.entries === 0 && !held.hasSummary) {
           return textResult(`"${agent.name}" remembers nothing already — nothing to forget.`);
         }
@@ -1785,7 +1785,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
             ].join('\n')
           );
         }
-        const result = await forgetAgentMemory(db, agent.id, { kind: 'all' });
+        const result = await forgetAgentMemory(agent.id, { kind: 'all' });
         // Memory does not come back, so the wipe leaves a trace somewhere.
         logger.info('agent_memory_forget cleared an agent memory', {
           component: 'mcp/tool',
@@ -1802,7 +1802,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       const lines: string[] = [];
       let entriesDeleted = 0;
       if (entryIds.length > 0) {
-        const result = await forgetAgentMemory(db, agent.id, {
+        const result = await forgetAgentMemory(agent.id, {
           kind: 'entries',
           entryIds,
         });
@@ -1816,7 +1816,7 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
       }
       if (clearSummary) {
-        const result = await forgetAgentMemory(db, agent.id, {
+        const result = await forgetAgentMemory(agent.id, {
           kind: 'summary',
         });
         lines.push(

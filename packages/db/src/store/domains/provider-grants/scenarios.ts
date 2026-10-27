@@ -158,4 +158,140 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
       await store.providerGrants.disconnectWithMcpTokens('atlassian', 'bob'),
     ],
   },
+  {
+    method: 'providerGrants.findSealed',
+    name: 'tokens as stored; another provider or account reads null',
+    fixture,
+    run: async (store) => [
+      await store.providerGrants.findSealed('zoom', 'z1'),
+      await store.providerGrants.findSealed('microsoft', 'ms2'),
+      await store.providerGrants.findSealed('zoom', 'a1'),
+    ],
+  },
+  {
+    method: 'providerGrants.upsertSealed',
+    name: 'insert, reconnect replacing or keeping the refresh token',
+    fixture,
+    run: async (store) => {
+      const input = {
+        accountId: 'n1',
+        clientId: 'client-n',
+        displayName: 'New',
+        subject: 'ann',
+        encryptedAccessToken: 'acc-1',
+        encryptedRefreshToken: 'ref-1',
+        keepStoredRefreshToken: false,
+        expiresAt: new Date('2026-02-01T00:00:00.000Z'),
+        requestedScopes: ['x'],
+        grantedScopes: null,
+        metadata: { site: 'a' },
+      };
+      await store.providerGrants.upsertSealed('github', input);
+      const first = await store.providerGrants.findSealed('github', 'n1');
+      await store.providerGrants.upsertSealed('github', {
+        ...input,
+        displayName: 'Renamed',
+        subject: 'bob',
+        encryptedAccessToken: 'acc-2',
+        encryptedRefreshToken: 'ref-ignored',
+        keepStoredRefreshToken: true,
+        grantedScopes: ['x'],
+      });
+      const kept = await store.providerGrants.findSealed('github', 'n1');
+      await store.providerGrants.upsertSealed('github', {
+        ...input,
+        encryptedAccessToken: 'acc-3',
+        encryptedRefreshToken: 'ref-3',
+      });
+      return { first, kept, replaced: await store.providerGrants.findSealed('github', 'n1') };
+    },
+  },
+  {
+    method: 'providerGrants.updateSealedTokens',
+    name: 'scopes only when given; a missing grant changes nothing',
+    fixture,
+    run: async (store) => [
+      await store.providerGrants.updateSealedTokens('zoom', 'z1', {
+        encryptedAccessToken: 'a2',
+        encryptedRefreshToken: 'r2',
+        expiresAt: new Date('2026-03-01T00:00:00.000Z'),
+        grantedScopes: null,
+      }),
+      await store.providerGrants.findSealed('zoom', 'z1'),
+      await store.providerGrants.updateSealedTokens('atlassian', 'a1', {
+        encryptedAccessToken: 'a3',
+        encryptedRefreshToken: 'r3',
+        expiresAt: new Date('2026-03-01T00:00:00.000Z'),
+        grantedScopes: ['read'],
+      }),
+      await store.providerGrants.findSealed('atlassian', 'a1'),
+      await store.providerGrants.updateSealedTokens('zoom', 'none', {
+        encryptedAccessToken: 'a',
+        encryptedRefreshToken: 'r',
+        expiresAt: new Date('2026-03-01T00:00:00.000Z'),
+        grantedScopes: null,
+      }),
+    ],
+  },
+  {
+    method: 'providerGrants.delete',
+    name: 'one grant; the others stay',
+    fixture,
+    run: async (store) => [
+      await store.providerGrants.delete('atlassian', 'a1'),
+      await store.providerGrants.delete('atlassian', 'a1'),
+      (await store.providerGrants.listForSubject('ann', { provider: 'atlassian' })).map(
+        (g) => g.accountId
+      ),
+    ],
+  },
+  {
+    method: 'providerGrants.acquireRefreshLock',
+    name: 'one holder at a time, per grant',
+    run: async (store) => {
+      const at = new Date('2026-01-01T00:00:00.000Z');
+      return [
+        await store.providerGrants.acquireRefreshLock('zoom', 'z1', at),
+        await store.providerGrants.acquireRefreshLock('zoom', 'z1', at),
+        await store.providerGrants.acquireRefreshLock('zoom', 'z2', at),
+        await store.providerGrants.findRefreshLock('zoom', 'z1'),
+      ];
+    },
+  },
+  {
+    method: 'providerGrants.findRefreshLock',
+    name: 'the lock time, or null',
+    fixture: {
+      provider_refresh_locks: [
+        { provider: 'zoom', account_id: 'z1', locked_at: '2026-01-01T00:05:00.000Z' },
+      ],
+    },
+    run: async (store) => [
+      await store.providerGrants.findRefreshLock('zoom', 'z1'),
+      await store.providerGrants.findRefreshLock('zoom', 'z2'),
+    ],
+  },
+  {
+    method: 'providerGrants.releaseRefreshLock',
+    name: 'released, then free to take again',
+    fixture: {
+      provider_refresh_locks: [
+        { provider: 'zoom', account_id: 'z1', locked_at: '2026-01-01T00:05:00.000Z' },
+        { provider: 'zoom', account_id: 'z2', locked_at: '2026-01-01T00:05:00.000Z' },
+      ],
+    },
+    run: async (store) => {
+      await store.providerGrants.releaseRefreshLock('zoom', 'z1');
+      await store.providerGrants.releaseRefreshLock('zoom', 'none');
+      return [
+        await store.providerGrants.findRefreshLock('zoom', 'z1'),
+        await store.providerGrants.findRefreshLock('zoom', 'z2'),
+        await store.providerGrants.acquireRefreshLock(
+          'zoom',
+          'z1',
+          new Date('2026-01-01T00:06:00.000Z')
+        ),
+      ];
+    },
+  },
 ];

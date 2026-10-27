@@ -1,6 +1,14 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '../../../db.types';
-import { batchFromRow, LIVE_STATUSES, likePattern, stepFromRow, summaryFromRow } from './record';
+import {
+  batchFromRow,
+  LIVE_STATUSES,
+  likePattern,
+  newRunValues,
+  runLogFromRow,
+  stepFromRow,
+  summaryFromRow,
+} from './record';
 import type { AgentRunStore } from './types';
 
 const RUN_COLUMNS = [
@@ -398,6 +406,173 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           failed: Number(row.failed),
         })),
       };
+    },
+    async countCreatedSince(since) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('created_at', '>', since)
+        .executeTakeFirst();
+      return Number(row?.count ?? 0);
+    },
+    async createQueued(run) {
+      await db().insertInto('agent_runs').values(newRunValues(run)).execute();
+    },
+    async deleteRun(runId) {
+      const result = await db().deleteFrom('agent_runs').where('id', '=', runId).executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async logRunCreated(entry) {
+      await db()
+        .insertInto('agent_run_log')
+        .values({
+          run_id: entry.runId,
+          agent_id: entry.agentId,
+          owner_subject: entry.ownerSubject,
+          trigger_kind: entry.triggerKind,
+          status: entry.status,
+        })
+        .execute();
+    },
+    async findInProgress(agentId) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(['id', 'status'])
+        .where('agent_id', '=', agentId)
+        .where('status', 'in', ['queued', 'running'])
+        .orderBy('created_at', 'desc')
+        .orderBy('id', 'desc')
+        .executeTakeFirst();
+      return row ?? null;
+    },
+    async findForResume(runId, agentId, ownerSubject) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(['status', 'error', 'error_kind'])
+        .where('id', '=', runId)
+        .where('agent_id', '=', agentId)
+        .where('owner_subject', '=', ownerSubject)
+        .executeTakeFirst();
+      return row ? { status: row.status, error: row.error, errorKind: row.error_kind } : null;
+    },
+    async markResumed(runId, resume) {
+      const result = await db()
+        .updateTable('agent_runs')
+        .set({
+          status: 'queued',
+          error: null,
+          error_kind: null,
+          started_at: null,
+          finished_at: null,
+          waiting_until: null,
+          active_ms: 0,
+          cancel_requested_at: null,
+          cancel_requested_by: null,
+          resumed_at: sql`NOW()`,
+          resumed_by: resume.resumedBy,
+          resume_count: sql`resume_count + 1`,
+          resume_guidance: resume.guidance,
+          resume_failure: resume.failure,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', runId)
+        // Optimistic on the status: a second click, or a janitor racing
+        // this, finds the row no longer 'failed' and changes nothing.
+        .where('status', '=', 'failed')
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0) > 0;
+    },
+    async restoreFailure(runId, failure) {
+      await db()
+        .updateTable('agent_runs')
+        .set({
+          status: 'failed',
+          error: failure.error,
+          error_kind: failure.errorKind,
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', runId)
+        .where('status', '=', 'queued')
+        .execute();
+    },
+    async findRunLog(runId) {
+      const row = await db()
+        .selectFrom('agent_run_log')
+        .selectAll()
+        .where('run_id', '=', runId)
+        .executeTakeFirst();
+      return row ? runLogFromRow(row) : null;
+    },
+    async markLogQueued(runId) {
+      await db()
+        .updateTable('agent_run_log')
+        .set({ status: 'queued', finished_at: null })
+        .where('run_id', '=', runId)
+        .execute();
+    },
+    async recordOutcome(outcome) {
+      const [run, spend, lastFailed] = await Promise.all([
+        db()
+          .selectFrom('agent_runs')
+          .select(['trigger_kind', 'created_at'])
+          .where('id', '=', outcome.runId)
+          .executeTakeFirst(),
+        db()
+          .selectFrom('agent_run_steps')
+          .select(({ fn }) => [
+            fn.sum<string>('input_tokens').as('input_tokens'),
+            fn.sum<string>('output_tokens').as('output_tokens'),
+            fn.sum<string>('tool_call_count').as('tool_calls'),
+            fn.countAll<string>().as('attempts'),
+          ])
+          .where('run_id', '=', outcome.runId)
+          .executeTakeFirst(),
+        outcome.failed
+          ? db()
+              .selectFrom('agent_run_steps')
+              .select('outcome_code')
+              .where('run_id', '=', outcome.runId)
+              .where('status', '=', 'failed')
+              .orderBy('step_index', 'desc')
+              .orderBy('iteration', 'desc')
+              .orderBy('attempt', 'desc')
+              .orderBy('id', 'desc')
+              .executeTakeFirst()
+          : Promise.resolve(undefined),
+      ]);
+      const outcomeCode = lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null;
+      const inputTokens = Number(spend?.input_tokens ?? 0);
+      const outputTokens = Number(spend?.output_tokens ?? 0);
+      const toolCalls = Number(spend?.tool_calls ?? 0);
+      const attempts = Number(spend?.attempts ?? 0);
+      // The log's step columns belong to the step model; a run has no
+      // steps, so they stay empty (the kind, code and message say why).
+      await sql`
+        INSERT INTO agent_run_log (
+          run_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at,
+          step_id, step_name, error_kind, outcome_code, error,
+          input_tokens, output_tokens, tool_calls, attempts, steps_version
+        ) VALUES (
+          ${outcome.runId}, ${outcome.agentId}, ${outcome.ownerSubject},
+          ${run?.trigger_kind ?? 'manual'}, ${outcome.status}, ${run?.created_at ?? sql`NOW()`}, NOW(),
+          ${null}, ${null}, ${outcome.errorKind}, ${outcomeCode}, ${outcome.error},
+          ${inputTokens}, ${outputTokens}, ${toolCalls}, ${attempts}, ${null}
+        )
+        ON CONFLICT (run_id) DO UPDATE SET
+          status = excluded.status,
+          finished_at = excluded.finished_at,
+          step_id = excluded.step_id,
+          step_name = excluded.step_name,
+          error_kind = excluded.error_kind,
+          outcome_code = excluded.outcome_code,
+          error = excluded.error,
+          input_tokens = excluded.input_tokens,
+          output_tokens = excluded.output_tokens,
+          tool_calls = excluded.tool_calls,
+          attempts = excluded.attempts,
+          steps_version = excluded.steps_version
+      `.execute(db());
     },
   };
 }

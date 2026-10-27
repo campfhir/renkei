@@ -241,7 +241,7 @@ export async function openResourceKey(
 ): Promise<Result<ResourceKey, OpenKeyError>> {
   const row = await keyRow(db, ref);
   if (!row) return err('NO_KEY' as const);
-  const ring = await getKeyRing(db, subject);
+  const ring = await getKeyRing(subject);
   if (!ring.ok) return err(ringError(ring.err.type));
   const key = await openKeyById(db, row.id, ring.val, 0);
   return key.ok ? ok({ id: row.id, key: key.val }) : key;
@@ -266,7 +266,7 @@ export async function createResourceKey(
   ownerSubject: string,
   options: CreateKeyOptions = {}
 ): Promise<Result<ResourceKey, OpenKeyError>> {
-  const ring = await getKeyRing(db, ownerSubject);
+  const ring = await getKeyRing(ownerSubject);
   if (!ring.ok) return err(ringError(ring.err.type));
   const key = generateDataKey();
   const inserted = await db
@@ -338,7 +338,7 @@ export async function grantAutomationAccess(
 ): Promise<Result<void, OpenKeyError>> {
   const row = await keyRow(db, ref);
   if (!row) return err('NO_KEY' as const);
-  const ring = await getKeyRing(db, subject);
+  const ring = await getKeyRing(subject);
   if (!ring.ok) return err(ringError(ring.err.type));
   const key = await openKeyById(db, row.id, ring.val, 0);
   if (!key.ok) return key;
@@ -393,7 +393,7 @@ export async function openResourceKeys(
     if (!keyId || out.has(entry.resourceId)) continue;
     let ring = rings.get(entry.subject);
     if (ring === undefined) {
-      const resolved = await getKeyRing(db, entry.subject);
+      const resolved = await getKeyRing(entry.subject);
       ring = resolved.ok ? resolved.val : null;
       rings.set(entry.subject, ring);
     }
@@ -425,7 +425,7 @@ export async function shareResourceKey(
 ): Promise<Result<void, ShareKeyError>> {
   const opened = await openResourceKey(db, ref, fromSubject);
   if (!opened.ok) return opened;
-  const grantee = await readKeyRow(db, toSubject);
+  const grantee = await readKeyRow(toSubject);
   if (!grantee || grantee.mode !== 'held' || !grantee.public_key) {
     return err('GRANTEE_NOT_ENROLLED' as const);
   }

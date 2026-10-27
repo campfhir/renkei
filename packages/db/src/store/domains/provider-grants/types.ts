@@ -13,6 +13,34 @@ export interface ProviderGrantSummaryRecord {
   metadata: unknown;
 }
 
+/** One grant with its tokens still sealed under the owner's key, as stored. */
+export interface ProviderGrantSealedRecord extends ProviderGrantSummaryRecord {
+  clientId: string;
+  encryptedAccessToken: string;
+  encryptedRefreshToken: string;
+  expiresAt: Date;
+}
+
+/** What a (re)connect writes; the tokens arrive already sealed. */
+export interface ProviderGrantSealedInput {
+  accountId: string;
+  clientId: string;
+  displayName: string;
+  subject: string;
+  encryptedAccessToken: string;
+  encryptedRefreshToken: string;
+  /**
+   * On a reconnect, keep the stored refresh token rather than this one —
+   * a repeat authorization that came back without a refresh token must
+   * not overwrite one that still works.
+   */
+  keepStoredRefreshToken: boolean;
+  expiresAt: Date;
+  requestedScopes: string[];
+  grantedScopes: string[] | null;
+  metadata: Record<string, unknown>;
+}
+
 export interface ProviderGrantStore {
   /**
    * One person's grants, by provider then account id. `provider` keeps one
@@ -59,4 +87,37 @@ export interface ProviderGrantStore {
     provider: string,
     subject: string
   ): Promise<{ grants: number; accessTokens: number; refreshTokens: number }>;
+  /** One grant, tokens sealed as stored; null when there is none. */
+  findSealed(provider: string, accountId: string): Promise<ProviderGrantSealedRecord | null>;
+  /**
+   * Insert a grant, or on (provider, account) replace its tokens, expiry,
+   * scopes, metadata and owner (created_at, client id and display name
+   * stay), touching `updated_at`.
+   */
+  upsertSealed(provider: string, grant: ProviderGrantSealedInput): Promise<void>;
+  /**
+   * A refresh's new sealed tokens and expiry; `grantedScopes` replaces the
+   * stored ones only when given. Returns how many rows changed (0 or 1).
+   */
+  updateSealedTokens(
+    provider: string,
+    accountId: string,
+    tokens: {
+      encryptedAccessToken: string;
+      encryptedRefreshToken: string;
+      expiresAt: Date;
+      grantedScopes: string[] | null;
+    }
+  ): Promise<number>;
+  /** Delete one grant; returns how many went. */
+  delete(provider: string, accountId: string): Promise<number>;
+
+  /**
+   * The cross-process refresh lock (provider_refresh_locks): take it at
+   * `at`; false when someone already holds it.
+   */
+  acquireRefreshLock(provider: string, accountId: string, at: Date): Promise<boolean>;
+  /** When the lock was taken, or null when nobody holds it. */
+  findRefreshLock(provider: string, accountId: string): Promise<Date | null>;
+  releaseRefreshLock(provider: string, accountId: string): Promise<void>;
 }

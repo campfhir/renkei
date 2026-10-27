@@ -1,4 +1,4 @@
-import { like, orderBy } from '../../memory/order';
+import { like, orderBy, page } from '../../memory/order';
 import { MemoryStoreError, type MemoryTables, type Row } from '../../memory/tables';
 import { jsonField } from './json';
 import { agentFromRow, definitionColumns, escapeLike, isNameTaken, triggerFromRow } from './record';
@@ -388,6 +388,71 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
     async clearMemory(agentId) {
       const id = tables.param('agent_memories', 'agent_id', agentId);
       return tables.delete('agent_memories', (r) => r.agent_id === id).length;
+    },
+    async addMemoryEntry(entry) {
+      tables.insert('agent_memories', {
+        id: entry.id,
+        agent_id: entry.agentId,
+        kind: 'entry',
+        content: entry.content,
+        run_id: entry.runId,
+      });
+    },
+    async saveMemorySummary(summary) {
+      const id = tables.param('agent_memories', 'agent_id', summary.agentId);
+      const changed = tables.update(
+        'agent_memories',
+        (r) => r.agent_id === id && r.kind === 'summary',
+        { content: summary.content, updated_at: new Date() }
+      );
+      if (changed.length > 0) return;
+      tables.insert('agent_memories', {
+        id: summary.id,
+        agent_id: summary.agentId,
+        kind: 'summary',
+        content: summary.content,
+      });
+    },
+    async countMemory(agentId) {
+      const id = tables.param('agent_memories', 'agent_id', agentId);
+      const rows = tables.select('agent_memories', (r) => r.agent_id === id);
+      return {
+        entries: rows.filter((r) => r.kind !== 'summary').length,
+        hasSummary: rows.some((r) => r.kind === 'summary'),
+      };
+    },
+    async deleteMemorySummary(agentId) {
+      const id = tables.param('agent_memories', 'agent_id', agentId);
+      return tables.delete('agent_memories', (r) => r.agent_id === id && r.kind === 'summary')
+        .length;
+    },
+    async deleteMemoryEntries(agentId, ids) {
+      if (ids.length === 0) return [];
+      const id = tables.param('agent_memories', 'agent_id', agentId);
+      const wanted = new Set(ids.map((entry) => tables.param('agent_memories', 'id', entry)));
+      return tables
+        .delete(
+          'agent_memories',
+          (r) => r.agent_id === id && r.kind === 'entry' && wanted.has(r.id)
+        )
+        .map((row) => row.id)
+        .sort();
+    },
+    async recentNoteChunks(agentId, { provider, scope, limit }) {
+      return page(
+        orderBy(
+          noteChunks(agentId, provider, scope),
+          [(r) => r.source_at, 'desc'],
+          [(r) => r.ref_id]
+        ),
+        limit
+      ).map((row) => ({
+        refId: row.ref_id,
+        metadata: row.metadata,
+        content: row.content,
+        keywords: row.keywords,
+        sourceAt: row.source_at,
+      }));
     },
   };
 }

@@ -188,5 +188,98 @@ export function postgresKnowledgeChunks(db: () => Kysely<DB>): KnowledgeChunkSto
         });
       return rows.rows.map(candidateFromRow);
     },
+    async upsert(chunk) {
+      const vector = `[${chunk.embedding.join(',')}]`;
+      const tsvector = (text: string) =>
+        sql<string>`to_tsvector(${chunk.search.config}::regconfig, ${text})`;
+      const searchText = sql<string>`setweight(${tsvector(chunk.search.title)}, 'A') || setweight(${tsvector(chunk.search.keywords)}, 'B') || setweight(${tsvector(chunk.search.content)}, 'C')`;
+      const metadata = JSON.stringify(chunk.metadata);
+      await db()
+        .insertInto('knowledge_chunks')
+        .values({
+          id: globalThis.crypto.randomUUID(),
+          provider: chunk.provider,
+          ref_id: chunk.refId,
+          metadata,
+          content: chunk.content,
+          embedding: sql`${vector}::vector`,
+          keywords: chunk.keywords,
+          search_text: searchText,
+          source_at: chunk.sourceAt,
+        })
+        .onConflict((oc) =>
+          // source_at must be in the update set too: a re-ingest of an edited
+          // page carries a newer document date, and omitting it here would
+          // pin the row to whatever date the first ingest saw.
+          oc.columns(['provider', 'ref_id']).doUpdateSet({
+            metadata,
+            content: chunk.content,
+            embedding: sql`${vector}::vector`,
+            keywords: chunk.keywords,
+            search_text: searchText,
+            source_at: chunk.sourceAt,
+          })
+        )
+        .execute();
+    },
+    async deleteObject(provider, refId, options = {}) {
+      const pattern = options.prefixOnly ? `${escapeLike(refId)}%` : `${escapeLike(refId)}#%`;
+      const result = await db()
+        .deleteFrom('knowledge_chunks')
+        .where('provider', '=', provider)
+        .where((eb) =>
+          options.prefixOnly
+            ? eb('ref_id', 'like', pattern)
+            : eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', pattern)])
+        )
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async deleteByMetadata(provider, key, value) {
+      const result = await db()
+        .deleteFrom('knowledge_chunks')
+        .where('provider', '=', provider)
+        .where(sql<boolean>`metadata ->> ${key} = ${value}`)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async deleteStaleScope(provider, scope, epoch) {
+      const result = await db()
+        .deleteFrom('knowledge_chunks')
+        .where('provider', '=', provider)
+        .where(sql<boolean>`metadata ->> ${scope.key} = ${scope.value}`)
+        .where(sql<boolean>`metadata ->> ${epoch.key} IS DISTINCT FROM ${epoch.value}`)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async objectMetadata(provider, refIds) {
+      if (refIds.length === 0) return [];
+      const patterns = refIds.map((refId) => `${escapeLike(refId)}#%`);
+      const rows = await db()
+        .selectFrom('knowledge_chunks')
+        .select(['ref_id', 'metadata'])
+        .where('provider', '=', provider)
+        .where((eb) =>
+          eb.or([eb('ref_id', 'in', [...refIds]), sql<boolean>`ref_id LIKE ANY(${patterns})`])
+        )
+        .orderBy('ref_id')
+        .execute();
+      return rows.map((row) => ({ refId: row.ref_id, metadata: row.metadata ?? null }));
+    },
+    async nearestDistance(vector, scope) {
+      const literal = `[${vector.join(',')}]`;
+      const result = await sql<{ distance: number }>`
+        SELECT (embedding <=> ${literal}::vector) AS distance
+        FROM knowledge_chunks
+        WHERE ref_id LIKE ${`${escapeLike(scope.refIdPrefix)}%`}
+          AND ref_id <> ${scope.excludeRefId}
+          AND ref_id NOT LIKE ${`${escapeLike(scope.excludeRefId)}#%`}
+          AND created_at >= ${scope.since}
+        ORDER BY distance
+        LIMIT 1
+      `.execute(db());
+      const distance = result.rows[0]?.distance;
+      return distance === undefined || distance === null ? null : Number(distance);
+    },
   };
 }

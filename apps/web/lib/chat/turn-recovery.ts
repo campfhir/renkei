@@ -47,7 +47,6 @@ import { getChatRow } from './store';
 import { interruptSubagentRunsOfTurn } from './subagent-runs';
 import { friendlyLlmError, type TurnResumeSeed } from './turn-runner';
 import { claimResumableTurns, finishTurn, interruptExhaustedTurns, type TurnRow } from './turns';
-import { databaseForUnconvertedCode } from './unconverted-db';
 
 /** How often each web process looks for turns to pick up. */
 export const RECOVERY_SWEEP_MS = 10_000;
@@ -203,7 +202,7 @@ export async function resumeChatTurn(turn: TurnRow): Promise<void> {
   if (plan.kind === 'finish') return end(plan.status, turn.error, seed);
 
   if (!chat) return end('interrupted', 'The chat is gone.', seed);
-  const llmResult = await resolveAgentLlm(databaseForUnconvertedCode(), turn.llmModelId);
+  const llmResult = await resolveAgentLlm(turn.llmModelId);
   if (!llmResult.ok) {
     return end(
       'failed',

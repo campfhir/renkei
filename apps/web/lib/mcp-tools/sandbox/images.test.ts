@@ -94,7 +94,7 @@ const models = [
   { id: 'img-2', label: 'Sketcher', model: 'FLUX.2-flex' },
 ];
 
-const resolveOk = jest.fn(async (_db: unknown, id: string | null) =>
+const resolveOk = jest.fn(async (id: string | null) =>
   ok({
     modelConfigId: id ?? 'img-1',
     label: 'x',

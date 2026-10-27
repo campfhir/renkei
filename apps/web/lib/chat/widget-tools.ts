@@ -40,7 +40,6 @@ import {
 } from '@renkei/mcp-client';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { insertMessageWhenIdle, listMessages } from './messages';
-import { databaseForUnconvertedCode } from './unconverted-db';
 import { chatCipherById } from './chat-keys';
 import { startChatTurn, type StartedTurn } from './start-turn';
 import { internalMcpEndpoint } from './internal-origin';
@@ -91,8 +90,7 @@ export async function confirmWidgetTool(input: {
   const descriptor = catalog.find((entry) => entry.name === input.name);
   if (!descriptor?.appOnly) return { ok: false, reason: 'not-a-card-tool' };
 
-  const db = databaseForUnconvertedCode();
-  const token = await mintRunToken(db, {
+  const token = await mintRunToken({
     subject: input.subject,
     agentId: null,
     ttlSeconds: CALL_TTL_SECONDS,
@@ -110,7 +108,7 @@ export async function confirmWidgetTool(input: {
   } catch {
     return { ok: false, reason: 'call-failed' };
   } finally {
-    await revokeRunToken(db, token);
+    await revokeRunToken(token);
   }
 }
 

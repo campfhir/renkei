@@ -17,6 +17,13 @@ export interface NotificationRecord {
   createdAt: Date;
 }
 
+/** One device's push subscription (push_subscriptions), as the push service needs it. */
+export interface NotificationPushSubscriptionRecord {
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+}
+
 /** Which of a person's notifications a bulk change reaches. */
 export type NotificationTarget = { ids: string[] } | { all: true };
 
@@ -49,4 +56,31 @@ export interface NotificationStore {
       readAt?: Date | null;
     }
   ): Promise<void>;
+  /** One of this person's notifications; null when it is not theirs or does not exist. */
+  find(subject: string, id: string): Promise<NotificationRecord | null>;
+
+  /**
+   * Record a device's push subscription. Idempotent on the endpoint: a
+   * repeat re-points it at `subject` and its keys rather than adding a row.
+   */
+  savePushSubscription(
+    subject: string,
+    subscription: NotificationPushSubscriptionRecord
+  ): Promise<void>;
+  /** Drop one of this person's subscriptions; returns how many went (an endpoint of someone else's: 0). */
+  deletePushSubscription(subject: string, endpoint: string): Promise<number>;
+  /** Drop a subscription whoever holds it (the push service said it is gone); returns how many went. */
+  deletePushSubscriptionByEndpoint(endpoint: string): Promise<number>;
+  /** Every device this person subscribed from, oldest first (ties by endpoint). */
+  listPushSubscriptions(subject: string): Promise<NotificationPushSubscriptionRecord[]>;
+
+  /**
+   * Chat presence (chat_presence): `subject` is watching `chatId`'s turn
+   * stream as of `at`. One row per (subject, chat), moved forward on repeat.
+   */
+  pingChatPresence(subject: string, chatId: string, at: Date): Promise<void>;
+  /** Whether `subject` pinged `chatId` after `since` (exclusive). */
+  wasWatchingChat(subject: string, chatId: string, since: Date): Promise<boolean>;
+  /** Drop presence rows last pinged before `before`; returns how many went. */
+  deleteChatPresenceBefore(before: Date): Promise<number>;
 }

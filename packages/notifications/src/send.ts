@@ -10,8 +10,6 @@
 
 import webpush from 'web-push';
 import type { Agent } from 'node:https';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { getVapidKeys } from './vapid';
@@ -123,7 +121,6 @@ export function pushClickTarget(input: {
 }
 
 export async function sendPush(
-  db: Kysely<DB>,
   subject: string,
   encryptionKey: Buffer,
   payload: PushPayload,
@@ -131,11 +128,11 @@ export async function sendPush(
 ): Promise<void> {
   const { log, agent } = options;
   try {
-    const subscriptions = await listSubscriptions(db, subject);
+    const subscriptions = await listSubscriptions(subject);
     if (subscriptions.length === 0) return;
 
     const [{ publicKey, privateKey }, prefs] = await Promise.all([
-      getVapidKeys(db, encryptionKey),
+      getVapidKeys(encryptionKey),
       getNotificationPrefs(subject),
     ]);
     const target = pushClickTarget({
@@ -165,7 +162,7 @@ export async function sendPush(
           // The browser itself revoked this subscription — no retry will
           // ever land, so it is dead weight from here on.
           if (statusCode === 404 || statusCode === 410) {
-            await deleteSubscriptionByEndpoint(db, subscription.endpoint);
+            await deleteSubscriptionByEndpoint(subscription.endpoint);
             return;
           }
           log?.('push send failed', {

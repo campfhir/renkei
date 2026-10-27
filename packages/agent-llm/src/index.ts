@@ -59,9 +59,7 @@ export {
   type ProviderRetention,
 } from './data-handling';
 export {
-  chatModelsOnly,
   contextWindowOfLlm,
-  imageModelsOnly,
   imageSurfaceOf,
   invalidateLlmCache,
   isImageModelSettings,

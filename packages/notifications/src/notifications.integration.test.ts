@@ -15,7 +15,7 @@ import path from 'node:path';
 import { createServer, Agent, type Server } from 'node:https';
 import { Kysely, PostgresDialect } from 'kysely';
 import { Pool } from 'pg';
-import type { DB } from '@renkei/db';
+import { closeDatabase, type DB } from '@renkei/db';
 import { getVapidKeys, invalidateVapidKeyCache } from './vapid';
 import { saveSubscription, listSubscriptions, deleteSubscription } from './subscriptions';
 import { sendPush } from './send';
@@ -46,10 +46,11 @@ describeLive('@renkei/notifications (live database)', () => {
     await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
     await db.deleteFrom('push_subscriptions').where('subject', '=', SUBJECT).execute();
     await db.destroy();
+    await closeDatabase();
   });
 
   it('mints a VAPID pair once and reuses it', async () => {
-    const first = await getVapidKeys(db, encryptionKey);
+    const first = await getVapidKeys(encryptionKey);
     expect(first.publicKey).toEqual(expect.any(String));
     expect(first.privateKey).toEqual(expect.any(String));
 
@@ -57,7 +58,7 @@ describeLive('@renkei/notifications (live database)', () => {
     // on the identical pair, not mint a second one that no subscription was
     // ever created against.
     invalidateVapidKeyCache();
-    const second = await getVapidKeys(db, encryptionKey);
+    const second = await getVapidKeys(encryptionKey);
     expect(second).toEqual(first);
   });
 
@@ -66,26 +67,26 @@ describeLive('@renkei/notifications (live database)', () => {
       endpoint: 'https://push.example.test/abc123',
       keys: { p256dh: 'p256dh-value', auth: 'auth-value' },
     };
-    await saveSubscription(db, SUBJECT, subscription);
+    await saveSubscription(SUBJECT, subscription);
 
-    const listed = await listSubscriptions(db, SUBJECT);
+    const listed = await listSubscriptions(SUBJECT);
     expect(listed).toEqual([subscription]);
 
     // Idempotent re-subscribe: same (subject, endpoint) upserts, not inserts.
-    await saveSubscription(db, SUBJECT, {
+    await saveSubscription(SUBJECT, {
       ...subscription,
       keys: { p256dh: 'p256dh-value', auth: 'rotated-auth' },
     });
-    const relisted = await listSubscriptions(db, SUBJECT);
+    const relisted = await listSubscriptions(SUBJECT);
     expect(relisted).toHaveLength(1);
     expect(relisted[0].keys.auth).toBe('rotated-auth');
 
-    await deleteSubscription(db, SUBJECT, subscription.endpoint);
-    expect(await listSubscriptions(db, SUBJECT)).toEqual([]);
+    await deleteSubscription(SUBJECT, subscription.endpoint);
+    expect(await listSubscriptions(SUBJECT)).toEqual([]);
   });
 
   it('sends a properly signed, encrypted push to the subscription endpoint', async () => {
-    const vapidKeys = await getVapidKeys(db, encryptionKey);
+    const vapidKeys = await getVapidKeys(encryptionKey);
 
     // A real subscription's p256dh/auth come from the browser's own ECDH
     // key pair; web-push needs SOMETHING valid there to encrypt against, so
@@ -148,7 +149,7 @@ describeLive('@renkei/notifications (live database)', () => {
     const agent = new Agent({ ca: cert });
 
     try {
-      await saveSubscription(db, SUBJECT, {
+      await saveSubscription(SUBJECT, {
         endpoint,
         // Web Push subscription keys are P-256 points / secrets, base64url —
         // reusing a VAPID key pair's public key gives a real point on the
@@ -157,7 +158,6 @@ describeLive('@renkei/notifications (live database)', () => {
       });
 
       await sendPush(
-        db,
         SUBJECT,
         encryptionKey,
         {

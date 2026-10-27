@@ -101,4 +101,33 @@ export interface BatchJobStore {
     batchId: string,
     options?: { status?: string; limit?: number }
   ): Promise<BatchJobItemRecord[]>;
+
+  /**
+   * The processed-files ledger (batch_processed_files): the rows recorded
+   * at any of these paths on this share, by path (ties by id).
+   */
+  findProcessedByPath(
+    shareId: string,
+    paths: readonly string[]
+  ): Promise<BatchProcessedFileRecord[]>;
+  /** Which of these content hashes the ledger holds for this share, sorted. */
+  findProcessedHashes(shareId: string, hashes: readonly string[]): Promise<string[]>;
+  /**
+   * Record files as processed, one row per file, upserted on (share,
+   * hash): a known hash takes the new path, size, modified time, batch and
+   * document key, and `processedAt` moves to now.
+   */
+  recordProcessedFiles(
+    shareId: string,
+    batchId: string,
+    files: readonly (BatchProcessedFileRecord & { documentKey?: string | null })[]
+  ): Promise<void>;
+}
+
+/** One file in the processed-files ledger. */
+export interface BatchProcessedFileRecord {
+  contentHash: string;
+  path: string;
+  size: number;
+  modifiedAt: Date | null;
 }

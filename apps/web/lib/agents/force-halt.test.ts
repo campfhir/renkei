@@ -12,10 +12,6 @@ jest.mock('@renkei/agents/runs', () => ({
   recordAgentRunOutcome: jest.fn(async () => ({ ok: true })),
 }));
 jest.mock('./run-jobs', () => ({ discardRunJobs: jest.fn(async () => undefined) }));
-jest.mock('@renkei/db', () => ({
-  ...jest.requireActual<object>('@renkei/db'),
-  getDatabase: jest.fn(() => ({ ok: true, val: {} })),
-}));
 
 import {
   createMemoryDataStore,
@@ -121,7 +117,6 @@ describe('forceHaltRun', () => {
     expect(run?.steps.map((step) => step.status)).toEqual(['canceled']);
     expect(mockDiscardRunJobs).toHaveBeenCalledWith(RUN_ID);
     expect(mockRecordOutcome).toHaveBeenCalledWith(
-      {},
       expect.objectContaining({ runId: RUN_ID, ownerSubject: 'alice', status: 'canceled' })
     );
   });

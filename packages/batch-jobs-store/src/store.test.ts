@@ -176,7 +176,12 @@ describe('the batch lifecycle', () => {
     const activated = await activateBatch(batch.id, 2, 1);
     expect(activated).toMatchObject({ status: 'succeeded', total: 2, skipped: 1, succeeded: 1 });
 
-    expect((await listItems(batch.id)).map((i) => i.payload.documentKey)).toEqual(['a', 'b']);
+    // Both items land within the same millisecond on a fast run, so their
+    // order is the id tie-breaker's: compare the set, not the order.
+    expect((await listItems(batch.id)).map((i) => i.payload.documentKey).sort()).toEqual([
+      'a',
+      'b',
+    ]);
     expect((await listItems(batch.id, { status: 'skipped' })).map((i) => i.result)).toEqual([
       { reason: 'x' },
     ]);

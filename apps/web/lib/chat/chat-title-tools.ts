@@ -10,7 +10,6 @@
  * is an ordinary tool call in the thread.
  */
 
-import { databaseForUnconvertedCode } from './unconverted-db';
 import type { ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
@@ -83,7 +82,7 @@ export async function autoTitleChat(input: {
       ...(input.llm.temperature !== undefined ? { temperature: input.llm.temperature } : {}),
     });
     if (!completion.ok) throw new Error(completion.err.message ?? 'the model failed');
-    await recordLlmCall(databaseForUnconvertedCode(), {
+    await recordLlmCall({
       subject: input.subject,
       agentId: null,
       purpose: 'context_window',

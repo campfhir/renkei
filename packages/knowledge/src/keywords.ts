@@ -36,7 +36,6 @@
  * the result card — needs them readable.
  */
 
-import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import type { LlmProvider } from '@renkei/agent-llm';
@@ -220,9 +219,7 @@ export async function resolveKeywordExtractor(): Promise<KeywordExtractor | null
   const settings = await getOrgSettings();
   if (!settings.ok || !settings.val.knowledgeKeywordEnrichment) return null;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const llm = await resolveAgentLlm(dbResult.val, null);
+  const llm = await resolveAgentLlm(null);
   if (!llm.ok) return null;
   return createLlmKeywordExtractor(llm.val.provider, {
     minChars: settings.val.knowledgeKeywordMinChars,

@@ -11,8 +11,7 @@
  * rekey sweep has moved it (`pnpm rekey-chats --connectors`).
  */
 
-import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { openForSubject, sealForSubject } from '@renkei/user-keys';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -25,11 +24,10 @@ function readMetadata(metadata: unknown): Record<string, unknown> {
 
 /** A token as stored: under its owner's key. */
 export async function sealGrantToken(
-  db: Kysely<DB>,
   subject: string,
   token: string
 ): Promise<Result<string, 'SEAL_ERROR'>> {
-  const sealed = await sealForSubject(db, subject, token);
+  const sealed = await sealForSubject(subject, token);
   if (!sealed.ok) return err('SEAL_ERROR' as const, { message: sealed.err.type });
   return ok(sealed.val);
 }
@@ -41,14 +39,13 @@ export async function sealGrantToken(
  * right now.
  */
 async function openGrantToken(
-  db: Kysely<DB>,
   subject: string | null,
   stored: string
 ): Promise<Result<string, 'DECRYPTION_ERROR'>> {
   if (!subject) {
     return err('DECRYPTION_ERROR' as const, { message: 'grant has no owner, so no key' });
   }
-  const opened = await openForSubject(db, subject, stored);
+  const opened = await openForSubject(subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const, { message: opened.err.type });
   return ok(opened.val);
 }
@@ -57,64 +54,46 @@ export async function setGrant(
   provider: string,
   grant: NewProviderGrant
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
-
-  const sealedAccess = await sealGrantToken(db, grant.subject, grant.accessToken);
-  const sealedRefresh = await sealGrantToken(db, grant.subject, grant.refreshToken);
-  if (!sealedAccess.ok || !sealedRefresh.ok) return err('DB_ERROR' as const);
-  const encryptedAccessToken = sealedAccess.val;
-  const encryptedRefreshToken = sealedRefresh.val;
-  const metadata = JSON.stringify(grant.metadata);
+  const sealedAccess = await wrapAsync(
+    () => sealGrantToken(grant.subject, grant.accessToken),
+    'DB_ERROR' as const
+  );
+  const sealedRefresh = await wrapAsync(
+    () => sealGrantToken(grant.subject, grant.refreshToken),
+    'DB_ERROR' as const
+  );
+  if (!sealedAccess.ok || !sealedAccess.val.ok || !sealedRefresh.ok || !sealedRefresh.val.ok) {
+    return err('DB_ERROR' as const);
+  }
+  const encryptedAccessToken = sealedAccess.val.val;
+  const encryptedRefreshToken = sealedRefresh.val.val;
 
   const result = await wrapAsync(
     () =>
-      db
-        .insertInto('provider_grants')
-        .values({
-          provider,
-          provider_account_id: grant.accountId,
-          client_id: grant.clientId,
-          display_name: grant.displayName || grant.accountId,
-          subject: grant.subject,
-          encrypted_access_token: encryptedAccessToken,
-          encrypted_refresh_token: encryptedRefreshToken,
-          expires_at: grant.expiresAt,
-          requested_scopes: grant.requestedScopes,
-          granted_scopes: grant.grantedScopes,
-          metadata,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .onConflict((oc) =>
-          oc.columns(['provider', 'provider_account_id']).doUpdateSet({
-            encrypted_access_token: encryptedAccessToken,
-            // A repeat authorization while a grant already exists can come
-            // back with no refresh_token at all (observed on Bitbucket,
-            // which only reissues one on a genuinely fresh consent) — the
-            // caller then has nothing but '' to offer here. Trusting that
-            // blindly would overwrite a refresh token that still works,
-            // and the breakage wouldn't surface until the access token
-            // from *this* exchange expires and refresh starts failing with
-            // invalid_grant, deleting the grant outright. Keep the stored
-            // token when the new one is empty.
-            encrypted_refresh_token: grant.refreshToken
-              ? encryptedRefreshToken
-              : sql`provider_grants.encrypted_refresh_token`,
-            expires_at: grant.expiresAt,
-            // Re-stamped on reconnect: the old row's scopes describe the old
-            // authorization, and keeping them once hid a narrowed re-consent.
-            requested_scopes: grant.requestedScopes,
-            granted_scopes: grant.grantedScopes,
-            metadata,
-            updated_at: new Date().toISOString(),
-            // Re-stamp on reconnect so grants predating per-user ownership get
-            // an owner, and so a re-auth by a different user reassigns cleanly.
-            subject: grant.subject,
-          })
-        )
-        .execute(),
+      getDataStore().providerGrants.upsertSealed(provider, {
+        accountId: grant.accountId,
+        clientId: grant.clientId,
+        displayName: grant.displayName || grant.accountId,
+        subject: grant.subject,
+        encryptedAccessToken,
+        encryptedRefreshToken,
+        // A repeat authorization while a grant already exists can come
+        // back with no refresh_token at all (observed on Bitbucket,
+        // which only reissues one on a genuinely fresh consent) — the
+        // caller then has nothing but '' to offer here. Trusting that
+        // blindly would overwrite a refresh token that still works,
+        // and the breakage wouldn't surface until the access token
+        // from *this* exchange expires and refresh starts failing with
+        // invalid_grant, deleting the grant outright. Keep the stored
+        // token when the new one is empty.
+        keepStoredRefreshToken: !grant.refreshToken,
+        expiresAt: new Date(grant.expiresAt),
+        // Re-stamped on reconnect: the old row's scopes describe the old
+        // authorization, and keeping them once hid a narrowed re-consent.
+        requestedScopes: grant.requestedScopes,
+        grantedScopes: grant.grantedScopes,
+        metadata: grant.metadata,
+      }),
     'DB_ERROR' as const
   );
 
@@ -126,29 +105,8 @@ export async function getGrant(
   provider: string,
   accountId: string
 ): Promise<Result<ProviderGrant | null, 'DB_ERROR' | 'DECRYPTION_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
-
   const rowResult = await wrapAsync(
-    () =>
-      db
-        .selectFrom('provider_grants')
-        .select([
-          'provider_account_id',
-          'client_id',
-          'display_name',
-          'metadata',
-          'encrypted_access_token',
-          'encrypted_refresh_token',
-          'expires_at',
-          'requested_scopes',
-          'granted_scopes',
-          'subject',
-        ])
-        .where('provider', '=', provider)
-        .where('provider_account_id', '=', accountId)
-        .executeTakeFirst(),
+    () => getDataStore().providerGrants.findSealed(provider, accountId),
     'DB_ERROR' as const
   );
 
@@ -157,31 +115,23 @@ export async function getGrant(
   const row = rowResult.val;
   if (!row) return ok(null);
 
-  const accessTokenResult = await openGrantToken(
-    db,
-    row.subject,
-    row.encrypted_access_token
-  );
+  const accessTokenResult = await openGrantToken(row.subject, row.encryptedAccessToken);
   if (!accessTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
-  const refreshTokenResult = await openGrantToken(
-    db,
-    row.subject,
-    row.encrypted_refresh_token
-  );
+  const refreshTokenResult = await openGrantToken(row.subject, row.encryptedRefreshToken);
   if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
 
   return ok({
     provider,
-    accountId: row.provider_account_id,
+    accountId: row.accountId,
     subject: row.subject,
-    clientId: row.client_id,
-    displayName: row.display_name || '',
+    clientId: row.clientId,
+    displayName: row.displayName || '',
     accessToken: accessTokenResult.val,
     refreshToken: refreshTokenResult.val,
-    expiresAt: row.expires_at.toISOString(),
-    requestedScopes: row.requested_scopes,
-    grantedScopes: row.granted_scopes,
+    expiresAt: row.expiresAt.toISOString(),
+    requestedScopes: row.requestedScopes,
+    grantedScopes: row.grantedScopes,
     metadata: readMetadata(row.metadata),
   });
 }
@@ -190,16 +140,8 @@ export async function deleteGrant(
   provider: string,
   accountId: string
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .deleteFrom('provider_grants')
-        .where('provider', '=', provider)
-        .where('provider_account_id', '=', accountId)
-        .execute(),
+    () => getDataStore().providerGrants.delete(provider, accountId),
     'DB_ERROR' as const
   );
 

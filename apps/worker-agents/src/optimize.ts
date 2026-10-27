@@ -78,7 +78,7 @@ export function createOptimizeHandler(deps: {
       return 'skipped';
     }
 
-    const token = await mintRunToken(deps.db, {
+    const token = await mintRunToken({
       subject: owner.subject,
       // The analysis acts as the PERSON: it reads their agent's history and
       // may start a revision draft on their behalf, exactly as they could.
@@ -110,7 +110,7 @@ export function createOptimizeHandler(deps: {
       });
       return undefined;
     } finally {
-      await revokeRunToken(deps.db, token);
+      await revokeRunToken(token);
     }
   };
 }

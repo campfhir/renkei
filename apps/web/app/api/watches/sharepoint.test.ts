@@ -16,11 +16,6 @@
  *     lets the backlog rebuild everything the purge just deleted.
  */
 
-// kysely ships ESM only and is not transformed for this suite. The routes use
-// exactly one thing from it — the `sql` tag, for NOW() — and the stubbed db
-// below never inspects what it produces.
-jest.mock('kysely', () => ({ sql: () => ({}) }));
-
 jest.mock('@/lib/session', () => ({
   getSessionFromRequest: jest.fn(async () => ({ subject: 'subject-1' })),
 }));
@@ -51,29 +46,6 @@ jest.mock('@renkei/provider-grants', () => ({
   ATLASSIAN: 'atlassian',
   ATLASSIAN_CONFLUENCE: 'atlassian-confluence',
 }));
-/**
- * A query builder that accepts any chain and answers the same row.
- *
- * Counting .where() calls to shape the mock is how these stubs rot: adding a
- * filter to a route then breaks the test for a reason that has nothing to do
- * with what it checks. Only two queries reach here — the grant lookup and the
- * watch-ownership lookup — and one row satisfies both.
- */
-jest.mock('@renkei/db', () => {
-  const row = { provider_account_id: 'acct-1', id: 'watch-1', scope_label: 'Eng / Documents' };
-  const chain: unknown = new Proxy(
-    {},
-    {
-      get: (_target, property) => {
-        if (property === 'executeTakeFirst') return async () => row;
-        if (property === 'execute') return async () => [];
-        return () => chain;
-      },
-    }
-  );
-  return { getDatabase: () => ({ ok: true, val: chain }) };
-});
-
 const upsertWatch = jest.fn(async () => ({ ok: true, created: true }));
 jest.mock('@/lib/mcp-tools/content-watches', () => ({
   upsertWatch: (...args: unknown[]) => upsertWatch(...(args as [])),
@@ -90,6 +62,12 @@ jest.mock('@renkei/knowledge', () => ({
 }));
 
 import { NextRequest } from 'next/server';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { POST as postWatch } from './route';
 import { GET as getOptions } from './options/route';
 import { POST as postReindex } from './reindex/route';
@@ -118,7 +96,6 @@ beforeEach(() => {
     });
   }) as unknown as typeof fetch;
 });
-
 
 function postRequest(url: string, body: unknown): NextRequest {
   return new NextRequest(url, {
@@ -210,9 +187,7 @@ describe('GET /watches/options — sharepoint', () => {
     ];
 
     const response = await getOptions(
-      new NextRequest(
-        'https://renkei.example.com/api/watches/options?provider=sharepoint'
-      )
+      new NextRequest('https://renkei.example.com/api/watches/options?provider=sharepoint')
     );
 
     await expect(response.json()).resolves.toEqual({
@@ -253,6 +228,30 @@ describe('GET /watches/options — sharepoint', () => {
 });
 
 describe('POST /watches/reindex — sharepoint', () => {
+  const WATCH = '00000000-0000-4000-8000-000000000001';
+  let store: MemoryDataStore;
+  beforeEach(async () => {
+    store = createMemoryDataStore();
+    await store.seed({
+      content_watches: [
+        {
+          id: WATCH,
+          subject: 'subject-1',
+          account_id: 'acct-1',
+          provider: 'sharepoint',
+          scope_type: 'drive',
+          scope_key: 'drive-2',
+          scope_label: 'Eng / Documents',
+          cursor: 'delta-token',
+          total_items: 30,
+          last_synced_at: new Date('2026-01-01T00:00:00Z'),
+        },
+      ],
+    });
+    registerDataStore(store);
+  });
+  afterEach(() => resetDataStore());
+
   it('discards the ingest.document work that would rebuild what it purged', async () => {
     const response = await postReindex(
       postRequest('https://renkei.example.com/api/watches/reindex', {
@@ -268,5 +267,29 @@ describe('POST /watches/reindex — sharepoint', () => {
       { path: ['provider'], value: 'sharepoint' },
       { path: ['scopeKey'], value: 'drive-2' },
     ]);
+    await expect(response.json()).resolves.toEqual({
+      purged: 12,
+      discarded: 4,
+      label: 'Eng / Documents',
+    });
+    // The cursor goes last, and with it the tallies: the next sweep re-reads it all.
+    expect(
+      await store.contentWatches.findForSubject('subject-1', 'sharepoint', 'drive-2')
+    ).toMatchObject({
+      totalItems: 0,
+      lastSyncedAt: null,
+      syncStatus: 'syncing',
+    });
+  });
+
+  it("answers 404 for a scope that is not the caller's watch", async () => {
+    const response = await postReindex(
+      postRequest('https://renkei.example.com/api/watches/reindex', {
+        provider: 'sharepoint',
+        scopeKey: 'drive-9',
+      })
+    );
+    expect(response.status).toBe(404);
+    expect(discardPending).not.toHaveBeenCalled();
   });
 });

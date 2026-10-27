@@ -23,8 +23,7 @@
  * token's provenance, never to authenticate anything itself.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { generateSecret, sha256Hex } from '@renkei/crypto';
 
 /** The two token classes this module mints — see the header. */
@@ -34,77 +33,66 @@ function runnerClientId(): string {
   return 'agent-runner';
 }
 
-export async function ensureAgentRunnerClient(db: Kysely<DB>): Promise<string> {
+export async function ensureAgentRunnerClient(): Promise<string> {
   const clientId = runnerClientId();
-  await db
-    .insertInto('oauth_clients')
-    .values({
-      client_id: clientId,
-      client_name: 'Renkei agent runner',
-      // A hash with no known preimage — this client never authenticates.
-      client_secret_hash: sha256Hex(generateSecret(32)),
-      redirect_uris: [],
-    })
-    .onConflict((oc) => oc.column('client_id').doNothing())
-    .execute();
+  await getDataStore().runTokens.ensureClient({
+    clientId,
+    clientName: 'Renkei agent runner',
+    // A hash with no known preimage — this client never authenticates.
+    secretHash: sha256Hex(generateSecret(32)),
+  });
   return clientId;
 }
 
-export async function mintRunToken(
-  db: Kysely<DB>,
-  params: {
-    subject: string;
-    /**
-     * The acting agent, or null when the work is the PERSON's rather than an
-     * agent's — a chat turn, or drafting from prose: there is usually no
-     * agent yet, and even when revising one the draft is the author's own
-     * work.
-     */
-    agentId: string | null;
-    ttlSeconds: number;
-    /** The person's renkei roles; omitted = none (the pre-091 behavior). */
-    roles?: string[];
-    /**
-     * The only tools this token may see or call (migration 096) — an
-     * agent run passes every tool its steps name. Omitted = unrestricted,
-     * the surface a chat turn or a draft has always had.
-     */
-    tools?: readonly string[];
-    /**
-     * The token's class. 'agent' (the default) is a run or a chat turn;
-     * 'widget' is a preview card's confirm button and is the ONLY class
-     * the gateway registers app-only confirm tools for. A 'widget' token
-     * must also name its one tool in `tools`.
-     */
-    application?: RunTokenApplication;
-  }
-): Promise<string> {
-  const clientId = await ensureAgentRunnerClient(db);
+export async function mintRunToken(params: {
+  subject: string;
+  /**
+   * The acting agent, or null when the work is the PERSON's rather than an
+   * agent's — a chat turn, or drafting from prose: there is usually no
+   * agent yet, and even when revising one the draft is the author's own
+   * work.
+   */
+  agentId: string | null;
+  ttlSeconds: number;
+  /** The person's renkei roles; omitted = none (the pre-091 behavior). */
+  roles?: string[];
+  /**
+   * The only tools this token may see or call (migration 096) — an
+   * agent run passes every tool its steps name. Omitted = unrestricted,
+   * the surface a chat turn or a draft has always had.
+   */
+  tools?: readonly string[];
+  /**
+   * The token's class. 'agent' (the default) is a run or a chat turn;
+   * 'widget' is a preview card's confirm button and is the ONLY class
+   * the gateway registers app-only confirm tools for. A 'widget' token
+   * must also name its one tool in `tools`.
+   */
+  application?: RunTokenApplication;
+}): Promise<string> {
+  const clientId = await ensureAgentRunnerClient();
   const token = generateSecret(32);
-  await db
-    .insertInto('oauth_access_tokens')
-    .values({
-      token_hash: sha256Hex(token),
-      client_id: clientId,
-      subject: params.subject,
-      application: params.application ?? 'agent',
-      // The acting agent (migration 040): the subject says WHOSE authority
-      // the run borrows; agent_id says WHO is borrowing it, so tools can
-      // stamp agent provenance without weakening the owner-scoped gates.
-      agent_id: params.agentId,
-      scope: null,
-      ...(params.roles ? { roles: params.roles } : {}),
-      ...(params.tools ? { tool_names: [...new Set(params.tools)].sort() } : {}),
-      expires_at: new Date(Date.now() + params.ttlSeconds * 1000),
-    })
-    .execute();
+  await getDataStore().runTokens.insert({
+    tokenHash: sha256Hex(token),
+    clientId,
+    subject: params.subject,
+    application: params.application ?? 'agent',
+    // The acting agent (migration 040): the subject says WHOSE authority
+    // the run borrows; agent_id says WHO is borrowing it, so tools can
+    // stamp agent provenance without weakening the owner-scoped gates.
+    agentId: params.agentId,
+    scope: null,
+    ...(params.roles ? { roles: params.roles } : {}),
+    toolNames: params.tools ? [...new Set(params.tools)].sort() : null,
+    expiresAt: new Date(Date.now() + params.ttlSeconds * 1000),
+  });
   return token;
 }
 
 /** Best effort — the TTL already bounds a missed revocation. */
-export async function revokeRunToken(db: Kysely<DB>, token: string): Promise<void> {
+export async function revokeRunToken(token: string): Promise<void> {
   try {
-    await db.deleteFrom('oauth_access_tokens').where('token_hash', '=', sha256Hex(token)).execute();
+    await getDataStore().runTokens.delete(sha256Hex(token));
   } catch {
     // The row expires on its own.
   }

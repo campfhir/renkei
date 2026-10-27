@@ -174,6 +174,24 @@ export interface NewVoiceUsage {
   locale: string | null;
 }
 
+/** One row of the token ledger (llm_calls), as a caller records it. */
+export interface NewLlmCallUsage {
+  subject: string;
+  agentId: string | null;
+  runId: string | null;
+  /** A uuid, or null (the ledger's step column is typed uuid). */
+  stepId: string | null;
+  purpose: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  llmModelId: string | null;
+  provider: string | null;
+  model: string | null;
+  durationMs: number | null;
+}
+
 export interface UtilizationTotals {
   inputTokens: number;
   outputTokens: number;
@@ -262,6 +280,8 @@ export interface UsageStore {
   recordImage(usage: NewImageUsage): Promise<void>;
   /** One speech-service call, now. */
   recordVoice(usage: NewVoiceUsage): Promise<void>;
+  /** Add one row to the token ledger (llm_calls), dated now. */
+  recordLlmCall(call: NewLlmCallUsage): Promise<void>;
   /** One person's totals across the three ledgers. */
   personTotals(subject: string, window: UsageWindow): Promise<UtilizationTotals>;
   /** One person's series, ascending by bucket key. */

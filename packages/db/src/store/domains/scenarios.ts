@@ -55,6 +55,12 @@ import { toolUsageScenarios } from './tool-usage/scenarios';
 import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
 import { uploadSlotScenarios } from './upload-slots/scenarios';
 import { chatTurnEngineScenarios } from './chat-threads/engine-scenarios';
+import { platformSettingScenarios } from './platform-settings/scenarios';
+import { userKeyScenarios } from './user-keys/scenarios';
+import { queueScenarios } from './queues/scenarios';
+import { runTokenScenarios } from './run-tokens/scenarios';
+import { knowledgeReindexRunScenarios } from './knowledge-reindex-runs/scenarios';
+import { contentWatchScenarios } from './content-watches/scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
@@ -114,4 +120,10 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webhookSubscriptionScenarios,
   ...uploadSlotScenarios,
   ...chatTurnEngineScenarios,
+  ...platformSettingScenarios,
+  ...userKeyScenarios,
+  ...queueScenarios,
+  ...runTokenScenarios,
+  ...knowledgeReindexRunScenarios,
+  ...contentWatchScenarios,
 ];

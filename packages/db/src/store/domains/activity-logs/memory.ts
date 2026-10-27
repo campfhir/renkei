@@ -1,5 +1,9 @@
 import {
+  isRedacted,
+  isSecure,
   LOG_LEVELS,
+  REDACTED_PLACEHOLDER,
+  type LogRecord,
   parseAttrPath,
   type FilterExpr,
   type LogQueryToken,
@@ -7,7 +11,8 @@ import {
 } from '@campfhir/bored-logs';
 import { compareAsc, like, orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
-import type { ActivityLogStore } from './types';
+import type { E2ERegistration } from '@campfhir/bored-logs/server';
+import type { ActivityLogStore, LogCipher } from './types';
 
 /**
  * The adapter's query (bored-logs' PostgresAdapter.query) in JavaScript.
@@ -185,8 +190,89 @@ function attributesOf(attrs: Attr[], decrypt: ((value: string) => string) | null
   return out;
 }
 
+/** One attribute as the adapter stores it (bored-logs' serializeAttrValue). */
+function serialize(
+  value: unknown,
+  cipher: LogCipher | undefined,
+  encrypted = false
+): { val: string | null; type: string; encrypted: boolean } {
+  if (value === null || value === undefined) return { val: null, type: 'null', encrypted: false };
+  if (isRedacted(value)) return { val: REDACTED_PLACEHOLDER, type: 'string', encrypted: false };
+  if (isSecure(value)) return serialize(value.value, cipher, true);
+  let val: string;
+  let type: string;
+  if (value instanceof Date) [val, type] = [value.toISOString(), 'date'];
+  else if (typeof value === 'number') [val, type] = [String(value), 'number'];
+  else if (typeof value === 'boolean') [val, type] = [String(value), 'boolean'];
+  else if (typeof value === 'string') [val, type] = [value, 'string'];
+  else if (typeof value === 'object') [val, type] = [JSON.stringify(value), 'json'];
+  else [val, type] = [String(value), 'string'];
+  if (encrypted && cipher) {
+    try {
+      val = Buffer.from(cipher.encrypt(val)).toString('base64url');
+    } catch {
+      // As the adapter: a value that will not encrypt is stored as it is.
+    }
+  }
+  return { val, type, encrypted };
+}
+
+function writeRecord(tables: MemoryTables, record: LogRecord, cipher: LogCipher | undefined) {
+  const row = tables.insert('logs', {
+    message: record.message,
+    logged_timestamp: record.timestamp,
+    level: record.level.toUpperCase(),
+  });
+  const entries: [string, { val: string | null; type: string; encrypted: boolean }][] =
+    Object.entries(record.attrs).map(([key, value]) => [key, serialize(value, cipher)]);
+  if (record.application && !('application' in record.attrs)) {
+    entries.push(['application', { val: record.application, type: 'string', encrypted: false }]);
+  }
+  if (record.version && !('version' in record.attrs)) {
+    entries.push(['version', { val: record.version, type: 'string', encrypted: false }]);
+  }
+  for (const [key, entry] of entries) {
+    tables.insert('log_attr', {
+      log_id: row.log_id,
+      val_name: key,
+      val: entry.val,
+      val_type: entry.type,
+      encrypted: entry.encrypted,
+      logged_timestamp: record.timestamp,
+    });
+  }
+}
+
 export function memoryActivityLogs(tables: MemoryTables): ActivityLogStore {
+  // Single-process: the registrations live as long as this store does.
+  const registrations = new Map<string, E2ERegistration>();
   return {
+    writer(options = {}) {
+      const threshold = LEVELS[(options.level ?? 'info').toLowerCase()] ?? LEVELS.info;
+      return {
+        write(record) {
+          const rank = LEVELS[record.level.toLowerCase()] ?? LEVELS.debug;
+          if (rank > threshold) return;
+          writeRecord(tables, record, options.cipher);
+        },
+        async flush() {},
+        async close() {},
+      };
+    },
+    shippingRegistrations() {
+      return {
+        async get(clientId) {
+          const found = registrations.get(clientId);
+          return found ? structuredClone(found) : undefined;
+        },
+        async set(registration) {
+          registrations.set(registration.clientId, structuredClone(registration));
+        },
+        async delete(clientId) {
+          registrations.delete(clientId);
+        },
+      };
+    },
     async search(options, cipher) {
       const start = options.start
         ? new Date(options.start)

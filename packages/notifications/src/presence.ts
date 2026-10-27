@@ -14,27 +14,15 @@
  * no new client code at all.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 /**
  * Record that `subject` is watching `chatId`'s turn stream right now.
  * Idempotent and cheap to call often: a repeat heartbeat from the same
  * connection just moves `updated_at` forward, never piles up rows.
  */
-export async function pingChatPresence(
-  db: Kysely<DB>,
-  subject: string,
-  chatId: string
-): Promise<void> {
-  const updatedAt = new Date();
-  await db
-    .insertInto('chat_presence')
-    .values({ subject, chat_id: chatId, updated_at: updatedAt })
-    .onConflict((oc) =>
-      oc.columns(['subject', 'chat_id']).doUpdateSet({ updated_at: updatedAt })
-    )
-    .execute();
+export async function pingChatPresence(subject: string, chatId: string): Promise<void> {
+  await getDataStore().notifications.pingChatPresence(subject, chatId, new Date());
 }
 
 /**
@@ -45,21 +33,13 @@ export async function pingChatPresence(
  * satisfied by a real heartbeat anyway.
  */
 export async function wasRecentlyWatchingChat(
-  db: Kysely<DB>,
   subject: string,
   chatId: string,
   windowSeconds: number
 ): Promise<boolean> {
   if (windowSeconds <= 0) return false;
   const cutoff = new Date(Date.now() - windowSeconds * 1000);
-  const row = await db
-    .selectFrom('chat_presence')
-    .select('chat_id')
-    .where('subject', '=', subject)
-    .where('chat_id', '=', chatId)
-    .where('updated_at', '>', cutoff)
-    .executeTakeFirst();
-  return row !== undefined;
+  return getDataStore().notifications.wasWatchingChat(subject, chatId, cutoff);
 }
 
 /**
@@ -69,14 +49,6 @@ export async function wasRecentlyWatchingChat(
  * fixed maintenance cutoff rather than a per-tenant setting (see
  * apps/worker-agents/src/maintenance.ts's `createChatPresenceSweep`).
  */
-export async function deleteStaleChatPresence(
-  db: Kysely<DB>,
-  olderThanMs: number
-): Promise<number> {
-  const cutoff = new Date(Date.now() - olderThanMs);
-  const deleted = await db
-    .deleteFrom('chat_presence')
-    .where('updated_at', '<', cutoff)
-    .executeTakeFirst();
-  return Number(deleted.numDeletedRows ?? 0);
+export async function deleteStaleChatPresence(olderThanMs: number): Promise<number> {
+  return getDataStore().notifications.deleteChatPresenceBefore(new Date(Date.now() - olderThanMs));
 }

@@ -59,7 +59,6 @@ export function notifyChatToolPermission(input: {
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
       void sendPush(
-        dbResult.val,
         input.ownerSubject,
         keyResult.val,
         {

@@ -65,7 +65,6 @@ import { listMessages, sealedMessage, type NewMessage } from './messages';
 import { finishTurn, heartbeatTurn, isUniqueViolation, suspendTurn, turnInsertOf } from './turns';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import { touchChat, type ChatRow } from './store';
-import { databaseForUnconvertedCode } from './unconverted-db';
 import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
@@ -307,7 +306,7 @@ export async function startChatTurn(
     input.llmModelId !== undefined && input.llmModelId !== null && isUuid(input.llmModelId)
       ? input.llmModelId
       : (chat.llmModelId ?? null);
-  const llmResult = await resolveAgentLlm(databaseForUnconvertedCode(), requestedModel);
+  const llmResult = await resolveAgentLlm(requestedModel);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),

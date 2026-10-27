@@ -214,7 +214,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
   const resolve =
     deps.resolveTarget ??
     ((target: SubjectTarget, provided: AdManagerCredentials | null) =>
-      resolveTarget(deps.db, target, provided));
+      resolveTarget(target, provided));
   const resolveOne = deps.resolveInstance ?? ((instanceId: string) => resolveInstance(instanceId));
 
   /**

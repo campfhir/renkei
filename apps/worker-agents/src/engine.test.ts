@@ -290,7 +290,7 @@ maybe('agent run engine', () => {
     const finalized: FinalizedRun[] = [];
     const clock = { now: Date.now() };
     const tokens = new Map<string, string[]>();
-    const mintToken = async (_db: unknown, params: { tools: string[] }) => {
+    const mintToken = async (params: { tools: string[] }) => {
       const token = `token-${minted.length}`;
       minted.push(params.tools);
       tokens.set(token, params.tools);
@@ -781,7 +781,9 @@ maybe('agent run engine', () => {
       expect(report).toContain('third was not made');
       const subRequests = llm.requests.filter(isSub);
       const stopNote = subRequests[subRequests.length - 1].messages.at(-1)?.content.at(-1);
-      expect(stopNote?.type === 'text' && stopNote.text).toContain("the run's tool budget is spent");
+      expect(stopNote?.type === 'text' && stopNote.text).toContain(
+        "the run's tool budget is spent"
+      );
       expect((await runOf(runId)).status).toBe('succeeded');
     } finally {
       await setOrgSettings({ agentRunToolCallBudget: 150 });
@@ -911,7 +913,10 @@ maybe('agent run engine', () => {
               context: '837 lab orders on 10/19; DigiPort testing still open.',
               answer: { type: 'choice', options: ['CIO-5', 'CIO-25', 'CIO-26', 'Something else'] },
             },
-            { question: 'Does the xCures SFTP work need a CIO-39 update?', answer: { type: 'yesno' } },
+            {
+              question: 'Does the xCures SFTP work need a CIO-39 update?',
+              answer: { type: 'yesno' },
+            },
           ],
         });
       }
@@ -997,7 +1002,7 @@ maybe('agent run engine', () => {
     await h.handler({ payload: { runId } });
     expect((await runOf(runId)).status).toBe('failed');
 
-    const resumed = await resumeAgentRun(db, h.producer, {
+    const resumed = await resumeAgentRun(h.producer, {
       agentId,
       runId,
       ownerSubject: subject,
@@ -1036,4 +1041,3 @@ maybe('agent run engine', () => {
     expect(run.error_kind).toBe('needs-sign-in');
   });
 });
-

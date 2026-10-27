@@ -18,7 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 
 export interface SyncProgressItem {
@@ -37,44 +37,22 @@ function iso(value: Date | string | null): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
-
-  const watches = await db
-    .selectFrom('content_watches')
-    .select([
-      'provider',
-      'scope_key',
-      'scope_label',
-      'enabled',
-      'last_synced_at',
-      'last_run_items',
-      'total_items',
-      'sync_status',
-      'last_error',
-    ])
-    .where('subject', '=', session.subject)
-    .orderBy('scope_key', 'asc')
-    .execute();
+  const watches = await getDataStore().contentWatches.listForSubject(session.subject);
 
   const byProvider = (provider: string): SyncProgressItem[] =>
     watches
       .filter((row) => row.provider === provider)
       .map((row) => ({
-        label: row.scope_label ? `${row.scope_label} (${row.scope_key})` : row.scope_key,
-        status: row.enabled ? (row.last_synced_at ? row.sync_status : 'syncing') : 'paused',
-        lastSyncedAt: iso(row.last_synced_at),
-        lastRunItems: row.last_run_items,
-        totalItems: row.total_items,
-        error: row.last_error,
+        label: row.scopeLabel ? `${row.scopeLabel} (${row.scopeKey})` : row.scopeKey,
+        status: row.enabled ? (row.lastSyncedAt ? row.syncStatus : 'syncing') : 'paused',
+        lastSyncedAt: iso(row.lastSyncedAt),
+        lastRunItems: row.lastRunItems,
+        totalItems: row.totalItems,
+        error: row.lastError,
       }));
 
   return NextResponse.json({

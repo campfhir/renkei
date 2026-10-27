@@ -154,5 +154,81 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
         overfetch
       );
     },
+    async upsert(chunk) {
+      const values = {
+        metadata: JSON.stringify(chunk.metadata),
+        content: chunk.content,
+        embedding: `[${chunk.embedding.join(',')}]`,
+        keywords: chunk.keywords,
+        search_text: [chunk.search.title, chunk.search.keywords, chunk.search.content]
+          .join(' ')
+          .toLowerCase(),
+        source_at: chunk.sourceAt,
+      };
+      tables.upsert(
+        'knowledge_chunks',
+        {
+          id: globalThis.crypto.randomUUID(),
+          provider: chunk.provider,
+          ref_id: chunk.refId,
+          ...values,
+        },
+        ['provider', 'ref_id'],
+        values
+      );
+    },
+    async deleteObject(provider, refId, options = {}) {
+      const pattern = options.prefixOnly ? `${escapeLike(refId)}%` : `${escapeLike(refId)}#%`;
+      return tables.delete(
+        'knowledge_chunks',
+        (r) =>
+          r.provider === provider &&
+          (like(r.ref_id, pattern, true) || (!options.prefixOnly && r.ref_id === refId))
+      ).length;
+    },
+    async deleteByMetadata(provider, key, value) {
+      return tables.delete(
+        'knowledge_chunks',
+        (r) => r.provider === provider && metadataText(r.metadata, key) === value
+      ).length;
+    },
+    async deleteStaleScope(provider, scope, epoch) {
+      return tables.delete(
+        'knowledge_chunks',
+        (r) =>
+          r.provider === provider &&
+          metadataText(r.metadata, scope.key) === scope.value &&
+          metadataText(r.metadata, epoch.key) !== epoch.value
+      ).length;
+    },
+    async objectMetadata(provider, refIds) {
+      if (refIds.length === 0) return [];
+      const patterns = refIds.map((refId) => `${escapeLike(refId)}#%`);
+      const rows = tables.select(
+        'knowledge_chunks',
+        (r) =>
+          r.provider === provider &&
+          (refIds.includes(r.ref_id) || patterns.some((p) => like(r.ref_id, p, true)))
+      );
+      return orderBy(rows, [(r) => r.ref_id]).map((row) => ({
+        refId: row.ref_id,
+        metadata: row.metadata ?? null,
+      }));
+    },
+    async nearestDistance(vector, scope) {
+      const prefix = `${escapeLike(scope.refIdPrefix)}%`;
+      const own = `${escapeLike(scope.excludeRefId)}#%`;
+      const distances = tables
+        .select(
+          'knowledge_chunks',
+          (r) =>
+            like(r.ref_id, prefix, true) &&
+            r.ref_id !== scope.excludeRefId &&
+            !like(r.ref_id, own, true) &&
+            r.created_at.getTime() >= scope.since.getTime()
+        )
+        .map((r) => cosineDistance(parseVector(r.embedding), vector));
+      return distances.length === 0 ? null : Math.min(...distances);
+    },
   };
 }

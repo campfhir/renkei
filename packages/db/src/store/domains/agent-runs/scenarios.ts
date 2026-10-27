@@ -282,6 +282,54 @@ const evidence = {
   ],
 };
 
+function step(
+  n: number,
+  runId: number,
+  index: number,
+  attempt: number,
+  status: string,
+  code: string | null
+) {
+  return {
+    id: id(n),
+    run_id: id(runId),
+    step_id: `turn-${index}`,
+    step_index: index,
+    attempt,
+    status,
+    outcome_code: code,
+    input_tokens: 10 * n,
+    output_tokens: n,
+    tool_call_count: index,
+  };
+}
+
+const lifecycleFixture = {
+  agents,
+  agent_runs: [
+    run(61, 1, 'ann', 1, { status: 'failed', error: 'boom', error_kind: 'tool' }),
+    run(62, 1, 'ann', 3, { status: 'queued' }),
+    run(63, 1, 'ann', 3, { status: 'running' }),
+    run(64, 2, 'bob', 2, { status: 'succeeded' }),
+  ],
+  agent_run_steps: [
+    step(81, 61, 0, 1, 'failed', 'first-failure'),
+    step(82, 61, 1, 1, 'succeeded', null),
+    step(83, 61, 1, 2, 'failed', 'last-failure'),
+  ],
+  agent_run_log: [
+    {
+      run_id: id(61),
+      agent_id: id(1),
+      owner_subject: 'ann',
+      trigger_kind: 'manual',
+      status: 'failed',
+      created_at: at(1),
+      finished_at: at(2),
+    },
+  ],
+};
+
 export const agentRunScenarios: Scenario<DataStore>[] = [
   {
     method: 'agentRuns.list',
@@ -634,6 +682,216 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
         })
       );
       return { claims, runs };
+    },
+  },
+  {
+    method: 'agentRuns.countCreatedSince',
+    name: 'strictly after the cutoff, everyone',
+    fixture: lifecycleFixture,
+    run: async (store) => [
+      await store.agentRuns.countCreatedSince(new Date(at(0))),
+      await store.agentRuns.countCreatedSince(new Date(at(2))),
+      await store.agentRuns.countCreatedSince(new Date(at(99))),
+    ],
+  },
+  {
+    method: 'agentRuns.createQueued',
+    name: 'a queued row with its snapshot and depth',
+    fixture: lifecycleFixture,
+    run: async (store) => {
+      await store.agentRuns.createQueued({
+        id: id(70),
+        agentId: id(1),
+        ownerSubject: 'ann',
+        triggerId: null,
+        triggerKind: 'agent',
+        triggeredBySubject: 'ann',
+        parentRunId: id(61),
+        lineage: [id(2), id(1)],
+        definitionSnapshot: { instructions: 'do it', tools: ['a'] },
+        llmModelId: null,
+        initialState: { issue: 'ABC-1' },
+      });
+      const again = await store.agentRuns
+        .createQueued({
+          id: id(70),
+          agentId: id(1),
+          ownerSubject: 'ann',
+          triggerId: null,
+          triggerKind: 'manual',
+          triggeredBySubject: null,
+          parentRunId: null,
+          lineage: [],
+          definitionSnapshot: {},
+          llmModelId: null,
+          initialState: null,
+        })
+        .then(
+          () => 'accepted',
+          (error: unknown) => refusal(error)
+        );
+      return {
+        again,
+        inProgress: await store.agentRuns.findInProgress(id(1)),
+        resume: await store.agentRuns.findForResume(id(70), id(1), 'ann'),
+      };
+    },
+  },
+  {
+    method: 'agentRuns.deleteRun',
+    name: 'one row; an unknown id deletes nothing',
+    fixture: lifecycleFixture,
+    run: async (store) => [
+      await store.agentRuns.deleteRun(id(62)),
+      await store.agentRuns.deleteRun(id(62)),
+      await store.agentRuns.findInProgress(id(1)),
+    ],
+  },
+  {
+    method: 'agentRuns.logRunCreated',
+    name: 'a queued log row; recordOutcome later finalizes it',
+    fixture: lifecycleFixture,
+    run: async (store) => {
+      await store.agentRuns.logRunCreated({
+        runId: id(62),
+        agentId: id(1),
+        ownerSubject: 'ann',
+        triggerKind: 'manual',
+        status: 'queued',
+      });
+      const twice = await store.agentRuns
+        .logRunCreated({
+          runId: id(62),
+          agentId: id(1),
+          ownerSubject: 'ann',
+          triggerKind: 'manual',
+          status: 'queued',
+        })
+        .then(
+          () => 'accepted',
+          (error: unknown) => refusal(error)
+        );
+      const row = await store.agentRuns.findRunLog(id(62));
+      return { twice, row: row && { ...row, createdAt: null } };
+    },
+  },
+  {
+    method: 'agentRuns.findRunLog',
+    name: 'the row as stored; a run with none reads null',
+    fixture: lifecycleFixture,
+    run: async (store) => [
+      await store.agentRuns.findRunLog(id(61)),
+      await store.agentRuns.findRunLog(id(62)),
+    ],
+  },
+  {
+    method: 'agentRuns.findInProgress',
+    name: 'newest queued or running run of the agent, ties by id descending',
+    fixture: lifecycleFixture,
+    run: async (store) => [
+      await store.agentRuns.findInProgress(id(1)),
+      await store.agentRuns.findInProgress(id(2)),
+    ],
+  },
+  {
+    method: 'agentRuns.findForResume',
+    name: "this agent's and owner's run only",
+    fixture: lifecycleFixture,
+    run: async (store) => [
+      await store.agentRuns.findForResume(id(61), id(1), 'ann'),
+      await store.agentRuns.findForResume(id(61), id(2), 'ann'),
+      await store.agentRuns.findForResume(id(61), id(1), 'bob'),
+      await store.agentRuns.findForResume(id(69), id(1), 'ann'),
+    ],
+  },
+  {
+    method: 'agentRuns.markResumed',
+    name: 'failed runs only, once',
+    fixture: lifecycleFixture,
+    run: async (store) => [
+      await store.agentRuns.markResumed(id(61), {
+        resumedBy: 'ann',
+        guidance: 'try the other project',
+        failure: 'boom',
+      }),
+      await store.agentRuns.markResumed(id(61), {
+        resumedBy: 'ann',
+        guidance: null,
+        failure: null,
+      }),
+      await store.agentRuns.markResumed(id(62), {
+        resumedBy: 'ann',
+        guidance: null,
+        failure: null,
+      }),
+      await store.agentRuns.findForResume(id(61), id(1), 'ann'),
+      await store.agentRuns.findInProgress(id(1)),
+    ],
+  },
+  {
+    method: 'agentRuns.restoreFailure',
+    name: 'a queued run back to failed; others untouched',
+    fixture: lifecycleFixture,
+    run: async (store) => {
+      await store.agentRuns.restoreFailure(id(62), { error: 'lost', errorKind: 'queue' });
+      await store.agentRuns.restoreFailure(id(63), { error: 'x', errorKind: 'x' });
+      return [
+        await store.agentRuns.findForResume(id(62), id(1), 'ann'),
+        await store.agentRuns.findForResume(id(63), id(1), 'ann'),
+      ];
+    },
+  },
+  {
+    method: 'agentRuns.markLogQueued',
+    name: 'the log row reads queued again; a run with no log row is a no-op',
+    fixture: lifecycleFixture,
+    run: async (store) => {
+      await store.agentRuns.markLogQueued(id(61));
+      await store.agentRuns.markLogQueued(id(63));
+      return [await store.agentRuns.findRunLog(id(61)), await store.agentRuns.findRunLog(id(63))];
+    },
+  },
+  {
+    method: 'agentRuns.recordOutcome',
+    name: 'spend summed from the attempts, newest failed code kept, upserted',
+    fixture: lifecycleFixture,
+    run: async (store) => {
+      await store.agentRuns.recordOutcome({
+        runId: id(61),
+        agentId: id(1),
+        ownerSubject: 'ann',
+        status: 'failed',
+        errorKind: 'tool',
+        error: 'it broke',
+        failed: true,
+      });
+      await store.agentRuns.recordOutcome({
+        runId: id(63),
+        agentId: id(1),
+        ownerSubject: 'ann',
+        status: 'succeeded',
+        errorKind: null,
+        error: null,
+        failed: false,
+      });
+      const twice = await store.agentRuns
+        .recordOutcome({
+          runId: id(63),
+          agentId: id(1),
+          ownerSubject: 'ann',
+          status: 'canceled',
+          errorKind: null,
+          error: null,
+          failed: false,
+        })
+        .then(() => 'accepted');
+      const failed = await store.agentRuns.findRunLog(id(61));
+      const done = await store.agentRuns.findRunLog(id(63));
+      return {
+        twice,
+        failed: failed && { ...failed, finishedAt: failed.finishedAt !== null },
+        done: done && { ...done, finishedAt: done.finishedAt !== null },
+      };
     },
   },
 ];

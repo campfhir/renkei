@@ -12,7 +12,7 @@
  * operator through the ordinary rules API, one deliberate click each.
  */
 
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import type { ClassifierRule, EmailCategory } from '@renkei/email-sanitizer';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
@@ -76,10 +76,7 @@ function promptOf(
 export async function suggestSanitizerRules(): Promise<
   { suggestions: RuleSuggestion[] } | { error: string }
 > {
-  // The model roster is the agent-llm package's to read, from the database.
-  const db = getDatabase();
-  if (!db.ok) return { error: 'The database is unavailable.' };
-  const llmResult = await resolveAgentLlm(db.val, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

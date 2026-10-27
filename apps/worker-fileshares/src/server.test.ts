@@ -156,11 +156,7 @@ describe('dispatch and serialization', () => {
         },
       ],
     });
-    expect(mocked.serviceListFolder).toHaveBeenCalledWith(
-      expect.objectContaining({ db: expect.anything() }),
-      TARGET,
-      '/docs'
-    );
+    expect(mocked.serviceListFolder).toHaveBeenCalledWith({}, TARGET, '/docs');
   });
 
   it('maps service error tags onto statuses and keeps the message', async () => {
@@ -279,11 +275,11 @@ describe('test-connection payload validation', () => {
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ entries: 3 });
-    expect(mocked.serviceTestConnection).toHaveBeenCalledWith(
-      expect.anything(),
-      'share-1',
-      { protocol: 'sftp', username: 'alice', password: 'pw' }
-    );
+    expect(mocked.serviceTestConnection).toHaveBeenCalledWith(expect.anything(), 'share-1', {
+      protocol: 'sftp',
+      username: 'alice',
+      password: 'pw',
+    });
   });
 
   it('refuses malformed or missing credentials before touching the service', async () => {

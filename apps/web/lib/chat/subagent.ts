@@ -41,7 +41,6 @@ import type { McpToolResult } from '@renkei/mcp-client';
 import { clipOutput } from '@renkei/connector-sandbox';
 import type { Result } from '@campfhir/safe-functions/types';
 import { errorResult, textResult, type LocalToolContext } from './local-tools';
-import { databaseForUnconvertedCode } from './unconverted-db';
 import { friendlyLlmError, textOfResult } from './turn-runner';
 
 const RESULT_MAX_CHARS = 30_000;
@@ -118,7 +117,7 @@ export type ResolveSubagentLlm = (
 
 /** The org's model config, resolved with its key — the default `ResolveSubagentLlm`. */
 export const resolveSubagentLlm: ResolveSubagentLlm = (modelConfigId) =>
-  resolveAgentLlm(databaseForUnconvertedCode(), modelConfigId);
+  resolveAgentLlm(modelConfigId);
 
 /** The ledger's view of the model a sub-agent ran on. */
 export function subagentModelOf(llm: ResolvedLlm): LlmCallModel {

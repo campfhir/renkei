@@ -261,7 +261,6 @@ async function write(
     // sent) is news regardless of what's on screen, so it stays unquiet.
     const quiet = row.kind === 'question' || row.kind === 'approval';
     void sendPush(
-      db,
       context.subject,
       keyResult.val,
       {

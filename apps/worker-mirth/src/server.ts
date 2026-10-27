@@ -175,8 +175,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
   // process holds no key and never reads a stored one.
   const resolve =
     deps.resolveTarget ??
-    ((target: SubjectTarget, provided: MirthCredentials | null) =>
-      resolveTarget(deps.db, target, provided));
+    ((target: SubjectTarget, provided: MirthCredentials | null) => resolveTarget(target, provided));
   const resolveOne = deps.resolveInstance ?? ((instanceId: string) => resolveInstance(instanceId));
 
   /**

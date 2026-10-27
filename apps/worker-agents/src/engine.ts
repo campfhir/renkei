@@ -764,7 +764,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
 
-    const llmResult = await resolveLlm(db, run.llm_model_id);
+    const llmResult = await resolveLlm(run.llm_model_id);
     if (!llmResult.ok) {
       if (llmResult.err.type === 'DB_ERROR') throw new TransientFailure('model config unavailable');
       await finalizeRun(
@@ -798,7 +798,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // notifier's own): it is how the engine learns which of them read and
     // which act, and it carries the notifier's mail/WebEx calls. The model
     // never reaches it.
-    const probeToken = await mint(db, {
+    const probeToken = await mint({
       subject: run.owner_subject,
       agentId: run.agent_id,
       ttlSeconds: tokenTtl,
@@ -823,7 +823,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       // The MODEL's token: read tools only. However the conversation goes,
       // nothing the agent calls can change a system — the gateway does not
       // register an act tool for this token at all.
-      const agentToken = await mint(db, {
+      const agentToken = await mint({
         subject: run.owner_subject,
         agentId: run.agent_id,
         ttlSeconds: tokenTtl,
@@ -922,7 +922,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       });
       await loop.execute();
     } finally {
-      for (const token of minted) await revoke(db, token);
+      for (const token of minted) await revoke(token);
     }
   }
 
@@ -2031,14 +2031,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const remembered = rememberArgsOf(input);
       if (!remembered) return { text: 'remember needs {note}, a non-empty string.', isError: true };
       try {
-        const { inserted } = await appendAgentMemory(db, {
+        const { inserted } = await appendAgentMemory({
           agentId: this.runRow.agent_id,
           content: remembered.note,
           runId: this.runRow.id,
         });
         if (!inserted) return { text: 'Already remembered — no change.', isError: false };
         this.input.context.memoryText = renderAgentMemory(
-          await readAgentMemory(db, this.runRow.agent_id)
+          await readAgentMemory(this.runRow.agent_id)
         );
         return { text: 'Remembered.', isError: false };
       } catch (error) {
@@ -2532,7 +2532,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     durationMs: number
   ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
-    const ledger = await recordLlmCall(db, {
+    const ledger = await recordLlmCall({
       subject: run.owner_subject,
       agentId: run.agent_id,
       runId: run.id,
@@ -2604,7 +2604,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       .where('run_id', '=', run.id)
       .where('status', 'in', ['running', 'waiting'])
       .execute();
-    await recordAgentRunOutcome(db, {
+    await recordAgentRunOutcome({
       agentId: run.agent_id,
       runId: run.id,
       ownerSubject: run.owner_subject,
@@ -2628,7 +2628,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     let memoryText = '';
     let knowledgeText = '';
     try {
-      memoryText = renderAgentMemory(await readAgentMemory(db, agentId));
+      memoryText = renderAgentMemory(await readAgentMemory(agentId));
     } catch (error) {
       logger.warn('agent memory unreadable for agent {agentId}: {error}', {
         component: 'worker-agents/engine',
@@ -2637,7 +2637,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       });
     }
     try {
-      knowledgeText = await renderAgentKnowledgeNotes(db, agentId);
+      knowledgeText = await renderAgentKnowledgeNotes(agentId);
     } catch (error) {
       logger.warn('agent knowledge notes unreadable for agent {agentId}: {error}', {
         component: 'worker-agents/engine',
@@ -2768,7 +2768,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     } else {
       logger.debug('agent "{agentName}" ({userName}) run {status}', common);
     }
-    const logged = await recordAgentRunOutcome(db, {
+    const logged = await recordAgentRunOutcome({
       agentId: run.agent_id,
       runId: run.id,
       ownerSubject: run.owner_subject,

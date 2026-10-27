@@ -107,7 +107,7 @@ export function createFinalizeHook(
         ...(run.vars.summary ? [`Its summary: ${run.vars.summary}`] : []),
         ...(run.vars.result ? [`Its result:\n${run.vars.result}`] : []),
       ].join('\n');
-      const result = await createAgentRun(db, agentProducer, {
+      const result = await createAgentRun(agentProducer, {
         agentId: trigger.agent_id,
         ownerSubject: trigger.owner_subject,
         definition: agentDefinitionOf(trigger),

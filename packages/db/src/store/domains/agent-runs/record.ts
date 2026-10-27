@@ -1,6 +1,12 @@
 import type { Selectable } from 'kysely';
-import type { AgentActionBatches, AgentRunSteps } from '../../../db.types';
-import type { RunBatchRecord, RunStepRecord, RunSummaryRecord } from './types';
+import type { AgentActionBatches, AgentRunLog, AgentRunSteps } from '../../../db.types';
+import type {
+  AgentRunLogRecord,
+  AgentRunNewInput,
+  RunBatchRecord,
+  RunStepRecord,
+  RunSummaryRecord,
+} from './types';
 
 /** The statuses a run is still live in — what a cancel can still reach. */
 export const LIVE_STATUSES = ['queued', 'running', 'waiting'] as const;
@@ -67,5 +73,43 @@ export function batchFromRow(row: Selectable<AgentActionBatches>): RunBatchRecor
     comment: row.comment,
     createdAt: row.created_at,
     finishedAt: row.finished_at,
+  };
+}
+
+/** The agent_runs row a new run starts as. */
+export function newRunValues(run: AgentRunNewInput) {
+  return {
+    id: run.id,
+    agent_id: run.agentId,
+    owner_subject: run.ownerSubject,
+    trigger_id: run.triggerId,
+    trigger_kind: run.triggerKind,
+    triggered_by_subject: run.triggeredBySubject,
+    parent_run_id: run.parentRunId,
+    lineage: JSON.stringify(run.lineage),
+    depth: run.lineage.length,
+    definition_snapshot: JSON.stringify(run.definitionSnapshot),
+    llm_model_id: run.llmModelId,
+    initial_state: run.initialState ? JSON.stringify(run.initialState) : null,
+    status: 'queued',
+  };
+}
+
+export function runLogFromRow(row: Selectable<AgentRunLog>): AgentRunLogRecord {
+  return {
+    runId: row.run_id,
+    agentId: row.agent_id,
+    ownerSubject: row.owner_subject,
+    triggerKind: row.trigger_kind,
+    status: row.status,
+    createdAt: new Date(row.created_at),
+    finishedAt: row.finished_at ? new Date(row.finished_at) : null,
+    errorKind: row.error_kind,
+    outcomeCode: row.outcome_code,
+    error: row.error,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    toolCalls: row.tool_calls,
+    attempts: row.attempts,
   };
 }

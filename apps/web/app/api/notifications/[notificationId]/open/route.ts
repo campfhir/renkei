@@ -17,7 +17,7 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { isWebUrl } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
@@ -50,32 +50,19 @@ export async function GET(
   }
   if (!isUuid(notificationId)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const row = await db
-    .selectFrom('agent_notifications')
-    .select(['id', 'kind', 'ref_url', 'agent_id', 'run_id', 'meta'])
-    .where('subject', '=', session.subject)
-    .where('id', '=', notificationId)
-    .executeTakeFirst();
+  const store = getDataStore().notifications;
+  const row = await store.find(session.subject, notificationId);
   if (!row) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  await db
-    .updateTable('agent_notifications')
-    .set({ read_at: new Date() })
-    .where('id', '=', row.id)
-    .where('read_at', 'is', null)
-    .execute();
+  await store.mark(session.subject, { ids: [row.id] }, { unread: false });
 
   const prefs = await getNotificationPrefs(session.subject, { fresh: true });
   const target = notificationTarget(
     {
       kind: row.kind,
-      refUrl: row.ref_url,
-      agentId: row.agent_id,
-      runId: row.run_id,
+      refUrl: row.refUrl,
+      agentId: row.agentId,
+      runId: row.runId,
       meta: row.meta ?? null,
     },
     prefs.openInSourceApp

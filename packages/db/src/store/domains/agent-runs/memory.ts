@@ -1,7 +1,15 @@
 import { groupBy, like, orderBy, page } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
 import { jsonbText, jsonField } from '../agents/json';
-import { batchFromRow, LIVE_STATUSES, likePattern, stepFromRow, summaryFromRow } from './record';
+import {
+  batchFromRow,
+  LIVE_STATUSES,
+  likePattern,
+  newRunValues,
+  runLogFromRow,
+  stepFromRow,
+  summaryFromRow,
+} from './record';
 import type { AgentRunStore } from './types';
 
 const LIVE: readonly string[] = LIVE_STATUSES;
@@ -315,6 +323,138 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         },
         tools: page(orderBy(tools, [(t) => t.calls, 'desc'], [(t) => t.tool]), maxTools),
       };
+    },
+    async countCreatedSince(since) {
+      return tables.select('agent_runs', (r) => r.created_at.getTime() > since.getTime()).length;
+    },
+    async createQueued(run) {
+      tables.insert('agent_runs', newRunValues(run));
+    },
+    async deleteRun(runId) {
+      const key = tables.param('agent_runs', 'id', runId);
+      return tables.delete('agent_runs', (r) => r.id === key).length;
+    },
+    async logRunCreated(entry) {
+      tables.insert('agent_run_log', {
+        run_id: entry.runId,
+        agent_id: entry.agentId,
+        owner_subject: entry.ownerSubject,
+        trigger_kind: entry.triggerKind,
+        status: entry.status,
+      });
+    },
+    async findInProgress(agentId) {
+      const key = tables.param('agent_runs', 'agent_id', agentId);
+      const rows = tables.select(
+        'agent_runs',
+        (r) => r.agent_id === key && (r.status === 'queued' || r.status === 'running')
+      );
+      const row = orderBy(rows, [(r) => r.created_at, 'desc'], [(r) => r.id, 'desc'])[0];
+      return row ? { id: row.id, status: row.status } : null;
+    },
+    async findForResume(runId, agentId, ownerSubject) {
+      const id = tables.param('agent_runs', 'id', runId);
+      const agent = tables.param('agent_runs', 'agent_id', agentId);
+      const row = tables.first(
+        'agent_runs',
+        (r) => r.id === id && r.agent_id === agent && r.owner_subject === ownerSubject
+      );
+      return row ? { status: row.status, error: row.error, errorKind: row.error_kind } : null;
+    },
+    async markResumed(runId, resume) {
+      const id = tables.param('agent_runs', 'id', runId);
+      const now = new Date();
+      return (
+        tables.update(
+          'agent_runs',
+          (r) => r.id === id && r.status === 'failed',
+          (r) => ({
+            status: 'queued',
+            error: null,
+            error_kind: null,
+            started_at: null,
+            finished_at: null,
+            waiting_until: null,
+            active_ms: 0,
+            cancel_requested_at: null,
+            cancel_requested_by: null,
+            resumed_at: now,
+            resumed_by: resume.resumedBy,
+            resume_count: r.resume_count + 1,
+            resume_guidance: resume.guidance,
+            resume_failure: resume.failure,
+            updated_at: now,
+          })
+        ).length > 0
+      );
+    },
+    async restoreFailure(runId, failure) {
+      const id = tables.param('agent_runs', 'id', runId);
+      const now = new Date();
+      tables.update('agent_runs', (r) => r.id === id && r.status === 'queued', {
+        status: 'failed',
+        error: failure.error,
+        error_kind: failure.errorKind,
+        finished_at: now,
+        updated_at: now,
+      });
+    },
+    async findRunLog(runId) {
+      const id = tables.param('agent_run_log', 'run_id', runId);
+      const row = tables.first('agent_run_log', (r) => r.run_id === id);
+      return row ? runLogFromRow(row) : null;
+    },
+    async markLogQueued(runId) {
+      const id = tables.param('agent_run_log', 'run_id', runId);
+      tables.update('agent_run_log', (r) => r.run_id === id, {
+        status: 'queued',
+        finished_at: null,
+      });
+    },
+    async recordOutcome(outcome) {
+      const id = tables.param('agent_run_log', 'run_id', outcome.runId);
+      const run = tables.first('agent_runs', (r) => r.id === id);
+      const steps = tables.select('agent_run_steps', (r) => r.run_id === id);
+      const lastFailed = outcome.failed
+        ? orderBy(
+            steps.filter((r) => r.status === 'failed'),
+            [(r) => r.step_index, 'desc'],
+            [(r) => r.iteration, 'desc'],
+            [(r) => r.attempt, 'desc'],
+            [(r) => r.id, 'desc']
+          )[0]
+        : undefined;
+      const sum = (pick: (r: (typeof steps)[number]) => number) =>
+        steps.reduce((total, r) => total + pick(r), 0);
+      const now = new Date();
+      const values = {
+        run_id: outcome.runId,
+        agent_id: outcome.agentId,
+        owner_subject: outcome.ownerSubject,
+        trigger_kind: run?.trigger_kind ?? 'manual',
+        status: outcome.status,
+        created_at: run?.created_at ?? now,
+        finished_at: now,
+        step_id: null,
+        step_name: null,
+        error_kind: outcome.errorKind,
+        outcome_code: lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null,
+        error: outcome.error,
+        input_tokens: sum((r) => r.input_tokens),
+        output_tokens: sum((r) => r.output_tokens),
+        tool_calls: sum((r) => r.tool_call_count),
+        attempts: steps.length,
+        steps_version: null,
+      };
+      const {
+        run_id: _runId,
+        agent_id: _agentId,
+        owner_subject: _owner,
+        trigger_kind: _kind,
+        created_at: _created,
+        ...update
+      } = values;
+      tables.upsert('agent_run_log', values, ['run_id'], update);
     },
   };
 }

@@ -5,7 +5,6 @@
  * 'chat', attributed to the person whose turn it was.
  */
 
-import { databaseForUnconvertedCode } from './unconverted-db';
 import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings } from '@renkei/settings';
 import { logger } from '@/lib/logger';
@@ -84,7 +83,7 @@ export function createTurnStore(scope: {
       await interruptSubagentRunsOfTurn(scope.turnId);
     },
     async recordUsage(usage, model, durationMs) {
-      await recordLlmCall(databaseForUnconvertedCode(), {
+      await recordLlmCall({
         subject: scope.subject,
         agentId: null,
         purpose: 'chat',

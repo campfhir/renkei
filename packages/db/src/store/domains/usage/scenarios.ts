@@ -473,4 +473,40 @@ export const usageScenarios: Scenario<DataStore>[] = [
       await store.usage.failureSignatures('ann', week, 1),
     ],
   },
+  {
+    method: 'usage.recordLlmCall',
+    name: 'a recorded call counts toward its run, by model',
+    fixture: {
+      agents: [{ id: '00000000-0000-4000-8000-140000000001', owner_subject: 'ann', name: 'A' }],
+      agent_runs: [
+        {
+          id: '00000000-0000-4000-8000-140000000002',
+          agent_id: '00000000-0000-4000-8000-140000000001',
+          owner_subject: 'ann',
+          trigger_kind: 'manual',
+        },
+      ],
+    },
+    run: async (store) => {
+      const runId = '00000000-0000-4000-8000-140000000002';
+      const call = {
+        subject: 'ann',
+        agentId: '00000000-0000-4000-8000-140000000001',
+        runId,
+        stepId: null,
+        purpose: 'run',
+        inputTokens: 120,
+        outputTokens: 30,
+        cacheReadInputTokens: 100,
+        cacheWriteInputTokens: null,
+        llmModelId: null,
+        provider: 'anthropic',
+        model: 'claude-x',
+        durationMs: 900,
+      };
+      await store.usage.recordLlmCall(call);
+      await store.usage.recordLlmCall({ ...call, inputTokens: 5, outputTokens: 1, model: 'other' });
+      return store.agentUsage.runTokensByModel(runId);
+    },
+  },
 ];

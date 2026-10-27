@@ -20,7 +20,6 @@
  * the draft in the builder like anything they typed themselves.
  */
 
-import { getDatabase } from '@renkei/db';
 import {
   BUILTIN_VARIABLES,
   INSTRUCTION_SECTIONS,
@@ -445,10 +444,7 @@ export async function draftAgentFromProse(
   const guardrails = options.guardrails?.trim() || null;
   const offerGuardrails = guardrails === null;
 
-  // The model roster is the agent-llm package's to read, from the database.
-  const db = getDatabase();
-  if (!db.ok) return { error: 'The database is unavailable.' };
-  const llmResult = await resolveAgentLlm(db.val, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) return { error: 'No model is configured for this organization yet.' };
   const llm = llmResult.val;
   const settings = await getOrgSettings();

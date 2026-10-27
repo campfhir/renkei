@@ -621,4 +621,88 @@ export const agentScenarios: Scenario<DataStore>[] = [
       }));
     },
   },
+  {
+    method: 'agents.addMemoryEntry',
+    name: 'a new entry reads back newest; a duplicate id is refused',
+    fixture: memories,
+    run: async (store) => {
+      await store.agents.addMemoryEntry({
+        id: id(56),
+        agentId: id(1),
+        content: 'sealed-new',
+        runId: null,
+      });
+      const again = await store.agents
+        .addMemoryEntry({ id: id(56), agentId: id(1), content: 'x', runId: null })
+        .then(
+          () => 'accepted',
+          (error: unknown) => refusal(error)
+        );
+      const slice = await store.agents.memorySlice(id(1), 10);
+      return { again, ids: slice.entries.map((e) => [e.id, e.content]) };
+    },
+  },
+  {
+    method: 'agents.saveMemorySummary',
+    name: 'replaces the one summary in place, or creates it',
+    fixture: memories,
+    run: async (store) => {
+      await store.agents.saveMemorySummary({ id: id(57), agentId: id(1), content: 'sum-2' });
+      await store.agents.saveMemorySummary({ id: id(58), agentId: id(2), content: 'first' });
+      const one = await store.agents.memorySlice(id(1), 10);
+      const two = await store.agents.memorySlice(id(2), 10);
+      return {
+        one: one.summary?.content,
+        two: two.summary?.content,
+        counts: [await store.agents.countMemory(id(1)), await store.agents.countMemory(id(2))],
+      };
+    },
+  },
+  {
+    method: 'agents.countMemory',
+    name: 'entries and the summary, per agent',
+    fixture: memories,
+    run: async (store) => [
+      await store.agents.countMemory(id(1)),
+      await store.agents.countMemory(id(2)),
+      await store.agents.countMemory(id(99)),
+    ],
+  },
+  {
+    method: 'agents.deleteMemorySummary',
+    name: 'the summary only; entries stay',
+    fixture: memories,
+    run: async (store) => [
+      await store.agents.deleteMemorySummary(id(1)),
+      await store.agents.deleteMemorySummary(id(1)),
+      await store.agents.countMemory(id(1)),
+    ],
+  },
+  {
+    method: 'agents.deleteMemoryEntries',
+    name: "this agent's entries only; the summary and other agents' ids stay",
+    fixture: memories,
+    run: async (store) => [
+      await store.agents.deleteMemoryEntries(id(1), [id(54), id(52), id(55), id(51), id(98)]),
+      await store.agents.deleteMemoryEntries(id(1), []),
+      await store.agents.countMemory(id(1)),
+      await store.agents.countMemory(id(2)),
+    ],
+  },
+  {
+    method: 'agents.recentNoteChunks',
+    name: 'newest dated first, bounded, members only',
+    fixture: {
+      ...notes,
+      knowledge_chunks: [
+        ...notes.knowledge_chunks,
+        { ...chunk(47, 'ann@example.test/n6', id(1), 'agent', 'undated'), source_at: null },
+      ],
+    },
+    run: async (store) => [
+      (await store.agents.recentNoteChunks(id(1), { ...noteScope, limit: 10 })).map((c) => c.refId),
+      (await store.agents.recentNoteChunks(id(1), { ...noteScope, limit: 2 })).map((c) => c.refId),
+      await store.agents.recentNoteChunks(id(3), { ...noteScope, limit: 10 }),
+    ],
+  },
 ];

@@ -14,8 +14,7 @@
  * than requiring a migration to seed them.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import webpush from 'web-push';
 import { encrypt, decrypt } from '@renkei/crypto';
 
@@ -56,14 +55,11 @@ let cached: VapidKeyPair | null = null;
  * subscribe time). Whichever insert actually lands, every process re-reads
  * the row rather than trusting what it generated locally.
  */
-export async function getVapidKeys(db: Kysely<DB>, encryptionKey: Buffer): Promise<VapidKeyPair> {
+export async function getVapidKeys(encryptionKey: Buffer): Promise<VapidKeyPair> {
   if (cached) return cached;
 
-  const existing = await db
-    .selectFrom('platform_settings')
-    .select('value')
-    .where('key', '=', SETTINGS_KEY)
-    .executeTakeFirst();
+  const settings = getDataStore().platformSettings;
+  const existing = await settings.get(SETTINGS_KEY);
 
   if (!existing) {
     const generated = webpush.generateVAPIDKeys();
@@ -71,20 +67,11 @@ export async function getVapidKeys(db: Kysely<DB>, encryptionKey: Buffer): Promi
       publicKey: generated.publicKey,
       encryptedPrivateKey: encrypt(generated.privateKey, encryptionKey),
     };
-    await db
-      .insertInto('platform_settings')
-      .values({ key: SETTINGS_KEY, value: JSON.stringify(stored) })
-      .onConflict((oc) => oc.column('key').doNothing())
-      .execute();
+    await settings.insertIfAbsent(SETTINGS_KEY, stored);
   }
 
-  const row = await db
-    .selectFrom('platform_settings')
-    .select('value')
-    .where('key', '=', SETTINGS_KEY)
-    .executeTakeFirstOrThrow(
-      () => new Error(`platform_settings.${SETTINGS_KEY} missing after insert`)
-    );
+  const row = await settings.get(SETTINGS_KEY);
+  if (!row) throw new Error(`platform_settings.${SETTINGS_KEY} missing after insert`);
 
   if (!isStoredVapidKeys(row.value)) {
     throw new Error(`platform_settings.${SETTINGS_KEY} is malformed`);

@@ -237,4 +237,34 @@ export interface AgentStore {
   memorySlice(agentId: string, maxEntries: number): Promise<AgentMemorySliceRecord>;
   /** Forget all of the agent's memory; returns how many rows went. */
   clearMemory(agentId: string): Promise<number>;
+  /** Add one memory entry; `content` arrives sealed. */
+  addMemoryEntry(entry: {
+    id: string;
+    agentId: string;
+    content: string;
+    runId: string | null;
+  }): Promise<void>;
+  /**
+   * Replace the agent's one rolling summary (sealed `content`), or create
+   * it with `id`; a replaced summary keeps its id and moves `updatedAt`.
+   */
+  saveMemorySummary(summary: { id: string; agentId: string; content: string }): Promise<void>;
+  /** How many entries the agent holds, and whether it has a summary. */
+  countMemory(agentId: string): Promise<{ entries: number; hasSummary: boolean }>;
+  /** Drop the summary only; returns how many rows went (0 or 1). */
+  deleteMemorySummary(agentId: string): Promise<number>;
+  /**
+   * Drop these entries of this agent (well-formed uuids only — the caller
+   * filters); returns the ids that went, sorted. Another agent's ids and
+   * the summary's id delete nothing.
+   */
+  deleteMemoryEntries(agentId: string, ids: readonly string[]): Promise<string[]>;
+  /**
+   * The agent's note chunks newest first by `sourceAt` (undated first, as
+   * Postgres's DESC puts nulls), ties by ref id, at most `limit`.
+   */
+  recentNoteChunks(
+    agentId: string,
+    options: { provider: string; scope: string; limit: number }
+  ): Promise<AgentNoteChunkRecord[]>;
 }

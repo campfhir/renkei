@@ -1,6 +1,12 @@
 import { like, orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
-import { grantSummaryFromRow, jsonbConcat, prefixPattern } from './record';
+import {
+  grantSummaryFromRow,
+  jsonbConcat,
+  prefixPattern,
+  sealedGrantFromRow,
+  sealedGrantValues,
+} from './record';
 import type { ProviderGrantStore } from './types';
 
 export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
@@ -61,6 +67,70 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
         accessTokens: tables.delete('oauth_access_tokens', (r) => r.subject === subject).length,
         refreshTokens: tables.delete('oauth_refresh_tokens', (r) => r.subject === subject).length,
       };
+    },
+    async findSealed(provider, accountId) {
+      const row = tables.first(
+        'provider_grants',
+        (r) => r.provider === provider && r.provider_account_id === accountId
+      );
+      return row ? sealedGrantFromRow(row) : null;
+    },
+    async upsertSealed(provider, grant) {
+      const now = new Date();
+      const values = sealedGrantValues(provider, grant, now);
+      tables.upsert('provider_grants', values, ['provider', 'provider_account_id'], (existing) => ({
+        encrypted_access_token: values.encrypted_access_token,
+        encrypted_refresh_token: grant.keepStoredRefreshToken
+          ? existing.encrypted_refresh_token
+          : values.encrypted_refresh_token,
+        expires_at: values.expires_at,
+        requested_scopes: values.requested_scopes,
+        granted_scopes: values.granted_scopes,
+        metadata: values.metadata,
+        updated_at: now,
+        subject: values.subject,
+      }));
+    },
+    async updateSealedTokens(provider, accountId, tokens) {
+      return tables.update(
+        'provider_grants',
+        (r) => r.provider === provider && r.provider_account_id === accountId,
+        {
+          encrypted_access_token: tokens.encryptedAccessToken,
+          encrypted_refresh_token: tokens.encryptedRefreshToken,
+          expires_at: tokens.expiresAt,
+          updated_at: new Date(),
+          ...(tokens.grantedScopes ? { granted_scopes: tokens.grantedScopes } : {}),
+        }
+      ).length;
+    },
+    async delete(provider, accountId) {
+      return tables.delete(
+        'provider_grants',
+        (r) => r.provider === provider && r.provider_account_id === accountId
+      ).length;
+    },
+    async acquireRefreshLock(provider, accountId, at) {
+      return (
+        tables.upsert(
+          'provider_refresh_locks',
+          { provider, account_id: accountId, locked_at: at },
+          ['provider', 'account_id']
+        ) !== undefined
+      );
+    },
+    async findRefreshLock(provider, accountId) {
+      const row = tables.first(
+        'provider_refresh_locks',
+        (r) => r.provider === provider && r.account_id === accountId
+      );
+      return row ? row.locked_at : null;
+    },
+    async releaseRefreshLock(provider, accountId) {
+      tables.delete(
+        'provider_refresh_locks',
+        (r) => r.provider === provider && r.account_id === accountId
+      );
     },
   };
 }

@@ -18,7 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, getDataStore, type AgentRecord } from '@renkei/db';
+import { getDataStore, type AgentRecord } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
@@ -135,12 +135,6 @@ export async function POST(
     }
   }
 
-  // Starting the run is @renkei/agents' own, which still takes the
-  // database handle.
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // A machine caller (API key, schedule, event, chain) never sees this —
   // those already run concurrently by design, serialized only by the
   // queue's ordering key. This is purely the "Run now" button's own
@@ -148,7 +142,7 @@ export async function POST(
   // noticing a run from a minute ago is still going, gets asked instead
   // of silently piling up a second run behind the first.
   if (triggerId === null && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -162,7 +156,7 @@ export async function POST(
     }
   }
 
-  const result = await createAgentRun(db, agentJobsQueue().producer, {
+  const result = await createAgentRun(agentJobsQueue().producer, {
     agentId,
     ownerSubject: agent.ownerSubject,
     definition: agentDefinitionOf(agent),

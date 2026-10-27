@@ -1034,7 +1034,6 @@ describeDb('worker-delegate', () => {
     });
     if (!instance.ok) throw new Error('instance not created');
     const sealed = await sealForSubject(
-      db,
       owner,
       JSON.stringify({ username: 'alice', password: 'pw-secret' })
     );

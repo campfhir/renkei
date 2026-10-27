@@ -69,7 +69,6 @@ export function notifyArtifactEvent(input: {
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (dbResult.ok && keyResult.ok) {
       void sendPush(
-        dbResult.val,
         input.recipientSubject,
         keyResult.val,
         {

@@ -21,8 +21,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { getOrgSettings } from '@renkei/settings';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
@@ -49,7 +48,6 @@ export type CreateAgentRunError =
   'AGENT_CYCLE' | 'CHAIN_TOO_DEEP' | 'DAILY_RUN_CAP' | 'DB_ERROR' | 'QUEUE_ERROR';
 
 export async function createAgentRun(
-  db: Kysely<DB>,
   producer: QueueProducer,
   input: CreateAgentRunInput
 ): Promise<Result<{ runId: string }, CreateAgentRunError>> {
@@ -71,17 +69,13 @@ export async function createAgentRun(
     });
   }
 
+  const runs = getDataStore().agentRuns;
   const countResult = await wrapAsync(
-    () =>
-      db
-        .selectFrom('agent_runs')
-        .select(({ fn }) => fn.countAll<string>().as('count'))
-        .where('created_at', '>', sql<Date>`NOW() - INTERVAL '24 hours'`)
-        .executeTakeFirst(),
+    () => runs.countCreatedSince(new Date(Date.now() - 24 * 60 * 60 * 1000)),
     'DB_ERROR' as const
   );
   if (!countResult.ok) return countResult;
-  if (Number(countResult.val?.count ?? 0) >= settings.agentMaxRunsPerDay) {
+  if (countResult.val >= settings.agentMaxRunsPerDay) {
     return err('DAILY_RUN_CAP' as const, {
       message: `This organization has reached its ${settings.agentMaxRunsPerDay} runs per day.`,
     });
@@ -90,24 +84,19 @@ export async function createAgentRun(
   const runId = randomUUID();
   const insertResult = await wrapAsync(
     () =>
-      db
-        .insertInto('agent_runs')
-        .values({
-          id: runId,
-          agent_id: input.agentId,
-          owner_subject: input.ownerSubject,
-          trigger_id: input.triggerId,
-          trigger_kind: input.triggerKind,
-          triggered_by_subject: input.triggeredBySubject ?? null,
-          parent_run_id: input.parentRunId ?? null,
-          lineage: JSON.stringify(lineage),
-          depth: lineage.length,
-          definition_snapshot: JSON.stringify(input.definition),
-          llm_model_id: input.llmModelId,
-          initial_state: input.initialState ? JSON.stringify(input.initialState) : null,
-          status: 'queued',
-        })
-        .execute(),
+      runs.createQueued({
+        id: runId,
+        agentId: input.agentId,
+        ownerSubject: input.ownerSubject,
+        triggerId: input.triggerId,
+        triggerKind: input.triggerKind,
+        triggeredBySubject: input.triggeredBySubject ?? null,
+        parentRunId: input.parentRunId ?? null,
+        lineage,
+        definitionSnapshot: input.definition,
+        llmModelId: input.llmModelId,
+        initialState: input.initialState ?? null,
+      }),
     'DB_ERROR' as const
   );
   if (!insertResult.ok) return insertResult;
@@ -125,10 +114,7 @@ export async function createAgentRun(
   if (!enqueueResult.ok) {
     // A queued row with no message would sit as 'queued' forever; better no
     // trace than a phantom. Best effort — the janitor also sweeps orphans.
-    await wrapAsync(
-      () => db.deleteFrom('agent_runs').where('id', '=', runId).execute(),
-      'DB_ERROR' as const
-    );
+    await wrapAsync(() => runs.deleteRun(runId), 'DB_ERROR' as const);
     return err('QUEUE_ERROR' as const);
   }
 
@@ -137,16 +123,13 @@ export async function createAgentRun(
   // posture; finalization upserts, so a missed insert still leaves a row.
   await wrapAsync(
     () =>
-      db
-        .insertInto('agent_run_log')
-        .values({
-          run_id: runId,
-          agent_id: input.agentId,
-          owner_subject: input.ownerSubject,
-          trigger_kind: input.triggerKind,
-          status: 'queued',
-        })
-        .execute(),
+      runs.logRunCreated({
+        runId,
+        agentId: input.agentId,
+        ownerSubject: input.ownerSubject,
+        triggerKind: input.triggerKind,
+        status: 'queued',
+      }),
     'DB_ERROR' as const
   );
 
@@ -163,17 +146,9 @@ export async function createAgentRun(
  * serialized only by the queue's ordering key (see `orderingKey` above).
  */
 export async function findInProgressRun(
-  db: Kysely<DB>,
   agentId: string
 ): Promise<{ id: string; status: string } | null> {
-  const row = await db
-    .selectFrom('agent_runs')
-    .select(['id', 'status'])
-    .where('agent_id', '=', agentId)
-    .where('status', 'in', ['queued', 'running'])
-    .orderBy('created_at', 'desc')
-    .executeTakeFirst();
-  return row ?? null;
+  return getDataStore().agentRuns.findInProgress(agentId);
 }
 
 /** The longest note an owner may attach to a resume. */
@@ -228,19 +203,12 @@ export interface ResumedAgentRun {
  * checkpoint. `active_ms` is cleared for a fresh time budget.
  */
 export async function resumeAgentRun(
-  db: Kysely<DB>,
   producer: QueueProducer,
   input: ResumeAgentRunInput
 ): Promise<Result<ResumedAgentRun, ResumeAgentRunError>> {
+  const runs = getDataStore().agentRuns;
   const runResult = await wrapAsync(
-    () =>
-      db
-        .selectFrom('agent_runs')
-        .select(['id', 'status', 'error', 'error_kind'])
-        .where('id', '=', input.runId)
-        .where('agent_id', '=', input.agentId)
-        .where('owner_subject', '=', input.ownerSubject)
-        .executeTakeFirst(),
+    () => runs.findForResume(input.runId, input.agentId, input.ownerSubject),
     'DB_ERROR' as const
   );
   if (!runResult.ok) return runResult;
@@ -256,35 +224,16 @@ export async function resumeAgentRun(
 
   const flipped = await wrapAsync(
     () =>
-      db
-        .updateTable('agent_runs')
-        .set({
-          status: 'queued',
-          error: null,
-          error_kind: null,
-          started_at: null,
-          finished_at: null,
-          waiting_until: null,
-          active_ms: 0,
-          cancel_requested_at: null,
-          cancel_requested_by: null,
-          resumed_at: sql`NOW()`,
-          resumed_by: input.resumedBySubject,
-          resume_count: sql`resume_count + 1`,
-          resume_guidance: guidance,
-          // Recorded for the failure story; the engine re-opens nothing by it.
-          resume_failure: run.error,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', input.runId)
-        // Optimistic on the status: a second click, or a janitor racing
-        // this, finds the row no longer 'failed' and changes nothing.
-        .where('status', '=', 'failed')
-        .executeTakeFirst(),
+      runs.markResumed(input.runId, {
+        resumedBy: input.resumedBySubject,
+        guidance,
+        // Recorded for the failure story; the engine re-opens nothing by it.
+        failure: run.error,
+      }),
     'DB_ERROR' as const
   );
   if (!flipped.ok) return flipped;
-  if (Number(flipped.val.numUpdatedRows ?? 0) === 0) {
+  if (!flipped.val) {
     return err('NOT_FAILED' as const, { message: 'This run was already resumed.' });
   }
 
@@ -299,19 +248,7 @@ export async function resumeAgentRun(
     // janitor failed it hours later, with the original error gone. Put
     // the failure back the way it was.
     await wrapAsync(
-      () =>
-        db
-          .updateTable('agent_runs')
-          .set({
-            status: 'failed',
-            error: run.error,
-            error_kind: run.error_kind,
-            finished_at: sql`NOW()`,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', input.runId)
-          .where('status', '=', 'queued')
-          .execute(),
+      () => runs.restoreFailure(input.runId, { error: run.error, errorKind: run.errorKind }),
       'DB_ERROR' as const
     );
     return err('QUEUE_ERROR' as const);
@@ -321,15 +258,7 @@ export async function resumeAgentRun(
   // finalizes it again; say it is back in flight so the usage page does
   // not count a run that is running as a failure meanwhile. Best effort,
   // like every write to the ledger.
-  await wrapAsync(
-    () =>
-      db
-        .updateTable('agent_run_log')
-        .set({ status: 'queued', finished_at: null })
-        .where('run_id', '=', input.runId)
-        .execute(),
-    'DB_ERROR' as const
-  );
+  await wrapAsync(() => runs.markLogQueued(input.runId), 'DB_ERROR' as const);
 
   return ok({ runId: input.runId });
 }
@@ -369,79 +298,22 @@ export interface RecordAgentRunOutcomeInput {
  * carried across every code path that can end a run.
  */
 export async function recordAgentRunOutcome(
-  db: Kysely<DB>,
   input: RecordAgentRunOutcomeInput
 ): Promise<Result<void, 'DB_ERROR'>> {
   const failed = input.status === 'failed';
-  const result = await wrapAsync(async () => {
-    const [run, spend, lastFailed] = await Promise.all([
-      db
-        .selectFrom('agent_runs')
-        .select(['trigger_kind', 'created_at'])
-        .where('id', '=', input.runId)
-        .executeTakeFirst(),
-      db
-        .selectFrom('agent_run_steps')
-        .select(({ fn }) => [
-          fn.sum<string>('input_tokens').as('input_tokens'),
-          fn.sum<string>('output_tokens').as('output_tokens'),
-          fn.sum<string>('tool_call_count').as('tool_calls'),
-          fn.countAll<string>().as('attempts'),
-        ])
-        .where('run_id', '=', input.runId)
-        .executeTakeFirst(),
-      failed
-        ? db
-            .selectFrom('agent_run_steps')
-            .select('outcome_code')
-            .where('run_id', '=', input.runId)
-            .where('status', '=', 'failed')
-            .orderBy('step_index', 'desc')
-            .orderBy('iteration', 'desc')
-            .orderBy('attempt', 'desc')
-            .executeTakeFirst()
-        : Promise.resolve(undefined),
-    ]);
-
-    // The log's step columns belong to the step model; a run has no
-    // steps, so they stay empty (the kind, code and message say why).
-    const stepId = null;
-    const stepName = null;
-    const errorKind = failed && input.errorKind ? input.errorKind.slice(0, 32) : null;
-    const outcomeCode = lastFailed?.outcome_code ? lastFailed.outcome_code.slice(0, 64) : null;
-    const error = failed && input.error ? input.error.slice(0, 2000) : null;
-    const inputTokens = Number(spend?.input_tokens ?? 0);
-    const outputTokens = Number(spend?.output_tokens ?? 0);
-    const toolCalls = Number(spend?.tool_calls ?? 0);
-    const attempts = Number(spend?.attempts ?? 0);
-    const stepsVersion = null;
-
-    await sql`
-      INSERT INTO agent_run_log (
-        run_id, agent_id, owner_subject, trigger_kind, status, created_at, finished_at,
-        step_id, step_name, error_kind, outcome_code, error,
-        input_tokens, output_tokens, tool_calls, attempts, steps_version
-      ) VALUES (
-        ${input.runId}, ${input.agentId}, ${input.ownerSubject},
-        ${run?.trigger_kind ?? 'manual'}, ${input.status}, ${run?.created_at ?? sql`NOW()`}, NOW(),
-        ${stepId}, ${stepName}, ${errorKind}, ${outcomeCode}, ${error},
-        ${inputTokens}, ${outputTokens}, ${toolCalls}, ${attempts}, ${stepsVersion}
-      )
-      ON CONFLICT (run_id) DO UPDATE SET
-        status = excluded.status,
-        finished_at = excluded.finished_at,
-        step_id = excluded.step_id,
-        step_name = excluded.step_name,
-        error_kind = excluded.error_kind,
-        outcome_code = excluded.outcome_code,
-        error = excluded.error,
-        input_tokens = excluded.input_tokens,
-        output_tokens = excluded.output_tokens,
-        tool_calls = excluded.tool_calls,
-        attempts = excluded.attempts,
-        steps_version = excluded.steps_version
-    `.execute(db);
-  }, 'DB_ERROR' as const);
+  const result = await wrapAsync(
+    () =>
+      getDataStore().agentRuns.recordOutcome({
+        runId: input.runId,
+        agentId: input.agentId,
+        ownerSubject: input.ownerSubject,
+        status: input.status,
+        errorKind: failed && input.errorKind ? input.errorKind.slice(0, 32) : null,
+        error: failed && input.error ? input.error.slice(0, 2000) : null,
+        failed,
+      }),
+    'DB_ERROR' as const
+  );
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });
   return ok(undefined);
 }
@@ -490,32 +362,26 @@ export interface LlmCallModel {
  * One row in the token ledger (migration 085). Skipped when both counts
  * are zero, like the counter tally; best effort, like everything here.
  */
-export async function recordLlmCall(
-  db: Kysely<DB>,
-  input: RecordLlmCallInput
-): Promise<Result<void, 'DB_ERROR'>> {
+export async function recordLlmCall(input: RecordLlmCallInput): Promise<Result<void, 'DB_ERROR'>> {
   if (input.inputTokens === 0 && input.outputTokens === 0) return ok(undefined);
   const result = await wrapAsync(
     () =>
-      db
-        .insertInto('llm_calls')
-        .values({
-          subject: input.subject,
-          agent_id: input.agentId,
-          run_id: input.runId ?? null,
-          step_id: uuidOrNull(input.stepId),
-          purpose: input.purpose,
-          input_tokens: input.inputTokens,
-          output_tokens: input.outputTokens,
-          cache_read_input_tokens: input.cacheReadInputTokens ?? null,
-          cache_write_input_tokens: input.cacheWriteInputTokens ?? null,
-          llm_model_id: input.model?.llmModelId ?? null,
-          provider: input.model?.provider ?? null,
-          model: input.model?.model ?? null,
-          duration_ms:
-            typeof input.durationMs === 'number' ? Math.max(0, Math.round(input.durationMs)) : null,
-        })
-        .execute(),
+      getDataStore().usage.recordLlmCall({
+        subject: input.subject,
+        agentId: input.agentId,
+        runId: input.runId ?? null,
+        stepId: uuidOrNull(input.stepId),
+        purpose: input.purpose,
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        cacheReadInputTokens: input.cacheReadInputTokens ?? null,
+        cacheWriteInputTokens: input.cacheWriteInputTokens ?? null,
+        llmModelId: input.model?.llmModelId ?? null,
+        provider: input.model?.provider ?? null,
+        model: input.model?.model ?? null,
+        durationMs:
+          typeof input.durationMs === 'number' ? Math.max(0, Math.round(input.durationMs)) : null,
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return err('DB_ERROR' as const, { cause: result.err });

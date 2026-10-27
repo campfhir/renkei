@@ -58,6 +58,12 @@ import { knowledgeChunks } from './knowledge-chunks';
 import { pendingSignins } from './pending-signins';
 import { webhookSubscriptions } from './webhook-subscriptions';
 import { uploadSlots } from './upload-slots';
+import { platformSettings } from './platform-settings';
+import { userKeys } from './user-keys';
+import { queues } from './queues';
+import { runTokens } from './run-tokens';
+import { knowledgeReindexRuns } from './knowledge-reindex-runs';
+import { contentWatches } from './content-watches';
 
 export const DOMAINS = {
   sessions,
@@ -114,4 +120,10 @@ export const DOMAINS = {
   pendingSignins,
   webhookSubscriptions,
   uploadSlots,
+  platformSettings,
+  userKeys,
+  queues,
+  runTokens,
+  knowledgeReindexRuns,
+  contentWatches,
 };

@@ -7,8 +7,6 @@
  * on the outside.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { openForSubject, sealForSubject, type SealError } from '@renkei/user-keys';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -18,11 +16,10 @@ export type SealCredentialsError = SealError;
 
 /** Seal the credential under the connecting person's own key. */
 export async function sealCredentialsForSubject(
-  db: Kysely<DB>,
   subject: string,
   credentials: ShareCredentials
 ): Promise<Result<string, SealCredentialsError>> {
-  return sealForSubject(db, subject, JSON.stringify(credentials));
+  return sealForSubject(subject, JSON.stringify(credentials));
 }
 
 /**
@@ -31,11 +28,10 @@ export async function sealCredentialsForSubject(
  * locked, which to a caller is simply "not usable right now".
  */
 export async function openCredentialsForSubject(
-  db: Kysely<DB>,
   subject: string,
   stored: string
 ): Promise<Result<ShareCredentials, CredentialError>> {
-  const opened = await openForSubject(db, subject, stored);
+  const opened = await openForSubject(subject, stored);
   if (!opened.ok) return err('DECRYPTION_ERROR' as const);
   let parsed: unknown;
   try {

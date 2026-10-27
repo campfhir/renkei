@@ -31,7 +31,7 @@ import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { vectorLiteral } from './embeddings';
 import type { EmbeddingProvider } from './embeddings';
-import { searchTextFragment } from './ingest';
+import { searchTextFragment } from './lexical-sql';
 import { titleOf, chunkContext, embeddingInput } from './context';
 import type { KeywordExtractor } from './keywords';
 

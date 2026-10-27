@@ -57,7 +57,6 @@ export function notifyChatShared(input: {
         const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
         if (keyResult.ok) {
           void sendPush(
-            dbResult.val,
             input.granteeSubject,
             keyResult.val,
             {

@@ -438,5 +438,88 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
         .executeTakeFirst();
       return Number(deleted.numDeletedRows ?? 0);
     },
+    async addMemoryEntry(entry) {
+      await db()
+        .insertInto('agent_memories')
+        .values({
+          id: entry.id,
+          agent_id: entry.agentId,
+          kind: 'entry',
+          content: entry.content,
+          run_id: entry.runId,
+        })
+        .execute();
+    },
+    async saveMemorySummary(summary) {
+      await db()
+        .insertInto('agent_memories')
+        .values({
+          id: summary.id,
+          agent_id: summary.agentId,
+          kind: 'summary',
+          content: summary.content,
+        })
+        .onConflict((oc) =>
+          // The partial unique index (agent_id WHERE kind='summary').
+          oc
+            .column('agent_id')
+            .where('kind', '=', 'summary')
+            .doUpdateSet({ content: summary.content, updated_at: sql`NOW()` })
+        )
+        .execute();
+    },
+    async countMemory(agentId) {
+      const rows = await db()
+        .selectFrom('agent_memories')
+        .select(['kind', ({ fn }) => fn.countAll<string>().as('count')])
+        .where('agent_id', '=', agentId)
+        .groupBy('kind')
+        .execute();
+      let entries = 0;
+      let hasSummary = false;
+      for (const row of rows) {
+        if (row.kind === 'summary') hasSummary = Number(row.count) > 0;
+        else entries += Number(row.count);
+      }
+      return { entries, hasSummary };
+    },
+    async deleteMemorySummary(agentId) {
+      const deleted = await db()
+        .deleteFrom('agent_memories')
+        .where('agent_id', '=', agentId)
+        .where('kind', '=', 'summary')
+        .executeTakeFirst();
+      return Number(deleted.numDeletedRows ?? 0);
+    },
+    async deleteMemoryEntries(agentId, ids) {
+      if (ids.length === 0) return [];
+      const rows = await db()
+        .deleteFrom('agent_memories')
+        .where('agent_id', '=', agentId)
+        .where('kind', '=', 'entry')
+        .where('id', 'in', [...ids])
+        .returning('id')
+        .execute();
+      return rows.map((row) => row.id).sort();
+    },
+    async recentNoteChunks(agentId, { provider, scope, limit }) {
+      const rows = await db()
+        .selectFrom('knowledge_chunks')
+        .select(['ref_id', 'metadata', 'content', 'keywords', 'source_at'])
+        .where('provider', '=', provider)
+        .where(sql<boolean>`metadata ->> 'agentId' = ${agentId}`)
+        .where(sql<boolean>`metadata ->> 'scope' = ${scope}`)
+        .orderBy('source_at', 'desc')
+        .orderBy('ref_id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({
+        refId: row.ref_id,
+        metadata: row.metadata,
+        content: row.content,
+        keywords: row.keywords,
+        sourceAt: row.source_at,
+      }));
+    },
   };
 }

@@ -40,7 +40,6 @@ import { resolveAgentLlm, type LlmToolDef, type ResolvedLlm } from '@renkei/agen
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { artifactCipher } from './artifact-access';
-import { databaseForUnconvertedCode } from './route-support';
 import {
   getAttachments,
   getAttachmentText,
@@ -146,7 +145,7 @@ export async function storeDigest(
  */
 async function resolveDigestLlm(): Promise<ResolvedLlm | null> {
   try {
-    const resolved = await resolveAgentLlm(databaseForUnconvertedCode(), null);
+    const resolved = await resolveAgentLlm(null);
     if (resolved.ok) return resolved.val;
     logger.debug('artifact digest skipped: {reason}', {
       component: 'chat/artifact-digest',
@@ -212,7 +211,7 @@ export async function digestText(input: {
       });
       return back('pending');
     }
-    await recordLlmCall(databaseForUnconvertedCode(), {
+    await recordLlmCall({
       subject: input.subject,
       agentId: null,
       purpose: 'artifact_digest',

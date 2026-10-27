@@ -328,7 +328,7 @@ export async function optimizeAgent(
   // The model roster is the agent-llm package's to read, from the database.
   const db = getDatabase();
   if (!db.ok) return { error: 'The database is unavailable.' };
-  const llmResult = await resolveAgentLlm(db.val, agent.llmModelId);
+  const llmResult = await resolveAgentLlm(agent.llmModelId);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };
   }

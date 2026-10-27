@@ -32,7 +32,6 @@ export async function POST(
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
 
   const optimization = await getOptimization(record.subject, optimizationId);
   if (!optimization) return NextResponse.json({ error: 'No such optimization' }, { status: 404 });
@@ -67,7 +66,7 @@ export async function POST(
     });
     // The pass's own spend, in the same ledger the page it serves reads —
     // attributed to the owner who asked, against the agent it was about.
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject: record.subject,
       agentId: optimization.agentId,
       purpose: 'optimize',

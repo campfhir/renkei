@@ -14,9 +14,8 @@
  * question involved.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
 /** pgvector cosine distance ≤ this counts as a near-duplicate (0.02 ⇒ ≥98% cosine similarity). */
@@ -45,32 +44,23 @@ export interface NearDuplicateScope {
 
 /**
  * Whether some OTHER already-indexed chunk in the same namespace is a
- * near-duplicate of the given embedding vector. `vector` is a pgvector
- * literal (see `@renkei/knowledge`'s `vectorLiteral`).
+ * near-duplicate of the given embedding vector.
  */
 export async function hasNearDuplicateChunk(
-  vector: string,
+  vector: readonly number[],
   scope: NearDuplicateScope
 ): Promise<Result<boolean, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const result = await wrapAsync(
     () =>
-      sql<{ distance: number }>`
-        SELECT (embedding <=> ${vector}::vector) AS distance
-        FROM knowledge_chunks
-        WHERE ref_id LIKE ${`${scope.refIdPrefix}%`}
-          AND ref_id <> ${scope.refId}
-          AND ref_id NOT LIKE ${`${scope.refId}#%`}
-          AND created_at >= NOW() - ${NEAR_DUPLICATE_LOOKBACK_DAYS} * INTERVAL '1 day'
-        ORDER BY distance
-        LIMIT 1
-      `.execute(dbResult.val),
+      getDataStore().knowledgeChunks.nearestDistance(vector, {
+        refIdPrefix: scope.refIdPrefix,
+        excludeRefId: scope.refId,
+        since: new Date(Date.now() - NEAR_DUPLICATE_LOOKBACK_DAYS * 24 * 60 * 60 * 1000),
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
 
-  const distance = result.val.rows[0]?.distance;
-  return ok(typeof distance === 'number' && distance <= NEAR_DUPLICATE_MAX_DISTANCE);
+  const distance = result.val;
+  return ok(distance !== null && distance <= NEAR_DUPLICATE_MAX_DISTANCE);
 }

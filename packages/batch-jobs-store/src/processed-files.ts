@@ -21,9 +21,7 @@
  * that opted out of the ledger (`skipProcessed: false`) call none of these.
  */
 
-import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 export interface ProcessedFileRow {
   contentHash: string;
@@ -51,47 +49,26 @@ function chunks<T>(values: T[]): T[][] {
 
 /** The ledger rows recorded at any of these paths, on this share. */
 export async function findProcessedByPath(
-  db: Kysely<DB>,
   shareId: string,
   paths: string[]
 ): Promise<Map<string, ProcessedFileRow>> {
   const found = new Map<string, ProcessedFileRow>();
   for (const chunk of chunks(paths)) {
     if (chunk.length === 0) continue;
-    const rows = await db
-      .selectFrom('batch_processed_files')
-      .select(['content_hash', 'path', 'size', 'modified_at'])
-      .where('share_id', '=', shareId)
-      .where('path', 'in', chunk)
-      .execute();
-    for (const row of rows) {
-      found.set(row.path, {
-        contentHash: row.content_hash,
-        path: row.path,
-        size: row.size,
-        modifiedAt: row.modified_at ? new Date(row.modified_at) : null,
-      });
-    }
+    const rows = await getDataStore().batchJobs.findProcessedByPath(shareId, chunk);
+    for (const row of rows) found.set(row.path, row);
   }
   return found;
 }
 
 /** Which of these content hashes the ledger already holds for this share. */
-export async function findProcessedHashes(
-  db: Kysely<DB>,
-  shareId: string,
-  hashes: string[]
-): Promise<Set<string>> {
+export async function findProcessedHashes(shareId: string, hashes: string[]): Promise<Set<string>> {
   const known = new Set<string>();
   for (const chunk of chunks([...new Set(hashes)])) {
     if (chunk.length === 0) continue;
-    const rows = await db
-      .selectFrom('batch_processed_files')
-      .select('content_hash')
-      .where('share_id', '=', shareId)
-      .where('content_hash', 'in', chunk)
-      .execute();
-    for (const row of rows) known.add(row.content_hash);
+    for (const hash of await getDataStore().batchJobs.findProcessedHashes(shareId, chunk)) {
+      known.add(hash);
+    }
   }
   return known;
 }
@@ -118,35 +95,10 @@ export function matchesProcessedStat(
 
 /** Record files as processed — one row per file, upserted on the hash. */
 export async function recordProcessedFiles(
-  db: Kysely<DB>,
   shareId: string,
   batchId: string,
   files: ProcessedFileInput[]
 ): Promise<void> {
   if (files.length === 0) return;
-  await db
-    .insertInto('batch_processed_files')
-    .values(
-      files.map((file) => ({
-        id: randomUUID(),
-        share_id: shareId,
-        content_hash: file.contentHash,
-        path: file.path,
-        size: file.size,
-        modified_at: file.modifiedAt,
-        batch_id: batchId,
-        document_key: file.documentKey ?? null,
-      }))
-    )
-    .onConflict((oc) =>
-      oc.columns(['share_id', 'content_hash']).doUpdateSet({
-        path: sql`excluded.path`,
-        size: sql`excluded.size`,
-        modified_at: sql`excluded.modified_at`,
-        batch_id: sql`excluded.batch_id`,
-        document_key: sql`excluded.document_key`,
-        processed_at: sql`NOW()`,
-      })
-    )
-    .execute();
+  await getDataStore().batchJobs.recordProcessedFiles(shareId, batchId, files);
 }

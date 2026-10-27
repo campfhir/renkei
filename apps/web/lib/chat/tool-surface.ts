@@ -25,7 +25,6 @@
  * connectors are on.
  */
 
-import { databaseForUnconvertedCode } from './unconverted-db';
 import type { LlmToolDef } from '@renkei/agent-llm';
 import { listServers, slugOfCapabilityKey } from '@renkei/connector-mcp';
 import { HttpMcpClient, mintRunToken, revokeRunToken, type McpClient } from '@renkei/mcp-client';
@@ -339,8 +338,7 @@ export async function resolveChatToolSurface(input: {
     };
   }
 
-  const db = databaseForUnconvertedCode();
-  const token = await mintRunToken(db, {
+  const token = await mintRunToken({
     subject: input.subject,
     agentId: null,
     ttlSeconds: input.ttlSeconds,
@@ -350,7 +348,7 @@ export async function resolveChatToolSurface(input: {
   const release = async () => {
     if (released) return;
     released = true;
-    await revokeRunToken(db, token);
+    await revokeRunToken(token);
   };
   const mcp = new HttpMcpClient(internalMcpEndpoint(), token, {
     clientName: 'renkei-chat',

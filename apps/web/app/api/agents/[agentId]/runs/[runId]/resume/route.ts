@@ -15,7 +15,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { findInProgressRun, resumeAgentRun } from '@renkei/agents/runs';
 import { getSessionFromRequest } from '@/lib/session';
@@ -58,16 +58,11 @@ export async function POST(
   });
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  // Resuming is @renkei/agents' own, which still takes the database handle.
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // The rerun route's guard, for the same reason: an event agent already
   // runs several at once by design; a scheduled/manual one is the case
   // where a second run in flight deserves a beat before proceeding.
   if (run.triggerKind !== 'event' && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -81,7 +76,7 @@ export async function POST(
     }
   }
 
-  const resumed = await resumeAgentRun(db, agentJobsQueue().producer, {
+  const resumed = await resumeAgentRun(agentJobsQueue().producer, {
     agentId,
     runId,
     ownerSubject: access.ownerSubject,

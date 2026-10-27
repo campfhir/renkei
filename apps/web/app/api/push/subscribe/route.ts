@@ -6,13 +6,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { saveSubscription } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -33,10 +30,7 @@ export async function POST(
     return NextResponse.json({ error: 'Expected p256dh and auth strings' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  await saveSubscription(dbResult.val, session.subject, {
+  await saveSubscription(session.subject, {
     endpoint: payload.endpoint,
     keys: { p256dh: keys.p256dh, auth: keys.auth },
   });

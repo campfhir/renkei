@@ -93,7 +93,6 @@ import {
   type SourceScope,
 } from './image-source';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
-import { databaseForUnconvertedCode } from './unconverted-db';
 import type { McpToolResult } from '@renkei/mcp-client';
 import type { ImageModelChoice } from './models';
 
@@ -175,9 +174,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
   const { models } = options;
   if (models.length === 0) return null;
   const generate = options.generate ?? callImagesApi;
-  const resolve =
-    options.resolve ??
-    ((modelConfigId: string) => resolveImageModel(databaseForUnconvertedCode(), modelConfigId));
+  const resolve = options.resolve ?? ((modelConfigId: string) => resolveImageModel(modelConfigId));
   const loadSource = options.loadSource ?? loadSourceImage;
 
   /**

@@ -62,7 +62,6 @@ import {
 } from '@renkei/agent-llm';
 import { resolveChatAccess } from './access';
 import { listMessages, type StoredMessage } from './messages';
-import { databaseForUnconvertedCode } from './unconverted-db';
 import { openText, sealText, type ContentCipher } from './content-crypto';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
@@ -486,7 +485,7 @@ export async function startCompactionTurn(input: {
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
 
-  const llmResult = await resolveAgentLlm(databaseForUnconvertedCode(), chat.llmModelId ?? null);
+  const llmResult = await resolveAgentLlm(chat.llmModelId ?? null);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),

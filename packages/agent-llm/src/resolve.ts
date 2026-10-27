@@ -12,8 +12,7 @@
  * minute to bite.
  */
 
-import { sql, type Kysely, type SqlBool } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type LlmModelConfigRecord } from '@renkei/db';
 import { decrypt, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -58,12 +57,6 @@ export function isImageModelSettings(settings: unknown): boolean {
   return imageSurfaceOf(settings) !== null;
 }
 
-/** `.where(chatModelsOnly)` — the SQL twin of !isImageModelSettings, for every query that picks a chat model. */
-export const chatModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') not in ('images', 'flux')`;
-
-/** `.where(imageModelsOnly)` — the rows that generate images. */
-export const imageModelsOnly = sql<SqlBool>`coalesce(settings->>'apiSurface', '') in ('images', 'flux')`;
-
 const CACHE_TTL_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
 
@@ -86,6 +79,19 @@ interface ModelRow {
   base_url: string | null;
   settings: unknown;
   encrypted_secrets: string | null;
+}
+
+/** The store's record in the shape the helpers below read. */
+function modelRowOf(record: LlmModelConfigRecord): ModelRow & { label: string } {
+  return {
+    id: record.id,
+    label: record.label,
+    provider: record.provider,
+    model: record.model,
+    base_url: record.baseUrl,
+    settings: record.settings,
+    encrypted_secrets: record.encryptedSecrets,
+  };
 }
 
 function settingsOf(row: ModelRow): {
@@ -178,7 +184,6 @@ function apiKeyOf(row: ModelRow): Result<string, ResolveLlmError> {
 }
 
 export async function resolveAgentLlm(
-  db: Kysely<DB>,
   agentModelConfigId: string | null
 ): Promise<Result<ResolvedLlm, ResolveLlmError>> {
   const cacheKey = agentModelConfigId ?? 'default';
@@ -186,22 +191,15 @@ export async function resolveAgentLlm(
   if (cached && cached.expiresAt > Date.now()) return ok(cached.value);
 
   const rowResult = await wrapAsync(async () => {
-    let query = db
-      .selectFrom('llm_model_configs')
-      .select(['id', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
-      .where('enabled', '=', true)
-      .where(chatModelsOnly);
-    query = agentModelConfigId
-      ? query.where('id', '=', agentModelConfigId)
-      : query.where('is_default', '=', sql<boolean>`true`);
-    return query.executeTakeFirst();
+    const record = await getDataStore().llmModels.findEnabledChatModel(agentModelConfigId);
+    return record ? modelRowOf(record) : null;
   }, 'DB_ERROR' as const);
   if (!rowResult.ok) return rowResult;
 
   // An override that no longer resolves falls back to the org default —
   // the agent should degrade to the org's model, not to nothing.
   if (!rowResult.val && agentModelConfigId) {
-    return resolveAgentLlm(db, null);
+    return resolveAgentLlm(null);
   }
   const row = rowResult.val;
   if (!row) {
@@ -268,17 +266,11 @@ function fluxOptionsOf(row: ModelRow): ImageModelConfig['fluxOptions'] {
 }
 
 export async function resolveImageModel(
-  db: Kysely<DB>,
   modelConfigId: string | null
 ): Promise<Result<ResolvedImageModel, ResolveLlmError>> {
   const rowResult = await wrapAsync(async () => {
-    let query = db
-      .selectFrom('llm_model_configs')
-      .select(['id', 'label', 'provider', 'model', 'base_url', 'settings', 'encrypted_secrets'])
-      .where('enabled', '=', true)
-      .where(imageModelsOnly);
-    if (modelConfigId) query = query.where('id', '=', modelConfigId);
-    return query.orderBy('label', 'asc').executeTakeFirst();
+    const record = await getDataStore().llmModels.findEnabledImageModel(modelConfigId);
+    return record ? modelRowOf(record) : null;
   }, 'DB_ERROR' as const);
   if (!rowResult.ok) return rowResult;
   const row = rowResult.val;

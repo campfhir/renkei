@@ -48,12 +48,13 @@ export {
 export {
   ingestChunk,
   upsertChunkRow,
-  searchTextFragment,
+  searchTextParts,
   postgresText,
   LEXICAL_CONFIG,
   type KnowledgeChunkInput,
 } from './ingest';
 
+export { searchTextFragment } from './lexical-sql';
 export { titleOf, chunkContext, embeddingInput } from './context';
 
 export {

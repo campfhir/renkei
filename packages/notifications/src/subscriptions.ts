@@ -4,9 +4,7 @@
  * than replacing it.
  */
 
-import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 export interface PushSubscriptionInput {
   endpoint: string;
@@ -24,53 +22,25 @@ export interface StoredPushSubscription {
  * rather than piling up duplicates that would each get their own push.
  */
 export async function saveSubscription(
-  db: Kysely<DB>,
   subject: string,
   subscription: PushSubscriptionInput
 ): Promise<void> {
-  await db
-    .insertInto('push_subscriptions')
-    .values({
-      id: randomUUID(),
-      subject,
-      endpoint: subscription.endpoint,
-      p256dh: subscription.keys.p256dh,
-      auth: subscription.keys.auth,
-    })
-    .onConflict((oc) =>
-      oc.columns(['endpoint']).doUpdateSet({
-        subject,
-        p256dh: subscription.keys.p256dh,
-        auth: subscription.keys.auth,
-      })
-    )
-    .execute();
+  await getDataStore().notifications.savePushSubscription(subject, {
+    endpoint: subscription.endpoint,
+    p256dh: subscription.keys.p256dh,
+    auth: subscription.keys.auth,
+  });
 }
 
 /** Scoped by subject too, structurally — a borrowed endpoint deletes nothing
  *  belonging to somebody else. */
-export async function deleteSubscription(
-  db: Kysely<DB>,
-  subject: string,
-  endpoint: string
-): Promise<void> {
-  await db
-    .deleteFrom('push_subscriptions')
-    .where('subject', '=', subject)
-    .where('endpoint', '=', endpoint)
-    .execute();
+export async function deleteSubscription(subject: string, endpoint: string): Promise<void> {
+  await getDataStore().notifications.deletePushSubscription(subject, endpoint);
 }
 
 /** Every device one person has opted in from, for fanning a send out. */
-export async function listSubscriptions(
-  db: Kysely<DB>,
-  subject: string
-): Promise<StoredPushSubscription[]> {
-  const rows = await db
-    .selectFrom('push_subscriptions')
-    .select(['endpoint', 'p256dh', 'auth'])
-    .where('subject', '=', subject)
-    .execute();
+export async function listSubscriptions(subject: string): Promise<StoredPushSubscription[]> {
+  const rows = await getDataStore().notifications.listPushSubscriptions(subject);
   return rows.map((row) => ({
     endpoint: row.endpoint,
     keys: { p256dh: row.p256dh, auth: row.auth },
@@ -79,12 +49,6 @@ export async function listSubscriptions(
 
 /** Drop a subscription the push service itself reports gone (404/410) — the
  *  browser revoked it, and no retry will ever land. */
-export async function deleteSubscriptionByEndpoint(
-  db: Kysely<DB>,
-  endpoint: string
-): Promise<void> {
-  await db
-    .deleteFrom('push_subscriptions')
-    .where('endpoint', '=', endpoint)
-    .execute();
+export async function deleteSubscriptionByEndpoint(endpoint: string): Promise<void> {
+  await getDataStore().notifications.deletePushSubscriptionByEndpoint(endpoint);
 }

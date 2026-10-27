@@ -25,7 +25,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase, getDataStore } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
@@ -80,12 +80,6 @@ export async function POST(
     }
   }
 
-  // Starting the run is @renkei/agents' own, which still takes the
-  // database handle.
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // Same guard as the invoke route, and the same carve-out: an event
   // agent already tolerates several runs going at once — that's the
   // normal shape of "a burst of messages each started one" — so
@@ -93,7 +87,7 @@ export async function POST(
   // (or manual, api, chained) run is the case someone reruns expecting
   // ONE thing to happen, so a second one already going is worth a beat.
   if (run.triggerKind !== 'event' && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -114,7 +108,7 @@ export async function POST(
       ? { ...run.initialState }
       : undefined;
 
-  const created = await createAgentRun(db, agentJobsQueue().producer, {
+  const created = await createAgentRun(agentJobsQueue().producer, {
     agentId,
     ownerSubject: agent.ownerSubject,
     definition: agentDefinitionOf(agent),

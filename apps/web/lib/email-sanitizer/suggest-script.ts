@@ -14,7 +14,6 @@
  * proposes, a person enables.
  */
 
-import { getDatabase } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
   runCleanerScript,
@@ -109,10 +108,7 @@ export async function suggestCleanerScript(
   }
   const instructions = rawInstructions.trim().slice(0, 2_000);
 
-  // The model roster is the agent-llm package's to read, from the database.
-  const db = getDatabase();
-  if (!db.ok) return { error: 'The database is unavailable.' };
-  const llmResult = await resolveAgentLlm(db.val, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

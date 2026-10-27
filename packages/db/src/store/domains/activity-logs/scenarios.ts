@@ -178,4 +178,59 @@ export const activityLogScenarios: Scenario<DataStore>[] = [
       await store.activityLogs.grantNamesByAccountIds([]),
     ],
   },
+  {
+    method: 'activityLogs.writer',
+    name: 'shipped records land with their attributes; below the level is dropped',
+    run: async (store) => {
+      const writer = store.activityLogs.writer({ level: 'info' });
+      const record = (minute: number, level: string, message: string, attrs = {}) => ({
+        level,
+        message,
+        template: message,
+        secureMessage: false,
+        attrs,
+        timestamp: at(minute),
+        application: 'worker',
+        version: '1.2.3',
+      });
+      await writer.write(
+        record(1, 'info', 'shipped one', {
+          accountId: 'acct-1',
+          count: 3,
+          ok: true,
+          when: at(0),
+          detail: { a: 1 },
+          none: null,
+        })
+      );
+      await writer.write(record(2, 'error', 'shipped two', { application: 'own-app' }));
+      await writer.write(record(3, 'debug', 'too chatty'));
+      await writer.flush?.();
+      await writer.close?.();
+      return store.activityLogs.search({
+        start: at(0).toISOString(),
+        end: at(10).toISOString(),
+        sort: 'asc',
+      });
+    },
+  },
+  {
+    method: 'activityLogs.shippingRegistrations',
+    name: 'set, replace, get and delete a shipper',
+    run: async (store) => {
+      const registrations = store.activityLogs.shippingRegistrations();
+      const registration = {
+        clientId: 'worker-1',
+        signingKeyJwk: { kty: 'EC', crv: 'P-256', x: 'x1', y: 'y1' },
+        algo: 'ecdh-p256+a256gcm+ecdsa-p256',
+        registeredAt: Date.UTC(2026, 0, 1),
+      };
+      await registrations.set(registration);
+      const first = await registrations.get('worker-1');
+      await registrations.set({ ...registration, signingKeyJwk: { kty: 'EC', x: 'x2' } });
+      const replaced = await registrations.get('worker-1');
+      await registrations.delete('worker-1');
+      return { first, replaced, gone: await registrations.get('worker-1') };
+    },
+  },
 ];

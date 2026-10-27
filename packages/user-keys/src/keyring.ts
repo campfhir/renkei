@@ -16,8 +16,7 @@
  * all: NOT_ENROLLED, until their next sign-in enrolls them.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { unwrapKey } from '@renkei/crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -66,24 +65,19 @@ export interface HeldRow {
   verifier: string | null;
 }
 
-export async function readKeyRow(
-  db: Kysely<DB>,
-  subject: string
-): Promise<HeldRow | null> {
-  const row = await db
-    .selectFrom('user_encryption_keys')
-    .select([
-      'version',
-      'mode',
-      'public_key',
-      'wrapped_private_key',
-      'wrapped_automation_key',
-      'enrolled_at',
-      'verifier',
-    ])
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  return row ?? null;
+export async function readKeyRow(subject: string): Promise<HeldRow | null> {
+  const row = await getDataStore().userKeys.findKeyRow(subject);
+  return row
+    ? {
+        version: row.version,
+        mode: row.mode,
+        public_key: row.publicKey,
+        wrapped_private_key: row.wrappedPrivateKey,
+        wrapped_automation_key: row.wrappedAutomationKey,
+        enrolled_at: row.enrolledAt,
+        verifier: row.verifier,
+      }
+    : null;
 }
 
 interface DelegationRow {
@@ -92,19 +86,13 @@ interface DelegationRow {
   sealed_key: string;
 }
 
-async function liveDelegationsFor(
-  db: Kysely<DB>,
-  subject: string,
-  instanceId: string
-): Promise<DelegationRow[]> {
-  return db
-    .selectFrom('key_delegations')
-    .select(['scope', 'session_id', 'sealed_key'])
-    .where('subject', '=', subject)
-    .where('instance_id', '=', instanceId)
-    .where('expires_at', '>', new Date())
-    .orderBy('created_at', 'desc')
-    .execute();
+async function liveDelegationsFor(subject: string, instanceId: string): Promise<DelegationRow[]> {
+  const rows = await getDataStore().userKeys.liveDelegations(subject, instanceId, new Date());
+  return rows.map((row) => ({
+    scope: row.scope,
+    session_id: row.sessionId,
+    sealed_key: row.sealedKey,
+  }));
 }
 
 /**
@@ -173,18 +161,15 @@ function ringFromAutomationKey(
  * automation delegation.
  */
 export async function getKeyRing(
-  db: Kysely<DB>,
   subject: string,
   need: 'any' | 'session' = 'any'
 ): Promise<Result<KeyRing, KeyError>> {
   const vault = keyVault();
   if (!vault) return err('NO_VAULT' as const);
-  const row = await readKeyRow(db, subject);
+  const row = await readKeyRow(subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
-  const delegations = usableDelegations(
-    await liveDelegationsFor(db, subject, vault.instanceId)
-  );
+  const delegations = usableDelegations(await liveDelegationsFor(subject, vault.instanceId));
   let sawAutomation: Buffer | null = null;
   for (const delegation of delegations) {
     const opened = vault.open(delegation.sealed_key);
@@ -210,14 +195,8 @@ export interface LiveInstance {
 }
 
 /** The delegate instances a browser should seal to right now. */
-export async function liveInstances(db: Kysely<DB>): Promise<LiveInstance[]> {
-  const rows = await db
-    .selectFrom('delegate_instances')
-    .select(['id', 'public_key'])
-    .where('heartbeat_at', '>', new Date(Date.now() - INSTANCE_LIVE_MS))
-    .orderBy('started_at', 'asc')
-    .execute();
-  return rows.map((row) => ({ id: row.id, publicKey: row.public_key }));
+export async function liveInstances(): Promise<LiveInstance[]> {
+  return getDataStore().userKeys.liveInstances(new Date(Date.now() - INSTANCE_LIVE_MS));
 }
 
 export interface DelegationStatus {
@@ -243,30 +222,19 @@ export interface DelegationStatus {
 
 /** What is delegated for a person, across the live instances — for the browser and the agents worker. */
 export async function delegationStatus(
-  db: Kysely<DB>,
   subject: string,
   sessionId?: string
 ): Promise<DelegationStatus> {
-  const row = await db
-    .selectFrom('user_encryption_keys')
-    .select([
-      'version',
-      'mode',
-      'public_key',
-      'wrapped_private_key',
-      'wrapped_automation_key',
-      'enrolled_at',
-      'verifier',
-    ])
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  const live = new Set((await liveInstances(db)).map((instance) => instance.id));
-  const delegations = await db
-    .selectFrom('key_delegations')
-    .select(['instance_id', 'scope', 'session_id', 'expires_at'])
-    .where('subject', '=', subject)
-    .where('expires_at', '>', new Date())
-    .execute();
+  const row = (await readKeyRow(subject)) ?? undefined;
+  const live = new Set((await liveInstances()).map((instance) => instance.id));
+  const delegations = (await getDataStore().userKeys.delegationsOf(subject, new Date())).map(
+    (delegation) => ({
+      instance_id: delegation.instanceId,
+      scope: delegation.scope,
+      session_id: delegation.sessionId,
+      expires_at: delegation.expiresAt,
+    })
+  );
   const session = new Set<string>();
   const thisSession = new Set<string>();
   const automation = new Set<string>();

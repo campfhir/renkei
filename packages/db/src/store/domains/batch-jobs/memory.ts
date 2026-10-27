@@ -144,5 +144,52 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
         options.limit || undefined
       ).map(itemFromRow);
     },
+    async findProcessedByPath(shareId, paths) {
+      if (paths.length === 0) return [];
+      const share = tables.param('batch_processed_files', 'share_id', shareId);
+      const wanted = new Set(paths);
+      const rows = tables.select(
+        'batch_processed_files',
+        (r) => r.share_id === share && wanted.has(r.path)
+      );
+      return orderBy(rows, [(r) => r.path], [(r) => r.id]).map((row) => ({
+        contentHash: row.content_hash,
+        path: row.path,
+        size: row.size,
+        modifiedAt: row.modified_at ? new Date(row.modified_at) : null,
+      }));
+    },
+    async findProcessedHashes(shareId, hashes) {
+      if (hashes.length === 0) return [];
+      const share = tables.param('batch_processed_files', 'share_id', shareId);
+      const wanted = new Set(hashes);
+      const rows = tables.select(
+        'batch_processed_files',
+        (r) => r.share_id === share && wanted.has(r.content_hash)
+      );
+      return orderBy(rows, [(r) => r.content_hash]).map((row) => row.content_hash);
+    },
+    async recordProcessedFiles(shareId, batchId, files) {
+      for (const file of files) {
+        const values = {
+          path: file.path,
+          size: file.size,
+          modified_at: file.modifiedAt,
+          batch_id: batchId,
+          document_key: file.documentKey ?? null,
+        };
+        tables.upsert(
+          'batch_processed_files',
+          {
+            id: globalThis.crypto.randomUUID(),
+            share_id: shareId,
+            content_hash: file.contentHash,
+            ...values,
+          },
+          ['share_id', 'content_hash'],
+          { ...values, processed_at: new Date() }
+        );
+      }
+    },
   };
 }

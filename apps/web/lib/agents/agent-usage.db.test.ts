@@ -37,14 +37,14 @@ maybe('token usage by model and by run', () => {
     const big = { provider: 'anthropic', model: 'claude-big', llmModelId: null };
     const small = { provider: 'openai', model: 'gpt-small', llmModelId: null };
     const base = { subject, agentId, runId, stepId };
-    await recordLlmCall(db, {
+    await recordLlmCall({
       ...base,
       purpose: 'run',
       inputTokens: 100,
       outputTokens: 10,
       model: big,
     });
-    await recordLlmCall(db, {
+    await recordLlmCall({
       ...base,
       purpose: 'run',
       // 1,100 read in total, 900 of them from the cache (a portion, per LlmUsage).
@@ -54,7 +54,7 @@ maybe('token usage by model and by run', () => {
       cacheWriteInputTokens: 40,
       model: big,
     });
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject,
       agentId,
       purpose: 'optimize',
@@ -63,7 +63,7 @@ maybe('token usage by model and by run', () => {
       model: small,
     });
     // A chat turn: the person's own spend, no agent.
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject,
       agentId: null,
       purpose: 'chat',
@@ -72,7 +72,7 @@ maybe('token usage by model and by run', () => {
       model: big,
     });
     // A row from before the model was recorded.
-    await recordLlmCall(db, { ...base, purpose: 'run', inputTokens: 7, outputTokens: 3 });
+    await recordLlmCall({ ...base, purpose: 'run', inputTokens: 7, outputTokens: 3 });
   });
 
   afterAll(async () => {

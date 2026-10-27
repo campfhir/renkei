@@ -6,20 +6,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { getVapidKeys } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
@@ -30,7 +24,7 @@ export async function GET(
   }
 
   try {
-    const { publicKey } = await getVapidKeys(dbResult.val, keyResult.val);
+    const { publicKey } = await getVapidKeys(keyResult.val);
     return NextResponse.json({ publicKey });
   } catch (error) {
     logger.error('could not read VAPID keys', {

@@ -56,7 +56,7 @@ describe('the draft job', () => {
     });
 
     expect(mintRunToken).toHaveBeenCalledTimes(1);
-    expect(mintRunToken.mock.calls[0][1]).toMatchObject({
+    expect(mintRunToken.mock.calls[0][0]).toMatchObject({
       subject: 'real-owner@example.com',
       // Drafting acts as the person; there is usually no agent yet.
       agentId: null,

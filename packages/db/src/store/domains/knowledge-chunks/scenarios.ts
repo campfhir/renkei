@@ -162,4 +162,132 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'knowledgeChunks.upsert',
+    name: 'insert, then replace in place by (provider, ref id)',
+    fixture,
+    run: async (store) => {
+      const base = {
+        provider: 'note',
+        refId: 'ann@example.com/n1',
+        metadata: { title: 'First' },
+        content: 'enc:new',
+        embedding: [1, 0, 0],
+        keywords: null,
+        search: { title: 'First', keywords: '', content: 'hello world', config: 'english' },
+        sourceAt: day(20),
+      };
+      await store.knowledgeChunks.upsert(base);
+      await store.knowledgeChunks.upsert({
+        ...base,
+        provider: 'jira',
+        refId: 'ENG-1',
+        metadata: { kind: 'issue', status: 'Closed' },
+        content: 'enc:replaced',
+        keywords: ['printer'],
+        sourceAt: day(21),
+      });
+      const recent = await store.knowledgeChunks.listRecent(none, 3);
+      return recent.map((row) => [
+        row.provider,
+        row.refId,
+        row.content,
+        row.metadata,
+        row.keywords,
+        row.sourceAt,
+      ]);
+    },
+  },
+  {
+    method: 'knowledgeChunks.deleteObject',
+    name: 'bare ref and its chunks, or a whole prefix; other providers untouched',
+    fixture,
+    run: async (store) => [
+      await store.knowledgeChunks.deleteObject('confluence', 'page-1'),
+      await store.knowledgeChunks.deleteObject('jira', 'ENG-1'),
+      await store.knowledgeChunks.deleteObject('microsoft', 'scott@example.com/', {
+        prefixOnly: true,
+      }),
+      await store.knowledgeChunks.deleteObject('jira', 'ENG_'),
+      refs(await store.knowledgeChunks.listRecent(none, 20)),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.deleteByMetadata',
+    name: 'by one metadata key, within a provider',
+    fixture,
+    run: async (store) => [
+      await store.knowledgeChunks.deleteByMetadata('confluence', 'space', 'Sales'),
+      await store.knowledgeChunks.deleteByMetadata('jira', 'version', '12'),
+      await store.knowledgeChunks.deleteByMetadata('jira', 'missing', 'x'),
+      refs(await store.knowledgeChunks.listRecent(none, 20)),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.deleteStaleScope',
+    name: 'the scope minus the current epoch; a missing epoch counts as stale',
+    fixture: {
+      knowledge_chunks: [
+        chunk(11, 'sharepoint', 'd/1', [1, 0, 0], { metadata: { scopeKey: 'd', epoch: 'e2' } }),
+        chunk(12, 'sharepoint', 'd/2', [1, 0, 0], { metadata: { scopeKey: 'd', epoch: 'e1' } }),
+        chunk(13, 'sharepoint', 'd/3', [1, 0, 0], { metadata: { scopeKey: 'd' } }),
+        chunk(14, 'sharepoint', 'x/1', [1, 0, 0], { metadata: { scopeKey: 'x', epoch: 'e1' } }),
+      ],
+    },
+    run: async (store) => [
+      await store.knowledgeChunks.deleteStaleScope(
+        'sharepoint',
+        { key: 'scopeKey', value: 'd' },
+        { key: 'epoch', value: 'e2' }
+      ),
+      refs(await store.knowledgeChunks.listRecent(none, 20)),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.objectMetadata',
+    name: 'bare refs and their chunks, by ref id',
+    fixture,
+    run: async (store) => [
+      await store.knowledgeChunks.objectMetadata('confluence', ['page-1']),
+      await store.knowledgeChunks.objectMetadata('jira', ['ENG-2', 'ENG-1', 'ENG-9']),
+      await store.knowledgeChunks.objectMetadata('jira', []),
+      await store.knowledgeChunks.objectMetadata('microsoft', ['ENG-1']),
+    ],
+  },
+  {
+    method: 'knowledgeChunks.nearestDistance',
+    name: 'nearest in the namespace, the object itself excluded',
+    fixture,
+    run: async (store) => {
+      const since = new Date(Date.UTC(2000, 0, 1));
+      const round = (value: number | null) =>
+        value === null ? null : Math.round(value * 1e6) / 1e6;
+      return [
+        round(
+          await store.knowledgeChunks.nearestDistance([0, 1, 0], {
+            refIdPrefix: 'scott@example.com/',
+            excludeRefId: 'scott@example.com/msg/1',
+            since,
+          })
+        ),
+        round(
+          await store.knowledgeChunks.nearestDistance([0, 1, 0], {
+            refIdPrefix: 'scott@example.com/',
+            excludeRefId: 'scott@example.com/other',
+            since,
+          })
+        ),
+        await store.knowledgeChunks.nearestDistance([0, 1, 0], {
+          refIdPrefix: 'nobody@example.com/',
+          excludeRefId: 'x',
+          since,
+        }),
+        await store.knowledgeChunks.nearestDistance([0, 1, 0], {
+          refIdPrefix: 'scott@example.com/',
+          excludeRefId: 'x',
+          since: new Date(Date.UTC(2999, 0, 1)),
+        }),
+      ];
+    },
+  },
 ];

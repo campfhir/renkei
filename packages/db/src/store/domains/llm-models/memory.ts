@@ -1,6 +1,6 @@
 import { orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
-import { isLabelConflict, llmModelFromRow, llmModelValues } from './record';
+import { isImageSurface, isLabelConflict, llmModelFromRow, llmModelValues } from './record';
 import type { LlmModelStore } from './types';
 
 export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
@@ -9,6 +9,25 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
       return orderBy(tables.select('llm_model_configs'), [(r) => r.label], [(r) => r.id]).map(
         llmModelFromRow
       );
+    },
+    async findEnabledChatModel(id) {
+      const key = id ? tables.param('llm_model_configs', 'id', id) : null;
+      const rows = tables.select(
+        'llm_model_configs',
+        (r) =>
+          r.enabled && !isImageSurface(r.settings) && (key === null ? r.is_default : r.id === key)
+      );
+      const row = orderBy(rows, [(r) => r.id])[0];
+      return row ? llmModelFromRow(row) : null;
+    },
+    async findEnabledImageModel(id) {
+      const key = id ? tables.param('llm_model_configs', 'id', id) : null;
+      const rows = tables.select(
+        'llm_model_configs',
+        (r) => r.enabled && isImageSurface(r.settings) && (key === null || r.id === key)
+      );
+      const row = orderBy(rows, [(r) => r.label], [(r) => r.id])[0];
+      return row ? llmModelFromRow(row) : null;
     },
     async get(id) {
       const key = tables.param('llm_model_configs', 'id', id);
