@@ -1,10 +1,11 @@
 /**
  * The data store seam, held statically across the repo: outside this
- * package, production code reads and writes through `getDataStore()` and
- * never sees the database — no handle, no Kysely, no SQL. The web app,
- * every worker, every shared package and their scripts are scanned; tests,
- * e2e specs and test-support modules may still seed and inspect Postgres
- * directly.
+ * package, code reads and writes through `getDataStore()` and never sees
+ * the database — no handle, no Kysely, no SQL. The web app, every worker,
+ * every shared package, their scripts, their tests and test-support are
+ * scanned: a test seeds its rows with the store methods the application
+ * writes them with. Only the e2e directories are left out (the Playwright
+ * suite drives a running deployment from outside it).
  *
  * A file that genuinely needs the pg handle goes in ALLOWED with the
  * reason, not around this test.
@@ -27,14 +28,13 @@ const FORBIDDEN: [RegExp, string][] = [
   [/\bsql`/, 'raw sql``'],
   [/\.(selectFrom|insertInto|updateTable|deleteFrom)\(/, 'a Kysely query builder'],
   [/\bcontext\.db\b/, 'the request context db getter'],
+  [/from\s+['"]@renkei\/db\/[^'"]+['"]/, 'a deep import past @renkei/db'],
 ];
 
-const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'e2e', 'test-support', 'coverage']);
+const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'e2e', 'coverage']);
 
 function isSource(name: string): boolean {
-  return (
-    /\.(ts|tsx|js|mjs|cjs)$/.test(name) && !/\.test\.tsx?$/.test(name) && !name.endsWith('.d.ts')
-  );
+  return /\.(ts|tsx|js|mjs|cjs)$/.test(name) && !name.endsWith('.d.ts');
 }
 
 function sources(dir: string): string[] {

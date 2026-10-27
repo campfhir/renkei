@@ -17,7 +17,7 @@
  * dropping the old key on a clean run.
  */
 
-import { closeDatabase } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import { rewrapAll, rewrapRingsFromEnv } from '../src/rewrap';
 
 function fail(message: string): never {
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
-    await closeDatabase();
+    await closeDataStore();
   }
 }
 

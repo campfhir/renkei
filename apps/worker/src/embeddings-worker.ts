@@ -16,7 +16,7 @@
  * is a pure queue consumer.
  */
 
-import { closeDatabase } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import { embeddingQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
 import { createEventLoop } from './loop';
@@ -68,7 +68,7 @@ async function main(): Promise<void> {
   await loop.run();
   logger.info('stopped', { component: 'worker/embeddings-loop' });
   await logger.flush();
-  await closeDatabase();
+  await closeDataStore();
 }
 
 function shutdown(signal: string): void {

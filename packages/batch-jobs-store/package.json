@@ -14,8 +14,7 @@
   },
   "dependencies": {
     "@renkei/db": "workspace:*",
-    "@renkei/queue": "workspace:*",
-    "kysely": "^0.29.7"
+    "@renkei/queue": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

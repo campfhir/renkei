@@ -1,6 +1,4 @@
-import { Kysely, PostgresDialect } from 'kysely';
-import { Pool } from 'pg';
-import { createPostgresDataStore, registerDataStore, resetDataStore, type DB } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import {
   createShare,
   deleteConnection,
@@ -18,8 +16,7 @@ import {
 } from './store';
 import type { ShareInput } from './store';
 
-const url = process.env.FILESHARE_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
-const describeLive = url ? describe : describe.skip;
+const describeLive = process.env.DATABASE_URL ? describe : describe.skip;
 
 const SUBJECT = 'itest-subject';
 
@@ -47,19 +44,8 @@ function connectionInput(username = 'alice') {
 }
 
 describeLive('file-share store (live database)', () => {
-  let db: Kysely<DB>;
-
-  beforeAll(async () => {
-    db = new Kysely<DB>({
-      dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
-    });
-    // The store functions read through the data store: this database's.
-    registerDataStore(createPostgresDataStore(() => db));
-  });
-
   afterAll(async () => {
-    resetDataStore();
-    await db.destroy();
+    await closeDataStore();
   });
 
   it('round-trips a share through create, update, list and get', async () => {
@@ -194,12 +180,16 @@ describeLive('file-share store (live database)', () => {
     if (!created.ok) return;
     await upsertConnection(created.val, SUBJECT, connectionInput());
 
+    expect(await getConnection(created.val, SUBJECT)).toMatchObject({
+      ok: true,
+      val: { username: 'alice' },
+    });
+
     await deleteShare(created.val);
-    const orphan = await db
-      .selectFrom('file_share_connections')
-      .select('share_id')
-      .where('share_id', '=', created.val)
-      .executeTakeFirst();
-    expect(orphan).toBeUndefined();
+    expect(await getConnection(created.val, SUBJECT)).toEqual({ ok: true, val: null });
+    expect(await readConnectionCiphertext(created.val, SUBJECT)).toMatchObject({
+      ok: true,
+      val: null,
+    });
   });
 });

@@ -26,7 +26,6 @@
     "@renkei/tool-outcomes": "workspace:*",
     "@renkei/user-prefs": "workspace:*",
     "@renkei/worker-loop": "workspace:*",
-    "kysely": "^0.29.7",
     "tsx": "^4.23.15"
   },
   "devDependencies": {

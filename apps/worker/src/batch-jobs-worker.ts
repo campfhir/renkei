@@ -11,7 +11,7 @@
  * serializing the huge batch's own items against each other.
  */
 
-import { closeDatabase } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { batchJobQueue } from './queue';
 import { handlerFor, registerHandler } from './handlers';
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   stopSweep();
   logger.info('stopped', { component: 'worker/batch-jobs-loop' });
   await logger.flush();
-  await closeDatabase();
+  await closeDataStore();
 }
 
 function shutdown(signal: string): void {

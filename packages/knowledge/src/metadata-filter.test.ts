@@ -1,24 +1,10 @@
 /**
  * The `key:value` half of knowledge search. What matters: bare words go to
- * the vector and filters go to SQL, a negated filter still matches rows
- * missing the key, and nothing a user types can reach the SQL as anything
- * but a parameter.
+ * the vector and filters go to SQL, with their grouping kept. (What a
+ * filter compiles to is the store's: packages/db's metadata-filter test.)
  */
 
-import { Kysely, PostgresDialect } from 'kysely';
-import { compileMetadataFilter, splitQuery, type MetadataFilterExpr } from './metadata-filter';
-
-/**
- * A Kysely that can COMPILE but never connects: turning a fragment into SQL
- * is a pure operation, and the pool is never touched by it.
- */
-/* eslint-disable-next-line @typescript-eslint/consistent-type-assertions --
-   The dialect wants a pg Pool it will never reach: compiling a fragment to
-   SQL is a pure operation and opens no connection. */
-const neverConnected = {} as never;
-const compiler = new Kysely<Record<string, never>>({
-  dialect: new PostgresDialect({ pool: neverConnected }),
-});
+import { splitQuery, type MetadataFilterExpr } from './metadata-filter';
 
 const filter = (
   key: string,
@@ -68,44 +54,6 @@ describe('splitQuery', () => {
   });
 });
 
-describe('compileMetadataFilter', () => {
-  const compiled = (expr: MetadataFilterExpr | null) => {
-    const built = compileMetadataFilter(expr);
-    return built ? built.compile(compiler) : null;
-  };
-
-  it('is null when there is nothing to narrow, so the plan is unchanged', () => {
-    expect(compileMetadataFilter(null)).toBeNull();
-    expect(compileMetadataFilter(bare('printers'))).toBeNull();
-    expect(compileMetadataFilter({ type: 'and', nodes: [] })).toBeNull();
-  });
-
-  it('parameterises the key and the value — never interpolates them', () => {
-    const built = compiled(filter('reporter', "Robert'); DROP TABLE knowledge_chunks;--"));
-    expect(built).not.toBeNull();
-    // Both sides arrive as bound parameters; the SQL text carries neither.
-    expect(built!.sql).not.toContain('DROP TABLE');
-    expect(built!.sql).not.toContain('reporter');
-    expect(built!.parameters).toContain('reporter');
-  });
-
-  it('matches a negated filter against rows that lack the key at all', () => {
-    const built = compiled(filter('from', 'evan', { negated: true }));
-    // "not from Evan" is true of a document with no sender; SQL NULL would
-    // otherwise quietly exclude it.
-    expect(built!.sql).toContain('IS NULL');
-  });
-
-  it('joins and/or as written', () => {
-    const built = compiled({
-      type: 'and',
-      nodes: [filter('space', 'Eng'), { type: 'or', nodes: [filter('a', '1'), filter('b', '2')] }],
-    });
-    expect(built!.sql).toContain(' AND ');
-    expect(built!.sql).toContain(' OR ');
-  });
-});
-
 describe('|| across the two halves', () => {
   it('supports || between filters, which is the common case', () => {
     const { filter: kept, unsupported } = splitQuery({
@@ -113,10 +61,10 @@ describe('|| across the two halves', () => {
       nodes: [filter('space', 'Eng'), filter('space', 'Ops')],
     });
     expect(unsupported).toBeNull();
-    expect(kept?.type).toBe('or');
-    const built = compileMetadataFilter(kept)!.compile(compiler);
-    expect(built.sql).toContain(' OR ');
-    expect(built.parameters).toEqual(expect.arrayContaining(['space', '%Eng%', '%Ops%']));
+    expect(kept).toEqual({
+      type: 'or',
+      nodes: [filter('space', 'Eng'), filter('space', 'Ops')],
+    });
   });
 
   it('keeps grouping: (a || b) && c', () => {
@@ -127,9 +75,13 @@ describe('|| across the two halves', () => {
         filter('ticket', 'ENG-787'),
       ],
     });
-    const built = compileMetadataFilter(kept)!.compile(compiler);
-    expect(built.sql).toContain(' OR ');
-    expect(built.sql).toContain(' AND ');
+    expect(kept).toEqual({
+      type: 'and',
+      nodes: [
+        { type: 'or', nodes: [filter('space', 'Eng'), filter('space', 'Ops')] },
+        filter('ticket', 'ENG-787'),
+      ],
+    });
   });
 
   it('refuses a word OR-ed with a filter instead of quietly ANDing it', () => {

@@ -1,10 +1,12 @@
 /**
- * Round-trips against a real Postgres (DATABASE_URL, or the suite skips
- * itself — the fileshares store test set this convention) plus a real
- * `web-push`-signed POST against a throwaway local HTTP server standing in
- * for a push service. Mocking `web-push` would only restate what it does;
- * this actually proves a send carries valid VAPID auth and Web Push
- * encryption headers to whatever endpoint a subscription names.
+ * The VAPID pair and a subscription round-trip through the data store (a
+ * fresh memory store: the VAPID row is a deployment-wide singleton, so a
+ * shared database may hold one this run's key cannot open; the store's
+ * Postgres side is held to the same answers by the differential suite),
+ * plus a real `web-push`-signed POST against a throwaway local HTTPS server
+ * standing in for a push service. Mocking `web-push` would only restate
+ * what it does; this actually proves a send carries valid VAPID auth and
+ * Web Push encryption headers to whatever endpoint a subscription names.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -13,40 +15,23 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createServer, Agent, type Server } from 'node:https';
-import { Kysely, PostgresDialect } from 'kysely';
-import { Pool } from 'pg';
-import { closeDatabase, type DB } from '@renkei/db';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { getVapidKeys, invalidateVapidKeyCache } from './vapid';
 import { saveSubscription, listSubscriptions, deleteSubscription } from './subscriptions';
 import { sendPush } from './send';
 
-const url = process.env.DATABASE_URL;
-const describeLive = url ? describe : describe.skip;
-
-describeLive('@renkei/notifications (live database)', () => {
-  let db: Kysely<DB>;
+describe('@renkei/notifications (store round-trips and a live push)', () => {
   const encryptionKey = randomBytes(32);
   const SUBJECT = 'itest-subject@example.com';
 
-  beforeAll(async () => {
-    db = new Kysely<DB>({
-      dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
-    });
-    // vapid_keys is a singleton row shared with everything else — an
-    // earlier run (or a real dev server pointed at the same database) can
-    // leave one behind that this run's own randomBytes(32) key can't
-    // decrypt. Clearing it first makes the suite self-contained regardless
-    // of what else has touched this database.
-    await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
-    await db.deleteFrom('push_subscriptions').where('subject', '=', SUBJECT).execute();
+  beforeAll(() => {
+    registerDataStore(createMemoryDataStore());
     invalidateVapidKeyCache();
   });
 
-  afterAll(async () => {
-    await db.deleteFrom('platform_settings').where('key', '=', 'vapid_keys').execute();
-    await db.deleteFrom('push_subscriptions').where('subject', '=', SUBJECT).execute();
-    await db.destroy();
-    await closeDatabase();
+  afterAll(() => {
+    resetDataStore();
+    invalidateVapidKeyCache();
   });
 
   it('mints a VAPID pair once and reuses it', async () => {

@@ -28,8 +28,6 @@ jest.mock('./limits', () => {
   };
 });
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { RawEntry, ShareSummary } from './types';
 import type { ShareBackend } from './backend';
 import {
@@ -58,7 +56,7 @@ const { openCredentialsForSubject } = jest.requireMock<{ openCredentialsForSubje
 const SHARE_ID = 'share-1';
 
 function deps(): ServiceDeps {
-  return { db: {} as Kysely<DB> };
+  return {};
 }
 
 function target() {

@@ -16,7 +16,7 @@
  *   pnpm --filter @renkei/worker-agents rekey-agent-memories --dry-run
  */
 
-import { closeDatabase, getDataStore } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { USER_ENVELOPE_PREFIX } from '@renkei/crypto';
 
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
           `(${[...new Set(skippedOwners.values())].join(', ')}) — run again after they sign in.`
         : '.')
   );
-  await closeDatabase();
+  await closeDataStore();
 }
 
 main().catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));

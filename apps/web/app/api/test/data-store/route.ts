@@ -7,11 +7,7 @@
  *                                    refuse what Postgres would refuse);
  *                                    `?replace=1` overwrites rows whose
  *                                    primary key is already there
- *   GET                              direct database calls made since the
- *                                    last reset: code that bypassed the
- *                                    data store (e2e/memory/crawl.spec.ts)
- *   DELETE { subject?: string,       forget one subject's rows, or everything;
- *            calls?: true }          `calls` clears only the call log
+ *   DELETE { subject?: string }      forget one subject's rows, or everything
  *
  * Answers 404 — as if it did not exist — unless this process runs on the
  * memory store (RENKEI_DATA_STORE=memory, see instrumentation.ts) AND the
@@ -22,13 +18,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  directDatabaseCalls,
-  getMemoryDataStore,
-  resetDirectDatabaseCalls,
-  type MemoryDataStore,
-  type TableRows,
-} from '@renkei/db';
+import { getMemoryDataStore, type MemoryDataStore, type TableRows } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 
 const TOKEN_HEADER = 'x-renkei-seed-token';
@@ -80,20 +70,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   return NextResponse.json({ seeded: true });
 }
 
-export async function GET(request: NextRequest): Promise<NextResponse> {
-  if (!authorizedStore(request)) return notFound();
-  return NextResponse.json({ directDatabaseCalls: directDatabaseCalls() });
-}
-
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const store = authorizedStore(request);
   if (!store) return notFound();
 
   const body: unknown = await request.json().catch(() => ({}));
-  if (isObject(body) && body.calls === true) {
-    resetDirectDatabaseCalls();
-    return NextResponse.json({ reset: 'calls' });
-  }
   const subject = isObject(body) && typeof body.subject === 'string' ? body.subject : undefined;
   store.reset(subject);
   return NextResponse.json({ reset: subject ?? 'all' });

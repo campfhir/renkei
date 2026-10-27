@@ -1,19 +1,13 @@
 /**
  * @renkei/db — the single Postgres instance, shared by every process.
  *
- * Exposes the Kysely client, the generated schema types, and the migration
- * API. Web routes, the worker, and the migrate CLI all come through here so
- * connection handling and schema knowledge live in exactly one place.
+ * Exposes the data store (getDataStore), the generated schema types and
+ * the migration status. The connection itself never leaves this package:
+ * the web app, the workers, their scripts and their tests read and write
+ * through the store, so connection handling, SQL and schema knowledge live
+ * in exactly one place.
  */
 
-export {
-  initDatabase,
-  getDatabase,
-  getPool,
-  closeDatabase,
-  directDatabaseCalls,
-  resetDirectDatabaseCalls,
-} from './client';
 export { describeActor, describeAccountActor, resetActorCache, type Actor } from './actors';
 export type * from './db.types';
 // The data store: the seam pages and routes read through instead of
@@ -36,7 +30,6 @@ export {
   type TableRows,
 } from './store/memory/tables';
 export { compareAsc, orderBy, like, page } from './store/memory/order';
-export { createPostgresDataStore } from './store/postgres';
 // The knowledge search's metadata filter, compiled by the store's Postgres
 // side and re-exported by @renkei/knowledge beside its query splitter.
 export {

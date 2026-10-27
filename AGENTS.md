@@ -81,19 +81,26 @@ Postgres returns them, in tables built from a schema generated off the
 migrations (`store/schema.generated.ts`): defaults, keys, foreign keys and
 cascades behave as they do in the database.
 
-- **Nothing outside `packages/db` touches the database: pages, API
-  routes, workers, shared packages and their scripts call
-  `getDataStore()`, never `getDatabase()`/`getPool()`.** On the memory store,
-  `getDatabase()` fails and records its caller; the crawl spec
-  (`apps/web/e2e/memory/crawl.spec.ts`) loads every page and fails when one
-  reached the database directly. A new page gets a `CrawlPage` entry in
-  `e2e/memory/crawl/<area>.ts`. Statically, `packages/db/src/store/seam.test.ts`
-  scans every app and package and fails any non-test module that calls
-  `getDatabase()`/`getPool()`, imports `kysely` or `pg`, or builds a
-  query; a file that truly needs the pg handle is listed there with its
-  reason. Tests, e2e specs and `test-support/` may still seed Postgres
-  directly. Logging and boot go through `createLogAdapter`,
-  `checkDataStore()` and `closeDataStore()` from `@renkei/db`.
+- **Nothing outside `packages/db` touches the database.** The connection
+  never leaves the package: `@renkei/db` exports no `getDatabase()`,
+  `getPool()` or handle-taking constructor. Pages, API routes, workers,
+  shared packages, their scripts and their tests all call
+  `getDataStore()`; logging and boot go through `createLogAdapter`,
+  `checkDataStore()` and `closeDataStore()`. Statically,
+  `packages/db/src/store/seam.test.ts` scans every app and package (only
+  `e2e/` directories aside) and fails any module that imports `kysely` or
+  `pg`, builds a query, or deep-imports past `@renkei/db`. The crawl spec
+  (`apps/web/e2e/memory/crawl.spec.ts`) loads every page on the memory
+  store alone; a new page gets a `CrawlPage` entry in
+  `e2e/memory/crawl/<area>.ts`.
+- **Tests seed with the application's own store methods**: create a row
+  the way the app creates it (`agents.create`, `chats.create`,
+  `agentRuns.createQueued` then `updateExecution`, …), read it back with
+  the store's reads, and use per-run unique ids and subjects instead of
+  cleaning up with deletes. `*.db.test.ts` and other database-gated tests
+  run the same calls against Postgres when `DATABASE_URL` is set. What
+  only the database can show (a trigger refusing an UPDATE) is tested in
+  `packages/db`, which keeps its own connection.
 - **A new or changed repository method** changes `types.ts`, `postgres.ts`
   and `memory.ts` together and gets at least one differential scenario in
   `scenarios.ts`: fixture rows plus a call, run against a freshly
@@ -102,8 +109,10 @@ cascades behave as they do in the database.
   order (ties broken explicitly); business rules (access, decryption,
   defaults) stay with the caller. See `packages/db/CLAUDE.md` for running it.
 - **Unit tests** register a memory store (`registerDataStore(createMemoryDataStore())`,
-  seed it with table rows, `resetDataStore()` after) instead of
-  hand-building Kysely chains — see `apps/web/lib/session.test.ts`.
+  `resetDataStore()` after) instead of hand-building Kysely chains — see
+  `apps/web/lib/session.test.ts`. Seeding it with table rows
+  (`store.seed({ table: [rows] })`) is for state the application cannot
+  write any more, such as a legacy row from before a migration.
 - **The memory UI suite** (`apps/web/playwright.memory.config.ts`, specs
   in `apps/web/e2e/memory/`) runs the web app with
   `RENKEI_DATA_STORE=memory` and no Postgres or delegate:

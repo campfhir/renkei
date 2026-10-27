@@ -23,8 +23,7 @@
     "@renkei/delegate-client": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
-    "@renkei/tool-outcomes": "workspace:*",
-    "kysely": "^0.29.7"
+    "@renkei/tool-outcomes": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

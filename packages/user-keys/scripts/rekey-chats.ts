@@ -32,7 +32,7 @@
  * opened and re-sealed, and under which key, is decided here.
  */
 
-import { closeDatabase, getDataStore, type LegacyEnvelopeCredentialTable } from '@renkei/db';
+import { closeDataStore, getDataStore, type LegacyEnvelopeCredentialTable } from '@renkei/db';
 import {
   contentEncryptionKey,
   decryptContent,
@@ -343,7 +343,7 @@ async function main(): Promise<void> {
 
   if (chats) await rekeyChats();
   if (connectors) await rekeyConnectors();
-  await closeDatabase();
+  await closeDataStore();
 }
 
 void main();

@@ -14,7 +14,7 @@
  *   DATABASE_URL=postgres://… pnpm encrypt-at-rest
  */
 
-import { closeDatabase, getDataStore } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { contentEncryptionKey, encryptContent, CONTENT_ENVELOPE_PREFIX } from '@renkei/crypto';
 
 const BATCH = 500;
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   }
 
   console.log(`Done — ${total} legacy chunk(s) encrypted.`);
-  await closeDatabase();
+  await closeDataStore();
 }
 
 void main();

@@ -16,57 +16,18 @@ import { memoryDataStoreRequested } from './store/selection';
 interface DbState {
   db: Kysely<DB> | null;
   pool: Pool | null;
-  /** On the memory store: each direct reach for the database, by calling frame. */
-  directCalls: Map<string, number>;
 }
 
 // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
 const globalForDb = globalThis as unknown as { __renkeiDbState?: DbState };
-const state: DbState = (globalForDb.__renkeiDbState ??= {
-  db: null,
-  pool: null,
-  directCalls: new Map(),
-});
-state.directCalls ??= new Map();
+const state: DbState = (globalForDb.__renkeiDbState ??= { db: null, pool: null });
 
-/**
- * Remember who reached for the database on the memory store: the first
- * three calling functions outside this module (bundled code has no useful
- * paths, but keeps names). The memory UI suite's crawl
- * (apps/web/e2e/memory/crawl.spec.ts) reads these through the test seed
- * route to prove a page renders from the data store alone.
- */
-function recordDirectCall(): void {
-  const callers = (new Error().stack ?? '')
-    .split('\n')
-    .slice(1)
-    .map((line) => line.trim())
-    .filter(
-      (frame) => !/recordDirectCall|initDatabase|getDatabase|getPool|node:internal/.test(frame)
-    )
-    .slice(0, 3)
-    .map((frame) => /^at (?:async )?([^\s(]+)/.exec(frame)?.[1] ?? frame);
-  const caller = callers.join(' < ') || 'unknown';
-  state.directCalls.set(caller, (state.directCalls.get(caller) ?? 0) + 1);
-}
-
-/** Direct database calls made on the memory store since the last reset, by caller. */
-export function directDatabaseCalls(): { caller: string; count: number }[] {
-  return [...state.directCalls].map(([caller, count]) => ({ caller, count }));
-}
-
-export function resetDirectDatabaseCalls(): void {
-  state.directCalls.clear();
-}
-
-export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
+function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   if (state.pool) return ok(state.pool);
 
   // A process on the in-memory data store (store/registry.ts) has no
-  // database by design: code that still queries directly sees it the way
-  // it sees an outage, never a real database the env happens to name.
+  // database by design, never a real database the env happens to name.
   if (memoryDataStoreRequested()) {
-    recordDirectCall();
     return err('DB_INIT_ERROR' as const);
   }
 
@@ -116,13 +77,6 @@ export function getDatabase(): Result<Kysely<DB>, 'DB_INIT_ERROR'> {
   } catch {
     return err('DB_INIT_ERROR' as const);
   }
-}
-
-export function getPool(): Result<Pool, 'DB_INIT_ERROR'> {
-  if (!state.pool) {
-    return initDatabase();
-  }
-  return ok(state.pool);
 }
 
 export async function closeDatabase(): Promise<void> {
