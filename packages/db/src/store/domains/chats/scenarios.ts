@@ -245,4 +245,35 @@ export const chatScenarios: Scenario<DataStore>[] = [
       return [set, (await store.chats.get(CHAT.annCode))?.workspaceId];
     },
   },
+  {
+    method: 'chats.listOwnedInProject',
+    name: "the owner's unarchived chats in one project, newest first, limited",
+    fixture: {
+      ...fixture,
+      chats: [
+        ...(fixture.chats ?? []),
+        {
+          id: uid(250),
+          owner_subject: ANN,
+          project_id: PROJECT.annChat,
+          created_at: at(1),
+          updated_at: at(20),
+        },
+        {
+          id: uid(251),
+          owner_subject: ANN,
+          project_id: PROJECT.annChat,
+          archived_at: at(25),
+          created_at: at(1),
+          updated_at: at(25),
+        },
+      ],
+    },
+    run: async (store) => [
+      ids(await store.chats.listOwnedInProject(ANN, PROJECT.annChat, 10)),
+      ids(await store.chats.listOwnedInProject(ANN, PROJECT.annChat, 1)),
+      ids(await store.chats.listOwnedInProject(BOB, PROJECT.annChat, 10)),
+      ids(await store.chats.listOwnedInProject(CAT, PROJECT.annChat, 10)),
+    ],
+  },
 ];

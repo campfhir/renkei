@@ -1,10 +1,12 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
+import { postgresChatTurnEngine } from './engine-postgres';
 import { messageFromRow, summaryFromRow, turnFromRow } from './record';
 import type { ChatThreadStore } from './types';
 
 export function postgresChatThreads(db: () => Kysely<DB>): ChatThreadStore {
   return {
+    ...postgresChatTurnEngine(db),
     async listMessages(chatId) {
       const rows = await db()
         .selectFrom('chat_messages')

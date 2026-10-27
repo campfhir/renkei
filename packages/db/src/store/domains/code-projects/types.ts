@@ -20,6 +20,35 @@ export interface SizeRequestRecord {
   createdAt: Date;
 }
 
+/** A file kind the code pane opened without a language server (code_language_gaps). */
+export interface CodeLanguageGapRecord {
+  extension: string;
+  language: string;
+  reason: string;
+  samplePath: string | null;
+  openCount: number;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+}
+
+/** Which pull request, and whose opt-in (pr_subscriptions' unique key). */
+export interface PrSubscriptionKey {
+  provider: string;
+  repoFullName: string;
+  prNumber: number;
+  subscriberSubject: string;
+}
+
+export interface PrSubscriptionRecord {
+  id: string;
+  projectId: string;
+  chatId: string | null;
+  watchPipelines: boolean;
+  autoFix: boolean;
+  autoMerge: boolean;
+  status: string;
+}
+
 export interface CodeProjectStore {
   /** The branch of each ready checkout among these ids (others, and empty branches, left out), by id. */
   workspaceBranches(workspaceIds: string[]): Promise<{ id: string; branch: string }[]>;
@@ -63,4 +92,31 @@ export interface CodeProjectStore {
     subject: string,
     provider: string
   ): Promise<{ requestedScopes: string[]; grantedScopes: string[] | null } | null>;
+  /** Count one more opening of a file kind with no language server (first one inserts). */
+  noteLanguageGap(gap: {
+    extension: string;
+    language: string;
+    reason: string;
+    samplePath: string;
+  }): Promise<void>;
+  /** Every gap, most opened first (ties by extension, language, reason). */
+  listLanguageGaps(): Promise<CodeLanguageGapRecord[]>;
+  /** The subscriber's active subscription to one pull request, or null. */
+  getActivePrSubscription(key: PrSubscriptionKey): Promise<PrSubscriptionRecord | null>;
+  /** The newest pipeline outcome observed for a subscription (ties by id), or null. */
+  latestPrPipelineEvent(
+    subscriptionId: string
+  ): Promise<{ conclusion: string; actionTaken: string | null; observedAt: Date } | null>;
+  /** Subscribe (or re-subscribe, replacing the settings) as active. */
+  savePrSubscription(
+    subscription: PrSubscriptionKey & {
+      projectId: string;
+      chatId: string | null;
+      watchPipelines: boolean;
+      autoFix: boolean;
+      autoMerge: boolean;
+    }
+  ): Promise<void>;
+  /** Cancel the subscriber's subscription to one pull request, if any. */
+  cancelPrSubscription(key: PrSubscriptionKey): Promise<void>;
 }

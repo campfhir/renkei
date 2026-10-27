@@ -130,5 +130,127 @@ export function postgresCodeProjects(db: () => Kysely<DB>): CodeProjectStore {
         ? { requestedScopes: row.requested_scopes, grantedScopes: row.granted_scopes }
         : null;
     },
+    async noteLanguageGap(gap) {
+      await db()
+        .insertInto('code_language_gaps')
+        .values({
+          extension: gap.extension,
+          language: gap.language,
+          reason: gap.reason,
+          sample_path: gap.samplePath,
+        })
+        .onConflict((conflict) =>
+          conflict.columns(['extension', 'language', 'reason']).doUpdateSet({
+            open_count: sql`code_language_gaps.open_count + 1`,
+            last_seen_at: sql`now()`,
+            sample_path: gap.samplePath,
+          })
+        )
+        .execute();
+    },
+    async listLanguageGaps() {
+      const rows = await db()
+        .selectFrom('code_language_gaps')
+        .selectAll()
+        .orderBy('open_count', 'desc')
+        .orderBy('extension')
+        .orderBy('language')
+        .orderBy('reason')
+        .execute();
+      return rows.map((row) => ({
+        extension: row.extension,
+        language: row.language,
+        reason: row.reason,
+        samplePath: row.sample_path,
+        openCount: row.open_count,
+        firstSeenAt: new Date(row.first_seen_at),
+        lastSeenAt: new Date(row.last_seen_at),
+      }));
+    },
+    async getActivePrSubscription(key) {
+      const row = await db()
+        .selectFrom('pr_subscriptions')
+        .select([
+          'id',
+          'project_id',
+          'chat_id',
+          'watch_pipelines',
+          'auto_fix',
+          'auto_merge',
+          'status',
+        ])
+        .where('provider', '=', key.provider)
+        .where('repo_full_name', '=', key.repoFullName)
+        .where('pr_number', '=', key.prNumber)
+        .where('subscriber_subject', '=', key.subscriberSubject)
+        .where('status', '=', 'active')
+        .executeTakeFirst();
+      return row
+        ? {
+            id: row.id,
+            projectId: row.project_id,
+            chatId: row.chat_id,
+            watchPipelines: row.watch_pipelines,
+            autoFix: row.auto_fix,
+            autoMerge: row.auto_merge,
+            status: row.status,
+          }
+        : null;
+    },
+    async latestPrPipelineEvent(subscriptionId) {
+      const row = await db()
+        .selectFrom('pr_pipeline_events')
+        .select(['conclusion', 'action_taken', 'observed_at'])
+        .where('subscription_id', '=', subscriptionId)
+        .orderBy('observed_at', 'desc')
+        .orderBy('id')
+        .executeTakeFirst();
+      return row
+        ? {
+            conclusion: row.conclusion,
+            actionTaken: row.action_taken,
+            observedAt: new Date(row.observed_at),
+          }
+        : null;
+    },
+    async savePrSubscription(subscription) {
+      await db()
+        .insertInto('pr_subscriptions')
+        .values({
+          project_id: subscription.projectId,
+          chat_id: subscription.chatId,
+          subscriber_subject: subscription.subscriberSubject,
+          provider: subscription.provider,
+          repo_full_name: subscription.repoFullName,
+          pr_number: subscription.prNumber,
+          watch_pipelines: subscription.watchPipelines,
+          auto_fix: subscription.autoFix,
+          auto_merge: subscription.autoMerge,
+          status: 'active',
+        })
+        .onConflict((oc) =>
+          oc
+            .columns(['provider', 'repo_full_name', 'pr_number', 'subscriber_subject'])
+            .doUpdateSet({
+              chat_id: subscription.chatId,
+              watch_pipelines: subscription.watchPipelines,
+              auto_fix: subscription.autoFix,
+              auto_merge: subscription.autoMerge,
+              status: 'active',
+              updated_at: new Date(),
+            })
+        )
+        .execute();
+    },
+    async cancelPrSubscription(key) {
+      await db()
+        .updateTable('pr_subscriptions')
+        .set({ status: 'canceled', updated_at: new Date() })
+        .where('provider', '=', key.provider)
+        .where('repo_full_name', '=', key.repoFullName)
+        .where('pr_number', '=', key.prNumber)
+        .where('subscriber_subject', '=', key.subscriberSubject)
+        .execute();
+    },
   };
 }

@@ -25,6 +25,19 @@ export function postgresChats(db: () => Kysely<DB>): ChatStore {
         .execute();
       return rows.map(chatFromRow);
     },
+    async listOwnedInProject(ownerSubject, projectId, limit) {
+      const rows = await db()
+        .selectFrom('chats')
+        .selectAll()
+        .where('project_id', '=', projectId)
+        .where('owner_subject', '=', ownerSubject)
+        .where('archived_at', 'is', null)
+        .orderBy('updated_at', 'desc')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map(chatFromRow);
+    },
     async hasOwnedBefore(ownerSubject, before) {
       const row = await db()
         .selectFrom('chats')

@@ -1,9 +1,45 @@
 import type { Selectable } from 'kysely';
-import type { ChatMessages, ChatSummaries, ChatTurns } from '../../../db.types';
-import type { ChatMessageRecord, ChatSummaryRecord, ChatTurnRecord } from './types';
+import type { ChatMessages, ChatSubagentRuns, ChatSummaries, ChatTurns } from '../../../db.types';
+import type {
+  ChatMessageRecord,
+  ChatSubagentRunRecord,
+  ChatSummaryRecord,
+  ChatTurnRecord,
+} from './types';
 
 const date = (value: Date | string) => new Date(value);
 const dateOrNull = (value: Date | string | null) => (value ? new Date(value) : null);
+
+export function subagentRunFromRow(
+  row: Selectable<ChatSubagentRuns> & { model_label: string | null }
+): ChatSubagentRunRecord {
+  return {
+    id: row.id,
+    chatId: row.chat_id,
+    turnId: row.turn_id,
+    toolUseId: row.tool_use_id,
+    status: row.status,
+    task: row.task,
+    instructions: row.instructions,
+    readOnly: row.read_only,
+    llmModelId: row.llm_model_id,
+    provider: row.provider,
+    model: row.model,
+    modelLabel: row.model_label,
+    steps: row.steps,
+    maxSteps: row.max_steps,
+    toolCalls: row.tool_calls,
+    lastTool: row.last_tool,
+    transcript: row.transcript,
+    report: row.report,
+    error: row.error,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    startedAt: date(row.started_at),
+    updatedAt: date(row.updated_at),
+    finishedAt: dateOrNull(row.finished_at),
+  };
+}
 
 export function messageFromRow(row: Selectable<ChatMessages>): ChatMessageRecord {
   return {

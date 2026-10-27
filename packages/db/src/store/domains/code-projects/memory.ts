@@ -1,7 +1,16 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import type { MemoryTables, Row } from '../../memory/tables';
 import { sizeRequestFromRow } from './postgres';
-import type { CodeProjectStore } from './types';
+import type { CodeProjectStore, PrSubscriptionKey } from './types';
+
+function matchesKey(row: Row<'pr_subscriptions'>, key: PrSubscriptionKey): boolean {
+  return (
+    row.provider === key.provider &&
+    row.repo_full_name === key.repoFullName &&
+    row.pr_number === key.prNumber &&
+    row.subscriber_subject === key.subscriberSubject
+  );
+}
 
 export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
   const requestsOf = (subject: string) =>
@@ -109,6 +118,100 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
       return row
         ? { requestedScopes: row.requested_scopes, grantedScopes: row.granted_scopes }
         : null;
+    },
+    async noteLanguageGap(gap) {
+      tables.upsert(
+        'code_language_gaps',
+        {
+          extension: gap.extension,
+          language: gap.language,
+          reason: gap.reason,
+          sample_path: gap.samplePath,
+        },
+        ['extension', 'language', 'reason'],
+        (existing) => ({
+          open_count: existing.open_count + 1,
+          last_seen_at: new Date(),
+          sample_path: gap.samplePath,
+        })
+      );
+    },
+    async listLanguageGaps() {
+      return orderBy(
+        tables.select('code_language_gaps'),
+        [(r) => r.open_count, 'desc'],
+        [(r) => r.extension],
+        [(r) => r.language],
+        [(r) => r.reason]
+      ).map((row) => ({
+        extension: row.extension,
+        language: row.language,
+        reason: row.reason,
+        samplePath: row.sample_path,
+        openCount: row.open_count,
+        firstSeenAt: row.first_seen_at,
+        lastSeenAt: row.last_seen_at,
+      }));
+    },
+    async getActivePrSubscription(key) {
+      const row = tables.first(
+        'pr_subscriptions',
+        (r) => matchesKey(r, key) && r.status === 'active'
+      );
+      return row
+        ? {
+            id: row.id,
+            projectId: row.project_id,
+            chatId: row.chat_id,
+            watchPipelines: row.watch_pipelines,
+            autoFix: row.auto_fix,
+            autoMerge: row.auto_merge,
+            status: row.status,
+          }
+        : null;
+    },
+    async latestPrPipelineEvent(subscriptionId) {
+      const id = tables.param('pr_pipeline_events', 'subscription_id', subscriptionId);
+      const [row] = orderBy(
+        tables.select('pr_pipeline_events', (r) => r.subscription_id === id),
+        [(r) => r.observed_at, 'desc'],
+        [(r) => r.id]
+      );
+      return row
+        ? { conclusion: row.conclusion, actionTaken: row.action_taken, observedAt: row.observed_at }
+        : null;
+    },
+    async savePrSubscription(subscription) {
+      tables.upsert(
+        'pr_subscriptions',
+        {
+          project_id: subscription.projectId,
+          chat_id: subscription.chatId,
+          subscriber_subject: subscription.subscriberSubject,
+          provider: subscription.provider,
+          repo_full_name: subscription.repoFullName,
+          pr_number: subscription.prNumber,
+          watch_pipelines: subscription.watchPipelines,
+          auto_fix: subscription.autoFix,
+          auto_merge: subscription.autoMerge,
+          status: 'active',
+        },
+        ['provider', 'repo_full_name', 'pr_number', 'subscriber_subject'],
+        {
+          chat_id: subscription.chatId,
+          watch_pipelines: subscription.watchPipelines,
+          auto_fix: subscription.autoFix,
+          auto_merge: subscription.autoMerge,
+          status: 'active',
+          updated_at: new Date(),
+        }
+      );
+    },
+    async cancelPrSubscription(key) {
+      tables.update('pr_subscriptions', (r) => matchesKey(r, key), {
+        status: 'canceled',
+        updated_at: new Date(),
+      });
     },
   };
 }

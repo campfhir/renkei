@@ -90,6 +90,57 @@ const fixture = {
 const omitNow = <T extends { decidedAt: Date | null } | null>(row: T) =>
   row && { ...row, decidedAt: row.decidedAt ? 'set' : null };
 
+const PR = { ann: uid(1201), bob: uid(1202), annOld: uid(1203) };
+const prKey = {
+  provider: 'github',
+  repoFullName: 'acme/beta',
+  prNumber: 7,
+  subscriberSubject: ANN,
+};
+const subscription = (id: string, extra: Record<string, unknown>) => ({
+  id,
+  project_id: PROJECT.annCode,
+  provider: 'github',
+  repo_full_name: 'acme/beta',
+  pr_number: 7,
+  subscriber_subject: ANN,
+  created_at: at(1),
+  updated_at: at(1),
+  ...extra,
+});
+const prFixture = {
+  ...chatWorld(),
+  pr_subscriptions: [
+    subscription(PR.ann, { chat_id: CHAT.annCode, auto_fix: true }),
+    subscription(PR.bob, { subscriber_subject: BOB, auto_merge: true }),
+    subscription(PR.annOld, { pr_number: 8, status: 'canceled', watch_pipelines: false }),
+  ],
+  pr_pipeline_events: [
+    {
+      id: uid(1302),
+      subscription_id: PR.ann,
+      provider_run_id: 'r2',
+      conclusion: 'failure',
+      observed_at: at(5),
+    },
+    {
+      id: uid(1301),
+      subscription_id: PR.ann,
+      provider_run_id: 'r1',
+      conclusion: 'success',
+      action_taken: 'merged',
+      observed_at: at(5),
+    },
+    {
+      id: uid(1303),
+      subscription_id: PR.ann,
+      provider_run_id: 'r0',
+      conclusion: 'failure',
+      observed_at: at(4),
+    },
+  ],
+};
+
 export const codeProjectScenarios: Scenario<DataStore>[] = [
   {
     method: 'codeProjects.workspaceBranches',
@@ -199,5 +250,129 @@ export const codeProjectScenarios: Scenario<DataStore>[] = [
       await store.codeProjects.providerGrantScopes(ANN, 'atlassian-bitbucket'),
       await store.codeProjects.providerGrantScopes(BOB, 'github'),
     ],
+  },
+  {
+    method: 'codeProjects.noteLanguageGap',
+    name: 'first opening inserts, later ones count up and move the sample',
+    fixture,
+    run: async (store) => {
+      const gap = { extension: '.zig', language: 'zig', reason: 'no_server' };
+      await store.codeProjects.noteLanguageGap({ ...gap, samplePath: 'a.zig' });
+      await store.codeProjects.noteLanguageGap({ ...gap, samplePath: 'b/c.zig' });
+      await store.codeProjects.noteLanguageGap({
+        ...gap,
+        reason: 'not_installed',
+        samplePath: 'd.zig',
+      });
+      return (await store.codeProjects.listLanguageGaps()).map((row) => ({
+        ...row,
+        firstSeenAt: undefined,
+        lastSeenAt: row.lastSeenAt.getTime() >= row.firstSeenAt.getTime(),
+      }));
+    },
+  },
+  {
+    method: 'codeProjects.listLanguageGaps',
+    name: 'most opened first, ties by extension, language, reason',
+    fixture: {
+      code_language_gaps: [
+        {
+          extension: '.b',
+          language: 'b',
+          reason: 'no_server',
+          open_count: 2,
+          first_seen_at: at(1),
+          last_seen_at: at(2),
+        },
+        {
+          extension: '.a',
+          language: 'z',
+          reason: 'no_server',
+          open_count: 2,
+          first_seen_at: at(1),
+          last_seen_at: at(3),
+        },
+        {
+          extension: '.a',
+          language: 'a',
+          reason: 'not_installed',
+          open_count: 2,
+          sample_path: 'x.a',
+          first_seen_at: at(1),
+          last_seen_at: at(4),
+        },
+        {
+          extension: '.c',
+          language: 'c',
+          reason: 'no_server',
+          open_count: 9,
+          first_seen_at: at(1),
+          last_seen_at: at(5),
+        },
+      ],
+    },
+    run: async (store) => [await store.codeProjects.listLanguageGaps()],
+  },
+  {
+    method: 'codeProjects.getActivePrSubscription',
+    name: "the subscriber's own active row only",
+    fixture: prFixture,
+    run: async (store) => [
+      await store.codeProjects.getActivePrSubscription(prKey),
+      await store.codeProjects.getActivePrSubscription({ ...prKey, subscriberSubject: BOB }),
+      await store.codeProjects.getActivePrSubscription({ ...prKey, prNumber: 8 }),
+      await store.codeProjects.getActivePrSubscription({ ...prKey, repoFullName: 'acme/other' }),
+    ],
+  },
+  {
+    method: 'codeProjects.latestPrPipelineEvent',
+    name: 'newest outcome, ties by id',
+    fixture: prFixture,
+    run: async (store) => [
+      await store.codeProjects.latestPrPipelineEvent(PR.ann),
+      await store.codeProjects.latestPrPipelineEvent(PR.bob),
+      await store.codeProjects.latestPrPipelineEvent(uid(999)),
+    ],
+  },
+  {
+    method: 'codeProjects.savePrSubscription',
+    name: 'insert, then replace and reactivate',
+    fixture: prFixture,
+    run: async (store) => {
+      const settings = {
+        projectId: PROJECT.annCode,
+        chatId: CHAT.annCode,
+        watchPipelines: true,
+        autoFix: true,
+        autoMerge: false,
+      };
+      await store.codeProjects.savePrSubscription({ ...prKey, prNumber: 9, ...settings });
+      await store.codeProjects.savePrSubscription({
+        ...prKey,
+        prNumber: 8,
+        ...settings,
+        chatId: null,
+        autoFix: false,
+        autoMerge: true,
+      });
+      const strip = (row: { id: string } | null) => row && { ...row, id: undefined };
+      return [
+        strip(await store.codeProjects.getActivePrSubscription({ ...prKey, prNumber: 9 })),
+        await store.codeProjects.getActivePrSubscription({ ...prKey, prNumber: 8 }),
+      ];
+    },
+  },
+  {
+    method: 'codeProjects.cancelPrSubscription',
+    name: "the subscriber's own only",
+    fixture: prFixture,
+    run: async (store) => {
+      await store.codeProjects.cancelPrSubscription(prKey);
+      await store.codeProjects.cancelPrSubscription({ ...prKey, prNumber: 404 });
+      return [
+        await store.codeProjects.getActivePrSubscription(prKey),
+        await store.codeProjects.getActivePrSubscription({ ...prKey, subscriberSubject: BOB }),
+      ];
+    },
   },
 ];

@@ -6,6 +6,10 @@
  * columns unparsed beyond what pg does.
  */
 
+import type { ChatTurnEngineStore } from './engine-types';
+
+export type * from './engine-types';
+
 export interface ChatMessageRecord {
   id: string;
   chatId: string;
@@ -62,7 +66,7 @@ export interface ChatSummaryRecord {
   createdAt: Date;
 }
 
-export interface ChatThreadStore {
+export interface ChatThreadStore extends ChatTurnEngineStore {
   /** A chat's messages in order (seq ascending). */
   listMessages(chatId: string): Promise<ChatMessageRecord[]>;
   /** One turn's messages in order (seq ascending, ties by id). */

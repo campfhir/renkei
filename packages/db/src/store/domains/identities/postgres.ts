@@ -28,6 +28,15 @@ export function postgresIdentities(db: () => Kysely<DB>): IdentityStore {
         .executeTakeFirst();
       return row ? record(row) : null;
     },
+    async findByEmail(email) {
+      const row = await db()
+        .selectFrom('identities')
+        .select(COLUMNS)
+        .where('email', '=', email)
+        .orderBy('subject')
+        .executeTakeFirst();
+      return row ? record(row) : null;
+    },
     async upsert({ subject, email, displayName, idpGroups }) {
       await db()
         .insertInto('identities')

@@ -48,6 +48,17 @@ export function postgresSessions(db: () => Kysely<DB>): SessionStore {
         .executeTakeFirst();
       return row?.last_used_at ? new Date(row.last_used_at) : null;
     },
+    async latestRolesOf(subject) {
+      const row = await db()
+        .selectFrom('sessions')
+        .select('roles')
+        .where('subject', '=', subject)
+        .orderBy('last_used_at', 'desc')
+        .orderBy('id')
+        .limit(1)
+        .executeTakeFirst();
+      return row ? row.roles : null;
+    },
     async deleteForSubject(subject) {
       const result = await db()
         .deleteFrom('sessions')

@@ -31,6 +31,15 @@ export function memoryChats(tables: MemoryTables): ChatStore {
       );
       return page(newestFirst(rows), options.limit).map(chatFromRow);
     },
+    async listOwnedInProject(ownerSubject, projectId, limit) {
+      const project = tables.param('chats', 'project_id', projectId);
+      const rows = tables.select(
+        'chats',
+        (r) =>
+          r.owner_subject === ownerSubject && r.project_id === project && r.archived_at === null
+      );
+      return page(newestFirst(rows), limit).map(chatFromRow);
+    },
     async hasOwnedBefore(ownerSubject, before) {
       return (
         tables.first(
