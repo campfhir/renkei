@@ -36,4 +36,24 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'userPreferences.delete',
+    name: 'one key of one person; reads as never set after',
+    fixture: {
+      user_preferences: [
+        { subject: 'ann', key: 'chatTools', value: JSON.stringify({ connectors: ['jira'] }) },
+        { subject: 'ann', key: 'theme', value: JSON.stringify({ mode: 'dark' }) },
+        { subject: 'bob', key: 'chatTools', value: JSON.stringify({ connectors: [] }) },
+      ],
+    },
+    run: async (store) => {
+      await store.userPreferences.delete('ann', 'chatTools');
+      await store.userPreferences.delete('ann', 'never');
+      return [
+        await store.userPreferences.get('ann', 'chatTools'),
+        await store.userPreferences.get('ann', 'theme'),
+        await store.userPreferences.get('bob', 'chatTools'),
+      ];
+    },
+  },
 ];

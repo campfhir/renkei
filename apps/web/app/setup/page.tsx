@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { SETUP_SECRET_ENV, SETUP_SECRET_MIN_CHARS, setupState } from '@/lib/setup-secret';
 import SetupForm from './setup-form';
 
@@ -14,19 +14,19 @@ export const dynamic = 'force-dynamic';
  * is configured the page is gone: sign-in is the way in.
  */
 export default async function SetupPage() {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const read = await wrapAsync(() => setupState(), 'DB_ERROR' as const);
+  if (!read.ok) {
     return (
       <main className="mx-auto max-w-lg px-4 py-16">
         <h1 className="mb-2 text-2xl font-bold">Renkei setup</h1>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          The database is not reachable. Check DATABASE_URL and that the migrations have run,
-          then reload this page.
+          The database is not reachable. Check DATABASE_URL and that the migrations have run, then
+          reload this page.
         </p>
       </main>
     );
   }
-  const state = await setupState(dbResult.val);
+  const state = read.val;
   if (state === 'configured') redirect('/');
 
   if (state !== 'ready') {
@@ -48,9 +48,9 @@ export default async function SetupPage() {
                 at least {SETUP_SECRET_MIN_CHARS} characters
               </>
             )}{' '}
-            (<code className="text-xs">openssl rand -base64 32</code> makes a good one), restart
-            the app and reload this page. The secret is only needed once; remove it after the
-            identity provider is saved.
+            (<code className="text-xs">openssl rand -base64 32</code> makes a good one), restart the
+            app and reload this page. The secret is only needed once; remove it after the identity
+            provider is saved.
           </p>
         </main>
       </div>

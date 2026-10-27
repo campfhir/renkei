@@ -47,6 +47,14 @@ import { artifacts } from './artifacts';
 import { codeProjects } from './code-projects';
 import { codeTemplates } from './code-templates';
 import { chatModels } from './chat-models';
+import { actionableItems } from './actionable-items';
+import { firstRun } from './first-run';
+import { oauthConsents } from './oauth-consents';
+import { deviceKeyRequests } from './device-key-requests';
+import { personalAccount } from './personal-account';
+import { activityLogs } from './activity-logs';
+import { toolUsage } from './tool-usage';
+import { knowledgeChunks } from './knowledge-chunks';
 
 export const DOMAINS = {
   sessions,
@@ -92,4 +100,12 @@ export const DOMAINS = {
   codeProjects,
   codeTemplates,
   chatModels,
+  actionableItems,
+  firstRun,
+  oauthConsents,
+  deviceKeyRequests,
+  personalAccount,
+  activityLogs,
+  toolUsage,
+  knowledgeChunks,
 };

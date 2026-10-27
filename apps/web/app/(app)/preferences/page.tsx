@@ -1,6 +1,6 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDatabase, getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
   CHAT_ARCHIVE_MAX_DAYS,
@@ -64,14 +64,9 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     // Just id + name: the overrides picker names an agent, it doesn't need
     // its steps — listAgents()'s full parse would be work spent for nothing
     // this page shows.
-    dbResult.ok
-      ? dbResult.val
-          .selectFrom('agents')
-          .select(['id', 'name'])
-          .where('owner_subject', '=', session.subject)
-          .orderBy('name')
-          .execute()
-      : [],
+    getDataStore()
+      .personalAccount.ownedAgentNames(session.subject)
+      .catch(() => []),
     listChatConnectors(session.subject),
     getDefaultChatTools(session.subject, { fresh: true }),
     getDefaultChatTools(session.subject, { fresh: true, kind: 'code' }),

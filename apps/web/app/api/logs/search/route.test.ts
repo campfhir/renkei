@@ -8,20 +8,14 @@
  * never from what they send, and naming another account is refused.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/log-encryption', () => ({ resolveLogCipher: () => ({ state: 'off' }) }));
 jest.mock('@/lib/log-query', () => ({ buildLogQueryOptions: jest.fn(() => ({})) }));
-jest.mock('@campfhir/bored-logs/adapters/psql', () => ({
-  PostgresAdapter: jest.fn().mockImplementation(() => ({
-    query: async () => ({ ok: true, val: [] }),
-  })),
-}));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
@@ -30,27 +24,41 @@ const { buildLogQueryOptions: mockBuildQuery } = jest.requireMock<{
 }>('@/lib/log-query');
 
 /**
- * `provider_grants` resolves to `grantRow`. Every `where(...)` on the grant
- * chain is recorded so a test can prove which identity was queried.
+ * A memory store holding an Atlassian grant per entry (subject → account),
+ * recording which subject the route asked about so a test can prove the
+ * identity came from the session.
  */
-function stubDb(grantRow: Record<string, unknown> | undefined) {
-  const grantFilters: Array<[string, string, unknown]> = [];
-  const chain = {
-    select: () => chain,
-    where(column: string, op: string, value: unknown) {
-      grantFilters.push([column, op, value]);
-      return chain;
+async function stubStore(grants: Record<string, string>) {
+  const asked: string[] = [];
+  const store = createMemoryDataStore();
+  await store.seed({
+    provider_grants: Object.entries(grants).map(([subject, account]) => ({
+      provider: 'atlassian',
+      provider_account_id: account,
+      subject,
+      client_id: 'c',
+      display_name: subject,
+      encrypted_access_token: 'e',
+      encrypted_refresh_token: 'e',
+      expires_at: new Date(Date.now() + 60_000),
+    })),
+  });
+  registerDataStore({
+    ...store,
+    personalAccount: {
+      ...store.personalAccount,
+      providerAccountId: (subject, provider) => {
+        asked.push(subject);
+        return store.personalAccount.providerAccountId(subject, provider);
+      },
     },
-    executeTakeFirst: async () => grantRow,
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: { selectFrom: () => chain } });
-  return { grantFilters };
+  });
+  return { asked };
 }
 
 function request(query = ''): NextRequest {
   return new NextRequest(`http://localhost/api/logs${query}`, { method: 'POST' });
 }
-
 
 function session(subject: string, roles: string[]) {
   return {
@@ -62,15 +70,18 @@ function session(subject: string, roles: string[]) {
 }
 
 describe('POST /api/logs/search', () => {
+  afterAll(() => {
+    resetDataStore();
+  });
+
   beforeEach(() => {
-    mockGetDatabase.mockReset();
     mockGetSession.mockReset();
     mockBuildQuery.mockClear();
   });
 
   it('rejects a caller with no session', async () => {
     mockGetSession.mockResolvedValue(null);
-    stubDb(undefined);
+    await stubStore({});
 
     const response = await POST(request('?accountId=acc-a'));
 
@@ -79,20 +90,22 @@ describe('POST /api/logs/search', () => {
 
   it('refuses a user asking for another account, having looked up by session subject', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    const { grantFilters } = stubDb({ provider_account_id: 'acc-a' });
+    const { asked } = await stubStore({
+      'user-a@example.com': 'acc-a',
+      'user-b@example.com': 'acc-b',
+    });
 
     const response = await POST(request('?accountId=acc-b'));
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({ error: 'Cannot view other users logs' });
     // Identity came from the session, never from the query string.
-    expect(grantFilters).toContainEqual(['subject', '=', 'user-a@example.com']);
-    expect(grantFilters).not.toContainEqual(['provider_account_id', '=', 'acc-b']);
+    expect(asked).toEqual(['user-a@example.com']);
   });
 
   it('serves a user their own logs, scoped to their own account', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    stubDb({ provider_account_id: 'acc-a' });
+    await stubStore({ 'user-a@example.com': 'acc-a' });
 
     const response = await POST(request('?accountId=acc-a'));
     const body = await response.json();
@@ -104,7 +117,7 @@ describe('POST /api/logs/search', () => {
 
   it('serves a user their own logs even with no accountId in the request', async () => {
     mockGetSession.mockResolvedValue(session('user-a@example.com', ['renkei-user']));
-    stubDb({ provider_account_id: 'acc-a' });
+    await stubStore({ 'user-a@example.com': 'acc-a' });
 
     const response = await POST(request());
 
@@ -114,7 +127,7 @@ describe('POST /api/logs/search', () => {
 
   it('refuses a user with no grant', async () => {
     mockGetSession.mockResolvedValue(session('user-c@example.com', ['renkei-user']));
-    stubDb(undefined);
+    await stubStore({ 'user-b@example.com': 'acc-b' });
 
     const response = await POST(request());
 

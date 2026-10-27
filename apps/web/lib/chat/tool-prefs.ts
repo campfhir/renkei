@@ -74,7 +74,7 @@ export async function getDefaultChatTools(
   );
   if (!rowResult.ok) return null;
 
-  const value = rowResult.val !== undefined ? parseToolConfig(rowResult.val) : null;
+  const value = rowResult.val === undefined ? null : parseToolConfig(rowResult.val);
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -85,16 +85,16 @@ export async function setDefaultChatTools(
   config: ChatToolConfig | null,
   kind: ToolDefaultsKind = 'chat'
 ): Promise<Result<void, 'DB_ERROR'>> {
+  const store = getDataStore().userPreferences;
   const key = prefKey(kind);
 
-  // Cleared is stored as null, which every read takes for "none saved".
-  const written = await wrapAsync(async () => {
-    await getDataStore().userPreferences.set(
-      subject,
-      key,
-      config === null ? null : toolConfigJson(config)
-    );
-  }, 'DB_ERROR' as const);
+  const written = await wrapAsync(
+    () =>
+      config === null
+        ? store.delete(subject, key)
+        : store.set(subject, key, toolConfigJson(config)),
+    'DB_ERROR' as const
+  );
   if (!written.ok) return written;
 
   cache.delete(cacheKey(subject, kind));

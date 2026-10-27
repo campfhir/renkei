@@ -30,7 +30,9 @@ test.beforeEach(({}, testInfo) => {
 for (const crawl of CRAWL_PAGES) {
   test(`${crawl.path} renders from the data store alone`, async ({ page, person, request }) => {
     // Replace: a reused server may still hold an earlier run's org-wide rows.
-    if (crawl.seed) await person.seed(crawl.seed(person.subject), { replace: true });
+    if (crawl.seed) {
+      await person.seed(crawl.seed(person.subject, person.sessionId), { replace: true });
+    }
     await request.delete(SEED_URL, { headers: HEADERS, data: { calls: true } });
 
     const response = await page.goto(crawl.path);

@@ -1,26 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
-import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
+import { getDataStore, type LogCipher } from '@renkei/db';
 import { resolveLogCipher } from '@/lib/log-encryption';
 import { buildLogQueryOptions } from '@/lib/log-query';
 import { getSessionFromRequest } from '@/lib/session';
+import type { LogRow } from '@campfhir/bored-logs';
 
 /** encrypt/decrypt for secure()-stored attributes, when LOG_ENCRYPTION_KEY is set. */
-function logCipherOptions() {
+function logCipher(): LogCipher | undefined {
   const resolved = resolveLogCipher();
   return resolved.state === 'on'
     ? { encrypt: resolved.cipher.encrypt, decrypt: resolved.cipher.decrypt }
-    : {};
+    : undefined;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+/** The query's rows, or the adapter's refusal as the message to send back. */
+async function runQuery(
+  options: ReturnType<typeof buildLogQueryOptions>
+): Promise<{ ok: true; logs: LogRow[] } | { ok: false; message: string }> {
+  try {
+    return { ok: true, logs: await getDataStore().activityLogs.search(options, logCipher()) };
+  } catch (error) {
+    console.error('Query error:', error);
+    return {
+      ok: false,
+      message: (error instanceof Error && error.message) || 'Failed to query logs',
+    };
   }
-  const db = dbResult.val;
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(request.url);
   const requestedAccountId = searchParams.get('accountId');
 
@@ -49,24 +57,18 @@ export async function POST(
     // Check for operator role
     if (userRoles.has('renkei-operator')) {
       // Operator can view all logs, filter by tenant only
-      const queryOptions = buildLogQueryOptions(userQuery);
-      const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
-      const result = await adapter.query(queryOptions);
+      const result = await runQuery(buildLogQueryOptions(userQuery));
 
       if (!result.ok) {
-        console.error('Query error:', result.err);
-        return NextResponse.json(
-          { error: result.err.message || 'Failed to query logs' },
-          { status: 500 }
-        );
+        return NextResponse.json({ error: result.message }, { status: 500 });
       }
 
       return NextResponse.json({
         role: 'renkei-operator',
         roles: [...userRoles],
         query: userQuery || undefined,
-        logs: result.val,
-        count: result.val.length,
+        logs: result.logs,
+        count: result.logs.length,
       });
     }
 
@@ -77,18 +79,14 @@ export async function POST(
       // has a grant" is not "the caller owns this account", so trusting a
       // client-supplied accountId let any user read another user's logs. A
       // grant with a NULL subject predates per-user ownership and never matches.
-      const grant = await db
-        .selectFrom('provider_grants')
-        .select('provider_account_id')
-        .where('provider', '=', 'atlassian')
-        .where('subject', '=', session.subject)
-        .executeTakeFirst();
+      const accountId = await getDataStore().personalAccount.providerAccountId(
+        session.subject,
+        'atlassian'
+      );
 
-      if (!grant) {
+      if (!accountId) {
         return NextResponse.json({ error: 'No Jira grant for this user' }, { status: 403 });
       }
-
-      const accountId = grant.provider_account_id;
 
       // A caller may still name an account, but only their own: serving their
       // own logs under someone else's id would misreport whose activity these are.
@@ -97,16 +95,10 @@ export async function POST(
       }
 
       // User can view only their own logs
-      const queryOptions = buildLogQueryOptions(userQuery, accountId);
-      const adapter = new PostgresAdapter({ db, ...logCipherOptions() });
-      const result = await adapter.query(queryOptions);
+      const result = await runQuery(buildLogQueryOptions(userQuery, accountId));
 
       if (!result.ok) {
-        console.error('Query error:', result.err);
-        return NextResponse.json(
-          { error: result.err.message || 'Failed to query logs' },
-          { status: 500 }
-        );
+        return NextResponse.json({ error: result.message }, { status: 500 });
       }
 
       return NextResponse.json({
@@ -114,8 +106,8 @@ export async function POST(
         roles: [...userRoles],
         accountId,
         query: userQuery || undefined,
-        logs: result.val,
-        count: result.val.length,
+        logs: result.logs,
+        count: result.logs.length,
       });
     }
 

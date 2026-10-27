@@ -13,5 +13,8 @@ export function memoryUserPreferences(tables: MemoryTables): UserPreferenceStore
         updated_at: new Date(),
       });
     },
+    async delete(subject, key) {
+      tables.delete('user_preferences', (r) => r.subject === subject && r.key === key);
+    },
   };
 }

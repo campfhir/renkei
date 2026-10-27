@@ -9,8 +9,8 @@ import type { TableRows } from '@renkei/db';
 export interface CrawlPage {
   /** The URL, ids filled in. */
   path: string;
-  /** Rows the page needs, given the crawl's signed-in person. */
-  seed?: (subject: string) => TableRows;
+  /** Rows the page needs, given the crawl's signed-in person (and their session, for rows bound to it). */
+  seed?: (subject: string, sessionId: string) => TableRows;
   /** Visible once the page rendered its data. */
   expectText?: string | RegExp;
 }

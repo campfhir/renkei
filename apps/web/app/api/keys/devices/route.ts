@@ -21,6 +21,7 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
+import { getDataStore } from '@renkei/db';
 import { deviceCodeOf } from '@renkei/crypto';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { pendingDevicesOf } from '@/lib/keys/status';
@@ -29,21 +30,18 @@ const REQUEST_TTL_MS = 10 * 60_000;
 /** The most asks a person may make in one TTL window, answered or not. */
 const MAX_ASKS_PER_WINDOW = 3;
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  return NextResponse.json({ requests: await pendingDevicesOf(db, session.subject) });
+  const { session } = ready.context;
+  return NextResponse.json({ requests: await pendingDevicesOf(session.subject) });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
+  const store = getDataStore().deviceKeyRequests;
   const body = await readJsonBody(request);
   const publicKey = typeof body.publicKey === 'string' ? body.publicKey : '';
   const raw = Buffer.from(publicKey, 'base64');
@@ -52,39 +50,26 @@ export async function POST(
   // Rows older than the window have nothing left to say; the ones inside it
   // are what the limit counts, whatever became of them.
   const windowStart = new Date(Date.now() - REQUEST_TTL_MS);
-  await db
-    .deleteFrom('device_key_requests')
-    .where('subject', '=', session.subject)
-    .where('created_at', '<', windowStart)
-    .execute();
-  const recent = await db
-    .selectFrom('device_key_requests')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('subject', '=', session.subject)
-    .where('created_at', '>=', windowStart)
-    .executeTakeFirst();
-  if (Number(recent?.count ?? 0) >= MAX_ASKS_PER_WINDOW) {
+  await store.purgeBefore(session.subject, windowStart);
+  const recent = await store.countSince(session.subject, windowStart);
+  if (recent >= MAX_ASKS_PER_WINDOW) {
     return jsonError(
       429,
       'rate_limited',
       'Too many requests for your key in the last ten minutes; wait before asking again.'
     );
   }
-  const inserted = await db
-    .insertInto('device_key_requests')
-    .values({
-      subject: session.subject,
-      public_key: publicKey,
-      code: deviceCodeOf(new Uint8Array(raw)),
-      asking_session_id: session.id,
-      user_agent: (request.headers.get('user-agent') ?? '').slice(0, 200) || null,
-      expires_at: new Date(Date.now() + REQUEST_TTL_MS),
-    })
-    .returning(['id', 'code', 'expires_at'])
-    .executeTakeFirstOrThrow();
+  const inserted = await store.create({
+    subject: session.subject,
+    publicKey,
+    code: deviceCodeOf(new Uint8Array(raw)),
+    askingSessionId: session.id,
+    userAgent: (request.headers.get('user-agent') ?? '').slice(0, 200) || null,
+    expiresAt: new Date(Date.now() + REQUEST_TTL_MS),
+  });
   return NextResponse.json({
     id: inserted.id,
     code: inserted.code,
-    expiresAt: inserted.expires_at.toISOString(),
+    expiresAt: inserted.expiresAt.toISOString(),
   });
 }

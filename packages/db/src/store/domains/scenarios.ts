@@ -45,6 +45,14 @@ import { artifactScenarios } from './artifacts/scenarios';
 import { codeProjectScenarios } from './code-projects/scenarios';
 import { codeTemplateScenarios } from './code-templates/scenarios';
 import { chatModelScenarios } from './chat-models/scenarios';
+import { actionableItemScenarios } from './actionable-items/scenarios';
+import { firstRunScenarios } from './first-run/scenarios';
+import { oauthConsentScenarios } from './oauth-consents/scenarios';
+import { deviceKeyRequestScenarios } from './device-key-requests/scenarios';
+import { personalAccountScenarios } from './personal-account/scenarios';
+import { activityLogScenarios } from './activity-logs/scenarios';
+import { toolUsageScenarios } from './tool-usage/scenarios';
+import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -90,4 +98,12 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...codeProjectScenarios,
   ...codeTemplateScenarios,
   ...chatModelScenarios,
+  ...actionableItemScenarios,
+  ...firstRunScenarios,
+  ...oauthConsentScenarios,
+  ...deviceKeyRequestScenarios,
+  ...personalAccountScenarios,
+  ...activityLogScenarios,
+  ...toolUsageScenarios,
+  ...knowledgeChunkScenarios,
 ];

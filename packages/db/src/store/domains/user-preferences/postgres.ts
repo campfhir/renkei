@@ -24,5 +24,12 @@ export function postgresUserPreferences(db: () => Kysely<DB>): UserPreferenceSto
         )
         .execute();
     },
+    async delete(subject, key) {
+      await db()
+        .deleteFrom('user_preferences')
+        .where('subject', '=', subject)
+        .where('key', '=', key)
+        .execute();
+    },
   };
 }

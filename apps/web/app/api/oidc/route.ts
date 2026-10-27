@@ -42,15 +42,7 @@ function isOidcConfigRequest(data: unknown): data is OidcConfigRequest {
   );
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     // First configuration needs the setup secret; every change after it is
     // operator-only.
@@ -62,7 +54,7 @@ export async function POST(
     // session here. Once a provider is set an operator can exist, and from
     // then on only they may change it -- which is the part that matters,
     // since whoever controls this record controls who becomes an operator.
-    const configured = await identityProviderConfigured(db);
+    const configured = await identityProviderConfigured();
     if (configured) {
       const denied = await requireOperator();
       if (denied) {
@@ -249,7 +241,6 @@ export async function POST(
 }
 
 export async function GET(): Promise<NextResponse> {
-
   // Operator-only, and checked before anything is read. This returns the
   // issuer, client id and the claim mapping that decides who becomes an
   // operator — which is the reconnaissance for an attack on POST, so it is

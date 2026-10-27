@@ -37,6 +37,13 @@ export {
 } from './store/memory/tables';
 export { compareAsc, orderBy, like, page } from './store/memory/order';
 export { createPostgresDataStore } from './store/postgres';
+// The knowledge search's metadata filter, compiled by the store's Postgres
+// side and re-exported by @renkei/knowledge beside its query splitter.
+export {
+  compileMetadataFilter,
+  metadataMatches,
+  FREE_TEXT_KEY,
+} from './store/domains/knowledge-chunks/metadata-filter';
 export type * from './store/types';
 // The migration runner is deliberately NOT re-exported here: it touches fs,
 // path and process.cwd, which poisons this barrel for Next's edge-runtime

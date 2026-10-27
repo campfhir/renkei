@@ -62,7 +62,7 @@ export async function POST(request: NextRequest): Promise<Response> {
       details: { instances: automation.length, days: days ?? null },
     });
   }
-  if (days) await setAutomationDays(db, session.subject, days);
+  if (days) await setAutomationDays(session.subject, days);
   await resumeRunsNeedingSignIn(agentJobsQueue().producer, session.subject);
   return NextResponse.json({ ok: true });
 }
