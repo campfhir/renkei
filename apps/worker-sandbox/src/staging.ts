@@ -9,8 +9,6 @@
  */
 
 import { Readable } from 'node:stream';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   DEFAULT_BATCH_FILE_TTL_MS,
   DEFAULT_BATCH_QUOTA_BYTES,
@@ -34,19 +32,18 @@ import * as store from './store';
  * ordinary scratch space.
  */
 export async function quotaHeadroom(
-  db: Kysely<DB>,
   target: store.SandboxTarget,
   batchId: string | null
 ): Promise<{ ok: true; remaining: number } | { ok: false; reason: 'too_many_files' }> {
   if (batchId) {
-    const count = await store.countFilesForBatch(db, batchId);
+    const count = await store.countFilesForBatch(batchId);
     if (count >= MAX_FILES_PER_BATCH) return { ok: false, reason: 'too_many_files' };
-    const total = await store.totalStagedBytesForBatch(db, batchId);
+    const total = await store.totalStagedBytesForBatch(batchId);
     return { ok: true, remaining: Math.max(0, DEFAULT_BATCH_QUOTA_BYTES - total) };
   }
-  const count = await store.countFiles(db, target);
+  const count = await store.countFiles(target);
   if (count >= MAX_FILES_PER_SUBJECT) return { ok: false, reason: 'too_many_files' };
-  const total = await store.totalStagedBytes(db, target);
+  const total = await store.totalStagedBytes(target);
   return { ok: true, remaining: Math.max(0, DEFAULT_SUBJECT_QUOTA_BYTES - total) };
 }
 
@@ -68,13 +65,12 @@ export type StageRefusal =
  * being loaded.
  */
 export async function stageBytes(
-  db: Kysely<DB>,
   target: store.SandboxTarget,
   input: { filename: string; contentType: string | null; source: string; sizeBytes: number },
   bytes: () => Promise<Buffer>,
   tenantMaxFileBytes: number
 ): Promise<{ ok: true; file: SandboxFileSummary } | StageRefusal> {
-  const headroom = await quotaHeadroom(db, target, null);
+  const headroom = await quotaHeadroom(target, null);
   if (!headroom.ok) return { ok: false, reason: 'too_many_files' };
   if (headroom.remaining <= 0) return { ok: false, reason: 'quota_full' };
   const cap = Math.min(tenantMaxFileBytes, DEFAULT_MAX_FILE_BYTES, headroom.remaining);
@@ -82,7 +78,7 @@ export async function stageBytes(
   const storageKey = disk.newStorageKey(target.subject);
   const written = await disk.writeStream(storageKey, Readable.from([await bytes()]), cap);
   if (!written.ok) return { ok: false, reason: 'too_large', cap };
-  const file = await store.insertFile(db, {
+  const file = await store.insertFile({
     ...target,
     filename: input.filename,
     contentType: input.contentType,

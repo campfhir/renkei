@@ -40,8 +40,6 @@ jest.mock('./store', () => ({
   deleteById: jest.fn(),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { openSecretFields } from '@renkei/connector-sandbox';
@@ -106,7 +104,6 @@ async function listen(deps: {
   browser: Scripted | null;
 }): Promise<{ server: Server; base: string }> {
   const created = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     maxFileBytes: async () => 1_048_576,
     browser: deps.browser as unknown as BrowserVerbs | null,
@@ -283,7 +280,7 @@ describe('screenshot staging', () => {
     });
     expect(response.status).toBe(200);
     expect(browser.screenshot).toHaveBeenCalledWith(TARGET, true);
-    const inserted = store.insertFile.mock.calls[0]?.[1] as Record<string, unknown>;
+    const inserted = store.insertFile.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(inserted).toMatchObject({
       ...TARGET,
       filename: 'home.png',
@@ -304,7 +301,7 @@ describe('screenshot staging', () => {
 
   it('names the file when the caller does not, and refuses a bad name', async () => {
     disk.writeStream.mockResolvedValue({ ok: true, sizeBytes: 3 });
-    store.insertFile.mockImplementation(async (_db: unknown, input: { filename: string }) => ({
+    store.insertFile.mockImplementation(async (input: { filename: string }) => ({
       id: 'shot-2',
       filename: input.filename,
       contentType: 'image/png',
@@ -348,12 +345,10 @@ describe('secrets', () => {
   beforeEach(() => {
     secretsStore.countSecrets.mockResolvedValue(0);
     secretsStore.getSecretByName.mockResolvedValue(undefined);
-    secretsStore.insertSecret.mockImplementation(
-      async (_db: unknown, input: { sealed: string }) => ({
-        ...ROW,
-        sealed: input.sealed,
-      })
-    );
+    secretsStore.insertSecret.mockImplementation(async (input: { sealed: string }) => ({
+      ...ROW,
+      sealed: input.sealed,
+    }));
   });
 
   it('creates a secret sealed under a generated passphrase, returned once, and unlocks it', async () => {
@@ -383,7 +378,7 @@ describe('secrets', () => {
     });
     expect(body.secret.unlockedUntil).not.toBeNull();
     expect(body.passphrase).toMatch(/^[a-z2-9]{5}(-[a-z2-9]{5}){4}$/);
-    const inserted = secretsStore.insertSecret.mock.calls[0]?.[1] as {
+    const inserted = secretsStore.insertSecret.mock.calls[0]?.[0] as {
       sealed: string;
       fields: string[];
     };

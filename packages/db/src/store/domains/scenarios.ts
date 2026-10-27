@@ -66,6 +66,13 @@ import { mailBulkJobScenarios } from './mail-bulk-jobs/scenarios';
 import { webexSentMessageScenarios } from './webex-sent-messages/scenarios';
 import { toolSurfaceScenarios } from './tool-surface/scenarios';
 import { contentWatchScenarios } from './content-watches/scenarios';
+import { sandboxFileScenarios } from './sandbox-files/scenarios';
+import { sandboxWorkspaceScenarios } from './sandbox-workspaces/scenarios';
+import { sandboxSecretScenarios } from './sandbox-secrets/scenarios';
+import { sandboxServiceScenarios } from './sandbox-services/scenarios';
+import { codeServiceImageRuleScenarios } from './code-service-image-rules/scenarios';
+import { sandboxEnvSecretScenarios } from './sandbox-env-secrets/scenarios';
+import { sandboxCrawlScenarios } from './sandbox-crawls/scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
@@ -136,4 +143,11 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webexSentMessageScenarios,
   ...toolSurfaceScenarios,
   ...contentWatchScenarios,
+  ...sandboxFileScenarios,
+  ...sandboxWorkspaceScenarios,
+  ...sandboxSecretScenarios,
+  ...sandboxServiceScenarios,
+  ...codeServiceImageRuleScenarios,
+  ...sandboxEnvSecretScenarios,
+  ...sandboxCrawlScenarios,
 ];

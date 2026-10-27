@@ -1,7 +1,8 @@
 /**
- * Postgres for web crawls (migration 156): the crawl, the pages it read,
- * and the recipes saved by name. Every read and write names the subject
- * and filters on it — no cross-caller reads, the store.ts discipline.
+ * Web crawls (migration 156), through the data store (`sandboxCrawls`):
+ * the crawl, the pages it read, and the recipes saved by name. Every read
+ * and write names the subject and filters on it — no cross-caller reads,
+ * the store.ts discipline.
  *
  * A page's content — its text and its tables as rows — is sealed before
  * it is written, under a key derived for its subject from the worker's
@@ -11,8 +12,7 @@
  */
 
 import { hkdfSync } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB, Json } from '@renkei/db';
+import { getDataStore, type SandboxCrawlRecipeRecord, type SandboxCrawlRecord } from '@renkei/db';
 import { decrypt, encrypt } from '@renkei/crypto';
 import type { CrawlRecipe } from '@renkei/connector-sandbox';
 import type { CrawledTable } from './crawl-page-script';
@@ -73,7 +73,7 @@ export interface RecipeRow {
   updatedAt: Date;
 }
 
-/** What the crawler needs of storage — a Postgres store in production, a Map in tests. */
+/** What the crawler needs of storage — the data store in production, a Map in tests. */
 export interface CrawlStore {
   create(input: {
     target: CrawlTarget;
@@ -193,296 +193,145 @@ function statusOf(value: string): CrawlStatus {
   }
 }
 
-function json(value: unknown): Json {
-  // Kysely takes a JSON column as its serialized text.
-  return JSON.stringify(value);
+const STALE_ERROR =
+  'The crawl was interrupted (the sandbox worker restarted). Resume it to carry on.';
+
+function toRow(record: SandboxCrawlRecord): CrawlRow | null {
+  if (!isRecipe(record.recipe)) return null;
+  return {
+    id: record.id,
+    subject: record.subject,
+    recipeName: record.recipeName,
+    recipe: record.recipe,
+    status: statusOf(record.status),
+    queue: queueOf(record.queue),
+    pagesDone: record.pagesDone,
+    pagesFailed: record.pagesFailed,
+    error: record.error,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    finishedAt: record.finishedAt,
+  };
 }
 
-/** The Postgres store; page content is sealed under keys derived from `rootKey` and `domain`. */
-export function createCrawlStore(db: Kysely<DB>, rootKey: Buffer, domain: string): CrawlStore {
-  const crawlColumns = [
-    'id',
-    'subject',
-    'recipe_name',
-    'recipe',
-    'status',
-    'queue',
-    'pages_done',
-    'pages_failed',
-    'error',
-    'created_at',
-    'updated_at',
-    'finished_at',
-  ] as const;
-  function toRow(row: {
-    id: string;
-    subject: string;
-    recipe_name: string | null;
-    recipe: unknown;
-    status: string;
-    queue: unknown;
-    pages_done: number;
-    pages_failed: number;
-    error: string | null;
-    created_at: Date;
-    updated_at: Date;
-    finished_at: Date | null;
-  }): CrawlRow | null {
-    if (!isRecipe(row.recipe)) return null;
-    return {
-      id: row.id,
-      subject: row.subject,
-      recipeName: row.recipe_name,
-      recipe: row.recipe,
-      status: statusOf(row.status),
-      queue: queueOf(row.queue),
-      pagesDone: row.pages_done,
-      pagesFailed: row.pages_failed,
-      error: row.error,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-      finishedAt: row.finished_at ? new Date(row.finished_at) : null,
-    };
-  }
+function toRecipe(record: SandboxCrawlRecipeRecord): RecipeRow | null {
+  if (!isRecipe(record.recipe)) return null;
+  return {
+    name: record.name,
+    recipe: record.recipe,
+    lastCrawlId: record.lastCrawlId,
+    updatedAt: record.updatedAt,
+  };
+}
+
+/**
+ * The store over the data store (`sandboxCrawls`); page content is sealed
+ * under keys derived from `rootKey` and `domain` before it is written.
+ */
+export function createCrawlStore(rootKey: Buffer, domain: string): CrawlStore {
+  const crawls = () => getDataStore().sandboxCrawls;
 
   return {
     async create(input) {
-      const row = await db
-        .insertInto('sandbox_crawls')
-        .values({
-          subject: input.target.subject,
-          recipe_name: input.recipeName,
-          recipe: json(input.recipe),
-          status: 'queued',
-          queue: json(input.queue),
-          expires_at: input.expiresAt,
-        })
-        .returning(crawlColumns)
-        .executeTakeFirstOrThrow();
-      const parsed = toRow(row);
+      const record = await crawls().create({
+        subject: input.target.subject,
+        recipeName: input.recipeName,
+        recipe: input.recipe,
+        queue: input.queue,
+        expiresAt: input.expiresAt,
+      });
+      const parsed = toRow(record);
       if (!parsed) throw new Error('crawl row did not read back');
       return parsed;
     },
 
     async get(target, id) {
-      const row = await db
-        .selectFrom('sandbox_crawls')
-        .select(crawlColumns)
-        .where('id', '=', id)
-        .where('subject', '=', target.subject)
-        .executeTakeFirst();
-      return row ? toRow(row) : null;
+      const record = await crawls().get(target.subject, id);
+      return record ? toRow(record) : null;
     },
 
     async getById(id) {
-      const row = await db
-        .selectFrom('sandbox_crawls')
-        .select(crawlColumns)
-        .where('id', '=', id)
-        .executeTakeFirst();
-      return row ? toRow(row) : null;
+      const record = await crawls().getById(id);
+      return record ? toRow(record) : null;
     },
 
     async list(target, limit) {
-      const rows = await db
-        .selectFrom('sandbox_crawls')
-        .select(crawlColumns)
-        .where('subject', '=', target.subject)
-        .orderBy('created_at', 'desc')
-        .limit(limit)
-        .execute();
-      return rows.flatMap((row) => toRow(row) ?? []);
+      return (await crawls().list(target.subject, limit)).flatMap((record) => toRow(record) ?? []);
     },
 
     async transition(id, from, to, error) {
+      const now = new Date();
       const finished = to === 'completed' || to === 'stopped' || to === 'failed';
-      const result = await db
-        .updateTable('sandbox_crawls')
-        .set({
-          status: to,
-          updated_at: sql`NOW()`,
-          ...(finished ? { finished_at: sql`NOW()` } : { finished_at: null }),
-          ...(error !== undefined ? { error } : {}),
-        })
-        .where('id', '=', id)
-        .where('status', 'in', from)
-        .executeTakeFirst();
-      return Number(result.numUpdatedRows ?? 0) > 0;
+      return crawls().transition(id, from, to, {
+        at: now,
+        finishedAt: finished ? now : null,
+        ...(error !== undefined ? { error } : {}),
+      });
     },
 
     async progress(id, update) {
-      await db
-        .updateTable('sandbox_crawls')
-        .set({
-          queue: json(update.queue),
-          pages_done: update.done,
-          pages_failed: update.failed,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', id)
-        .execute();
+      await crawls().progress(id, {
+        queue: update.queue,
+        done: update.done,
+        failed: update.failed,
+        at: new Date(),
+      });
     },
 
     async extend(id, recipe) {
-      await db
-        .updateTable('sandbox_crawls')
-        .set({ recipe: json(recipe), status: 'queued', error: null, updated_at: sql`NOW()` })
-        .where('id', '=', id)
-        .execute();
+      await crawls().extend(id, recipe, new Date());
     },
 
     async putPage(crawlId, page, content, subject) {
       const sealed = content
         ? sealPageContent(content, crawlContentKey(rootKey, domain, subject))
         : null;
-      await db
-        .insertInto('sandbox_crawl_pages')
-        .values({
-          crawl_id: crawlId,
-          url: page.url,
-          seq: page.seq,
-          depth: page.depth,
-          status: page.status,
-          title: page.title,
-          content: sealed,
-          text_chars: page.textChars,
-          table_count: page.tableCount,
-          error: page.error,
-        })
-        .onConflict((conflict) =>
-          conflict.columns(['crawl_id', 'url']).doUpdateSet({
-            status: page.status,
-            title: page.title,
-            content: sealed,
-            text_chars: page.textChars,
-            table_count: page.tableCount,
-            error: page.error,
-            fetched_at: sql`NOW()`,
-          })
-        )
-        .execute();
+      await crawls().putPage(crawlId, { ...page, content: sealed }, new Date());
     },
 
     async visited(crawlId) {
-      const rows = await db
-        .selectFrom('sandbox_crawl_pages')
-        .select('url')
-        .where('crawl_id', '=', crawlId)
-        .execute();
-      return new Set(rows.map((row) => row.url));
+      return new Set(await crawls().visitedUrls(crawlId));
     },
 
     async pages(target, crawlId, query) {
-      // The crawl is the subject's, or nothing comes back.
-      let select = db
-        .selectFrom('sandbox_crawl_pages as p')
-        .innerJoin('sandbox_crawls as c', 'c.id', 'p.crawl_id')
-        .select([
-          'p.url',
-          'p.seq',
-          'p.depth',
-          'p.status',
-          'p.title',
-          'p.text_chars',
-          'p.table_count',
-          'p.error',
-          'p.content',
-        ])
-        .where('p.crawl_id', '=', crawlId)
-        .where('c.subject', '=', target.subject);
-      if (query.urls && query.urls.length > 0) select = select.where('p.url', 'in', query.urls);
-      const rows = await select.orderBy('p.seq').offset(query.offset).limit(query.limit).execute();
+      const records = await crawls().pages(target.subject, crawlId, {
+        urls: query.urls,
+        offset: query.offset,
+        limit: query.limit,
+      });
       const key = query.withContent ? crawlContentKey(rootKey, domain, target.subject) : null;
-      return rows.map((row) => ({
-        url: row.url,
-        seq: row.seq,
-        depth: row.depth,
-        status: row.status === 'ok' ? 'ok' : 'failed',
-        title: row.title,
-        textChars: row.text_chars,
-        tableCount: row.table_count,
-        error: row.error,
-        content: key && row.content ? openPageContent(row.content, key) : null,
+      return records.map((record) => ({
+        url: record.url,
+        seq: record.seq,
+        depth: record.depth,
+        status: record.status === 'ok' ? 'ok' : 'failed',
+        title: record.title,
+        textChars: record.textChars,
+        tableCount: record.tableCount,
+        error: record.error,
+        content: key && record.content ? openPageContent(record.content, key) : null,
       }));
     },
 
     async saveRecipe(target, name, recipe, crawlId) {
-      await db
-        .insertInto('sandbox_crawl_recipes')
-        .values({
-          subject: target.subject,
-          name,
-          recipe: json(recipe),
-          last_crawl_id: crawlId,
-        })
-        .onConflict((conflict) =>
-          conflict.columns(['subject', 'name']).doUpdateSet({
-            recipe: json(recipe),
-            last_crawl_id: crawlId,
-            updated_at: sql`NOW()`,
-          })
-        )
-        .execute();
+      await crawls().saveRecipe(target.subject, name, recipe, crawlId, new Date());
     },
 
     async recipe(target, name) {
-      const row = await db
-        .selectFrom('sandbox_crawl_recipes')
-        .select(['name', 'recipe', 'last_crawl_id', 'updated_at'])
-        .where('subject', '=', target.subject)
-        .where('name', '=', name)
-        .executeTakeFirst();
-      if (!row || !isRecipe(row.recipe)) return null;
-      return {
-        name: row.name,
-        recipe: row.recipe,
-        lastCrawlId: row.last_crawl_id,
-        updatedAt: new Date(row.updated_at),
-      };
+      const record = await crawls().recipe(target.subject, name);
+      return record ? toRecipe(record) : null;
     },
 
     async recipes(target) {
-      const rows = await db
-        .selectFrom('sandbox_crawl_recipes')
-        .select(['name', 'recipe', 'last_crawl_id', 'updated_at'])
-        .where('subject', '=', target.subject)
-        .orderBy('updated_at', 'desc')
-        .execute();
-      return rows.flatMap((row) =>
-        isRecipe(row.recipe)
-          ? [
-              {
-                name: row.name,
-                recipe: row.recipe,
-                lastCrawlId: row.last_crawl_id,
-                updatedAt: new Date(row.updated_at),
-              },
-            ]
-          : []
-      );
+      return (await crawls().recipes(target.subject)).flatMap((record) => toRecipe(record) ?? []);
     },
 
     async releaseStale(olderThan) {
-      const result = await db
-        .updateTable('sandbox_crawls')
-        .set({
-          status: 'stopped',
-          error: 'The crawl was interrupted (the sandbox worker restarted). Resume it to carry on.',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('status', 'in', ['queued', 'running'])
-        .where('updated_at', '<', olderThan)
-        .executeTakeFirst();
-      return Number(result.numUpdatedRows ?? 0);
+      return crawls().releaseStale(olderThan, { error: STALE_ERROR, at: new Date() });
     },
 
     async sweepExpired(now) {
-      const result = await db
-        .deleteFrom('sandbox_crawls')
-        .where('expires_at', '<', now)
-        .executeTakeFirst();
-      return Number(result.numDeletedRows ?? 0);
+      return crawls().sweepExpired(now);
     },
   };
 }

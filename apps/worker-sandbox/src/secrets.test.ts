@@ -10,8 +10,6 @@ jest.mock('./secrets-store', () => ({
   touchSecretUsed: jest.fn(async () => undefined),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { sealSecretFields } from '@renkei/connector-sandbox';
 import { BrowserOpError } from './browser';
 import { SecretVault } from './secret-vault';
@@ -60,19 +58,19 @@ describe('createSecretResolver', () => {
 
   it('types the value when the secret is unlocked and the page is on a scoped host', async () => {
     await vault.unlock(TARGET, ROW.id, SEALED, PASSPHRASE, Date.now() + 60_000);
-    const resolve = createSecretResolver({} as Kysely<DB>, vault);
+    const resolve = createSecretResolver(vault);
     await expect(
       resolve(TARGET, { name: 'vendor-portal', field: 'password' }, 'portal.vendor.com')
     ).resolves.toBe('hunter2!');
     await expect(
       resolve(TARGET, { name: 'vendor-portal', field: 'username' }, 'sso.vendor.com')
     ).resolves.toBe('alice');
-    expect(store.getSecretByName).toHaveBeenCalledWith({}, TARGET, 'vendor-portal');
-    expect(store.touchSecretUsed).toHaveBeenCalledWith({}, ROW.id);
+    expect(store.getSecretByName).toHaveBeenCalledWith(TARGET, 'vendor-portal');
+    expect(store.touchSecretUsed).toHaveBeenCalledWith(ROW.id);
   });
 
   it('refuses, naming why, and never touches the row', async () => {
-    const resolve = createSecretResolver({} as Kysely<DB>, vault);
+    const resolve = createSecretResolver(vault);
     store.getSecretByName.mockResolvedValueOnce(undefined);
     expect(
       await refusal(resolve(TARGET, { name: 'nope', field: 'password' }, 'portal.vendor.com'))

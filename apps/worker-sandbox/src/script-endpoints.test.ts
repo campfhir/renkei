@@ -8,8 +8,6 @@
 
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
 import { ALL_ORG_FEATURES } from './features';
 import { ScriptRunError, type ScriptRunner } from './scripts';
@@ -44,7 +42,6 @@ async function post(base: string, op: string, body: unknown) {
 
 beforeAll(async () => {
   enabledServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     scripts: runner,
     scriptsNetworkIsolation: 'netns',
@@ -52,7 +49,6 @@ beforeAll(async () => {
   });
   // The interpreter is there; this organization has not turned scripts on.
   disabledServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     scripts: runner,
     scriptsNetworkIsolation: 'netns',
@@ -61,7 +57,6 @@ beforeAll(async () => {
   // No network isolation here, and this organization has not accepted
   // runs on the container's network.
   unavailableServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     scripts: runner,
     scriptsNetworkIsolation: null,

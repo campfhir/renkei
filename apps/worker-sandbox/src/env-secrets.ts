@@ -28,8 +28,6 @@
 
 import { decrypt, encrypt, parseKeyring } from '@renkei/crypto';
 import { scrubSecretValues } from '@renkei/connector-sandbox';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { listSealedEnv, touchEnvSecretsUsed, type EnvTarget } from './env-secrets-store';
 
 const PREFIX = 'env1.';
@@ -86,9 +84,9 @@ export interface OpenedEnv {
 
 export const EMPTY_ENV: OpenedEnv = { values: {}, unreadable: [], usedIds: [] };
 
-export async function openCallerEnv(db: Kysely<DB>, target: EnvTarget): Promise<OpenedEnv> {
+export async function openCallerEnv(target: EnvTarget): Promise<OpenedEnv> {
   const key = envSecretsKey();
-  const rows = key ? await listSealedEnv(db, target) : [];
+  const rows = key ? await listSealedEnv(target) : [];
   const values: Record<string, string> = {};
   const unreadable: string[] = [];
   const usedIds: string[] = [];
@@ -105,8 +103,8 @@ export async function openCallerEnv(db: Kysely<DB>, target: EnvTarget): Promise<
 }
 
 /** Mark the variables a command just ran with as used. */
-export async function markEnvUsed(db: Kysely<DB>, opened: OpenedEnv): Promise<void> {
-  await touchEnvSecretsUsed(db, opened.usedIds);
+export async function markEnvUsed(opened: OpenedEnv): Promise<void> {
+  await touchEnvSecretsUsed(opened.usedIds);
 }
 
 /** The mask applied to everything a workspace answers: every value, in every spelling the browser scrub knows. */

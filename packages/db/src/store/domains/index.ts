@@ -69,6 +69,13 @@ import { mailBulkJobs } from './mail-bulk-jobs';
 import { webexSentMessages } from './webex-sent-messages';
 import { toolSurface } from './tool-surface';
 import { contentWatches } from './content-watches';
+import { sandboxFiles } from './sandbox-files';
+import { sandboxWorkspaces } from './sandbox-workspaces';
+import { sandboxSecrets } from './sandbox-secrets';
+import { sandboxServices } from './sandbox-services';
+import { codeServiceImageRules } from './code-service-image-rules';
+import { sandboxEnvSecrets } from './sandbox-env-secrets';
+import { sandboxCrawls } from './sandbox-crawls';
 
 export const DOMAINS = {
   sessions,
@@ -136,4 +143,11 @@ export const DOMAINS = {
   webexSentMessages,
   toolSurface,
   contentWatches,
+  sandboxFiles,
+  sandboxWorkspaces,
+  sandboxSecrets,
+  sandboxServices,
+  codeServiceImageRules,
+  sandboxEnvSecrets,
+  sandboxCrawls,
 };

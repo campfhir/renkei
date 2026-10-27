@@ -278,7 +278,6 @@ async function main(): Promise<void> {
     try {
       const selfContainer = await ownContainer(engine);
       const manager = new ServiceManager({
-        db: dbResult.val,
         engine,
         network: (process.env.SANDBOX_SERVICES_NETWORK ?? '').trim() || 'renkei-sandbox-services',
         selfContainer,
@@ -348,7 +347,6 @@ async function main(): Promise<void> {
         return Math.max(SCRIPT_MIN_MEMORY_BYTES, org.sandboxScriptMemoryBytes);
       };
       const runner = new ScriptRunner({
-        db: dbResult.val,
         runsRoot: configuredDirectory('SANDBOX_RUNS_DIR', '/runs'),
         python,
         networkIsolation: isolation.mode,
@@ -436,7 +434,7 @@ async function main(): Promise<void> {
     );
   }
   const browser = new BrowserSessions({
-    secrets: createSecretResolver(dbResult.val, vault),
+    secrets: createSecretResolver(vault),
     state,
   });
 
@@ -444,7 +442,7 @@ async function main(): Promise<void> {
   // pages are stored sealed, so only with a key. Crawls a stopped worker
   // left mid-way are released for a resume, and expired ones swept.
   const crawlKey = envSecretsKey();
-  const crawlStore = crawlKey ? createCrawlStore(dbResult.val, crawlKey, keyDomain) : null;
+  const crawlStore = crawlKey ? createCrawlStore(crawlKey, keyDomain) : null;
   const crawler = crawlStore
     ? new Crawler({
         store: crawlStore,
@@ -482,7 +480,6 @@ async function main(): Promise<void> {
   }
 
   const server = createSandboxServer({
-    db: dbResult.val,
     apiKeys,
     browser,
     crawler,

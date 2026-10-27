@@ -21,8 +21,6 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   IMAGE_RULE_MAX_PER_TENANT,
   IMAGE_RULE_NOTE_MAX_CHARS,
@@ -47,7 +45,6 @@ import { ServiceOpError, type ServiceManager } from './services';
 import type { ServiceTarget } from './service-store';
 
 export interface ServiceHandlerDeps {
-  db: Kysely<DB>;
   /** The manager, when the engine answered at boot; null answers every verb 503. */
   manager: ServiceManager | null;
   /** Whether the organization has services on (its settings, with workspaces), asked per request. */
@@ -112,8 +109,6 @@ const STATUS_OF: Record<ServiceOpError['type'], number> = {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function createServiceHandlers(deps: ServiceHandlerDeps) {
-  const { db } = deps;
-
   function unavailable(response: ServerResponse, why: 'deployment' | 'organization'): void {
     sendError(
       response,
@@ -143,20 +138,20 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
     switch (op) {
       case 'list':
         return sendJson(response, 200, {
-          rules: (await rules.listImageRules(db)).map(ruleWire),
+          rules: (await rules.listImageRules()).map(ruleWire),
         });
       case 'restore': {
-        const added = await rules.restoreDefaultImageRules(db);
+        const added = await rules.restoreDefaultImageRules();
         return sendJson(response, 200, {
           added,
-          rules: (await rules.listImageRules(db)).map(ruleWire),
+          rules: (await rules.listImageRules()).map(ruleWire),
         });
       }
       case 'delete': {
         const id = str(body.id);
         if (!UUID_PATTERN.test(id))
           return sendError(response, 400, 'bad_request', 'A rule id is required.');
-        const deleted = await rules.deleteImageRule(db, id);
+        const deleted = await rules.deleteImageRule(id);
         if (!deleted) return sendError(response, 404, 'not_found', 'No such rule.');
         return sendJson(response, 200, { deleted: true, id });
       }
@@ -211,7 +206,7 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
         if (id) {
           if (!UUID_PATTERN.test(id))
             return sendError(response, 400, 'bad_request', 'A rule id is a uuid.');
-          const updated = await rules.updateImageRule(db, {
+          const updated = await rules.updateImageRule({
             id,
             pattern: normalized.rule.pattern,
             note,
@@ -220,7 +215,7 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
           if (!updated) return sendError(response, 404, 'not_found', 'No such rule.');
           return sendJson(response, 200, { rule: ruleWire(updated), dropped: normalized.dropped });
         }
-        if ((await rules.countImageRules(db)) >= IMAGE_RULE_MAX_PER_TENANT) {
+        if ((await rules.countImageRules()) >= IMAGE_RULE_MAX_PER_TENANT) {
           return sendError(
             response,
             429,
@@ -228,7 +223,7 @@ export function createServiceHandlers(deps: ServiceHandlerDeps) {
             `An organization keeps at most ${IMAGE_RULE_MAX_PER_TENANT} rules.`
           );
         }
-        const created = await rules.insertImageRule(db, {
+        const created = await rules.insertImageRule({
           pattern: normalized.rule.pattern,
           note,
           registryUsername: credential ? credential.registryUsername : null,

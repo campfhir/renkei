@@ -38,8 +38,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
 import { ALL_ORG_FEATURES } from './features';
 import { createWorkspaceHandlers } from './workspace-endpoints';
@@ -111,12 +109,11 @@ beforeAll(async () => {
   await mkdir(join(root, 'tenant-1', 'hash', 'home'), { recursive: true });
   await writeFile(join(dir, 'src', 'config.ts'), 'export const token = "tok-abc123";\n');
   enabledServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     workspaces: true,
     orgFeatures: async () => ALL_ORG_FEATURES,
   });
-  disabledServer = createSandboxServer({ db: {} as Kysely<DB>, apiKeys: [API_KEY] });
+  disabledServer = createSandboxServer({ apiKeys: [API_KEY] });
   enabledBase = await listen(enabledServer);
   disabledBase = await listen(disabledServer);
 });
@@ -131,9 +128,8 @@ afterAll(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  workspaceStore.getWorkspace.mockImplementation(
-    async (_db: unknown, target: { subject: string }, id: string) =>
-      target.subject === 'alice' && id === 'ws-1' ? readyWorkspace() : undefined
+  workspaceStore.getWorkspace.mockImplementation(async (target: { subject: string }, id: string) =>
+    target.subject === 'alice' && id === 'ws-1' ? readyWorkspace() : undefined
   );
   workspaceStore.touchWorkspace.mockResolvedValue(undefined);
   envStore.touchEnvSecretsUsed.mockResolvedValue(undefined);
@@ -173,7 +169,7 @@ describe('scope', () => {
 describe('a checkout that vanished from disk', () => {
   it('marks the workspace failed and says to clone again, on any verb', async () => {
     workspaceStore.getWorkspace.mockImplementation(
-      async (_db: unknown, target: { subject: string }, id: string) =>
+      async (target: { subject: string }, id: string) =>
         target.subject === 'alice' && id === 'ws-gone'
           ? { ...readyWorkspace(), id: 'ws-gone', storageKey: 'tenant-1/hash/ws-gone' }
           : undefined
@@ -189,17 +185,14 @@ describe('a checkout that vanished from disk', () => {
         /checkout alone was removed \(worker \S+, up \S+\)/
       );
     }
-    expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith(
-      expect.anything(),
-      'ws-gone',
-      'failed',
-      { error: expect.stringContaining('no longer on the worker') }
-    );
+    expect(workspaceStore.setWorkspaceStatus).toHaveBeenCalledWith('ws-gone', 'failed', {
+      error: expect.stringContaining('no longer on the worker'),
+    });
   });
 
   it('says when this worker never had the project at all', async () => {
     workspaceStore.getWorkspace.mockImplementation(
-      async (_db: unknown, target: { subject: string }, id: string) =>
+      async (target: { subject: string }, id: string) =>
         target.subject === 'alice' && id === 'ws-elsewhere'
           ? { ...readyWorkspace(), id: 'ws-elsewhere', storageKey: 'tenant-1/other-hash/ws-1' }
           : undefined
@@ -238,11 +231,10 @@ describe('the sweep across instances', () => {
     workspaceStore.deleteWorkspaceById.mockResolvedValue(undefined);
     workspaceStore.listWorktreesOf.mockResolvedValue([]);
     await createWorkspaceHandlers({
-      db: {} as Kysely<DB>,
       capable: true,
       enabledFor: async () => true,
     }).sweep(10);
-    const deleted = workspaceStore.deleteWorkspaceById.mock.calls.map((call) => call[1]);
+    const deleted = workspaceStore.deleteWorkspaceById.mock.calls.map((call) => call[0]);
     expect(deleted.sort()).toEqual(['ws-elsewhere-orphan', 'ws-expired-here']);
     await expect(readFile(join(workspaceDir(here), 'src'))).rejects.toThrow();
   });
@@ -259,7 +251,7 @@ describe('secrets never leave as text', () => {
     expect(result.json.exitCode).toBe(0);
     expect(result.json.stdout).toBe('token is ••••••\n');
     expect(result.json.stderr).toBe('••••••\n');
-    expect(envStore.touchEnvSecretsUsed).toHaveBeenCalledWith(expect.anything(), ['e1']);
+    expect(envStore.touchEnvSecretsUsed).toHaveBeenCalledWith(['e1']);
   });
 
   it('masks a value sitting in a file and in a grep match', async () => {
@@ -697,19 +689,17 @@ describe('env verbs', () => {
   it('sets a variable and lists names only', async () => {
     envStore.hasEnvSecret.mockResolvedValue(false);
     envStore.countEnvSecrets.mockResolvedValue(0);
-    envStore.upsertEnvSecret.mockImplementation(
-      async (_db: unknown, input: { name: string; sealed: string }) => {
-        expect(input.sealed.startsWith('env1.')).toBe(true);
-        expect(input.sealed).not.toContain('hunter2');
-        return {
-          id: 'e2',
-          name: input.name,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          lastUsedAt: null,
-        };
-      }
-    );
+    envStore.upsertEnvSecret.mockImplementation(async (input: { name: string; sealed: string }) => {
+      expect(input.sealed.startsWith('env1.')).toBe(true);
+      expect(input.sealed).not.toContain('hunter2');
+      return {
+        id: 'e2',
+        name: input.name,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        lastUsedAt: null,
+      };
+    });
     const set = await post(enabledBase, 'env/set', {
       ...TARGET,
       name: 'API_KEY',
@@ -762,7 +752,6 @@ describe('language servers over the wire', () => {
         ),
     });
     lspServer = createSandboxServer({
-      db: {} as Kysely<DB>,
       apiKeys: [API_KEY],
       workspaces: true,
       lsp: sessions,
