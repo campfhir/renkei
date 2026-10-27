@@ -84,9 +84,12 @@ maybe('resumeRunsNeedingSignIn', () => {
     };
 
     expect(await resumeRunsNeedingSignIn(producer, owner)).toBe(2);
-    expect(sent.map((m) => m.payload).sort()).toEqual(
-      [{ runId: parkedA }, { runId: parkedB }].sort()
-    );
+    // By run id: the two runs re-queue in no particular order.
+    const runIdOf = (payload: unknown) =>
+      typeof payload === 'object' && payload !== null && 'runId' in payload
+        ? String(payload.runId)
+        : '';
+    expect(sent.map((m) => runIdOf(m.payload)).sort()).toEqual([parkedA, parkedB].sort());
     expect(new Set(sent.map((m) => m.orderingKey))).toEqual(new Set([`agent:${agentId}`]));
     expect(new Set(sent.map((m) => m.type))).toEqual(new Set(['run']));
 
