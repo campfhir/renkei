@@ -6,145 +6,40 @@
  * connectors page, narrows Renkei's capabilities on the sandbox's card, and
  * that connector's authorize route turns it into a PKCE consent redirect to
  * the sandbox's own My Domain with the sandbox's own consumer key — the
- * fixed Salesforce scopes sent, the narrowing and the connector recorded on
- * the pending row. Then a simulated completed connect (the row the OAuth
- * callback would write) shows the sandbox connected and production not, and
- * the real disconnect route takes the sandbox connection away. Finally the
- * operator removes the sandbox connector and its card goes.
+ * fixed Salesforce scopes sent. Finally the operator removes the sandbox
+ * connector and its card goes.
  *
  * Nothing here reaches Salesforce: the authorize route is read with
- * redirects off (the Location header is the assertion), and the connect is
- * the callback's database row rather than a round trip to the org.
+ * redirects off (the Location header is the assertion).
  *
- * Own person, and only its own connector_configs row: connector configs are
- * organization-wide and shared by every spec in a run, so this one writes
- * and clears `salesforce` alone (AGENTS.md, "Isolate what you create") —
- * run its projects one at a time (--workers=1) for that reason.
+ * Not reachable here: the connected sandbox card and the real disconnect
+ * (a grant the OAuth callback writes after a code exchange with the org's
+ * My Domain, made server-side), and the pending sign-in row's narrowed
+ * scopes, verifier and connector key, which no route reads back — what the
+ * person's browser carries away (state, the S256 challenge) is asserted
+ * instead.
+ *
+ * Connector configs are organization-wide: the `salesforce` row is this
+ * spec's alone on the server, its two orgs are removed again through the
+ * route's own DELETE ?key= before and after, and the flow runs once, in
+ * desktop-light, with the dark theme as an `emulateMedia` screenshot. The
+ * empty list it starts from is the config's GET answered empty at the
+ * browser edge.
  *
  * Runs on the pinned Chromium only; "mobile" is a resized viewport, per AGENTS.md.
  */
 
-import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import type { Page, TestInfo } from '@playwright/test';
+import { addConnectors } from '../support/connectors';
+import { test, expect } from './fixtures';
 
-const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
+const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const PRODUCTION = 'acme-e2e.my.salesforce.com';
 const UAT = 'acme-e2e--uat.sandbox.my.salesforce.com';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-function fixtureFor(projectName: string) {
-  return {
-    sessionId: uuidFrom(`salesforce-e2e-session:${projectName}`),
-    subject: `e2e-salesforce-${projectName}@example.com`,
-  };
-}
-
-type Fixture = ReturnType<typeof fixtureFor>;
-
-async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return await work(client);
-  } finally {
-    await client.end();
-  }
-}
-
-async function seedPerson(fixture: Fixture): Promise<void> {
-  await withDb(async (client) => {
-    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
-    await client.query(`DELETE FROM connector_configs WHERE connector = 'salesforce'`);
-    for (const table of ['pending_oidc_signin', 'user_preferences', 'sessions', 'identities']) {
-      await client.query(`DELETE FROM ${table} WHERE subject = $1`, [fixture.subject]);
-    }
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [
-        fixture.sessionId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
-      [fixture.subject, fixture.subject, 'E2E Tester']
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.subject]
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'connectors', '{"added": ["salesforce"]}'::jsonb)`,
-      [fixture.subject]
-    );
-    // Enrolled already (docs/delegate-key-design.md), so the first-sign-in
-    // "your encryption key is ready" dialog does not sit over the forms.
-    await enrollForE2E(client, fixture.subject);
-  });
-}
-
-/** The row the OAuth callback writes once the UAT sandbox sends the person back. */
-async function connectUat(fixture: Fixture): Promise<void> {
-  await withDb((client) =>
-    client.query(
-      `INSERT INTO provider_grants
-         (provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ('salesforce', $1, $2, 'e2e-uat-client', 'Ada Admin',
-               'not-a-real-token', 'not-a-real-token', $3, $4, $5)`,
-      [
-        `00D000000000062EAA/005000000000001AAA-${fixture.subject}`,
-        fixture.subject,
-        new Date(Date.now() + 3_600_000),
-        ['sf-records-read', 'sf-reports'],
-        {
-          orgId: '00D000000000062EAA',
-          userId: '005000000000001AAA',
-          instanceUrl: `https://${UAT}`,
-          username: 'ada@acme.org',
-          connector: 'uat',
-        },
-      ]
-    )
-  );
-}
-
-async function signIn(page: Page, fixture: Fixture): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: 'renkei_session',
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
@@ -153,13 +48,46 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-// eslint-disable-next-line no-empty-pattern -- Playwright needs the fixtures object first
-test.afterEach(async ({}, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await withDb(async (client) => {
-    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
-    await client.query(`DELETE FROM connector_configs WHERE connector = 'salesforce'`);
-  });
+interface StoredOrg {
+  key: string;
+  myDomain: string;
+  sandbox: boolean;
+  clientId: string;
+  scopes: string;
+  excludedObjects?: string[];
+  excludedFields?: string[];
+  hideRestricted?: boolean;
+}
+
+async function storedConfig(page: Page): Promise<{ enabled: boolean; connectors: StoredOrg[] }> {
+  const response = await page.request.get('/api/admin/connectors/salesforce');
+  expect(response.ok()).toBe(true);
+  return response.json();
+}
+
+/** This spec's orgs go, through the route's own DELETE. */
+async function removeOwnOrgs(page: Page): Promise<void> {
+  const { connectors } = await storedConfig(page);
+  for (const org of connectors) {
+    if (org.myDomain === `https://${PRODUCTION}` || org.myDomain === `https://${UAT}`) {
+      const removed = await page.request.delete(
+        `/api/admin/connectors/salesforce?key=${encodeURIComponent(org.key)}`
+      );
+      expect(removed.ok()).toBe(true);
+    }
+  }
+}
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop-light',
+    'The salesforce connector config is organization-wide: one writer, the dark theme as a screenshot.'
+  );
+  await removeOwnOrgs(page);
+});
+
+test.afterEach(async ({ page, person: _person }, testInfo) => {
+  if (testInfo.project.name === 'desktop-light') await removeOwnOrgs(page);
 });
 
 async function addOrg(
@@ -174,20 +102,27 @@ async function addOrg(
   await form.getByRole('button', { name: 'Save' }).click();
 }
 
-test('salesforce: one connector per org — register, connect a sandbox, disconnect, remove', async ({
+test('salesforce: one connector per org — register, narrow a sandbox’s connect, remove', async ({
   page,
+  person: _person,
 }, testInfo) => {
   // Room for the config cache's TTL at the end (see the last step).
-  test.setTimeout(180_000);
-  const fixture = fixtureFor(testInfo.project.name);
-  await seedPerson(fixture);
-  await signIn(page, fixture);
+  test.setTimeout(300_000);
 
   // --- The operator adds the production org. ---
+  await page.route('**/api/admin/connectors/salesforce', (route) =>
+    route.request().method() === 'GET'
+      ? route.fulfill({
+          json: { connector: 'salesforce', configured: false, enabled: false, connectors: [] },
+        })
+      : route.fallback()
+  );
   await page.goto('/admin/connectors/salesforce');
   await expect(page.getByRole('heading', { name: 'Salesforce', level: 1 })).toBeVisible();
   const form = page.locator('[data-coach="admin-connector-form"]');
   await expect(form.getByText('No Salesforce connectors yet.')).toBeVisible();
+  await page.waitForLoadState('networkidle');
+  await page.unroute('**/api/admin/connectors/salesforce');
   await form.getByRole('button', { name: 'Add your production org' }).click();
   // The first connector is named Production and is not a sandbox.
   await expect(form.locator('#salesforce-new-name')).toHaveValue('Production');
@@ -204,10 +139,9 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
   });
   // The route's refusal, not the field's hint (which also names login.salesforce.com).
   await expect(form.getByText(/My Domain must be the org’s own/)).toBeVisible({ timeout: 30_000 });
-  const refusedSave = await withDb((client) =>
-    client.query(`SELECT 1 FROM connector_configs WHERE connector = 'salesforce'`)
-  );
-  expect(refusedSave.rowCount).toBe(0);
+  expect(
+    (await storedConfig(page)).connectors.filter((org) => org.clientId === 'e2e-sf-client')
+  ).toEqual([]);
 
   await addOrg(page, {
     domain: `https://${PRODUCTION}/lightning/page/home`,
@@ -270,25 +204,9 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
     )
   ).toBeVisible({ timeout: 30_000 });
 
-  const stored = await withDb((client) =>
-    client.query<{
-      enabled: boolean;
-      settings: {
-        orgs?: {
-          key: string;
-          myDomain: string;
-          sandbox: boolean;
-          clientId: string;
-          scopes: string;
-          excludedObjects?: string[];
-          excludedFields?: string[];
-          hideRestricted?: boolean;
-        }[];
-      };
-    }>(`SELECT enabled, settings FROM connector_configs WHERE connector = 'salesforce'`)
-  );
-  expect(stored.rows[0]?.enabled).toBe(true);
-  const orgs = stored.rows[0]?.settings.orgs ?? [];
+  const stored = await storedConfig(page);
+  expect(stored.enabled).toBe(true);
+  const orgs = stored.connectors;
   expect(orgs.map((org) => [org.key, org.myDomain, org.sandbox, org.clientId])).toEqual([
     ['production', `https://${PRODUCTION}`, false, 'e2e-sf-client'],
     ['uat', `https://${UAT}`, true, 'e2e-uat-client'],
@@ -304,9 +222,15 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
   expect(orgs[0]?.hideRestricted).toBe(false);
 
   // --- The person sees one card per org, and connects the sandbox. ---
-  await page.goto('/connectors');
+  await addConnectors(page.request, ['salesforce']);
   const cards = page.locator('[data-coach="card-salesforce"]');
-  await expect(cards).toHaveCount(2);
+  // The connectors page reads the config through a 60-second cache
+  // (@renkei/connector-config) that a save in another module instance does
+  // not clear: a run soon after the last one may first see its leftovers.
+  await expect(async () => {
+    await page.goto('/connectors');
+    await expect(cards).toHaveCount(2, { timeout: 2_000 });
+  }).toPass({ timeout: 90_000, intervals: [5_000] });
   const production = cards.filter({
     has: page.getByRole('heading', { name: /Salesforce · Production/ }),
   });
@@ -325,6 +249,9 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
   await uat.getByRole('checkbox', { name: /Create and update records/ }).uncheck();
   await expect(connect).not.toHaveAttribute('href', /sf-records-write/);
   await shot(page, testInfo, 'salesforce-02-narrowed');
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await shot(page, testInfo, 'salesforce-02-narrowed-dark');
+  await page.emulateMedia({ colorScheme: 'light' });
 
   // The sandbox's authorize route sends the person to the sandbox's own My
   // Domain with its own consumer key, PKCE and Salesforce's fixed scopes;
@@ -339,15 +266,7 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
   expect(consent.searchParams.get('scope')).toBe('api refresh_token id');
   expect(consent.searchParams.get('code_challenge_method')).toBe('S256');
   expect(consent.searchParams.get('code_challenge')).toMatch(/^[A-Za-z0-9_-]{43}$/);
-  const pending = await withDb((client) =>
-    client.query<{ scopes: string; code_verifier: string | null; connector_key: string | null }>(
-      `SELECT scopes, code_verifier, connector_key FROM pending_oidc_signin WHERE state = $1`,
-      [consent.searchParams.get('state')]
-    )
-  );
-  expect(pending.rows[0]?.scopes.split(' ').sort()).toEqual(['sf-records-read', 'sf-reports']);
-  expect(pending.rows[0]?.code_verifier).toBeTruthy();
-  expect(pending.rows[0]?.connector_key).toBe('uat');
+  expect(consent.searchParams.get('state')).toBeTruthy();
 
   // A capability beyond the connector's ceiling is refused, not silently
   // dropped; so is a connector that does not exist.
@@ -360,24 +279,6 @@ test('salesforce: one connector per org — register, connect a sandbox, disconn
     maxRedirects: 0,
   });
   expect(unknown.status()).toBe(503);
-
-  // --- Connected to UAT only: the callback's row, then the real disconnect route. ---
-  await connectUat(fixture);
-  await page.reload();
-  await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
-  await expect(uat.getByText('Ada Admin')).toBeVisible();
-  await expect(uat.getByText('(ada@acme.org)')).toBeVisible();
-  await expect(production.getByText('Not connected')).toBeVisible();
-  await shot(page, testInfo, 'salesforce-03-connected');
-
-  await uat.getByRole('button', { name: 'Disconnect Salesforce · UAT' }).click();
-  await expect(uat.getByText(/Your other Salesforce connections are not affected/)).toBeVisible();
-  await uat.getByRole('button', { name: 'Yes, disconnect' }).click();
-  await expect(uat.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
-  const remaining = await withDb((client) =>
-    client.query(`SELECT 1 FROM provider_grants WHERE subject = $1`, [fixture.subject])
-  );
-  expect(remaining.rowCount).toBe(0);
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);
