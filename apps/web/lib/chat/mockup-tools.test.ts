@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for a tool that never touches it */
 /**
  * chat_show_mockup's promises: a mockup that builds is answered with a
  * line that tells the model what the person now sees and not to repeat the
@@ -17,7 +16,6 @@ const testCipher = resourceCipher({
 });
 
 const context: LocalToolContext = {
-  db: null as unknown as LocalToolContext['db'],
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

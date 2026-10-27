@@ -28,7 +28,7 @@ export async function POST(
   const { chatId, turnId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
@@ -62,7 +62,7 @@ export async function POST(
     }
   }
 
-  const written = await decideToolPermission(db, chat.id, turnId, toolUseId, decision);
+  const written = await decideToolPermission(chat.id, turnId, toolUseId, decision);
   if (!written) return jsonError(409, 'not-pending', 'The chat is no longer waiting on this call');
   getTurnChannel(turnId)?.resolveToolPermission(toolUseId, decision);
   // The ask is answered — its notification row need not stay unread.

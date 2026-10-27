@@ -19,7 +19,7 @@ export async function POST(
   const { chatId, messageId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
 
   const text = typeof body.text === 'string' ? body.text : null;
@@ -36,7 +36,7 @@ export async function POST(
   const llmModelId =
     typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
 
-  const resent = await resendFromMessage(db, {
+  const resent = await resendFromMessage({
     session: { subject: session.subject, roles: session.roles },
     chatId,
     messageId,

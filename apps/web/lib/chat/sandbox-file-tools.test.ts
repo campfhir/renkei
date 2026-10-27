@@ -55,7 +55,6 @@ const testCipher = resourceCipher({
 
 function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'auth0|alice',
     chatId: 'chat-1',
     cipher: testCipher,

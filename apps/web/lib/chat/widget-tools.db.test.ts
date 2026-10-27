@@ -87,7 +87,7 @@ maybe('recordWidgetModelContext', () => {
   });
 
   it('records the decision as a note row that opens a turn of its own', async () => {
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: DECISION,
@@ -121,7 +121,7 @@ maybe('recordWidgetModelContext', () => {
   });
 
   it('refuses while that turn is still running, writing nothing', async () => {
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: 'The user cancelled "Create Jira issue" from the preview card. Nothing was written.',
@@ -149,7 +149,7 @@ maybe('recordWidgetModelContext', () => {
     invalidateLlmCache();
     let recorded: Awaited<ReturnType<typeof recordWidgetModelContext>>;
     try {
-      recorded = await recordWidgetModelContext(db, {
+      recorded = await recordWidgetModelContext({
         session,
         chatId: modellessChatId,
         text: DECISION,
@@ -232,7 +232,7 @@ maybe('chat widget decisions', () => {
   });
 
   it('records a decision, readable by its own key and by its chat', async () => {
-    const recorded = await recordWidgetDecision(db, {
+    const recorded = await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey,
@@ -274,7 +274,7 @@ maybe('chat widget decisions', () => {
     // for one state_key could arrive, whatever it reported already
     // happened once (a tool call, or nothing, for Cancel); recording a
     // later, different report over it would rewrite that history.
-    const recorded = await recordWidgetDecision(db, {
+    const recorded = await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey,
@@ -352,7 +352,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
         finished_at: new Date(),
       })
       .execute();
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId: replyTurnId,
       role: 'assistant',
@@ -365,7 +365,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
         { type: 'tool_use', id: toolUseIdB, name: 'entra_assign_app_role_preview', input: {} },
       ],
     });
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId: replyTurnId,
       role: 'user',
@@ -401,14 +401,14 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
   });
 
   it('appends the first decision as a note, opening no turn, while its sibling is undecided', async () => {
-    await recordWidgetDecision(db, {
+    await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey: stateKeyA,
       decision: 'confirmed',
       state: { icon: 'sent', headline: 'Assigned Tony Liang.' },
     });
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: 'The user confirmed "Assign app role" (Tony Liang) on the preview card.',
@@ -431,14 +431,14 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
   });
 
   it('opens exactly one turn once the second decision lands, informed by both', async () => {
-    await recordWidgetDecision(db, {
+    await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey: stateKeyB,
       decision: 'confirmed',
       state: { icon: 'sent', headline: 'Assigned Rachel Cheng.' },
     });
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: 'The user confirmed "Assign app role" (Rachel Cheng) on the preview card.',

@@ -55,8 +55,7 @@ maybe('turn recovery claims', () => {
    *  suites' (and earlier runs') turns are filtered out of every answer. */
   const options = { staleSeconds: 60, maxResumes: 3, limit: 100 };
   const mine = new Set<string>();
-  const claim = async () =>
-    (await claimResumableTurns(db, options)).filter((row) => mine.has(row.id));
+  const claim = async () => (await claimResumableTurns(options)).filter((row) => mine.has(row.id));
 
   async function turn(chatId: string, over: { resume_count?: number } = {}): Promise<string> {
     const inserted = await db
@@ -79,7 +78,7 @@ maybe('turn recovery claims', () => {
   it('claims a suspended turn once, clearing the mark and counting the resume', async () => {
     const turnId = await turn(await chat());
     expect(await claim()).toEqual([]);
-    await suspendTurn(db, turnId, 4);
+    await suspendTurn(turnId, 4);
     const claimed = await claim();
     expect(claimed.map((row) => row.id)).toEqual([turnId]);
     expect(claimed[0]).toMatchObject({
@@ -146,9 +145,9 @@ maybe('turn recovery claims', () => {
       })
       .returning('id')
       .executeTakeFirstOrThrow();
-    await suspendTurn(db, turnId, 9);
+    await suspendTurn(turnId, 9);
     expect((await claim()).map((row) => row.id)).not.toContain(turnId);
-    const ended = await interruptExhaustedTurns(db, { ...options, error: 'too many' });
+    const ended = await interruptExhaustedTurns({ ...options, error: 'too many' });
     expect(ended).toContain(turnId);
     const after = await getTurn(chatId, turnId);
     expect(after).toMatchObject({ status: 'interrupted', error: 'too many', suspendedAt: null });

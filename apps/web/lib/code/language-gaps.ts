@@ -18,8 +18,7 @@
  * on every open.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { languageServerFor } from '@renkei/connector-sandbox';
 import {
   sandboxWorkspacesEnabled,
@@ -73,30 +72,21 @@ export function resetLanguageAvailabilityForTests(): void {
   availability = null;
 }
 
-export function noteLanguageGap(
-  db: Kysely<DB>,
-  input: { target: SandboxTarget; path: string; language: string }
-): void {
+export function noteLanguageGap(input: {
+  target: SandboxTarget;
+  path: string;
+  language: string;
+}): void {
   void (async () => {
     const available = await availableServers(input.target);
     const reason = gapReason(input.language, available);
     if (!reason) return;
-    await db
-      .insertInto('code_language_gaps')
-      .values({
-        extension: extensionOf(input.path),
-        language: input.language.slice(0, 64),
-        reason,
-        sample_path: input.path.slice(0, 1_000),
-      })
-      .onConflict((conflict) =>
-        conflict.columns(['extension', 'language', 'reason']).doUpdateSet({
-          open_count: sql`code_language_gaps.open_count + 1`,
-          last_seen_at: sql`now()`,
-          sample_path: input.path.slice(0, 1_000),
-        })
-      )
-      .execute();
+    await getDataStore().codeProjects.noteLanguageGap({
+      extension: extensionOf(input.path),
+      language: input.language.slice(0, 64),
+      reason,
+      samplePath: input.path.slice(0, 1_000),
+    });
   })().catch((error: unknown) => {
     logger.warn('language gap not recorded for {path}: {error}', {
       component: 'code/language-gaps',

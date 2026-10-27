@@ -16,8 +16,12 @@
  */
 
 import { after } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import {
+  getDataStore,
+  type ChatMessageInsert,
+  type ChatTurnInsert,
+  type DataStore,
+} from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -57,10 +61,11 @@ import {
   overheadTokensOf,
   setRequestOverhead,
 } from './compaction';
-import { listMessages, insertMessage, type InsertedMessage } from './messages';
-import { createTurn, finishTurn, heartbeatTurn, suspendTurn } from './turns';
+import { listMessages, sealedMessage, type NewMessage } from './messages';
+import { finishTurn, heartbeatTurn, isUniqueViolation, suspendTurn, turnInsertOf } from './turns';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import { touchChat, type ChatRow } from './store';
+import { databaseForUnconvertedCode } from './unconverted-db';
 import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
@@ -202,8 +207,77 @@ export interface StartTurnInput {
   defer?: (task: () => Promise<void>) => void;
 }
 
+/**
+ * Send's rows in one write (the store's transaction): the turn, the
+ * person's prompt rows, the empty assistant row, and the prompt's own
+ * uploads pointed at its last row. The database refuses a second running
+ * turn; any other failure is thrown, for the caller's log.
+ */
+async function openSendTurn(input: {
+  turn: ChatTurnInsert;
+  prompts: NewMessage[];
+  assistant: NewMessage;
+  ownerSubject: string;
+  attachmentIds: string[];
+}): Promise<
+  Result<
+    {
+      turnId: string;
+      userMessageId: string;
+      userMessageSeq: number;
+      userMessageCreatedAt: string;
+      assistantMessageId: string;
+      assistantSeq: number;
+      assistantCreatedAt: Date;
+    },
+    'ALREADY_RUNNING' | 'CONTENT_KEY'
+  >
+> {
+  const rows: Omit<ChatMessageInsert, 'chatId' | 'turnId'>[] = [];
+  for (const message of [...input.prompts, input.assistant]) {
+    const sealed = sealedMessage(message);
+    if (!sealed) return err('CONTENT_KEY' as const);
+    const { chatId: _chatId, turnId: _turnId, ...row } = sealed;
+    rows.push(row);
+  }
+  if (input.prompts.length === 0) return err('CONTENT_KEY' as const);
+  const userIndex = input.prompts.length - 1;
+  let opened: Awaited<ReturnType<DataStore['chatThreads']['openTurn']>>;
+  try {
+    opened = await getDataStore().chatThreads.openTurn({
+      turn: input.turn,
+      messages: rows,
+      ...(input.attachmentIds.length > 0
+        ? {
+            link: {
+              messageIndex: userIndex,
+              ownerSubject: input.ownerSubject,
+              artifactIds: input.attachmentIds,
+            },
+          }
+        : {}),
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      return err('ALREADY_RUNNING' as const, { message: 'A reply is already in progress.' });
+    }
+    throw error;
+  }
+  const user = opened.messages[userIndex];
+  const assistant = opened.messages[rows.length - 1];
+  if (!user || !assistant) throw new Error('the turn was opened without its messages');
+  return ok({
+    turnId: opened.turnId,
+    userMessageId: user.id,
+    userMessageSeq: user.seq,
+    userMessageCreatedAt: user.createdAt.toISOString(),
+    assistantMessageId: assistant.id,
+    assistantSeq: assistant.seq,
+    assistantCreatedAt: assistant.createdAt,
+  });
+}
+
 export async function startChatTurn(
-  db: Kysely<DB>,
   input: StartTurnInput
 ): Promise<Result<StartedTurn, StartTurnError>> {
   const defer = input.defer ?? ((task) => after(task));
@@ -221,7 +295,7 @@ export async function startChatTurn(
     ...(input.extraBlocks ?? []),
     ...(input.attachmentIds && input.attachmentIds.length > 0
       ? await attachmentPromptBlocks(
-          db,
+          databaseForUnconvertedCode(),
           input.session.subject,
           chat.id,
           input.attachmentIds,
@@ -234,7 +308,7 @@ export async function startChatTurn(
     input.llmModelId !== undefined && input.llmModelId !== null && isUuid(input.llmModelId)
       ? input.llmModelId
       : (chat.llmModelId ?? null);
-  const llmResult = await resolveAgentLlm(db, requestedModel);
+  const llmResult = await resolveAgentLlm(databaseForUnconvertedCode(), requestedModel);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -257,8 +331,8 @@ export async function startChatTurn(
 
   let started: StartedTurn;
   try {
-    const opened = await db.transaction().execute(async (trx) => {
-      const turn = await createTurn(trx, {
+    const opened = await openSendTurn({
+      turn: turnInsertOf({
         chatId: chat.id,
         llmModelId: llm.modelConfigId,
         thinkingBudget,
@@ -269,26 +343,19 @@ export async function startChatTurn(
           voice: input.voice === true,
           timeZone: input.timeZone ?? null,
         },
-      });
-      if (!turn.ok) return turn;
-      let user: InsertedMessage | null = null;
-      for (const blocks of chunkedUserBlocks(redacted.text, extraBlocks)) {
-        const inserted = await insertMessage(trx, {
-          chatId: chat.id,
-          turnId: turn.val,
-          role: 'user',
-          kind: input.kind ?? 'prompt',
-          status: 'complete',
-          blocks,
-          cipher: access.cipher,
-        });
-        if (!inserted) return err('CONTENT_KEY' as const);
-        user = inserted;
-      }
-      if (!user) return err('CONTENT_KEY' as const);
-      const assistant = await insertMessage(trx, {
+      }),
+      prompts: chunkedUserBlocks(redacted.text, extraBlocks).map((blocks) => ({
         chatId: chat.id,
-        turnId: turn.val,
+        turnId: null,
+        role: 'user' as const,
+        kind: input.kind ?? 'prompt',
+        status: 'complete' as const,
+        blocks,
+        cipher: access.cipher,
+      })),
+      assistant: {
+        chatId: chat.id,
+        turnId: null,
         role: 'assistant',
         kind: 'assistant',
         status: 'streaming',
@@ -297,41 +364,16 @@ export async function startChatTurn(
         provider: llm.providerName,
         model: llm.model,
         cipher: access.cipher,
-      });
-      if (!assistant) return err('CONTENT_KEY' as const);
-      if (input.attachmentIds && input.attachmentIds.length > 0) {
-        await trx
-          .updateTable('artifacts')
-          .set({ message_id: user.id })
-          .where('chat_id', '=', chat.id)
-          .where('owner_subject', '=', input.session.subject)
-          .where('id', 'in', input.attachmentIds.filter(isUuid))
-          .execute();
-      }
-      await touchChat(chat.id, {
-        titleIfMissing: deriveTitle(text || 'Attachment'),
-        // The switch is sticky: the chat remembers the model it last used.
-        llmModelId: llm.modelConfigId,
-      });
-      return ok({
-        turnId: turn.val,
-        userMessageId: user.id,
-        userMessageSeq: user.seq,
-        userMessageCreatedAt: user.createdAt.toISOString(),
-        assistantMessageId: assistant.id,
-        assistantSeq: assistant.seq,
-        assistantCreatedAt: assistant.createdAt,
-      });
+      },
+      ownerSubject: input.session.subject,
+      attachmentIds: (input.attachmentIds ?? []).filter(isUuid),
     });
-    if (!opened.ok) {
-      return err(
-        opened.err.type === 'ALREADY_RUNNING'
-          ? ('ALREADY_RUNNING' as const)
-          : opened.err.type === 'CONTENT_KEY'
-            ? ('CONTENT_KEY' as const)
-            : ('DB_ERROR' as const)
-      );
-    }
+    if (!opened.ok) return err(opened.err.type);
+    await touchChat(chat.id, {
+      titleIfMissing: deriveTitle(text || 'Attachment'),
+      // The switch is sticky: the chat remembers the model it last used.
+      llmModelId: llm.modelConfigId,
+    });
     started = {
       turnId: opened.val.turnId,
       userMessageId: opened.val.userMessageId,
@@ -345,7 +387,7 @@ export async function startChatTurn(
       createdAt: opened.val.assistantCreatedAt,
     };
     defer(() =>
-      executeChatTurn(db, {
+      executeChatTurn({
         session: input.session,
         chat: { ...chat, llmModelId: llm.modelConfigId },
         cipher: access.cipher,
@@ -400,11 +442,11 @@ const PREPARING_HEARTBEAT_MS = 2_000;
  */
 export class TurnRefused extends Error {}
 
-export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): Promise<void> {
+export async function executeChatTurn(input: ExecuteTurnInput): Promise<void> {
   // Going down already: nothing here should start. The row is marked for
   // the sweep the way a turn suspended mid-loop is.
   if (isShuttingDown()) {
-    await suspendTurn(db, input.turnId, input.resume?.seed.iterations ?? 0);
+    await suspendTurn(input.turnId, input.resume?.seed.iterations ?? 0);
     return;
   }
   const channel = openTurnChannel(input.turnId);
@@ -426,14 +468,14 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
   // process to the recovery sweep. So the row is touched here until the
   // loop takes over; a cancel clicked meanwhile reaches the channel.
   const preparing = setInterval(() => {
-    void heartbeatTurn(db, input.turnId, input.resume?.seed.iterations ?? 0, 'preparing')
+    void heartbeatTurn(input.turnId, input.resume?.seed.iterations ?? 0, 'preparing')
       .then((canceled) => {
         if (canceled) channel.requestCancel();
       })
       .catch(() => {});
   }, PREPARING_HEARTBEAT_MS);
   try {
-    await executeTurnBody(db, input, channel, suspend.signal, () => clearInterval(preparing));
+    await executeTurnBody(input, channel, suspend.signal, () => clearInterval(preparing));
   } finally {
     clearInterval(preparing);
     unsubscribeShutdown();
@@ -442,13 +484,12 @@ export async function executeChatTurn(db: Kysely<DB>, input: ExecuteTurnInput): 
 }
 
 async function executeTurnBody(
-  db: Kysely<DB>,
   input: ExecuteTurnInput,
   channel: TurnChannel,
   suspendSignal: AbortSignal,
   prepared: () => void
 ): Promise<void> {
-  const store = createTurnStore(db, {
+  const store = createTurnStore({
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
@@ -522,7 +563,7 @@ async function executeTurnBody(
     // endpoint asked three times over HTTP — so it runs while the rest of
     // the turn's context is read. The release is taken the moment it is
     // known, so a failure among the other reads still revokes the token.
-    const surfacing = resolveChatToolSurface(db, {
+    const surfacing = resolveChatToolSurface({
       subject: input.session.subject,
       roles: input.session.roles,
       config: toolConfig,
@@ -550,14 +591,14 @@ async function executeTurnBody(
       // A code project's checkout, when it is there to work in: the code_*
       // tools bound to it, and what the prompt says about it either way.
       project?.kind === 'code'
-        ? codeProjectContext(db, project, {
+        ? codeProjectContext(project, {
             subject: input.session.subject,
             chat: { id: input.chat.id, workspaceId: input.chat.workspaceId },
             // Auto mode's sub-agents run long (delegate.ts).
             auto: input.chat.autoMode && !readOnly,
           })
         : null,
-      chatPromptContext(db, input.chat, project, projectCipher),
+      chatPromptContext(input.chat, project, projectCipher),
       // The roster a chat's sub-agent picks from; a code project's chat has
       // no such sub-agent (see `delegate` below), nor does a caller with
       // its own local tools.
@@ -574,7 +615,7 @@ async function executeTurnBody(
     // the sidebar's refresh at turn end already shows the title.
     const firstPrompt = input.chat.autoTitleAsked ? '' : latestUserPrompt(rows);
     const titling = firstPrompt
-      ? autoTitleChat(db, {
+      ? autoTitleChat({
           subject: input.session.subject,
           chatId: input.chat.id,
           llm: input.llm,
@@ -596,7 +637,7 @@ async function executeTurnBody(
       })
     ) {
       try {
-        const compacted = await compactChat(db, {
+        const compacted = await compactChat({
           chatId: input.chat.id,
           llm: input.llm,
           createdBy: 'auto',
@@ -641,7 +682,6 @@ async function executeTurnBody(
     if (phiRefusal) throw new TurnRefused(phiRefusal);
     const chatSummary = await latestChatSummary(input.chat.id, input.cipher);
     const localContext = {
-      db,
       subject: input.session.subject,
       chatId: input.chat.id,
       cipher: input.cipher,
@@ -653,7 +693,7 @@ async function executeTurnBody(
       // The person's own words for this turn: the image tool's prompt, verbatim.
       userPrompt: latestUserPrompt(rows),
       recordImageUsage: (report: ImageUsageReport) =>
-        recordImageUsage(db, {
+        recordImageUsage(databaseForUnconvertedCode(), {
           ...report,
           subject: input.session.subject,
         }),
@@ -671,7 +711,6 @@ async function executeTurnBody(
       // progress on the turn's stream; nothing of theirs enters this
       // turn's history but the report.
       subagents: createSubagentRecorder(
-        db,
         {
           chatId: input.chat.id,
           turnId: input.turnId,
@@ -691,7 +730,7 @@ async function executeTurnBody(
     // the org's roster. A code project's chat has code_delegate instead,
     // over its checkout, and is not offered a second way to delegate.
     const chatTools =
-      input.localTools ?? (await chatLocalTools(db, localContext, toolConfig, filesAllowed));
+      input.localTools ?? (await chatLocalTools(localContext, toolConfig, filesAllowed));
     const delegate =
       models === null
         ? null
@@ -798,7 +837,7 @@ async function executeTurnBody(
     // runner ask again. Null when there was nothing worth folding.
     const recoverFromContextOverflow = async () => {
       try {
-        const compacted = await compactChat(db, {
+        const compacted = await compactChat({
           chatId: input.chat.id,
           llm: input.llm,
           createdBy: 'auto',
@@ -904,7 +943,7 @@ async function executeTurnBody(
         message: error instanceof Error ? error.message : String(error),
       });
       try {
-        await suspendTurn(db, input.turnId, input.resume?.seed.iterations ?? 0);
+        await suspendTurn(input.turnId, input.resume?.seed.iterations ?? 0);
       } catch {
         // The stale heartbeat says the same thing to the sweep.
       }
@@ -921,7 +960,7 @@ async function executeTurnBody(
         status: 'failed',
         error: failure,
       });
-      await finishTurn(db, input.turnId, {
+      await finishTurn(input.turnId, {
         status: 'failed',
         error: failure,
         iterations: 0,
@@ -946,7 +985,6 @@ async function executeTurnBody(
 
 /** What the system prompt says about the project and the files at hand. */
 export async function chatPromptContext(
-  db: Kysely<DB>,
   chat: ChatRow,
   project: Awaited<ReturnType<typeof getProjectRow>>,
   /** The project's cipher (chat-keys.ts), when the chat is in one. */
@@ -989,7 +1027,7 @@ export async function chatPromptContext(
         ? {
             name: project.name,
             instructions: openProjectInstructions(project, projectCipher),
-            memoryText: await projectMemoryText(db, project.id, projectCipher),
+            memoryText: await projectMemoryText(project.id, projectCipher),
             files: projectFiles.map((row) => ({ ...shape(row), mode: row.mode })),
             alwaysFiles,
             code: null,
@@ -1004,10 +1042,6 @@ export async function chatPromptContext(
   };
 }
 
-async function projectMemoryText(
-  db: Kysely<DB>,
-  projectId: string,
-  cipher: ContentCipher
-): Promise<string | null> {
+async function projectMemoryText(projectId: string, cipher: ContentCipher): Promise<string | null> {
   return renderProjectMemory(await readProjectMemory(projectId, cipher));
 }

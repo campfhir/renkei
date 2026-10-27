@@ -12,6 +12,8 @@
 import { err, ok } from '@campfhir/safe-functions/helpers';
 import type { generateImage, resolveImageModel } from '@renkei/agent-llm';
 import type { LocalToolContext } from './local-tools';
+
+type ResolveImage = (modelConfigId: string) => ReturnType<typeof resolveImageModel>;
 import { decodePng, encodePng } from '@renkei/document-render';
 import {
   frameLine,
@@ -42,7 +44,6 @@ const models = [
 
 function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'u',
     chatId: 'c',
     cipher: testCipher,
@@ -61,17 +62,17 @@ interface Doc {
 const documentsOf = (meta: Record<string, unknown>): Doc[] =>
   Array.isArray(meta.renkeiDocuments) ? (meta.renkeiDocuments as Doc[]) : [];
 
-const resolveOk = jest.fn(async (_db: unknown, _tenant: string, id: string | null) =>
+const resolveOk = jest.fn(async (id: string | null) =>
   ok({
     modelConfigId: id ?? 'img-1',
     label: 'x',
     config: { apiKey: 'k', model: 'gpt-image-1', surface: 'images' as const },
   })
-) as unknown as typeof resolveImageModel;
+) as unknown as ResolveImage;
 
 function tool(
   generate: typeof generateImage,
-  extra: { preferredModelId?: string | null; resolve?: typeof resolveImageModel } = {}
+  extra: { preferredModelId?: string | null; resolve?: ResolveImage } = {}
 ) {
   return imageGenerationTool({
     models,
@@ -233,7 +234,7 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-2');
+    expect(resolveOk).toHaveBeenLastCalledWith('img-2');
   });
 
   it('falls back to the first when the saved one is gone, or none is saved', async () => {
@@ -241,16 +242,16 @@ describe('chat_generate_image — which model', () => {
       { filename: 'a.png' },
       context()
     );
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith('img-1');
     await tool(returning()).execute({ filename: 'a.png' }, context());
-    expect(resolveOk).toHaveBeenLastCalledWith(null, 'img-1');
+    expect(resolveOk).toHaveBeenLastCalledWith('img-1');
   });
 
   it('says so when the chosen model cannot be used right now', async () => {
     const generate = returning();
     const gone = jest.fn(async () =>
       err('NO_MODEL' as const, { message: 'none' })
-    ) as unknown as typeof resolveImageModel;
+    ) as unknown as ResolveImage;
     const result = await tool(generate, { resolve: gone }).execute(
       { filename: 'a.png' },
       context()
@@ -395,13 +396,13 @@ describe('chat_generate_image — a size the model will not draw', () => {
   });
 
   it('gives FLUX no auto rung, and reports every size tried when all are rejected', async () => {
-    const flux = jest.fn(async (_db: unknown, _t: string, id: string | null) =>
+    const flux = jest.fn(async (id: string | null) =>
       ok({
         modelConfigId: id ?? 'img-1',
         label: 'x',
         config: { apiKey: 'k', model: 'FLUX.2-flex', surface: 'flux' as const },
       })
-    ) as unknown as typeof resolveImageModel;
+    ) as unknown as ResolveImage;
     const generate = rejecting('invalid_request', 'width must be a multiple of 16');
     const result = await tool(generate, { resolve: flux }).execute(
       { filename: 'a.png', size: '1792x1024' },
@@ -442,7 +443,7 @@ describe('chat_generate_image — building on an earlier picture', () => {
     expect(result.isError).toBe(false);
     // Looked up in this chat, by what the chat model named.
     expect(loadSource).toHaveBeenCalledWith(
-      expect.objectContaining({ db: null, chatId: 'c', subject: 'u', cipher: expect.anything() }),
+      expect.objectContaining({ chatId: 'c', subject: 'u', cipher: expect.anything() }),
       'last'
     );
     expect(generate).toHaveBeenCalledWith(expect.anything(), {

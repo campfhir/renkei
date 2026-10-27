@@ -39,7 +39,9 @@ import {
   renameArtifact,
   shareArtifact,
 } from './artifact-library';
+import { getDataStore } from '@renkei/db';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
+import { databaseForUnconvertedCode } from './unconverted-db';
 
 const WINDOW_CHARS = 1_200;
 const WINDOW_STEP = 600;
@@ -254,7 +256,7 @@ export function artifactAttachTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be attached.');
       if (!context.projectId) return errorResult('This chat is not in a project.');
       const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
-      const result = await attachToProject(context.db, {
+      const result = await attachToProject(databaseForUnconvertedCode(), {
         actorSubject: context.subject,
         artifactId: id,
         projectId: context.projectId,
@@ -308,13 +310,9 @@ export function artifactShareTool(): LocalTool {
       const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
       const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
       if (!email) return errorResult('Say whose email to share with.');
-      const person = await context.db
-        .selectFrom('identities')
-        .select(['subject', 'display_name'])
-        .where('email', '=', email)
-        .executeTakeFirst();
+      const person = await getDataStore().identities.findByEmail(email);
       if (!person) return errorResult(`Nobody in the directory has the email ${email}.`);
-      const result = await shareArtifact(context.db, {
+      const result = await shareArtifact(databaseForUnconvertedCode(), {
         ownerSubject: context.subject,
         artifactId: id,
         granteeSubject: person.subject,
@@ -333,7 +331,7 @@ export function artifactShareTool(): LocalTool {
         }
       }
       return textResult(
-        `Shared with ${person.display_name ?? email}; they can use it in their own projects.`
+        `Shared with ${person.displayName ?? email}; they can use it in their own projects.`
       );
     },
   };
@@ -375,7 +373,7 @@ export function artifactRenameTool(): LocalTool {
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
-      const renamed = await renameArtifact(context.db, {
+      const renamed = await renameArtifact(databaseForUnconvertedCode(), {
         ownerSubject: context.subject,
         artifactId: row.id,
         filename: newName,
@@ -420,7 +418,7 @@ export function artifactDeleteTool(): LocalTool {
           `${row.filename} is used by ${users.join(', ')}. Deleting it would remove it for everyone, so it was not deleted. Hand it over or detach it on the Artifacts page first.`
         );
       }
-      const deleted = await deleteArtifact(context.db, row);
+      const deleted = await deleteArtifact(databaseForUnconvertedCode(), row);
       if (!deleted) return errorResult(`${row.filename} could not be deleted.`);
       return textResult(`Deleted ${row.filename}.`);
     },
@@ -463,7 +461,7 @@ export function artifactDescribeTool(): LocalTool {
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file in this chat; name one by its file name or id.');
-      await storeDigest(context.db, row.id, digest);
+      await storeDigest(databaseForUnconvertedCode(), row.id, digest);
       return textResult(`Described ${row.filename} for the Artifacts search.`, {
         attachmentId: row.id,
       });

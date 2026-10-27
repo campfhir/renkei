@@ -50,8 +50,7 @@
  */
 
 import { after } from 'next/server';
-import type { Kysely } from 'kysely';
-import { getDataStore, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -62,7 +61,8 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { resolveChatAccess } from './access';
-import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
+import { listMessages, type StoredMessage } from './messages';
+import { databaseForUnconvertedCode } from './unconverted-db';
 import { openText, sealText, type ContentCipher } from './content-crypto';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
@@ -420,10 +420,7 @@ async function foldBatch(
  * another (each reads the previous batch's summary), reporting progress as
  * they go; nothing is written to the database until every batch succeeds.
  */
-export async function compactChat(
-  db: Kysely<DB>,
-  input: CompactChatInput
-): Promise<CompactChatResult | null> {
+export async function compactChat(input: CompactChatInput): Promise<CompactChatResult | null> {
   const messages = input.messages ?? (await listMessages(input.chatId, input.cipher));
   const unfolded = unfoldedOf(messages);
   const candidates = foldCandidates(unfolded);
@@ -449,27 +446,18 @@ export async function compactChat(
   const throughSeq = candidates[candidates.length - 1].seq;
   const sealed = sealText(runningSummary, input.cipher);
   if (!sealed.ok) throw new Error(sealed.err.message ?? 'the content key is not configured');
-  const inserted = await db
-    .insertInto('chat_summaries')
-    .values({
-      chat_id: input.chatId,
-      content: sealed.val,
-      through_seq: throughSeq,
-      folded_count: candidates.length,
-      created_by: input.createdBy,
-    })
-    .returning(['id'])
-    .executeTakeFirstOrThrow();
-  // Summary first, then the attribution: a crash between the two leaves the
-  // folded messages present AND summarized — sent again once, harmlessly —
-  // never dropped from the conversation.
-  await attributeMessagesToSummary(
-    db,
-    candidates.map((message) => message.id),
-    inserted.id
-  );
+  // The summary, then the folded messages attributed to it (the store
+  // writes them in that order).
+  const summaryId = await getDataStore().chatThreads.insertSummary({
+    chatId: input.chatId,
+    content: sealed.val,
+    throughSeq,
+    foldedCount: candidates.length,
+    createdBy: input.createdBy,
+    messageIds: candidates.map((message) => message.id),
+  });
 
-  return { summaryId: inserted.id, foldedCount: candidates.length, throughSeq };
+  return { summaryId, foldedCount: candidates.length, throughSeq };
 }
 
 export type StartCompactionError =
@@ -487,21 +475,18 @@ export interface StartedCompactionTurn {
  * replies, and the browser's existing turn/EventSource machinery needs no
  * special case to watch it.
  */
-export async function startCompactionTurn(
-  db: Kysely<DB>,
-  input: {
-    session: { subject: string; roles: string[] };
-    chatId: string;
-    defer?: (task: () => Promise<void>) => void;
-  }
-): Promise<Result<StartedCompactionTurn, StartCompactionError>> {
+export async function startCompactionTurn(input: {
+  session: { subject: string; roles: string[] };
+  chatId: string;
+  defer?: (task: () => Promise<void>) => void;
+}): Promise<Result<StartedCompactionTurn, StartCompactionError>> {
   const defer = input.defer ?? ((task) => after(task));
   const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
 
-  const llmResult = await resolveAgentLlm(db, chat.llmModelId ?? null);
+  const llmResult = await resolveAgentLlm(databaseForUnconvertedCode(), chat.llmModelId ?? null);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -512,7 +497,7 @@ export async function startCompactionTurn(
   }
   const llm = llmResult.val;
 
-  const turn = await createTurn(db, {
+  const turn = await createTurn({
     chatId: chat.id,
     llmModelId: llm.modelConfigId,
     thinkingBudget: null,
@@ -528,7 +513,7 @@ export async function startCompactionTurn(
   }
   const turnId = turn.val;
   defer(() =>
-    runCompactionTurn(db, {
+    runCompactionTurn({
       chatId: chat.id,
       turnId,
       llm,
@@ -538,20 +523,17 @@ export async function startCompactionTurn(
   return ok({ turnId });
 }
 
-async function runCompactionTurn(
-  db: Kysely<DB>,
-  input: {
-    chatId: string;
-    turnId: string;
-    llm: ResolvedLlm;
-    cipher: ContentCipher;
-  }
-): Promise<void> {
+async function runCompactionTurn(input: {
+  chatId: string;
+  turnId: string;
+  llm: ResolvedLlm;
+  cipher: ContentCipher;
+}): Promise<void> {
   const channel = openTurnChannel(input.turnId);
   let status: 'completed' | 'failed' = 'completed';
   let error: string | null = null;
   try {
-    await compactChat(db, {
+    await compactChat({
       chatId: input.chatId,
       llm: input.llm,
       createdBy: 'user',
@@ -569,7 +551,7 @@ async function runCompactionTurn(
       message: error,
     });
   }
-  await finishTurn(db, input.turnId, {
+  await finishTurn(input.turnId, {
     status,
     error,
     iterations: 0,

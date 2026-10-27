@@ -2,13 +2,12 @@
  * chat_messages: read with the envelope opened, written sealed — under
  * the chat's own cipher (content-crypto.ts, chat-keys.ts), which every
  * caller passes: there is no default, so a row cannot be written under
- * the wrong key by omission. `seq` is allocated under the chat's row lock
- * by the caller's transaction so two writers cannot collide (the unique
- * constraint would catch them anyway).
+ * the wrong key by omission. `seq` is allocated by the store at the
+ * chat's next place (the unique constraint catches two writers that
+ * collide); rows go through `getDataStore().chatThreads`.
  */
 
-import { sql, type Kysely, type Transaction } from 'kysely';
-import { getDataStore, type ChatMessageRecord, type DB } from '@renkei/db';
+import { getDataStore, type ChatMessageInsert, type ChatMessageRecord } from '@renkei/db';
 import type { LlmContentBlock, LlmUsage } from '@renkei/agent-llm';
 import { isUuid } from '@/lib/uuid';
 import { openBlocks, sealBlocks, type ContentCipher } from './content-crypto';
@@ -190,53 +189,50 @@ export interface InsertedMessage {
   createdAt: Date;
 }
 
-/**
- * Appends at the next seq. Run inside a transaction that has locked the
- * chat row (`FOR UPDATE`) when two writers could race; the turn runner is
- * the only writer while a turn runs, so it appends without one.
- */
-export async function insertMessage(
-  db: Kysely<DB> | Transaction<DB>,
-  input: NewMessage
-): Promise<InsertedMessage | null> {
+/** The row as the store takes it, its blocks sealed; null when the chat's key is unavailable. */
+export function sealedMessage(input: NewMessage): ChatMessageInsert | null {
   const sealed = sealBlocks(input.blocks, input.cipher);
   if (!sealed.ok) return null;
-  const inserted = await db
-    .insertInto('chat_messages')
-    .values({
-      chat_id: input.chatId,
-      turn_id: input.turnId,
-      seq: sql<number>`(SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE chat_id = ${input.chatId})`,
-      role: input.role,
-      kind: input.kind,
-      status: input.status,
-      content: sealed.val,
-      llm_model_id: input.llmModelId ?? null,
-      provider: input.provider ?? null,
-      model: input.model ?? null,
-    })
-    .returning(['id', 'seq', 'created_at'])
-    .executeTakeFirstOrThrow();
-  return { id: inserted.id, seq: inserted.seq, createdAt: inserted.created_at };
+  return {
+    chatId: input.chatId,
+    turnId: input.turnId,
+    role: input.role,
+    kind: input.kind,
+    status: input.status,
+    content: sealed.val,
+    llmModelId: input.llmModelId ?? null,
+    provider: input.provider ?? null,
+    model: input.model ?? null,
+  };
 }
 
 /**
- * Compaction's write: attributes the folded messages to the summary that
- * just absorbed them (compaction.ts). Idempotent — a message already
- * attributed to an earlier summary is left alone by the caller's own
- * selection, never re-pointed here.
+ * Appends at the next seq. The turn runner is the only writer while a
+ * turn runs, so it appends without a lock; a writer that could race a
+ * turn uses `insertMessageWhenIdle`.
  */
-export async function attributeMessagesToSummary(
-  db: Kysely<DB> | Transaction<DB>,
-  messageIds: string[],
-  summaryId: string
-): Promise<void> {
-  if (messageIds.length === 0) return;
-  await db
-    .updateTable('chat_messages')
-    .set({ summary_id: summaryId })
-    .where('id', 'in', messageIds)
-    .execute();
+export async function insertMessage(input: NewMessage): Promise<InsertedMessage | null> {
+  const message = sealedMessage(input);
+  if (!message) return null;
+  return getDataStore().chatThreads.insertMessage(message);
+}
+
+/**
+ * Appends at the next seq only while no turn of the chat runs: the runner
+ * is the only writer then, and a user-role row landing between a reply's
+ * rows would sit where the provider expects a tool result. The store
+ * locks the chat row for the check and the insert together, so a turn
+ * starting in the same instant waits its turn.
+ */
+export async function insertMessageWhenIdle(
+  input: NewMessage
+): Promise<
+  { ok: true; inserted: InsertedMessage } | { ok: false; reason: 'turn-running' | 'failed' }
+> {
+  const message = sealedMessage(input);
+  if (!message) return { ok: false, reason: 'failed' };
+  const inserted = await getDataStore().chatThreads.insertMessageWhenIdle(message);
+  return inserted ? { ok: true, inserted } : { ok: false, reason: 'turn-running' };
 }
 
 export interface AssistantPatch {
@@ -248,7 +244,6 @@ export interface AssistantPatch {
 }
 
 export async function updateMessageContent(
-  db: Kysely<DB>,
   messageId: string,
   blocks: LlmContentBlock[],
   cipher: ContentCipher,
@@ -256,19 +251,14 @@ export async function updateMessageContent(
 ): Promise<boolean> {
   const sealed = sealBlocks(blocks, cipher);
   if (!sealed.ok) return false;
-  await db
-    .updateTable('chat_messages')
-    .set({
-      content: sealed.val,
-      ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.stopReason !== undefined ? { stop_reason: patch.stopReason } : {}),
-      ...(patch.usage !== undefined ? { usage: patch.usage ? usageJson(patch.usage) : null } : {}),
-      ...(patch.timing !== undefined ? { timing: patch.timing ? { ...patch.timing } : null } : {}),
-      ...(patch.error !== undefined ? { error: patch.error } : {}),
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', messageId)
-    .execute();
+  await getDataStore().chatThreads.updateMessage(messageId, {
+    content: sealed.val,
+    ...(patch.status !== undefined ? { status: patch.status } : {}),
+    ...(patch.stopReason !== undefined ? { stopReason: patch.stopReason } : {}),
+    ...(patch.usage !== undefined ? { usage: patch.usage ? usageJson(patch.usage) : null } : {}),
+    ...(patch.timing !== undefined ? { timing: patch.timing ? { ...patch.timing } : null } : {}),
+    ...(patch.error !== undefined ? { error: patch.error } : {}),
+  });
   return true;
 }
 

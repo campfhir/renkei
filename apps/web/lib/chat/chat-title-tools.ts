@@ -10,8 +10,7 @@
  * is an ordinary tool call in the thread.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { databaseForUnconvertedCode } from './unconverted-db';
 import type { ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
@@ -60,10 +59,12 @@ const AUTO_TITLE_SYSTEM_PROMPT =
  * auto-compaction budget (compaction.ts reads the stored replies' usage)
  * never counts it.
  */
-export async function autoTitleChat(
-  db: Kysely<DB>,
-  input: { subject: string; chatId: string; llm: ResolvedLlm; firstPrompt: string }
-): Promise<void> {
+export async function autoTitleChat(input: {
+  subject: string;
+  chatId: string;
+  llm: ResolvedLlm;
+  firstPrompt: string;
+}): Promise<void> {
   try {
     const claimed = await claimAutoTitle(input.chatId);
     if (!claimed) return;
@@ -82,7 +83,7 @@ export async function autoTitleChat(
       ...(input.llm.temperature !== undefined ? { temperature: input.llm.temperature } : {}),
     });
     if (!completion.ok) throw new Error(completion.err.message ?? 'the model failed');
-    await recordLlmCall(db, {
+    await recordLlmCall(databaseForUnconvertedCode(), {
       subject: input.subject,
       agentId: null,
       purpose: 'context_window',

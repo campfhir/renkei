@@ -85,7 +85,7 @@ maybe('chat and project keys through the chat', () => {
     expect(access?.role).toBe('owner');
     if (!access) return;
     expect(access.cipher.keyId).not.toBeNull();
-    const inserted = await insertMessage(db, {
+    const inserted = await insertMessage({
       chatId,
       turnId: null,
       role: 'user',
@@ -180,7 +180,7 @@ maybe('chat and project keys through the chat', () => {
     const asOwner = await resolveChatAccess(owner, bareId);
     if (!asOwner) throw new Error('owner lost access');
     expect(asOwner.cipher.keyId).toBe(asViewer.cipher.keyId);
-    await insertMessage(db, {
+    await insertMessage({
       chatId: bareId,
       turnId: null,
       role: 'assistant',
@@ -196,7 +196,7 @@ maybe('chat and project keys through the chat', () => {
       chat ? [chat] : []
     );
     const ciphers = await chatCiphersFor(friend, chats);
-    const hits = await searchChatMessages(db, [chatId, bareId], 'after keys', ciphers);
+    const hits = await searchChatMessages([chatId, bareId], 'after keys', ciphers);
     expect(hits.map((hit) => hit.chatId)).toEqual([bareId]);
     // The chat the friend was unshared from matches nothing for them.
     expect(ciphers.get(chatId)?.keyId).not.toBeNull(); // opened as its owner (no grant) — see chatCiphersFor

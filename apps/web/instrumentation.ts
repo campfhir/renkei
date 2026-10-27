@@ -124,7 +124,7 @@ export async function register() {
         signal,
       })
     );
-    startTurnRecovery(dbResult.val);
+    startTurnRecovery();
 
     // Approved Salesforce and Jira admin changes run as jobs in this
     // process (an after() from the approve route); this sweep starts any

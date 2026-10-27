@@ -17,7 +17,7 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
 
   const text = typeof body.text === 'string' ? body.text : '';
@@ -34,7 +34,7 @@ export async function POST(
   const llmModelId =
     typeof body.llmModelId === 'string' && isUuid(body.llmModelId) ? body.llmModelId : null;
 
-  const started = await startChatTurn(db, {
+  const started = await startChatTurn({
     session: { subject: session.subject, roles: session.roles },
     chatId,
     text,

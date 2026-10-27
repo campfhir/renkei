@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for a tool that never touches it */
 /**
  * chat_write_file's promises: the content comes back as a document the
  * runner keeps as an artifact, named as asked and typed by its extension
@@ -19,7 +18,6 @@ const testCipher = resourceCipher({
 });
 
 const context: LocalToolContext = {
-  db: null as unknown as LocalToolContext['db'],
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

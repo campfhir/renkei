@@ -49,7 +49,6 @@ maybe('chat_widget_resolve', () => {
     if (!result.ok) throw new Error('no database');
     db = result.val;
     context = {
-      db,
       subject: me,
       chatId,
       projectId: null,
@@ -77,7 +76,7 @@ maybe('chat_widget_resolve', () => {
         finished_at: new Date(),
       })
       .execute();
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId,
       role: 'assistant',
@@ -90,7 +89,7 @@ maybe('chat_widget_resolve', () => {
         { type: 'tool_use', id: 'tu_issue', name: 'jira_create_issue_preview', input: {} },
       ],
     });
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId,
       role: 'user',
@@ -125,7 +124,7 @@ maybe('chat_widget_resolve', () => {
       ],
     });
     // A card in a different chat of the same tenant: never reachable from here.
-    await insertMessage(db, {
+    await insertMessage({
       chatId: otherChatId,
       turnId: null,
       role: 'user',
@@ -243,7 +242,7 @@ maybe('chat_widget_resolve', () => {
     // ui/report-decision) between the tool's read and its write: the tool
     // wrote nothing, and reports the receipt the card actually shows.
     const raced = createLocalToolSet(widgetStateTools());
-    const clicked = await recordWidgetDecision(db, {
+    const clicked = await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey: `renkei-preview:${previewId}`,
@@ -268,7 +267,7 @@ maybe('chat_widget_resolve', () => {
 
   it('defaults the receipt’s wording by outcome', async () => {
     const freshPreviewId = randomUUID();
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId: null,
       role: 'user',

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for a tool that never touches it */
 /**
  * chat_write_chart's promises: the worker's render comes back as a
  * document the runner keeps as an artifact, named as asked with the
@@ -29,7 +28,6 @@ const testCipher = resourceCipher({
 const client = jest.requireMock<{ sbChartRender: jest.Mock }>('@renkei/sandbox-client');
 
 const context: LocalToolContext = {
-  db: null as unknown as LocalToolContext['db'],
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

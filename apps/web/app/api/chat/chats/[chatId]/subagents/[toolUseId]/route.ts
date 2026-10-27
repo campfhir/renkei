@@ -18,10 +18,10 @@ export async function GET(
   const { chatId, toolUseId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  const run = await getSubagentRunByCall(db, chatId, toolUseId, access.cipher);
+  const run = await getSubagentRunByCall(chatId, toolUseId, access.cipher);
   if (!run) return jsonError(404, 'not-found', 'No such sub-agent run');
   return NextResponse.json({ run });
 }

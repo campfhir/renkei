@@ -26,8 +26,6 @@
  * call that hit the wall run again.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import {
   sandboxServicesEnabled,
@@ -88,7 +86,6 @@ type Target = ReturnType<typeof codeProjectTarget>;
  * gone or failed — cloned again with the chatting person's grant.
  */
 async function resolveBase(
-  db: Kysely<DB>,
   project: ProjectRow,
   actor: Actor,
   target: Target,
@@ -123,7 +120,6 @@ async function resolveBase(
  * person's grant — and the chat's worktree is then made in it.
  */
 async function recoverCheckout(
-  db: Kysely<DB>,
   project: ProjectRow,
   chat: Chat,
   actor: Actor,
@@ -137,7 +133,7 @@ async function recoverCheckout(
   const freshChat = (await getChatRow(chat.id)) ?? chat;
   // The lost id is the chat's worktree or the base under it; the base is
   // only cloned again when the worker no longer has it.
-  const base = await resolveBase(db, fresh, actor, target, { notId: lostId });
+  const base = await resolveBase(fresh, actor, target, { notId: lostId });
   if (!base.ok) return { ok: false, message: base.message };
   const settled = await awaitClone(target, base.val, started + CLONE_WAIT_MS);
   if (!settled) return { ok: false, message: 'the checkout disappeared while cloning.' };
@@ -192,7 +188,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function codeProjectContext(
-  db: Kysely<DB>,
   project: ProjectRow,
   actor: { subject: string; origin?: string; auto?: boolean; chat: Chat }
 ): Promise<CodeTurnContext | null> {
@@ -218,7 +213,7 @@ export async function codeProjectContext(
 
   // The project's clone as it is: present and usable, still cloning, or
   // gone (never cloned, failed, or retired by the worker's sweep).
-  const resolvedBase = await resolveBase(db, project, actor, target);
+  const resolvedBase = await resolveBase(project, actor, target);
   if (!resolvedBase.ok) {
     return unavailable(`the repository could not be cloned: ${resolvedBase.message}`);
   }
@@ -249,7 +244,7 @@ export async function codeProjectContext(
     repoFullName: project.repo.fullName,
     repoProvider: project.repo.provider,
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
-    recover: (lostId) => recoverCheckout(db, project, actor.chat, actor, target, lostId),
+    recover: (lostId) => recoverCheckout(project, actor.chat, actor, target, lostId),
     servicesEnabled,
     ...(actor.auto ? { auto: true } : {}),
     subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({

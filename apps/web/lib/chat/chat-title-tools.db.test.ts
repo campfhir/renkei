@@ -64,7 +64,7 @@ maybe('chat titles', () => {
     const chatId = await newChat(placeholder);
     const { llm } = modelAnswering('Budget review');
 
-    await autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' });
+    await autoTitleChat({ subject, chatId, llm, firstPrompt: 'Budget help please.' });
 
     const rows = await db
       .selectFrom('llm_calls')
@@ -78,13 +78,13 @@ maybe('chat titles', () => {
     const chatId = await newChat(placeholder);
     const { llm, complete } = modelAnswering('Budget review');
 
-    await autoTitleChat(db, {
+    await autoTitleChat({
       subject,
       chatId,
       llm,
       firstPrompt: 'Help me plan the budget review.',
     });
-    await autoTitleChat(db, {
+    await autoTitleChat({
       subject,
       chatId,
       llm,
@@ -120,7 +120,7 @@ maybe('chat titles', () => {
     });
     const llm = { provider: { complete } } as unknown as ResolvedLlm;
 
-    await autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' });
+    await autoTitleChat({ subject, chatId, llm, firstPrompt: 'Budget help please.' });
 
     expect(await titleOf(chatId)).toEqual({ title: 'My own name', auto_title_asked: true });
   });
@@ -130,7 +130,7 @@ maybe('chat titles', () => {
     const { llm } = modelAnswering(null);
 
     await expect(
-      autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' })
+      autoTitleChat({ subject, chatId, llm, firstPrompt: 'Budget help please.' })
     ).resolves.toBeUndefined();
 
     expect(await titleOf(chatId)).toEqual({ title: placeholder, auto_title_asked: true });
@@ -141,7 +141,7 @@ maybe('chat titles', () => {
     const complete = jest.fn(async () => err({ type: 'PROVIDER', message: 'overloaded' } as never));
     const llm = { provider: { complete } } as unknown as ResolvedLlm;
 
-    await autoTitleChat(db, { subject, chatId, llm, firstPrompt: 'Budget help please.' });
+    await autoTitleChat({ subject, chatId, llm, firstPrompt: 'Budget help please.' });
 
     expect(await titleOf(chatId)).toEqual({ title: placeholder, auto_title_asked: true });
   });

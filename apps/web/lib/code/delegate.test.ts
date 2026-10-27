@@ -79,7 +79,6 @@ const pushTool: LocalTool = {
 
 function context(extra: Partial<LocalToolContext>): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'u',
     chatId: 'c',
     cipher: testCipher,
@@ -175,7 +174,7 @@ describe('code_delegate', () => {
     expect(result.isError).toBe(false);
     expect(result.content[0]?.text).toContain('from the fast model');
     // Resolved by the chosen config's id, with its own key and settings.
-    expect(resolve).toHaveBeenCalledWith(null, 'model-2');
+    expect(resolve).toHaveBeenCalledWith('model-2');
     const fast = { provider: 'anthropic', model: 'claude-fast', llmModelId: 'model-2' };
     expect(started).toEqual([fast]);
     expect(recorded).toEqual([fast]);

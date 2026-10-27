@@ -1,6 +1,6 @@
 /**
- * The lines every code-project route starts with, once: the session and
- * database, the person's access to the project (404 for none, never
+ * The lines every code-project route starts with, once: the session, the
+ * person's access to the project (404 for none, never
  * 403), the project row as a code project, and — for a write — the
  * editor role, the feature switch, and the org's read-only mode. The
  * older routes (tree, diff, env) spell these out themselves; the code
@@ -9,15 +9,9 @@
 
 import type { NextRequest } from 'next/server';
 import type { NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
-import {
-  chatRequestContext,
-  databaseForUnconvertedCode,
-  jsonError,
-} from '@/lib/chat/route-support';
+import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { resolveResourceAccess, type ResourceAccess } from '@/lib/chat/access';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import { getChatRow, type ChatRow } from '@/lib/chat/store';
@@ -27,8 +21,6 @@ import { ensureChatWorktree } from './worktree';
 import type { Session } from '@/lib/session';
 
 export interface CodeProjectContext {
-  /** The database, for code not yet behind the data store (route-support.ts); connects on first use. */
-  readonly db: Kysely<DB>;
   session: Session;
   access: ResourceAccess;
   project: ProjectRow;
@@ -95,9 +87,6 @@ export async function codeProjectContext(
   return {
     ok: true,
     context: {
-      get db() {
-        return databaseForUnconvertedCode();
-      },
       session,
       access,
       project,

@@ -14,8 +14,7 @@
  * the prompt — a state the person can see and continue from.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
@@ -74,21 +73,14 @@ export function promptTextOf(content: string, cipher: ContentCipher): string {
  * with no turn (an older chat) falls back to its own text.
  */
 async function originalPromptText(
-  db: Kysely<DB>,
   chatId: string,
-  prompt: { turn_id: string | null; content: string },
+  prompt: { turnId: string | null; content: string },
   cipher: ContentCipher
 ): Promise<string> {
-  if (!prompt.turn_id) return promptTextOf(prompt.content, cipher);
-  const rows = await db
-    .selectFrom('chat_messages')
-    .select(['content'])
-    .where('chat_id', '=', chatId)
-    .where('turn_id', '=', prompt.turn_id)
-    .where('role', '=', 'user')
-    .where('kind', '=', 'prompt')
-    .orderBy('seq', 'asc')
-    .execute();
+  if (!prompt.turnId) return promptTextOf(prompt.content, cipher);
+  const rows = (await getDataStore().chatThreads.listTurnMessages(prompt.turnId)).filter(
+    (row) => row.chatId === chatId && row.role === 'user' && row.kind === 'prompt'
+  );
   if (rows.length === 0) return promptTextOf(prompt.content, cipher);
   return rows
     .map((row) => rawPromptText(row.content, cipher))
@@ -96,82 +88,33 @@ async function originalPromptText(
     .trim();
 }
 
-export async function resendFromMessage(
-  db: Kysely<DB>,
-  input: ResendInput
-): Promise<Result<Resent, ResendError>> {
+export async function resendFromMessage(input: ResendInput): Promise<Result<Resent, ResendError>> {
   if (!isUuid(input.messageId)) return err('NOT_FOUND' as const);
   const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   if (await getActiveTurn(access.chat.id)) return err('ALREADY_RUNNING' as const);
 
-  const prompt = await db
-    .selectFrom('chat_messages')
-    .select(['id', 'seq', 'kind', 'content', 'turn_id'])
-    .where('chat_id', '=', access.chat.id)
-    .where('id', '=', input.messageId)
-    .executeTakeFirst();
+  const store = getDataStore();
+  const prompt = await store.chatThreads.getMessage(access.chat.id, input.messageId);
   if (!prompt) return err('NOT_FOUND' as const);
   if (prompt.kind !== 'prompt') return err('NOT_PROMPT' as const);
 
   const text =
     input.text !== null
       ? input.text
-      : await originalPromptText(db, access.chat.id, prompt, access.cipher);
-  const ownUploads = await db
-    .selectFrom('artifacts')
-    .select('id')
-    .where('chat_id', '=', access.chat.id)
-    .where('message_id', '=', prompt.id)
-    .where('origin', '=', 'upload')
-    .execute();
+      : await originalPromptText(access.chat.id, prompt, access.cipher);
+  const ownUploads = (
+    await store.artifacts.listByChat(access.chat.id, { origin: 'upload' })
+  ).filter((row) => row.messageId === prompt.id);
   const attachmentIds = [
     ...ownUploads.map((row) => row.id),
     ...(input.extraAttachmentIds ?? []).filter(isUuid),
   ];
 
-  const removedBlobKeys: string[] = [];
-  const removedArtifactIds: string[] = [];
-  await db.transaction().execute(async (trx) => {
-    const doomed = await trx
-      .selectFrom('chat_messages')
-      .select(['id', 'turn_id'])
-      .where('chat_id', '=', access.chat.id)
-      .where('seq', '>=', prompt.seq)
-      .execute();
-    const messageIds = doomed.map((row) => row.id);
-    const turnIds = [...new Set(doomed.flatMap((row) => (row.turn_id ? [row.turn_id] : [])))];
-    if (messageIds.length > 0) {
-      const artifacts = await trx
-        .selectFrom('artifacts')
-        .select(['id', 'blob_key'])
-        .where('chat_id', '=', access.chat.id)
-        .where('origin', '=', 'model')
-        .where('message_id', 'in', messageIds)
-        .execute();
-      if (artifacts.length > 0) {
-        await trx
-          .deleteFrom('artifacts')
-          .where(
-            'id',
-            'in',
-            artifacts.map((row) => row.id)
-          )
-          .execute();
-        removedBlobKeys.push(...artifacts.map((row) => row.blob_key));
-        removedArtifactIds.push(...artifacts.map((row) => row.id));
-      }
-      await trx.deleteFrom('chat_messages').where('id', 'in', messageIds).execute();
-    }
-    if (turnIds.length > 0) {
-      await trx
-        .deleteFrom('chat_turns')
-        .where('chat_id', '=', access.chat.id)
-        .where('id', 'in', turnIds)
-        .execute();
-    }
-  });
+  const removed = await store.chatThreads.truncateFrom(access.chat.id, prompt.seq);
+  const removedBlobKeys = removed.map((row) => row.blobKey);
+  const removedArtifactIds = removed.map((row) => row.id);
   if (removedBlobKeys.length > 0) {
     const store = await resolveTenantBlobStore();
     if (store.ok) {
@@ -188,7 +131,7 @@ export async function resendFromMessage(
     }
   }
 
-  const started = await startChatTurn(db, {
+  const started = await startChatTurn({
     session: input.session,
     chatId: access.chat.id,
     text,
