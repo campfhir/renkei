@@ -26,8 +26,6 @@
  * stamped in the ledger with the model that actually answered.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   resolveAgentLlm,
   streamOrComplete,
@@ -43,6 +41,7 @@ import type { McpToolResult } from '@renkei/mcp-client';
 import { clipOutput } from '@renkei/connector-sandbox';
 import type { Result } from '@campfhir/safe-functions/types';
 import { errorResult, textResult, type LocalToolContext } from './local-tools';
+import { databaseForUnconvertedCode } from './unconverted-db';
 import { friendlyLlmError, textOfResult } from './turn-runner';
 
 const RESULT_MAX_CHARS = 30_000;
@@ -114,9 +113,12 @@ export interface SubagentModelChoice {
 }
 
 export type ResolveSubagentLlm = (
-  db: Kysely<DB>,
   modelConfigId: string
 ) => Promise<Result<ResolvedLlm, ResolveLlmError>>;
+
+/** The org's model config, resolved with its key — the default `ResolveSubagentLlm`. */
+export const resolveSubagentLlm: ResolveSubagentLlm = (modelConfigId) =>
+  resolveAgentLlm(databaseForUnconvertedCode(), modelConfigId);
 
 /** The ledger's view of the model a sub-agent ran on. */
 export function subagentModelOf(llm: ResolvedLlm): LlmCallModel {
@@ -202,7 +204,7 @@ export async function pickSubagentLlm(
   context: LocalToolContext,
   wanted: string,
   models: SubagentModelChoice[],
-  resolve: ResolveSubagentLlm = resolveAgentLlm
+  resolve: ResolveSubagentLlm = resolveSubagentLlm
 ): Promise<{ ok: true; llm: ResolvedLlm } | { ok: false; error: McpToolResult }> {
   const turnLlm = context.llm;
   if (!turnLlm) {
@@ -222,7 +224,7 @@ export async function pickSubagentLlm(
     };
   }
   if (choice.id === turnLlm.modelConfigId) return { ok: true, llm: turnLlm };
-  const resolved = await resolve(context.db, choice.id);
+  const resolved = await resolve(choice.id);
   // resolveAgentLlm falls back to the org default when the row no longer
   // resolves; that is not what was asked for, so say so.
   if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {

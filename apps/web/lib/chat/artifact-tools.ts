@@ -39,6 +39,7 @@ import {
   renameArtifact,
   shareArtifact,
 } from './artifact-library';
+import { getDataStore } from '@renkei/db';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 
 const WINDOW_CHARS = 1_200;
@@ -308,11 +309,7 @@ export function artifactShareTool(): LocalTool {
       const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
       const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
       if (!email) return errorResult('Say whose email to share with.');
-      const person = await context.db
-        .selectFrom('identities')
-        .select(['subject', 'display_name'])
-        .where('email', '=', email)
-        .executeTakeFirst();
+      const person = await getDataStore().identities.findByEmail(email);
       if (!person) return errorResult(`Nobody in the directory has the email ${email}.`);
       const result = await shareArtifact({
         ownerSubject: context.subject,
@@ -333,7 +330,7 @@ export function artifactShareTool(): LocalTool {
         }
       }
       return textResult(
-        `Shared with ${person.display_name ?? email}; they can use it in their own projects.`
+        `Shared with ${person.displayName ?? email}; they can use it in their own projects.`
       );
     },
   };

@@ -1,5 +1,6 @@
 import { orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
+import { memoryChatTurnEngine } from './engine-memory';
 import { messageFromRow, summaryFromRow, turnFromRow } from './record';
 import type { ChatThreadStore } from './types';
 
@@ -7,6 +8,7 @@ export function memoryChatThreads(tables: MemoryTables): ChatThreadStore {
   const chat = (value: string) => tables.param('chats', 'id', value);
 
   return {
+    ...memoryChatTurnEngine(tables),
     async listMessages(chatId) {
       const id = chat(chatId);
       return orderBy(

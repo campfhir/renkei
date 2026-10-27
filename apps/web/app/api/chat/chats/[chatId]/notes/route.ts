@@ -21,7 +21,7 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
   const project = chat.projectId ? await getProjectRow(chat.projectId) : null;
@@ -30,7 +30,7 @@ export async function POST(
   const body = await readJsonBody(request);
   const note = noteFromInput(body.note);
   if (!note) return jsonError(400, 'invalid', 'That is not a note the pane writes.');
-  const appended = await appendChatNote(db, { chatId: chat.id, note });
+  const appended = await appendChatNote({ chatId: chat.id, note });
   if (!appended.ok) {
     return appended.reason === 'turn-running'
       ? jsonError(409, 'turn-running', 'Wait for the current reply to finish first.')

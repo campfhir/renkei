@@ -9,21 +9,17 @@
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import type { DB } from '@renkei/db';
 import { getSessionFromRequest, type Session } from '@/lib/session';
 import type { ReadBytesError } from './attachments';
+import { databaseForUnconvertedCode } from './unconverted-db';
+
+export { databaseForUnconvertedCode } from './unconverted-db';
 
 export interface ChatRequestContext {
   /** The database, for code not yet behind the data store; throws when it is unavailable. */
   readonly db: Kysely<DB>;
   session: Session;
-}
-
-/** The database for code not yet behind the data store, or a thrown error (the route's 500). */
-export function databaseForUnconvertedCode(): Kysely<DB> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('Database unavailable');
-  return dbResult.val;
 }
 
 export function jsonError(status: number, code: string, message: string): NextResponse {

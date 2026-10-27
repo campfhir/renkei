@@ -39,10 +39,7 @@ maybe('chat_subagent_runs model', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await db
-      .insertInto('chats')
-      .values({ id: chatId, owner_subject: subject })
-      .execute();
+    await db.insertInto('chats').values({ id: chatId, owner_subject: subject }).execute();
     await db
       .insertInto('chat_turns')
       .values({ id: turnId, chat_id: chatId, status: 'running' })
@@ -70,7 +67,7 @@ maybe('chat_subagent_runs model', () => {
   });
 
   it('keeps the model a run started on and reads it back with its label, then without', async () => {
-    const runId = await createSubagentRun(db, {
+    const runId = await createSubagentRun({
       chatId,
       turnId,
       toolUseId: 'toolu_fast',
@@ -83,7 +80,6 @@ maybe('chat_subagent_runs model', () => {
     });
     expect(runId).not.toBeNull();
     await finishSubagentRun(
-      db,
       runId!,
       {
         status: 'completed',
@@ -95,7 +91,7 @@ maybe('chat_subagent_runs model', () => {
       },
       testCipher
     );
-    const run = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
+    const run = await getSubagentRunByCall(chatId, 'toolu_fast', testCipher);
     expect(run?.model).toEqual({
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
@@ -104,12 +100,12 @@ maybe('chat_subagent_runs model', () => {
 
     // The config removed: the run still says what answered, by name.
     await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
-    const later = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
+    const later = await getSubagentRunByCall(chatId, 'toolu_fast', testCipher);
     expect(later?.model).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5', label: null });
   });
 
   it('records no model for a run started without one, as before the column existed', async () => {
-    const runId = await createSubagentRun(db, {
+    const runId = await createSubagentRun({
       chatId,
       turnId,
       toolUseId: 'toolu_plain',
@@ -121,7 +117,7 @@ maybe('chat_subagent_runs model', () => {
       cipher: testCipher,
     });
     expect(runId).not.toBeNull();
-    const run = await getSubagentRunByCall(db, chatId, 'toolu_plain', testCipher);
+    const run = await getSubagentRunByCall(chatId, 'toolu_plain', testCipher);
     expect(run?.model).toBeNull();
   });
 });

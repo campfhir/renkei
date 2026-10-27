@@ -32,8 +32,7 @@
  * permission (the deadline counts from the turn's start).
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { resolveAgentLlm, type LlmContentBlock } from '@renkei/agent-llm';
 import { getOrgSettings } from '@renkei/settings';
 import { logger } from '@/lib/logger';
@@ -48,7 +47,7 @@ import { getChatRow } from './store';
 import { interruptSubagentRunsOfTurn } from './subagent-runs';
 import { friendlyLlmError, type TurnResumeSeed } from './turn-runner';
 import { claimResumableTurns, finishTurn, interruptExhaustedTurns, type TurnRow } from './turns';
-import { sql } from 'kysely';
+import { databaseForUnconvertedCode } from './unconverted-db';
 
 /** How often each web process looks for turns to pick up. */
 export const RECOVERY_SWEEP_MS = 10_000;
@@ -155,7 +154,7 @@ export function resumeSeedOf(rows: StoredMessage[], startedAt: Date): TurnResume
  * The claimed turn, carried on in this process. Every path settles the
  * row: resumed and running again, or finished with a status.
  */
-export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<void> {
+export async function resumeChatTurn(turn: TurnRow): Promise<void> {
   const log = (
     message: string,
     fields: Record<string, unknown> = {},
@@ -173,20 +172,18 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     error: string | null,
     seed: TurnResumeSeed
   ) => {
-    await finishTurn(db, turn.id, {
+    await finishTurn(turn.id, {
       status,
       error,
       iterations: seed.iterations,
       inputTokens: seed.inputTokens,
       outputTokens: seed.outputTokens,
     });
-    await db
-      .updateTable('chat_messages')
-      .set({ status: status === 'completed' ? 'complete' : status, updated_at: sql<Date>`NOW()` })
-      .where('turn_id', '=', turn.id)
-      .where('status', '=', 'streaming')
-      .execute();
-    await interruptSubagentRunsOfTurn(db, turn.id);
+    await getDataStore().chatThreads.settleStreamingMessages(
+      turn.id,
+      status === 'completed' ? 'complete' : status
+    );
+    await interruptSubagentRunsOfTurn(turn.id);
     log('orphaned chat turn ended as {status}', { status, error });
   };
 
@@ -200,13 +197,13 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
   const plan = planResume(rows);
 
   // A sub-agent of the lost process reports to nobody now.
-  await interruptSubagentRunsOfTurn(db, turn.id);
+  await interruptSubagentRunsOfTurn(turn.id);
 
   if (turn.cancelRequestedAt) return end('canceled', null, seed);
   if (plan.kind === 'finish') return end(plan.status, turn.error, seed);
 
   if (!chat) return end('interrupted', 'The chat is gone.', seed);
-  const llmResult = await resolveAgentLlm(db, turn.llmModelId);
+  const llmResult = await resolveAgentLlm(databaseForUnconvertedCode(), turn.llmModelId);
   if (!llmResult.ok) {
     return end(
       'failed',
@@ -217,13 +214,13 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     );
   }
   const llm = llmResult.val;
-  const roles = turn.runner?.roles ?? (await latestSessionRoles(db, chat.ownerSubject));
+  const roles = turn.runner?.roles ?? (await latestSessionRoles(chat.ownerSubject));
   const settingsResult = await getOrgSettings();
 
   // Reconcile the rows to a state the loop can start from: a results row
   // for the calls cut off, the note, and a fresh row for the next reply.
   if (plan.kind === 'restream') {
-    await db.deleteFrom('chat_messages').where('id', '=', plan.messageId).execute();
+    await getDataStore().chatThreads.deleteMessage(plan.messageId);
   }
   if (plan.kind === 'answer') {
     const results: LlmContentBlock[] = plan.toolUses.map((use) => ({
@@ -232,7 +229,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
       content: TOOL_CALL_INTERRUPTED_RESULT,
       isError: true,
     }));
-    const inserted = await insertMessage(db, {
+    const inserted = await insertMessage({
       chatId: turn.chatId,
       turnId: turn.id,
       role: 'user',
@@ -243,7 +240,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     });
     if (!inserted) return end('failed', 'The content encryption key is not configured.', seed);
   }
-  const note = await insertMessage(db, {
+  const note = await insertMessage({
     chatId: turn.chatId,
     turnId: turn.id,
     role: 'user',
@@ -253,7 +250,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     cipher,
   });
   if (!note) return end('failed', 'The content encryption key is not configured.', seed);
-  const assistant = await insertMessage(db, {
+  const assistant = await insertMessage({
     chatId: turn.chatId,
     turnId: turn.id,
     role: 'assistant',
@@ -272,7 +269,7 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
     interruptedCalls: plan.kind === 'answer' ? plan.toolUses.map((use) => use.name) : [],
     iterations: seed.iterations,
   });
-  await executeChatTurn(db, {
+  await executeChatTurn({
     session: { subject: chat.ownerSubject, roles },
     chat: { ...chat, llmModelId: llm.modelConfigId },
     cipher,
@@ -292,15 +289,8 @@ export async function resumeChatTurn(db: Kysely<DB>, turn: TurnRow): Promise<voi
  * recent session's. Empty when they have none, which offers the turn no
  * role-gated tool rather than guessing at one.
  */
-async function latestSessionRoles(db: Kysely<DB>, subject: string): Promise<string[]> {
-  const row = await db
-    .selectFrom('sessions')
-    .select('roles')
-    .where('subject', '=', subject)
-    .orderBy('last_used_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return row?.roles ?? [];
+async function latestSessionRoles(subject: string): Promise<string[]> {
+  return (await getDataStore().sessions.latestRolesOf(subject)) ?? [];
 }
 
 /**
@@ -308,28 +298,28 @@ async function latestSessionRoles(db: Kysely<DB>, subject: string): Promise<stri
  * resume each — not awaited, the way a Send's turn runs behind its
  * response. Returns how many were claimed, for the log and the tests.
  */
-export async function recoverOrphanedTurns(db: Kysely<DB>): Promise<number> {
+export async function recoverOrphanedTurns(): Promise<number> {
   if (isShuttingDown()) return 0;
-  const exhausted = await interruptExhaustedTurns(db, {
+  const exhausted = await interruptExhaustedTurns({
     staleSeconds: STALE_HEARTBEAT_SECONDS,
     maxResumes: MAX_TURN_RESUMES,
     error: RESUME_EXHAUSTED_ERROR,
   });
   for (const id of exhausted) {
-    await interruptSubagentRunsOfTurn(db, id);
+    await interruptSubagentRunsOfTurn(id);
     logger.warn('chat turn interrupted after {max} resumes', {
       component: 'chat/turn-recovery',
       turnId: id,
       max: MAX_TURN_RESUMES,
     });
   }
-  const claimed = await claimResumableTurns(db, {
+  const claimed = await claimResumableTurns({
     staleSeconds: STALE_HEARTBEAT_SECONDS,
     maxResumes: MAX_TURN_RESUMES,
     limit: CLAIM_BATCH,
   });
   for (const turn of claimed) {
-    void resumeChatTurn(db, turn).catch((error: unknown) => {
+    void resumeChatTurn(turn).catch((error: unknown) => {
       logger.error('chat turn resume crashed: {message}', {
         component: 'chat/turn-recovery',
         chatId: turn.chatId,
@@ -346,13 +336,13 @@ export async function recoverOrphanedTurns(db: Kysely<DB>): Promise<number> {
  * shutdown so a process on its way out claims nothing. One pass at a
  * time — a slow pass skips a beat rather than piling up.
  */
-export function startTurnRecovery(db: Kysely<DB>, intervalMs = RECOVERY_SWEEP_MS): () => void {
+export function startTurnRecovery(intervalMs = RECOVERY_SWEEP_MS): () => void {
   let running = false;
   const tick = async () => {
     if (running || isShuttingDown()) return;
     running = true;
     try {
-      await recoverOrphanedTurns(db);
+      await recoverOrphanedTurns();
     } catch (error) {
       logger.error('chat turn recovery sweep failed: {message}', {
         component: 'chat/turn-recovery',

@@ -20,6 +20,7 @@ import { getDataStore } from '@renkei/db';
 import { pingChatPresence } from '@renkei/notifications';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext } from '@/lib/chat/route-support';
+import { databaseForUnconvertedCode } from '@/lib/chat/unconverted-db';
 import { resolveChatAccess } from '@/lib/chat/access';
 import type { ContentCipher } from '@/lib/chat/content-crypto';
 import { getTurn, isTurnSettled, toTurnView } from '@/lib/chat/turns';
@@ -72,8 +73,7 @@ export async function GET(
   }
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { context } = ready;
-  const { session } = context;
+  const { session } = ready.context;
   const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const turn = await getTurn(chatId, turnId);
@@ -91,7 +91,7 @@ export async function GET(
     // chat_presence is not behind the data store yet: the database is
     // reached for here, lazily, and a store without one just skips it.
     try {
-      void pingChatPresence(context.db, session.subject, chatId).catch(() => {});
+      void pingChatPresence(databaseForUnconvertedCode(), session.subject, chatId).catch(() => {});
     } catch {
       // No database: no presence to record.
     }

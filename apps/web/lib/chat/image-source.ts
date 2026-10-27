@@ -11,8 +11,6 @@
  * files: nothing from another chat or a project is reachable by name.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { sanitizeBytes } from '@renkei/document-render';
 import { fileCipherFor } from './artifact-access';
 import { listAttachments, readAttachmentBytes, type AttachmentRow } from './attachments';
@@ -78,7 +76,6 @@ export interface SourceImage {
 export type SourceLoad = { ok: true; image: SourceImage } | { ok: false; reason: string };
 
 export interface SourceScope {
-  db: Kysely<DB>;
   subject: string;
   chatId: string;
   /** The chat's cipher: what opens a picture still under the chat's key. */

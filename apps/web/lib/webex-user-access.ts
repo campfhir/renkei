@@ -39,9 +39,10 @@ export async function resolveWebexUserAccess(subject: string): Promise<WebexUser
 export async function resolveWebexUserAccessByEmail(
   email: string
 ): Promise<WebexUserAccess | null> {
-  const subject = await getDataStore()
-    .identities.subjectByEmail(email.toLowerCase())
+  const identity = await getDataStore()
+    .identities.findByEmail(email.toLowerCase())
     .catch(() => null);
+  const subject = identity?.subject ?? null;
   if (!subject) return null;
   return resolveWebexUserAccess(subject);
 }

@@ -53,6 +53,8 @@ export interface ChatStore {
     ownerSubject: string,
     options: { includeArchived?: boolean; since?: Date; before?: Date; limit: number }
   ): Promise<ChatRecord[]>;
+  /** The owner's unarchived chats in one project, most recently touched first (ties by id). */
+  listOwnedInProject(ownerSubject: string, projectId: string, limit: number): Promise<ChatRecord[]>;
   /** Whether the owner has a chat with a message, touched before `before`. */
   hasOwnedBefore(ownerSubject: string, before: Date): Promise<boolean>;
   /**

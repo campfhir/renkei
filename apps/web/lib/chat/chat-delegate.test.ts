@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for fakes that never touch it */
 /**
  * An ordinary chat's sub-agent against a fake model and a fake MCP
  * surface: it reads through the chat's connector tools and its own
@@ -137,7 +136,6 @@ const writeFile: LocalTool = {
 
 function context(extra: Partial<LocalToolContext>): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'u',
     chatId: 'c',
     cipher: testCipher,

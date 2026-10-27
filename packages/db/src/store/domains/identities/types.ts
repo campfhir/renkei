@@ -8,6 +8,8 @@ export interface IdentityRecord {
 
 export interface IdentityStore {
   get(subject: string): Promise<IdentityRecord | null>;
+  /** The identity recorded with this email (exact match; ties by subject), or null. */
+  findByEmail(email: string): Promise<IdentityRecord | null>;
   /** Insert, or replace email, name and groups of an existing subject. */
   upsert(identity: IdentityRecord): Promise<void>;
   /** Empty a subject's groups; a subject with no row is left alone. */
@@ -18,9 +20,4 @@ export interface IdentityStore {
   listBySubjects(subjects: string[]): Promise<IdentityRecord[]>;
   /** Every distinct group value anyone carried at sign-in, ascending. */
   distinctGroups(): Promise<string[]>;
-  /**
-   * The subject recorded with exactly this email (the caller normalizes
-   * case), the first by subject when several share it; null when none does.
-   */
-  subjectByEmail(email: string): Promise<string | null>;
 }

@@ -41,6 +41,14 @@ export function memorySessions(tables: MemoryTables): SessionStore {
         .map((r) => r.last_used_at.getTime());
       return times.length === 0 ? null : new Date(Math.max(...times));
     },
+    async latestRolesOf(subject) {
+      const [row] = orderBy(
+        tables.select('sessions', (r) => r.subject === subject),
+        [(r) => r.last_used_at, 'desc'],
+        [(r) => r.id]
+      );
+      return row ? row.roles : null;
+    },
     async deleteForSubject(subject) {
       return tables.delete('sessions', (r) => r.subject === subject).length;
     },

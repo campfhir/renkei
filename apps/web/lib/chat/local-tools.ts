@@ -7,8 +7,6 @@
  * the connector prefixes.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { LlmToolDef, LlmUsage, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import type { McpToolResult } from '@renkei/mcp-client';
@@ -18,7 +16,6 @@ import type { ContentCipher } from './content-crypto';
 import type { WidgetDecisionState } from './views';
 
 export interface LocalToolContext {
-  db: Kysely<DB>;
   subject: string;
   chatId: string;
   /** How this chat's rows are sealed and opened (access.cipher). */

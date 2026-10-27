@@ -16,12 +16,11 @@ import { chatCiphersFor } from '@/lib/chat/chat-keys';
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const query = normalizeQuery(request.nextUrl.searchParams.get('q') ?? '');
   if (query.length < CHAT_SEARCH_MIN_CHARS) return NextResponse.json({ query, hits: [] });
   const sidebar = await loadChatSidebar(session.subject);
   const hits = await searchChatMessages(
-    db,
     sidebar.chats.map((chat) => chat.id),
     query,
     await chatCiphersFor(session.subject, sidebar.chats)

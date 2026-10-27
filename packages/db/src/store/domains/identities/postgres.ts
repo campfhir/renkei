@@ -28,6 +28,15 @@ export function postgresIdentities(db: () => Kysely<DB>): IdentityStore {
         .executeTakeFirst();
       return row ? record(row) : null;
     },
+    async findByEmail(email) {
+      const row = await db()
+        .selectFrom('identities')
+        .select(COLUMNS)
+        .where('email', '=', email)
+        .orderBy('subject')
+        .executeTakeFirst();
+      return row ? record(row) : null;
+    },
     async upsert({ subject, email, displayName, idpGroups }) {
       await db()
         .insertInto('identities')
@@ -74,15 +83,6 @@ export function postgresIdentities(db: () => Kysely<DB>): IdentityStore {
         SELECT DISTINCT unnest(idp_groups) AS value FROM identities ORDER BY value
       `.execute(db());
       return result.rows.map((row) => row.value);
-    },
-    async subjectByEmail(email) {
-      const row = await db()
-        .selectFrom('identities')
-        .select('subject')
-        .where('email', '=', email)
-        .orderBy('subject')
-        .executeTakeFirst();
-      return row?.subject ?? null;
     },
   };
 }

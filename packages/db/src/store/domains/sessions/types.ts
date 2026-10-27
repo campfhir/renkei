@@ -18,6 +18,8 @@ export interface SessionStore {
   lastUsedBySubject(): Promise<{ subject: string; lastUsedAt: Date }[]>;
   /** One subject's newest session use, or null when they hold none. */
   lastUsedOf(subject: string): Promise<Date | null>;
+  /** The roles of a subject's most recently used session (ties by id), or null when they hold none. */
+  latestRolesOf(subject: string): Promise<string[] | null>;
   /** End every browser session of a subject; returns how many went. */
   deleteForSubject(subject: string): Promise<number>;
   /**

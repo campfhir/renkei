@@ -14,6 +14,8 @@ jest.mock('./attachments', () => ({
   findChatAttachment: jest.fn(),
 }));
 jest.mock('./artifact-access', () => ({ resolveArtifactAccess: jest.fn() }));
+// The library calls below still take a database handle; the mocks never touch it.
+jest.mock('./unconverted-db', () => ({ databaseForUnconvertedCode: () => null }));
 jest.mock('./artifact-library', () => ({
   artifactImpact: jest.fn(),
   attachToProject: jest.fn(),
@@ -56,7 +58,6 @@ const cipher = resourceCipher({
 
 function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'auth0|alice',
     chatId: 'chat-1',
     cipher,

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a fake db shaped for exactly the recorder's calls */
 /**
  * The pure half of a sub-agent's record: a stored transcript read back as
  * chat blocks, and the recorder's stream events. Sealing is stood in for:
@@ -11,6 +10,7 @@ jest.mock('./content-crypto', () => ({
   openText: (stored: string) => stored,
 }));
 
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { createSubagentRecorder, parseTranscript } from './subagent-runs';
 import { resourceCipher } from './content-crypto';
 
@@ -62,29 +62,32 @@ describe('parseTranscript', () => {
 });
 
 describe('createSubagentRecorder', () => {
+  afterEach(() => resetDataStore());
+
   it('emits a start, a progress and an end event for the delegating call, and survives a failed write', async () => {
     const events: { startedAt: number; finishedAt: number | null }[] = [];
-    const inserted = jest.fn().mockResolvedValue({ id: 'run-1' });
-    const db = {
-      insertInto: () => ({
-        values: () => ({
-          onConflict: () => ({ returning: () => ({ executeTakeFirst: inserted }) }),
-        }),
-      }),
-      updateTable: () => ({
-        set: () => ({
-          where: () => ({
-            where: () => ({ execute: jest.fn().mockRejectedValue(new Error('db down')) }),
-            execute: jest.fn().mockRejectedValue(new Error('db down')),
-          }),
-        }),
-      }),
+    const store = createMemoryDataStore();
+    const chatId = '00000000-0000-4000-8000-000000000001';
+    const turnId = '00000000-0000-4000-8000-000000000002';
+    await store.seed({
+      chats: [{ id: chatId, owner_subject: 'ann' }],
+      chat_turns: [{ id: turnId, chat_id: chatId, status: 'running' }],
+    });
+    const failing = async () => {
+      throw new Error('db down');
     };
+    // The run is written for real; its later writes fail, as a dropped connection would.
+    registerDataStore({
+      ...store,
+      chatThreads: {
+        ...store.chatThreads,
+        progressSubagentRun: failing,
+        finishSubagentRun: failing,
+      },
+    });
     const logged: string[] = [];
     const recorder = createSubagentRecorder(
-      // The fake stands in for exactly the calls the recorder makes.
-      db as never,
-      { chatId: 'c', turnId: 'turn', cipher: testCipher },
+      { chatId, turnId, cipher: testCipher },
       (event) => events.push(event),
       (message) => logged.push(message)
     );
@@ -94,16 +97,18 @@ describe('createSubagentRecorder', () => {
       instructions: null,
       readOnly: false,
       maxSteps: 40,
-      model: { provider: 'anthropic', model: 'claude-x', llmModelId: 'model-1' },
+      model: { provider: 'anthropic', model: 'claude-x', llmModelId: null },
     });
-    expect(runId).toBe('run-1');
-    await recorder.progress('run-1', {
+    expect(runId).toEqual(expect.any(String));
+    const run = await store.chatThreads.getSubagentRunByCall(chatId, 'd1');
+    expect(run).toMatchObject({ id: runId, status: 'running', maxSteps: 40, model: 'claude-x' });
+    await recorder.progress(runId ?? '', {
       steps: 2,
       toolCalls: 3,
       lastTool: 'code_read_file',
       usage: { inputTokens: 1, outputTokens: 1 },
     });
-    await recorder.finish('run-1', {
+    await recorder.finish(runId ?? '', {
       status: 'completed',
       transcript: [],
       report: 'done',

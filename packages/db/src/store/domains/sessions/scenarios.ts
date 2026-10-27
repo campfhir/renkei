@@ -150,4 +150,21 @@ export const sessionScenarios: Scenario<DataStore>[] = [
       await store.sessions.lastUsedBySubject(),
     ],
   },
+  {
+    method: 'sessions.latestRolesOf',
+    name: "the most recently used session's roles, or null",
+    fixture: {
+      sessions: [
+        { ...session(1, 'ann', '2029-12-01T00:00:00.000Z'), roles: ['old'] },
+        { ...session(2, 'ann', '2029-12-03T00:00:00.000Z'), roles: ['new', 'x'] },
+        { ...session(3, 'bob', '2029-12-03T00:00:00.000Z'), roles: ['b2'] },
+        { ...session(4, 'bob', '2029-12-03T00:00:00.000Z'), roles: ['b4'] },
+      ],
+    },
+    run: async (store) => [
+      await store.sessions.latestRolesOf('ann'),
+      await store.sessions.latestRolesOf('bob'),
+      await store.sessions.latestRolesOf('nobody'),
+    ],
+  },
 ];

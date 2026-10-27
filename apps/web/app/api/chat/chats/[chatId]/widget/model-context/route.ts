@@ -21,7 +21,7 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
@@ -30,7 +30,7 @@ export async function POST(
   const stateKey = typeof body.stateKey === 'string' ? body.stateKey : undefined;
   if (!text.trim()) return jsonError(400, 'invalid', 'text is required.');
 
-  const recorded = await recordWidgetModelContext(db, {
+  const recorded = await recordWidgetModelContext({
     session: { subject: session.subject, roles: session.roles },
     chatId: chat.id,
     text,

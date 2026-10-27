@@ -4,11 +4,8 @@
  * (note-text.ts has the vocabulary and the parser the thread uses).
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { insertMessage } from '@/lib/chat/messages';
+import { insertMessageWhenIdle } from '@/lib/chat/messages';
 import { chatCipherById } from '@/lib/chat/chat-keys';
-import { getActiveTurn } from '@/lib/chat/turns';
 import type { ChatMessageView } from '@/lib/chat/views';
 import { noteText, type ChatNote } from './note-text';
 
@@ -21,50 +18,42 @@ export { noteFromInput, noteText, parseNote, type ChatNote } from './note-text';
  * chat row is locked for the check and the insert together, so a turn
  * starting in the same instant waits its turn.
  */
-export async function appendChatNote(
-  db: Kysely<DB>,
-  input: { chatId: string; note: ChatNote }
-): Promise<
+export async function appendChatNote(input: {
+  chatId: string;
+  note: ChatNote;
+}): Promise<
   { ok: true; message: ChatMessageView } | { ok: false; reason: 'turn-running' | 'failed' }
 > {
   const text = noteText(input.note);
-  return db.transaction().execute(async (trx) => {
-    await trx
-      .selectFrom('chats')
-      .select('id')
-      .where('id', '=', input.chatId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (await getActiveTurn(input.chatId)) return { ok: false, reason: 'turn-running' };
-    const inserted = await insertMessage(trx, {
-      chatId: input.chatId,
+  const appended = await insertMessageWhenIdle({
+    chatId: input.chatId,
+    turnId: null,
+    role: 'user',
+    kind: 'note',
+    status: 'complete',
+    blocks: [{ type: 'text', text }],
+    cipher: await chatCipherById(input.chatId),
+  });
+  if (!appended.ok) return appended;
+  const inserted = appended.inserted;
+  return {
+    ok: true,
+    message: {
+      id: inserted.id,
       turnId: null,
+      seq: inserted.seq,
       role: 'user',
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
-      cipher: await chatCipherById(input.chatId),
-    });
-    if (!inserted) return { ok: false, reason: 'failed' };
-    return {
-      ok: true,
-      message: {
-        id: inserted.id,
-        turnId: null,
-        seq: inserted.seq,
-        role: 'user',
-        kind: 'note',
-        status: 'complete',
-        blocks: [{ type: 'text', text }],
-        llmModelId: null,
-        provider: null,
-        model: null,
-        stopReason: null,
-        usage: null,
-        error: null,
-        createdAt: inserted.createdAt.toISOString(),
-        attachments: [],
-      },
-    };
-  });
+      llmModelId: null,
+      provider: null,
+      model: null,
+      stopReason: null,
+      usage: null,
+      error: null,
+      createdAt: inserted.createdAt.toISOString(),
+      attachments: [],
+    },
+  };
 }
