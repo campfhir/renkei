@@ -71,37 +71,44 @@ viewport pass.
   every spec in a run: a spec that writes one of them cannot assume an
   empty state and should keep its own writes distinctive.
 
-# The data store seam: new reads go through `getDataStore()`
+# The data store seam: pages read through `getDataStore()`
 
 `@renkei/db` exposes a data store (`packages/db/src/store/`): domain-shaped
-repositories — sessions, identities, user preferences, org settings, coach
-marks, notifications so far — with a Postgres implementation and an
-in-memory JavaScript one, both held to one contract
-(`store/contract.ts`, run against memory by `pnpm test` and against a
-migrated Postgres by `pnpm --filter @renkei/db test:contract`).
+repositories under `store/domains/<name>/` (types, `postgres.ts`,
+`memory.ts`, `scenarios.ts`), each with a Postgres implementation and an
+in-memory JavaScript one. The memory store keeps rows shaped exactly as
+Postgres returns them, in tables built from a schema generated off the
+migrations (`store/schema.generated.ts`): defaults, keys, foreign keys and
+cascades behave as they do in the database.
 
-- **Pages and API routes for an area that is behind the store call
-  `getDataStore()`, never `getDatabase()`.** Code that still uses
-  `getDatabase()` directly gets a database error on the memory store (it
-  sees what it sees during an outage), so a page queried that way renders
-  empty in the memory UI suite.
-- **Moving an area behind the seam** is one change: a repository in
-  `store/types.ts`, both implementations, cases in `store/contract.ts`
-  that pin down anything a page can observe (order, bounds, JSON round
-  trips, who can see what), then the call sites. Business rules stay with
-  the caller; a store only keeps and returns.
+- **Pages, layouts and the API routes they load from call
+  `getDataStore()`, never `getDatabase()`.** On the memory store,
+  `getDatabase()` fails and records its caller; the crawl spec
+  (`apps/web/e2e/memory/crawl.spec.ts`) loads every page and fails when one
+  reached the database directly. A new page gets a `CrawlPage` entry in
+  `e2e/memory/crawl/<area>.ts`.
+- **A new or changed repository method** changes `types.ts`, `postgres.ts`
+  and `memory.ts` together and gets at least one differential scenario in
+  `scenarios.ts`: fixture rows plus a call, run against a freshly
+  truncated Postgres and a fresh memory store, answers required equal.
+  `coverage.test.ts` fails any method without one. Lists have a defined
+  order (ties broken explicitly); business rules (access, decryption,
+  defaults) stay with the caller. See `packages/db/CLAUDE.md` for running it.
 - **Unit tests** register a memory store (`registerDataStore(createMemoryDataStore())`,
-  `resetDataStore()` after) instead of hand-building Kysely chains — see
-  `packages/settings/src/index.test.ts` or `apps/web/lib/session.test.ts`.
-- **The memory UI suite** (`apps/web/playwright.memory.config.ts`,
-  specs in `apps/web/e2e/memory/`) runs the web app with
-  `RENKEI_DATA_STORE=memory` (instrumentation.ts registers the store) and
-  no Postgres or delegate: `pnpm --filter renkei e2e:memory`. Specs get a
-  signed-in person of their own from `e2e/memory/fixtures.ts` and add rows
-  with `person.seed({...})`, which posts to the test-only
-  `app/api/test/data-store` route (404 unless the memory store is active and
-  the seed token matches). It runs in CI. Prefer it for layout, navigation
-  and page-behavior checks of areas behind the store; keep the full suite
-  for what needs the real database, the delegate or the stubs. On a box
-  whose preinstalled Chromium doesn't match Playwright's, set
-  `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+  seed it with table rows, `resetDataStore()` after) instead of
+  hand-building Kysely chains — see `apps/web/lib/session.test.ts`.
+- **The memory UI suite** (`apps/web/playwright.memory.config.ts`, specs
+  in `apps/web/e2e/memory/`) runs the web app with
+  `RENKEI_DATA_STORE=memory` and no Postgres or delegate:
+  `pnpm --filter renkei e2e:memory`. Specs get a signed-in person from
+  `e2e/memory/fixtures.ts` and add rows with `person.seed({ table: [rows] })`
+  (the same columns `e2e/seed.ts` writes to Postgres), posted to the
+  test-only `app/api/test/data-store` route (404 unless the memory store is
+  active and the seed token matches). It runs in CI. Prefer it for layout,
+  navigation and page behavior; keep the full suite for what needs the
+  delegate, the stubs or a real chat turn. `E2E_MEMORY_PORT` moves its
+  server; on a box whose preinstalled Chromium doesn't match Playwright's,
+  set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+- Workers still use `getDatabase()`; outside the web app's memory mode
+  `getDataStore()` is the Postgres store, so shared package functions can
+  go through it.

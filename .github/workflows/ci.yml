@@ -53,12 +53,17 @@ jobs:
       - name: Test
         run: pnpm test
 
-  # The data-store contract (packages/db/src/store/contract.ts) against a
-  # real, migrated Postgres. `pnpm test` above runs the same cases against
-  # the in-memory store only; this is the half that proves the memory store
-  # answers what the database answers, so the UI suite below can trust it.
+  # The data store against a real, migrated Postgres. `pnpm test` above
+  # holds the memory store to itself (every repository method has a
+  # differential scenario, answered deterministically); this job runs each
+  # scenario against a freshly truncated contract database AND the memory
+  # store and requires equal answers, runs the older contract cases, and
+  # fails if the schema the memory tables are built from
+  # (packages/db/src/store/schema.generated.ts) no longer matches the
+  # migrations. The contract database collates with ICU en-US, the
+  # ordering the memory store reproduces.
   db-contract:
-    name: data store contract (postgres)
+    name: data store (postgres vs memory)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -76,6 +81,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgres://renkei:renkei@localhost:5432/renkei
+      CONTRACT_DATABASE_URL: postgres://renkei:renkei@localhost:5432/renkei_contract
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -89,10 +95,23 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Migrate
-        run: pnpm --filter @renkei/db migrate
+      - name: Create the contract database
+        run: >-
+          psql "$DATABASE_URL" -c "CREATE DATABASE renkei_contract TEMPLATE template0
+          LOCALE_PROVIDER icu ICU_LOCALE 'en-US' LOCALE 'C.UTF-8'"
 
-      - name: Contract
+      - name: Migrate
+        run: |
+          pnpm --filter @renkei/db migrate
+          DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm --filter @renkei/db migrate
+
+      - name: Generated store schema is current
+        run: |
+          DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm --filter @renkei/db db:store-schema
+          pnpm exec prettier --write packages/db/src/store/schema.generated.ts
+          git diff --exit-code packages/db/src/store/schema.generated.ts
+
+      - name: Differential and contract
         run: pnpm --filter @renkei/db test:contract
 
   # The UI suite on the in-memory data store (apps/web/playwright.memory.config.ts):
