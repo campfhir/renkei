@@ -2,11 +2,12 @@
  * Every inbound webhook route refuses the cheap cases BEFORE it reads the
  * database or decrypts a connector config (lib/webhook-intake.ts): a
  * missing or malformed signature header, a body over the cap, a flood.
- * The database is mocked to throw on any use, so the assertion is literal:
- * none of these requests may reach it.
+ * The data store is mocked to throw on any use, so the assertion is literal:
+ * none of these requests may reach it. And when the store does fail, the
+ * per-account routes answer 500, so the sender retries rather than drops.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
 jest.mock('@renkei/queue', () => ({
   webhookEventsQueue: () => ({ producer: { enqueue: jest.fn() } }),
 }));
@@ -21,7 +22,9 @@ import { POST as zoomPost } from './zoom/route';
 import { POST as webexPost } from './webex/user/[accountId]/route';
 import { POST as microsoftPost } from './microsoft/[accountId]/route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { getDataStore: mockGetDataStore } = jest.requireMock<{ getDataStore: jest.Mock }>(
+  '@renkei/db'
+);
 const { readConnectorConfigCached: mockReadConfig } = jest.requireMock<{
   readConnectorConfigCached: jest.Mock;
 }>('@renkei/connector-config');
@@ -116,8 +119,8 @@ function deliver(
 
 beforeEach(() => {
   resetInboundLimits();
-  mockGetDatabase.mockReset().mockImplementation(() => {
-    throw new Error('database reached before the intake checks');
+  mockGetDataStore.mockReset().mockImplementation(() => {
+    throw new Error('data store reached before the intake checks');
   });
   mockReadConfig.mockReset().mockImplementation(() => {
     throw new Error('connector config read before the intake checks');
@@ -130,14 +133,14 @@ describe.each(ROUTES.filter((route) => route.malformedHeaders !== null))(
     it('refuses a delivery with no signature header without touching the database', async () => {
       const response = await deliver(route, { headers: {} });
       expect(response.status).toBe(401);
-      expect(mockGetDatabase).not.toHaveBeenCalled();
+      expect(mockGetDataStore).not.toHaveBeenCalled();
       expect(mockReadConfig).not.toHaveBeenCalled();
     });
 
     it('refuses a header of the wrong shape the same way', async () => {
       const response = await deliver(route, { headers: route.malformedHeaders ?? {} });
       expect(response.status).toBe(401);
-      expect(mockGetDatabase).not.toHaveBeenCalled();
+      expect(mockGetDataStore).not.toHaveBeenCalled();
       expect(mockReadConfig).not.toHaveBeenCalled();
     });
   }
@@ -150,7 +153,7 @@ describe.each(ROUTES)('$name webhook: body cap and throttle', (route) => {
       contentLength: WEBHOOK_MAX_BODY_BYTES + 1,
     });
     expect(response.status).toBe(413);
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockGetDataStore).not.toHaveBeenCalled();
   });
 
   it('answers 413 to a body that actually exceeds the cap, before the database', async () => {
@@ -159,7 +162,7 @@ describe.each(ROUTES)('$name webhook: body cap and throttle', (route) => {
       body: `{"pad":"${'x'.repeat(WEBHOOK_MAX_BODY_BYTES)}"}`,
     });
     expect(response.status).toBe(413);
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockGetDataStore).not.toHaveBeenCalled();
   });
 
   it('answers 429 once the per-client window is spent, before the database', async () => {
@@ -174,6 +177,33 @@ describe.each(ROUTES)('$name webhook: body cap and throttle', (route) => {
     const response = await deliver(route, { headers: route.validHeaders });
     expect(response.status).toBe(429);
     expect(response.headers.get('retry-after')).toMatch(/^\d+$/);
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockGetDataStore).not.toHaveBeenCalled();
+  });
+});
+
+describe('per-account webhooks: a failing store asks the sender to retry', () => {
+  const unavailable = () => Promise.reject(new Error('connection refused'));
+
+  beforeEach(() => {
+    mockGetDataStore.mockReset().mockReturnValue({
+      providerGrants: { find: unavailable },
+      webhookSubscriptions: { listForAccount: unavailable },
+    });
+  });
+
+  it('webex answers 500 when the grant cannot be read', async () => {
+    const webex = ROUTES.find((route) => route.name === 'webex');
+    if (!webex) throw new Error('no webex route');
+    const response = await deliver(webex, { headers: webex.validHeaders });
+    expect(response.status).toBe(500);
+  });
+
+  it('microsoft answers 500 when its subscriptions cannot be read', async () => {
+    const microsoft = ROUTES.find((route) => route.name === 'microsoft');
+    if (!microsoft) throw new Error('no microsoft route');
+    const response = await deliver(microsoft, {
+      body: JSON.stringify({ value: [{ subscriptionId: 's1', clientState: 'c' }] }),
+    });
+    expect(response.status).toBe(500);
   });
 });

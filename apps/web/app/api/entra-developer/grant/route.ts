@@ -7,39 +7,29 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { ENTRA_DEVELOPER } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-
-  const grantRow = await dbResult.val
-    .selectFrom('provider_grants')
-    .select(['provider_account_id'])
-    .where('provider', '=', ENTRA_DEVELOPER)
-    .where('subject', '=', session.subject)
-    .executeTakeFirst();
+  const [grantRow] = await getDataStore().providerGrants.listForSubject(session.subject, {
+    provider: ENTRA_DEVELOPER,
+  });
   if (!grantRow) {
     return NextResponse.json({ message: 'Nothing to disconnect' });
   }
 
   const deleted = await delegateGrants().delete({
     provider: ENTRA_DEVELOPER,
-    accountId: grantRow.provider_account_id,
+    accountId: grantRow.accountId,
   });
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });

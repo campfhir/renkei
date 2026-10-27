@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
@@ -248,25 +248,9 @@ export async function GET(): Promise<NextResponse> {
   const denied = await requireOperator();
   if (denied) return denied;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   try {
-    // Get OIDC configuration
-    const oidc = await db
-      .selectFrom('oidc_config')
-      .select([
-        'issuer',
-        'client_id',
-        'role_claim',
-        'operator_idp_value',
-        'user_idp_value',
-        'groups_claim',
-      ])
-      .executeTakeFirst();
+    // Get OIDC configuration (the sealed client secret stays out of the answer)
+    const oidc = await getDataStore().oidcConfig.get();
 
     if (!oidc) {
       return NextResponse.json({ configured: false });
@@ -275,11 +259,11 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({
       configured: true,
       issuer: oidc.issuer,
-      clientId: oidc.client_id,
-      roleClaim: oidc.role_claim,
-      operatorIdpValue: oidc.operator_idp_value,
-      userIdpValue: oidc.user_idp_value,
-      groupsClaim: oidc.groups_claim,
+      clientId: oidc.clientId,
+      roleClaim: oidc.roleClaim,
+      operatorIdpValue: oidc.operatorIdpValue,
+      userIdpValue: oidc.userIdpValue,
+      groupsClaim: oidc.groupsClaim,
     });
   } catch (error) {
     logger.error('Config fetch error: {error}', {

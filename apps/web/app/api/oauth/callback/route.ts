@@ -15,8 +15,6 @@
  * unknown, honestly), so nothing here assumes granted equals requested.
  */
 import { NextRequest, NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   getAtlassianApp,
   getAtlassianJsmApp,
@@ -28,7 +26,7 @@ import { getWebexUserApp } from '@/lib/webex-app';
 import { getMicrosoftApp, type MicrosoftApp } from '@/lib/microsoft-app';
 import { getEntraDeveloperApp } from '@/lib/entra-developer-app';
 import { getZoomApp } from '@/lib/zoom-app';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import {
   ATLASSIAN,
@@ -230,11 +228,7 @@ async function handleCallback(
   request: NextRequest,
   flow: { stateKnown: boolean }
 ): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
+  const store = getDataStore();
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const state = searchParams.get('state');
@@ -257,11 +251,7 @@ async function handleCallback(
     // Look up the pending authorization by state (single-use token). The
     // pending record tells us which tenant this flow is for and which
     // provider's token endpoint the code must be exchanged at.
-    const pendingSignIn = await db
-      .selectFrom('pending_oidc_signin')
-      .select(['expires_at', 'subject', 'provider', 'scopes', 'code_verifier', 'connector_key'])
-      .where('state', '=', state)
-      .executeTakeFirst();
+    const pendingSignIn = await store.pendingSignins.findByState(state);
 
     if (!pendingSignIn) {
       return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
@@ -275,7 +265,7 @@ async function handleCallback(
     // another carries neither, so it is refused — and the state is consumed
     // either way, so it cannot be retried with a different browser.
     if (!isConnectFlowBound(request, state)) {
-      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      await store.pendingSignins.deleteByState(state);
       logger.warn('Connect flow state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oauth',
         provider: pendingSignIn.provider ?? 'atlassian',
@@ -284,7 +274,7 @@ async function handleCallback(
     }
     const session = await getSessionFromRequest(request);
     if (!session || !pendingSignIn.subject || session.subject !== pendingSignIn.subject) {
-      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      await store.pendingSignins.deleteByState(state);
       logger.warn('Connect flow completed by a different session than started it; rejecting', {
         component: 'auth/oauth',
         provider: pendingSignIn.provider ?? 'atlassian',
@@ -307,10 +297,10 @@ async function handleCallback(
     }
 
     // Delete pending record (single-use) to prevent replay attacks
-    await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+    await store.pendingSignins.deleteByState(state);
 
     // Verify state is not expired
-    const stateExpiresAt = new Date(pendingSignIn.expires_at);
+    const stateExpiresAt = pendingSignIn.expiresAt;
     if (stateExpiresAt < new Date()) {
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
@@ -373,8 +363,8 @@ async function handleCallback(
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
-        pendingSignIn.code_verifier,
-        pendingSignIn.connector_key
+        pendingSignIn.codeVerifier,
+        pendingSignIn.connectorKey
       );
     }
     if (pendingSignIn.provider === 'zoom') {
@@ -386,7 +376,7 @@ async function handleCallback(
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
-        pendingSignIn.code_verifier,
+        pendingSignIn.codeVerifier,
         ONBASE_SPEC
       );
     }
@@ -399,7 +389,7 @@ async function handleCallback(
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
-        pendingSignIn.code_verifier,
+        pendingSignIn.codeVerifier,
         ONBASE_ADMIN_SPEC
       );
     }
@@ -412,7 +402,7 @@ async function handleCallback(
         pendingSignIn.subject,
         code,
         pendingSignIn.scopes,
-        pendingSignIn.code_verifier,
+        pendingSignIn.codeVerifier,
         mcpServerId
       );
     }
@@ -455,12 +445,7 @@ async function handleCallback(
       // for the siteUrl: one org, one site, in practice.
       cloudId = cloudIdFromCodeClaims(code) ?? '';
 
-      const prior = await db
-        .selectFrom('provider_grants')
-        .select(['metadata'])
-        .where('provider', '=', 'atlassian')
-        .orderBy('updated_at', 'desc')
-        .executeTakeFirst();
+      const prior = await store.providerGrants.latestOf([ATLASSIAN]);
       if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
         const metadata = prior.metadata as Record<string, unknown>;
         if (!cloudId && typeof metadata.cloudId === 'string') cloudId = metadata.cloudId;
@@ -494,20 +479,15 @@ async function handleCallback(
       // /myself is a Jira-scoped endpoint; a jira-less token cannot call it.
       // The authorization code's sub claim is the Atlassian account id, and
       // the caller's existing grant the fallback behind that.
-      const accountId = await atlassianAccountIdOffline(db, pendingSignIn.subject, code);
+      const accountId = await atlassianAccountIdOffline(pendingSignIn.subject, code);
       if (!accountId) {
         logger.error('Failed to fetch user info and no identity hint in code claims or grants', {
           component: 'auth/oauth',
         });
         return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
       }
-      const priorName = await db
-        .selectFrom('provider_grants')
-        .select('display_name')
-        .where('provider', '=', 'atlassian')
-        .where('provider_account_id', '=', accountId)
-        .executeTakeFirst();
-      identity = { accountId, displayName: priorName?.display_name || null };
+      const priorName = await store.providerGrants.find(ATLASSIAN, accountId);
+      identity = { accountId, displayName: priorName?.displayName || null };
       logger.debug('User identity from code claims (jira-less scopes)', {
         component: 'auth/oauth',
         accountId,
@@ -648,43 +628,29 @@ async function atlassianMyself(
  * the caller's existing Atlassian grant of any flavor — same human, same
  * Atlassian account across Jira, JSM, Confluence and Jira Admin.
  */
-async function atlassianAccountIdOffline(
-  db: Kysely<DB>,
-  subject: string,
-  code: string
-): Promise<string | null> {
+async function atlassianAccountIdOffline(subject: string, code: string): Promise<string | null> {
   const fromCode = subFromCodeClaims(code);
   if (fromCode) return fromCode;
-  const prior = await db
-    .selectFrom('provider_grants')
-    .select('provider_account_id')
-    .where('provider', 'in', [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE, ATLASSIAN_ADMIN])
-    .where('subject', '=', subject)
-    .orderBy('updated_at', 'desc')
-    .executeTakeFirst();
-  return prior?.provider_account_id ?? null;
+  const prior = await getDataStore().providerGrants.latestOf(
+    [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE, ATLASSIAN_ADMIN],
+    { subject }
+  );
+  return prior?.accountId ?? null;
 }
 
 /** The caller's Jira grant row, whose display name and site a sibling connect borrows. */
 async function callerJiraGrant(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ display_name: string; metadata: unknown } | undefined> {
-  return db
-    .selectFrom('provider_grants')
-    .select(['display_name', 'metadata'])
-    .where('provider', '=', ATLASSIAN)
-    .where('subject', '=', subject)
-    .executeTakeFirst();
+  const [grant] = await getDataStore().providerGrants.listForSubject(subject, {
+    provider: ATLASSIAN,
+  });
+  return grant && { display_name: grant.displayName, metadata: grant.metadata };
 }
 
 /** The cloud id recorded on any prior grant of the given Atlassian providers in this tenant. */
-async function priorCloudId(db: Kysely<DB>, providers: string[]): Promise<string | null> {
-  const prior = await db
-    .selectFrom('provider_grants')
-    .select('metadata')
-    .where('provider', 'in', providers)
-    .executeTakeFirst();
+async function priorCloudId(providers: string[]): Promise<string | null> {
+  const prior = await getDataStore().providerGrants.latestOf(providers);
   if (prior && typeof prior.metadata === 'object' && prior.metadata !== null) {
     const meta = prior.metadata as Record<string, unknown>;
     if (typeof meta.cloudId === 'string' && meta.cloudId) return meta.cloudId;
@@ -706,9 +672,6 @@ async function handleAtlassianJsmCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   logger.debug('Atlassian JSM callback', { component: 'auth/oauth' });
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
@@ -732,7 +695,7 @@ async function handleAtlassianJsmCallback(
   const cloudId =
     resources[0]?.id ??
     cloudIdFromCodeClaims(code) ??
-    (await priorCloudId(db, [ATLASSIAN, ATLASSIAN_JSM]));
+    (await priorCloudId([ATLASSIAN, ATLASSIAN_JSM]));
   if (!cloudId) {
     logger.error('Atlassian JSM callback could not resolve a cloud id', {
       component: 'auth/oauth',
@@ -745,12 +708,12 @@ async function handleAtlassianJsmCallback(
   // resort. Display name borrows from the caller's Jira grant when one
   // exists (same human, same Atlassian account).
   const accountId =
-    (await atlassianAccountIdOffline(db, subject, code)) ??
+    (await atlassianAccountIdOffline(subject, code)) ??
     (await atlassianMyself(pending, cloudId))?.accountId;
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
-  const jiraGrantRow = await callerJiraGrant(db, subject);
+  const jiraGrantRow = await callerJiraGrant(subject);
   const displayName = jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
@@ -795,9 +758,6 @@ async function handleAtlassianConfluenceCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   logger.debug('Atlassian Confluence callback', { component: 'auth/oauth' });
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
@@ -825,7 +785,7 @@ async function handleAtlassianConfluenceCallback(
   const cloudId =
     resources[0]?.id ??
     cloudIdFromCodeClaims(code) ??
-    (await priorCloudId(db, [ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE]));
+    (await priorCloudId([ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE]));
   if (!cloudId) {
     logger.error('Atlassian Confluence callback could not resolve a cloud id', {
       component: 'auth/oauth',
@@ -841,12 +801,12 @@ async function handleAtlassianConfluenceCallback(
   // resort. Display name borrows from the caller's Jira grant when one
   // exists (same human, same Atlassian account).
   const accountId =
-    (await atlassianAccountIdOffline(db, subject, code)) ??
+    (await atlassianAccountIdOffline(subject, code)) ??
     (await atlassianMyself(pending, cloudId))?.accountId;
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
-  const jiraGrantRow = await callerJiraGrant(db, subject);
+  const jiraGrantRow = await callerJiraGrant(subject);
   const displayName = jiraGrantRow?.display_name || accountId;
 
   const stored = await delegateGrants().commit({
@@ -894,9 +854,6 @@ async function handleAtlassianAdminCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   logger.debug('Atlassian Jira Admin callback', { component: 'auth/oauth' });
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  const db = dbResult.val;
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
@@ -917,7 +874,7 @@ async function handleAtlassianAdminCallback(
   if (connect instanceof NextResponse) return connect;
   const { handle, pending, resources } = connect;
 
-  const jiraGrantRow = await callerJiraGrant(db, subject);
+  const jiraGrantRow = await callerJiraGrant(subject);
   const jiraMeta =
     jiraGrantRow && typeof jiraGrantRow.metadata === 'object' && jiraGrantRow.metadata !== null
       ? (jiraGrantRow.metadata as Record<string, unknown>)
@@ -937,7 +894,7 @@ async function handleAtlassianAdminCallback(
   // read:jira-user lets /myself answer with the real name; the code's
   // claims and the borrowed Jira identity stand behind it.
   const myself = await atlassianMyself(pending, cloudId);
-  const accountId = myself?.accountId ?? (await atlassianAccountIdOffline(db, subject, code));
+  const accountId = myself?.accountId ?? (await atlassianAccountIdOffline(subject, code));
   if (!accountId) {
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
@@ -1283,15 +1240,10 @@ async function handleMicrosoftCallback(
   // lives there — carry it over, or reconnecting silently turns a user's
   // indexing off.
   let carriedIndexing: Record<string, unknown> = {};
-  const dbForPrefs = getDatabase();
-  if (dbForPrefs.ok) {
-    const prior = await dbForPrefs.val
-      .selectFrom('provider_grants')
-      .select('metadata')
-      .where('provider', '=', MICROSOFT)
-      .where('provider_account_id', '=', oid)
-      .executeTakeFirst()
-      .catch(() => undefined);
+  {
+    const prior = await getDataStore()
+      .providerGrants.find(MICROSOFT, oid)
+      .catch(() => null);
     const priorMetadata =
       typeof prior?.metadata === 'object' &&
       prior.metadata !== null &&
@@ -1610,14 +1562,11 @@ async function handleSalesforceCallback(
 
   // One connection per person per connector: an earlier one to this org as
   // someone else goes (revoked at Salesforce too).
-  const dbResult = getDatabase();
-  if (dbResult.ok) {
-    const earlier = (await listSalesforceConnections(subject, [connector], kind.provider)).filter(
-      (connection) => connection.connector === connector.key && connection.accountId !== accountId
-    );
-    for (const connection of earlier) {
-      await delegateGrants().revoke({ provider: kind.provider, accountId: connection.accountId });
-    }
+  const earlier = (await listSalesforceConnections(subject, [connector], kind.provider)).filter(
+    (connection) => connection.connector === connector.key && connection.accountId !== accountId
+  );
+  for (const connection of earlier) {
+    await delegateGrants().revoke({ provider: kind.provider, accountId: connection.accountId });
   }
 
   logger.info('Salesforce grant stored', {
@@ -1791,8 +1740,6 @@ async function handleMcpServerCallback(
   if (!subject || !codeVerifier) {
     return NextResponse.json({ error: 'Start the connection again' }, { status: 400 });
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const server = await getServer(serverId);
   if (!server.ok || !server.val || !server.val.enabled) {
     return NextResponse.json({ error: 'That MCP server is no longer available' }, { status: 404 });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { bindConnectFlow } from '@/lib/connect-flow-binding';
@@ -15,15 +15,7 @@ import { logger } from '@/lib/logger';
  * widen it, and the pending row records provider + scopes for the shared
  * callback.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     // The resulting grant is bound to whoever completes this flow.
     const session = await getSessionFromRequest(request);
@@ -67,19 +59,15 @@ export async function GET(
 
     const state = randomUUID();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await db
-      .insertInto('pending_oidc_signin')
-      .values({
-        id: randomUUID(),
-        state,
-        nonce: randomUUID(),
-        subject: session.subject,
-        provider: 'atlassian-admin',
-        scopes: effectiveScopes,
-        expires_at: expiresAt.toISOString(),
-        created_at: new Date().toISOString(),
-      })
-      .execute();
+    await getDataStore().pendingSignins.create({
+      id: randomUUID(),
+      state,
+      nonce: randomUUID(),
+      subject: session.subject,
+      provider: 'atlassian-admin',
+      scopes: effectiveScopes,
+      expiresAt: expiresAt,
+    });
 
     const authUrl = new URL('https://auth.atlassian.com/authorize');
     authUrl.searchParams.append('audience', 'api.atlassian.com');

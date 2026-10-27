@@ -17,7 +17,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
@@ -42,10 +41,7 @@ import {
 
 const eventsQueue = webhookEventsQueue();
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   // Throttle, then the credential's shape, then a bounded body — all before
   // any config or database read (lib/webhook-intake.ts).
   const verdict = checkWebhookLimit('zoom', request);
@@ -72,11 +68,6 @@ export async function POST(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    // 500 so Zoom retries the delivery instead of dropping it.
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
   const configResult = await readConnectorConfigCached(ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });

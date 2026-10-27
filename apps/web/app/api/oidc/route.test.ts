@@ -10,7 +10,6 @@
  * requires an operator session.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 // safeFetch goes through the sandbox package's guarded fetch, which dials
 // node:https at a resolved address; here the structural guard stays real,
 // every name resolves publicly, and the request itself is the global.fetch
@@ -47,8 +46,8 @@ jest.mock('@/lib/setup-secret', () => ({
 }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GET, POST } from './route';
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromCookies: mockGetSession } = jest.requireMock<{
   getSessionFromCookies: jest.Mock;
 }>('@/lib/session');
@@ -64,20 +63,34 @@ const { identityProviderConfigured: mockConfigured, verifySetupSecret: mockVerif
 
 const SECRET = 'the-setup-secret';
 
+/** Configuration reads the store saw, for "rejected before reading anything". */
+let oidcReads = 0;
+
 /** The route's one read of its own: the OIDC row GET returns. */
-function stubDb(options: { existingOidc?: boolean } = {}) {
+async function stubDb(options: { existingOidc?: boolean } = {}) {
   const { existingOidc = false } = options;
-  const db = {
-    selectFrom() {
-      const chain = {
-        select: () => chain,
-        where: () => chain,
-        executeTakeFirst: async () => (existingOidc ? { client_id: 'existing-client' } : undefined),
-      };
-      return chain;
+  const store = createMemoryDataStore();
+  if (existingOidc) {
+    await store.oidcConfig.save({
+      id: '00000000-0000-4000-8000-0000000001dc',
+      issuer: 'https://idp.example',
+      clientId: 'existing-client',
+      clientSecret: 'sealed',
+      operatorIdpValue: null,
+      userIdpValue: null,
+      groupsClaim: null,
+    });
+  }
+  registerDataStore({
+    ...store,
+    oidcConfig: {
+      ...store.oidcConfig,
+      get: () => {
+        oidcReads += 1;
+        return store.oidcConfig.get();
+      },
     },
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
+  });
   mockConfigured.mockResolvedValue(existingOidc);
 }
 
@@ -126,8 +139,10 @@ function stubDiscovery(issuer: string | null = 'https://idp.example.com') {
 }
 
 describe('OIDC configuration', () => {
+  afterEach(() => resetDataStore());
+
   beforeEach(() => {
-    mockGetDatabase.mockReset();
+    oidcReads = 0;
     mockGetSession.mockReset();
     mockGetSession.mockResolvedValue(null);
     mockSetTenantOidc.mockReset();
@@ -142,7 +157,7 @@ describe('OIDC configuration', () => {
 
   describe('POST before any provider is configured', () => {
     it('allows an unauthenticated caller holding the setup secret', async () => {
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
 
       const response = await POST(post(VALID_BODY));
 
@@ -156,7 +171,7 @@ describe('OIDC configuration', () => {
       // The squat: whoever reaches the deployment first posting their own
       // IdP. Without the secret only the deployment's environment holds,
       // reaching it buys nothing.
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
 
       const response = await POST(post(VALID_BODY, { setupSecret: null }));
 
@@ -166,7 +181,7 @@ describe('OIDC configuration', () => {
     });
 
     it('refuses a wrong setup secret', async () => {
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
 
       const response = await POST(post(VALID_BODY, { setupSecret: 'guess' }));
 
@@ -177,7 +192,7 @@ describe('OIDC configuration', () => {
     it('refuses everyone while the environment holds no setup secret', async () => {
       // No secret set means nobody can configure the provider, not that
       // anybody can: the page says how to set one, the API says the same.
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
       stubSecret('unset');
 
       const response = await POST(post(VALID_BODY));
@@ -190,7 +205,7 @@ describe('OIDC configuration', () => {
     });
 
     it('refuses everyone while the configured secret is too short to count', async () => {
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
       stubSecret('short');
 
       const response = await POST(post(VALID_BODY));
@@ -203,7 +218,7 @@ describe('OIDC configuration', () => {
     it('does not overwrite a configuration that appeared mid-request', async () => {
       // The insert is conditional in the database, so a caller that lost the
       // race is told to authenticate rather than silently replacing the winner.
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
       mockCreateTenantOidc.mockResolvedValue({ ok: true, val: false });
 
       const response = await POST(post(VALID_BODY));
@@ -212,7 +227,7 @@ describe('OIDC configuration', () => {
     });
 
     it('still rejects a body missing required fields', async () => {
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
 
       const response = await POST(post({ clientId: 'only-this' }));
 
@@ -223,7 +238,7 @@ describe('OIDC configuration', () => {
     it('refuses an SSRF discovery endpoint (metadata IP) without fetching it', async () => {
       // The first-run path must not be usable to reach cloud metadata or
       // internal hosts.
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
 
       const response = await POST(
         post({ ...VALID_BODY, discoveryEndpoint: 'https://169.254.169.254/latest/meta-data/' })
@@ -235,7 +250,7 @@ describe('OIDC configuration', () => {
     });
 
     it('refuses a non-https discovery endpoint', async () => {
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
 
       const response = await POST(
         post({ ...VALID_BODY, discoveryEndpoint: 'http://idp.example.com/.well-known/x' })
@@ -248,7 +263,7 @@ describe('OIDC configuration', () => {
     it('refuses when the discovery document names an internal issuer', async () => {
       // A public discovery URL must not be able to smuggle an internal issuer
       // (which login/callback would later fetch) past the guard.
-      stubDb({ existingOidc: false });
+      await stubDb({ existingOidc: false });
       stubDiscovery('https://localhost/');
 
       const response = await POST(post(VALID_BODY));
@@ -260,7 +275,7 @@ describe('OIDC configuration', () => {
 
   describe('POST once a provider is configured', () => {
     it('rejects an unauthenticated caller, setup secret or not', async () => {
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
 
       const response = await POST(post(VALID_BODY));
 
@@ -270,7 +285,7 @@ describe('OIDC configuration', () => {
     });
 
     it('rejects a signed-in caller without the operator role', async () => {
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
       mockGetSession.mockResolvedValue({
         id: 's2',
         subject: 'someone@example.com',
@@ -285,7 +300,7 @@ describe('OIDC configuration', () => {
     });
 
     it('allows an operator', async () => {
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
       grantOperator();
 
       const response = await POST(post(VALID_BODY, { setupSecret: null }));
@@ -297,7 +312,7 @@ describe('OIDC configuration', () => {
     it('refuses before fetching the attacker-supplied discovery endpoint', async () => {
       // The gate runs first, so an unauthenticated caller cannot use this route
       // to make the server issue outbound requests.
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
 
       await POST(post(VALID_BODY));
 
@@ -307,16 +322,16 @@ describe('OIDC configuration', () => {
 
   describe('GET', () => {
     it('rejects an unauthenticated caller before reading anything', async () => {
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
 
       const response = await GET();
 
       expect(response.status).toBe(401);
-      expect(mockGetDatabase).not.toHaveBeenCalled();
+      expect(oidcReads).toBe(0);
     });
 
     it('rejects a signed-in caller without the operator role', async () => {
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
       mockGetSession.mockResolvedValue({
         id: 's2',
         subject: 'someone@example.com',
@@ -330,13 +345,15 @@ describe('OIDC configuration', () => {
     });
 
     it('serves an operator', async () => {
-      stubDb({ existingOidc: true });
+      await stubDb({ existingOidc: true });
       grantOperator();
 
       const response = await GET();
 
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ configured: true });
+      const body = await response.json();
+      expect(body).toMatchObject({ configured: true, clientId: 'existing-client' });
+      expect(body).not.toHaveProperty('clientSecret');
     });
   });
 });

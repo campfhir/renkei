@@ -75,5 +75,14 @@ export function postgresIdentities(db: () => Kysely<DB>): IdentityStore {
       `.execute(db());
       return result.rows.map((row) => row.value);
     },
+    async subjectByEmail(email) {
+      const row = await db()
+        .selectFrom('identities')
+        .select('subject')
+        .where('email', '=', email)
+        .orderBy('subject')
+        .executeTakeFirst();
+      return row?.subject ?? null;
+    },
   };
 }

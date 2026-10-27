@@ -38,4 +38,25 @@ export interface ProviderGrantStore {
     accountId: string,
     patch: Record<string, unknown>
   ): Promise<number>;
+  /** One grant by provider and account id, whoever holds it; null when there is none. */
+  find(provider: string, accountId: string): Promise<ProviderGrantSummaryRecord | null>;
+  /**
+   * The most recently updated grant on any of these providers (ties by
+   * provider, then account id), or only `subject`'s; null when there is
+   * none. A connect borrows a sibling grant's site and identity from it.
+   */
+  latestOf(
+    providers: string[],
+    options?: { subject?: string }
+  ): Promise<ProviderGrantSummaryRecord | null>;
+  /**
+   * Delete one person's grants on a provider together with every MCP access
+   * and refresh token issued to them, in one step: a disconnect must not
+   * leave a bearer token resolving to a grant that is gone. Returns how
+   * many of each went.
+   */
+  disconnectWithMcpTokens(
+    provider: string,
+    subject: string
+  ): Promise<{ grants: number; accessTokens: number; refreshTokens: number }>;
 }

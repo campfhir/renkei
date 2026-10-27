@@ -26,6 +26,16 @@ export interface ConsentRequestView extends ConsentRequestRecord {
   clientCreatedAt: Date;
 }
 
+/** A dynamically registered client (RFC 7591): only the secret's digest is kept. */
+export interface NewOAuthClient {
+  clientId: string;
+  clientSecretHash: string;
+  clientName: string | null;
+  redirectUris: string[];
+  responseTypes: string[];
+  grantTypes: string[];
+}
+
 export interface NewAuthorizationCode {
   code: string;
   clientId: string;
@@ -55,4 +65,6 @@ export interface OAuthConsentStore {
   /** Remove and return a request — spent on the first answer, whatever it is. */
   takeRequest(id: string): Promise<ConsentRequestRecord | null>;
   insertAuthorizationCode(code: NewAuthorizationCode): Promise<void>;
+  /** Register a client; a client id already taken is refused (23505). */
+  registerClient(client: NewOAuthClient): Promise<void>;
 }

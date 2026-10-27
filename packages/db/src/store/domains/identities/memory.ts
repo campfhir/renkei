@@ -47,5 +47,12 @@ export function memoryIdentities(tables: MemoryTables): IdentityStore {
       const values = new Set(tables.select('identities').flatMap((r) => r.idp_groups ?? []));
       return [...values].sort(compareAsc);
     },
+    async subjectByEmail(email) {
+      const [row] = orderBy(
+        tables.select('identities', (r) => r.email === email),
+        [(r) => r.subject]
+      );
+      return row?.subject ?? null;
+    },
   };
 }

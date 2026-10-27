@@ -31,5 +31,36 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
         })
       ).length;
     },
+    async find(provider, accountId) {
+      const row = tables.first(
+        'provider_grants',
+        (r) => r.provider === provider && r.provider_account_id === accountId
+      );
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async latestOf(providers, { subject } = {}) {
+      const wanted = new Set(providers);
+      const rows = tables.select(
+        'provider_grants',
+        (r) => wanted.has(r.provider) && (subject === undefined || r.subject === subject)
+      );
+      const [row] = orderBy(
+        rows,
+        [(r) => r.updated_at, 'desc'],
+        [(r) => r.provider],
+        [(r) => r.provider_account_id]
+      );
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async disconnectWithMcpTokens(provider, subject) {
+      return {
+        grants: tables.delete(
+          'provider_grants',
+          (r) => r.provider === provider && r.subject === subject
+        ).length,
+        accessTokens: tables.delete('oauth_access_tokens', (r) => r.subject === subject).length,
+        refreshTokens: tables.delete('oauth_refresh_tokens', (r) => r.subject === subject).length,
+      };
+    },
   };
 }

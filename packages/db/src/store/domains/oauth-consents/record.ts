@@ -1,6 +1,6 @@
 import type { Selectable } from 'kysely';
 import type { OauthClients, OauthConsentRequests } from '../../../db.types';
-import type { ConsentRequestRecord, OAuthClientRecord } from './types';
+import type { ConsentRequestRecord, NewOAuthClient, OAuthClientRecord } from './types';
 
 export function clientFromRow(row: Selectable<OauthClients>): OAuthClientRecord {
   return {
@@ -8,6 +8,17 @@ export function clientFromRow(row: Selectable<OauthClients>): OAuthClientRecord 
     clientName: row.client_name,
     redirectUris: row.redirect_uris,
     createdAt: new Date(row.created_at),
+  };
+}
+
+export function clientValues(client: NewOAuthClient) {
+  return {
+    client_id: client.clientId,
+    client_secret_hash: client.clientSecretHash,
+    client_name: client.clientName,
+    redirect_uris: client.redirectUris,
+    response_types: client.responseTypes,
+    grant_types: client.grantTypes,
   };
 }
 
