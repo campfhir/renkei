@@ -9,135 +9,57 @@
  * repository as a whole. Every chat in a project has its own worktree
  * and so its own switcher.
  *
- * Own tenant fixtures under the shared e2e/seed.ts tenant (AGENTS.md:
- * fine to share the tenant when nothing races on uniqueness or an
- * empty-state assertion), with project/chat ids distinct from
- * code.spec.ts's own so the two specs never collide running side by
- * side.
+ * The project and its two chats are the test's own person's, made through
+ * the Code routes after connecting Bitbucket (e2e/support/code-host.ts);
+ * a first turn in each chat clones the repository and gives the chat its
+ * worktree, as it does for a person. The branch routes themselves are
+ * mocked at the browser edge, as before.
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { giveChatWorktree } from './worktree';
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { removeModel } from '../support/stub-model';
+import { setUpCode, stageCodeProject } from '../support/code-host';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// The stand-in model is staged by an operator.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `9c9c9c9c-9c9c-49c9-89c9-9c9c9c9c9c${digit}1`,
-    activeChatId: `9c9c9c9c-9c9c-49c9-89c9-9c9c9c9c9c${digit}2`,
-    otherChatId: `9c9c9c9c-9c9c-49c9-89c9-9c9c9c9c9c${digit}3`,
-    projectName: `Branch switcher project (${digit})`,
-    activeChatTitle: `Active chat (${digit})`,
-    otherChatTitle: `Other chat (${digit})`,
+interface Ids {
+  projectId: string;
+  activeChatId: string;
+  otherChatId: string;
+  projectName: string;
+  activeChatTitle: string;
+  otherChatTitle: string;
+  modelId: string;
+}
+
+/** The project, both chats, each with its own worktree off a ready checkout. */
+async function stage(
+  page: Page,
+  request: import('@playwright/test').APIRequestContext,
+  testInfo: TestInfo
+): Promise<Ids> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await setUpCode(page, request, tag);
+  const names = {
+    projectName: `Branch switcher project (${tag})`,
+    activeChatTitle: `Active chat (${tag})`,
+    otherChatTitle: `Other chat (${tag})`,
   };
-}
-
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = ANY($1)', [
-      [ids.activeChatId, ids.otherChatId],
-    ]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.activeChatId, E2E_SUBJECT, ids.projectId, ids.activeChatTitle]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.otherChatId, E2E_SUBJECT, ids.projectId, ids.otherChatTitle]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-/**
- * A ready checkout, the way the first chat in a project would leave one —
- * cloned on the real sandbox-stub worker (project-view.ts reads a
- * project's workspace status live from the worker, not from a DB row),
- * then the project pointed at it. Mirrors code.spec.ts's own
- * seedCheckout.
- */
-async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const worker = process.env.SANDBOX_WORKER_URL ?? 'http://127.0.0.1:8092';
-  const headers = {
-    authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
-    'content-type': 'application/json',
-  };
-  const target = { subject: `code-project:${ids.projectId}` };
-  const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      ...target,
-      provider: 'atlassian-bitbucket',
-      repoFullName: 'acme/billing-service',
-      branch: 'main',
-      cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
-      gitProxy: {
-        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
-        insteadOf: 'https://bitbucket.org/',
-      },
-    }),
+  const { projectId, chatIds } = await stageCodeProject(page.request, {
+    name: names.projectName,
+    repository: 'acme/billing-service',
+    branch: 'main',
+    chats: [names.activeChatTitle, names.otherChatTitle],
+    clone: true,
+    llmModelId: modelId,
   });
-  const { workspace }: { workspace: { id: string } } = await cloned.json();
-  for (let tries = 0; tries < 20; tries += 1) {
-    const got = await fetch(`${worker}/v1/workspaces/get`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ...target, id: workspace.id }),
-    });
-    const state: { workspace: { status: string } } = await got.json();
-    if (state.workspace.status === 'ready') break;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  const client = await db();
-  try {
-    await client.query('UPDATE chat_projects SET workspace_id = $1 WHERE id = $2', [
-      workspace.id,
-      ids.projectId,
-    ]);
-    for (const chatId of [ids.activeChatId, ids.otherChatId]) {
-      await giveChatWorktree(client, { projectId: ids.projectId, baseId: workspace.id, chatId });
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = ANY($1)', [
-      [ids.activeChatId, ids.otherChatId],
-    ]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+  return { ...names, projectId, activeChatId: chatIds[0], otherChatId: chatIds[1], modelId };
 }
 
 /** The branch route, mocked: `feature/x` is offered and switching to it succeeds. */
@@ -231,7 +153,9 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
     path: path.join(
       import.meta.dirname,
       '..',
+      '..',
       'test-results',
+      'memory',
       'screens',
       testInfo.project.name,
       name
@@ -241,22 +165,20 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 }
 
 test.describe('branch switcher', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await seedFixtures(ids);
-    await seedCheckout(ids);
+  let ids: Ids;
+  test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+    test.setTimeout(180_000);
+    ids = await stage(page, request, testInfo);
   });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  test.afterEach(async ({ page }) => {
+    await removeModel(page.request, ids.modelId);
   });
 
   test('the project screen carries no branch mention; each chat switches its own worktree through its overflow menu', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+    // The phone width the old `mobile` project gave, as a resized viewport on one project.
+    const mobile = testInfo.project.name === 'desktop-dark';
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     await mockBranchRoute(page, ids.projectId);
     const main = page.getByRole('main');
@@ -309,8 +231,8 @@ test.describe('branch switcher', () => {
   test('a dirty checkout is refused with a clear reason, and discarding lets the switch through', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+    // The phone width the old `mobile` project gave, as a resized viewport on one project.
+    const mobile = testInfo.project.name === 'desktop-dark';
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     await mockDirtyThenCleanBranchRoute(page, ids.projectId);
     const main = page.getByRole('main');

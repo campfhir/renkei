@@ -9,132 +9,102 @@
  * stub (sandbox-stub.mjs), which answers `worktree` the way the real
  * worker does.
  *
- * Own project and chat ids per Playwright project: the three share one
- * database.
+ * The project and its chats are the test's own person's, made through the
+ * Code routes after connecting Bitbucket (e2e/support/code-host.ts); a
+ * first turn in each chat (the stand-in model, e2e/llm-stub.mjs) clones
+ * the repository and gives the chat its worktree. A reply "in progress"
+ * is a real turn parked on a permission ask for a tool the model called.
  */
 
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { giveChatWorktree } from './worktree';
+import { randomUUID } from 'node:crypto';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { SANDBOX_STUB_URL } from './constants';
+import { removeModel } from '../support/stub-model';
+import { setUpCode, stageCodeProject } from '../support/code-host';
 
-test.use({
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here; the pinned Chromium runs every project.
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// The stand-in model is staged by an operator.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-const WORKER = process.env.SANDBOX_WORKER_URL ?? 'http://127.0.0.1:8092';
 const WORKER_HEADERS = {
   authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
   'content-type': 'application/json',
 };
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `9b9b9b9b-9b9b-49b9-89b9-9b9b9b9b9b${digit}1`,
-    firstChatId: `9b9b9b9b-9b9b-49b9-89b9-9b9b9b9b9b${digit}2`,
-    secondChatId: `9b9b9b9b-9b9b-49b9-89b9-9b9b9b9b9b${digit}3`,
-    projectName: `Ledger service (${digit})`,
-    firstChatTitle: `Where do refunds get posted? (${digit})`,
-    secondChatTitle: `Month-end close checklist (${digit})`,
+interface Ids {
+  projectId: string;
+  firstChatId: string;
+  secondChatId: string;
+  projectName: string;
+  firstChatTitle: string;
+  secondChatTitle: string;
+  modelId: string;
+}
+
+/** The project's base clone, ready, and both chats' worktrees off it. */
+async function stage(page: Page, request: APIRequestContext, testInfo: TestInfo): Promise<Ids> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await setUpCode(page, request, tag);
+  const names = {
+    projectName: `Ledger service (${tag})`,
+    firstChatTitle: `Where do refunds get posted? (${tag})`,
+    secondChatTitle: `Month-end close checklist (${tag})`,
   };
+  const { projectId, chatIds } = await stageCodeProject(page.request, {
+    name: names.projectName,
+    description: 'Postings, refunds and the month-end close.',
+    repository: 'acme/ledger-service',
+    branch: 'main',
+    chats: [names.firstChatTitle, names.secondChatTitle],
+    clone: true,
+    llmModelId: modelId,
+  });
+  return { ...names, projectId, firstChatId: chatIds[0], secondChatId: chatIds[1], modelId };
 }
 
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
+/**
+ * A reply in progress in the chat: auto mode off, and a turn whose model
+ * calls a tool, parked on the person's permission (left unanswered).
+ */
+async function startRunningTurn(page: Page, chatId: string, llmModelId: string): Promise<void> {
+  const manual = await page.request.patch(`/api/chat/chats/${chatId}`, {
+    data: { autoMode: false },
+  });
+  expect(manual.ok()).toBe(true);
+  const asked = await page.request.post(`/api/chat/chats/${chatId}/turns`, {
+    data: {
+      text: 'Note where refunds go.\nstub:call code_write_file {"path":"NOTES.md","content":"2410\\n"}',
+      llmModelId,
+    },
+  });
+  expect(asked.status(), await asked.text()).toBe(202);
+  await expect
+    .poll(
+      async () => {
+        const view: { chat: { activeTurn: { pendingPermission: unknown } | null } } = await (
+          await page.request.get(`/api/chat/chats/${chatId}`)
+        ).json();
+        return Boolean(view.chat.activeTurn?.pendingPermission);
+      },
+      { timeout: 30_000 }
+    )
+    .toBe(true);
 }
 
-async function clean(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    // Chats started through the page in a test go with the project.
-    await client.query('DELETE FROM chats WHERE project_id = $1', [ids.projectId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+/** The branch of a chat's worktree: lib/code/turn.ts names it after the chat. */
+function branchOf(chatId: string): string {
+  return `renkei/${chatId.slice(-12)}`;
 }
 
-/** The project's base clone on the stub, ready, and both chats' worktrees off it. */
-async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
-  await clean(ids);
-  const target = { subject: `code-project:${ids.projectId}` };
-  const cloned = await fetch(`${WORKER}/v1/workspaces/clone`, {
+/** The branches of the project's workspaces on the sandbox worker (the stub). */
+async function workspaceBranches(projectId: string): Promise<string[]> {
+  const listed = await fetch(`${SANDBOX_STUB_URL}/v1/workspaces/list`, {
     method: 'POST',
     headers: WORKER_HEADERS,
-    body: JSON.stringify({
-      ...target,
-      provider: 'atlassian-bitbucket',
-      repoFullName: 'acme/ledger-service',
-      branch: 'main',
-      cloneUrl: 'https://bitbucket.org/acme/ledger-service.git',
-      gitProxy: {
-        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
-        insteadOf: 'https://bitbucket.org/',
-      },
-    }),
+    body: JSON.stringify({ subject: `code-project:${projectId}` }),
   });
-  const { workspace }: { workspace: { id: string } } = await cloned.json();
-  for (let tries = 0; tries < 20; tries += 1) {
-    const got = await fetch(`${WORKER}/v1/workspaces/get`, {
-      method: 'POST',
-      headers: WORKER_HEADERS,
-      body: JSON.stringify({ ...target, id: workspace.id }),
-    });
-    const state: { workspace: { status: string } } = await got.json();
-    if (state.workspace.status === 'ready') break;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  const client = await db();
-  try {
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch, workspace_id)\n       VALUES ($1, $2, $3, 'Postings, refunds and the month-end close.', 'code', 'atlassian-bitbucket', 'acme/ledger-service', 'main', $4)`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName, workspace.id]
-    );
-    for (const [chatId, title] of [
-      [ids.firstChatId, ids.firstChatTitle],
-      [ids.secondChatId, ids.secondChatTitle],
-    ] as const) {
-      await client.query(
-        `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
-        [chatId, E2E_SUBJECT, ids.projectId, title]
-      );
-      await giveChatWorktree(client, { projectId: ids.projectId, baseId: workspace.id, chatId });
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-/** A reply in progress in the chat, as the runner leaves one while it works. */
-async function seedRunningTurn(chatId: string): Promise<void> {
-  const client = await db();
-  try {
-    await client.query(`INSERT INTO chat_turns (chat_id, status) VALUES ($1, 'running')`, [chatId]);
-  } finally {
-    await client.end();
-  }
-}
-
-async function worktreeOf(chatId: string): Promise<string> {
-  const client = await db();
-  try {
-    const { rows } = await client.query<{ workspace_id: string }>(
-      'SELECT workspace_id FROM chats WHERE id = $1',
-      [chatId]
-    );
-    return rows[0]!.workspace_id;
-  } finally {
-    await client.end();
-  }
+  const { workspaces }: { workspaces: { branch?: string }[] } = await listed.json();
+  return workspaces.map((workspace) => workspace.branch ?? '');
 }
 
 /** The entry paths of a tree listing's JSON. */
@@ -158,19 +128,18 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 test.describe('code project concurrent chats', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    await seed(idsFor(testInfo.project.name));
+  let ids: Ids;
+  test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+    test.setTimeout(180_000);
+    ids = await stage(page, request, testInfo);
   });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await clean(idsFor(testInfo.project.name));
+  test.afterEach(async ({ page }) => {
+    await removeModel(page.request, ids.modelId);
   });
 
   test('two chats in one project both continue, and the project lists both', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
     const main = page.getByRole('main');
     const composer = main.getByPlaceholder('Message Renkei');
 
@@ -186,7 +155,7 @@ test.describe('code project concurrent chats', () => {
     }
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
-      path: `test-results/screens/${testInfo.project.name}/code-chat-concurrent.png`,
+      path: `test-results/memory/screens/${testInfo.project.name}/code-chat-concurrent.png`,
     });
 
     await page.goto(`/code/${ids.projectId}`);
@@ -199,16 +168,15 @@ test.describe('code project concurrent chats', () => {
     await expect(main.getByText('worktree of its own')).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await page.screenshot({
-      path: `test-results/screens/${testInfo.project.name}/code-project-chats.png`,
+      path: `test-results/memory/screens/${testInfo.project.name}/code-project-chats.png`,
     });
   });
 
   test('a new chat starts while another is replying, and defaults to auto mode on', async ({
     page,
-  }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
+  }, _testInfo) => {
     const main = page.getByRole('main');
-    await seedRunningTurn(ids.firstChatId);
+    await startRunningTurn(page, ids.firstChatId, ids.modelId);
 
     await page.goto(`/code/${ids.projectId}`);
     await expect(
@@ -234,7 +202,6 @@ test.describe('code project concurrent chats', () => {
   test('a file made in one chat’s worktree is in that chat’s tree and not the other’s', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
     const file = `only-in-first-${testInfo.project.name}.txt`;
     const tree = (chatId: string) =>
       page.request.get(`/api/code/projects/${ids.projectId}/chats/${chatId}/tree?path=`);
@@ -263,25 +230,16 @@ test.describe('code project concurrent chats', () => {
     expect(stranger.status()).toBe(404);
   });
 
-  test('deleting a chat takes its worktree with it, and only its own', async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const target = { subject: `code-project:${ids.projectId}` };
-    const first = await worktreeOf(ids.firstChatId);
-    const second = await worktreeOf(ids.secondChatId);
+  test('deleting a chat takes its worktree with it, and only its own', async ({ page }) => {
+    const first = branchOf(ids.firstChatId);
+    const second = branchOf(ids.secondChatId);
     expect(first).not.toBe(second);
-    const exists = async (id: string): Promise<boolean> => {
-      const got = await fetch(`${WORKER}/v1/workspaces/get`, {
-        method: 'POST',
-        headers: WORKER_HEADERS,
-        body: JSON.stringify({ ...target, id }),
-      });
-      return got.ok;
-    };
-    expect(await exists(first)).toBe(true);
+    expect(await workspaceBranches(ids.projectId)).toEqual(expect.arrayContaining([first, second]));
 
     const deleted = await page.request.delete(`/api/chat/chats/${ids.firstChatId}`);
     expect(deleted.ok()).toBe(true);
-    expect(await exists(first)).toBe(false);
-    expect(await exists(second)).toBe(true);
+    const left = await workspaceBranches(ids.projectId);
+    expect(left).not.toContain(first);
+    expect(left).toContain(second);
   });
 });

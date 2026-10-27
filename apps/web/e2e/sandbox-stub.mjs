@@ -226,6 +226,36 @@ function envWire(variable) {
   return { ...variable };
 }
 
+/** A form-encoded body (an OAuth token request), as URLSearchParams. */
+function readForm(request) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => resolve(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))));
+  });
+}
+
+/**
+ * A connect flow's token, one per authorization code, so every person a
+ * spec connects is a different account; the identity reads answer by it.
+ */
+function issueToken(request, response, host) {
+  void readForm(request).then((form) => {
+    const code = form.get('code') || 'e2e-code';
+    json(response, 200, {
+      access_token: `e2e-${host}-${code}`,
+      refresh_token: `e2e-${host}-refresh-${code}`,
+      token_type: 'bearer',
+      expires_in: 365 * 86_400,
+    });
+  });
+}
+
+/** Whose token this request carries (the delegate attaches it as a Bearer). */
+function bearerOf(request) {
+  return (request.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || 'e2e-anonymous';
+}
+
 function readBody(request) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -276,9 +306,10 @@ const RULE_SEED = [
   ['mcr.microsoft.com/mssql/server', 'SQL Server on Linux'],
   ['mcr.microsoft.com/azure-storage/azurite', 'Azurite, the Azure Storage emulator'],
 ];
-const rulesByTenant = new Map();
+// One organization per deployment: one set of rules, seeded on first read.
+let orgRules = null;
 function rulesOf() {
-  let rules = rulesByTenant.get();
+  let rules = orgRules;
   if (!rules) {
     rules = new Map();
     for (const [pattern, note] of RULE_SEED) {
@@ -286,7 +317,7 @@ function rulesOf() {
       const now = new Date().toISOString();
       rules.set(id, { id, pattern, note, registryUsername: null, createdAt: now, updatedAt: now });
     }
-    rulesByTenant.set(rules);
+    orgRules = rules;
   }
   return rules;
 }
@@ -1230,6 +1261,15 @@ function handleBitbucket(request, url, response) {
       environment.variables,
       environmentVariables[4]
     );
+  }
+  // The connect flow's identity read (app/api/oauth/callback): who the
+  // token belongs to, keyed by the uuid the grant is stored under.
+  if (path === '/user') {
+    return json(response, 200, {
+      uuid: `{${bearerOf(request)}}`,
+      username: 'e2e-dev',
+      display_name: 'E2E Dev',
+    });
   }
   // The membership listing the app reads (bare /workspaces is deprecated
   // and refuses newer tokens): workspace_access rows wrapping each workspace.
@@ -2482,6 +2522,26 @@ const server = createServer((request, response) => {
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
+  // GitHub's OAuth token endpoint and identity read, the same way (the app
+  // is pointed at /github with GITHUB_API_BASE_URL); nothing else of
+  // GitHub's API is stood in for.
+  if (request.method === 'POST' && url.pathname === '/login/oauth/access_token') {
+    return issueToken(request, response, 'github');
+  }
+  if (url.pathname === '/github/user') {
+    // A stable numeric id per token, as GitHub's account ids are numbers.
+    const token = bearerOf(request);
+    let id = 7;
+    for (const char of token) id = (id * 31 + char.charCodeAt(0)) % 2_000_000_000;
+    return json(response, 200, { id, login: 'e2e-dev', name: 'E2E Dev' });
+  }
+  if (url.pathname.startsWith('/github/')) return error(response, 404, 'not_found');
+  // Bitbucket's OAuth token endpoint, at its own path on this origin (the
+  // delegate exchanges a stand-in provider's codes here): any code buys a
+  // long-lived token of its own, so a spec can drive the real connect flow.
+  if (request.method === 'POST' && url.pathname === '/site/oauth2/access_token') {
+    return issueToken(request, response, 'bitbucket');
+  }
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);

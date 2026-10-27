@@ -31,6 +31,8 @@ import {
   MEMORY_DELEGATE_URL,
   MEMORY_DELEGATE_API_KEY,
   LLM_STUB_PORT,
+  SANDBOX_STUB_PORT,
+  SANDBOX_STUB_URL,
 } from './e2e/memory/constants';
 import { E2E_SETUP_SECRET } from './e2e/setup-secret';
 
@@ -78,9 +80,11 @@ export default defineConfig({
   webServer: [
     {
       // A stand-in sandbox worker (e2e/sandbox-stub.mjs): Code pages, the
-      // chat's sandbox tools, Bitbucket and Jira administration's APIs.
-      command: 'node e2e/sandbox-stub.mjs',
-      url: 'http://127.0.0.1:8092/health',
+      // chat's sandbox tools, Bitbucket and GitHub (their OAuth token
+      // exchanges and identity reads too) and
+      // Jira administration's APIs. SANDBOX_STUB_PORT moves it.
+      command: `SANDBOX_STUB_PORT=${SANDBOX_STUB_PORT} node e2e/sandbox-stub.mjs`,
+      url: `${SANDBOX_STUB_URL}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
@@ -122,12 +126,13 @@ export default defineConfig({
         RENKEI_WEB_INTERNAL_URL: MEMORY_BASE_URL,
         // What playwright.config.ts gives the Postgres suite's dev server
         // (and its .env.development the sandbox pair), the same values.
-        SANDBOX_WORKER_URL: 'http://127.0.0.1:8092',
+        SANDBOX_WORKER_URL: SANDBOX_STUB_URL,
         SANDBOX_WORKER_API_KEY: 'e2e-sandbox-key',
         SETUP_SECRET: E2E_SETUP_SECRET,
-        BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
-        JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
-        JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
+        BITBUCKET_API_BASE_URL: `${SANDBOX_STUB_URL}/bitbucket/2.0`,
+        GITHUB_API_BASE_URL: `${SANDBOX_STUB_URL}/github`,
+        JIRA_ADMIN_API_BASE_URL: `${SANDBOX_STUB_URL}/jira`,
+        JIRA_AUTOMATION_API_BASE_URL: `${SANDBOX_STUB_URL}/automation`,
         BLOB_STORE_PROVIDER: process.env.BLOB_STORE_PROVIDER ?? 'local',
         BLOB_STORE_LOCAL_DIR:
           process.env.BLOB_STORE_LOCAL_DIR ?? path.join(HERE, 'test-results', 'memory', 'blobs'),

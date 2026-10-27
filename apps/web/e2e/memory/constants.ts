@@ -27,6 +27,13 @@ export const MEMORY_TOKEN_ENCRYPTION_KEY = 'cmVua2VpLWUyZS1tZW1vcnktdG9rZW4ta2V5
  * give a model on the admin roster, and the one reply it ever makes — an
  * agent run's finish_run summary, or a chat turn's text.
  */
+/**
+ * The sandbox stub (e2e/sandbox-stub.mjs), which also stands in for
+ * Bitbucket and Jira administration. SANDBOX_STUB_PORT moves it, for a
+ * checkout that runs its own copy beside another's.
+ */
+export const SANDBOX_STUB_PORT = Number(process.env.SANDBOX_STUB_PORT ?? 8092);
+export const SANDBOX_STUB_URL = `http://127.0.0.1:${SANDBOX_STUB_PORT}`;
 export const LLM_STUB_PORT = Number(process.env.E2E_LLM_STUB_PORT ?? 8094);
 export const LLM_STUB_BASE_URL = `http://127.0.0.1:${LLM_STUB_PORT}/v1`;
 export const LLM_STUB_REPLY = 'The stub model finished the work.';

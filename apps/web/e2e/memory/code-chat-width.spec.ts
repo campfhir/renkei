@@ -7,6 +7,7 @@
  * resized Chromium viewport (see AGENTS.md's "UI changes").
  *
  * The project and chat are the test's own person's (e2e/support/code-host.ts);
+ * a speech provider is configured for the organization (no vendor call);
  * the chat's one reply comes from the stand-in model (e2e/llm-stub.mjs), put
  * on the roster with a context window, so the context ring has a measured
  * reply to show.
@@ -37,6 +38,25 @@ test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   await prepareCodeHost(request);
   await connectBitbucket(page);
+  // A speech provider configured for the org, as the old seed had it: the
+  // composer folds its tools into one menu only when there is voice to fold
+  // in. Nothing here speaks to the vendor; organization-wide, and left on.
+  const voice = await page.request.put('/api/admin/connectors/voice', {
+    data: {
+      provider: 'azure-speech',
+      region: 'eastus',
+      apiKey: 'e2e-voice-key',
+      defaultLocale: 'en-US',
+      defaultVoice: 'en-US-AvaMultilingualNeural',
+    },
+  });
+  expect(voice.ok(), await voice.text()).toBe(true);
+  // What the composer reads, through the voice route's own cache.
+  await expect
+    .poll(async () => (await (await page.request.get('/api/voice')).json()).configured, {
+      timeout: 70_000,
+    })
+    .toBe(true);
   // A model with a window and one measured reply, so the context ring shows.
   modelId = await addStubModel(page.request, tag, { contextWindow: 200_000 });
   const { chatIds } = await stageCodeProject(page.request, {
@@ -74,23 +94,34 @@ for (const width of [1024, 1280, 1440, 1920]) {
     // client has measured the frame.
     await page.waitForLoadState('networkidle');
 
-    const layout = await page.evaluate(() => {
-      const send = document.querySelector('button[aria-label="Send"]');
-      const row = send?.parentElement ?? null;
-      const composer = row?.closest('.\\@container') ?? null;
-      const rect = (element: Element) => element.getBoundingClientRect();
-      return {
-        composerWidth: composer ? rect(composer).width : 0,
-        composerRight: composer ? rect(composer).right : 0,
-        buttons: Array.from(row?.querySelectorAll('button') ?? [])
-          .filter((button) => button.offsetParent !== null)
-          .map((button) => ({
-            label: button.getAttribute('aria-label') ?? button.textContent ?? '',
-            right: rect(button).right,
-          })),
-        sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-      };
-    });
+    const measure = () =>
+      page.evaluate(() => {
+        const send = document.querySelector('button[aria-label="Send"]');
+        const row = send?.parentElement ?? null;
+        const composer = row?.closest('.\\@container') ?? null;
+        const rect = (element: Element) => element.getBoundingClientRect();
+        return {
+          composerWidth: composer ? rect(composer).width : 0,
+          composerRight: composer ? rect(composer).right : 0,
+          buttons: Array.from(row?.querySelectorAll('button') ?? [])
+            .filter((button) => button.offsetParent !== null)
+            .map((button) => ({
+              label: button.getAttribute('aria-label') ?? button.textContent ?? '',
+              right: rect(button).right,
+            })),
+          sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        };
+      });
+    // The pane settles a beat after load (it opens beside a chat with a
+    // checkout): measure until two readings agree.
+    let layout = await measure();
+    await expect
+      .poll(async () => {
+        const previous = layout.composerWidth;
+        layout = await measure();
+        return layout.composerWidth === previous;
+      })
+      .toBe(true);
     // The chat column is at least its minimum; nothing in the row pokes out of it.
     expect(layout.composerWidth).toBeGreaterThanOrEqual(400);
     for (const button of layout.buttons) {

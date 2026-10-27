@@ -7,47 +7,34 @@
  * and a deployment environment's variable added — then the page at
  * phone width. Bitbucket is the stub in sandbox-stub.mjs (the app is
  * pointed at it with BITBUCKET_API_BASE_URL), which keeps one pipelines
- * row per repository; each Playwright project seeds a project on a
- * repository of its own, so the three never share state.
+ * row per repository; each test's person makes a project on a repository
+ * of its own (connected through the real connect flow, with the admin and
+ * pipeline-variable scopes the page stands on: e2e/support/code-host.ts),
+ * so no two tests share state.
  */
 
 import path from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { sealForSubject } from './keys';
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { connectBitbucket, createCodeProject, prepareCodeHost } from '../support/code-host';
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// The catalog's admin page is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    digit,
-    projectId: `77777777-7777-4777-8777-7777777777${digit}1`,
-    name: `Pipelines demo (${digit})`,
-    repo: `acme/pipelines-demo-${digit}`,
-  };
-}
-
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
+interface Ids {
+  tag: string;
+  projectId: string;
+  name: string;
+  repo: string;
 }
 
 /**
- * What migration 122 seeds for a real tenant, in short: global-setup
- * deletes and reinserts the e2e tenant on every run, and tenant_id
- * cascades — which drops the seeded rows. Patched in the way
- * project-templates.spec.ts patches its own catalog.
+ * What migration 122 seeds for a real organization, in short. The
+ * in-memory store starts from the schema alone, so an operator adds them
+ * through the catalog's own route when they are missing (and they stay).
  */
 const SEED_PIPELINE_TEMPLATES = [
   {
@@ -62,56 +49,29 @@ const SEED_PIPELINE_TEMPLATES = [
   },
 ];
 
-function customTemplateNameFor(project: string): string {
-  return `Playwright pipeline template (${project})`;
-}
-
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    for (const template of SEED_PIPELINE_TEMPLATES) {
-      await client.query(
-        `INSERT INTO pipeline_templates (provider, name, description, body)\n         VALUES ('atlassian-bitbucket', $1, $2, $3)\n         ON CONFLICT (provider, name) DO NOTHING`,
-        [template.name, template.description, template.body]
-      );
-    }
-    await client.query(`DELETE FROM pipeline_templates WHERE name = $1`, [customTemplateNameFor(ids.digit)]);
-    // The person's Bitbucket grant, carrying the two checkboxes the
-    // page stands on beyond a code project's own three: the admin
-    // bundle (the switch) and the pipeline-variable one. code.spec.ts
-    // seeds the same row without them, so this upsert sets the scopes too.
-    await client.query(
-      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at,\n             requested_scopes = EXCLUDED.requested_scopes`,
-      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), [
-                  'account',
-                  'repository',
-                  'repository:write',
-                  'pullrequest',
-                  'pullrequest:write',
-                  'project:admin',
-                  'repository:admin',
-                  'pipeline',
-                  'pipeline:write',
-                  'pipeline:variable',
-                ], JSON.stringify({ username: 'e2e-dev' })]
-    );
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Where the pipeline gets set up.', 'code', 'atlassian-bitbucket', $4, 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.name, ids.repo]
-    );
-  } finally {
-    await client.end();
+/**
+ * The catalog's seeded rows, the person's Bitbucket connection, and a
+ * project on a repository of its own. The repository must be one the
+ * stub's pipelines answer for (`acme/pipelines-demo-*`).
+ */
+async function stage(page: Page, testInfo: TestInfo): Promise<Ids> {
+  for (const template of SEED_PIPELINE_TEMPLATES) {
+    const added = await page.request.post('/api/admin/pipeline-templates', {
+      data: { provider: 'atlassian-bitbucket', ...template },
+    });
+    // 409: already there, from an earlier test.
+    expect([201, 409], await added.text()).toContain(added.status());
   }
-}
-
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const name = `Pipelines demo (${tag})`;
+  const repo = `acme/pipelines-demo-${tag}`;
+  const projectId = await createCodeProject(page.request, {
+    name,
+    description: 'Where the pipeline gets set up.',
+    repository: repo,
+    branch: 'main',
+  });
+  return { tag, projectId, name, repo };
 }
 
 /**
@@ -132,25 +92,24 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Code project pipelines', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    await seedFixtures(idsFor(testInfo.project.name));
-  });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  let ids: Ids;
+  test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+    await prepareCodeHost(request);
+    await connectBitbucket(page);
+    ids = await stage(page, testInfo);
   });
 
   test('card, page, runs, switch, variables, environment, phone width', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
     const shot = (name: string) =>
       page.screenshot({
         path: path.join(
           import.meta.dirname,
           '..',
+          '..',
           'test-results',
+          'memory',
           'screens',
           testInfo.project.name,
           name
@@ -380,9 +339,8 @@ test.describe('Code project pipelines', () => {
 
   test('the admin catalog: seeded rows, one added, edited and deleted', async ({
     page,
-  }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const name = customTemplateNameFor(ids.digit);
+  }, _testInfo) => {
+    const name = `Playwright pipeline template (${ids.tag})`;
     await page.goto(`/admin/pipeline-templates`);
     await expect(page.getByRole('heading', { level: 1, name: 'Pipeline templates' })).toBeVisible({
       timeout: 30_000,

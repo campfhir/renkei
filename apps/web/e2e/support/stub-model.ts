@@ -12,7 +12,12 @@
 import type { APIRequestContext } from '@playwright/test';
 import { LLM_STUB_BASE_URL } from '../memory/constants';
 
-export async function addStubModel(request: APIRequestContext, tag: string): Promise<string> {
+export async function addStubModel(
+  request: APIRequestContext,
+  tag: string,
+  /** More of the roster form's fields, e.g. `{ contextWindow: 200_000 }`. */
+  extra: Record<string, unknown> = {}
+): Promise<string> {
   const response = await request.post('/api/admin/llm-models', {
     data: {
       label: `Stub model ${tag}`,
@@ -22,6 +27,7 @@ export async function addStubModel(request: APIRequestContext, tag: string): Pro
       apiKey: 'stub-key',
       enabled: true,
       isDefault: false,
+      ...extra,
     },
   });
   const body: unknown = await response.json();
@@ -35,7 +41,12 @@ export async function addStubModel(request: APIRequestContext, tag: string): Pro
 }
 
 export async function removeModel(request: APIRequestContext, id: string): Promise<void> {
-  const response = await request.delete(`/api/admin/llm-models/${id}`);
+  // A kept-alive socket the server has just closed resets the first try
+  // (after a long test the request context's connection sits idle); the
+  // delete is safe to send again.
+  const response = await request
+    .delete(`/api/admin/llm-models/${id}`)
+    .catch(() => request.delete(`/api/admin/llm-models/${id}`));
   if (!response.ok()) {
     throw new Error(`DELETE /api/admin/llm-models/${id} answered ${response.status()}`);
   }

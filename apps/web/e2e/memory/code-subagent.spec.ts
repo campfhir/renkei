@@ -105,14 +105,16 @@ test('the card names the model the orchestrator picked; the transcript names wha
     await subagent.getByRole('button', { name: 'View transcript' }).click();
     const dialog = page.getByRole('dialog', { name: 'Sub-agent' });
     // Two model calls: the grep, then the report.
-    await expect(dialog.getByText(/^2 of \d+ model calls$/)).toBeVisible();
+    await expect(dialog).toContainText(/2 of \d+ model calls · 1 tool call/);
     // How long it ran: its start to its finish, the run being over.
     await expect(dialog.locator('[data-subagent-elapsed]')).toHaveText(/^ran for \d/);
     const model = dialog.locator('[data-subagent-model]');
     await expect(model).toHaveText(`on ${fastModelLabel}`);
     await expect(model).toHaveAttribute('title', 'openai stub-model');
     await expect(dialog.getByText(TASK, { exact: false })).toBeVisible();
-    await expect(dialog.getByText('code_grep', { exact: false }).first()).toBeVisible();
+    // The grep is the sub-agent's own step (the stub worker answers no grep,
+    // so the step reads failed — which step it was is what is shown here).
+    await expect(dialog.getByText(/Search code/).first()).toBeVisible();
     // Where its time went: each model call's own duration on its heading,
     // and the tool call's on its line.
     await expect(dialog.locator('[data-model-call-duration]').first()).toHaveText(/^· /);
