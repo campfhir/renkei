@@ -88,7 +88,7 @@ const fixture = {
     {
       state_key: 'a-key',
       chat_id: CHAT.annA,
-      decided_by: 'ann',
+      decided_by: 'ann-on-her-phone',
       decision: 'cancelled',
       state: JSON.stringify({ icon: 'cancelled', headline: 'No' }),
     },
@@ -155,7 +155,7 @@ export const chatThreadScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'chatThreads.listWidgetDecisions',
-    name: 'per chat by key',
+    name: 'per chat by key, with the decision and who made it',
     fixture,
     run: async (store) => [
       await store.chatThreads.listWidgetDecisions(CHAT.annA),

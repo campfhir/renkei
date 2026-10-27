@@ -66,6 +66,15 @@ export interface ChatSummaryRecord {
   createdAt: Date;
 }
 
+/** One card's recorded decision (chat_widget_decisions). */
+export interface ChatWidgetDecisionRecord {
+  stateKey: string;
+  /** The card's receipt, as stored (the caller validates it). */
+  state: unknown;
+  decision: string;
+  decidedBy: string;
+}
+
 export interface ChatThreadStore extends ChatTurnEngineStore {
   /** A chat's messages in order (seq ascending). */
   listMessages(chatId: string): Promise<ChatMessageRecord[]>;
@@ -77,8 +86,11 @@ export interface ChatThreadStore extends ChatTurnEngineStore {
   getTurn(chatId: string, turnId: string): Promise<ChatTurnRecord | null>;
   /** The chat's newest compaction summary (ties by id), or null. */
   latestSummary(chatId: string): Promise<ChatSummaryRecord | null>;
-  /** Every widget decision recorded in the chat, by state key ascending. */
-  listWidgetDecisions(chatId: string): Promise<{ stateKey: string; state: unknown }[]>;
+  /**
+   * Every widget decision recorded in the chat, by state key ascending:
+   * the card's state, which way it went and who decided it.
+   */
+  listWidgetDecisions(chatId: string): Promise<ChatWidgetDecisionRecord[]>;
   /** One decision's state by its key, or null. */
   getWidgetDecision(stateKey: string): Promise<unknown>;
   /** The composer's saved draft, sealed, or null when there is none. */
