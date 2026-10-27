@@ -242,11 +242,15 @@ export function postgresArtifacts(db: () => Kysely<DB>): ArtifactStore {
       return Number(row.count);
     },
     async libraryRows(filter, { limit, offset }) {
+      // The viewer's own artifacts first. Named once, as the query this
+      // replaced did: it orders, it doesn't repeat a SELECT expression
+      // (src/group-by-parameter.test.ts).
+      const ownedFirst = sql`(owner_subject = ${filter.viewerSubject}) desc`;
       const rows = await db()
         .selectFrom('artifacts')
         .select(ARTIFACT_COLUMNS)
         .where((eb) => filterWhere(eb, filter))
-        .orderBy(sql`(owner_subject = ${filter.viewerSubject}) desc`)
+        .orderBy(ownedFirst)
         .orderBy('created_at', 'desc')
         .orderBy('id', 'asc')
         .limit(limit)
