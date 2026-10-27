@@ -130,7 +130,16 @@ for (const width of [1024, 1280, 1440, 1920]) {
     expect(layout.sideways).toBeLessThanOrEqual(0);
     // In a column this narrow the tools are the one folded menu, not three buttons.
     if (layout.composerWidth < 480) {
-      await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible();
+      // The page reads the speech setup through its own cache: a page served
+      // just before the org's voice landed there shows it on the next load.
+      await expect(async () => {
+        if (!(await page.getByRole('button', { name: 'Prompts and voice' }).isVisible())) {
+          await page.reload();
+        }
+        await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible({
+          timeout: 3_000,
+        });
+      }).toPass({ timeout: 90_000 });
       await expect(page.getByRole('button', { name: 'Insert a prompt' })).toBeHidden();
     }
     await expect(page.getByRole('button', { name: /Auto/ })).toBeVisible();

@@ -91,7 +91,7 @@ export default defineConfig({
     {
       // A stand-in remote MCP server with its own OAuth (e2e/mcp-stub.mjs).
       command: 'node e2e/mcp-stub.mjs',
-      url: 'http://127.0.0.1:8093/health',
+      url: `http://127.0.0.1:${process.env.E2E_MCP_STUB_PORT ?? 8093}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
