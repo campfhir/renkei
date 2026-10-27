@@ -62,8 +62,8 @@ viewport pass.
   `e2e/seed.ts`'s shared session — Playwright runs projects concurrently
   against the same dev database, and a shared subject races on uniqueness
   constraints and on any "empty state" assertion. On the memory suite the
-  `person` fixture (`e2e/memory/fixtures.ts`) is that person, forgotten
-  after the test; in the Postgres suite derive a deterministic
+  `person` fixture (`e2e/memory/fixtures.ts`) is that person, a fresh
+  subject per test that needs no cleanup; in the Postgres suite derive a deterministic
   subject/session per project name and clear your person's rows with
   `deleteRowsOf(client, subject, tables)` from `e2e/seed.ts`. There is one
   organization per deployment, so organization-wide tables (`settings`,
@@ -71,7 +71,8 @@ viewport pass.
   every spec in a run: a spec that writes one of them cannot assume an
   empty state and should keep its own writes distinctive
   (`memory/llm-models.spec.ts` tags its rows, scopes assertions to them and
-  deletes them afterwards).
+  deletes them afterwards through the UI's own delete route). Agent names
+  are unique across the organization too, so tag those.
 
 # The data store seam: pages read through `getDataStore()`
 
@@ -95,14 +96,17 @@ cascades behave as they do in the database.
   (`apps/web/e2e/memory/crawl.spec.ts`) loads every page on the memory
   store alone; a new page gets a `CrawlPage` entry in
   `e2e/memory/crawl/<area>.ts`.
-- **Tests seed with the application's own store methods**: create a row
-  the way the app creates it (`agents.create`, `chats.create`,
-  `agentRuns.createQueued` then `updateExecution`, …), read it back with
-  the store's reads, and use per-run unique ids and subjects instead of
-  cleaning up with deletes. `*.db.test.ts` and other database-gated tests
-  run the same calls against Postgres when `DATABASE_URL` is set. What
-  only the database can show (a trigger refusing an UPDATE) is tested in
-  `packages/db`, which keeps its own connection.
+- **Tests seed with the application's own code**: a unit or database test
+  creates a row the way the app creates it (`agents.create`,
+  `chats.create`, `agentRuns.createQueued` then `updateExecution`, …),
+  reads it back with the store's reads, and uses per-run unique ids and
+  subjects instead of cleaning up with deletes. `*.db.test.ts` and other
+  database-gated tests run the same calls against Postgres when
+  `DATABASE_URL` is set. What only the database can show (a trigger
+  refusing an UPDATE) is tested in `packages/db`, which keeps its own
+  connection. A Playwright spec goes one step further out and stages
+  through the app's REST routes (the memory UI suite, below); it never
+  calls the store.
 - **A new or changed repository method** changes `types.ts`, `postgres.ts`
   and `memory.ts` together and gets at least one differential scenario in
   `scenarios.ts`: fixture rows plus a call, run against a freshly
@@ -116,20 +120,30 @@ cascades behave as they do in the database.
   (`store.seed({ table: [rows] })`) is for state the application cannot
   write any more, such as a legacy row from before a migration.
 - **The memory UI suite** (`apps/web/playwright.memory.config.ts`, specs
-  in `apps/web/e2e/memory/`) runs the web app with
-  `RENKEI_DATA_STORE=memory` and no Postgres:
-  `pnpm --filter renkei e2e:memory`. The server runs the real delegate in its own process
-  (`lib/memory-delegate.ts`, on the same store), and the config starts the
-  sandbox and MCP stubs beside it. Specs get a signed-in, really enrolled
-  person from `e2e/memory/fixtures.ts` and seed with the store methods the
-  app writes with — `await person.store.agents.create({...})`, or
-  `dataStore(request)` / `dataStoreBatch(request)` from
-  `e2e/support/store.ts` — posted to the test-only `app/api/test/data-store`
-  route (404 unless the memory store is active and the seed token matches);
-  never raw rows or SQL. `e2e/support/` holds the shared helpers (person,
-  keys, the shared fixtures `e2e/seed.ts` wrote, written once per server by
-  its global setup). It runs in CI. `E2E_MEMORY_PORT` moves its server; on
-  a box whose preinstalled Chromium doesn't match Playwright's, set
+  in `apps/web/e2e/memory/`) tests the UI and UX on one process: the web
+  app with `RENKEI_DATA_STORE=memory` and no Postgres,
+  `pnpm --filter renkei e2e:memory`. Everything that has to share the
+  memory store runs inside that server, started by `instrumentation.ts`:
+  the real delegate (`lib/memory-delegate.ts`) and the background
+  consumers a UI flow waits on (`lib/memory-workers.ts`: the agents
+  worker's run engine and action executor, and the event dispatcher, each
+  from its worker's `src/embedded.ts`, woken the moment something is
+  enqueued; no sweeps, ingest or schedule loops). Beside it the config
+  starts three stateless stubs: the sandbox worker, an MCP server and a
+  model (`e2e/llm-stub.mjs`, an OpenAI-compatible endpoint with one fixed
+  reply, put on the roster through the admin LLM-models route by
+  `e2e/support/stub-model.ts`). Specs sign in through the one test-only
+  route, `app/api/test/session` (a fresh identity and session with the
+  roles asked for; 404 unless the memory store is active and the seed
+  token matches), via the `person` fixture (`e2e/memory/fixtures.ts` →
+  `e2e/support/person.ts`, which also enrolls the person's keys through
+  `/api/keys` as their browser would), and stage everything else through
+  the REST routes the UI itself calls (`POST /api/agents` with
+  `page.request`, the admin routes, …). There is no store RPC: what only a vendor
+  produces is answered at the browser edge with `page.route`, and a page
+  whose data only a background process writes shows its empty state.
+  It runs in CI. `E2E_MEMORY_PORT` moves its server; on a box whose
+  preinstalled Chromium doesn't match Playwright's, set
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
 - Outside the web app's memory mode `getDataStore()` is the Postgres
   store, so workers and shared packages go through it like the web app.

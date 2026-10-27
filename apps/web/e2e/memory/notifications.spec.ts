@@ -3,53 +3,37 @@
  * the unread total, "Mark all as read" and a per-card "Mark as unread"
  * going through the real route to the store and surviving a reload, and
  * the empty state for somebody with nothing yet.
+ *
+ * The notifications are the app's own: a colleague shares agents with the
+ * person through each agent's access route (e2e/support/share-agents.ts),
+ * and one is marked read through the feed's route, as its menu does.
  */
 
 import path from 'node:path';
-import { test, expect, type MemoryPerson } from './fixtures';
-import { forgetSubject } from '../support/store';
+import { test, expect } from './fixtures';
+import { createPerson } from '../support/person';
+import { shareAgentsWith } from '../support/share-agents';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 
-/** One agent-run notification, as the run's end writes it (notifications.insert). */
-async function notify(
-  person: MemoryPerson,
-  headline: string,
-  minutesAgo: number,
-  options: { read?: boolean; subject?: string } = {}
-): Promise<void> {
-  const createdAt = new Date(Date.now() - minutesAgo * 60_000);
-  await person.store.notifications.insert({
-    id: crypto.randomUUID(),
-    subject: options.subject ?? person.subject,
-    kind: 'agent_run',
-    category: null,
-    connector: null,
-    tool: null,
-    entity: null,
-    headline,
-    refUrl: null,
-    agentId: null,
-    agentName: 'Triage',
-    runId: null,
-    meta: null,
-    createdAt,
-    readAt: options.read ? createdAt : null,
+test('the feed, newest first, marked read and unread again', async ({
+  page,
+  request,
+  person,
+}, testInfo) => {
+  const [oldest, middle, newest] = await shareAgentsWith(request, person, [
+    'Oldest: triage',
+    'Middle: reply drafts',
+    'Newest: duplicates',
+  ]);
+  const markedRead = await page.request.post('/api/notifications', {
+    data: { ids: [oldest.notificationId] },
   });
-}
-
-test('the feed, newest first, marked read and unread again', async ({ page, person }, testInfo) => {
-  await notify(person, 'Oldest: triaged 4 tickets', 30, { read: true });
-  await notify(person, 'Newest: closed a duplicate', 1);
-  await notify(person, 'Middle: drafted a reply', 10);
+  expect(markedRead.ok()).toBe(true);
 
   await page.goto('/notifications');
-  const headlines = page.getByText(/^(Oldest|Middle|Newest):/);
-  await expect(headlines).toHaveText([
-    'Newest: closed a duplicate',
-    'Middle: drafted a reply',
-    'Oldest: triaged 4 tickets',
-  ]);
+  const headlines = page.getByText(/shared the agent "(Oldest|Middle|Newest):/);
+  await expect(headlines).toHaveText([newest.headline, middle.headline, oldest.headline]);
   await expect(page.getByText('2 unread', { exact: true })).toBeVisible();
   await page.screenshot({
     path: path.join(RESULTS, 'screens', testInfo.project.name, 'notifications-01-feed.png'),
@@ -74,7 +58,7 @@ test('the feed, newest first, marked read and unread again', async ({ page, pers
   await expect(page.getByText('2 unread', { exact: true })).toHaveCount(0);
   await expect(page.getByLabel(/unread notification/)).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Actions for "Middle: drafted a reply"' }).click();
+  await page.getByRole('button', { name: `Actions for "${middle.headline}"` }).click();
   await page.getByRole('menuitem', { name: 'Mark as unread' }).click();
   await expect(page.getByText('1 unread', { exact: true })).toBeVisible();
   await page.reload();
@@ -84,14 +68,13 @@ test('the feed, newest first, marked read and unread again', async ({ page, pers
 test('somebody with no notifications sees none, and no one else’s', async ({
   page,
   request,
-  person,
+  person: _person,
 }) => {
-  const other = `other-${person.subject}`;
-  await notify(person, 'Somebody else’s news', 1, { subject: other });
+  // Somebody else gets a notification; this person gets nothing.
+  const somebodyElse = await createPerson(request);
+  const [{ headline }] = await shareAgentsWith(request, somebodyElse, ['Somebody else’s news']);
   await page.goto('/notifications');
   await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
-  await expect(page.getByText('Somebody else’s news')).toHaveCount(0);
+  await expect(page.getByText(headline)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
-  // Nobody's fixture forgets the other subject's row.
-  await forgetSubject(request, other);
 });

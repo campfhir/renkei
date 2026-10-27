@@ -1,143 +1,58 @@
-import { randomUUID } from 'node:crypto';
-import type { CrawlPage } from './types';
-import { crawlId } from './types';
+import { addStubModel, removeModel } from '../../support/stub-model';
+import { agentOf, field, remove, send, type CrawlPage } from './types';
 
 /**
- * Pages of this area the memory crawl visits; see ./types.ts.
- *
- * Organization-wide rows (audit events, the event queue, model and
- * calendar rosters, the IdP record) are not reset with the crawl's person,
- * so they get fresh ids and names on each seed rather than fixed ones.
+ * The console's pages. Models and holiday calendars are organization-wide:
+ * each is staged under the test's own tag through the console's own route
+ * and deleted through it again afterwards. Provider grants, content
+ * watches and webhook events come from vendors, and the identity provider
+ * is the deployment's own: those pages show their empty states or their
+ * plain form.
  */
-const fresh = () => randomUUID();
-const suffix = () => randomUUID().slice(0, 8);
-
 export const adminPages: CrawlPage[] = [
   { path: '/admin', expectText: 'Organization' },
+  { path: '/admin/access', expectText: /^Who is connected to what/ },
   {
-    path: '/admin/access',
-    seed: (subject) => ({
-      provider_grants: [
-        {
-          provider: 'microsoft',
-          provider_account_id: `crawl-${subject}`,
-          subject,
-          display_name: 'Crawl Access Grant',
-          client_id: 'crawl',
-          encrypted_access_token: 'sealed',
-          encrypted_refresh_token: 'sealed',
-          expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-        },
-      ],
-    }),
-    expectText: 'Crawl Access Grant',
-  },
-  {
+    // Saving an agent is an audited change.
     path: '/admin/audit',
-    seed: (subject) => ({
-      audit_events: [
-        {
-          id: fresh(),
-          actor_subject: subject,
-          action: 'agent.created',
-          target_kind: 'agent',
-          target_label: 'Crawl audit agent',
-        },
-      ],
-    }),
-    expectText: 'Crawl audit agent',
+    stage: async ({ api, tag }) => {
+      await agentOf(api, `Crawl audit agent ${tag}`);
+    },
+    expectText: /Crawl audit agent crawl-/,
   },
   {
     path: '/admin/events',
-    seed: (subject) => ({
-      events: [
-        {
-          id: fresh(),
-          source: 'crawl-events-source',
-          type: 'crawl.event',
-          payload: JSON.stringify({ ownerSubject: subject }),
-        },
-      ],
-    }),
-    expectText: 'crawl-events-source',
+    expectText: 'Nothing yet — events appear as connected providers deliver webhooks.',
   },
-  {
-    path: '/admin/sites',
-    seed: (subject) => ({
-      content_watches: [
-        {
-          id: crawlId(201),
-          provider: 'atlassian',
-          subject,
-          account_id: 'crawl-account',
-          scope_type: 'space',
-          scope_key: 'CRAWL',
-          scope_label: 'Crawl Watched Space',
-        },
-      ],
-    }),
-    expectText: 'Crawl Watched Space',
-  },
-  {
-    path: '/admin/settings',
-    seed: () => ({
-      oidc_config: [
-        {
-          id: fresh(),
-          issuer: `https://crawl-idp-${suffix()}.example.test`,
-          client_id: 'crawl',
-          client_secret: 'sealed',
-        },
-      ],
-    }),
-    expectText: /crawl-idp-/,
-  },
+  { path: '/admin/sites', expectText: /^None yet — they appear when someone connects/ },
+  { path: '/admin/settings', expectText: 'Organization name' },
   { path: '/admin/storage', expectText: 'Storage' },
-  {
-    path: '/admin/usage',
-    seed: (subject) => ({
-      chats: [{ id: crawlId(202), owner_subject: subject }],
-      chat_turns: [
-        {
-          id: crawlId(203),
-          chat_id: crawlId(202),
-          status: 'completed',
-          input_tokens: 4321,
-          output_tokens: 1234,
-        },
-      ],
-    }),
-    // The seeded turn's tokens, on the chat surface.
-    expectText: '4.3k in · 1.2k out',
-  },
+  { path: '/admin/usage', expectText: 'Organization usage' },
   { path: '/admin/grants', expectText: 'Access' },
   { path: '/admin/redaction', expectText: 'Sensitive data' },
   {
     path: '/admin/llm-models',
-    seed: () => ({
-      llm_model_configs: [
-        {
-          id: fresh(),
-          label: `Crawl Model ${suffix()}`,
-          provider: 'anthropic',
-          model: 'crawl-model',
-          encrypted_secrets: 'sealed',
-          settings: JSON.stringify({}),
-        },
-      ],
-    }),
-    expectText: /Crawl Model/,
+    stage: async ({ api, tag, cleanup }) => {
+      const id = await addStubModel(api, tag);
+      cleanup(() => removeModel(api, id));
+    },
+    expectText: /^Stub model crawl-/,
   },
   { path: '/admin/code-services', expectText: 'Code services' },
   { path: '/admin/pipeline-templates' },
   { path: '/admin/project-templates' },
   {
     path: '/admin/calendars',
-    seed: () => ({
-      schedule_calendars: [
-        { id: fresh(), name: `Crawl Calendar ${suffix()}`, dates: JSON.stringify([]) },
-      ],
-    }),
-    expectText: /Crawl Calendar/,
+    stage: async ({ api, tag, cleanup }) => {
+      const id = field(
+        await send(api, 'post', '/api/admin/schedule-calendars', {
+          name: `Crawl Calendar ${tag}`,
+          dates: [],
+        }),
+        'id'
+      );
+      cleanup(() => remove(api, `/api/admin/schedule-calendars/${id}`));
+    },
+    expectText: /Crawl Calendar crawl-/,
   },
 ];

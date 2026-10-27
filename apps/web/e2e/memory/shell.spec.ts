@@ -1,14 +1,18 @@
 /**
  * The app shell on the in-memory data store: signed-in chrome (the
  * person's name from the identity spine, the unread badge from the
- * notification poll), moving between pages from the menu, the theme a
- * saved preference picks, a signed-out visitor turned away, and the same
- * at phone width. No database anywhere — see playwright.memory.config.ts.
+ * notification poll — a colleague shared an agent with them, through the
+ * agent's own access route), moving between pages from the menu, the
+ * theme a saved preference picks (PUT /api/preferences, as the
+ * preferences form saves it), a signed-out visitor turned away, and the
+ * same at phone width. No database anywhere — see
+ * playwright.memory.config.ts.
  */
 
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { shareAgentsWith } from '../support/share-agents';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -27,23 +31,10 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 test('the shell carries the person and moves between pages from the menu', async ({
   page,
+  request,
   person,
 }, testInfo) => {
-  await person.store.notifications.insert({
-    id: crypto.randomUUID(),
-    subject: person.subject,
-    kind: 'agent_run',
-    category: null,
-    connector: null,
-    tool: null,
-    entity: null,
-    headline: 'Weekly digest finished',
-    refUrl: null,
-    agentId: null,
-    agentName: 'Digest',
-    runId: null,
-    meta: null,
-  });
+  const [{ headline }] = await shareAgentsWith(request, person, ['Weekly digest']);
 
   await page.goto('/about');
   await expect(page.getByRole('heading', { name: 'What’s changed' })).toBeVisible();
@@ -60,7 +51,7 @@ test('the shell carries the person and moves between pages from the menu', async
   await expect(page).toHaveURL(/\/notifications$/);
   await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
   // On the page itself — the same row may also be up as a toast.
-  await expect(page.getByRole('main').getByText('Weekly digest finished')).toBeVisible();
+  await expect(page.getByRole('main').getByText(headline)).toBeVisible();
 
   await sideMenu(page).getByRole('link', { name: 'Home' }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -71,8 +62,9 @@ test('the shell carries the person and moves between pages from the menu', async
   await expect(page.getByRole('heading', { name: 'What’s changed' })).toBeVisible();
 });
 
-test('a saved theme preference sets the page theme', async ({ page, person }) => {
-  await person.store.userPreferences.set(person.subject, 'theme', { mode: 'dark' });
+test('a saved theme preference sets the page theme', async ({ page, person: _person }) => {
+  const saved = await page.request.put('/api/preferences', { data: { theme: { mode: 'dark' } } });
+  expect(saved.ok()).toBe(true);
   await page.goto('/about');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });

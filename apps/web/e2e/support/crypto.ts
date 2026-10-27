@@ -1,15 +1,12 @@
 /**
- * The browser's key crypto, in node:crypto, for specs that act as a
- * person's browser (e2e/support/keys.ts): `@renkei/crypto`'s secretbox,
- * sealed box, user-key format and device code, reproduced byte for byte
- * so Playwright's own transpilation never resolves a workspace package.
- * Ported unchanged from e2e/keys.ts, which phase 2 retires.
+ * The browser's enrollment crypto, in node:crypto, for the sign-in helper
+ * that enrolls a person as their browser would (./person.ts):
+ * `@renkei/crypto`'s secretbox and sealed box, reproduced byte for byte so
+ * Playwright's own transpilation never resolves a workspace package.
  */
 
 import {
   createCipheriv,
-  createDecipheriv,
-  createHash,
   createPrivateKey,
   createPublicKey,
   diffieHellman,
@@ -29,17 +26,6 @@ export function secretbox(plaintext: string, key: Buffer): string {
     cipher.getAuthTag().toString('base64'),
     ciphertext.toString('base64'),
   ].join('.');
-}
-
-/** The inverse of `secretbox`, for reading a wrapping this helper wrote earlier. */
-export function openSecretbox(payload: string, key: Buffer): string {
-  const [, iv, tag, ciphertext] = payload.split('.');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv!, 'base64'));
-  decipher.setAuthTag(Buffer.from(tag!, 'base64'));
-  return Buffer.concat([
-    decipher.update(Buffer.from(ciphertext!, 'base64')),
-    decipher.final(),
-  ]).toString('utf8');
 }
 
 const SPKI_PREFIX = Buffer.from('302a300506032b656e032100', 'hex');
@@ -87,58 +73,4 @@ export function sealToPublicKey(recipientPublic: Buffer, plaintext: Buffer): str
   ]);
   const key = Buffer.from(hkdfSync('sha256', shared, Buffer.alloc(0), info, 32));
   return `sbox1:${ephemeral.publicKey.toString('base64')}:${secretbox(plaintext.toString('base64'), key)}`;
-}
-
-const BASE32 = 'abcdefghijklmnopqrstuvwxyz234567';
-
-function crc32(bytes: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of bytes) {
-    crc ^= byte;
-    for (let i = 0; i < 8; i += 1) crc = crc & 1 ? (crc >>> 1) ^ 0xedb88320 : crc >>> 1;
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-/** `@renkei/crypto`'s written-down form of a user key: 14 groups of 4 base32 characters, the last 4 a CRC checksum. */
-export function formatUserKey(bytes: Buffer): string {
-  let raw = '';
-  let buffer = 0;
-  let bits = 0;
-  for (const byte of bytes) {
-    buffer = (buffer << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      bits -= 5;
-      raw += BASE32[(buffer >> bits) & 31];
-    }
-  }
-  if (bits > 0) raw += BASE32[(buffer << (5 - bits)) & 31];
-  const top = crc32(bytes) >>> 12;
-  raw +=
-    BASE32[(top >> 15) & 31] +
-    BASE32[(top >> 10) & 31] +
-    BASE32[(top >> 5) & 31] +
-    BASE32[top & 31];
-  const groups: string[] = [];
-  for (let i = 0; i < raw.length; i += 4) groups.push(raw.slice(i, i + 4));
-  return groups.join('-');
-}
-
-/** `@renkei/crypto`'s device code and instance fingerprint: ten base32 characters of SHA-256, grouped in fives. */
-export function deviceCodeOf(publicKey: Buffer): string {
-  const digest = createHash('sha256').update(publicKey).digest();
-  let raw = '';
-  let buffer = 0;
-  let bits = 0;
-  for (const byte of digest) {
-    buffer = (buffer << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      bits -= 5;
-      raw += BASE32[(buffer >> bits) & 31];
-    }
-  }
-  const chars = raw.slice(0, 10).toUpperCase();
-  return `${chars.slice(0, 5)}-${chars.slice(5)}`;
 }

@@ -16,13 +16,13 @@
  * The worked example of a spec on the memory store (AGENTS.md, "UI
  * changes"):
  *   - each test signs in as a person of its own (`person`,
- *     e2e/memory/fixtures.ts: written through the store, enrolled through
- *     the real delegate) — here an operator;
+ *     e2e/memory/fixtures.ts: signed in through the test sign-in route,
+ *     enrolled through the real delegate) — here an operator;
  *   - llm_model_configs is ORGANIZATION-wide, and every project and spec
  *     shares one server: a test names its rows distinctively (`tagged`),
  *     scopes each assertion to its own row (`modelRow`), and removes its
- *     rows afterwards through the store's own delete
- *     (`person.store.llmModels`). It can never assume the table is empty,
+ *     rows afterwards through the roster's own DELETE route. It can never
+ *     assume the table is empty,
  *     so the empty state is the list route answered empty at the browser
  *     edge (`page.route`), the way a vendor call is answered;
  *   - "mobile" is a resized Chromium viewport, not a device descriptor.
@@ -46,11 +46,21 @@ test.beforeEach(({}, testInfo) => {
   tag = `${testInfo.project.name.replace('desktop-', '')}-${randomUUID().slice(0, 4)}`;
 });
 
-// What the test saved goes again, through the store's own delete: the
-// table is everybody's.
-test.afterEach(async ({ person }) => {
-  for (const model of await person.store.llmModels.list()) {
-    if (model.label.endsWith(` ${tag}`)) await person.store.llmModels.delete(model.id);
+// What the test saved goes again, through the roster's own delete route:
+// the table is everybody's.
+test.afterEach(async ({ page, person: _person }) => {
+  const listed = await page.request.get('/api/admin/llm-models');
+  const body: unknown = await listed.json();
+  const models =
+    typeof body === 'object' && body !== null && 'models' in body && Array.isArray(body.models)
+      ? body.models
+      : [];
+  for (const model of models) {
+    const id = typeof model?.id === 'string' ? model.id : null;
+    const label = typeof model?.label === 'string' ? model.label : '';
+    if (id && label.endsWith(` ${tag}`)) {
+      expect((await page.request.delete(`/api/admin/llm-models/${id}`)).ok()).toBe(true);
+    }
   }
 });
 

@@ -2,18 +2,18 @@
  * The UI suite on the in-memory data store (packages/db/src/store/memory.ts):
  * one Next server with RENKEI_DATA_STORE=memory, and no Postgres anywhere.
  *
- * The server runs the real delegate in its own process
- * (lib/memory-delegate.ts), on the same store, so people enroll and chats
- * open their keys exactly as in a deployment. The sandbox stub (:8092) and
- * the MCP stub (:8093) start beside it, as in the Postgres suite
- * (playwright.config.ts), whose dev-server environment this mirrors.
+ * The server runs, in its own process and on the same store, the real
+ * delegate (lib/memory-delegate.ts) — so people enroll and chats open
+ * their keys exactly as in a deployment — and the background consumers a
+ * UI flow waits on (lib/memory-workers.ts): the agents worker's run
+ * engine and action executor, and the event dispatcher. Beside it start
+ * three stateless stubs: the sandbox worker (:8092), a remote MCP server
+ * (:8093) and a model (:8094, e2e/llm-stub.mjs). The dev-server
+ * environment mirrors the Postgres suite's (playwright.config.ts).
  *
- * Specs seed through the store methods the app writes with, posted to the
- * test-only app/api/test/data-store route (e2e/support/store.ts); a person
- * of the test's own comes from e2e/memory/fixtures.ts
- * (e2e/support/person.ts). The org-wide fixtures e2e/seed.ts writes to
- * Postgres are written once per server by globalSetup
- * (e2e/support/global-setup.ts → e2e/support/fixtures.ts).
+ * Specs sign in through the one test-only route (app/api/test/session,
+ * via e2e/memory/fixtures.ts → e2e/support/person.ts) and stage
+ * everything else through the REST routes the UI itself calls.
  *
  * Locally: `pnpm e2e:memory` (dev server on :3100, so it runs beside the
  * full suite's :3000). In CI the app is built and started instead — a
@@ -30,6 +30,7 @@ import {
   MEMORY_TOKEN_ENCRYPTION_KEY,
   MEMORY_DELEGATE_URL,
   MEMORY_DELEGATE_API_KEY,
+  LLM_STUB_PORT,
 } from './e2e/memory/constants';
 import { E2E_SETUP_SECRET } from './e2e/setup-secret';
 
@@ -44,7 +45,6 @@ export default defineConfig({
   testDir: './e2e/memory',
   outputDir: 'test-results/memory',
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
-  globalSetup: './e2e/support/global-setup.ts',
   timeout: 60_000,
   fullyParallel: true,
   use: {
@@ -92,6 +92,14 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
+      // A stand-in model (e2e/llm-stub.mjs): the fixed reply that lets an
+      // agent run or a chat turn finish.
+      command: 'node e2e/llm-stub.mjs',
+      url: `http://127.0.0.1:${LLM_STUB_PORT}/health`,
+      reuseExistingServer: !process.env.CI,
+      timeout: 30_000,
+    },
+    {
       command: process.env.CI
         ? `pnpm build && pnpm start -p ${MEMORY_PORT}`
         : `pnpm dev -p ${MEMORY_PORT}`,
@@ -109,6 +117,9 @@ export default defineConfig({
         DELEGATE_WORKER_URL: MEMORY_DELEGATE_URL,
         DELEGATE_WORKER_API_KEY: MEMORY_DELEGATE_API_KEY,
         TOKEN_ENCRYPTION_KEY: MEMORY_TOKEN_ENCRYPTION_KEY,
+        // The in-process agents worker runs tools through this server's
+        // own MCP endpoint (lib/memory-workers.ts).
+        RENKEI_WEB_INTERNAL_URL: MEMORY_BASE_URL,
         // What playwright.config.ts gives the Postgres suite's dev server
         // (and its .env.development the sandbox pair), the same values.
         SANDBOX_WORKER_URL: 'http://127.0.0.1:8092',

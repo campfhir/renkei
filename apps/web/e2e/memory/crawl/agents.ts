@@ -1,160 +1,91 @@
-import type { TableRows } from '@renkei/db';
-import type { CrawlPage } from './types';
-import { crawlId } from './types';
-
-/** Fixed ids for this area's rows (crawlId(100…) is the agents area's range). */
-const AGENT = crawlId(101);
-const RUN = crawlId(111);
-const AT = '2026-01-05T09:00:00.000Z';
-const LATER = '2026-01-05T09:01:30.000Z';
+import { expect } from '@playwright/test';
+import { LLM_STUB_REPLY } from '../constants';
+import { addStubModel, removeModel } from '../../support/stub-model';
+import { agentOf, field, send, type CrawlPage, type CrawlStage } from './types';
 
 /**
- * One agent of the crawl's person with a failed run (its turn, a staged
- * batch, the run-log and ledger rows behind the usage panels), a memory
- * entry and an optimizer report — what the agent pages render. Content
- * is stored unsealed, so no page needs the delegate to open it.
+ * The agent pages: one agent of the crawl's person, made through the
+ * builder's route, and — for the pages that show runs — one run of it,
+ * started the way "Run now" starts one and carried out by the agents
+ * worker the memory server runs in-process, on the stand-in model (staged
+ * on the roster, tagged, and removed again afterwards).
  */
-function agentRows(subject: string): TableRows {
-  return {
-    agents: [
-      {
-        id: AGENT,
-        owner_subject: subject,
-        name: 'Crawl agent',
-        description: 'Crawl description of the agent',
-        description_status: 'ok',
-        instructions: '## Goal\n\nCrawl instructions line.',
-        tools: JSON.stringify(['jira_search_issues']),
-        enabled: true,
-        created_at: AT,
-        updated_at: AT,
-      },
-    ],
-    agent_triggers: [
-      {
-        id: crawlId(102),
-        agent_id: AGENT,
-        kind: 'api',
-        config: JSON.stringify({ inputs: [], keyHash: 'crawl', keyHint: 'abcd' }),
-        created_at: AT,
-      },
-    ],
-    agent_runs: [
-      {
-        id: RUN,
-        agent_id: AGENT,
-        owner_subject: subject,
-        trigger_kind: 'crawltrigger',
-        status: 'failed',
-        error: 'Crawl run error',
-        error_kind: 'tool',
-        created_at: AT,
-        started_at: AT,
-        finished_at: LATER,
-        initial_state: JSON.stringify({ subject: 'crawl input' }),
-        definition_snapshot: JSON.stringify({
-          instructions: 'Crawl instructions line.',
-          tools: [],
-        }),
-      },
-    ],
-    agent_run_steps: [
-      {
-        id: crawlId(112),
-        run_id: RUN,
-        step_id: 'turn',
-        step_index: 0,
-        attempt: 1,
-        status: 'failed',
-        outcome: 'error',
-        detail: JSON.stringify({ llmSummary: 'Crawl turn summary', toolCalls: [] }),
-        started_at: AT,
-        finished_at: LATER,
-      },
-    ],
-    agent_action_batches: [
-      {
-        id: crawlId(113),
-        run_id: RUN,
-        agent_id: AGENT,
-        owner_subject: subject,
-        turn: 1,
-        status: 'declined',
-        summary: 'Crawl batch summary',
-        actions: JSON.stringify([]),
-        created_at: AT,
-      },
-    ],
-    agent_run_log: [
-      {
-        run_id: RUN,
-        agent_id: AGENT,
-        owner_subject: subject,
-        trigger_kind: 'crawltrigger',
-        status: 'failed',
-        created_at: AT,
-      },
-    ],
-    llm_calls: [
-      {
-        id: crawlId(114),
-        subject,
-        purpose: 'agent_run',
-        agent_id: AGENT,
-        run_id: RUN,
-        provider: 'anthropic',
-        model: 'crawl-model',
-        input_tokens: 1200,
-        output_tokens: 300,
-        created_at: AT,
-      },
-    ],
-    tool_calls: [
-      {
-        id: crawlId(115),
-        subject,
-        agent_id: AGENT,
-        tool: 'jira_search_issues',
-        status: 'ok',
-        duration_ms: 120,
-        started_at: new Date().toISOString(),
-        ended_at: new Date().toISOString(),
-      },
-    ],
-    agent_memories: [
-      {
-        id: crawlId(116),
-        agent_id: AGENT,
-        kind: 'entry',
-        content: 'Crawl memory note',
-        created_at: AT,
-      },
-    ],
-    agent_optimizations: [
-      {
-        id: crawlId(117),
-        agent_id: AGENT,
-        owner_subject: subject,
-        status: 'failed',
-        request: JSON.stringify({ windowDays: 30 }),
-        error: 'Crawl optimizer error',
-        created_at: AT,
-        finished_at: LATER,
-      },
-    ],
-  };
+
+// Agent names are unique across the organization: each carries the test's tag.
+async function agent({ api, tag }: CrawlStage): Promise<string> {
+  return agentOf(api, `Crawl agent ${tag}`);
 }
 
-/** Pages of this area the memory crawl visits; see ./types.ts. */
+async function agentWithRun(stage: CrawlStage): Promise<{ agentId: string; runId: string }> {
+  const { api, tag, cleanup } = stage;
+  const modelId = await addStubModel(api, tag);
+  cleanup(() => removeModel(api, modelId));
+  const agentId = await agentOf(api, `Crawl agent ${tag}`, { llmModelId: modelId });
+  const runId = field(await send(api, 'post', `/api/agents/${agentId}/invoke`, {}), 'runId');
+  // The run is the worker's: wait until its page reads it finished.
+  await expect
+    .poll(async () => (await api.get(`/agents/${agentId}/runs/${runId}`)).text(), {
+      timeout: 30_000,
+    })
+    .toContain(LLM_STUB_REPLY);
+  return { agentId, runId };
+}
+
 export const agentsPages: CrawlPage[] = [
-  { path: '/agents', seed: agentRows, expectText: 'Crawl agent' },
-  { path: '/agents/new', seed: agentRows, expectText: 'New agent' },
-  { path: `/agents/${AGENT}`, seed: agentRows, expectText: 'Crawl instructions line.' },
-  { path: `/agents/${AGENT}/edit`, seed: agentRows, expectText: 'Edit “Crawl agent”' },
-  { path: `/agents/${AGENT}/runs`, seed: agentRows, expectText: 'via crawltrigger' },
-  { path: `/agents/${AGENT}/runs/${RUN}`, seed: agentRows, expectText: 'Crawl run error' },
-  { path: '/admin/agents', seed: agentRows, expectText: 'Crawl agent' },
-  { path: `/admin/agents/${AGENT}`, seed: agentRows, expectText: 'Crawl description of the agent' },
-  { path: `/admin/agents/${AGENT}/runs`, seed: agentRows, expectText: 'via crawltrigger' },
-  { path: `/admin/agents/${AGENT}/runs/${RUN}`, seed: agentRows, expectText: 'Crawl run error' },
+  {
+    path: '/agents',
+    stage: async (stage) => {
+      await agent(stage);
+    },
+    expectText: 'Crawl agent',
+  },
+  { path: '/agents/new', expectText: 'New agent' },
+  {
+    path: '/agents/[agentId]',
+    stage: async (stage) => `/agents/${await agent(stage)}`,
+    expectText: 'Crawl instructions line.',
+  },
+  {
+    path: '/agents/[agentId]/edit',
+    stage: async (stage) => `/agents/${await agent(stage)}/edit`,
+    expectText: /^Edit “Crawl agent crawl-/,
+  },
+  {
+    path: '/agents/[agentId]/runs',
+    stage: async (stage) => `/agents/${(await agentWithRun(stage)).agentId}/runs`,
+    expectText: 'via manual',
+  },
+  {
+    path: '/agents/[agentId]/runs/[runId]',
+    stage: async (stage) => {
+      const { agentId, runId } = await agentWithRun(stage);
+      return `/agents/${agentId}/runs/${runId}`;
+    },
+    expectText: LLM_STUB_REPLY,
+  },
+  {
+    path: '/admin/agents',
+    stage: async (stage) => {
+      await agent(stage);
+    },
+    expectText: 'Crawl agent',
+  },
+  {
+    path: '/admin/agents/[agentId]',
+    stage: async (stage) => `/admin/agents/${await agent(stage)}`,
+    expectText: 'Crawl agent',
+  },
+  {
+    path: '/admin/agents/[agentId]/runs',
+    stage: async (stage) => `/admin/agents/${(await agentWithRun(stage)).agentId}/runs`,
+    expectText: 'via manual',
+  },
+  {
+    path: '/admin/agents/[agentId]/runs/[runId]',
+    stage: async (stage) => {
+      const { agentId, runId } = await agentWithRun(stage);
+      return `/admin/agents/${agentId}/runs/${runId}`;
+    },
+    expectText: 'Succeeded',
+  },
 ];
