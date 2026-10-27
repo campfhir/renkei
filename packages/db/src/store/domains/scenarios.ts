@@ -2,6 +2,8 @@
 
 import type { Scenario } from '../domain';
 import type { DataStore } from '../types';
+import { batchJobScheduleScenarios } from './batch-job-schedules/scenarios';
+import { batchJobScenarios } from './batch-jobs/scenarios';
 import { coachMarkScenarios } from './coach-marks/scenarios';
 import { identityScenarios } from './identities/scenarios';
 import { notificationScenarios } from './notifications/scenarios';
@@ -16,4 +18,6 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...settingScenarios,
   ...coachMarkScenarios,
   ...notificationScenarios,
+  ...batchJobScenarios,
+  ...batchJobScheduleScenarios,
 ];

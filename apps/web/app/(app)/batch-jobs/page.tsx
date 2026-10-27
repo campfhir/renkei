@@ -1,7 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listBatches } from '@renkei/batch-jobs-store';
@@ -13,7 +12,9 @@ import CoachTarget from '@/components/coach-marks/anchor';
 const STATUS_TABS = ['running', 'succeeded', 'partial', 'failed'] as const;
 
 /** Your batch jobs — a per-user list, the runs-page precedent. */
-export default async function BatchJobsPage({ searchParams }: {
+export default async function BatchJobsPage({
+  searchParams,
+}: {
   searchParams: Promise<{ status?: string }>;
 }): Promise<React.ReactNode> {
   const { status } = await searchParams;
@@ -23,11 +24,8 @@ export default async function BatchJobsPage({ searchParams }: {
     redirect(signInUrl(`/batch-jobs`));
   }
 
-  const dbResult = getDatabase();
   const filter = STATUS_TABS.some((tab) => tab === status) ? status : undefined;
-  const batches = dbResult.ok
-    ? await listBatches(dbResult.val, session.subject, { limit: 50, status: filter })
-    : [];
+  const batches = await listBatches(session.subject, { limit: 50, status: filter });
 
   const tabHref = (tabStatus?: string) =>
     tabStatus ? `/batch-jobs?status=${tabStatus}` : `/batch-jobs`;

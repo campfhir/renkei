@@ -8,6 +8,8 @@ jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/connector-fileshares', () => ({ listConnectedShares: jest.fn() }));
 jest.mock('@renkei/batch-jobs-store', () => ({
+  isDuplicateScheduleName: (error: unknown) =>
+    error instanceof Error && error.message.includes('batch_job_schedules_name'),
   getSchedule: jest.fn(),
   updateSchedule: jest.fn(),
   deleteSchedule: jest.fn(),
@@ -18,7 +20,9 @@ jest.mock('@/lib/batch-jobs/schedule-next-run', () => ({ nextRunAtFor: jest.fn()
 import { NextRequest } from 'next/server';
 import { GET, PUT, DELETE } from './route';
 
-const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>('@/lib/session');
+const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>(
+  '@/lib/session'
+);
 const { listConnectedShares } = jest.requireMock<{ listConnectedShares: jest.Mock }>(
   '@renkei/connector-fileshares'
 );
@@ -27,8 +31,12 @@ const { getSchedule, updateSchedule, deleteSchedule } = jest.requireMock<{
   updateSchedule: jest.Mock;
   deleteSchedule: jest.Mock;
 }>('@renkei/batch-jobs-store');
-const { parseScheduleConfig } = jest.requireMock<{ parseScheduleConfig: jest.Mock }>('@renkei/agents');
-const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>('@/lib/batch-jobs/schedule-next-run');
+const { parseScheduleConfig } = jest.requireMock<{ parseScheduleConfig: jest.Mock }>(
+  '@renkei/agents'
+);
+const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>(
+  '@/lib/batch-jobs/schedule-next-run'
+);
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SCHEDULE_ID = 'sched-1';
@@ -80,7 +88,7 @@ describe('GET', () => {
     expect(response.status).toBe(401);
   });
 
-  test('another subject\'s schedule is a 404', async () => {
+  test("another subject's schedule is a 404", async () => {
     getSchedule.mockResolvedValue(existingSchedule({ subject: 'auth0|bob' }));
     const response = await GET(new NextRequest('http://x'), { params: paramsOf() });
     expect(response.status).toBe(404);
@@ -112,7 +120,6 @@ describe('PUT', () => {
     expect(response.status).toBe(200);
     expect(nextRunAtFor).not.toHaveBeenCalled();
     expect(updateSchedule).toHaveBeenCalledWith(
-      {},
       SCHEDULE_ID,
       expect.not.objectContaining({ nextRunAt: expect.anything() })
     );
@@ -123,7 +130,6 @@ describe('PUT', () => {
     expect(response.status).toBe(200);
     expect(nextRunAtFor).toHaveBeenCalled();
     expect(updateSchedule).toHaveBeenCalledWith(
-      {},
       SCHEDULE_ID,
       expect.objectContaining({ nextRunAt: new Date('2026-09-03T00:00:00Z') })
     );
@@ -144,29 +150,37 @@ describe('PUT', () => {
 
   test('changing the share requires it to be connected', async () => {
     listConnectedShares.mockResolvedValue({ ok: true, val: [] });
-    const response = await PUT(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), { params: paramsOf() });
+    const response = await PUT(reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' } }), {
+      params: paramsOf(),
+    });
     expect(response.status).toBe(400);
     expect(updateSchedule).not.toHaveBeenCalled();
   });
 
   test('a duplicate name is a 409', async () => {
-    updateSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_name'));
+    updateSchedule.mockRejectedValue(
+      new Error('duplicate key value violates batch_job_schedules_name')
+    );
     const response = await PUT(reqOf({ name: 'Taken' }), { params: paramsOf() });
     expect(response.status).toBe(409);
   });
 });
 
 describe('DELETE', () => {
-  test('another subject\'s schedule is a 404', async () => {
+  test("another subject's schedule is a 404", async () => {
     getSchedule.mockResolvedValue(existingSchedule({ subject: 'auth0|bob' }));
-    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), { params: paramsOf() });
+    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), {
+      params: paramsOf(),
+    });
     expect(response.status).toBe(404);
     expect(deleteSchedule).not.toHaveBeenCalled();
   });
 
   test('deletes the schedule', async () => {
-    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), { params: paramsOf() });
+    const response = await DELETE(new NextRequest('http://x', { method: 'DELETE' }), {
+      params: paramsOf(),
+    });
     expect(response.status).toBe(200);
-    expect(deleteSchedule).toHaveBeenCalledWith({}, SCHEDULE_ID);
+    expect(deleteSchedule).toHaveBeenCalledWith(SCHEDULE_ID);
   });
 });

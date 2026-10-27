@@ -54,9 +54,6 @@ export {
   listSchedules,
   updateSchedule,
   deleteSchedule,
+  isDuplicateScheduleName,
 } from './schedules';
-export type {
-  BatchJobScheduleRow,
-  CreateScheduleInput,
-  UpdateScheduleInput,
-} from './schedules';
+export type { BatchJobScheduleRow, CreateScheduleInput, UpdateScheduleInput } from './schedules';

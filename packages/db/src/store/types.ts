@@ -48,3 +48,5 @@ export type * from './domains/user-preferences';
 export type * from './domains/settings';
 export type * from './domains/coach-marks';
 export type * from './domains/notifications';
+export type * from './domains/batch-jobs';
+export type * from './domains/batch-job-schedules';

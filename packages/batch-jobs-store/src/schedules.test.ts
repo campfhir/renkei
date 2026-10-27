@@ -1,41 +1,34 @@
 /**
- * batch_job_schedules CRUD against a real database (skipped without
- * DATABASE_URL) — this package's own store.test.ts stays unit-level (a fake
- * Kysely stand-in) because recordItemOutcome's interesting property is call
- * shape, but schedules.ts has no other exerciser yet (the worker's schedule
- * sweep reads/writes the table directly, not through this module — see its
- * own doc comment), so its CRUD is verified here directly.
+ * batch_job_schedules CRUD on the memory data store (the Postgres side of
+ * the same store calls is packages/db's differential suite).
  */
 
-import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
-import { createSchedule, getSchedule, listSchedules, updateSchedule, deleteSchedule } from './schedules';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import {
+  createSchedule,
+  getSchedule,
+  listSchedules,
+  updateSchedule,
+  deleteSchedule,
+  isDuplicateScheduleName,
+} from './schedules';
 
-const maybe = process.env.DATABASE_URL ? describe : describe.skip;
+beforeEach(() => {
+  registerDataStore(createMemoryDataStore());
+});
 
-maybe('batch_job_schedules store', () => {
-  jest.setTimeout(20_000);
+afterAll(() => {
+  resetDataStore();
+});
 
-  let db: Kysely<DB>;
-  const subject = `sched-store-subject-${randomUUID().slice(0, 8)}`;
+const subject = 'sched-store-subject';
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-  });
-
-  afterAll(async () => {
-    await sql`DELETE FROM batch_job_schedules WHERE subject = ${subject}`.execute(db);
-    await closeDatabase();
-  });
-
+describe('batch_job_schedules store', () => {
   it('creates, reads, lists, updates, and deletes a schedule', async () => {
     const nextRunAt = new Date(Date.now() + 60_000);
-    const created = await createSchedule(db, {
+    const created = await createSchedule({
       subject,
-      name: `Nightly OCR ${randomUUID().slice(0, 8)}`,
+      name: 'Nightly OCR',
       kind: 'document-ocr-pipeline',
       config: { shareId: 'share-1', path: '/inbox', grouping: { strategy: 'whole-file' } },
       scheduleConfig: { recurrences: [{ every: 'day', at: '02:00' }], timezone: 'UTC' },
@@ -43,47 +36,47 @@ maybe('batch_job_schedules store', () => {
     });
     expect(created.enabled).toBe(true);
     expect(created.next_run_at?.getTime()).toBe(nextRunAt.getTime());
-    expect(created.config).toEqual({ shareId: 'share-1', path: '/inbox', grouping: { strategy: 'whole-file' } });
+    expect(created.config).toEqual({
+      shareId: 'share-1',
+      path: '/inbox',
+      grouping: { strategy: 'whole-file' },
+    });
 
-    const fetched = await getSchedule(db, created.id);
+    const fetched = await getSchedule(created.id);
     expect(fetched?.name).toBe(created.name);
 
-    const listed = await listSchedules(db, subject);
+    const listed = await listSchedules(subject);
     expect(listed.map((s) => s.id)).toContain(created.id);
+    expect(await listSchedules('someone-else')).toEqual([]);
 
-    const updated = await updateSchedule(db, created.id, {
+    const updated = await updateSchedule(created.id, {
       enabled: false,
       name: `${created.name} (renamed)`,
     });
     expect(updated?.enabled).toBe(false);
     expect(updated?.name).toBe(`${created.name} (renamed)`);
+    expect(updated?.schedule_config).toEqual(created.schedule_config);
 
-    const deleted = await deleteSchedule(db, created.id);
+    const deleted = await deleteSchedule(created.id);
     expect(deleted).toBe(true);
-    expect(await getSchedule(db, created.id)).toBeUndefined();
+    expect(await getSchedule(created.id)).toBeUndefined();
+    expect(await deleteSchedule(created.id)).toBe(false);
   });
 
   it('enforces one name per organization', async () => {
-    const name = `Duplicate name ${randomUUID().slice(0, 8)}`;
-    await createSchedule(db, {
+    const input = {
       subject,
-      name,
+      name: 'Duplicate name',
       kind: 'document-ocr-pipeline',
       config: {},
       scheduleConfig: {},
       nextRunAt: new Date(),
-    });
-
-    await expect(
-      createSchedule(db, {
-        subject,
-        name,
-        kind: 'document-ocr-pipeline',
-        config: {},
-        scheduleConfig: {},
-        nextRunAt: new Date(),
-      })
-    ).rejects.toThrow();
+    };
+    await createSchedule(input);
+    const refusal = await createSchedule({ ...input, subject: 'other' }).catch(
+      (error: unknown) => error
+    );
+    expect(isDuplicateScheduleName(refusal)).toBe(true);
+    expect(isDuplicateScheduleName(new Error('something else'))).toBe(false);
   });
-
 });

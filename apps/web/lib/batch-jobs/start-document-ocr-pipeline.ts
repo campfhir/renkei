@@ -6,14 +6,16 @@
  * human using the "start a batch job" form) so the two paths cannot drift.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { createBatch, enqueueDiscover, DOCUMENT_OCR_PIPELINE_KIND, type BatchJobRow } from '@renkei/batch-jobs-store';
+import {
+  createBatch,
+  enqueueDiscover,
+  DOCUMENT_OCR_PIPELINE_KIND,
+  type BatchJobRow,
+} from '@renkei/batch-jobs-store';
 import { batchJobsQueue } from '@renkei/queue';
 
 export type DocumentGrouping =
-  | { strategy: 'whole-file' }
-  | { strategy: 'filename-pattern'; pattern: string };
+  { strategy: 'whole-file' } | { strategy: 'filename-pattern'; pattern: string };
 
 /**
  * What happens to a source file once its document is staged. `move` may
@@ -22,9 +24,7 @@ export type DocumentGrouping =
  * to the fileshare worker like every other operation.
  */
 export type AfterProcessing =
-  | { action: 'keep' }
-  | { action: 'delete' }
-  | { action: 'move'; shareId: string; path: string };
+  { action: 'keep' } | { action: 'delete' } | { action: 'move'; shareId: string; path: string };
 
 /** The config a document-ocr-pipeline batch or schedule carries. */
 export interface DocumentPipelineConfig {
@@ -70,10 +70,9 @@ export function documentPipelineConfig(input: {
 }
 
 export async function startDocumentOcrPipeline(
-  db: Kysely<DB>,
   input: StartDocumentOcrPipelineInput
 ): Promise<BatchJobRow> {
-  const batch = await createBatch(db, {
+  const batch = await createBatch({
     subject: input.subject,
     name: input.name,
     kind: DOCUMENT_OCR_PIPELINE_KIND,

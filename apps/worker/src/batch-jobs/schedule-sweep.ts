@@ -30,10 +30,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Same calendar overlay the agent schedule sweep applies — see its own comment. */
-async function calendarDatesOf(
-  db: Kysely<DB>,
-  calendarId: string
-): Promise<BlackoutEntry[]> {
+async function calendarDatesOf(db: Kysely<DB>, calendarId: string): Promise<BlackoutEntry[]> {
   const row = await db
     .selectFrom('schedule_calendars')
     .select(['dates'])
@@ -64,15 +61,18 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
     for (const row of due) {
       const config = parseScheduleConfig(row.schedule_config);
       if (!config) {
-        await recordScheduleError(db, row.id, 'The schedule is malformed and was turned off.', true);
+        await recordScheduleError(
+          db,
+          row.id,
+          'The schedule is malformed and was turned off.',
+          true
+        );
         continue;
       }
 
       const observed = row.next_run_at;
       if (!observed) continue;
-      const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, config.calendarId)
-        : [];
+      const calendarDates = config.calendarId ? await calendarDatesOf(db, config.calendarId) : [];
       let next: Date;
       try {
         next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
@@ -96,7 +96,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
       if (Number(advanced.numUpdatedRows ?? 0) === 0) continue;
 
       try {
-        const batch = await createBatch(db, {
+        const batch = await createBatch({
           subject: row.subject,
           name: row.name,
           kind: row.kind,
