@@ -195,7 +195,7 @@ it('queues it under the approving operator, answers at once, and runs the job af
 
   expect(response.status).toBe(202);
   expect(await response.json()).toEqual({ status: 'queued' });
-  expect(queueChangeRequest).toHaveBeenCalledWith(expect.anything(), CHANGE, 'operator');
+  expect(queueChangeRequest).toHaveBeenCalledWith(CHANGE, 'operator');
   // The access is resolved for the operator who approved, not the requester.
   expect(jest.mocked(resolveApplyAccess).mock.calls[0]?.[0]).toBe('operator');
   // Nothing runs in the request itself; the job is handed to after().
@@ -204,5 +204,5 @@ it('queues it under the approving operator, answers at once, and runs the job af
   const job = jest.mocked(after).mock.calls[0]?.[0];
   if (typeof job !== 'function') throw new Error('expected a callback');
   await job();
-  expect(runApplyJob).toHaveBeenCalledWith(expect.anything(), CHANGE);
+  expect(runApplyJob).toHaveBeenCalledWith(CHANGE);
 });

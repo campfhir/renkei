@@ -121,11 +121,11 @@ export async function proposeAndValidate(
   if (!db) return errText('Could not store the change request.');
   // Replacing your own earlier proposal cancels it. An operator may also
   // replace someone's free-text request, which closes it as built.
-  const replaced = input.replaces ? await getChangeRequestById(db, input.replaces) : null;
+  const replaced = input.replaces ? await getChangeRequestById(input.replaces) : null;
   if (input.replaces && replaced?.kind !== REQUEST_KIND) {
-    await cancelChangeRequest(db, context.subject, input.replaces);
+    await cancelChangeRequest(context.subject, input.replaces);
   }
-  const change = await createChangeRequest(db, {
+  const change = await createChangeRequest({
     subject: context.subject,
     agentId: context.agent?.agentId,
     connectorKey: access.connector,
@@ -160,11 +160,10 @@ export async function proposeAndValidate(
       : await waitForDeploy(context, access, started.outcome.id, VALIDATION_WAIT_MS);
     validation = waited.ok ? validationFrom(waited.outcome) : validationFrom(started.outcome);
   }
-  await setValidation(db, change.id, validation);
+  await setValidation(change.id, validation);
   if (replaced && replaced.kind === REQUEST_KIND) {
-    if (await closeRequestAsProposed(db, replaced.id, change.id)) {
+    if (await closeRequestAsProposed(replaced.id, change.id)) {
       notifyChangeOutcome({
-        db,
         connector: 'salesforce-admin',
         changeId: replaced.id,
         title: replaced.title,
@@ -175,7 +174,6 @@ export async function proposeAndValidate(
     }
   }
   notifyOperatorsOfRequest({
-    db,
     connector: 'salesforce-admin',
     changeId: change.id,
     title: change.title,
@@ -320,7 +318,7 @@ export async function fileRequest(
   if (!context.subject) return errText('No signed-in identity on this request.');
   const db = dbOf(context);
   if (!db) return errText('Could not store the change request.');
-  const request = await createRequest(db, {
+  const request = await createRequest({
     subject: context.subject,
     agentId: context.agent?.agentId,
     connectorKey: access.connector,
@@ -331,7 +329,6 @@ export async function fileRequest(
     description: input.description,
   });
   notifyOperatorsOfRequest({
-    db,
     connector: 'salesforce-admin',
     changeId: request.id,
     title: request.title,

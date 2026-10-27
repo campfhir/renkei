@@ -18,7 +18,6 @@
  */
 
 import { NextRequest, NextResponse, after } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import {
@@ -58,13 +57,7 @@ export async function POST(
     );
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
-  const change = await getChangeRequestById(db, changeId);
+  const change = await getChangeRequestById(changeId);
   if (!change) {
     return NextResponse.json({ error: 'Change request not found' }, { status: 404 });
   }
@@ -82,7 +75,7 @@ export async function POST(
     return NextResponse.json({ error: NOT_PENDING[state] ?? 'Not pending' }, { status: 409 });
   }
 
-  const gate = await applyGate(db, session.subject, session.roles, change);
+  const gate = await applyGate(session.subject, session.roles, change);
   if (!gate.ok) {
     return NextResponse.json({ error: gate.reason }, { status: 403 });
   }
@@ -94,13 +87,13 @@ export async function POST(
     return NextResponse.json({ error: resolved }, { status: 409 });
   }
 
-  if (!(await queueChangeRequest(db, change.id, session.subject))) {
+  if (!(await queueChangeRequest(change.id, session.subject))) {
     return NextResponse.json(
       { error: 'This change request is no longer pending.' },
       { status: 409 }
     );
   }
-  after(() => runApplyJob(db, change.id));
+  after(() => runApplyJob(change.id));
 
   return NextResponse.json({ status: 'queued' }, { status: 202 });
 }

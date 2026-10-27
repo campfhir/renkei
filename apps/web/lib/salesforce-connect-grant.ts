@@ -34,7 +34,6 @@ export async function disconnectSalesforce(
   }
 
   const connections = await listSalesforceConnections(
-    dbResult.val,
     session.subject,
     await listSalesforceConnectors(kind),
     kind.provider

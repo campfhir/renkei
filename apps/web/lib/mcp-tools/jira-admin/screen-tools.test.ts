@@ -88,7 +88,7 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<T
 const propose = (args: Record<string, unknown>) => call('jira_admin_propose_screen_changes', args);
 const text = (result: ToolResult) => result.content[0]?.text ?? '';
 const stored = () =>
-  jest.mocked(createChangeRequest).mock.calls[0]?.[1]?.payload as ScreenChangesPayload | undefined;
+  jest.mocked(createChangeRequest).mock.calls[0]?.[0]?.payload as ScreenChangesPayload | undefined;
 
 /** The screens' fields, and the screen lookups by name and id. */
 function screenFields(): Record<string, [number, unknown]> {
@@ -139,7 +139,7 @@ beforeEach(() => {
     return new Response(JSON.stringify(body), { status });
   }) as unknown as typeof fetch;
   jest.mocked(createChangeRequest).mockReset();
-  jest.mocked(createChangeRequest).mockImplementation(async (_db, input) => {
+  jest.mocked(createChangeRequest).mockImplementation(async (input) => {
     const now = new Date();
     const change: ChangeRequest = {
       id: CHANGE_ID,
@@ -243,7 +243,7 @@ describe('jira_admin_propose_screen_changes', () => {
       { op: 'rename_tab', tabId: '410', from: 'Field Tab', to: 'Main' },
       { op: 'rename_screen', from: 'OPS: Create', to: 'OPS: New issue' },
     ]);
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1]).toMatchObject({
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0]).toMatchObject({
       kind: 'screen_changes',
       title: '6 changes to the screen “OPS: Create”',
       reason: 'Tidying up',

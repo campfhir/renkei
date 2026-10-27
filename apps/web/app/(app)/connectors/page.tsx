@@ -260,7 +260,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
         return {
           kind,
           connectors: all.filter((org) => org.enabled),
-          connections: await listSalesforceConnections(db, session.subject, all, kind.provider),
+          connections: await listSalesforceConnections(session.subject, all, kind.provider),
         };
       })
   );
@@ -268,8 +268,8 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // waiting; anyone else's count is their own requests still undecided.
   const salesforcePending = shown.has(SALESFORCE_ADMIN_KIND.key)
     ? session.roles.includes(ROLE_OPERATOR)
-      ? await countSalesforceAwaitingReview(db)
-      : await countSalesforceAdminChanges(db, session.subject)
+      ? await countSalesforceAwaitingReview()
+      : await countSalesforceAdminChanges(session.subject)
     : new Map<string, number>();
 
   // The caller's own grants, one query, mapped by provider — connection
@@ -286,8 +286,8 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // many, so an agent's proposal is not only a notification away.
   const pendingJiraAdminChanges = jiraAdminGrant
     ? session.roles.includes(ROLE_OPERATOR)
-      ? await countJiraAwaitingReview(db)
-      : await countPendingChangeRequests(db, session.subject)
+      ? await countJiraAwaitingReview()
+      : await countPendingChangeRequests(session.subject)
     : 0;
   const microsoftGrant = grants.get(MICROSOFT);
   const entraDeveloperGrant = grants.get(ENTRA_DEVELOPER);

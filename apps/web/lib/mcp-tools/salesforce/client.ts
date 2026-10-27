@@ -87,12 +87,7 @@ export async function resolveSalesforceAccess(
   if (!db) return 'Could not read your Salesforce connections.';
   const call = orgCall.getStore();
   const connectors = await listSalesforceConnectors(kind);
-  const connections = await listSalesforceConnections(
-    db,
-    context.subject,
-    connectors,
-    kind.provider
-  );
+  const connections = await listSalesforceConnections(context.subject, connectors, kind.provider);
   const choice = chooseConnection(
     connectors,
     connections,

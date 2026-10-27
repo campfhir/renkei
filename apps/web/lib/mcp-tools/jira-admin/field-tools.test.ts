@@ -87,7 +87,7 @@ async function propose(args: Record<string, unknown>): Promise<ToolResult> {
 
 const text = (result: ToolResult) => result.content[0]?.text ?? '';
 const stored = () =>
-  jest.mocked(createChangeRequest).mock.calls[0]?.[1]?.payload as SpaceFieldPayload | undefined;
+  jest.mocked(createChangeRequest).mock.calls[0]?.[0]?.payload as SpaceFieldPayload | undefined;
 
 const VENDOR_SEARCH = '/rest/api/3/field/search?type=custom&maxResults=50&query=Vendor';
 const BY_NAME =
@@ -106,7 +106,7 @@ beforeEach(() => {
     return new Response(JSON.stringify(body), { status });
   }) as unknown as typeof fetch;
   jest.mocked(createChangeRequest).mockReset();
-  jest.mocked(createChangeRequest).mockImplementation(async (_db, input) => {
+  jest.mocked(createChangeRequest).mockImplementation(async (input) => {
     const now = new Date();
     const change: ChangeRequest = {
       id: CHANGE_ID,
@@ -180,7 +180,7 @@ describe('jira_admin_propose_space_field', () => {
 
     expect(result.isError).toBeUndefined();
     expect(requests.every((request) => request.method === 'GET')).toBe(true);
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1]).toMatchObject({
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0]).toMatchObject({
       kind: 'space_field',
       title: 'New field “Vendor” for OPS',
       reason: 'Procurement asked',

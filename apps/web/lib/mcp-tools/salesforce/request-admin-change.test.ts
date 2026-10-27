@@ -108,7 +108,7 @@ beforeEach(() => {
   app.listSalesforceConnectors.mockImplementation(async (kind: { key: string }) =>
     kind.key === 'salesforce-admin' ? [org('uat', UAT)] : [org('crm-uat', UAT)]
   );
-  store.createRequest.mockImplementation(async (_db: unknown, input: Record<string, unknown>) => ({
+  store.createRequest.mockImplementation(async (input: Record<string, unknown>) => ({
     id: '99999999-2222-4333-8444-555555555555',
     ...input,
   }));
@@ -128,7 +128,7 @@ describe('salesforce_request_admin_change', () => {
     const result = await handler!({ ...args, reason: 'The program tracks outcomes now' });
     expect(result.isError).toBeUndefined();
     // Stored against the ADMIN connector's key for that org, not the CRM's.
-    expect(store.createRequest.mock.calls[0][1]).toMatchObject({
+    expect(store.createRequest.mock.calls[0][0]).toMatchObject({
       subject: 'subject-1',
       connectorKey: 'uat',
       orgId: '00D000000000062EAA',
@@ -171,9 +171,9 @@ describe('salesforce_request_admin_change', () => {
   });
 
   it('is not offered without the CRM read capability, nor without a CRM grant at all', async () => {
-    expect(crm({ salesforceScopes: ['sf-records-write'] }).has('salesforce_request_admin_change')).toBe(
-      false
-    );
+    expect(
+      crm({ salesforceScopes: ['sf-records-write'] }).has('salesforce_request_admin_change')
+    ).toBe(false);
     expect(crm({}).has('salesforce_request_admin_change')).toBe(false);
   });
 });

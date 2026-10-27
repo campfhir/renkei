@@ -46,7 +46,6 @@ export function registerOrgTools(
       if (!db) return errText(`Could not read your ${kind.label} connections.`);
       const connectors = (await listSalesforceConnectors(kind)).filter((org) => org.enabled);
       const connections = await listSalesforceConnections(
-        db,
         context.subject,
         connectors,
         kind.provider

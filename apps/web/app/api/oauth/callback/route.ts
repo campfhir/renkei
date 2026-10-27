@@ -1612,9 +1612,7 @@ async function handleSalesforceCallback(
   // someone else goes (revoked at Salesforce too).
   const dbResult = getDatabase();
   if (dbResult.ok) {
-    const earlier = (
-      await listSalesforceConnections(dbResult.val, subject, [connector], kind.provider)
-    ).filter(
+    const earlier = (await listSalesforceConnections(subject, [connector], kind.provider)).filter(
       (connection) => connection.connector === connector.key && connection.accountId !== accountId
     );
     for (const connection of earlier) {

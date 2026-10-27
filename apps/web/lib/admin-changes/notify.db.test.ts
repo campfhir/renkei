@@ -69,14 +69,13 @@ maybe('admin change notifications', () => {
   });
 
   it('finds the operators, and only them', async () => {
-    const operators = await operatorSubjects(db);
+    const operators = await operatorSubjects();
     expect(operators).toEqual(expect.arrayContaining([ada, grace]));
     expect(operators).not.toContain(requester);
   });
 
   it('tells every operator but the one who filed it that a change waits, linking its review page', async () => {
     notifyOperatorsOfRequest({
-      db,
       connector: 'salesforce-admin',
       changeId,
       title: 'Add an Outcome picklist',
@@ -100,7 +99,6 @@ maybe('admin change notifications', () => {
   it('words a request in words as a request, and a Jira one by its own page', async () => {
     const jiraChange = randomUUID();
     notifyOperatorsOfRequest({
-      db,
       connector: 'jira-admin',
       changeId: jiraChange,
       title: 'Add a Vendor option',
@@ -125,7 +123,6 @@ maybe('admin change notifications', () => {
 
   it('tells the requester and the approving operator how a change ended, once each', async () => {
     notifyChangeOutcome({
-      db,
       connector: 'salesforce-admin',
       changeId,
       title: 'Add an Outcome picklist',
@@ -146,7 +143,6 @@ maybe('admin change notifications', () => {
   it('tells one person once when they asked for it and approved it', async () => {
     const own = randomUUID();
     notifyChangeOutcome({
-      db,
       connector: 'jira-admin',
       changeId: own,
       title: 'Own change',
@@ -170,7 +166,6 @@ maybe('admin change notifications', () => {
   it('gives a decline its reason as the body, and says nothing of it as a failure', async () => {
     const declined = randomUUID();
     notifyChangeOutcome({
-      db,
       connector: 'salesforce-admin',
       changeId: declined,
       title: 'A change',
@@ -188,8 +183,6 @@ maybe('admin change notifications', () => {
           .execute(),
       1
     );
-    expect(rows).toEqual([
-      { headline: 'Your Salesforce change request was declined: A change' },
-    ]);
+    expect(rows).toEqual([{ headline: 'Your Salesforce change request was declined: A change' }]);
   });
 });

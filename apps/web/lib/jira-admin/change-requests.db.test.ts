@@ -41,7 +41,7 @@ maybe('jira_admin_change_requests', () => {
   const operator = `operator-${suiteId.slice(0, 8)}`;
 
   const propose = (title = 'Source (Ops): add “Vendor”') =>
-    createChangeRequest(db, {
+    createChangeRequest({
       subject: owner,
       cloudId: 'cloud-1',
       siteUrl: 'https://acme.atlassian.net',
@@ -58,7 +58,9 @@ maybe('jira_admin_change_requests', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_change_requests WHERE subject IN (${owner}, ${stranger}, ${operator})`.execute(db);
+    await sql`DELETE FROM jira_admin_change_requests WHERE subject IN (${owner}, ${stranger}, ${operator})`.execute(
+      db
+    );
     await closeDatabase();
   });
 
@@ -69,31 +71,31 @@ maybe('jira_admin_change_requests', () => {
     const hours = (change.expiresAt.getTime() - change.createdAt.getTime()) / 3_600_000;
     expect(hours).toBeCloseTo(24, 1);
 
-    const read = await getChangeRequest(db, owner, change.id);
+    const read = await getChangeRequest(owner, change.id);
     expect(read?.payload).toEqual({ operations: [{ op: 'add', values: ['Vendor'] }] });
     expect(read?.reason).toBe('Procurement asked for it');
   });
 
   it('is its owner’s alone: anyone else reads it as not found and cannot touch it', async () => {
     const change = await propose();
-    expect(await getChangeRequest(db, stranger, change.id)).toBeNull();
-    expect(await claimChangeRequest(db, stranger, change.id)).toBe(false);
-    expect(await cancelChangeRequest(db, stranger, change.id)).toBe(false);
-    expect(await listChangeRequests(db, stranger)).toEqual([]);
+    expect(await getChangeRequest(stranger, change.id)).toBeNull();
+    expect(await claimChangeRequest(stranger, change.id)).toBe(false);
+    expect(await cancelChangeRequest(stranger, change.id)).toBe(false);
+    expect(await listChangeRequests(stranger)).toEqual([]);
     // A malformed id is simply not found, not a database error.
-    expect(await getChangeRequest(db, owner, `${change.id}.`)).toBeNull();
+    expect(await getChangeRequest(owner, `${change.id}.`)).toBeNull();
   });
 
   it('lets exactly one of two simultaneous claims win', async () => {
     const change = await propose();
     const claims = await Promise.all([
-      claimChangeRequest(db, owner, change.id),
-      claimChangeRequest(db, owner, change.id),
+      claimChangeRequest(owner, change.id),
+      claimChangeRequest(owner, change.id),
     ]);
     expect(claims.filter(Boolean)).toHaveLength(1);
-    expect((await getChangeRequest(db, owner, change.id))?.status).toBe('applying');
+    expect((await getChangeRequest(owner, change.id))?.status).toBe('applying');
 
-    await finishChangeRequest(db, change.id, {
+    await finishChangeRequest(change.id, {
       status: 'partial',
       appliedBy: owner,
       results: [
@@ -101,7 +103,7 @@ maybe('jira_admin_change_requests', () => {
         { label: 'Disable “Legacy”', outcome: 'failed', detail: 'Jira answered 400.' },
       ],
     });
-    const finished = await getChangeRequest(db, owner, change.id);
+    const finished = await getChangeRequest(owner, change.id);
     expect(finished?.status).toBe('partial');
     expect(finished?.appliedBy).toBe(owner);
     expect(finished?.results?.[1]).toEqual({
@@ -110,8 +112,8 @@ maybe('jira_admin_change_requests', () => {
       detail: 'Jira answered 400.',
     });
     // Decided: neither claimable nor cancellable again.
-    expect(await claimChangeRequest(db, owner, change.id)).toBe(false);
-    expect(await cancelChangeRequest(db, owner, change.id)).toBe(false);
+    expect(await claimChangeRequest(owner, change.id)).toBe(false);
+    expect(await cancelChangeRequest(owner, change.id)).toBe(false);
   });
 
   it('refuses to claim an expired request, and leaves it out of the pending list', async () => {
@@ -119,22 +121,22 @@ maybe('jira_admin_change_requests', () => {
     await sql`UPDATE jira_admin_change_requests SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = ${change.id}`.execute(
       db
     );
-    const read = await getChangeRequest(db, owner, change.id);
+    const read = await getChangeRequest(owner, change.id);
     expect(read && stateOf(read)).toBe('expired');
-    expect(await claimChangeRequest(db, owner, change.id)).toBe(false);
-    const pending = await listChangeRequests(db, owner, { pendingOnly: true });
+    expect(await claimChangeRequest(owner, change.id)).toBe(false);
+    const pending = await listChangeRequests(owner, { pendingOnly: true });
     expect(pending.map((c) => c.id)).not.toContain(change.id);
   });
 
   it('cancels a pending request, and counts only what still waits', async () => {
-    const before = await countPendingChangeRequests(db, owner);
+    const before = await countPendingChangeRequests(owner);
     const change = await propose('To be withdrawn');
-    expect(await countPendingChangeRequests(db, owner)).toBe(before + 1);
-    expect(await cancelChangeRequest(db, owner, change.id)).toBe(true);
-    const cancelled = await getChangeRequest(db, owner, change.id);
+    expect(await countPendingChangeRequests(owner)).toBe(before + 1);
+    expect(await cancelChangeRequest(owner, change.id)).toBe(true);
+    const cancelled = await getChangeRequest(owner, change.id);
     expect(cancelled?.status).toBe('cancelled');
     expect(cancelled?.cancelledAt).not.toBeNull();
-    expect(await countPendingChangeRequests(db, owner)).toBe(before);
+    expect(await countPendingChangeRequests(owner)).toBe(before);
   });
 
   it('reads an apply cut off mid-flight as interrupted', () => {
@@ -148,57 +150,51 @@ maybe('jira_admin_change_requests', () => {
     it('queues a pending proposal once, under the approving operator, and runs it from the queue', async () => {
       const change = await propose('Queued');
       const queued = await Promise.all([
-        queueChangeRequest(db, change.id, operator),
-        queueChangeRequest(db, change.id, owner),
+        queueChangeRequest(change.id, operator),
+        queueChangeRequest(change.id, owner),
       ]);
       expect(queued.filter(Boolean)).toHaveLength(1);
 
-      const read = await getChangeRequestById(db, change.id);
+      const read = await getChangeRequestById(change.id);
       expect(read?.status).toBe('queued');
       expect(read?.subject).toBe(owner);
       expect([operator, owner]).toContain(read?.approvedBy);
-      expect(await cancelChangeRequest(db, owner, change.id)).toBe(false);
-      expect((await listRunnableChanges(db, 90_000, 100)).map((job) => job.id)).toContain(
-        change.id
-      );
+      expect(await cancelChangeRequest(owner, change.id)).toBe(false);
+      expect((await listRunnableChanges(90_000, 100)).map((job) => job.id)).toContain(change.id);
 
       const started = await Promise.all([
-        startQueuedChange(db, change.id),
-        startQueuedChange(db, change.id),
+        startQueuedChange(change.id),
+        startQueuedChange(change.id),
       ]);
       expect(started.filter(Boolean)).toHaveLength(1);
-      expect(await setStep(db, change.id, 'Applying the change in Jira')).toBe(true);
-      expect((await getChangeRequestById(db, change.id))?.step).toBe(
-        'Applying the change in Jira'
-      );
-      expect(await reclaimStaleChange(db, change.id)).toBe(false);
+      expect(await setStep(change.id, 'Applying the change in Jira')).toBe(true);
+      expect((await getChangeRequestById(change.id))?.step).toBe('Applying the change in Jira');
+      expect(await reclaimStaleChange(change.id)).toBe(false);
 
       await sql`UPDATE jira_admin_change_requests SET updated_at = NOW() - INTERVAL '5 minutes' WHERE id = ${change.id}`.execute(
         db
       );
-      expect((await listRunnableChanges(db, 90_000, 100)).map((job) => job.id)).toContain(
-        change.id
-      );
+      expect((await listRunnableChanges(90_000, 100)).map((job) => job.id)).toContain(change.id);
       const takers = await Promise.all([
-        reclaimStaleChange(db, change.id),
-        reclaimStaleChange(db, change.id),
+        reclaimStaleChange(change.id),
+        reclaimStaleChange(change.id),
       ]);
       expect(takers.filter(Boolean)).toHaveLength(1);
 
-      await finishChangeRequest(db, change.id, {
+      await finishChangeRequest(change.id, {
         status: 'applied',
         results: [{ label: 'Add “Vendor”', outcome: 'done' }],
         appliedBy: operator,
       });
-      const done = await getChangeRequestById(db, change.id);
+      const done = await getChangeRequestById(change.id);
       expect(done?.status).toBe('applied');
       expect(done?.step).toBeNull();
       // Once finished the heartbeat has nothing to say.
-      expect(await setStep(db, change.id, 'late')).toBe(false);
+      expect(await setStep(change.id, 'late')).toBe(false);
     });
 
     it('will not queue a request in words, and closes one as built when it is proposed', async () => {
-      const words = await createRequest(db, {
+      const words = await createRequest({
         subject: stranger,
         cloudId: 'cloud-1',
         siteUrl: 'https://acme.atlassian.net',
@@ -206,26 +202,26 @@ maybe('jira_admin_change_requests', () => {
         description: 'The Source field in OPS needs Vendor.',
       });
       expect(requestDescription(words.payload)).toContain('Vendor');
-      expect(await queueChangeRequest(db, words.id, operator)).toBe(false);
+      expect(await queueChangeRequest(words.id, operator)).toBe(false);
 
-      const before = await countAwaitingReview(db);
+      const before = await countAwaitingReview();
       const proposal = await propose('Built from words');
-      expect(await countAwaitingReview(db)).toBe(before + 1);
-      expect(await closeRequestAsProposed(db, words.id, proposal.id)).toBe(true);
-      expect(await closeRequestAsProposed(db, words.id, proposal.id)).toBe(false);
-      const closed = await getChangeRequestById(db, words.id);
+      expect(await countAwaitingReview()).toBe(before + 1);
+      expect(await closeRequestAsProposed(words.id, proposal.id)).toBe(true);
+      expect(await closeRequestAsProposed(words.id, proposal.id)).toBe(false);
+      const closed = await getChangeRequestById(words.id);
       expect(closed?.status).toBe('cancelled');
       expect(closed?.resolution).toContain(proposal.id);
     });
 
     it('lets an operator decline anyone’s request with a note, while a stranger cannot', async () => {
       const mine = await propose('To decline');
-      expect(await cancelChangeRequest(db, stranger, mine.id)).toBe(false);
+      expect(await cancelChangeRequest(stranger, mine.id)).toBe(false);
       expect(
-        await cancelChangeRequest(db, operator, mine.id, { operator: true, note: 'Not this way' })
+        await cancelChangeRequest(operator, mine.id, { operator: true, note: 'Not this way' })
       ).toBe(true);
-      expect((await getChangeRequest(db, owner, mine.id))?.resolution).toBe('Not this way');
-      expect((await listAllChangeRequests(db, { limit: 500 })).map((c) => c.id)).toContain(mine.id);
+      expect((await getChangeRequest(owner, mine.id))?.resolution).toBe('Not this way');
+      expect((await listAllChangeRequests({ limit: 500 })).map((c) => c.id)).toContain(mine.id);
     });
   });
 });

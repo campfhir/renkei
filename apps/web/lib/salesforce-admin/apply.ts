@@ -19,8 +19,7 @@
  * finished by `refreshApplying` the next time anyone looks.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { NO_DATABASE_REASON, legacyDatabase } from '@/lib/admin-changes/legacy-database';
 import { getOrgSettings } from '@renkei/settings';
 import { takesChanges, type DeployOutcome } from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -106,7 +105,6 @@ export async function waitReporting(
 }
 
 export async function applyGate(
-  db: Kysely<DB>,
   subject: string,
   roles: readonly string[],
   change: Pick<ChangeRequest, 'connectorKey' | 'validation'>
@@ -125,6 +123,8 @@ export async function applyGate(
   if (settings.disabledConnectors.includes(CONNECTOR)) {
     return { ok: false, reason: 'Salesforce Admin is switched off for your organization.' };
   }
+  const db = legacyDatabase();
+  if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
     resolveAudience(db, subject),
@@ -365,7 +365,6 @@ async function runDataSteps(
 
 /** Record a finished deploy: the deploy's own line, then the grants that follow a success. */
 async function finish(
-  db: Kysely<DB>,
   context: SalesforceCallContext,
   access: SalesforceAccess,
   change: ChangeRequest,
@@ -397,13 +396,12 @@ async function finish(
       ? 'partial'
       : 'applied';
   const results = { ...base, deployId: outcome.id, operations };
-  await finishChangeRequest(db, change.id, { status, results, appliedBy });
+  await finishChangeRequest(change.id, { status, results, appliedBy });
   return { ...results, status };
 }
 
 /** Apply a claimed request. The caller holds the claim; this records how it ended. */
 export async function applyChangeRequest(
-  db: Kysely<DB>,
   context: SalesforceCallContext,
   access: SalesforceAccess,
   change: ChangeRequest,
@@ -423,7 +421,7 @@ export async function applyChangeRequest(
         },
       ],
     };
-    await finishChangeRequest(db, change.id, { status: 'failed', results, appliedBy });
+    await finishChangeRequest(change.id, { status: 'failed', results, appliedBy });
     return { status: 'failed', results };
   }
   const broken = await brokenPreconditions(context, access, payload.preconditions);
@@ -437,7 +435,7 @@ export async function applyChangeRequest(
         },
       ],
     };
-    await finishChangeRequest(db, change.id, { status: 'failed', results, appliedBy });
+    await finishChangeRequest(change.id, { status: 'failed', results, appliedBy });
     return { status: 'failed', results };
   }
   const checked: OperationResult = {
@@ -451,7 +449,7 @@ export async function applyChangeRequest(
     const failures = steps.filter((step) => step.outcome === 'failed').length;
     const status = failures === 0 ? 'applied' : failures === steps.length ? 'failed' : 'partial';
     const results = { operations: [checked, ...steps] };
-    await finishChangeRequest(db, change.id, { status, results, appliedBy });
+    await finishChangeRequest(change.id, { status, results, appliedBy });
     return { status, results };
   }
 
@@ -466,11 +464,11 @@ export async function applyChangeRequest(
     const results = {
       operations: [checked, { label: 'Deploy', outcome: 'failed' as const, detail: started.error }],
     };
-    await finishChangeRequest(db, change.id, { status: 'failed', results, appliedBy });
+    await finishChangeRequest(change.id, { status: 'failed', results, appliedBy });
     return { status: 'failed', results };
   }
   const base: ApplyResults = { deployId: started.outcome.id, quick, operations: [checked] };
-  await recordDeployStarted(db, change.id, base);
+  await recordDeployStarted(change.id, base);
 
   const waited = started.outcome.done
     ? { ok: true as const, outcome: started.outcome }
@@ -479,7 +477,7 @@ export async function applyChangeRequest(
     // Still running in Salesforce: a later look finishes it.
     return { status: 'applying', results: base };
   }
-  const done = await finish(db, context, access, change, waited.outcome, base, appliedBy, onStep);
+  const done = await finish(context, access, change, waited.outcome, base, appliedBy, onStep);
   return { status: done.status, results: done };
 }
 
@@ -489,7 +487,6 @@ export async function applyChangeRequest(
  * running, or when it has no deploy to read.
  */
 export async function refreshApplying(
-  db: Kysely<DB>,
   context: SalesforceCallContext,
   access: SalesforceAccess,
   change: ChangeRequest,
@@ -500,7 +497,6 @@ export async function refreshApplying(
   const status = await waitReporting(context, access, change.results.deployId, waitMs, onStep);
   if (!status.ok || !status.outcome.done) return false;
   await finish(
-    db,
     context,
     access,
     change,
@@ -514,7 +510,6 @@ export async function refreshApplying(
 
 /** Record a validation that was still running when its proposal answered. */
 export async function refreshValidation(
-  db: Kysely<DB>,
   context: SalesforceCallContext,
   access: SalesforceAccess,
   change: ChangeRequest
@@ -525,6 +520,6 @@ export async function refreshValidation(
   }
   const status = await waitForDeploy(context, access, validation.deployId, 0);
   if (!status.ok || !status.outcome.done) return false;
-  await setValidation(db, change.id, validationFrom(status.outcome));
+  await setValidation(change.id, validationFrom(status.outcome));
   return true;
 }

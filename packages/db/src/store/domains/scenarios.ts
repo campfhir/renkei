@@ -8,6 +8,11 @@ import { notificationScenarios } from './notifications/scenarios';
 import { sessionScenarios } from './sessions/scenarios';
 import { settingScenarios } from './settings/scenarios';
 import { userPreferenceScenarios } from './user-preferences/scenarios';
+import { salesforceChangeScenarios } from './salesforce-changes/scenarios';
+import { jiraChangeScenarios } from './jira-changes/scenarios';
+import { jiraSpaceTemplateScenarios } from './jira-space-templates/scenarios';
+import { adminChangeQueueScenarios } from './admin-change-queue/scenarios';
+import { salesforceGrantScenarios } from './salesforce-grants/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -16,4 +21,9 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...settingScenarios,
   ...coachMarkScenarios,
   ...notificationScenarios,
+  ...salesforceChangeScenarios,
+  ...jiraChangeScenarios,
+  ...jiraSpaceTemplateScenarios,
+  ...adminChangeQueueScenarios,
+  ...salesforceGrantScenarios,
 ];

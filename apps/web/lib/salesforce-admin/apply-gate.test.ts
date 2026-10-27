@@ -16,8 +16,10 @@ jest.mock('@/lib/mcp-tools/registry', () => ({ resolveConnectorAvailability: jes
 jest.mock('@/lib/mcp-tools/projection', () => ({ buildProjection: jest.fn() }));
 jest.mock('@/lib/salesforce-app', () => ({ listSalesforceConnectors: jest.fn() }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+jest.mock('@/lib/admin-changes/legacy-database', () => ({
+  legacyDatabase: () => ({}),
+  NO_DATABASE_REASON: 'no database',
+}));
 import { getOrgSettings } from '@renkei/settings';
 import { EMPTY_POLICY, type SalesforceOrg } from '@renkei/connector-salesforce';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -25,8 +27,6 @@ import { resolveConnectorAvailability } from '@/lib/mcp-tools/registry';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { listSalesforceConnectors } from '@/lib/salesforce-app';
 import { applyGate } from './apply';
-
-const db = {} as Kysely<DB>;
 
 const UAT: SalesforceOrg = {
   key: 'uat',
@@ -69,7 +69,7 @@ beforeEach(() => {
 const change = { connectorKey: 'uat', validation: passed };
 
 it('lets someone with a connected Salesforce Admin connection approve a validated change', async () => {
-  expect(await applyGate(db, 'operator', ['renkei-operator'], change)).toEqual({ ok: true });
+  expect(await applyGate('operator', ['renkei-operator'], change)).toEqual({ ok: true });
 });
 
 it('refuses someone who has no Salesforce Admin connection, however they use Salesforce otherwise', async () => {
@@ -77,13 +77,13 @@ it('refuses someone who has no Salesforce Admin connection, however they use Sal
   jest
     .mocked(resolveConnectorAvailability)
     .mockResolvedValue({ salesforceAdminAvailable: false, salesforceAvailable: true } as never);
-  const gate = await applyGate(db, 'crm-user', ['renkei-operator'], change);
+  const gate = await applyGate('crm-user', ['renkei-operator'], change);
   expect(gate.ok).toBe(false);
   expect(gate.ok === false && gate.reason).toMatch(/Salesforce Admin is not connected/);
 });
 
 it('refuses a change Salesforce has not validated', async () => {
-  const gate = await applyGate(db, 'operator', ['renkei-operator'], {
+  const gate = await applyGate('operator', ['renkei-operator'], {
     connectorKey: 'uat',
     validation: null,
   });

@@ -10,8 +10,7 @@
  * pending proposals from being applied, not only new ones from being made.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { NO_DATABASE_REASON, legacyDatabase } from '@/lib/admin-changes/legacy-database';
 import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN_ADMIN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -91,7 +90,6 @@ export function changeScopes(change: Pick<ChangeRequest, 'kind' | 'payload'>): s
 type Gate = { ok: true } | { ok: false; reason: string };
 
 export async function applyGate(
-  db: Kysely<DB>,
   subject: string,
   roles: readonly string[],
   change: Pick<ChangeRequest, 'kind' | 'payload'>
@@ -110,6 +108,8 @@ export async function applyGate(
     return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
   }
 
+  const db = legacyDatabase();
+  if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
     resolveAudience(db, subject),
@@ -197,13 +197,15 @@ export async function applyGate(
  * decide, as they decide whether its tools register. Read-only mode does
  * not: looking changes nothing.
  */
-export async function viewGate(db: Kysely<DB>, subject: string): Promise<Gate> {
+export async function viewGate(subject: string): Promise<Gate> {
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok)
     return { ok: false, reason: 'Could not read your organization’s settings.' };
   if (settingsResult.val.disabledConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR)) {
     return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
   }
+  const db = legacyDatabase();
+  if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
     resolveAudience(db, subject),

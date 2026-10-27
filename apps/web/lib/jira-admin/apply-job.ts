@@ -17,8 +17,6 @@
  * the requester and approver are told.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
@@ -137,12 +135,11 @@ function finishedWith(
 }
 
 async function end(
-  db: Kysely<DB>,
   change: ChangeRequest,
   status: 'applied' | 'partial' | 'failed',
   results: OperationResult[]
 ): Promise<void> {
-  await finishChangeRequest(db, change.id, {
+  await finishChangeRequest(change.id, {
     status,
     results,
     appliedBy: change.approvedBy ?? change.subject,
@@ -156,14 +153,13 @@ async function end(
  * already 'applying' here belongs to a job that stopped reporting (the
  * sweep only offers those), and is ended, not run again.
  */
-export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<void> {
-  let change = await getChangeRequestById(db, changeId);
+export async function runApplyJob(changeId: string): Promise<void> {
+  let change = await getChangeRequestById(changeId);
   if (!change) return;
 
   if (change.status === 'applying') {
-    if (!(await reclaimStaleChange(db, change.id))) return;
+    if (!(await reclaimStaleChange(change.id))) return;
     await end(
-      db,
       change,
       'failed',
       failure(
@@ -173,13 +169,12 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
     );
     return;
   }
-  if (change.status !== 'queued' || !(await startQueuedChange(db, change.id))) return;
-  change = (await getChangeRequestById(db, changeId)) ?? change;
+  if (change.status !== 'queued' || !(await startQueuedChange(change.id))) return;
+  change = (await getChangeRequestById(changeId)) ?? change;
 
   const approver = change.approvedBy;
   if (!approver) {
     await end(
-      db,
       change,
       'failed',
       failure('Start the change', 'No operator is recorded as having approved this change.')
@@ -189,20 +184,20 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
 
   let heartbeat: ReturnType<typeof setInterval> | undefined;
   try {
-    const gate = await applyGate(db, approver, [ROLE_OPERATOR], change);
+    const gate = await applyGate(approver, [ROLE_OPERATOR], change);
     if (!gate.ok) {
-      await end(db, change, 'failed', failure('Check this can still be applied', gate.reason));
+      await end(change, 'failed', failure('Check this can still be applied', gate.reason));
       return;
     }
     const resolved = await resolveApplyAccess(approver, change);
     if (typeof resolved === 'string') {
-      await end(db, change, 'failed', failure('Connect to Jira', resolved));
+      await end(change, 'failed', failure('Connect to Jira', resolved));
       return;
     }
 
-    await setStep(db, change.id, 'Applying the change in Jira');
+    await setStep(change.id, 'Applying the change in Jira');
     heartbeat = setInterval(
-      () => void setStep(db, change.id, 'Applying the change in Jira'),
+      () => void setStep(change.id, 'Applying the change in Jira'),
       HEARTBEAT_MS
     );
     const outcome = await applyChangeRequest({ subject: approver }, resolved.access, change, {
@@ -211,7 +206,7 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
     });
     clearInterval(heartbeat);
     heartbeat = undefined;
-    await end(db, change, outcome.status, outcome.results);
+    await end(change, outcome.status, outcome.results);
   } catch (error) {
     if (heartbeat) clearInterval(heartbeat);
     logger.error('jira admin change job threw: {message}', {
@@ -220,7 +215,6 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
       message: error instanceof Error ? error.message : String(error),
     });
     await end(
-      db,
       change,
       'failed',
       failure(
@@ -232,10 +226,10 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
 }
 
 /** One pass: start whatever is queued, and end what lost its job. */
-export async function recoverApplyJobs(db: Kysely<DB>): Promise<void> {
-  for (const job of await listRunnableChanges(db)) {
+export async function recoverApplyJobs(): Promise<void> {
+  for (const job of await listRunnableChanges()) {
     if (isShuttingDown()) return;
-    await runApplyJob(db, job.id);
+    await runApplyJob(job.id);
   }
 }
 
@@ -247,17 +241,17 @@ export async function recoverApplyJobs(db: Kysely<DB>): Promise<void> {
  * What is already running here is remembered so a tick does not offer it
  * again (the row's claim would refuse the duplicate anyway).
  */
-export function startApplyJobRecovery(db: Kysely<DB>, intervalMs = APPLY_SWEEP_MS): () => void {
+export function startApplyJobRecovery(intervalMs = APPLY_SWEEP_MS): () => void {
   const inFlight = new Set<string>();
   let listing = false;
   const tick = async () => {
     if (listing || isShuttingDown()) return;
     listing = true;
     try {
-      for (const job of await listRunnableChanges(db)) {
+      for (const job of await listRunnableChanges()) {
         if (inFlight.has(job.id) || isShuttingDown()) continue;
         inFlight.add(job.id);
-        void runApplyJob(db, job.id)
+        void runApplyJob(job.id)
           .catch((error: unknown) => {
             logger.error('jira admin change job failed: {message}', {
               component: COMPONENT,

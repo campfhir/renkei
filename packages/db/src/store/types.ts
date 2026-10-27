@@ -48,3 +48,8 @@ export type * from './domains/user-preferences';
 export type * from './domains/settings';
 export type * from './domains/coach-marks';
 export type * from './domains/notifications';
+export type * from './domains/salesforce-changes';
+export type * from './domains/jira-changes';
+export type * from './domains/jira-space-templates';
+export type * from './domains/admin-change-queue';
+export type * from './domains/salesforce-grants';

@@ -39,8 +39,8 @@ const DOCUMENT: TemplateDocument = {
 maybe('jira_admin_space_templates', () => {
   let db: Kysely<DB>;
 
-  const save = (overrides: Partial<Parameters<typeof saveSpaceTemplate>[1]> = {}) =>
-    saveSpaceTemplate(db, {
+  const save = (overrides: Partial<Parameters<typeof saveSpaceTemplate>[0]> = {}) =>
+    saveSpaceTemplate({
       cloudId: 'cloud-1',
       siteUrl: 'https://acme.atlassian.net',
       name: 'Ops standard',
@@ -56,11 +56,15 @@ maybe('jira_admin_space_templates', () => {
     const result = getDatabase();
     if (!result.ok) throw new Error('no database');
     db = result.val;
-    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(db);
+    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(
+      db
+    );
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(db);
+    await sql`DELETE FROM jira_admin_space_templates WHERE created_by = 'dana@example.com'`.execute(
+      db
+    );
     await closeDatabase();
   });
 
@@ -70,9 +74,9 @@ maybe('jira_admin_space_templates', () => {
     expect(saved.replaced).toBe(false);
     expect(saved.template.document).toEqual(DOCUMENT);
 
-    const byName = await findSpaceTemplate(db, 'cloud-1', '  OPS STANDARD ');
+    const byName = await findSpaceTemplate('cloud-1', '  OPS STANDARD ');
     expect(byName?.id).toBe(saved.template.id);
-    const byId = await findSpaceTemplate(db, 'cloud-1', saved.template.id);
+    const byId = await findSpaceTemplate('cloud-1', saved.template.id);
     expect(byId?.name).toBe('Ops standard');
   });
 
@@ -95,22 +99,18 @@ maybe('jira_admin_space_templates', () => {
   it('keeps the same name on another site as a separate template, preferring this site’s', async () => {
     const elsewhere = await save({ cloudId: 'cloud-2', siteUrl: 'https://other.atlassian.net' });
     if (!elsewhere.ok) throw new Error(elsewhere.reason);
-    expect((await findSpaceTemplate(db, 'cloud-1', 'Ops standard'))?.cloudId).toBe(
-      'cloud-1'
-    );
+    expect((await findSpaceTemplate('cloud-1', 'Ops standard'))?.cloudId).toBe('cloud-1');
     // Asked for from a third site: the name still resolves, so the caller
     // can say "saved from another site" rather than "no such template".
-    expect((await findSpaceTemplate(db, 'cloud-3', 'Ops standard'))?.cloudId).toMatch(
-      /^cloud-[12]$/
-    );
-    expect((await listSpaceTemplates(db)).length).toBe(2);
+    expect((await findSpaceTemplate('cloud-3', 'Ops standard'))?.cloudId).toMatch(/^cloud-[12]$/);
+    expect((await listSpaceTemplates()).length).toBe(2);
   });
 
   it('deletes by id, once', async () => {
     const saved = await save({ name: 'To remove' });
     if (!saved.ok) throw new Error(saved.reason);
-    expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(true);
-    expect(await deleteSpaceTemplate(db, saved.template.id)).toBe(false);
-    expect(await findSpaceTemplate(db, 'cloud-1', 'To remove')).toBeNull();
+    expect(await deleteSpaceTemplate(saved.template.id)).toBe(true);
+    expect(await deleteSpaceTemplate(saved.template.id)).toBe(false);
+    expect(await findSpaceTemplate('cloud-1', 'To remove')).toBeNull();
   });
 });

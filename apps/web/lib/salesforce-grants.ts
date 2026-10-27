@@ -6,8 +6,7 @@
  * is `<orgId>/<userId>`; `connector` is the Salesforce connector's key.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { SALESFORCE, readSalesforceMetadata } from '@renkei/provider-grants';
 import { orgForInstance, type SalesforceOrg } from '@renkei/connector-salesforce';
 
@@ -23,21 +22,15 @@ export interface SalesforceConnection {
 
 /** `provider` is the connector type's grant provider: the CRM's by default, or `salesforce-admin`. */
 export async function listSalesforceConnections(
-  db: Kysely<DB>,
   subject: string,
   connectors: readonly SalesforceOrg[],
   provider: string = SALESFORCE
 ): Promise<SalesforceConnection[]> {
-  const rows = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'display_name', 'metadata', 'requested_scopes'])
-    .where('provider', '=', provider)
-    .where('subject', '=', subject)
-    .execute();
+  const rows = await getDataStore().salesforceGrants.listConnections(subject, provider);
   return rows.map((row) => {
     const metadata =
       typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
-        ? { ...row.metadata }
+        ? Object.fromEntries(Object.entries(row.metadata))
         : {};
     const parsed = readSalesforceMetadata(metadata);
     // The connector the grant names, while it still is that connector's org;
@@ -49,12 +42,12 @@ export async function listSalesforceConnections(
       byInstance?.key ??
       null;
     return {
-      accountId: row.provider_account_id,
+      accountId: row.providerAccountId,
       connector,
-      displayName: row.display_name,
+      displayName: row.displayName,
       username: parsed.username,
       instanceUrl: parsed.instanceUrl,
-      requestedScopes: row.requested_scopes ?? [],
+      requestedScopes: row.requestedScopes,
     };
   });
 }

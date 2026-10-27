@@ -22,8 +22,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore, getDatabase } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -45,45 +44,38 @@ export function changePath(connector: AdminConnectorKey, changeId: string): stri
 }
 
 /** Every subject Renkei knows to hold the operator role. */
-export async function operatorSubjects(db: Kysely<DB>): Promise<string[]> {
-  const rows = await sql<{ subject: string }>`
-    SELECT subject FROM sessions WHERE ${ROLE_OPERATOR} = ANY(roles)
-    UNION
-    SELECT subject FROM oauth_access_tokens WHERE ${ROLE_OPERATOR} = ANY(roles)
-  `.execute(db);
-  return rows.rows.map((row) => row.subject);
+export async function operatorSubjects(): Promise<string[]> {
+  return getDataStore().adminChangeQueue.operatorSubjects(ROLE_OPERATOR);
 }
 
-async function notify(
-  db: Kysely<DB>,
-  input: {
-    subject: string;
-    kind: string;
-    connector: AdminConnectorKey;
-    headline: string;
-    body: string;
-    path: string;
-    changeId: string;
-  }
-): Promise<void> {
+async function notify(input: {
+  subject: string;
+  kind: string;
+  connector: AdminConnectorKey;
+  headline: string;
+  body: string;
+  path: string;
+  changeId: string;
+}): Promise<void> {
   const id = randomUUID();
-  await db
-    .insertInto('agent_notifications')
-    .values({
-      id,
-      subject: input.subject,
-      kind: input.kind,
-      connector: input.connector,
-      entity: 'change request',
-      headline: input.headline,
-      ref_id: input.changeId,
-      ref_url: input.path,
-    })
-    .execute();
+  await getDataStore().adminChangeQueue.recordNotice({
+    id,
+    subject: input.subject,
+    kind: input.kind,
+    connector: input.connector,
+    entity: 'change request',
+    headline: input.headline,
+    refId: input.changeId,
+    refUrl: input.path,
+  });
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return;
+  // The push goes through @renkei/notifications, which still reads the
+  // person's devices from the database itself.
+  const db = getDatabase();
+  if (!db.ok) return;
   void sendPush(
-    db,
+    db.val,
     input.subject,
     keyResult.val,
     {
@@ -109,7 +101,6 @@ function swallow(what: string, changeId: string): (error: unknown) => void {
 
 /** A request is waiting: tell every operator but the person who filed it. */
 export function notifyOperatorsOfRequest(input: {
-  db?: Kysely<DB>;
   connector: AdminConnectorKey;
   changeId: string;
   title: string;
@@ -118,23 +109,14 @@ export function notifyOperatorsOfRequest(input: {
   freeText: boolean;
 }): void {
   void (async () => {
-    const db =
-      input.db ??
-      (() => {
-        const result = getDatabase();
-        return result.ok ? result.val : null;
-      })();
-    if (!db) return;
     const label = CONNECTOR_LABELS[input.connector];
-    const recipients = (await operatorSubjects(db)).filter(
-      (subject) => subject !== input.requester
-    );
+    const recipients = (await operatorSubjects()).filter((subject) => subject !== input.requester);
     const headline = input.freeText
       ? `A ${label} change was requested: ${input.title}`
       : `A ${label} change is waiting for your approval: ${input.title}`;
     await Promise.all(
       recipients.map((subject) =>
-        notify(db, {
+        notify({
           subject,
           kind: CHANGE_REQUEST_NOTIFICATION_KIND,
           connector: input.connector,
@@ -150,7 +132,6 @@ export function notifyOperatorsOfRequest(input: {
 
 /** A queued change ended: tell the person who asked and the operator who approved. */
 export function notifyChangeOutcome(input: {
-  db?: Kysely<DB>;
   connector: AdminConnectorKey;
   changeId: string;
   title: string;
@@ -161,13 +142,6 @@ export function notifyChangeOutcome(input: {
   note?: string | null;
 }): void {
   void (async () => {
-    const db =
-      input.db ??
-      (() => {
-        const result = getDatabase();
-        return result.ok ? result.val : null;
-      })();
-    if (!db) return;
     const label = CONNECTOR_LABELS[input.connector];
     const headline =
       input.outcome === 'applied'
@@ -191,7 +165,7 @@ export function notifyChangeOutcome(input: {
     if (input.approver) recipients.add(input.approver);
     await Promise.all(
       [...recipients].map((subject) =>
-        notify(db, {
+        notify({
           subject,
           kind: CHANGE_RESULT_NOTIFICATION_KIND,
           connector: input.connector,

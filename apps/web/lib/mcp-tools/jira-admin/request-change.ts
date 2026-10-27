@@ -59,7 +59,7 @@ export function registerRequestTools(
       if (typeof access === 'string') return errText(access);
       const dbResult = getDatabase();
       if (!dbResult.ok) return errText('Database unavailable; nothing was requested.');
-      const request = await createRequest(dbResult.val, {
+      const request = await createRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,

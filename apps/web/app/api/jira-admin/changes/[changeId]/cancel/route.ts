@@ -6,7 +6,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
@@ -27,14 +26,8 @@ export async function POST(
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   const operator = session.roles.includes(ROLE_OPERATOR);
-  const change = await getChangeRequestById(db, changeId);
+  const change = await getChangeRequestById(changeId);
   // Someone else's request is not found, not forbidden — unless they review them.
   if (!change || !mayView(change, { subject: session.subject, operator })) {
     return NextResponse.json({ error: 'Change request not found' }, { status: 404 });
@@ -46,7 +39,7 @@ export async function POST(
       ? body.note
       : '';
 
-  if (!(await cancelChangeRequest(db, session.subject, change.id, { operator, note }))) {
+  if (!(await cancelChangeRequest(session.subject, change.id, { operator, note }))) {
     return NextResponse.json(
       { error: 'Only a change request waiting for review can be cancelled.' },
       { status: 409 }
@@ -54,7 +47,6 @@ export async function POST(
   }
   if (change.subject !== session.subject) {
     notifyChangeOutcome({
-      db,
       connector: 'jira-admin',
       changeId: change.id,
       title: change.title,

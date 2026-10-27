@@ -131,10 +131,10 @@ export async function register() {
     // that were queued as a process went away, and takes over any whose job
     // stopped reporting. See lib/salesforce-admin/apply-job.ts.
     const { startApplyJobRecovery } = await import('@/lib/salesforce-admin/apply-job');
-    startApplyJobRecovery(dbResult.val);
+    startApplyJobRecovery();
     const { startApplyJobRecovery: startJiraApplyJobRecovery } =
       await import('@/lib/jira-admin/apply-job');
-    startJiraApplyJobRecovery(dbResult.val);
+    startJiraApplyJobRecovery();
   }
 }
 

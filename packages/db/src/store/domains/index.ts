@@ -10,6 +10,11 @@ import { notifications } from './notifications';
 import { sessions } from './sessions';
 import { settings } from './settings';
 import { userPreferences } from './user-preferences';
+import { salesforceChanges } from './salesforce-changes';
+import { jiraChanges } from './jira-changes';
+import { jiraSpaceTemplates } from './jira-space-templates';
+import { adminChangeQueue } from './admin-change-queue';
+import { salesforceGrants } from './salesforce-grants';
 
 export const DOMAINS = {
   sessions,
@@ -18,4 +23,9 @@ export const DOMAINS = {
   settings,
   coachMarks,
   notifications,
+  salesforceChanges,
+  jiraChanges,
+  jiraSpaceTemplates,
+  adminChangeQueue,
+  salesforceGrants,
 };

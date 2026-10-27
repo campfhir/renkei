@@ -168,7 +168,7 @@ beforeEach(() => {
   jest.mocked(saveSpaceTemplate).mockReset();
   jest.mocked(findSpaceTemplate).mockReset();
   jest.mocked(listSpaceTemplates).mockReset();
-  jest.mocked(createChangeRequest).mockImplementation(async (_db, input) => {
+  jest.mocked(createChangeRequest).mockImplementation(async (input) => {
     const now = new Date();
     const change: ChangeRequest = {
       id: CHANGE_ID,
@@ -244,7 +244,7 @@ beforeEach(() => {
 
 describe('jira_admin_save_space_template', () => {
   it('saves the schemes and role groups, says who was left out, and writes nothing to Jira', async () => {
-    jest.mocked(saveSpaceTemplate).mockImplementation(async (_db, input) => ({
+    jest.mocked(saveSpaceTemplate).mockImplementation(async (input) => ({
       ok: true,
       replaced: false,
       template: template({ name: input.name, document: input.document }),
@@ -256,7 +256,7 @@ describe('jira_admin_save_space_template', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    const input = jest.mocked(saveSpaceTemplate).mock.calls[0]?.[1];
+    const input = jest.mocked(saveSpaceTemplate).mock.calls[0]?.[0];
     expect(input).toMatchObject({
       cloudId: 'cloud-1',
       sourceSpaceKey: 'OPS',
@@ -356,7 +356,7 @@ describe('jira_admin_propose_space', () => {
 
     expect(result.isError).toBeUndefined();
     expect(requests.every((request) => request.method === 'GET')).toBe(true);
-    const input = jest.mocked(createChangeRequest).mock.calls[0]?.[1];
+    const input = jest.mocked(createChangeRequest).mock.calls[0]?.[0];
     expect(input).toMatchObject({
       kind: 'create_space',
       cloudId: 'cloud-1',
@@ -465,7 +465,7 @@ describe('jira_admin_propose_space', () => {
       likeSpace: 'OPS',
     });
     expect(result.isError).toBeUndefined();
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1]).toMatchObject({
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0]).toMatchObject({
       title: 'New space FIN “Finance”, like OPS',
       payload: { source: { kind: 'space', key: 'OPS' } },
     });

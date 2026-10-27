@@ -294,8 +294,8 @@ export function registerAdminReadTools(
       if (!db) return errText('Could not read your change requests.');
       const everyone = args.everyone === true && context.roles?.includes(ROLE_OPERATOR) === true;
       const found = everyone
-        ? await listAllChangeRequests(db, { limit: args.limit ?? 20 })
-        : await listChangeRequests(db, context.subject, {
+        ? await listAllChangeRequests({ limit: args.limit ?? 20 })
+        : await listChangeRequests(context.subject, {
             limit: args.limit ?? 20,
             pendingOnly: args.pendingOnly,
           });

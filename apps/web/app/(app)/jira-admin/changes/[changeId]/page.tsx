@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -52,13 +52,10 @@ export default async function JiraAdminChangePage({
     redirect(signInUrl(`/jira-admin/changes/${changeId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
   // The requester sees their own and an operator sees everyone's; to anyone
   // else a request reads as not found.
   const operator = session.roles.includes(ROLE_OPERATOR);
-  const change = await getChangeRequestById(db, changeId);
+  const change = await getChangeRequestById(changeId);
   if (!change || !mayView(change, { subject: session.subject, operator })) notFound();
   const isOwner = change.subject === session.subject;
   const isRequest = change.kind === REQUEST_KIND;
@@ -75,13 +72,9 @@ export default async function JiraAdminChangePage({
       : (approver?.displayName ?? approver?.email ?? change.approvedBy)
     : null;
 
-  const agent = change.agentId
-    ? await db
-        .selectFrom('agents')
-        .select('name')
-        .where('id', '=', change.agentId)
-        .executeTakeFirst()
-    : undefined;
+  const agentName = change.agentId
+    ? await getDataStore().adminChangeQueue.agentName(change.agentId)
+    : null;
 
   const state = stateOf(change);
   const { operations, reach, siteWide, applyNote } = isRequest
@@ -93,7 +86,7 @@ export default async function JiraAdminChangePage({
   // Apply is off before anyone presses it.
   const gate =
     state === 'pending' && operator && !isRequest
-      ? await applyGate(db, session.subject, session.roles, change)
+      ? await applyGate(session.subject, session.roles, change)
       : null;
 
   return (
@@ -130,8 +123,8 @@ export default async function JiraAdminChangePage({
           {isRequest ? 'Requested' : 'Proposed'} <LocalTime at={change.createdAt} /> by{' '}
           {requesterName}
           {change.agentId
-            ? agent
-              ? `, through ${isOwner ? 'your' : 'their'} agent “${agent.name}”`
+            ? agentName
+              ? `, through ${isOwner ? 'your' : 'their'} agent “${agentName}”`
               : `, through ${isOwner ? 'one of your agents' : 'an agent'}`
             : ''}
           {change.siteUrl ? ` for ${change.siteUrl}` : ''}.

@@ -1,7 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -32,12 +31,9 @@ export default async function SalesforceAdminChangesPage(): Promise<React.ReactN
   }
 
   const operator = session.roles.includes(ROLE_OPERATOR);
-  const dbResult = getDatabase();
-  const changes = !dbResult.ok
-    ? []
-    : operator
-      ? await listAllChangeRequests(dbResult.val, { limit: 100 })
-      : await listChangeRequests(dbResult.val, session.subject, { limit: 50 });
+  const changes = operator
+    ? await listAllChangeRequests({ limit: 100 })
+    : await listChangeRequests(session.subject, { limit: 50 });
   const people = new Map<string, string>();
   if (operator) {
     for (const subject of new Set(changes.map((change) => change.subject))) {

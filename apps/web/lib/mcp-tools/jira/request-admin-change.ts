@@ -66,7 +66,7 @@ export function registerRequestAdminChangeTool(server: McpServer, context: MCPTo
       }
       const dbResult = getDatabase();
       if (!dbResult.ok) return textError('Database unavailable; nothing was requested.');
-      const request = await createRequest(dbResult.val, {
+      const request = await createRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId,
