@@ -29,16 +29,20 @@ test('the shell carries the person and moves between pages from the menu', async
   page,
   person,
 }, testInfo) => {
-  await person.seed({
-    agent_notifications: [
-      {
-        id: crypto.randomUUID(),
-        subject: person.subject,
-        kind: 'agent_run',
-        headline: 'Weekly digest finished',
-        agent_name: 'Digest',
-      },
-    ],
+  await person.store.notifications.insert({
+    id: crypto.randomUUID(),
+    subject: person.subject,
+    kind: 'agent_run',
+    category: null,
+    connector: null,
+    tool: null,
+    entity: null,
+    headline: 'Weekly digest finished',
+    refUrl: null,
+    agentId: null,
+    agentName: 'Digest',
+    runId: null,
+    meta: null,
   });
 
   await page.goto('/about');
@@ -68,9 +72,7 @@ test('the shell carries the person and moves between pages from the menu', async
 });
 
 test('a saved theme preference sets the page theme', async ({ page, person }) => {
-  await person.seed({
-    user_preferences: [{ subject: person.subject, key: 'theme', value: { mode: 'dark' } }],
-  });
+  await person.store.userPreferences.set(person.subject, 'theme', { mode: 'dark' });
   await page.goto('/about');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });

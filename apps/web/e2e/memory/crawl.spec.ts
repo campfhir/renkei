@@ -7,8 +7,25 @@
  * a row the store does not answer for fails here.
  */
 
+import type { APIRequestContext } from '@playwright/test';
+import type { TableRows } from '@renkei/db';
 import { CRAWL_PAGES } from './crawl';
 import { test, expect } from './fixtures';
+import { DATA_STORE_HEADERS, DATA_STORE_URL } from '../support/store';
+
+/**
+ * The crawl's fixtures are still raw table rows (./crawl/*.ts), posted to
+ * the test route's table-row path; `replace` overwrites rows a reused
+ * server may still hold. They move to store calls (e2e/support/store.ts)
+ * in phase 2, and this path goes with them.
+ */
+async function seedTableRows(request: APIRequestContext, rows: TableRows): Promise<void> {
+  const response = await request.post(`${DATA_STORE_URL}?replace=1`, {
+    headers: DATA_STORE_HEADERS,
+    data: rows,
+  });
+  expect(response.status(), await response.text()).toBe(200);
+}
 
 // An operator sees every page, the console included.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -22,11 +39,8 @@ test.beforeEach(({}, testInfo) => {
 });
 
 for (const crawl of CRAWL_PAGES) {
-  test(`${crawl.path} renders from the data store alone`, async ({ page, person }) => {
-    // Replace: a reused server may still hold an earlier run's org-wide rows.
-    if (crawl.seed) {
-      await person.seed(crawl.seed(person.subject, person.sessionId), { replace: true });
-    }
+  test(`${crawl.path} renders from the data store alone`, async ({ page, request, person }) => {
+    if (crawl.seed) await seedTableRows(request, crawl.seed(person.subject, person.sessionId));
 
     const response = await page.goto(crawl.path);
     expect(response?.status() ?? 0, `${crawl.path} answered`).toBeLessThan(500);

@@ -11,7 +11,7 @@ Whenever a change touches UI (a page, a form, a component with visible
 output), add or update Playwright coverage in `apps/web/e2e/*.spec.ts` as
 part of that change, and actually run it — don't just write the spec and
 assume it passes. This is the repo's established pattern (see
-`voice.spec.ts`, `preferences-widths.spec.ts`); `llm-models.spec.ts` is a
+`voice.spec.ts`, `preferences-widths.spec.ts`); `memory/llm-models.spec.ts` is a
 worked example of the full shape: empty state, filling a form, mocking a
 network call with `page.route`, a saved-state screenshot, and a mobile
 viewport pass.
@@ -48,7 +48,7 @@ viewport pass.
 - **For mobile, just resize the viewport** — `page.setViewportSize({width:
 390, height: 844})` on the pinned Chromium executable
   (`/opt/pw-browsers/chromium-1194/chrome-linux/chrome`), the way
-  `preferences-widths.spec.ts` and `llm-models.spec.ts` do it. Do NOT reach
+  `preferences-widths.spec.ts` and `memory/llm-models.spec.ts` do it. Do NOT reach
   for the `mobile` project (`devices['iPhone 14']`) for a routine UI check:
   that's a full device descriptor asking for WebKit, which isn't installed
   in this environment (see `voice.spec.ts`'s note on the same friction), so
@@ -61,15 +61,17 @@ viewport pass.
   just reads seeded fixtures), give it its own person rather than reusing
   `e2e/seed.ts`'s shared session — Playwright runs projects concurrently
   against the same dev database, and a shared subject races on uniqueness
-  constraints and on any "empty state" assertion. `llm-models.spec.ts`
-  derives a deterministic subject/session per project name for exactly
-  this reason; copy that pattern rather than the shared-session one when
-  your spec writes data, and clear your person's rows with
+  constraints and on any "empty state" assertion. On the memory suite the
+  `person` fixture (`e2e/memory/fixtures.ts`) is that person, forgotten
+  after the test; in the Postgres suite derive a deterministic
+  subject/session per project name and clear your person's rows with
   `deleteRowsOf(client, subject, tables)` from `e2e/seed.ts`. There is one
   organization per deployment, so organization-wide tables (`settings`,
   `connector_configs`, `llm_model_configs`, `oauth_clients`) are shared by
   every spec in a run: a spec that writes one of them cannot assume an
-  empty state and should keep its own writes distinctive.
+  empty state and should keep its own writes distinctive
+  (`memory/llm-models.spec.ts` tags its rows, scopes assertions to them and
+  deletes them afterwards).
 
 # The data store seam: pages read through `getDataStore()`
 
@@ -115,16 +117,20 @@ cascades behave as they do in the database.
   write any more, such as a legacy row from before a migration.
 - **The memory UI suite** (`apps/web/playwright.memory.config.ts`, specs
   in `apps/web/e2e/memory/`) runs the web app with
-  `RENKEI_DATA_STORE=memory` and no Postgres or delegate:
-  `pnpm --filter renkei e2e:memory`. Specs get a signed-in person from
-  `e2e/memory/fixtures.ts` and add rows with `person.seed({ table: [rows] })`
-  (the same columns `e2e/seed.ts` writes to Postgres), posted to the
-  test-only `app/api/test/data-store` route (404 unless the memory store is
-  active and the seed token matches). It runs in CI. Prefer it for layout,
-  navigation and page behavior; keep the full suite for what needs the
-  delegate, the stubs or a real chat turn. `E2E_MEMORY_PORT` moves its
-  server; on a box whose preinstalled Chromium doesn't match Playwright's,
-  set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+  `RENKEI_DATA_STORE=memory` and no Postgres:
+  `pnpm --filter renkei e2e:memory`. The server runs the real delegate in its own process
+  (`lib/memory-delegate.ts`, on the same store), and the config starts the
+  sandbox and MCP stubs beside it. Specs get a signed-in, really enrolled
+  person from `e2e/memory/fixtures.ts` and seed with the store methods the
+  app writes with — `await person.store.agents.create({...})`, or
+  `dataStore(request)` / `dataStoreBatch(request)` from
+  `e2e/support/store.ts` — posted to the test-only `app/api/test/data-store`
+  route (404 unless the memory store is active and the seed token matches);
+  never raw rows or SQL. `e2e/support/` holds the shared helpers (person,
+  keys, the shared fixtures `e2e/seed.ts` wrote, written once per server by
+  its global setup). It runs in CI. `E2E_MEMORY_PORT` moves its server; on
+  a box whose preinstalled Chromium doesn't match Playwright's, set
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
 - Outside the web app's memory mode `getDataStore()` is the Postgres
   store, so workers and shared packages go through it like the web app.
   What only Postgres can do stays inside a store method: queue claims

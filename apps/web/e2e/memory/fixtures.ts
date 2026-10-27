@@ -1,122 +1,43 @@
 /**
- * The memory suite's one fixture: a signed-in person of the spec's own.
+ * The memory suite's one fixture: a signed-in person of the test's own.
  *
  * Each test gets a subject and session nobody else has (derived from the
- * project and the test's id), seeded into the server's in-memory store
- * through app/api/test/data-store, and forgotten again afterwards — so
- * tests run in parallel, across projects, without racing on one another's
- * rows or "empty" states. `seed()` adds whatever else the test needs, as
- * table rows — the same columns e2e/seed.ts writes to Postgres
- * (`{ agent_notifications: [{ id, subject, kind, headline, … }] }`); the
- * memory tables fill defaults and refuse what Postgres would.
+ * project and a random suffix), written through the store methods sign-in
+ * writes and ENROLLED through the delegate the memory server runs
+ * in-process (e2e/support/person.ts) — the KeyGuard then has nothing to
+ * show, because the person really is enrolled and delegated. The person is
+ * forgotten again afterwards, so tests run in parallel, across projects,
+ * without racing on one another's rows or "empty" states.
  *
- * The delegate is the one service the shell calls that the memory store
- * does not replace: /api/keys is answered here, at the browser edge, as
- * "enrolled, and this session already delegated" — the state in which the
- * KeyGuard has nothing to show.
+ * `person.store` is the data store as the app sees it (e2e/support/store.ts):
+ * seed what the test needs with the methods the app writes it with —
+ * `await person.store.notifications.insert({ … })`.
  */
 
 import { randomUUID } from 'node:crypto';
-import { test as base, expect, type APIRequestContext } from '@playwright/test';
-import type { MemorySeed } from '@renkei/db';
-import { MEMORY_BASE_URL, MEMORY_SEED_TOKEN } from './constants';
+import { test as base, expect } from '@playwright/test';
+import { createPerson, signIn, type Person } from '../support/person';
+import { dataStore, forgetSubject, type RemoteDataStore } from '../support/store';
 
-export interface MemoryPerson {
-  subject: string;
-  sessionId: string;
-  displayName: string;
-  email: string;
-  /**
-   * Add table rows to the store; ids and subjects are the caller's to
-   * choose. `replace` overwrites rows whose primary key is already stored
-   * (org-wide fixtures a reused server may already hold).
-   */
-  seed(fixtures: MemorySeed, options?: { replace?: boolean }): Promise<void>;
+export interface MemoryPerson extends Person {
+  /** The server's data store, every method a promise. */
+  store: RemoteDataStore;
 }
-
-const SEED_URL = `${MEMORY_BASE_URL}/api/test/data-store`;
-const SEED_HEADERS = { 'x-renkei-seed-token': MEMORY_SEED_TOKEN };
-
-async function seedStore(
-  request: APIRequestContext,
-  fixtures: MemorySeed,
-  options: { replace?: boolean } = {}
-): Promise<void> {
-  const url = options.replace ? `${SEED_URL}?replace=1` : SEED_URL;
-  const response = await request.post(url, { headers: SEED_HEADERS, data: fixtures });
-  expect(response.status(), await response.text()).toBe(200);
-}
-
-/** The KeyGuard's quiet state; see components/key-guard.tsx. */
-const QUIET_KEY_STATUS = {
-  enrolled: true,
-  legacy: false,
-  legacyNeedsPassphrase: false,
-  publicKey: null,
-  wrappedPrivateKey: null,
-  wrappedAutomationKey: null,
-  version: 1,
-  enrolledAt: '2026-01-01T00:00:00.000Z',
-  instances: [],
-  instanceSigningKey: null,
-  instancesSignature: null,
-  sessionDelegated: true,
-  instancesMissingSession: [],
-  automationInstances: [],
-  automationUntil: null,
-  automationDays: 30,
-  pendingDevices: [],
-  unavailable: false,
-};
 
 export const test = base.extend<{ person: MemoryPerson; roles: string[] }>({
   roles: [['renkei-user'], { option: true }],
   person: async ({ page, request, roles }, use, testInfo) => {
     const suffix = randomUUID().slice(0, 8);
-    const subject = `memory-${testInfo.project.name}-${suffix}@example.test`;
-    const sessionId = randomUUID();
-    const displayName = `Memory Tester ${suffix}`;
-
-    await seedStore(request, {
-      sessions: [
-        {
-          id: sessionId,
-          subject,
-          roles,
-          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-        },
-      ],
-      identities: [{ subject, email: subject, display_name: displayName }],
-      // No tour stealing focus mid-test.
-      user_preferences: [{ subject, key: 'coach_marks', value: { autoStart: false } }],
+    const person = await createPerson(request, {
+      subject: `memory-${testInfo.project.name}-${suffix}@example.test`,
+      displayName: `Memory Tester ${suffix}`,
+      roles,
     });
+    await signIn(page.context(), person);
 
-    await page.context().addCookies([
-      {
-        name: 'renkei_session',
-        value: sessionId,
-        domain: '127.0.0.1',
-        path: '/',
-        httpOnly: true,
-        secure: false,
-        sameSite: 'Lax',
-      },
-    ]);
-    await page.route('**/api/keys', (route) =>
-      route.request().method() === 'GET'
-        ? route.fulfill({ json: QUIET_KEY_STATUS })
-        : route.fulfill({ status: 204 })
-    );
+    await use({ ...person, store: dataStore(request) });
 
-    await use({
-      subject,
-      sessionId,
-      displayName,
-      email: subject,
-      seed: (fixtures, options) => seedStore(request, fixtures, options),
-    });
-
-    await request.delete(SEED_URL, { headers: SEED_HEADERS, data: { subject } });
+    await forgetSubject(request, person.subject);
   },
 });
 
