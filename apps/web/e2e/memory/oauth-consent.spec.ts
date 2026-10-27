@@ -7,17 +7,17 @@
  *
  * The client registers itself the way an MCP client does (dynamic
  * registration, e2e/support/mcp-client.ts — the org setting that opens it
- * is put back as it was), under a name of this test's own. The person who
- * consents is the test's own too, with a name of its own, so the audit
+ * is put back as it was), once per project, under a name of its own. The person who
+ * consents is the test's own, with a name of its own, so the audit
  * trail's lines (read on the Audit page by an operator) are theirs alone.
  * Pinned Chromium; mobile is a viewport resize.
  */
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { Page, TestInfo } from '@playwright/test';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { createPerson, signIn } from '../support/person';
-import { authorizeUrl, exchangeCode, registerClient } from '../support/mcp-client';
+import { authorizeUrl, exchangeCode, registerClient, type McpClient } from '../support/mcp-client';
 import { MEMORY_BASE_URL } from './constants';
 import { test, expect } from './fixtures';
 
@@ -27,6 +27,26 @@ const CALLBACK = 'http://127.0.0.1:47391/callback';
 
 function tagOf(testInfo: TestInfo): string {
   return `${testInfo.project.name.replace('desktop-', '')}-${randomUUID().slice(0, 6)}`;
+}
+
+/**
+ * One registered client per project per worker, shared by this file's
+ * tests: registration is rate-limited (ten per caller per ten minutes,
+ * app/api/mcp/oauth/register), and a run that registered per test would
+ * leave the next run on the same server refused.
+ */
+const clients = new Map<string, Promise<McpClient>>();
+function clientFor(request: APIRequestContext, testInfo: TestInfo): Promise<McpClient> {
+  const key = testInfo.project.name;
+  let client = clients.get(key);
+  if (!client) {
+    const name = `Claude Code (e2e ${tagOf(testInfo)})`;
+    client = createPerson(request, { roles: ['renkei-user', 'renkei-operator'] }).then((operator) =>
+      registerClient(request, operator, name, CALLBACK)
+    );
+    clients.set(key, client);
+  }
+  return client;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -56,12 +76,12 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
   browser,
 }, testInfo) => {
   const tag = tagOf(testInfo);
-  const clientName = `Claude Code (e2e ${tag})`;
   const personName = `E2E Person ${tag}`;
   const operator = await createPerson(request, { roles: ['renkei-user', 'renkei-operator'] });
   const person = await createPerson(request, { displayName: personName });
   await signIn(page.context(), person);
-  const client = await registerClient(request, operator, clientName, CALLBACK);
+  const client = await clientFor(request, testInfo);
+  const clientName = client.clientName;
   const callback = await interceptCallback(page);
 
   // Deny first: the client hears access_denied and nothing was minted.
@@ -137,13 +157,7 @@ test('a request without PKCE never reaches the consent page', async ({
   request,
   person: _person,
 }, testInfo) => {
-  const operator = await createPerson(request, { roles: ['renkei-user', 'renkei-operator'] });
-  const client = await registerClient(
-    request,
-    operator,
-    `No-PKCE client ${tagOf(testInfo)}`,
-    CALLBACK
-  );
+  const client = await clientFor(request, testInfo);
 
   // Asked the way the browser would (same cookies), but without following
   // the redirect: what matters is where the server sends it and with what.

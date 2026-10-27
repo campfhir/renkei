@@ -153,7 +153,9 @@ async function chatOf(page: Page, modelId: string, title: string): Promise<strin
   expect(asked.status(), await asked.text()).toBe(202);
   await expect(async () => {
     await page.goto(`/chat/${chatId}`);
-    await expect(page.getByText(LLM_STUB_REPLY)).toBeVisible({ timeout: 2_000 });
+    await expect(page.getByRole('main').getByText(LLM_STUB_REPLY).first()).toBeVisible({
+      timeout: 2_000,
+    });
   }).toPass({ timeout: 30_000 });
   return chatId;
 }
@@ -161,8 +163,8 @@ async function chatOf(page: Page, modelId: string, title: string): Promise<strin
 async function expectChatReadable(page: Page, chatId: string, title: string): Promise<void> {
   await page.goto(`/chat/${chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
-  await expect(page.getByText(PROMPT_TEXT)).toBeVisible();
-  await expect(page.getByText(LLM_STUB_REPLY)).toBeVisible();
+  await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible();
+  await expect(page.getByRole('main').getByText(LLM_STUB_REPLY).first()).toBeVisible();
   await expect(page.getByTestId('chat-key-unavailable-notice')).toHaveCount(0);
 }
 
@@ -296,9 +298,9 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
     await dropDelegation(page);
     await page.goto(`/chat/${chatId}`);
     const notice = page.getByTestId('chat-key-unavailable-notice');
-    await expect(notice).toBeVisible({ timeout: 30_000 });
-    await expect(notice).toContainText('not connected to this session');
-    await expect(page.getByText(PROMPT_TEXT)).toHaveCount(0);
+    await expect(notice.first()).toBeVisible({ timeout: 30_000 });
+    await expect(notice.first()).toContainText('not connected to this session');
+    await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toHaveCount(0);
     await shot(page, testInfo, 'keys-05-chat-not-connected');
     const needsKey = page.getByTestId('key-modal-needs-key');
     await expect(needsKey).toBeVisible();
@@ -306,7 +308,9 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
     await page.getByTestId('key-unlock-submit').click();
     await expect(page.getByTestId('key-unlock')).toHaveCount(0);
     // The page refreshes its server data once the key is back; the chat opens.
-    await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(notice).toHaveCount(0);
 
     // Rotation: a new key, shown once; the chat still opens afterwards.
@@ -335,7 +339,9 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
     await unlock.getByLabel('Type the key you wrote down').fill(newKey);
     await page.getByTestId('key-unlock-submit').click();
     await expect(unlock).toHaveCount(0);
-    await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
+      timeout: 30_000,
+    });
   } finally {
     await removeModel(page.request, modelId).catch(() => removeModel(page.request, modelId));
   }
@@ -362,7 +368,9 @@ test('a key service this browser has not met is confirmed by fingerprint before 
     await expect(page.getByTestId('key-modal-needs-key')).toBeVisible({ timeout: 30_000 });
     await page.getByTestId('key-unlock').getByLabel('Type the key you wrote down').fill(userKey);
     await page.getByTestId('key-unlock-submit').click();
-    await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
 
     // The web app now claims one more instance, with a key the deployment's
@@ -400,7 +408,9 @@ test('a key service this browser has not met is confirmed by fingerprint before 
     await page.unroute(`**/api/keys`);
     await recheck(page);
     await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
-    await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
+      timeout: 30_000,
+    });
   } finally {
     await removeModel(page.request, modelId).catch(() => removeModel(page.request, modelId));
   }

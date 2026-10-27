@@ -18,6 +18,7 @@ import { MEMORY_BASE_URL } from '../memory/constants';
 import type { Person } from './person';
 
 export interface McpClient {
+  clientName: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
@@ -78,7 +79,7 @@ export async function registerClient(
       if (typeof clientId !== 'string' || typeof clientSecret !== 'string') {
         throw new Error(`registration answered ${JSON.stringify(body)}`);
       }
-      return { clientId, clientSecret, redirectUri };
+      return { clientName, clientId, clientSecret, redirectUri };
     }
     throw new Error('dynamic client registration stayed closed');
   } finally {
