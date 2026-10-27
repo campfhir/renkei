@@ -5,12 +5,7 @@
  * a cursor that restarts an enumeration instead of resuming it.
  */
 
-// The data store is the real memory one; only the pg handle log-actor.ts
-// still reads is stubbed away (unavailable — the log line names the account).
-jest.mock('@renkei/db', () => ({
-  ...jest.requireActual('@renkei/db'),
-  getDatabase: () => ({ ok: false, err: { type: 'NO_DATABASE' } }),
-}));
+// The data store is the real memory one, registered per test below.
 jest.mock('@renkei/knowledge', () => ({ readObjectMetadataBatch: jest.fn() }));
 jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 jest.mock('@renkei/connector-microsoft', () => ({

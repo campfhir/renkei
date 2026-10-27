@@ -8,7 +8,7 @@
 
 import type { ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import { decrypt, parseEncryptionKey } from '@renkei/crypto';
 import {
   createServer,
@@ -108,8 +108,6 @@ describeDb('mcp/prepare', () => {
   }
 
   async function makeServer(slug: string, authMode: 'oauth' | 'none' = 'oauth') {
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
     const made = await createServer({
       slug,
       name: slug,
@@ -145,9 +143,8 @@ describeDb('mcp/prepare', () => {
   });
 
   afterAll(async () => {
-    const db = getDatabase();
-    if (db.ok) for (const id of created) await deleteServer(id);
-    await closeDatabase();
+    for (const id of created) await deleteServer(id);
+    await closeDataStore();
   });
 
   it('discovers the authorization server, registers Renkei, and seals the issued secret', async () => {
@@ -170,8 +167,6 @@ describeDb('mcp/prepare', () => {
       grant_types: ['authorization_code', 'refresh_token'],
     });
 
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
     const stored = await getServer(server.id);
     expect(stored.ok && stored.val?.clientId).toBe('registered-client');
     expect(stored.ok && stored.val?.oauth?.tokenEndpoint).toBe(`${AUTH}/token`);

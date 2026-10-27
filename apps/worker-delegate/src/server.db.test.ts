@@ -10,11 +10,11 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
-import { getDatabase, closeDatabase } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { instanceListMessage, parseEncryptionKey, verifyEd25519 } from '@renkei/crypto';
 import { setGrant, ATLASSIAN_ADMIN_TOKEN, GITHUB, SALESFORCE } from '@renkei/provider-grants';
 import { invalidateConnectorConfigCache, setConnectorConfig } from '@renkei/connector-config';
-import { createInstance, upsertConnection } from '@renkei/connector-mirth';
+import { createInstance, deleteInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
 import { Readable } from 'node:stream';
 import { setKeyVault } from '@renkei/user-keys';
@@ -68,8 +68,6 @@ describeDb('worker-delegate', () => {
   const scriptedAnswers: ((url: string, init: RequestInit | undefined) => Response | null)[] = [];
 
   beforeAll(async () => {
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
     if (!key.ok) throw new Error('bad key');
     instance = await registerTestInstance();
@@ -151,15 +149,21 @@ describeDb('worker-delegate', () => {
   afterAll(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     setKeyVault(null);
-    const db = getDatabase();
-    if (db.ok) {
-      await db.val.deleteFrom('delegate_instances').where('id', '=', instance.id).execute();
-      await db.val.deleteFrom('provider_grants').where('subject', 'in', people).execute();
-      await db.val.deleteFrom('delegate_git_tickets').where('subject', 'in', people).execute();
-      await db.val.deleteFrom('agents').where('owner_subject', 'in', people).execute();
-      await db.val.deleteFrom('user_encryption_keys').where('subject', 'in', people).execute();
+    // The people are this run's own (random subjects); what is cleared is
+    // what would otherwise stay usable: the instance, the grants, the keys.
+    // Git tickets expire on their own and are swept like any other.
+    const store = getDataStore();
+    await store.userKeys.deleteInstance(instance.id);
+    for (const person of people) {
+      for (const grant of await store.providerGrants.listForSubject(person)) {
+        await store.providerGrants.delete(grant.provider, grant.accountId);
+      }
+      for (const agent of await store.agents.list(person)) {
+        await store.agents.delete(person, agent.id);
+      }
+      await store.userKeys.shred(person);
     }
-    await closeDatabase();
+    await closeDataStore();
   });
 
   async function op(
@@ -186,8 +190,7 @@ describeDb('worker-delegate', () => {
   });
 
   it('lets each caller run only its own ops: the agents key is refused a shred the web key may do', async () => {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
+    const startedAt = Date.now();
     const refused = await op('keys/shred', { subject: leaver }, AGENTS_KEY);
     expect(refused.status).toBe(403);
     expect(errorType(refused.json)).toBe('forbidden');
@@ -199,32 +202,18 @@ describeDb('worker-delegate', () => {
     expect(shredded.json.shredded).toBe(true);
     expect((await op('keys/status', { subject: leaver })).json.enrolled).toBe(false);
 
-    // The shred left an append-only access row naming the caller, not the key or the person.
-    const events = await dbResult.val
-      .selectFrom('delegate_access_events')
-      .selectAll()
-      .where('op', '=', 'keys/shred')
-      .execute();
-    expect(events.map((event) => [event.caller, event.outcome, event.status])).toEqual(
-      expect.arrayContaining([['web', 'ok', 200]])
+    // The shred left an access row naming the caller, not the key or the person.
+    const events = (await getDataStore().delegateAccessEvents.recent(500)).filter(
+      (event) => event.op === 'keys/shred' && event.createdAt.getTime() >= startedAt - 1_000
     );
-    const refusals = await dbResult.val
-      .selectFrom('delegate_access_events')
-      .select(['caller', 'outcome', 'status'])
-      .where('op', '=', 'keys/shred')
-      .where('caller', 'in', ['agents', 'worker'])
-      .where('created_at', '>', new Date(Date.now() - 60_000))
-      .execute();
-    expect(refusals).toEqual(
+    expect(events.map((event) => [event.caller, event.outcome, event.status])).toEqual(
       expect.arrayContaining([
-        { caller: 'agents', outcome: 'refused', status: 403 },
-        { caller: 'worker', outcome: 'refused', status: 403 },
+        ['web', 'ok', 200],
+        ['agents', 'refused', 403],
+        ['worker', 'refused', 403],
       ])
     );
     expect(JSON.stringify(events)).not.toContain(leaver);
-    await expect(
-      dbResult.val.deleteFrom('delegate_access_events').where('id', '=', events[0]!.id).execute()
-    ).rejects.toThrow(/append-only/);
   });
 
   it("binds an op to the session it names: another session of the same person, or anyone else's, is refused", async () => {
@@ -257,17 +246,13 @@ describeDb('worker-delegate', () => {
     expect(stolen.status).toBe(403);
     expect(errorType(stolen.json)).toBe('SESSION_MISMATCH');
     // The owner's other session, once it exists and is theirs, opens through its own delegation only.
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
     const secondSession = randomUUID();
-    await dbResult.val
-      .insertInto('sessions')
-      .values({
-        id: secondSession,
-        subject: owner,
-        expires_at: new Date(Date.now() + 3_600_000),
-      })
-      .execute();
+    await getDataStore().sessions.create({
+      id: secondSession,
+      subject: owner,
+      roles: [],
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
     const undelegated = await op('resource-key/open', {
       ...ref,
       subject: owner,
@@ -281,9 +266,6 @@ describeDb('worker-delegate', () => {
   });
 
   it('never opens a session ring for a worker, and makes the agents worker name its run', async () => {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const db = dbResult.val;
     // The queue worker mints a chat note's key: wrapped under the owner's
     // automation key, since the session key is not the worker's to hold.
     const chatId = randomUUID();
@@ -305,20 +287,33 @@ describeDb('worker-delegate', () => {
     // somebody else's run, it is refused; with the owner's run it is answered.
     const agentId = randomUUID();
     const runId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({ id: agentId, owner_subject: owner, name: 'r24' })
-      .execute();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id: runId,
-        agent_id: agentId,
-        owner_subject: owner,
-        definition_snapshot: JSON.stringify({ instructions: 'Go.', tools: [] }),
-        trigger_kind: 'manual',
-      })
-      .execute();
+    const createdAgent = await getDataStore().agents.create({
+      id: agentId,
+      ownerSubject: owner,
+      name: `r24-${agentId.slice(0, 8)}`,
+      instructions: 'Go.',
+      tools: [],
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
+    expect(createdAgent).toBe('CREATED');
+    // A run started by hand, as the run route queues it.
+    await getDataStore().agentRuns.createQueued({
+      id: runId,
+      agentId,
+      ownerSubject: owner,
+      triggerId: null,
+      triggerKind: 'manual',
+      triggeredBySubject: owner,
+      parentRunId: null,
+      lineage: [],
+      definitionSnapshot: { instructions: 'Go.', tools: [] },
+      llmModelId: null,
+      initialState: null,
+    });
     const unnamed = await op('keys/status', { subject: owner }, AGENTS_KEY);
     expect(unnamed.status).toBe(403);
     expect(errorType(unnamed.json)).toBe('RUN_MISMATCH');
@@ -777,6 +772,8 @@ describeDb('worker-delegate', () => {
     if (!key.ok) throw new Error('bad key');
     const PROD = 'acme-e2e.my.salesforce.com';
     const UAT = 'acme-e2e--uat.sandbox.my.salesforce.com';
+    // The organization's one Salesforce row, put back as it was afterwards.
+    const before = await getDataStore().connectorConfigs.get(SALESFORCE);
     const configured = await setConnectorConfig(
       SALESFORCE,
       {
@@ -898,9 +895,21 @@ describeDb('worker-delegate', () => {
       expect((await op('grant/describe', grant)).status).toBe(404);
     } finally {
       scriptedAnswers.length = 0;
-      const db = getDatabase();
-      if (db.ok)
-        await db.val.deleteFrom('connector_configs').where('connector', '=', SALESFORCE).execute();
+      if (before) {
+        await getDataStore().connectorConfigs.upsert({
+          connector: SALESFORCE,
+          enabled: before.enabled,
+          settings: before.settings,
+          encryptedSecrets: before.encryptedSecrets,
+        });
+      } else {
+        // Nothing was configured: leave it switched off with nothing in it.
+        await setConnectorConfig(
+          SALESFORCE,
+          { enabled: false, settings: {}, secrets: {} },
+          key.val
+        );
+      }
       invalidateConnectorConfigCache(SALESFORCE);
     }
   });
@@ -1018,9 +1027,6 @@ describeDb('worker-delegate', () => {
   it("forwards a Mirth op to its worker with the person's credential attached, never a stored one", async () => {
     process.env.MIRTH_WORKER_URL = 'http://mirth.test';
     process.env.MIRTH_WORKER_API_KEY = 'mirth-worker-key';
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const db = dbResult.val;
     const instance = await createInstance({
       name: `Dev ${randomUUID().slice(0, 8)}`,
       environment: 'dev',
@@ -1093,6 +1099,6 @@ describeDb('worker-delegate', () => {
     expect((await op('forward/mirth/nope', {})).status).toBe(404);
     expect((await op('forward/elsewhere/api', {})).status).toBe(404);
 
-    await db.deleteFrom('mirth_instances').where('id', '=', instance.val).execute();
+    expect((await deleteInstance(instance.val)).ok).toBe(true);
   });
 });

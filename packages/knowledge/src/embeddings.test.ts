@@ -3,10 +3,6 @@
  * the vector literal pgvector receives.
  */
 
-// embeddings.ts → connector-config → @renkei/db → kysely (ESM, unloadable
-// under jest); the client itself never touches the database.
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-
 import { OpenAiCompatibleEmbeddings, vectorLiteral, parseMaxDistance } from './embeddings';
 
 function jsonResponse(status: number, body: unknown): Response {
