@@ -1,6 +1,6 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { contentWatchFromRow, REBUILD_RESET } from './record';
+import { contentWatchFromRow, contentWatchSyncStateFromRow, REBUILD_RESET } from './record';
 import type { ContentWatchStore } from './types';
 
 export function postgresContentWatches(db: () => Kysely<DB>): ContentWatchStore {
@@ -160,6 +160,43 @@ export function postgresContentWatches(db: () => Kysely<DB>): ContentWatchStore 
       const counts = (rows: { scope: string | null; objects: string }[]) =>
         rows.map((row) => ({ scope: row.scope, objects: Number(row.objects) }));
       return { indexed: counts(indexed), queued: counts(queued) };
+    },
+    async getSyncState(id) {
+      const row = await db()
+        .selectFrom('content_watches')
+        .select([
+          'cursor',
+          'sync_status',
+          'last_synced_at',
+          'last_run_items',
+          'total_items',
+          'last_error',
+        ])
+        .where('id', '=', id)
+        .executeTakeFirst();
+      return row ? contentWatchSyncStateFromRow(row) : null;
+    },
+    async recordRound(id, round) {
+      await db()
+        .updateTable('content_watches')
+        .set({
+          cursor: round.cursor,
+          last_synced_at: sql<Date>`NOW()`,
+          last_run_items: round.items,
+          total_items: sql<number>`total_items + ${round.items}`,
+          sync_status: round.syncStatus,
+          last_error: null,
+          updated_at: sql<Date>`NOW()`,
+        })
+        .where('id', '=', id)
+        .execute();
+    },
+    async restartCursor(id) {
+      await db()
+        .updateTable('content_watches')
+        .set({ cursor: null, sync_status: 'syncing', updated_at: sql<Date>`NOW()` })
+        .where('id', '=', id)
+        .execute();
     },
   };
 }

@@ -294,4 +294,50 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
       ];
     },
   },
+  {
+    method: 'providerGrants.findByMetadataText',
+    name: 'exact match on one provider, first by account id; misses and other keys',
+    fixture: {
+      provider_grants: [
+        grant('zoom', 'z9', 'ann', { metadata: JSON.stringify({ email: 'host@x.test' }) }),
+        grant('zoom', 'z2', 'bob', { metadata: JSON.stringify({ email: 'host@x.test' }) }),
+        grant('zoom', 'z3', 'carol', { metadata: JSON.stringify({ email: 'Host@x.test' }) }),
+        grant('zoom', 'z4', 'dan', { metadata: JSON.stringify({ other: 'host@x.test' }) }),
+        grant('webex', 'w1', 'erin', { metadata: JSON.stringify({ email: 'solo@x.test' }) }),
+        grant('zoom', 'z5', 'fay'),
+      ],
+    },
+    run: async (store) => [
+      await store.providerGrants.findByMetadataText('zoom', 'email', 'host@x.test'),
+      await store.providerGrants.findByMetadataText('zoom', 'email', 'Host@x.test'),
+      await store.providerGrants.findByMetadataText('zoom', 'email', 'solo@x.test'),
+      await store.providerGrants.findByMetadataText('webex', 'email', 'solo@x.test'),
+      await store.providerGrants.findByMetadataText('zoom', 'email', 'nobody@x.test'),
+    ],
+  },
+  {
+    method: 'providerGrants.findByHolderEmail',
+    name: "the holder's grant on that provider, first by account id; others and unknown emails miss",
+    fixture: {
+      identities: [
+        { subject: 'ann', email: 'ann@x.test' },
+        { subject: 'bob', email: 'bob@x.test' },
+        { subject: 'carol', email: 'carol@x.test' },
+      ],
+      provider_grants: [
+        grant('webex-user', 'w9', 'ann'),
+        grant('webex-user', 'w2', 'ann'),
+        grant('webex-user', 'w5', 'bob'),
+        grant('zoom', 'z1', 'carol'),
+        grant('webex-user', 'w0', null),
+      ],
+    },
+    run: async (store) => [
+      await store.providerGrants.findByHolderEmail('webex-user', 'ann@x.test'),
+      await store.providerGrants.findByHolderEmail('webex-user', 'bob@x.test'),
+      await store.providerGrants.findByHolderEmail('webex-user', 'carol@x.test'),
+      await store.providerGrants.findByHolderEmail('webex-user', 'Ann@x.test'),
+      await store.providerGrants.findByHolderEmail('webex-user', 'nobody@x.test'),
+    ],
+  },
 ];

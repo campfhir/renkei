@@ -27,8 +27,8 @@
  *     lets the embedding worker scale to N instances.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
+// The handlers read and write through a real memory data store.
+jest.mock('@renkei/db', () => ({ ...jest.requireActual('@renkei/db'), getDatabase: jest.fn() }));
 jest.mock('@renkei/settings', () => ({
   getPublicBaseUrl: jest.fn(() => 'https://renkei.example.com'),
 }));
@@ -196,7 +196,9 @@ let mockEnqueueImpl: (
   orderingKey: string | null
 ) => Promise<void>;
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { createMemoryDataStore, registerDataStore, resetDataStore } =
+  jest.requireActual<typeof import('@renkei/db')>('@renkei/db');
+const INBOX_ROW = '00000000-0000-4000-8000-000000000001';
 const { resolveEmbeddingProvider: mockResolveEmbeddingProvider } = jest.requireMock<{
   resolveEmbeddingProvider: jest.Mock;
 }>('@renkei/knowledge');
@@ -244,42 +246,22 @@ function hungEmbedder(): { embedder: Embedder; release: (result: EmbedResult) =>
   };
 }
 
-/** Shared DB stub: dedup misses, inserts and updates recorded. */
-function stubDb(state: {
-  inserted: Array<Record<string, unknown>>;
-  updates: Array<Record<string, unknown>>;
-}): void {
-  const missChain = {
-    select: () => missChain,
-    where: () => missChain,
-    executeTakeFirst: async () => undefined,
-  };
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: () => missChain,
-      insertInto: () => ({
-        values: (row: Record<string, unknown>) => ({
-          execute: async () => {
-            state.inserted.push(row);
-            return [];
-          },
-        }),
-      }),
-      updateTable: (table: string) => ({
-        set: (values: Record<string, unknown>) => {
-          const chain = {
-            where: () => chain,
-            execute: async () => [],
-            executeTakeFirst: async () => {
-              state.updates.push({ table, ...values });
-              return { numUpdatedRows: BigInt(1) };
-            },
-          };
-          return chain;
-        },
-      }),
-    },
+/** A fresh memory store holding the one Microsoft inbox row the delta rounds advance. */
+async function registerStore(): Promise<void> {
+  const store = createMemoryDataStore();
+  registerDataStore(store);
+  await store.seed({
+    webhook_subscriptions: [
+      {
+        id: INBOX_ROW,
+        provider: 'microsoft',
+        account_id: 'acct-1',
+        resource: "me/mailFolders('inbox')/messages",
+        subscription_id: 'graph-sub-1',
+        client_state: 'state',
+        delta_link: 'delta-1',
+      },
+    ],
   });
 }
 
@@ -347,7 +329,7 @@ function registerAllHandlers(handled: Handled[]): void {
   // interactive-latency stream here, not a saturation source.
   registerHandler('microsoft', 'change-notification', async () => {
     await runSubscriptionSync(microsoftAccess(), {
-      id: 'sub-row-1',
+      id: INBOX_ROW,
       resource: "me/mailFolders('inbox')/messages",
       subscription_id: 'graph-sub-1',
       client_state: 'state',
@@ -417,18 +399,20 @@ function insertMicrosoft(events: InMemoryQueue): void {
   });
 }
 
-let dbState: { inserted: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>> };
 let handled: Handled[];
 let events: InMemoryQueue;
 let embedding: InMemoryQueue;
 
-beforeEach(() => {
+afterEach(() => {
+  resetDataStore();
+});
+
+beforeEach(async () => {
   jest.clearAllMocks();
-  dbState = { inserted: [], updates: [] };
+  await registerStore();
   handled = [];
   events = new InMemoryQueue();
   embedding = new InMemoryQueue();
-  stubDb(dbState);
   registerAllHandlers(handled);
   mockEnqueueImpl = async (type, payload, orderingKey) => {
     // Mirrors the real enqueueKnowledgeEvent's payload encryption too — the

@@ -120,4 +120,22 @@ export interface ProviderGrantStore {
   /** When the lock was taken, or null when nobody holds it. */
   findRefreshLock(provider: string, accountId: string): Promise<Date | null>;
   releaseRefreshLock(provider: string, accountId: string): Promise<void>;
+
+  /**
+   * The first grant on `provider` (by account id) whose `metadata ->> key`
+   * is exactly `value`; null when there is none. A Zoom delivery that names
+   * only its host's email finds the host's grant this way.
+   */
+  findByMetadataText(
+    provider: string,
+    key: string,
+    value: string
+  ): Promise<ProviderGrantSummaryRecord | null>;
+  /**
+   * The first grant on `provider` (by account id) held by someone whose
+   * recorded identity has exactly this email; null when there is none.
+   * The gates verify by email, grants are keyed by subject: identities is
+   * the bridge.
+   */
+  findByHolderEmail(provider: string, email: string): Promise<ProviderGrantSummaryRecord | null>;
 }

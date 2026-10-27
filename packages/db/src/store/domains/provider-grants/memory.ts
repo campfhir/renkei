@@ -1,5 +1,6 @@
 import { like, orderBy } from '../../memory/order';
 import type { MemoryTables } from '../../memory/tables';
+import { metadataText } from '../knowledge-chunks/metadata-filter';
 import {
   grantSummaryFromRow,
   jsonbConcat,
@@ -131,6 +132,25 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
         'provider_refresh_locks',
         (r) => r.provider === provider && r.account_id === accountId
       );
+    },
+    async findByMetadataText(provider, key, value) {
+      const rows = tables.select(
+        'provider_grants',
+        (r) => r.provider === provider && metadataText(r.metadata, key) === value
+      );
+      const [row] = orderBy(rows, [(r) => r.provider_account_id]);
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async findByHolderEmail(provider, email) {
+      const holders = new Set(
+        tables.select('identities', (r) => r.email === email).map((r) => r.subject)
+      );
+      const rows = tables.select(
+        'provider_grants',
+        (r) => r.provider === provider && r.subject !== null && holders.has(r.subject)
+      );
+      const [row] = orderBy(rows, [(r) => r.provider_account_id]);
+      return row ? grantSummaryFromRow(row) : null;
     },
   };
 }

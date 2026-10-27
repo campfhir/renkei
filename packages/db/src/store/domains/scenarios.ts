@@ -64,6 +64,7 @@ import { oauthTokenScenarios } from './oauth-tokens/scenarios';
 import { phiAccessScenarios } from './phi-access/scenarios';
 import { mailBulkJobScenarios } from './mail-bulk-jobs/scenarios';
 import { webexSentMessageScenarios } from './webex-sent-messages/scenarios';
+import { webexDirtyWindowScenarios } from './webex-dirty-windows/scenarios';
 import { toolSurfaceScenarios } from './tool-surface/scenarios';
 import { contentWatchScenarios } from './content-watches/scenarios';
 
@@ -136,4 +137,5 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webexSentMessageScenarios,
   ...toolSurfaceScenarios,
   ...contentWatchScenarios,
+  ...webexDirtyWindowScenarios,
 ];

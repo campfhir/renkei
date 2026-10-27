@@ -213,5 +213,43 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
         updated_at: new Date(),
       });
     },
+    async listPipelineSubscriptions(provider, repoFullName, prNumber) {
+      const rows = tables.select(
+        'pr_subscriptions',
+        (r) =>
+          r.provider === provider &&
+          r.repo_full_name === repoFullName &&
+          r.status === 'active' &&
+          r.watch_pipelines &&
+          (prNumber === undefined || r.pr_number === prNumber)
+      );
+      return orderBy(rows, [(r) => r.pr_number], [(r) => r.id]).map((row) => ({
+        id: row.id,
+        chatId: row.chat_id,
+        subscriberSubject: row.subscriber_subject,
+        autoFix: row.auto_fix,
+        autoMerge: row.auto_merge,
+        repoFullName: row.repo_full_name,
+        prNumber: row.pr_number,
+      }));
+    },
+    async hasPrPipelineEvent(subscriptionId, providerRunId) {
+      const id = tables.param('pr_pipeline_events', 'subscription_id', subscriptionId);
+      return (
+        tables.first(
+          'pr_pipeline_events',
+          (r) => r.subscription_id === id && r.provider_run_id === providerRunId
+        ) !== undefined
+      );
+    },
+    async recordPrPipelineEvent(event) {
+      tables.insert('pr_pipeline_events', {
+        subscription_id: event.subscriptionId,
+        provider_run_id: event.providerRunId,
+        conclusion: event.conclusion,
+        raw_payload: JSON.stringify(event.rawPayload),
+        action_taken: event.actionTaken,
+      });
+    },
   };
 }

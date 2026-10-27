@@ -7,8 +7,7 @@
  * to sanitize, only a chunk removal to enqueue.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
+jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
 jest.mock('./microsoft-access', () => ({ resolveMicrosoftAccess: jest.fn() }));
 jest.mock('@renkei/connector-microsoft', () => ({
   renewGraphSubscription: jest.fn(),
@@ -73,7 +72,8 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await handler(event({ action: 'exclude' }));
 
     expect(mockGraphRequest).not.toHaveBeenCalled();
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('delete.object',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'delete.object',
       { provider: 'microsoft', refId: 'alice@example.com/msg/msg-1' },
       'microsoft/alice@example.com/msg'
     );
@@ -94,7 +94,8 @@ describe('createMicrosoftMessageOverrideHandler', () => {
     await handler(event({ action: 'reclassify', category: 'human' }));
 
     expect(mockGraphRequest).toHaveBeenCalledWith(auth, '/me/messages/msg-1');
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('ingest.email',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'ingest.email',
       expect.objectContaining({
         provider: 'microsoft',
         refId: 'alice@example.com/msg/msg-1',

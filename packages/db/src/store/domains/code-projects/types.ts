@@ -119,4 +119,37 @@ export interface CodeProjectStore {
   ): Promise<void>;
   /** Cancel the subscriber's subscription to one pull request, if any. */
   cancelPrSubscription(key: PrSubscriptionKey): Promise<void>;
+  /**
+   * The active subscriptions watching pipelines on a repository — one pull
+   * request's when `prNumber` is given — by pull request then id.
+   */
+  listPipelineSubscriptions(
+    provider: string,
+    repoFullName: string,
+    prNumber?: number
+  ): Promise<PrPipelineSubscriptionRecord[]>;
+  /** Whether this provider run was already recorded for the subscription (a redelivery). */
+  hasPrPipelineEvent(subscriptionId: string, providerRunId: string): Promise<boolean>;
+  /** Record one pipeline outcome observed for a subscription, observed now. */
+  recordPrPipelineEvent(event: PrPipelineEventInput): Promise<void>;
+}
+
+/** A subscription as the pipeline-event handler acts on it. */
+export interface PrPipelineSubscriptionRecord {
+  id: string;
+  chatId: string | null;
+  subscriberSubject: string;
+  autoFix: boolean;
+  autoMerge: boolean;
+  repoFullName: string;
+  prNumber: number;
+}
+
+export interface PrPipelineEventInput {
+  subscriptionId: string;
+  providerRunId: string;
+  conclusion: string;
+  /** The webhook payload as received; stored as JSON. */
+  rawPayload: unknown;
+  actionTaken: string | null;
 }

@@ -179,6 +179,15 @@ export interface KnowledgeChunkStore {
    * nulls), then by ref id and id.
    */
   listByRefPrefix(provider: string, prefix: string): Promise<KnowledgeObjectChunk[]>;
+  /**
+   * Delete the provider's chunks whose ref id starts with `refIdPrefix` but
+   * not with `exceptRefIdPrefix` (both literal, case sensitive) and whose
+   * `source_at` falls in [from, to); undated chunks stay. Returns how many.
+   */
+  deleteSourcedBetween(
+    provider: string,
+    scope: { refIdPrefix: string; exceptRefIdPrefix: string; from: Date; to: Date }
+  ): Promise<number>;
 }
 
 /** One stored chunk of an object (a note, an issue), still ciphertext. */

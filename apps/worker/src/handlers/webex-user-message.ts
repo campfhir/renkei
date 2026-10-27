@@ -24,7 +24,7 @@
  * the conversation missing does not read as a conversation.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { WebexClient, type WebexMessage } from '@renkei/connector-webex';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import type { ClaimedEvent } from '../queue';
@@ -79,14 +79,8 @@ async function nearbyMessagesOf(
  * rest of the pipeline cannot use either.
  */
 async function wasSentByRenkei(messageId: string): Promise<boolean> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable for the WebEx sent-message ledger');
-  const row = await dbResult.val
-    .selectFrom('webex_sent_messages')
-    .select('message_id')
-    .where('message_id', '=', messageId)
-    .executeTakeFirst();
-  return row !== undefined;
+  const row = await getDataStore().webexSentMessages.find(messageId);
+  return row !== null;
 }
 
 function payloadOf(event: ClaimedEvent): { messageId: string; accountId: string } | null {

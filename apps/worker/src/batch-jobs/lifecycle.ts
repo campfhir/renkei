@@ -226,7 +226,7 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
     const body =
       `${kindLabel} batch “${batch.name}” ${phase === 'started' ? 'started' : describeBatchOutcome(batch)}.` +
       (link ? `\n\nSee the batch: ${link}` : '');
-    await deliverToOwnerChannels(db, {
+    await deliverToOwnerChannels({
       ownerSubject: batch.subject,
       email: wanted.email,
       webex: wanted.webex,

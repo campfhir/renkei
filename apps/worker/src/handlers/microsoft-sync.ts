@@ -26,8 +26,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore, type WebhookSubscriptionSyncRecord } from '@renkei/db';
 import {
   createGraphSubscription,
   renewGraphSubscription,
@@ -56,6 +55,18 @@ export interface SubscriptionRow {
   client_state: string;
   expires_at: Date | null;
   delta_link: string | null;
+}
+
+/** The store's record in the row shape the sync engine (and its sweep) hands around. */
+function subscriptionRowOf(record: WebhookSubscriptionSyncRecord): SubscriptionRow {
+  return {
+    id: record.id,
+    resource: record.resource,
+    subscription_id: record.subscriptionId,
+    client_state: record.clientState,
+    expires_at: record.expiresAt,
+    delta_link: record.deltaLink,
+  };
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -126,36 +137,24 @@ export async function ensureMicrosoftSubscriptions(
   access: MicrosoftAccess,
   publicBaseUrl: string
 ): Promise<SubscriptionRow[]> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
+  const subscriptions = getDataStore().webhookSubscriptions;
 
-  const notificationUrl =
-    `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/${encodeURIComponent(access.accountId)}`;
+  const notificationUrl = `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/${encodeURIComponent(access.accountId)}`;
 
   const resources = desiredResources(access);
   for (const resource of resources) {
-    await db
-      .insertInto('webhook_subscriptions')
-      .values({
-        id: randomUUID(),
-        provider: MICROSOFT,
-        account_id: access.accountId,
-        resource,
-        client_state: randomUUID(),
-      })
-      .onConflict((oc) =>
-        oc.columns(['provider', 'account_id', 'resource']).doNothing()
-      )
-      .execute();
+    await subscriptions.insertIfMissing({
+      id: randomUUID(),
+      provider: MICROSOFT,
+      accountId: access.accountId,
+      resource,
+      clientState: randomUUID(),
+    });
   }
 
-  const rows = await db
-    .selectFrom('webhook_subscriptions')
-    .select(['id', 'resource', 'subscription_id', 'client_state', 'expires_at', 'delta_link'])
-    .where('provider', '=', MICROSOFT)
-    .where('account_id', '=', access.accountId)
-    .execute();
+  const rows = (await subscriptions.listSyncStates(MICROSOFT, access.accountId)).map(
+    subscriptionRowOf
+  );
 
   const wanted = new Set(resources);
   const desired: SubscriptionRow[] = [];
@@ -173,11 +172,10 @@ export async function ensureMicrosoftSubscriptions(
             resource: row.resource,
           });
         }
-        await db
-          .updateTable('webhook_subscriptions')
-          .set({ subscription_id: null, expires_at: null, updated_at: sql`NOW()` })
-          .where('id', '=', row.id)
-          .execute();
+        await subscriptions.setProviderSubscription(row.id, {
+          subscriptionId: null,
+          expiresAt: null,
+        });
       }
       continue;
     }
@@ -202,15 +200,10 @@ export async function ensureMicrosoftSubscriptions(
         });
         continue;
       }
-      await db
-        .updateTable('webhook_subscriptions')
-        .set({
-          subscription_id: created.val.id,
-          expires_at: created.val.expiresAt,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', row.id)
-        .execute();
+      await subscriptions.setProviderSubscription(row.id, {
+        subscriptionId: created.val.id,
+        expiresAt: created.val.expiresAt,
+      });
       row.subscription_id = created.val.id;
       row.expires_at = created.val.expiresAt;
       continue;
@@ -225,11 +218,9 @@ export async function ensureMicrosoftSubscriptions(
     if (new Date(expiresAt).getTime() - Date.now() < RENEW_WITHIN_MS) {
       const renewed = await renewGraphSubscription(access.auth, subscriptionId);
       if (renewed.ok) {
-        await db
-          .updateTable('webhook_subscriptions')
-          .set({ expires_at: renewed.val.expiresAt, updated_at: sql`NOW()` })
-          .where('id', '=', row.id)
-          .execute();
+        await subscriptions.setProviderSubscription(row.id, {
+          expiresAt: renewed.val.expiresAt,
+        });
         row.expires_at = renewed.val.expiresAt;
       } else {
         // A renewal that fails is usually a subscription Graph already
@@ -238,11 +229,10 @@ export async function ensureMicrosoftSubscriptions(
           component: COMPONENT,
           resource: row.resource,
         });
-        await db
-          .updateTable('webhook_subscriptions')
-          .set({ subscription_id: null, expires_at: null, updated_at: sql`NOW()` })
-          .where('id', '=', row.id)
-          .execute();
+        await subscriptions.setProviderSubscription(row.id, {
+          subscriptionId: null,
+          expiresAt: null,
+        });
         row.subscription_id = null;
         row.expires_at = null;
       }
@@ -303,10 +293,6 @@ export async function runSubscriptionSync(
   access: MicrosoftAccess,
   row: SubscriptionRow
 ): Promise<{ changed: number; removed: number }> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
-
   const kind = refKindOfResource(row.resource);
   if (kind !== 'msg') {
     // Calendar and To Do left the index. desiredResources never returns
@@ -333,11 +319,7 @@ export async function runSubscriptionSync(
     // notification for the resource fails its whole attempt budget and
     // dead-letters, forever, because the poisoned cursor never changes.
     if (round.err.cause === 410 && row.delta_link !== null) {
-      await db
-        .updateTable('webhook_subscriptions')
-        .set({ delta_link: null, sync_status: 'syncing', updated_at: sql`NOW()` })
-        .where('id', '=', row.id)
-        .execute();
+      await getDataStore().webhookSubscriptions.restartDelta(row.id);
       logger.info('delta token expired for {resource}; restarting the series', {
         component: COMPONENT,
         resource: row.resource,
@@ -346,9 +328,7 @@ export async function runSubscriptionSync(
     }
     // The Graph status and URL ride along — "delta round failed" alone once
     // hid a permanent 410 behind five retries per notification.
-    throw new Error(
-      `delta round failed for ${row.resource}: ${round.err.message ?? 'unknown'}`
-    );
+    throw new Error(`delta round failed for ${row.resource}: ${round.err.message ?? 'unknown'}`);
   }
 
   let changed = 0;
@@ -392,7 +372,7 @@ export async function runSubscriptionSync(
       orderingKey: `microsoft/${access.accountId}`,
     });
   }
-  await persistCursor(db, row.id, round.val, changed);
+  await persistCursor(row.id, round.val, changed);
   return { changed, removed };
 }
 
@@ -409,22 +389,14 @@ export async function runSubscriptionSync(
  * 'syncing' until Graph closes the series with a real deltaLink.
  */
 async function persistCursor(
-  db: Kysely<DB>,
   rowId: string,
   round: { deltaLink: string | null; nextLink?: string | null },
   changed: number
 ): Promise<void> {
   const cursor = round.deltaLink ?? round.nextLink ?? null;
-  await db
-    .updateTable('webhook_subscriptions')
-    .set({
-      delta_link: cursor,
-      last_synced_at: sql<Date>`NOW()`,
-      last_run_items: changed,
-      total_items: sql<number>`total_items + ${changed}`,
-      sync_status: round.deltaLink === null && cursor !== null ? 'syncing' : 'idle',
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', rowId)
-    .execute();
+  await getDataStore().webhookSubscriptions.recordDeltaRound(rowId, {
+    cursor,
+    changed,
+    syncStatus: round.deltaLink === null && cursor !== null ? 'syncing' : 'idle',
+  });
 }

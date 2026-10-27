@@ -1,5 +1,5 @@
 import { orderBy } from '../../memory/order';
-import { contentWatchFromRow, REBUILD_RESET } from './record';
+import { contentWatchFromRow, contentWatchSyncStateFromRow, REBUILD_RESET } from './record';
 import type { ContentWatchStore, ContentWatchScopeCount } from './types';
 import { MemoryStoreError, type MemoryTables } from '../../memory/tables';
 import { metadataText } from '../knowledge-chunks/metadata-filter';
@@ -134,6 +134,36 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
         queued.set(scope, (queued.get(scope) ?? 0) + 1);
       }
       return { indexed: sortedCounts(indexed), queued: sortedCounts(queued) };
+    },
+    async getSyncState(id) {
+      const key = tables.param('content_watches', 'id', id);
+      const row = tables.first('content_watches', (r) => r.id === key);
+      return row ? contentWatchSyncStateFromRow(row) : null;
+    },
+    async recordRound(id, round) {
+      const key = tables.param('content_watches', 'id', id);
+      const now = new Date();
+      tables.update(
+        'content_watches',
+        (r) => r.id === key,
+        (r) => ({
+          cursor: round.cursor,
+          last_synced_at: now,
+          last_run_items: round.items,
+          total_items: r.total_items + round.items,
+          sync_status: round.syncStatus,
+          last_error: null,
+          updated_at: now,
+        })
+      );
+    },
+    async restartCursor(id) {
+      const key = tables.param('content_watches', 'id', id);
+      tables.update('content_watches', (r) => r.id === key, {
+        cursor: null,
+        sync_status: 'syncing',
+        updated_at: new Date(),
+      });
     },
   };
 }

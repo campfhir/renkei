@@ -360,5 +360,16 @@ export function postgresKnowledgeChunks(db: () => Kysely<DB>): KnowledgeChunkSto
         .execute();
       return rows.map(objectChunkFromRow);
     },
+    async deleteSourcedBetween(provider, scope) {
+      const result = await db()
+        .deleteFrom('knowledge_chunks')
+        .where('provider', '=', provider)
+        .where('ref_id', 'like', `${escapeLike(scope.refIdPrefix)}%`)
+        .where('ref_id', 'not like', `${escapeLike(scope.exceptRefIdPrefix)}%`)
+        .where('source_at', '>=', scope.from)
+        .where('source_at', '<', scope.to)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
   };
 }

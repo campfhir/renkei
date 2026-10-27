@@ -199,5 +199,37 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .where('account_id', '=', accountId)
         .execute();
     },
+    async findByMetadataText(provider, key, value) {
+      const row = await db()
+        .selectFrom('provider_grants')
+        .select(SUMMARY_COLUMNS)
+        .where('provider', '=', provider)
+        .where(sql<string>`metadata->>${key}`, '=', value)
+        .orderBy('provider_account_id')
+        .executeTakeFirst();
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async findByHolderEmail(provider, email) {
+      const row = await db()
+        .selectFrom('identities')
+        .innerJoin('provider_grants', (join) =>
+          join.onRef('provider_grants.subject', '=', 'identities.subject')
+        )
+        .select([
+          'provider_grants.provider',
+          'provider_grants.provider_account_id',
+          'provider_grants.subject',
+          'provider_grants.display_name',
+          'provider_grants.requested_scopes',
+          'provider_grants.granted_scopes',
+          'provider_grants.metadata',
+        ])
+        .where('identities.email', '=', email)
+        .where('provider_grants.provider', '=', provider)
+        .orderBy('provider_grants.provider_account_id')
+        .limit(1)
+        .executeTakeFirst();
+      return row ? grantSummaryFromRow(row) : null;
+    },
   };
 }
