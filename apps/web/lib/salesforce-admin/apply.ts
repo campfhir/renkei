@@ -127,7 +127,7 @@ export async function applyGate(
   if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(CONNECTOR) &&

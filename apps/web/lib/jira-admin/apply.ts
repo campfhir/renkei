@@ -112,7 +112,7 @@ export async function applyGate(
   if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&
@@ -208,7 +208,7 @@ export async function viewGate(subject: string): Promise<Gate> {
   if (!db) return { ok: false, reason: NO_DATABASE_REASON };
   const [availability, audience] = await Promise.all([
     resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&

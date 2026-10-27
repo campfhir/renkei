@@ -1,24 +1,15 @@
 /**
- * DB accessors for `email_classifier_rules` — content-free sender policy,
- * safe for an org-admin route to read and write directly.
+ * `email_classifier_rules`, through the data store
+ * (`getDataStore().emailSanitizer`) — content-free sender policy, safe for
+ * an org-admin route to read and write directly.
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore, type ClassifierRuleRecord } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ClassifierRule } from '../types';
 import { DEFAULT_CLASSIFIER_RULES } from '../registry/seed';
-
-interface RuleRow {
-  id: string;
-  category: string;
-  match_type: string;
-  match_value: string;
-  sender_key: string | null;
-  priority: number;
-  enabled: boolean;
-}
 
 function isCategory(value: string): value is ClassifierRule['category'] {
   return value === 'human' || value === 'system_notification' || value === 'marketing';
@@ -28,41 +19,24 @@ function isMatchType(value: string): value is ClassifierRule['matchType'] {
   return value === 'domain' || value === 'sender_email' || value === 'subject_contains';
 }
 
-function toRule(row: RuleRow): ClassifierRule {
+function toRule(row: ClassifierRuleRecord): ClassifierRule {
   return {
     id: row.id,
     // A row's category/match_type only ever come from upsertClassifierRule's own
     // literal-union input, so these fallbacks are unreachable in practice — the
     // guard exists because the DB layer can't prove that at the type level.
     category: isCategory(row.category) ? row.category : 'human',
-    matchType: isMatchType(row.match_type) ? row.match_type : 'domain',
-    matchValue: row.match_value,
-    senderKey: row.sender_key,
+    matchType: isMatchType(row.matchType) ? row.matchType : 'domain',
+    matchValue: row.matchValue,
+    senderKey: row.senderKey,
     priority: row.priority,
     enabled: row.enabled,
   };
 }
 
-export async function listClassifierRules(
-): Promise<Result<ClassifierRule[], 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
+export async function listClassifierRules(): Promise<Result<ClassifierRule[], 'DB_ERROR'>> {
   const rowsResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('email_classifier_rules')
-        .select([
-          'id',
-          'category',
-          'match_type',
-          'match_value',
-          'sender_key',
-          'priority',
-          'enabled',
-        ])
-        .orderBy('priority', 'asc')
-        .execute(),
+    () => getDataStore().emailSanitizer.listRules(),
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
@@ -82,38 +56,18 @@ export interface ClassifierRuleInput {
 export async function upsertClassifierRule(
   rule: ClassifierRuleInput
 ): Promise<Result<string, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const id = rule.id ?? randomUUID();
-  const matchValue = rule.matchValue.trim().toLowerCase();
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .insertInto('email_classifier_rules')
-        .values({
-          id,
-          category: rule.category,
-          match_type: rule.matchType,
-          match_value: matchValue,
-          sender_key: rule.senderKey,
-          priority: rule.priority,
-          enabled: rule.enabled,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .onConflict((oc) =>
-          oc.column('id').doUpdateSet({
-            category: rule.category,
-            match_type: rule.matchType,
-            match_value: matchValue,
-            sender_key: rule.senderKey,
-            priority: rule.priority,
-            enabled: rule.enabled,
-            updated_at: new Date().toISOString(),
-          })
-        )
-        .execute(),
+      getDataStore().emailSanitizer.upsertRule({
+        id,
+        category: rule.category,
+        matchType: rule.matchType,
+        matchValue: rule.matchValue.trim().toLowerCase(),
+        senderKey: rule.senderKey,
+        priority: rule.priority,
+        enabled: rule.enabled,
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
@@ -129,21 +83,15 @@ export async function upsertClassifierRule(
  * it twice is harmless and an admin's edit to a seeded rule is never
  * clobbered.
  */
-export async function seedDefaultClassifierRules(
-): Promise<Result<{ inserted: number }, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
+export async function seedDefaultClassifierRules(): Promise<
+  Result<{ inserted: number }, 'DB_ERROR'>
+> {
   const existingResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('email_classifier_rules')
-        .select(['match_type', 'match_value'])
-        .execute(),
+    () => getDataStore().emailSanitizer.listRules(),
     'DB_ERROR' as const
   );
   if (!existingResult.ok) return existingResult;
-  const taken = new Set(existingResult.val.map((row) => `${row.match_type} ${row.match_value}`));
+  const taken = new Set(existingResult.val.map((row) => `${row.matchType} ${row.matchValue}`));
 
   const missing = DEFAULT_CLASSIFIER_RULES.filter(
     (rule) => !taken.has(`${rule.matchType} ${rule.matchValue}`)
@@ -152,40 +100,26 @@ export async function seedDefaultClassifierRules(
 
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .insertInto('email_classifier_rules')
-        .values(
-          missing.map((rule) => ({
-            id: randomUUID(),
-            category: rule.category,
-            match_type: rule.matchType,
-            match_value: rule.matchValue,
-            sender_key: rule.senderKey,
-            priority: rule.priority,
-            enabled: true,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }))
-        )
-        .execute(),
+      getDataStore().emailSanitizer.insertRules(
+        missing.map((rule) => ({
+          id: randomUUID(),
+          category: rule.category,
+          matchType: rule.matchType,
+          matchValue: rule.matchValue,
+          senderKey: rule.senderKey,
+          priority: rule.priority,
+          enabled: true,
+        }))
+      ),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
   return ok({ inserted: missing.length });
 }
 
-export async function deleteClassifierRule(
-  id: string
-): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
+export async function deleteClassifierRule(id: string): Promise<Result<void, 'DB_ERROR'>> {
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .deleteFrom('email_classifier_rules')
-        .where('id', '=', id)
-        .execute(),
+    () => getDataStore().emailSanitizer.deleteRule(id),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;

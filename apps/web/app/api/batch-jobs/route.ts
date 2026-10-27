@@ -9,7 +9,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
 import { startDocumentOcrPipeline } from '@/lib/batch-jobs/start-document-ocr-pipeline';
@@ -58,14 +57,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!afterProcessing)
     return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // The share must exist and this caller must have connected their own
   // credentials to it — otherwise discovery would just fail later with a
   // less helpful error once the batch is already running — and moving or
   // deleting on it must be within what they allowed on the Connectors page.
-  const shares = await listConnectedShares(dbResult.val, session.subject);
+  const shares = await listConnectedShares(session.subject);
   if (!shares.ok)
     return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);

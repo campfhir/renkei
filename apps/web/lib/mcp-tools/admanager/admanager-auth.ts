@@ -16,7 +16,6 @@
  * have the final word on every operation.
  */
 
-import { getDatabase } from '@renkei/db';
 import { getConnection, listConnectedInstances } from '@renkei/connector-admanager';
 import type { ConnectedInstance, InstanceConnection } from '@renkei/connector-admanager';
 import type { MCPToolContext } from '../common';
@@ -49,9 +48,7 @@ export function userAdManagerAuth(context: MCPToolContext): AdManagerAuth {
     async listConnected() {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return 'Database unavailable.';
-      const connected = await listConnectedInstances(dbResult.val, subject);
+      const connected = await listConnectedInstances(subject);
       if (!connected.ok) return 'Could not read your ADManager Plus connections.';
       return connected.val;
     },
@@ -59,9 +56,7 @@ export function userAdManagerAuth(context: MCPToolContext): AdManagerAuth {
     async connection(instanceId: string) {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return 'Database unavailable.';
-      const connection = await getConnection(dbResult.val, instanceId, subject);
+      const connection = await getConnection(instanceId, subject);
       if (!connection.ok) return 'Could not read your ADManager Plus connections.';
       if (!connection.val) return NO_SUCH_INSTANCE;
       return connection.val;

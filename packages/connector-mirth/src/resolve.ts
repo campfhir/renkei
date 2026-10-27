@@ -29,10 +29,9 @@ export interface SubjectTarget {
 
 /** The enabled instance alone — for probes that carry their own credential. */
 export async function resolveInstance(
-  db: Kysely<DB>,
   instanceId: string
 ): Promise<Result<InstanceRow, 'no_instance' | 'store'>> {
-  const instance = await getInstance(db, instanceId);
+  const instance = await getInstance(instanceId);
   if (!instance.ok) return err('store' as const);
   if (!instance.val || !instance.val.summary.enabled) return err('no_instance' as const);
   return ok(instance.val);
@@ -49,24 +48,16 @@ export async function resolveTarget(
   target: SubjectTarget,
   provided?: MirthCredentials | null
 ): Promise<Result<ResolvedTarget, ResolveError>> {
-  const instance = await resolveInstance(db, target.instanceId);
+  const instance = await resolveInstance(target.instanceId);
   if (!instance.ok) return instance;
   if (provided) return ok({ instance: instance.val, credentials: provided });
   if (provided === null) return err('not_connected' as const);
 
-  const ciphertext = await readConnectionCiphertext(
-    db,
-    target.instanceId,
-    target.subject
-  );
+  const ciphertext = await readConnectionCiphertext(target.instanceId, target.subject);
   if (!ciphertext.ok) return err('store' as const);
   if (ciphertext.val === null) return err('not_connected' as const);
 
-  const credentials = await openCredentialsForSubject(
-    db,
-    target.subject,
-    ciphertext.val
-  );
+  const credentials = await openCredentialsForSubject(db, target.subject, ciphertext.val);
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ instance: instance.val, credentials: credentials.val });
 }

@@ -22,10 +22,16 @@ const RUN_COLUMNS = [
  * a failed run — a CASE, so content an admin may not see never leaves the
  * database.
  */
-const FAILED_INITIAL_STATE = sql<Json | null>`
+// Built on use, not at import: the store barrel is imported everywhere,
+// including tests that stub kysely.
+const FAILED_INITIAL_STATE = () =>
+  sql<Json | null>`
   case when status = 'failed' then initial_state end
 `.as('initial_state');
-const FAILED_RESUME_GUIDANCE = sql<string | null>`
+// Built on use, not at import: the store barrel is imported everywhere,
+// including tests that stub kysely.
+const FAILED_RESUME_GUIDANCE = () =>
+  sql<string | null>`
   case when status = 'failed' then resume_guidance end
 `.as('resume_guidance');
 
@@ -95,7 +101,7 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           'active_ms',
           ...(audience === 'owner'
             ? (['initial_state', 'resume_guidance'] as const)
-            : [FAILED_INITIAL_STATE, FAILED_RESUME_GUIDANCE]),
+            : [FAILED_INITIAL_STATE(), FAILED_RESUME_GUIDANCE()]),
         ])
         .where('agent_id', '=', agentId)
         .where('id', '=', runId);

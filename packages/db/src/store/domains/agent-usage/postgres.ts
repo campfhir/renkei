@@ -52,21 +52,27 @@ function bucketColumns(aggregate: string, prefix: string, where?: string) {
   }).join(',\n');
 }
 
-const TOKEN_BUCKET_COLUMNS = sql.raw(
-  [
-    bucketColumns('SUM(input_tokens)', 'in'),
-    bucketColumns('SUM(output_tokens)', 'out'),
-    bucketColumns('SUM(cache_read_input_tokens)', 'cr'),
-    bucketColumns('SUM(cache_write_input_tokens)', 'cw'),
-  ].join(',\n')
-);
+// Built on use, not at import: the store barrel is imported everywhere,
+// including tests that stub kysely.
+const TOKEN_BUCKET_COLUMNS = () =>
+  sql.raw(
+    [
+      bucketColumns('SUM(input_tokens)', 'in'),
+      bucketColumns('SUM(output_tokens)', 'out'),
+      bucketColumns('SUM(cache_read_input_tokens)', 'cr'),
+      bucketColumns('SUM(cache_write_input_tokens)', 'cw'),
+    ].join(',\n')
+  );
 
-const RUN_LOG_BUCKET_COLUMNS = sql.raw(
-  [
-    bucketColumns('COUNT(*)', 'runs'),
-    bucketColumns('COUNT(*)', 'failed', "status = 'failed'"),
-  ].join(',\n')
-);
+// Built on use, not at import: the store barrel is imported everywhere,
+// including tests that stub kysely.
+const RUN_LOG_BUCKET_COLUMNS = () =>
+  sql.raw(
+    [
+      bucketColumns('COUNT(*)', 'runs'),
+      bucketColumns('COUNT(*)', 'failed', "status = 'failed'"),
+    ].join(',\n')
+  );
 
 type TokenRow = BucketColumns<'in'> &
   BucketColumns<'out'> &
@@ -109,7 +115,7 @@ export function postgresAgentUsage(db: () => Kysely<DB>): AgentUsageStore {
     async tokenBuckets(agentIds) {
       if (agentIds !== null && agentIds.length === 0) return ZERO_TOKEN_BUCKETS;
       const result = await sql<TokenRow>`
-        SELECT ${TOKEN_BUCKET_COLUMNS}
+        SELECT ${TOKEN_BUCKET_COLUMNS()}
         FROM llm_calls
         ${agentIds === null ? sql`` : sql`WHERE agent_id IN (${sql.join([...agentIds])})`}
       `.execute(db());
@@ -117,7 +123,7 @@ export function postgresAgentUsage(db: () => Kysely<DB>): AgentUsageStore {
     },
     async tokenBucketsByAgent() {
       const result = await sql<TokenRow & { agent_id: string }>`
-        SELECT agent_id, ${TOKEN_BUCKET_COLUMNS}
+        SELECT agent_id, ${TOKEN_BUCKET_COLUMNS()}
         FROM llm_calls
         WHERE agent_id IS NOT NULL
         GROUP BY agent_id
@@ -128,7 +134,7 @@ export function postgresAgentUsage(db: () => Kysely<DB>): AgentUsageStore {
     async tokenBucketsByModel(agentIds) {
       if (agentIds !== null && agentIds.length === 0) return [];
       const result = await sql<TokenRow & { provider: string | null; model: string | null }>`
-        SELECT provider, model, ${TOKEN_BUCKET_COLUMNS}
+        SELECT provider, model, ${TOKEN_BUCKET_COLUMNS()}
         FROM llm_calls
           ${agentIds === null ? sql`` : sql`WHERE agent_id IN (${sql.join([...agentIds])})`}
         GROUP BY provider, model
@@ -281,7 +287,7 @@ export function postgresAgentUsage(db: () => Kysely<DB>): AgentUsageStore {
     async invocationCounts(agentId) {
       const [agent, org] = await Promise.all([
         sql<RunLogRow>`
-          SELECT ${RUN_LOG_BUCKET_COLUMNS}
+          SELECT ${RUN_LOG_BUCKET_COLUMNS()}
           FROM agent_run_log
           WHERE agent_id = ${agentId}
         `.execute(db()),
@@ -296,11 +302,11 @@ export function postgresAgentUsage(db: () => Kysely<DB>): AgentUsageStore {
     async runLogBuckets() {
       const [totals, perAgent] = await Promise.all([
         sql<RunLogRow>`
-          SELECT ${RUN_LOG_BUCKET_COLUMNS}
+          SELECT ${RUN_LOG_BUCKET_COLUMNS()}
           FROM agent_run_log
         `.execute(db()),
         sql<RunLogRow & { agent_id: string }>`
-          SELECT agent_id, ${RUN_LOG_BUCKET_COLUMNS}
+          SELECT agent_id, ${RUN_LOG_BUCKET_COLUMNS()}
           FROM agent_run_log
           GROUP BY agent_id
           ORDER BY agent_id

@@ -19,7 +19,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { getBatch, listBatches, listItems } from '@renkei/batch-jobs-store';
 import {
   callMistralOcr,
@@ -145,8 +144,6 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
     async (args: Record<string, unknown>) => {
       const target = targetOf(context);
       if (typeof target === 'string') return errText(target);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const grouping: DocumentGrouping = groupingSchema.parse(args.grouping);
       const shareId = str(args.shareId);
@@ -166,7 +163,7 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       // The share must be one the caller connected, and moving/deleting on
       // it must be within what they allowed the tools on the Connectors
       // page — same gate the plain form goes through.
-      const connected = await listConnectedShares(dbResult.val, target.subject);
+      const connected = await listConnectedShares(target.subject);
       if (!connected.ok) return errText('Could not read your file shares.');
       const refusal = afterProcessingRefusal(connected.val, shareId, afterProcessing);
       if (refusal) return errText(refusal);

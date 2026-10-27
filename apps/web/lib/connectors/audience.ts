@@ -4,7 +4,7 @@
  * An admin scopes a connector to people carrying certain IdP group values
  * (`OrgSettings.connectorAudiences`, capability key → values). Everyone
  * else must neither see its card nor have its tools registered. This
- * module answers per subject, from the database — the groups recorded at
+ * module answers per subject, from the data store — the groups recorded at
  * their last sign-in — never from token roles, because agent-run tokens
  * carry none and a stale token must not widen anything.
  *
@@ -16,8 +16,6 @@
  * access", which is the point.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { idpGroupsFor } from '@/lib/identity';
@@ -55,10 +53,7 @@ function closed(restricted?: string[]): AudienceResolution {
   };
 }
 
-export async function resolveAudience(
-  db: Kysely<DB>,
-  subject: string
-): Promise<AudienceResolution> {
+export async function resolveAudience(subject: string): Promise<AudienceResolution> {
   const settings = await getOrgSettings();
   if (!settings.ok) return closed();
   const audiences = settings.val.connectorAudiences ?? {};
@@ -74,11 +69,8 @@ export async function resolveAudience(
 }
 
 /** The same answer as a predicate, for the connectors page's catalog. */
-export async function resolveAudienceAllows(
-  db: Kysely<DB>,
-  subject: string
-): Promise<AudienceAllows> {
-  const resolution = await resolveAudience(db, subject);
+export async function resolveAudienceAllows(subject: string): Promise<AudienceAllows> {
+  const resolution = await resolveAudience(subject);
   const restricted = new Set(resolution.restrictedConnectors);
   const allowed = new Set(resolution.allowedConnectors);
   return (capabilityKey) => !restricted.has(capabilityKey) || allowed.has(capabilityKey);

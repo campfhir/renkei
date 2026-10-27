@@ -82,9 +82,7 @@ export interface AdManagerServerDeps {
     target: SubjectTarget,
     provided: AdManagerCredentials | null
   ) => Promise<Result<ResolvedTarget, ResolveError>>;
-  resolveInstance?: (
-    instanceId: string
-  ) => Promise<Result<InstanceRow, 'no_instance' | 'store'>>;
+  resolveInstance?: (instanceId: string) => Promise<Result<InstanceRow, 'no_instance' | 'store'>>;
 }
 
 /** Operation requests are JSON; bodies here are small AD attribute bags. */
@@ -217,9 +215,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     deps.resolveTarget ??
     ((target: SubjectTarget, provided: AdManagerCredentials | null) =>
       resolveTarget(deps.db, target, provided));
-  const resolveOne =
-    deps.resolveInstance ??
-    ((instanceId: string) => resolveInstance(deps.db, instanceId));
+  const resolveOne = deps.resolveInstance ?? ((instanceId: string) => resolveInstance(instanceId));
 
   /**
    * One forwarded request. `/api/v2/*` (and everything else that isn't
@@ -295,8 +291,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
   const handlers: Record<string, Handler> = {
     async api(body, response) {
       const target = targetOf(body);
-      if (!target)
-        return sendError(response, 'bad_request', 'instanceId and subject are required');
+      if (!target) return sendError(response, 'bad_request', 'instanceId and subject are required');
       const method = str(body.method).toUpperCase();
       const path = str(body.path);
       if (!isHttpMethod(method)) {
@@ -331,11 +326,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       const instanceId = str(body.instanceId);
       const credentials: AdManagerCredentials | null = parseAdManagerCredentials(body.credentials);
       if (!instanceId || !credentials) {
-        return sendError(
-          response,
-          'bad_request',
-          'instanceId and credentials are required'
-        );
+        return sendError(response, 'bad_request', 'instanceId and credentials are required');
       }
       const instance = await resolveOne(instanceId);
       if (!instance.ok) return sendError(response, instance.err.type);

@@ -5,23 +5,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { createShare, listShares } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseSharePayload } from '@/lib/file-shares/parse';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const shares = await listShares(dbResult.val);
+  const shares = await listShares();
   if (!shares.ok) return NextResponse.json({ error: 'Could not read shares' }, { status: 500 });
 
   return NextResponse.json({
@@ -32,9 +26,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -42,10 +34,7 @@ export async function POST(
   const parsed = parseSharePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const created = await createShare(dbResult.val, parsed.input);
+  const created = await createShare(parsed.input);
   if (!created.ok) {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'A share with that name exists' }, { status: 409 });

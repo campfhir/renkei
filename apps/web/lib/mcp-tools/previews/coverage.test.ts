@@ -44,19 +44,16 @@ const GRANT = {
 };
 
 jest.mock('@renkei/db', () => ({
+  // One read/write share connection with delete: the whole fileshare surface.
+  getDataStore: () => ({
+    fileShares: {
+      connectionExposures: async () => [{ toolAccess: 'read_write', allowDelete: true }],
+    },
+  }),
   getDatabase: () => ({
     ok: true,
     val: {
-      selectFrom: (table: string) => {
-        if (table === 'file_share_connections') {
-          const shareChain = {
-            innerJoin: () => shareChain,
-            select: () => shareChain,
-            where: () => shareChain,
-            execute: async () => [{ tool_access: 'read_write', allow_delete: true }],
-          };
-          return shareChain;
-        }
+      selectFrom: (_table: string) => {
         const chain = {
           select: () => chain,
           where: () => chain,

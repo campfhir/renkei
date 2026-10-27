@@ -11,7 +11,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
 import {
@@ -96,13 +95,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'scheduleConfig is missing or malformed' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // The share must exist and this caller must have connected their own
   // credentials to it, and moving/deleting there must be within what they
   // allowed on the Connectors page — same check the one-off start route makes.
-  const shares = await listConnectedShares(dbResult.val, session.subject);
+  const shares = await listConnectedShares(session.subject);
   if (!shares.ok)
     return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);

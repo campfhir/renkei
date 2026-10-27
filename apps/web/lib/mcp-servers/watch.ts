@@ -14,8 +14,6 @@
  * itself; a refresh is idempotent, so two watchers do no harm.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   McpAuthRequired,
   getServer,
@@ -60,19 +58,19 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /** Whether the server still exists, is on, and is where the watch was opened. */
-async function stillWanted(db: Kysely<DB>, server: McpServer): Promise<McpServer | null> {
-  const read = await getServer(db, server.id);
+async function stillWanted(server: McpServer): Promise<McpServer | null> {
+  const read = await getServer(server.id);
   if (!read.ok || !read.val || !read.val.enabled) return null;
   if (read.val.url !== server.url || read.val.transport !== server.transport) return null;
   return read.val;
 }
 
-async function run(db: Kysely<DB>, server: McpServer, subject: string, watch: Watch) {
+async function run(server: McpServer, subject: string, watch: Watch) {
   const key = keyOf(server.id, subject);
   let backoff = MIN_BACKOFF_MS;
   try {
     while (!watch.abort.signal.aborted && Date.now() - watch.lastWanted < IDLE_MS) {
-      const current = await stillWanted(db, server);
+      const current = await stillWanted(server);
       if (!current) return;
       try {
         const outcome = await watchToolListChanges({
@@ -82,7 +80,7 @@ async function run(db: Kysely<DB>, server: McpServer, subject: string, watch: Wa
           timeoutMs: 20_000,
           signal: watch.abort.signal,
           onChange: () => {
-            void refreshToolList(db, current, subject).then((listed) => {
+            void refreshToolList(current, subject).then((listed) => {
               if (!listed.ok) {
                 logger.warn('MCP tool list refresh after a change notice failed: {reason}', {
                   component: 'mcp-servers',
@@ -121,7 +119,7 @@ async function run(db: Kysely<DB>, server: McpServer, subject: string, watch: Wa
  * has its idle clock reset, and a server known not to announce changes is
  * skipped.
  */
-export function ensureWatching(db: Kysely<DB>, server: McpServer, subject: string): void {
+export function ensureWatching(server: McpServer, subject: string): void {
   const key = keyOf(server.id, subject);
   const existing = watches.get(key);
   if (existing) {
@@ -131,7 +129,7 @@ export function ensureWatching(db: Kysely<DB>, server: McpServer, subject: strin
   if ((unsupportedUntil.get(server.id) ?? 0) > Date.now()) return;
   const watch: Watch = { lastWanted: Date.now(), abort: new AbortController() };
   watches.set(key, watch);
-  void run(db, server, subject, watch);
+  void run(server, subject, watch);
 }
 
 /** Stop listening for one person on one server (disconnect). */

@@ -1,6 +1,7 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import {
   countAwaitingReview as countJiraAwaitingReview,
   countPendingChangeRequests,
@@ -126,8 +127,20 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
     redirect(signInUrl(`/connectors`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  // Fresh, because this page is where selections are saved from: a route
+  // handler wrote the row, and this server component holds its own cache.
+  // Non-secret settings carry the org's scope ceiling, which the connect
+  // cards let the user narrow; their secrets are never read here.
+  const loaded = await wrapAsync(async () => {
+    const audienceAllows = await resolveAudienceAllows(session.subject);
+    const userCatalog = await resolveUserCatalog(session.subject, {
+      audienceAllows,
+      fresh: true,
+    });
+    const enabledConfigs = await getDataStore().connectorConfigs.list({ enabledOnly: true });
+    return { audienceAllows, catalog: userCatalog, configs: enabledConfigs };
+  }, 'DB_ERROR' as const);
+  if (!loaded.ok) {
     return (
       <div className="mx-auto max-w-6xl">
         <h1 className="mb-1 text-xl font-bold">Connectors</h1>
@@ -135,23 +148,9 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
       </div>
     );
   }
-  const db = dbResult.val;
-
-  // Fresh, because this page is where selections are saved from: a route
-  // handler wrote the row, and this server component holds its own cache.
-  const catalog = await resolveUserCatalog(db, session.subject, {
-    audienceAllows: await resolveAudienceAllows(db, session.subject),
-    fresh: true,
-  });
+  const { audienceAllows, catalog, configs } = loaded.val;
   const { shown, grants } = catalog;
 
-  // Non-secret settings carry the org's scope ceiling, which the connect
-  // cards let the user narrow. Secrets never touch this page.
-  const configs = await db
-    .selectFrom('connector_configs')
-    .select(['connector', 'settings'])
-    .where('enabled', '=', true)
-    .execute();
   const settingsOf = (connector: string) =>
     configs.find((c) => c.connector === connector)?.settings;
 
@@ -159,7 +158,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // share's connection details, and this person connects it with their own
   // credentials right on the card. Every enabled share is offered.
   const fileshareRows = shown.has('fileshares')
-    ? await listSharesWithConnection(db, session.subject)
+    ? await listSharesWithConnection(session.subject)
     : null;
   const connectableShares =
     fileshareRows && fileshareRows.ok
@@ -182,9 +181,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // Mirth instances follow the same arrangement as file shares: an admin
   // registers each server, and this person connects it with their own
   // Mirth account right on the card. Every enabled instance is offered.
-  const mirthRows = shown.has('mirth')
-    ? await listInstancesWithConnection(db, session.subject)
-    : null;
+  const mirthRows = shown.has('mirth') ? await listInstancesWithConnection(session.subject) : null;
   const connectableMirthInstances =
     mirthRows && mirthRows.ok
       ? mirthRows.val.map((entry) => ({
@@ -205,7 +202,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // admin registers each server, and this person connects it with their
   // own authtoken right on the card. Every enabled instance is offered.
   const admanagerRows = shown.has('admanager')
-    ? await listAdManagerInstancesWithConnection(db, session.subject)
+    ? await listAdManagerInstancesWithConnection(session.subject)
     : null;
   const connectableAdManagerInstances =
     admanagerRows && admanagerRows.ok
@@ -312,10 +309,9 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   // Remote MCP servers: the admin's list, every enabled one in this
   // person's audience. The server owns sign-in, so "connected" is simply
   // whether this person holds a grant on it.
-  const audienceAllows = await resolveAudienceAllows(db, session.subject);
-  const mcpServerRows = await listServers(db);
-  const mcpConnected = await connectedServerIds(db, session.subject);
-  const mcpToolLists = await getToolLists(db, session.subject);
+  const mcpServerRows = await listServers();
+  const mcpConnected = await connectedServerIds(session.subject);
+  const mcpToolLists = await getToolLists(session.subject);
   const mcpServerViews =
     mcpServerRows.ok && mcpConnected.ok
       ? mcpServerRows.val

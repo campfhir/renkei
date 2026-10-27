@@ -200,7 +200,7 @@ describe('resolution failures', () => {
   it('resolves the CALLER as the credential owner', async () => {
     arm({ '/': [] });
     await serviceListFolder(deps(), target(), '/');
-    expect(readConnectionCiphertext).toHaveBeenCalledWith(expect.anything(), SHARE_ID, 'auth0|alice');
+    expect(readConnectionCiphertext).toHaveBeenCalledWith(SHARE_ID, 'auth0|alice');
   });
 });
 

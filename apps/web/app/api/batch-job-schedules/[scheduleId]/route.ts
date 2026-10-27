@@ -8,7 +8,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
 import {
@@ -116,9 +115,7 @@ export async function PUT(
     const afterProcessing = parseAfterProcessing(body.afterProcessing);
     if (!afterProcessing)
       return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-    const shares = await listConnectedShares(dbResult.val, session.subject);
+    const shares = await listConnectedShares(session.subject);
     if (!shares.ok)
       return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
     const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);

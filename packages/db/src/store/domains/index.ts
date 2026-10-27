@@ -29,6 +29,14 @@ import { jiraChanges } from './jira-changes';
 import { jiraSpaceTemplates } from './jira-space-templates';
 import { adminChangeQueue } from './admin-change-queue';
 import { salesforceGrants } from './salesforce-grants';
+import { connectorConfigs } from './connector-configs';
+import { providerGrants } from './provider-grants';
+import { mcpServers } from './mcp-servers';
+import { fileShares } from './file-shares';
+import { mirthInstances } from './mirth-instances';
+import { adManagerInstances } from './admanager-instances';
+import { emailSanitizer } from './email-sanitizer';
+import { mailReview } from './mail-review';
 
 export const DOMAINS = {
   sessions,
@@ -56,4 +64,12 @@ export const DOMAINS = {
   agentUsage,
   agentOptimizations,
   agentDrafts,
+  connectorConfigs,
+  providerGrants,
+  mcpServers,
+  fileShares,
+  mirthInstances,
+  adManagerInstances,
+  emailSanitizer,
+  mailReview,
 };

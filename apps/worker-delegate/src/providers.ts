@@ -290,11 +290,11 @@ export async function resolveProviderSpec(
   if (fixed) return fixed;
   const serverId = serverIdOfProvider(provider);
   if (!serverId) return null;
-  const read = await getServer(db, serverId);
+  const read = await getServer(serverId);
   if (!read.ok || !read.val || !read.val.enabled) return null;
   const server = read.val;
   let secret = '';
-  const sealed = await getSealedClientSecret(db, serverId);
+  const sealed = await getSealedClientSecret(serverId);
   if (sealed.ok && sealed.val) {
     const opened = decrypt(sealed.val, encryptionKey);
     if (opened.ok) secret = opened.val;

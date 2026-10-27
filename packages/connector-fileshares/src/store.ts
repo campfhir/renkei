@@ -1,8 +1,10 @@
 /**
- * Kysely accessors for shares and per-user connections — the only file that
- * knows the table shapes. Everything returns Result and every uncertain
- * outcome denies: a DB error is an error (not "no shares"), and a row that
- * fails validation poisons the read rather than being skipped.
+ * Shares and per-user connections, through the data store
+ * (`getDataStore().fileShares`): the store keeps and returns rows, this
+ * file validates them into the connector's types. Everything returns
+ * Result and every uncertain outcome denies: a storage error is an error
+ * (not "no shares"), and a row that fails validation poisons the read
+ * rather than being skipped.
  *
  * There is no authorization model here. Admins register a share's
  * connection details; each person stores their OWN credential for it (the
@@ -13,8 +15,7 @@
  * deliberately does not.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type FileShareRecord } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isShareProtocol, isToolAccess } from './types';
@@ -29,24 +30,11 @@ export interface ShareRow {
   updatedAt: Date;
 }
 
-interface RawShare {
-  id: string;
-  name: string;
-  protocol: string;
-  host: string;
-  port: number | null;
-  share_name: string | null;
-  root_path: string;
-  case_insensitive: boolean;
-  enabled: boolean;
-  host_key_fingerprint: string | null;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function summaryFromRow(row: RawShare): ShareSummary | null {
+function summaryFromRecord(row: FileShareRecord): ShareSummary | null {
   if (!isShareProtocol(row.protocol)) return null;
   return {
     id: row.id,
@@ -54,38 +42,41 @@ function summaryFromRow(row: RawShare): ShareSummary | null {
     protocol: row.protocol,
     host: row.host,
     port: row.port,
-    shareName: row.share_name,
-    rootPath: row.root_path,
-    caseInsensitive: row.case_insensitive,
+    shareName: row.shareName,
+    rootPath: row.rootPath,
+    caseInsensitive: row.caseInsensitive,
     enabled: row.enabled,
-    hostKeyFingerprint: row.host_key_fingerprint,
+    hostKeyFingerprint: row.hostKeyFingerprint,
   };
 }
 
-const SHARE_COLUMNS = [
-  'file_shares.id',
-  'file_shares.name',
-  'file_shares.protocol',
-  'file_shares.host',
-  'file_shares.port',
-  'file_shares.share_name',
-  'file_shares.root_path',
-  'file_shares.case_insensitive',
-  'file_shares.enabled',
-  'file_shares.host_key_fingerprint',
-] as const;
-
-function connectionFromRow(row: {
+function connectionFromRecord(row: {
   username: string;
-  tool_access: string;
-  allow_delete: boolean;
+  toolAccess: string;
+  allowDelete: boolean;
 }): Result<ShareConnection, StoreError> {
-  if (!isToolAccess(row.tool_access)) return err('MALFORMED_ROW' as const);
+  if (!isToolAccess(row.toolAccess)) return err('MALFORMED_ROW' as const);
   return ok({
     username: row.username,
-    toolAccess: row.tool_access,
-    allowDelete: row.allow_delete === true,
+    toolAccess: row.toolAccess,
+    allowDelete: row.allowDelete === true,
   });
+}
+
+function rowFromRecord(row: FileShareRecord): ShareRow | null {
+  const summary = summaryFromRecord(row);
+  if (!summary) return null;
+  return {
+    summary,
+    settings: isRecord(row.settings) ? { ...row.settings } : {},
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** The data store's name-uniqueness refusal (the only unique key a write here can hit). */
+function isDuplicateName(cause: unknown): boolean {
+  return isRecord(cause) && cause.code === '23505';
 }
 
 // ---------------------------------------------------------------------------
@@ -110,44 +101,23 @@ export interface ShareWithConnection {
  * model, credentials are the gate.
  */
 export async function listSharesWithConnection(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ShareWithConnection[], StoreError>> {
   const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('file_shares')
-        .leftJoin('file_share_connections', (join) =>
-          join
-            .onRef('file_share_connections.share_id', '=', 'file_shares.id')
-            .on('file_share_connections.subject', '=', subject)
-        )
-        .select([
-          ...SHARE_COLUMNS,
-          'file_share_connections.username',
-          'file_share_connections.tool_access',
-          'file_share_connections.allow_delete',
-        ])
-        .where('file_shares.enabled', '=', true)
-        .orderBy('file_shares.name')
-        .execute(),
+    () => getDataStore().fileShares.listWithConnection(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return rows;
 
   const shares: ShareWithConnection[] = [];
   for (const row of rows.val) {
-    const summary = summaryFromRow(row);
+    const summary = summaryFromRecord(row.share);
     if (!summary) return err('MALFORMED_ROW' as const);
-    if (row.username === null || row.tool_access === null) {
+    if (!row.connection) {
       shares.push({ share: summary, connection: null });
       continue;
     }
-    const connection = connectionFromRow({
-      username: row.username,
-      tool_access: row.tool_access,
-      allow_delete: row.allow_delete === true,
-    });
+    const connection = connectionFromRecord(row.connection);
     if (!connection.ok) return connection;
     shares.push({ share: summary, connection: connection.val });
   }
@@ -156,10 +126,9 @@ export async function listSharesWithConnection(
 
 /** The shares this subject has connected — what the tools and browser list. */
 export async function listConnectedShares(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ConnectedShare[], StoreError>> {
-  const all = await listSharesWithConnection(db, subject);
+  const all = await listSharesWithConnection(subject);
   if (!all.ok) return all;
   return ok(
     all.val.flatMap((entry) =>
@@ -170,43 +139,29 @@ export async function listConnectedShares(
 
 /** One connection's exposure row (no credential), or null if not connected. */
 export async function getConnection(
-  db: Kysely<DB>,
   shareId: string,
   subject: string
 ): Promise<Result<ShareConnection | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('file_share_connections')
-        .select(['username', 'tool_access', 'allow_delete'])
-        .where('share_id', '=', shareId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().fileShares.getConnection(shareId, subject),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
   if (!row.val) return ok(null);
-  return connectionFromRow(row.val);
+  return connectionFromRecord(row.val);
 }
 
 /** The sealed credential for one connection — only the worker decrypts it. */
 export async function readConnectionCiphertext(
-  db: Kysely<DB>,
   shareId: string,
   subject: string
 ): Promise<Result<string | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('file_share_connections')
-        .select('encrypted_credentials')
-        .where('share_id', '=', shareId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().fileShares.getConnection(shareId, subject),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
-  return ok(row.val?.encrypted_credentials ?? null);
+  return ok(row.val?.encryptedCredentials ?? null);
 }
 
 export interface ConnectionInput {
@@ -220,33 +175,18 @@ export interface ConnectionInput {
 
 /** Store or replace this subject's connection to a share. */
 export async function upsertConnection(
-  db: Kysely<DB>,
   shareId: string,
   subject: string,
   input: ConnectionInput
 ): Promise<Result<void, StoreError>> {
   const written = await wrapAsync(
     () =>
-      db
-        .insertInto('file_share_connections')
-        .values({
-          share_id: shareId,
-          subject,
-          encrypted_credentials: input.encryptedCredentials,
-          username: input.username,
-          tool_access: input.toolAccess,
-          allow_delete: input.allowDelete,
-        })
-        .onConflict((oc) =>
-          oc.constraint('file_share_connections_pk').doUpdateSet({
-            encrypted_credentials: input.encryptedCredentials,
-            username: input.username,
-            tool_access: input.toolAccess,
-            allow_delete: input.allowDelete,
-            updated_at: new Date(),
-          })
-        )
-        .execute(),
+      getDataStore().fileShares.upsertConnection(shareId, subject, {
+        encryptedCredentials: input.encryptedCredentials,
+        username: input.username,
+        toolAccess: input.toolAccess,
+        allowDelete: input.allowDelete,
+      }),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -255,7 +195,6 @@ export async function upsertConnection(
 
 /** Change only the exposure choice, keeping the stored credential. */
 export async function updateConnectionExposure(
-  db: Kysely<DB>,
   shareId: string,
   subject: string,
   toolAccess: ShareConnection['toolAccess'],
@@ -263,35 +202,27 @@ export async function updateConnectionExposure(
 ): Promise<Result<boolean, StoreError>> {
   const updated = await wrapAsync(
     () =>
-      db
-        .updateTable('file_share_connections')
-        .set({ tool_access: toolAccess, allow_delete: allowDelete, updated_at: new Date() })
-        .where('share_id', '=', shareId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+      getDataStore().fileShares.updateConnectionExposure(shareId, subject, {
+        toolAccess,
+        allowDelete,
+      }),
     'DB_ERROR' as const
   );
   if (!updated.ok) return updated;
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
 /** Remove this subject's connection (credential included). */
 export async function deleteConnection(
-  db: Kysely<DB>,
   shareId: string,
   subject: string
 ): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
-    () =>
-      db
-        .deleteFrom('file_share_connections')
-        .where('share_id', '=', shareId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().fileShares.deleteConnection(shareId, subject),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
-  return ok(deleted.val.numDeletedRows > BigInt(0));
+  return ok(deleted.val > 0);
 }
 
 /** Which tool families this subject's connections enable — see registry. */
@@ -309,29 +240,21 @@ export interface ToolExposure {
  * which fileshare tool families should register for this subject?
  */
 export async function resolveToolExposure(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ToolExposure, StoreError>> {
   const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('file_share_connections')
-        .innerJoin('file_shares', 'file_shares.id', 'file_share_connections.share_id')
-        .select(['file_share_connections.tool_access', 'file_share_connections.allow_delete'])
-        .where('file_share_connections.subject', '=', subject)
-        .where('file_shares.enabled', '=', true)
-        .execute(),
+    () => getDataStore().fileShares.connectionExposures(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return rows;
 
   const exposure: ToolExposure = { read: false, write: false, del: false };
   for (const row of rows.val) {
-    if (!isToolAccess(row.tool_access)) return err('MALFORMED_ROW' as const);
+    if (!isToolAccess(row.toolAccess)) return err('MALFORMED_ROW' as const);
     exposure.read = true;
-    const write = row.tool_access === 'read_write';
+    const write = row.toolAccess === 'read_write';
     exposure.write = exposure.write || write;
-    exposure.del = exposure.del || (write && row.allow_delete === true);
+    exposure.del = exposure.del || (write && row.allowDelete === true);
   }
   return ok(exposure);
 }
@@ -340,57 +263,26 @@ export async function resolveToolExposure(
 // Admin accessors — used only behind ROLE_OPERATOR routes.
 // ---------------------------------------------------------------------------
 
-export async function listShares(
-  db: Kysely<DB>
-): Promise<Result<ShareRow[], StoreError>> {
-  const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('file_shares')
-        .selectAll()
-        .orderBy('name')
-        .execute(),
-    'DB_ERROR' as const
-  );
+export async function listShares(): Promise<Result<ShareRow[], StoreError>> {
+  const rows = await wrapAsync(() => getDataStore().fileShares.list(), 'DB_ERROR' as const);
   if (!rows.ok) return rows;
 
   const shares: ShareRow[] = [];
-  for (const row of rows.val) {
-    const summary = summaryFromRow(row);
-    if (!summary) return err('MALFORMED_ROW' as const);
-    shares.push({
-      summary,
-      settings: isRecord(row.settings) ? { ...row.settings } : {},
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-    });
+  for (const record of rows.val) {
+    const row = rowFromRecord(record);
+    if (!row) return err('MALFORMED_ROW' as const);
+    shares.push(row);
   }
   return ok(shares);
 }
 
-export async function getShare(
-  db: Kysely<DB>,
-  shareId: string
-): Promise<Result<ShareRow | null, StoreError>> {
-  const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('file_shares')
-        .selectAll()
-        .where('id', '=', shareId)
-        .executeTakeFirst(),
-    'DB_ERROR' as const
-  );
-  if (!row.ok) return row;
-  if (!row.val) return ok(null);
-  const summary = summaryFromRow(row.val);
-  if (!summary) return err('MALFORMED_ROW' as const);
-  return ok({
-    summary,
-    settings: isRecord(row.val.settings) ? { ...row.val.settings } : {},
-    createdAt: new Date(row.val.created_at),
-    updatedAt: new Date(row.val.updated_at),
-  });
+export async function getShare(shareId: string): Promise<Result<ShareRow | null, StoreError>> {
+  const record = await wrapAsync(() => getDataStore().fileShares.get(shareId), 'DB_ERROR' as const);
+  if (!record.ok) return record;
+  if (!record.val) return ok(null);
+  const row = rowFromRecord(record.val);
+  if (!row) return err('MALFORMED_ROW' as const);
+  return ok(row);
 }
 
 export interface ShareInput {
@@ -411,64 +303,30 @@ export interface ShareInput {
 }
 
 export async function createShare(
-  db: Kysely<DB>,
   input: ShareInput
 ): Promise<Result<string, StoreError | 'DUPLICATE_NAME'>> {
   const inserted = await wrapAsync(
-    () =>
-      db
-        .insertInto('file_shares')
-        .values({
-          name: input.name,
-          protocol: input.protocol,
-          host: input.host,
-          port: input.port,
-          share_name: input.shareName,
-          root_path: input.rootPath,
-          case_insensitive: input.caseInsensitive,
-          enabled: input.enabled,
-          host_key_fingerprint: input.hostKeyFingerprint,
-          settings: JSON.stringify({}),
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow(),
+    () => getDataStore().fileShares.create(input),
     'DB_ERROR' as const
   );
   if (!inserted.ok) {
     return isDuplicateName(inserted.err.cause) ? err('DUPLICATE_NAME' as const) : inserted;
   }
-  return ok(inserted.val.id);
+  return ok(inserted.val);
 }
 
 export async function updateShare(
-  db: Kysely<DB>,
   shareId: string,
   input: ShareInput
 ): Promise<Result<boolean, StoreError | 'DUPLICATE_NAME'>> {
   const updated = await wrapAsync(
-    () =>
-      db
-        .updateTable('file_shares')
-        .set({
-          name: input.name,
-          protocol: input.protocol,
-          host: input.host,
-          port: input.port,
-          share_name: input.shareName,
-          root_path: input.rootPath,
-          case_insensitive: input.caseInsensitive,
-          enabled: input.enabled,
-          host_key_fingerprint: input.hostKeyFingerprint,
-          updated_at: new Date().toISOString(),
-        })
-        .where('id', '=', shareId)
-        .executeTakeFirst(),
+    () => getDataStore().fileShares.update(shareId, input),
     'DB_ERROR' as const
   );
   if (!updated.ok) {
     return isDuplicateName(updated.err.cause) ? err('DUPLICATE_NAME' as const) : updated;
   }
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
 /**
@@ -479,45 +337,22 @@ export async function updateShare(
  * call did the recording.
  */
 export async function recordHostKeyFingerprint(
-  db: Kysely<DB>,
   shareId: string,
   fingerprint: string
 ): Promise<Result<boolean, StoreError>> {
   const updated = await wrapAsync(
-    () =>
-      db
-        .updateTable('file_shares')
-        .set({ host_key_fingerprint: fingerprint, updated_at: new Date().toISOString() })
-        .where('id', '=', shareId)
-        .where('host_key_fingerprint', 'is', null)
-        .executeTakeFirst(),
+    () => getDataStore().fileShares.recordHostKeyFingerprint(shareId, fingerprint),
     'DB_ERROR' as const
   );
   if (!updated.ok) return updated;
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
-export async function deleteShare(
-  db: Kysely<DB>,
-  shareId: string
-): Promise<Result<boolean, StoreError>> {
+export async function deleteShare(shareId: string): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
-    () =>
-      db
-        .deleteFrom('file_shares')
-        .where('id', '=', shareId)
-        .executeTakeFirst(),
+    () => getDataStore().fileShares.delete(shareId),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
-  return ok(deleted.val.numDeletedRows > BigInt(0));
-}
-
-function isDuplicateName(cause: unknown): boolean {
-  return (
-    isRecord(cause) &&
-    cause.code === '23505' &&
-    typeof cause.constraint === 'string' &&
-    cause.constraint === 'idx_file_shares_name'
-  );
+  return ok(deleted.val > 0);
 }

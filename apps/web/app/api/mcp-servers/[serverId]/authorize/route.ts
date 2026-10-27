@@ -37,7 +37,7 @@ export async function GET(
   if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   const db = dbResult.val;
 
-  const server = await getServer(db, serverId);
+  const server = await getServer(serverId);
   if (!server.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
   if (!server.val || !server.val.enabled) {
     return NextResponse.json({ error: 'No such MCP server' }, { status: 404 });

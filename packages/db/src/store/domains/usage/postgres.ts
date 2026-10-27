@@ -11,7 +11,10 @@ interface ChatBucketRow {
 }
 
 /** A chat with no project is 'chat', a code project's 'code', any other project's 'chat_project'. */
-const CHAT_BUCKET_CASE = sql`
+// Built on use, not at import: the store barrel is imported everywhere,
+// including tests that stub kysely.
+const CHAT_BUCKET_CASE = () =>
+  sql`
   CASE
     WHEN c.project_id IS NULL THEN 'chat'
     WHEN cp.kind = 'code' THEN 'code'
@@ -38,7 +41,7 @@ export function postgresUsage(db: () => Kysely<DB>): UsageStore {
       const [chatResult, agentRow, imageRow, documentRow] = await Promise.all([
         sql<ChatBucketRow>`
           SELECT
-            ${CHAT_BUCKET_CASE} AS bucket,
+            ${CHAT_BUCKET_CASE()} AS bucket,
             COALESCE(SUM(ct.input_tokens), 0) AS input_tokens,
             COALESCE(SUM(ct.output_tokens), 0) AS output_tokens
           FROM chat_turns ct
@@ -153,7 +156,7 @@ export function postgresUsage(db: () => Kysely<DB>): UsageStore {
         sql<ChatBucketRow & { day: string }>`
           SELECT
             to_char(ct.started_at AT TIME ZONE ${timeZone}, ${pattern}) AS day,
-            ${CHAT_BUCKET_CASE} AS bucket,
+            ${CHAT_BUCKET_CASE()} AS bucket,
             COALESCE(SUM(ct.input_tokens), 0) AS input_tokens,
             COALESCE(SUM(ct.output_tokens), 0) AS output_tokens
           FROM chat_turns ct

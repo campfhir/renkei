@@ -7,20 +7,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { listInstancesWithConnection } from '@renkei/connector-admanager';
 import { getSessionFromRequest } from '@/lib/session';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const instances = await listInstancesWithConnection(dbResult.val, session.subject);
+  const instances = await listInstancesWithConnection(session.subject);
   if (!instances.ok) {
     return NextResponse.json({ error: 'Could not read the instances' }, { status: 500 });
   }

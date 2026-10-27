@@ -7,7 +7,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { delegateGrants } from '@renkei/delegate-client';
 import { getServer } from '@renkei/connector-mcp';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
@@ -22,8 +21,6 @@ export async function POST(
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   const origin = await getOrigin(request);
   if (!origin.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
 
@@ -32,7 +29,7 @@ export async function POST(
     redirectUri: `${origin.val}/api/oauth/callback`,
     refresh: true,
   });
-  const server = await getServer(dbResult.val, serverId);
+  const server = await getServer(serverId);
   if (!server.ok || !server.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!prepared.ok) {
     return NextResponse.json({

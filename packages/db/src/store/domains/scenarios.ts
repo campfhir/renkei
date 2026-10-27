@@ -27,6 +27,14 @@ import { jiraChangeScenarios } from './jira-changes/scenarios';
 import { jiraSpaceTemplateScenarios } from './jira-space-templates/scenarios';
 import { adminChangeQueueScenarios } from './admin-change-queue/scenarios';
 import { salesforceGrantScenarios } from './salesforce-grants/scenarios';
+import { connectorConfigScenarios } from './connector-configs/scenarios';
+import { providerGrantScenarios } from './provider-grants/scenarios';
+import { mcpServerScenarios } from './mcp-servers/scenarios';
+import { fileShareScenarios } from './file-shares/scenarios';
+import { mirthInstanceScenarios } from './mirth-instances/scenarios';
+import { adManagerInstanceScenarios } from './admanager-instances/scenarios';
+import { emailSanitizerScenarios } from './email-sanitizer/scenarios';
+import { mailReviewScenarios } from './mail-review/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -54,4 +62,12 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...agentUsageScenarios,
   ...agentOptimizationScenarios,
   ...agentDraftScenarios,
+  ...connectorConfigScenarios,
+  ...providerGrantScenarios,
+  ...mcpServerScenarios,
+  ...fileShareScenarios,
+  ...mirthInstanceScenarios,
+  ...adManagerInstanceScenarios,
+  ...emailSanitizerScenarios,
+  ...mailReviewScenarios,
 ];

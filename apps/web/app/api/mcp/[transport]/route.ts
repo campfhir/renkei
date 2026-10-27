@@ -475,7 +475,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
             // audiences are resolved from the caller's recorded identity —
             // a run token carries no roles, and a restriction must hold for
             // an agent exactly as for the person it runs for.
-            const audience = await resolveAudience(db, subject);
+            const audience = await resolveAudience(subject);
             const projection = buildProjection({ settings, availability, roles, audience });
             // A run token names the only tools it may see (migration 096):
             // an agent run's steps, plus the notifier's own. Everything

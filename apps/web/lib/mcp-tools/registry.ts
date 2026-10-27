@@ -192,13 +192,13 @@ async function resolveMcpServers(
   db: Kysely<DB>,
   subject: string
 ): Promise<McpServerRegistration[]> {
-  const servers = await listServers(db);
+  const servers = await listServers();
   if (!servers.ok) return [];
   const enabled = servers.val.filter((server) => server.enabled);
   if (enabled.length === 0) return [];
   const [connected, lists] = await Promise.all([
-    connectedServerIds(db, subject),
-    getToolLists(db, subject),
+    connectedServerIds(subject),
+    getToolLists(subject),
   ]);
   if (!connected.ok || !lists.ok) return [];
   const connectedIds = new Set(connected.val);
@@ -206,10 +206,10 @@ async function resolveMcpServers(
   for (const server of enabled) {
     if (server.authMode === 'oauth' && !connectedIds.has(server.id)) continue;
     const cached = lists.val.get(server.id);
-    if (!cached || isStale(cached.fetchedAt)) refreshInBackground(db, server, subject);
+    if (!cached || isStale(cached.fetchedAt)) refreshInBackground(server, subject);
     // Where the server announces tool changes, hear them (watch.ts); where
     // it does not, the stale check above is the whole mechanism.
-    ensureWatching(db, server, subject);
+    ensureWatching(server, subject);
     if (!cached) continue;
     entries.push({
       id: server.id,
@@ -389,7 +389,7 @@ export async function resolveConnectorAvailability(
   // any connection mounts the read tools; write and delete each need an
   // explicit opt-in somewhere. Any error reads as "not provisioned" — the
   // fail-closed direction.
-  const fileshareExposure = await resolveToolExposure(db, subject);
+  const fileshareExposure = await resolveToolExposure(subject);
   const filesharesAvailable = fileshareExposure.ok && fileshareExposure.val.read;
   const fileshareWrite = fileshareExposure.ok && fileshareExposure.val.write;
   const fileshareDelete = fileshareExposure.ok && fileshareExposure.val.del;
@@ -399,7 +399,7 @@ export async function resolveConnectorAvailability(
   // and the exposure they chose per instance decides which families
   // register (act and destructive only on opt-in). Errors read as "not
   // provisioned".
-  const mirthExposure = await resolveMirthExposure(db, subject);
+  const mirthExposure = await resolveMirthExposure(subject);
   const mirthAvailable = mirthExposure.ok && mirthExposure.val.connected;
   const mirthPermissions = mirthExposure.ok ? mirthExposure.val.permissions : [];
 
@@ -407,7 +407,7 @@ export async function resolveConnectorAvailability(
   // row, the caller's own per-instance connections stand in for the
   // grant, and the exposure they chose per instance decides which
   // families register. Errors read as "not provisioned".
-  const admanagerExposure = await resolveAdManagerExposure(db, subject);
+  const admanagerExposure = await resolveAdManagerExposure(subject);
   const admanagerAvailable = admanagerExposure.ok && admanagerExposure.val.connected;
   const admanagerPermissions = admanagerExposure.ok ? admanagerExposure.val.permissions : [];
 

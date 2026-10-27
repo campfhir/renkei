@@ -7,7 +7,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { createServer, listServers } from '@renkei/connector-mcp';
 import { encrypt, loadKeyring } from '@renkei/crypto';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
@@ -19,9 +18,7 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const servers = await listServers(dbResult.val);
+  const servers = await listServers();
   if (!servers.ok) return NextResponse.json({ error: 'Could not read servers' }, { status: 500 });
   return NextResponse.json({ servers: servers.val.map(serverSummary) });
 }
@@ -49,9 +46,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     encryptedClientSecret = encrypt(input.clientSecret, key.val);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const created = await createServer(dbResult.val, {
+  const created = await createServer({
     slug,
     name: input.name,
     url: input.url,
