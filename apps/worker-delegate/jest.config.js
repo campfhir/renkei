@@ -22,8 +22,8 @@ export default {
     '^@renkei/connector-fileshares$': '<rootDir>/../../packages/connector-fileshares/src/index.ts',
     '^@renkei/connector-salesforce$': '<rootDir>/../../packages/connector-salesforce/src/index.ts',
   },
-  // kysely's published build is ESM-only; ts-jest (allowJs) transforms it to
-  // CJS for the test run — the worker-agents arrangement.
+  // @renkei/db is loaded from source and imports kysely, whose published
+  // build is ESM-only; ts-jest (allowJs) transforms it to CJS for the run.
   transformIgnorePatterns: ['/node_modules/(?!.*kysely)'],
   transform: {
     '^.+\\.(t|j)sx?$': [

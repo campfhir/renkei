@@ -575,9 +575,6 @@ importers:
       '@renkei/worker-kit':
         specifier: workspace:*
         version: link:../../packages/worker-kit
-      kysely:
-        specifier: ^0.29.7
-        version: 0.29.7
       tsx:
         specifier: ^4.23.15
         version: 4.23.15
@@ -759,9 +756,6 @@ importers:
       '@renkei/settings':
         specifier: workspace:*
         version: link:../../packages/settings
-      kysely:
-        specifier: ^0.29.7
-        version: 0.29.7
       mermaid:
         specifier: 12.2.0
         version: 12.2.0
