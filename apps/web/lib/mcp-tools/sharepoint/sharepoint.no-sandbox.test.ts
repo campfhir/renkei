@@ -12,16 +12,12 @@
  * denied credential into a clean errText() rather than crashing.
  */
 
-// watches.ts pulls in content-watches.ts, which imports `sql` from kysely
-// directly — ESM-only, unparseable by this suite's CJS runtime. index.ts's
-// own import of withPresentationHint from ../common reaches @renkei/db the
-// same transitive way every other no-sandbox suite in this codebase does.
-// Neither mock does anything useful: deniedGraphAuth() denies before any
-// handler reaches a real database call, so both exist purely to keep the
-// module graph parseable.
-jest.mock('kysely', () => ({ sql: () => ({}) }));
+// index.ts's own import of withPresentationHint from ../common reaches
+// @renkei/db the same transitive way every other no-sandbox suite in this
+// codebase does. The mock does nothing useful: deniedGraphAuth() denies
+// before any handler reaches the data store, so it exists purely to keep
+// the module graph light.
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: false, error: 'no db in this suite' }),
   // Every data-store method rejects, as an unreachable database does.
   getDataStore: () =>
     new Proxy(

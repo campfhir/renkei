@@ -3,12 +3,12 @@
  * DATABASE_URL): a request is only its owner's, carries its validation, can
  * be claimed only while pending and unexpired — of two simultaneous claims
  * exactly one wins — and an apply cut off after its deploy started is not
- * "interrupted", since the deploy can still be read.
+ * "interrupted", since the deploy can still be read. The subjects are
+ * per run; the requests stay behind, as a request's history does.
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import {
   cancelChangeRequest,
   claimChangeRequest,
@@ -37,7 +37,6 @@ import {
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('salesforce_admin_change_requests', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const owner = `sfa-owner-${suiteId.slice(0, 8)}`;
   const stranger = `sfa-stranger-${suiteId.slice(0, 8)}`;
@@ -55,17 +54,23 @@ maybe('salesforce_admin_change_requests', () => {
       payload: { files: { 'package.xml': '<Package/>' } },
     });
 
-  beforeAll(() => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-  });
+  /** A proposal filed as `createChangeRequest` files one, but out of time as it lands. */
+  const proposeExpired = () =>
+    getDataStore().salesforceChanges.create({
+      subject: owner,
+      agentId: null,
+      connectorKey: 'uat',
+      orgId: '00D000000000062EAA',
+      instanceUrl: 'https://acme--uat.sandbox.my.salesforce.com',
+      kind: 'fields',
+      title: 'Site Visit: add Outcome',
+      reason: 'The program tracks outcomes now',
+      payload: { files: { 'package.xml': '<Package/>' } },
+      ttlHours: 0,
+    });
 
   afterAll(async () => {
-    await sql`DELETE FROM salesforce_admin_change_requests WHERE subject IN (${owner}, ${stranger}, ${operator})`.execute(
-      db
-    );
-    await closeDatabase();
+    await closeDataStore();
   });
 
   it('stores a proposal as pending for a day, its owner’s alone, with its validation', async () => {
@@ -133,10 +138,7 @@ maybe('salesforce_admin_change_requests', () => {
     expect(await cancelChangeRequest(owner, change.id)).toBe(true);
     expect(await claimChangeRequest(owner, change.id)).toBe(false);
 
-    const old = await propose();
-    await sql`UPDATE salesforce_admin_change_requests SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = ${old.id}`.execute(
-      db
-    );
+    const old = await proposeExpired();
     const expired = await getChangeRequest(owner, old.id);
     expect(expired && stateOf(expired)).toBe('expired');
     expect(await claimChangeRequest(owner, old.id)).toBe(false);
@@ -178,14 +180,14 @@ maybe('salesforce_admin_change_requests', () => {
         change.id
       );
 
-      // ...until its heartbeat goes quiet.
-      await sql`UPDATE salesforce_admin_change_requests SET updated_at = NOW() - INTERVAL '5 minutes' WHERE id = ${change.id}`.execute(
-        db
-      );
-      expect((await listRunnableChanges(90_000, 100)).map((job) => job.id)).toContain(change.id);
+      // ...until its heartbeat goes quiet (here: for longer than the short
+      // staleness the sweep is asked about).
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const quiet = 100;
+      expect((await listRunnableChanges(quiet, 100)).map((job) => job.id)).toContain(change.id);
       const takers = await Promise.all([
-        reclaimStaleChange(change.id),
-        reclaimStaleChange(change.id),
+        reclaimStaleChange(change.id, quiet),
+        reclaimStaleChange(change.id, quiet),
       ]);
       expect(takers.filter(Boolean)).toHaveLength(1);
 
@@ -212,10 +214,7 @@ maybe('salesforce_admin_change_requests', () => {
       expect(requestDescription(words.payload)).toContain('Outcome picklist');
       expect(await queueChangeRequest(words.id, operator)).toBe(false);
 
-      const old = await propose();
-      await sql`UPDATE salesforce_admin_change_requests SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = ${old.id}`.execute(
-        db
-      );
+      const old = await proposeExpired();
       expect(await queueChangeRequest(old.id, operator)).toBe(false);
     });
 

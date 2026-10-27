@@ -6,8 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { QueueMessageInput, QueueProducer } from '@renkei/queue';
 import { NEEDS_SIGN_IN, resumeRunsNeedingSignIn } from './needs-sign-in';
@@ -15,57 +14,77 @@ import { NEEDS_SIGN_IN, resumeRunsNeedingSignIn } from './needs-sign-in';
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('resumeRunsNeedingSignIn', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const other = `other-${suiteId.slice(0, 8)}`;
   const agentId = randomUUID();
   const definition = { instructions: '## Goal\n\nGo.', tools: [] };
 
+  /**
+   * A run brought to `status` the engine's way: queued, then parked
+   * ('waiting', with `errorKind` when it waits for the owner's key) or
+   * started and finished.
+   */
   const seedRun = async (
     ownerSubject: string,
     status: string,
     errorKind: string | null
   ): Promise<string> => {
+    const runs = getDataStore().agentRuns;
     const id = randomUUID();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id,
-        agent_id: agentId,
-        owner_subject: ownerSubject,
-        trigger_kind: 'manual',
-        definition_snapshot: JSON.stringify(definition),
-        lineage: JSON.stringify([]),
-        initial_state: JSON.stringify({}),
-        status,
-        error_kind: errorKind,
+    await runs.createQueued({
+      id,
+      agentId,
+      ownerSubject,
+      triggerId: null,
+      triggerKind: 'manual',
+      triggeredBySubject: ownerSubject,
+      parentRunId: null,
+      lineage: [],
+      definitionSnapshot: definition,
+      llmModelId: null,
+      initialState: {},
+    });
+    if (status === 'waiting') {
+      await runs.updateExecution(id, {
+        status: 'waiting',
+        waitingUntil: null,
+        errorKind,
         error: errorKind ? 'Paused: sign in.' : null,
-      })
-      .execute();
+      });
+    } else {
+      await runs.updateExecution(id, { status: 'running', startedAt: new Date() });
+      await runs.finishExecution(id, { status, errorKind: null, error: null });
+    }
     return id;
   };
 
+  const stateOf = async (runId: string) => {
+    const runs = getDataStore().agentRuns;
+    const run = await runs.findForExecution(runId);
+    const failure = await runs.findRunError(runId);
+    return { status: run?.status, errorKind: run?.errorKind, error: failure?.error };
+  };
+
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: owner,
-        name: 'Parked agent',
-        instructions: definition.instructions,
-        enabled: true,
-      })
-      .execute();
+    await getDataStore().agents.create({
+      id: agentId,
+      ownerSubject: owner,
+      name: 'Parked agent',
+      instructions: definition.instructions,
+      tools: definition.tools,
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE owner_subject IN (${owner}, ${other})`.execute(db);
-    await sql`DELETE FROM agents WHERE owner_subject IN (${owner}, ${other})`.execute(db);
-    await closeDatabase();
+    // The agent's runs (the other owner's included) cascade with it.
+    await getDataStore().agents.delete(owner, agentId);
+    await closeDataStore();
   });
 
   it("re-queues only the owner's runs parked for sign-in and enqueues one message each", async () => {
@@ -93,26 +112,12 @@ maybe('resumeRunsNeedingSignIn', () => {
     expect(new Set(sent.map((m) => m.orderingKey))).toEqual(new Set([`agent:${agentId}`]));
     expect(new Set(sent.map((m) => m.type))).toEqual(new Set(['run']));
 
-    const rows = await db
-      .selectFrom('agent_runs')
-      .select(['id', 'status', 'error_kind', 'error'])
-      .execute();
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    expect(byId.get(parkedA)).toEqual({
-      id: parkedA,
-      status: 'queued',
-      error_kind: null,
-      error: null,
-    });
-    expect(byId.get(parkedB)).toEqual({
-      id: parkedB,
-      status: 'queued',
-      error_kind: null,
-      error: null,
-    });
-    expect(byId.get(approval)?.status).toBe('waiting');
-    expect(byId.get(theirs)).toMatchObject({ status: 'waiting', error_kind: NEEDS_SIGN_IN });
-    expect(byId.get(done)?.status).toBe('succeeded');
+    const cleared = { status: 'queued', errorKind: null, error: null };
+    expect(await stateOf(parkedA)).toEqual(cleared);
+    expect(await stateOf(parkedB)).toEqual(cleared);
+    expect((await stateOf(approval)).status).toBe('waiting');
+    expect(await stateOf(theirs)).toMatchObject({ status: 'waiting', errorKind: NEEDS_SIGN_IN });
+    expect((await stateOf(done)).status).toBe('succeeded');
 
     // Nothing left to re-queue the second time around.
     expect(await resumeRunsNeedingSignIn(producer, owner)).toBe(0);

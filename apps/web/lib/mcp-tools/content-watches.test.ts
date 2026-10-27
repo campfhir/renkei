@@ -8,81 +8,86 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase, type DB } from '@renkei/db';
-import type { Kysely } from 'kysely';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { upsertWatch, repairWatch } from './content-watches';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('watch repair and cursor inheritance', () => {
-  let db: Kysely<DB>;
-  const scopeKey = `ENG-${randomUUID().slice(0, 8)}`;
+  const suiteId = randomUUID().slice(0, 8);
+  const scopeKey = `ENG-${suiteId}`;
+  const departed = `departed-user-${suiteId}`;
+  const alice = `alice-${suiteId}`;
+  const bob = `bob-${suiteId}`;
   const cursor = '2026-08-01T00:00:00.000Z';
+  let watchId = '';
+
+  /** The poller state of one person's watch on the scope. */
+  const stateFor = async (subject: string) => {
+    const watches = getDataStore().contentWatches;
+    const watch = await watches.findForSubject(subject, 'jira', scopeKey);
+    if (!watch) throw new Error(`no watch for ${subject}`);
+    return { watch, state: await watches.getSyncState(watch.id) };
+  };
 
   beforeAll(async () => {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('no database');
-    db = dbResult.val;
-    // The broken watch: owned by a departed subject, mid-history cursor,
-    // failing every poll.
-    await db
-      .insertInto('content_watches')
-      .values({
-        id: randomUUID(),
-        provider: 'jira',
-        account_id: 'dead-account',
-        subject: 'departed-user',
-        scope_type: 'project',
-        scope_key: scopeKey,
-        scope_label: 'Engineering',
-        cursor,
-        sync_status: 'error',
-        last_error: 'No usable grant found',
-        last_synced_at: new Date(),
-      })
-      .execute();
+    // The broken watch, reached the way the poller leaves one: watched by
+    // a since-departed subject, a round recorded mid-history, then failing
+    // every poll.
+    const watches = getDataStore().contentWatches;
+    await watches.watch(
+      { subject: departed, accountId: 'dead-account' },
+      { provider: 'jira', scopeType: 'project', scopeKey, scopeLabel: 'Engineering' }
+    );
+    const broken = await watches.findForSubject(departed, 'jira', scopeKey);
+    if (!broken) throw new Error('the watch was not created');
+    watchId = broken.id;
+    await watches.recordRound(watchId, { cursor, items: 3, syncStatus: 'idle' });
+    await watches.recordSyncFailure(watchId, 'No usable grant found');
   });
 
   afterAll(async () => {
-    await db.deleteFrom('content_watches').where('scope_key', '=', scopeKey).execute();
+    await closeDataStore();
   });
 
   it('rebinds the watch to the caller, keeping the cursor', async () => {
+    const before = await getDataStore().contentWatches.getSyncState(watchId);
+    expect(before).toMatchObject({ cursor, syncStatus: 'error' });
+
     const result = await repairWatch(
-      { subject: 'alice', accountId: 'alice-account' },
+      { subject: alice, accountId: 'alice-account' },
       'jira',
       'project',
       scopeKey
     );
     expect(result).toEqual({ ok: true, repaired: 1 });
 
-    const row = await db
-      .selectFrom('content_watches')
-      .select(['subject', 'account_id', 'cursor', 'last_error', 'sync_status', 'last_synced_at'])
-      .where('scope_key', '=', scopeKey)
-      .executeTakeFirstOrThrow();
-    expect(row.subject).toBe('alice');
-    expect(row.account_id).toBe('alice-account');
-    expect(row.cursor).toBe(cursor);
-    expect(row.last_error).toBeNull();
-    expect(row.sync_status).toBe('idle');
+    const { watch, state } = await stateFor(alice);
+    expect(watch.id).toBe(watchId);
+    expect(watch.accountId).toBe('alice-account');
+    expect(state?.cursor).toBe(cursor);
+    expect(state?.lastError).toBeNull();
+    expect(state?.syncStatus).toBe('idle');
     // NULL puts it at the head of the sweep's never-synced-first ordering.
-    expect(row.last_synced_at).toBeNull();
+    expect(state?.lastSyncedAt).toBeNull();
+    expect(
+      await getDataStore().contentWatches.findForSubject(departed, 'jira', scopeKey)
+    ).toBeNull();
   });
 
   it('reports zero when no watch exists for the scope', async () => {
     const result = await repairWatch(
-      { subject: 'alice', accountId: 'alice-account' },
+      { subject: alice, accountId: 'alice-account' },
       'jira',
       'project',
-      'NOPE'
+      `NOPE-${suiteId}`
     );
     expect(result).toEqual({ ok: true, repaired: 0 });
   });
 
   it('a fresh watch on an already-indexed scope inherits the cursor', async () => {
     const result = await upsertWatch(
-      { subject: 'bob', accountId: 'bob-account' },
+      { subject: bob, accountId: 'bob-account' },
       'jira',
       'project',
       scopeKey,
@@ -90,12 +95,7 @@ maybe('watch repair and cursor inheritance', () => {
     );
     expect(result).toEqual({ ok: true, created: true });
 
-    const row = await db
-      .selectFrom('content_watches')
-      .select(['cursor'])
-      .where('scope_key', '=', scopeKey)
-      .where('subject', '=', 'bob')
-      .executeTakeFirstOrThrow();
-    expect(row.cursor).toBe(cursor);
+    const { state } = await stateFor(bob);
+    expect(state?.cursor).toBe(cursor);
   });
 });

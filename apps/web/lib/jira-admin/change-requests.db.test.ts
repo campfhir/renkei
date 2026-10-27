@@ -3,12 +3,12 @@
  * DATABASE_URL): a request is only ever its owner's, only a pending,
  * unexpired one can be claimed for applying, and of two simultaneous
  * claims exactly one wins — the guarantee that one click applies a
- * change once.
+ * change once. The subjects are per run; the requests stay behind, as a
+ * request's history does.
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import {
   cancelChangeRequest,
   claimChangeRequest,
@@ -34,7 +34,6 @@ import {
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('jira_admin_change_requests', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
@@ -51,17 +50,22 @@ maybe('jira_admin_change_requests', () => {
       payload: { operations: [{ op: 'add', values: ['Vendor'] }] },
     });
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-  });
+  /** A proposal filed as `createChangeRequest` files one, but out of time as it lands. */
+  const proposeExpired = (title: string) =>
+    getDataStore().jiraChanges.create({
+      subject: owner,
+      agentId: null,
+      cloudId: 'cloud-1',
+      siteUrl: 'https://acme.atlassian.net',
+      kind: 'field_options',
+      title,
+      reason: 'Procurement asked for it',
+      payload: { operations: [{ op: 'add', values: ['Vendor'] }] },
+      ttlHours: 0,
+    });
 
   afterAll(async () => {
-    await sql`DELETE FROM jira_admin_change_requests WHERE subject IN (${owner}, ${stranger}, ${operator})`.execute(
-      db
-    );
-    await closeDatabase();
+    await closeDataStore();
   });
 
   it('stores a proposal as pending, expiring in a day, and reads it back', async () => {
@@ -117,10 +121,7 @@ maybe('jira_admin_change_requests', () => {
   });
 
   it('refuses to claim an expired request, and leaves it out of the pending list', async () => {
-    const change = await propose('Expired one');
-    await sql`UPDATE jira_admin_change_requests SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = ${change.id}`.execute(
-      db
-    );
+    const change = await proposeExpired('Expired one');
     const read = await getChangeRequest(owner, change.id);
     expect(read && stateOf(read)).toBe('expired');
     expect(await claimChangeRequest(owner, change.id)).toBe(false);
@@ -171,13 +172,14 @@ maybe('jira_admin_change_requests', () => {
       expect((await getChangeRequestById(change.id))?.step).toBe('Applying the change in Jira');
       expect(await reclaimStaleChange(change.id)).toBe(false);
 
-      await sql`UPDATE jira_admin_change_requests SET updated_at = NOW() - INTERVAL '5 minutes' WHERE id = ${change.id}`.execute(
-        db
-      );
-      expect((await listRunnableChanges(90_000, 100)).map((job) => job.id)).toContain(change.id);
+      // Its heartbeat goes quiet for longer than the short staleness the
+      // sweep is asked about here.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const quiet = 100;
+      expect((await listRunnableChanges(quiet, 100)).map((job) => job.id)).toContain(change.id);
       const takers = await Promise.all([
-        reclaimStaleChange(change.id),
-        reclaimStaleChange(change.id),
+        reclaimStaleChange(change.id, quiet),
+        reclaimStaleChange(change.id, quiet),
       ]);
       expect(takers.filter(Boolean)).toHaveLength(1);
 

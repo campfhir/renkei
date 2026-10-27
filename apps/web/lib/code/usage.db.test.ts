@@ -6,53 +6,65 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { loadCodeProjectUsage } from './usage';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('loadCodeProjectUsage', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const subject = `owner-${suiteId.slice(0, 8)}`;
-  const projectId = randomUUID();
-  const otherProjectId = randomUUID();
-  const chatA = randomUUID();
-  const chatB = randomUUID();
-  const chatOutside = randomUUID();
+  let projectId = '';
+  let otherProjectId = '';
+  let chatA = '';
+  let chatB = '';
+  let chatOutside = '';
 
-  const turn = (chatId: string, inputTokens: number, outputTokens: number) =>
-    db
-      .insertInto('chat_turns')
-      .values({
-        chat_id: chatId,
-        status: 'completed',
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-      })
-      .execute();
+  // A finished turn, the way the turn runner leaves one: opened, then
+  // settled with its token tallies.
+  const turn = async (chatId: string, inputTokens: number, outputTokens: number) => {
+    const store = getDataStore().chatThreads;
+    const turnId = await store.createTurn({
+      chatId,
+      kind: 'reply',
+      llmModelId: null,
+      thinkingBudget: null,
+      runner: null,
+    });
+    await store.finishTurn(turnId, {
+      status: 'completed',
+      error: null,
+      iterations: 1,
+      inputTokens,
+      outputTokens,
+    });
+  };
+
+  const codeProject = () =>
+    getDataStore().chatProjects.create({
+      ownerSubject: subject,
+      name: 'p',
+      description: null,
+      toolConfig: null,
+      repo: { provider: 'github', fullName: `acme/${suiteId}`, branch: null },
+    });
+
+  const chatIn = (projectFk: string) =>
+    getDataStore().chats.create({
+      ownerSubject: subject,
+      projectId: projectFk,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    for (const id of [projectId, otherProjectId]) {
-      await db
-        .insertInto('chat_projects')
-        .values({ id, owner_subject: subject, name: 'p', kind: 'code' })
-        .execute();
-    }
-    for (const [id, projectFk] of [
-      [chatA, projectId],
-      [chatB, projectId],
-      [chatOutside, otherProjectId],
-    ] as const) {
-      await db
-        .insertInto('chats')
-        .values({ id, owner_subject: subject, project_id: projectFk })
-        .execute();
-    }
+    projectId = await codeProject();
+    otherProjectId = await codeProject();
+    chatA = await chatIn(projectId);
+    chatB = await chatIn(projectId);
+    chatOutside = await chatIn(otherProjectId);
     // Chat A: two turns — an orchestrator's own call, then a turn whose
     // total also carries what its sub-agents cost (turn-runner.ts folds
     // code_delegate usage into the same total before this row is written).
@@ -65,14 +77,11 @@ maybe('loadCodeProjectUsage', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_turns WHERE chat_id IN (SELECT id FROM chats WHERE owner_subject = ${subject})`.execute(
-      db
-    );
-    await sql`DELETE FROM chats WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM chat_projects WHERE owner_subject = ${subject}`.execute(db);
-    await closeDatabase();
+    const store = getDataStore();
+    for (const chatId of [chatA, chatB, chatOutside]) await store.chats.delete(subject, chatId);
+    for (const id of [projectId, otherProjectId]) await store.chatProjects.delete(subject, id);
+    await closeDataStore();
   });
-
   it('sums every turn per chat, and the project total across every chat', async () => {
     const usage = await loadCodeProjectUsage(projectId);
     expect(usage.byChat[chatA]).toEqual({ inputTokens: 6_000, outputTokens: 1_100 });
