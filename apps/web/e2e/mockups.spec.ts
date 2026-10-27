@@ -393,8 +393,15 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   const frame = dialog.frameLocator('iframe');
   await frame.getByRole('tab', { name: 'Team' }).click(COLD);
-  // Focus is now inside the frame; the frame's own key handler forwards these.
-  await page.keyboard.press('Control+=');
+  // Focus is now inside the frame, whose own key handler forwards Control+=.
+  // Headless Chromium does not return from that real keypress (it is the
+  // browser's zoom shortcut), so the same keydown is dispatched in the frame.
+  // The viewer's own frame: the inline card has one too, and it is not the one zoomed.
+  const inner = await (await dialog.locator('iframe').elementHandle())?.contentFrame();
+  if (!inner) throw new Error('No mockup frame in the viewer.');
+  await inner.evaluate(() =>
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: '=', ctrlKey: true, bubbles: true }))
+  );
   await expect.poll(() => zoomPercent(page)).toBe(125);
   await page.keyboard.press('Escape');
   await expect(dialog).toHaveCount(0);

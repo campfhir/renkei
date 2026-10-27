@@ -439,7 +439,27 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-let orgCache: CacheEntry<OrgSettings> | null = null;
+/**
+ * The org settings cache, anchored on globalThis: a production build keeps a
+ * separate copy of this module for each route, so a module-level cache would
+ * not hear a setter that ran in another route's copy. The generation is bumped
+ * by every write, and a read that began before a write must not store what it
+ * read: it may have read the old row, and would otherwise put that back after
+ * the write cleared the cache, where it would stand for the whole TTL.
+ */
+const orgCacheState = globalThis as unknown as {
+  __renkeiOrgCache?: { entry: CacheEntry<OrgSettings> | null; generation: number };
+};
+function orgCacheOf() {
+  orgCacheState.__renkeiOrgCache ??= { entry: null, generation: 0 };
+  return orgCacheState.__renkeiOrgCache;
+}
+
+function invalidateOrgCache(): void {
+  const cache = orgCacheOf();
+  cache.generation += 1;
+  cache.entry = null;
+}
 
 /** A stored string, trimmed; anything else (or an empty string) is the default. */
 function coerceString(current: unknown, fallback: string): string {
@@ -487,7 +507,9 @@ export function coerceStringListRecord(
  * invalidates).
  */
 export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>> {
-  if (orgCache && orgCache.expiresAt > Date.now()) return ok(orgCache.value);
+  const cache = orgCacheOf();
+  if (cache.entry && cache.entry.expiresAt > Date.now()) return ok(cache.entry.value);
+  const generation = cache.generation;
 
   const dbResult = getDatabase();
   if (!dbResult.ok) return err('DB_ERROR' as const);
@@ -623,7 +645,9 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
     ),
   };
 
-  orgCache = { value: settings, expiresAt: Date.now() + CACHE_TTL_MS };
+  if (generation === cache.generation) {
+    cache.entry = { value: settings, expiresAt: Date.now() + CACHE_TTL_MS };
+  }
   return ok(settings);
 }
 
@@ -740,7 +764,7 @@ export async function setOrgSettings(
     if (!result.ok) return result;
   }
 
-  orgCache = null;
+  invalidateOrgCache();
   return ok();
 }
 
@@ -791,7 +815,7 @@ export function getPublicBaseUrl(): string | null {
 
 /** Test hook. */
 export function invalidateSettingsCache(): void {
-  orgCache = null;
+  invalidateOrgCache();
 }
 
 export { getEffectiveLogLevel, watchLogLevel } from './log-level-sync';

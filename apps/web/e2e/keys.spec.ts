@@ -193,7 +193,7 @@ async function recheck(page: Page): Promise<void> {
 async function expectChatReadable(page: Page, fixture: Fixture): Promise<void> {
   await page.goto(`/chat/${fixture.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Sprint slippage' })).toBeVisible();
-  await expect(page.getByText(PROMPT_TEXT)).toBeVisible();
+  await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toBeVisible();
   await expect(page.getByText(REPLY_TEXT)).toBeVisible();
   await expect(page.getByTestId('chat-key-unavailable-notice')).toHaveCount(0);
 }
@@ -317,7 +317,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   const notice = page.getByTestId('chat-key-unavailable-notice');
   await expect(notice).toBeVisible({ timeout: 30_000 });
   await expect(notice).toContainText('not connected to this session');
-  await expect(page.getByText(PROMPT_TEXT)).toHaveCount(0);
+  await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toHaveCount(0);
   await shot(page, testInfo, 'keys-05-chat-not-connected');
   const needsKey = page.getByTestId('key-modal-needs-key');
   await expect(needsKey).toBeVisible();
@@ -328,7 +328,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
   await page.getByTestId('key-unlock-submit').click();
   await expect(page.getByTestId('key-unlock')).toHaveCount(0);
   // The page refreshes its server data once the key is back; the chat opens.
-  await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
   await expect(notice).toHaveCount(0);
 
   // Rotation: a new key, shown once; the chat still opens afterwards.
@@ -388,7 +388,7 @@ test('a seeded chat follows the key: lost delegation, typed key, rotation, a sec
 
   // The asking device picks the key up on its own and the chat opens there too.
   await expect(other.getByTestId('key-unlock')).toHaveCount(0, { timeout: 30_000 });
-  await expect(other.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+  await expect(other.getByRole('main').getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
   await expect(other.getByTestId('chat-key-unavailable-notice')).toHaveCount(0);
   await second.close();
 });
@@ -412,7 +412,7 @@ test('a key service this browser has not met is confirmed by fingerprint before 
     .getByLabel('Type the key you wrote down')
     .fill(formatUserKey(userKey));
   await page.getByTestId('key-unlock-submit').click();
-  await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
 
   // The web app now claims one more instance, with a key the deployment's
@@ -450,7 +450,7 @@ test('a key service this browser has not met is confirmed by fingerprint before 
   await page.unroute(`**/api/keys`);
   await page.reload();
   await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
-  await expect(page.getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toBeVisible({ timeout: 30_000 });
 });
 
 test('the key dialog and the section at phone width', async ({ page }, testInfo) => {

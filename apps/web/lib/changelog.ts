@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-27',
+    entries: [
+      {
+        kind: 'fixed',
+        title: "The library shows a picture's description when it is written",
+        detail:
+          "A photo's description appeared only after a reload: the library now refreshes while a description is being written.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Settings changes show on every page at once',
+        detail:
+          "A change to the organization's settings could be missed by another page for up to a minute, depending on which page had read the settings first. Every page now sees a change as soon as it is saved.",
+      },
+    ],
+  },
+  {
     date: '2026-10-26',
     entries: [
       {

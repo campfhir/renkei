@@ -134,7 +134,9 @@ describe('org settings', () => {
       expect(result.val.sandboxServicePids).toBe(128);
       expect(result.val.sandboxWorkspacesDebug).toBe(true);
       expect(result.val.admanagerProductName).toBe('Acme Renkei');
-      expect(result.val.sandboxScriptMemoryBytes).toBe(DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes);
+      expect(result.val.sandboxScriptMemoryBytes).toBe(
+        DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes
+      );
     }
   });
 
@@ -232,5 +234,41 @@ describe('connector audiences', () => {
       jira: ['a'],
       onbase: [],
     });
+  });
+});
+
+describe('the org settings cache under a write that lands during a read', () => {
+  it('does not keep the value a read fetched before the write', async () => {
+    let stored = false;
+    let releaseFirstRead!: () => void;
+    const firstReadMayFinish = new Promise<void>((resolve) => {
+      releaseFirstRead = resolve;
+    });
+    let reads = 0;
+    mockGetDatabase.mockReturnValue({
+      ok: true,
+      val: {
+        selectFrom: () => ({
+          select: () => ({
+            execute: async () => {
+              reads += 1;
+              // The first read is in flight when the write lands; it returns what it read.
+              const seen = stored;
+              if (reads === 1) await firstReadMayFinish;
+              return [{ key: 'artifact_digest_enabled', value: seen }];
+            },
+          }),
+        }),
+      },
+    });
+
+    const inFlight = getOrgSettings();
+    stored = true;
+    invalidateSettingsCache();
+    releaseFirstRead();
+    await inFlight;
+
+    const after = await getOrgSettings();
+    expect(after.ok && after.val.artifactDigestEnabled).toBe(true);
   });
 });

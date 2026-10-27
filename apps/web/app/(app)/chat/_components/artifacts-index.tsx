@@ -168,14 +168,19 @@ export default function ArtifactsIndex({
   const reload = useCallback(() => {
     startTransition(() => router.refresh());
   }, [router]);
-  // While a read is in flight the page is read again, so its progress and
-  // estimate move; it stops once nothing on the page is being read.
+  // While a read or a summary is in flight the page is read again, so its
+  // progress, estimate and description move; it stops once nothing on the
+  // page is being worked on.
   const ocrRunning = items.some((item) => item.ocr !== null);
+  const digesting = items.some(
+    (item) => item.digestStatus === 'pending' || item.digestStatus === 'running'
+  );
+  const working = ocrRunning || digesting;
   useEffect(() => {
-    if (!ocrRunning) return;
+    if (!working) return;
     const timer = setInterval(reload, OCR_POLL_MS);
     return () => clearInterval(timer);
-  }, [ocrRunning, reload]);
+  }, [working, reload]);
   // A new page of the library is the server's answer to a detach, so the
   // one in flight is over.
   useEffect(() => {
