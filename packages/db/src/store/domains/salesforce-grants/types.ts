@@ -1,5 +1,5 @@
 /** One provider grant's plain columns — never its tokens. */
-export interface GrantSummary {
+export interface SalesforceGrantSummary {
   providerAccountId: string;
   displayName: string;
   /** Parsed JSON, unread. */
@@ -10,5 +10,5 @@ export interface GrantSummary {
 /** A person's Salesforce connections, read from provider_grants without opening a token. */
 export interface SalesforceGrantStore {
   /** This person's grants for `provider`, by account id. */
-  listConnections(subject: string, provider: string): Promise<GrantSummary[]>;
+  listConnections(subject: string, provider: string): Promise<SalesforceGrantSummary[]>;
 }

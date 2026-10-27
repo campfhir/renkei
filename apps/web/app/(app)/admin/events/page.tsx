@@ -1,8 +1,7 @@
 import React from 'react';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
-import type { Json } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import EventsList, { type EventRow, type EventStatus } from './events-list';
 import CoachTarget from '@/components/coach-marks/anchor';
 
@@ -19,10 +18,14 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * for success.
  */
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 /** The payload fields that name an owner, read without disclosing content. */
-function actorHintOf(payload: Json): { accountId?: string; subject?: string; email?: string } {
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return {};
-  const record: Record<string, unknown> = payload;
+function actorHintOf(payload: unknown): { accountId?: string; subject?: string; email?: string } {
+  if (!isRecord(payload)) return {};
+  const record = payload;
   if (typeof record.accountId === 'string' && record.accountId) {
     return { accountId: record.accountId };
   }
@@ -54,8 +57,17 @@ export default async function EventsPage(): Promise<React.ReactNode> {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const store = getDataStore();
+
+  const LIMIT = 200;
+  // A named constant, not an inline literal: object-literal widening would
+  // otherwise erase the EventStatus type in the merge below.
+  const failedStatus: EventStatus = 'failed';
+  const loaded = await Promise.all([
+    store.eventLog.listRecent(LIMIT),
+    store.eventLog.listRecentDeadLetters(LIMIT),
+  ]).catch(() => null);
+  if (!loaded) {
     return (
       <div>
         <h2 className="mb-2 text-lg font-semibold">Error</h2>
@@ -65,26 +77,7 @@ export default async function EventsPage(): Promise<React.ReactNode> {
       </div>
     );
   }
-  const db = dbResult.val;
-
-  const LIMIT = 200;
-  // A named constant, not an inline literal: object-literal widening would
-  // otherwise erase the EventStatus type in the merge below.
-  const failedStatus: EventStatus = 'failed';
-  const [liveRows, deadRows] = await Promise.all([
-    db
-      .selectFrom('events')
-      .select(['id', 'source', 'type', 'status', 'attempts', 'payload', 'created_at'])
-      .orderBy('created_at', 'desc')
-      .limit(LIMIT)
-      .execute(),
-    db
-      .selectFrom('events_dead_letters')
-      .select(['id', 'source', 'type', 'attempts', 'payload', 'created_at'])
-      .orderBy('created_at', 'desc')
-      .limit(LIMIT)
-      .execute(),
-  ]);
+  const [liveRows, deadRows] = loaded;
 
   const merged = [
     ...liveRows.map((row) => ({
@@ -94,7 +87,7 @@ export default async function EventsPage(): Promise<React.ReactNode> {
       status: statusOf(row.status, row.attempts),
       attempts: row.attempts,
       hint: actorHintOf(row.payload),
-      receivedAt: new Date(row.created_at),
+      receivedAt: row.createdAt,
     })),
     ...deadRows.map((row) => ({
       id: row.id,
@@ -103,7 +96,7 @@ export default async function EventsPage(): Promise<React.ReactNode> {
       status: failedStatus,
       attempts: row.attempts,
       hint: actorHintOf(row.payload),
-      receivedAt: new Date(row.created_at),
+      receivedAt: row.createdAt,
     })),
   ]
     .sort((a, b) => b.receivedAt.getTime() - a.receivedAt.getTime())
@@ -114,14 +107,8 @@ export default async function EventsPage(): Promise<React.ReactNode> {
   // A hint that resolves to nothing still shows raw rather than '—': an
   // admin chasing one user's missing events needs SOMETHING to match on.
   const accountIds = [...new Set(merged.flatMap((row) => row.hint.accountId ?? []))];
-  const grantRows = accountIds.length
-    ? await db
-        .selectFrom('provider_grants')
-        .select(['provider_account_id', 'subject'])
-        .where('provider_account_id', 'in', accountIds)
-        .execute()
-    : [];
-  const subjectByAccount = new Map(grantRows.map((row) => [row.provider_account_id, row.subject]));
+  const grantRows = await store.orgAccess.grantsForAccounts(accountIds);
+  const subjectByAccount = new Map(grantRows.map((row) => [row.accountId, row.subject]));
 
   const subjects = [
     ...new Set(
@@ -136,13 +123,7 @@ export default async function EventsPage(): Promise<React.ReactNode> {
       })
     ),
   ];
-  const identityRows = subjects.length
-    ? await db
-        .selectFrom('identities')
-        .select(['subject', 'email', 'display_name'])
-        .where('subject', 'in', subjects)
-        .execute()
-    : [];
+  const identityRows = await store.identities.listBySubjects(subjects);
   const identityBySubject = new Map(identityRows.map((row) => [row.subject, row]));
 
   const events: EventRow[] = merged.map((row) => {
@@ -158,7 +139,7 @@ export default async function EventsPage(): Promise<React.ReactNode> {
       attempts: row.attempts,
       user:
         identity?.email ??
-        identity?.display_name ??
+        identity?.displayName ??
         row.hint.email ??
         row.hint.accountId ??
         subject ??

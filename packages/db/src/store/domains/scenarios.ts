@@ -4,11 +4,18 @@ import type { Scenario } from '../domain';
 import type { DataStore } from '../types';
 import { batchJobScheduleScenarios } from './batch-job-schedules/scenarios';
 import { batchJobScenarios } from './batch-jobs/scenarios';
+import { auditEventScenarios } from './audit-events/scenarios';
 import { coachMarkScenarios } from './coach-marks/scenarios';
+import { eventLogScenarios } from './event-log/scenarios';
 import { identityScenarios } from './identities/scenarios';
+import { llmModelScenarios } from './llm-models/scenarios';
 import { notificationScenarios } from './notifications/scenarios';
+import { oidcConfigScenarios } from './oidc-config/scenarios';
+import { orgAccessScenarios } from './org-access/scenarios';
+import { scheduleCalendarScenarios } from './schedule-calendars/scenarios';
 import { sessionScenarios } from './sessions/scenarios';
 import { settingScenarios } from './settings/scenarios';
+import { usageScenarios } from './usage/scenarios';
 import { userPreferenceScenarios } from './user-preferences/scenarios';
 import { salesforceChangeScenarios } from './salesforce-changes/scenarios';
 import { jiraChangeScenarios } from './jira-changes/scenarios';
@@ -30,4 +37,11 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...salesforceGrantScenarios,
   ...batchJobScenarios,
   ...batchJobScheduleScenarios,
+  ...auditEventScenarios,
+  ...eventLogScenarios,
+  ...oidcConfigScenarios,
+  ...llmModelScenarios,
+  ...scheduleCalendarScenarios,
+  ...orgAccessScenarios,
+  ...usageScenarios,
 ];

@@ -14,6 +14,39 @@ const fixture = {
   ],
 };
 
+const sid = (n: number) => `00000000-0000-4000-8000-5e${String(n).padStart(10, '0')}`;
+const session = (n: number, subject: string, lastUsed: string) => ({
+  id: sid(n),
+  subject,
+  expires_at: '2030-01-01T00:00:00.000Z',
+  last_used_at: lastUsed,
+});
+const subjectFixture = {
+  sessions: [
+    session(1, 'ann', '2029-12-01T00:00:00.000Z'),
+    session(2, 'ann', '2029-12-03T00:00:00.000Z'),
+    session(3, 'bob', '2029-11-01T00:00:00.000Z'),
+    session(4, 'Ann', '2029-12-09T00:00:00.000Z'),
+  ],
+  oauth_clients: [
+    { client_id: 'client-1', client_secret_hash: 'h', redirect_uris: ['https://x.test'] },
+  ],
+  oauth_access_tokens: [
+    { token_hash: 'a1', client_id: 'client-1', subject: 'ann', expires_at: '2030-01-01T00:00:00Z' },
+    { token_hash: 'a2', client_id: 'client-1', subject: 'ann', expires_at: '2030-01-01T00:00:00Z' },
+    { token_hash: 'a3', client_id: 'client-1', subject: 'bob', expires_at: '2030-01-01T00:00:00Z' },
+  ],
+  oauth_refresh_tokens: [
+    {
+      token_hash: 'r1',
+      token_id: '00000000-0000-4000-8000-5f0000000001',
+      client_id: 'client-1',
+      subject: 'ann',
+      expires_at: '2030-01-01T00:00:00Z',
+    },
+  ],
+};
+
 export const sessionScenarios: Scenario<DataStore>[] = [
   {
     method: 'sessions.find',
@@ -74,5 +107,47 @@ export const sessionScenarios: Scenario<DataStore>[] = [
       await store.sessions.delete(ID);
       return store.sessions.find(ID);
     },
+  },
+  {
+    method: 'sessions.lastUsedBySubject',
+    name: 'newest use per subject, by subject; none at all',
+    fixture: subjectFixture,
+    run: async (store) => store.sessions.lastUsedBySubject(),
+  },
+  {
+    method: 'sessions.lastUsedBySubject',
+    name: 'no sessions',
+    run: async (store) => store.sessions.lastUsedBySubject(),
+  },
+  {
+    method: 'sessions.lastUsedOf',
+    name: 'newest of several, and a subject with none',
+    fixture: subjectFixture,
+    run: async (store) => [
+      await store.sessions.lastUsedOf('ann'),
+      await store.sessions.lastUsedOf('Ann'),
+      await store.sessions.lastUsedOf('nobody'),
+    ],
+  },
+  {
+    method: 'sessions.deleteForSubject',
+    name: 'every session of one subject, nobody else’s',
+    fixture: subjectFixture,
+    run: async (store) => [
+      await store.sessions.deleteForSubject('ann'),
+      await store.sessions.deleteForSubject('ann'),
+      await store.sessions.lastUsedBySubject(),
+    ],
+  },
+  {
+    method: 'sessions.revokeAll',
+    name: 'sessions and both token kinds, one subject only',
+    fixture: subjectFixture,
+    run: async (store) => [
+      await store.sessions.revokeAll('ann'),
+      await store.sessions.revokeAll('ann'),
+      await store.sessions.revokeAll('bob'),
+      await store.sessions.lastUsedBySubject(),
+    ],
   },
 ];

@@ -7,8 +7,7 @@
  * copy of the same query).
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isBlackoutEntry, type BlackoutEntry } from '@renkei/agents';
 
 export interface CalendarOption {
@@ -17,12 +16,8 @@ export interface CalendarOption {
   dates: BlackoutEntry[];
 }
 
-export async function loadCalendarOptions(db: Kysely<DB>): Promise<CalendarOption[]> {
-  const rows = await db
-    .selectFrom('schedule_calendars')
-    .select(['id', 'name', 'dates'])
-    .orderBy('name')
-    .execute();
+export async function loadCalendarOptions(): Promise<CalendarOption[]> {
+  const rows = await getDataStore().scheduleCalendars.list();
   return rows.map((row) => ({
     id: row.id,
     name: row.name,

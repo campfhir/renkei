@@ -7,9 +7,9 @@
  * most (`transcription`, by the second heard).
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { inSpan, type UsageSpan } from './user-utilization';
+import { getDataStore } from '@renkei/db';
+import { labelOf, labelsBySubject } from './org-usage';
+import type { UsageSpan } from './user-utilization';
 import type { VoiceUserRow } from './voice-window';
 
 export interface VoiceTotals {
@@ -24,74 +24,38 @@ export const ZERO_VOICE_TOTALS: VoiceTotals = {
   transcription: { calls: 0, audioMs: 0 },
 };
 
-interface KindRow {
-  kind: string;
-  calls: string;
-  characters: string;
-  audio_ms: string;
-}
-
-function ownedBy(ownerSubject: string | null) {
-  return ownerSubject === null ? sql`` : sql`AND subject = ${ownerSubject}`;
-}
-
 export async function getVoiceTotals(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<VoiceTotals> {
-  const result = await sql<KindRow>`
-    SELECT kind, COUNT(*) AS calls,
-           COALESCE(SUM(characters), 0) AS characters,
-           COALESCE(SUM(audio_ms), 0) AS audio_ms
-    FROM voice_usage
-    WHERE ${inSpan('created_at', span, timeZone)}
-      ${ownedBy(ownerSubject)}
-    GROUP BY kind
-  `.execute(db);
-  const speech = result.rows.find((row) => row.kind === 'speech');
-  const transcription = result.rows.find((row) => row.kind === 'transcription');
+  const rows = await getDataStore().usage.voiceByKind({ span, timeZone }, ownerSubject);
+  const speech = rows.find((row) => row.kind === 'speech');
+  const transcription = rows.find((row) => row.kind === 'transcription');
   return {
     speech: {
-      calls: Number(speech?.calls ?? 0),
-      characters: Number(speech?.characters ?? 0),
-      audioMs: Number(speech?.audio_ms ?? 0),
+      calls: speech?.calls ?? 0,
+      characters: speech?.characters ?? 0,
+      audioMs: speech?.audioMs ?? 0,
     },
     transcription: {
-      calls: Number(transcription?.calls ?? 0),
-      audioMs: Number(transcription?.audio_ms ?? 0),
+      calls: transcription?.calls ?? 0,
+      audioMs: transcription?.audioMs ?? 0,
     },
   };
 }
 
 /** Everyone who used voice in the span, with both measures; unranked. */
-export async function getVoiceUsers(
-  db: Kysely<DB>,
-  span: UsageSpan,
-  timeZone: string
-): Promise<VoiceUserRow[]> {
-  const [usage, identities] = await Promise.all([
-    sql<KindRow & { subject: string }>`
-      SELECT subject, kind, COUNT(*) AS calls,
-             COALESCE(SUM(characters), 0) AS characters,
-             COALESCE(SUM(audio_ms), 0) AS audio_ms
-      FROM voice_usage
-      WHERE ${inSpan('created_at', span, timeZone)}
-      GROUP BY subject, kind
-    `.execute(db),
-    db
-      .selectFrom('identities')
-      .select(['subject', 'display_name', 'email'])
-      .execute(),
+export async function getVoiceUsers(span: UsageSpan, timeZone: string): Promise<VoiceUserRow[]> {
+  const [usage, labels] = await Promise.all([
+    getDataStore().usage.voiceBySubject({ span, timeZone }),
+    labelsBySubject(),
   ]);
-  const identityBySubject = new Map(identities.map((row) => [row.subject, row]));
   const bySubject = new Map<string, VoiceUserRow>();
-  for (const row of usage.rows) {
-    const identity = identityBySubject.get(row.subject);
+  for (const row of usage) {
     const entry = bySubject.get(row.subject) ?? {
       subject: row.subject,
-      label: identity?.display_name || identity?.email || row.subject,
+      label: labelOf(labels, row.subject),
       speechCharacters: 0,
       speechMs: 0,
       speechCalls: 0,
@@ -99,12 +63,12 @@ export async function getVoiceUsers(
       transcriptionCalls: 0,
     };
     if (row.kind === 'speech') {
-      entry.speechCharacters += Number(row.characters);
-      entry.speechMs += Number(row.audio_ms);
-      entry.speechCalls += Number(row.calls);
+      entry.speechCharacters += row.characters;
+      entry.speechMs += row.audioMs;
+      entry.speechCalls += row.calls;
     } else if (row.kind === 'transcription') {
-      entry.transcriptionMs += Number(row.audio_ms);
-      entry.transcriptionCalls += Number(row.calls);
+      entry.transcriptionMs += row.audioMs;
+      entry.transcriptionCalls += row.calls;
     }
     bySubject.set(row.subject, entry);
   }

@@ -9,39 +9,28 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseCalendarPayload } from '@/lib/agents/calendar-payload';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const rows = await dbResult.val
-    .selectFrom('schedule_calendars')
-    .select(['id', 'name', 'dates', 'updated_at'])
-    .orderBy('name')
-    .execute();
+  const rows = await getDataStore().scheduleCalendars.list();
 
   return NextResponse.json({
     calendars: rows.map((row) => ({
       id: row.id,
       name: row.name,
       dates: Array.isArray(row.dates) ? row.dates : [],
-      updatedAt: row.updated_at,
+      updatedAt: row.updatedAt,
     })),
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -50,24 +39,14 @@ export async function POST(
   const parsed = parseCalendarPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   const id = randomUUID();
-  try {
-    await dbResult.val
-      .insertInto('schedule_calendars')
-      .values({
-        id,
-        name: parsed.name,
-        dates: JSON.stringify(parsed.dates),
-      })
-      .execute();
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('idx_schedule_calendars_name')) {
-      return NextResponse.json({ error: 'A calendar with that name exists' }, { status: 409 });
-    }
-    throw error;
+  const created = await getDataStore().scheduleCalendars.create({
+    id,
+    name: parsed.name,
+    dates: parsed.dates,
+  });
+  if (created === 'duplicate') {
+    return NextResponse.json({ error: 'A calendar with that name exists' }, { status: 409 });
   }
   return NextResponse.json({ id }, { status: 201 });
 }

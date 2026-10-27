@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { readAtlassianMetadata } from '@renkei/provider-grants';
 import CoachTarget from '@/components/coach-marks/anchor';
 import ExternalLink from '@/components/external-link';
@@ -35,13 +35,26 @@ const WATCH_KIND: Record<string, string> = {
   drive: 'SharePoint / OneDrive library',
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export default async function SitesPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const store = getDataStore();
+  const loaded = await Promise.all([
+    store.orgAccess.listGrantsOfProviders([
+      'atlassian',
+      'atlassian-jsm',
+      'atlassian-confluence',
+      'atlassian-admin',
+    ]),
+    store.orgAccess.listContentWatches(),
+  ]).catch(() => null);
+  if (!loaded) {
     return (
       <div>
         <h2 className="mb-2 text-lg font-semibold">Error</h2>
@@ -51,24 +64,7 @@ export default async function SitesPage(): Promise<React.ReactNode> {
       </div>
     );
   }
-
-  const [grants, watches] = await Promise.all([
-    dbResult.val
-      .selectFrom('provider_grants')
-      .select(['provider', 'metadata', 'display_name', 'created_at'])
-      .where('provider', 'in', [
-        'atlassian',
-        'atlassian-jsm',
-        'atlassian-confluence',
-        'atlassian-admin',
-      ])
-      .execute(),
-    dbResult.val
-      .selectFrom('content_watches')
-      .select(['provider', 'scope_type', 'scope_label', 'scope_key', 'enabled', 'sync_status'])
-      .orderBy('provider')
-      .execute(),
-  ]);
+  const [grants, watches] = loaded;
 
   // Aggregate Atlassian grants by cloud: which site, through which products,
   // via how many accounts. JSM/Confluence grants record only the cloud id,
@@ -78,12 +74,9 @@ export default async function SitesPage(): Promise<React.ReactNode> {
     { cloudId: string; siteUrl: string; products: Set<string>; users: Set<string> }
   >();
   for (const grant of grants) {
-    const metadata =
-      typeof grant.metadata === 'object' &&
-      grant.metadata !== null &&
-      !Array.isArray(grant.metadata)
-        ? readAtlassianMetadata({ ...grant.metadata })
-        : { cloudId: '', siteUrl: '' };
+    const metadata = isRecord(grant.metadata)
+      ? readAtlassianMetadata({ ...grant.metadata })
+      : { cloudId: '', siteUrl: '' };
     if (!metadata.cloudId) continue;
 
     let site = sites.get(metadata.cloudId);
@@ -93,7 +86,7 @@ export default async function SitesPage(): Promise<React.ReactNode> {
     }
     if (metadata.siteUrl) site.siteUrl = metadata.siteUrl;
     site.products.add(PRODUCT_OF_PROVIDER[grant.provider] ?? grant.provider);
-    site.users.add(grant.display_name ?? 'Unknown');
+    site.users.add(grant.displayName ?? 'Unknown');
   }
 
   return (
@@ -102,10 +95,7 @@ export default async function SitesPage(): Promise<React.ReactNode> {
       <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
         The external places this organization reaches — derived from connected accounts and content
         watches. Access is per-person: manage it on{' '}
-        <Link
-          href={`/admin/access`}
-          className="text-blue-600 hover:underline dark:text-blue-400"
-        >
+        <Link href={`/admin/access`} className="text-blue-600 hover:underline dark:text-blue-400">
           Access
         </Link>
         .
@@ -169,25 +159,25 @@ export default async function SitesPage(): Promise<React.ReactNode> {
           <div className="space-y-2">
             {watches.map((watch) => (
               <div
-                key={`${watch.provider}:${watch.scope_type}:${watch.scope_key}`}
+                key={`${watch.provider}:${watch.scopeType}:${watch.scopeKey}`}
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-white px-4 py-2.5 dark:border-gray-800 dark:bg-gray-950"
               >
                 <div className="min-w-0">
-                  <span className="font-medium">{watch.scope_label || watch.scope_key}</span>
+                  <span className="font-medium">{watch.scopeLabel || watch.scopeKey}</span>
                   <span className="ml-2 text-xs text-gray-500">
-                    {WATCH_KIND[watch.scope_type] ?? `${watch.provider} ${watch.scope_type}`}
+                    {WATCH_KIND[watch.scopeType] ?? `${watch.provider} ${watch.scopeType}`}
                   </span>
                 </div>
                 <span
                   className={`text-xs ${
                     !watch.enabled
                       ? 'text-gray-400 dark:text-gray-600'
-                      : watch.sync_status === 'error'
+                      : watch.syncStatus === 'error'
                         ? 'text-red-600 dark:text-red-400'
                         : 'text-gray-500'
                   }`}
                 >
-                  {!watch.enabled ? 'off' : watch.sync_status}
+                  {!watch.enabled ? 'off' : watch.syncStatus}
                 </span>
               </div>
             ))}

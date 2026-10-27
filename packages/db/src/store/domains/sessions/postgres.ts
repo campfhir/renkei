@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import type { SessionStore } from './types';
 
@@ -30,6 +30,53 @@ export function postgresSessions(db: () => Kysely<DB>): SessionStore {
     },
     async delete(id) {
       await db().deleteFrom('sessions').where('id', '=', id).execute();
+    },
+    async lastUsedBySubject() {
+      const rows = await db()
+        .selectFrom('sessions')
+        .select(['subject', sql<Date>`max(last_used_at)`.as('last_used_at')])
+        .groupBy('subject')
+        .orderBy('subject')
+        .execute();
+      return rows.map((row) => ({ subject: row.subject, lastUsedAt: new Date(row.last_used_at) }));
+    },
+    async lastUsedOf(subject) {
+      const row = await db()
+        .selectFrom('sessions')
+        .select(sql<Date | null>`max(last_used_at)`.as('last_used_at'))
+        .where('subject', '=', subject)
+        .executeTakeFirst();
+      return row?.last_used_at ? new Date(row.last_used_at) : null;
+    },
+    async deleteForSubject(subject) {
+      const result = await db()
+        .deleteFrom('sessions')
+        .where('subject', '=', subject)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
+    },
+    async revokeAll(subject) {
+      return db()
+        .transaction()
+        .execute(async (trx) => {
+          const sessions = await trx
+            .deleteFrom('sessions')
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          const accessTokens = await trx
+            .deleteFrom('oauth_access_tokens')
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          const refreshTokens = await trx
+            .deleteFrom('oauth_refresh_tokens')
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          return {
+            sessions: Number(sessions.numDeletedRows),
+            accessTokens: Number(accessTokens.numDeletedRows),
+            refreshTokens: Number(refreshTokens.numDeletedRows),
+          };
+        });
     },
   };
 }

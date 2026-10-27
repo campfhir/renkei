@@ -239,7 +239,7 @@ export async function digestText(
         : {}),
       model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
     });
-    await recordDocumentUsage(db, {
+    await recordDocumentUsage({
       subject: input.subject,
       artifactId: input.file.id,
       kind: picture ? 'describe' : 'summary',

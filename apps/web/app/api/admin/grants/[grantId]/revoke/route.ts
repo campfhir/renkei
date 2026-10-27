@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { grantProviderLabel, GRANT_PROVIDER_LABELS } from '@/lib/provider-labels';
@@ -27,12 +27,6 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   const body: unknown = await request.json().catch(() => null);
   const requested: { provider?: unknown } = typeof body === 'object' && body !== null ? body : {};
   const provider = typeof requested.provider === 'string' ? requested.provider : 'atlassian';
@@ -40,35 +34,13 @@ export async function POST(
     return NextResponse.json({ error: 'Unknown provider' }, { status: 400 });
   }
 
-  const grant = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'display_name', 'subject'])
-    .where('provider_account_id', '=', grantId)
-    .where('provider', '=', provider)
-    .executeTakeFirst();
+  // The grant goes, and with it the subject's MCP bearer credentials: an
+  // access or refresh token issued to them keeps naming them as the caller
+  // for up to its lifetime, and the admin pressed this to cut access now,
+  // not at the next expiry. Every client's — one revoke, no survivors.
+  const grant = await getDataStore().orgAccess.revokeGrant(provider, grantId);
   if (!grant) {
     return NextResponse.json({ error: 'Grant not found' }, { status: 404 });
-  }
-
-  await db
-    .deleteFrom('provider_grants')
-    .where('provider_account_id', '=', grantId)
-    .where('provider', '=', provider)
-    .execute();
-
-  // The subject's MCP bearer credentials go with the grant: an access token
-  // or refresh token issued to them keeps naming them as the caller for up
-  // to its lifetime, and the admin pressed this to cut access now, not at
-  // the next expiry. Every client's — one revoke, no survivors.
-  if (grant.subject) {
-    await db
-      .deleteFrom('oauth_access_tokens')
-      .where('subject', '=', grant.subject)
-      .execute();
-    await db
-      .deleteFrom('oauth_refresh_tokens')
-      .where('subject', '=', grant.subject)
-      .execute();
   }
 
   recordAuditEvent({
@@ -78,7 +50,7 @@ export async function POST(
     targetLabel: provider,
     // Whose access died, and that it was not their own doing — the two
     // things the person will ask when their tools stop working.
-    details: { byAdmin: true, subject: grant.subject, account: grant.display_name },
+    details: { byAdmin: true, subject: grant.subject, account: grant.displayName },
   });
   // The GRANT's own subject lost the connector, not the admin who revoked it.
   // A pre-per-user-ownership grant can carry no subject at all, in which
@@ -87,6 +59,6 @@ export async function POST(
 
   return NextResponse.json({
     success: true,
-    message: `${grantProviderLabel(provider)} access for ${grant.display_name ?? grantId} has been revoked`,
+    message: `${grantProviderLabel(provider)} access for ${grant.displayName ?? grantId} has been revoked`,
   });
 }

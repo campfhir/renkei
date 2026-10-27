@@ -1,7 +1,7 @@
 import React from 'react';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import AuditList, { type AuditEventRow } from './audit-list';
 import CoachTarget from '@/components/coach-marks/anchor';
 
@@ -15,13 +15,19 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * because both the day buckets and the times must be the VIEWER's zone,
  * which the server does not know.
  */
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export default async function AuditPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  const rows = await getDataStore()
+    .auditEvents.listRecent(200)
+    .catch(() => null);
+  if (!rows) {
     return (
       <div>
         <h2 className="mb-2 text-lg font-semibold">Error</h2>
@@ -32,36 +38,13 @@ export default async function AuditPage(): Promise<React.ReactNode> {
     );
   }
 
-  const rows = await dbResult.val
-    .selectFrom('audit_events')
-    .leftJoin('identities', (join) =>
-      join
-        .onRef('identities.subject', '=', 'audit_events.actor_subject')
-    )
-    .select([
-      'audit_events.id as id',
-      'audit_events.action as action',
-      'audit_events.target_label as target_label',
-      'audit_events.details as details',
-      'audit_events.created_at as created_at',
-      'audit_events.actor_subject as actor_subject',
-      'identities.display_name as display_name',
-      'identities.email as email',
-    ])
-    .orderBy('audit_events.created_at', 'desc')
-    .limit(200)
-    .execute();
-
   const events: AuditEventRow[] = rows.map((row) => ({
     id: row.id,
     action: row.action,
-    targetLabel: row.target_label,
-    details:
-      typeof row.details === 'object' && row.details !== null && !Array.isArray(row.details)
-        ? { ...row.details }
-        : null,
-    at: new Date(row.created_at).toISOString(),
-    actor: row.display_name || row.email || row.actor_subject || 'The platform',
+    targetLabel: row.targetLabel,
+    details: isRecord(row.details) ? { ...row.details } : null,
+    at: row.createdAt.toISOString(),
+    actor: row.actorDisplayName || row.actorEmail || row.actorSubject || 'The platform',
   }));
 
   return (

@@ -6,11 +6,18 @@
 
 import { batchJobSchedules } from './batch-job-schedules';
 import { batchJobs } from './batch-jobs';
+import { auditEvents } from './audit-events';
 import { coachMarks } from './coach-marks';
+import { eventLog } from './event-log';
 import { identities } from './identities';
+import { llmModels } from './llm-models';
 import { notifications } from './notifications';
+import { oidcConfig } from './oidc-config';
+import { orgAccess } from './org-access';
+import { scheduleCalendars } from './schedule-calendars';
 import { sessions } from './sessions';
 import { settings } from './settings';
+import { usage } from './usage';
 import { userPreferences } from './user-preferences';
 import { salesforceChanges } from './salesforce-changes';
 import { jiraChanges } from './jira-changes';
@@ -32,4 +39,11 @@ export const DOMAINS = {
   salesforceGrants,
   batchJobs,
   batchJobSchedules,
+  auditEvents,
+  eventLog,
+  oidcConfig,
+  llmModels,
+  scheduleCalendars,
+  orgAccess,
+  usage,
 };

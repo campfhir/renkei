@@ -21,7 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { decrypt, loadKeyring } from '@renkei/crypto';
 import { listAvailableModels, type ListModelsError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
@@ -51,9 +51,7 @@ function messageFor(kind: ListModelsError): { message: string; status: number } 
   }
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -82,21 +80,15 @@ export async function POST(
 
   let apiKey = typeof payload.apiKey === 'string' && payload.apiKey ? payload.apiKey : null;
   if (!apiKey && typeof payload.modelConfigId === 'string' && payload.modelConfigId) {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-    const row = await dbResult.val
-      .selectFrom('llm_model_configs')
-      .select(['encrypted_secrets'])
-      .where('id', '=', payload.modelConfigId)
-      .executeTakeFirst();
+    const row = await getDataStore().llmModels.get(payload.modelConfigId);
     if (!row) return NextResponse.json({ error: 'Model config not found' }, { status: 404 });
 
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!keyResult.ok) {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
-    const secretsResult = row.encrypted_secrets
-      ? decrypt(row.encrypted_secrets, keyResult.val)
+    const secretsResult = row.encryptedSecrets
+      ? decrypt(row.encryptedSecrets, keyResult.val)
       : null;
     if (secretsResult?.ok) {
       try {

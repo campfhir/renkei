@@ -8,43 +8,30 @@ jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
-const inserted: Record<string, unknown>[] = [];
-let dbAvailable = true;
-let insertFails = false;
-
-jest.mock('@renkei/db', () => ({
-  getDatabase: () =>
-    dbAvailable
-      ? {
-          ok: true,
-          val: {
-            insertInto: () => ({
-              values: (row: Record<string, unknown>) => {
-                inserted.push(row);
-                return {
-                  execute: async () => {
-                    if (insertFails) throw new Error('db down mid-write');
-                    return [];
-                  },
-                };
-              },
-            }),
-          },
-        }
-      : { ok: false },
-}));
-
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { recordAuditEvent } from './audit-events';
 import { logger } from '@/lib/logger';
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
+let store: MemoryDataStore;
+
 beforeEach(() => {
-  inserted.length = 0;
-  dbAvailable = true;
-  insertFails = false;
+  store = createMemoryDataStore();
+  registerDataStore(store);
   jest.clearAllMocks();
 });
+
+afterAll(() => {
+  resetDataStore();
+});
+
+const rows = () => store.tables.select('audit_events');
 
 describe('recordAuditEvent', () => {
   it('writes an attributed, labelled row', async () => {
@@ -56,7 +43,7 @@ describe('recordAuditEvent', () => {
     });
     await flush();
 
-    expect(inserted[0]).toMatchObject({
+    expect(rows()[0]).toMatchObject({
       actor_subject: 'subject-1',
       action: 'connector.connected',
       target_kind: 'connector',
@@ -73,10 +60,10 @@ describe('recordAuditEvent', () => {
       targetLabel: 'x'.repeat(500),
     });
     await flush();
-    expect(String(inserted[0]!.target_label)).toHaveLength(200);
+    expect(String(rows()[0]!.target_label)).toHaveLength(200);
   });
 
-  it('serializes details and omits them when absent', async () => {
+  it('stores details as JSON and omits them when absent', async () => {
     recordAuditEvent({
       actorSubject: 'operator-1',
       action: 'agent.disabled',
@@ -85,22 +72,22 @@ describe('recordAuditEvent', () => {
       details: { byAdmin: true },
     });
     await flush();
-    expect(inserted[0]!.details).toBe('{"byAdmin":true}');
+    expect(rows()[0]!.details).toEqual({ byAdmin: true });
   });
 
   it('swallows a failed write with a warning, never a throw', async () => {
-    insertFails = true;
-    expect(() =>
-      recordAuditEvent({ actorSubject: null, action: 'user.signed_in' })
-    ).not.toThrow();
+    registerDataStore({
+      ...store,
+      auditEvents: {
+        ...store.auditEvents,
+        record: async () => {
+          throw new Error('db down mid-write');
+        },
+      },
+    });
+    expect(() => recordAuditEvent({ actorSubject: null, action: 'user.signed_in' })).not.toThrow();
     await flush();
     expect(logger.warn).toHaveBeenCalled();
-  });
-
-  it('is a no-op when the database is unavailable', async () => {
-    dbAvailable = false;
-    recordAuditEvent({ actorSubject: null, action: 'user.signed_out' });
-    await flush();
-    expect(inserted).toHaveLength(0);
+    expect(rows()).toHaveLength(0);
   });
 });
