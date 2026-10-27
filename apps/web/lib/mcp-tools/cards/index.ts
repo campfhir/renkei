@@ -29,9 +29,8 @@
 
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { sql } from 'kysely';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 
@@ -83,27 +82,19 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       const summary = typeof args.summary === 'string' ? args.summary : '';
       if (!title || !summary) return errText('Both title and summary are required.');
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
       const cardId = randomUUID();
-      await dbResult.val
-        .insertInto('actionable_items')
-        .values({
-          id: cardId,
-          source: context.agent ? 'agent' : 'mcp',
-          kind: 'info',
-          title,
-          summary,
-          evidence: JSON.stringify(
-            typeof args.evidence === 'object' && args.evidence !== null ? args.evidence : {}
-          ),
-          suggested_action: null,
-          owner_subject: subject,
-          created_by: subject,
-          created_by_agent_id: context.agent?.agentId ?? null,
-        })
-        .execute();
+      await getDataStore().actionableItems.create({
+        id: cardId,
+        source: context.agent ? 'agent' : 'mcp',
+        kind: 'info',
+        title,
+        summary,
+        evidence: typeof args.evidence === 'object' && args.evidence !== null ? args.evidence : {},
+        suggestedAction: null,
+        ownerSubject: subject,
+        createdBy: subject,
+        createdByAgentId: context.agent?.agentId ?? null,
+      });
 
       logger.info('card_create put a card on the feed', {
         component: 'mcp/tool',
@@ -143,26 +134,15 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
         return errText('Nothing to update — pass a new title, summary, or evidence.');
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
-      // Every guard is in the WHERE: zero rows means "not yours to change",
-      // whatever the exact reason — existence is not probed separately, so
-      // this tool cannot be used to test other people's card ids.
-      const updated = await dbResult.val
-        .updateTable('actionable_items')
-        .set({
-          ...(title !== undefined ? { title } : {}),
-          ...(summary !== undefined ? { summary } : {}),
-          ...(evidence !== undefined ? { evidence: JSON.stringify(evidence) } : {}),
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', cardId)
-        .where('owner_subject', '=', subject)
-        .where('created_by', 'is not', null)
-        .where('status', '=', 'suggested')
-        .executeTakeFirst();
-      if (Number(updated.numUpdatedRows ?? 0) === 0) {
+      // Every guard is in the one write: zero rows means "not yours to
+      // change", whatever the exact reason — existence is not probed
+      // separately, so this tool cannot be used to test other people's card ids.
+      const updated = await getDataStore().actionableItems.updateOwnCreated(subject, cardId, {
+        title,
+        summary,
+        evidence,
+      });
+      if (updated === 0) {
         return errText(
           'No updatable card with that id: it does not exist, is not yours, was not created ' +
             'over MCP, or has already been dismissed.'
@@ -190,27 +170,11 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       const cardId = typeof args.cardId === 'string' ? args.cardId.trim() : '';
       if (!cardId) return errText('cardId is required.');
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
       // Mirrors the decision route's dismiss branch, owner-scoped: the
       // status guard is the optimistic claim, so a racing web dismissal
       // and this call cannot both record a decision.
-      const updated = await dbResult.val
-        .updateTable('actionable_items')
-        .set({
-          status: 'dismissed',
-          decided_by: subject,
-          decided_at: sql`NOW()`,
-          archived_at: sql`NOW()`,
-          archived_by: subject,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', cardId)
-        .where('owner_subject', '=', subject)
-        .where('status', '=', 'suggested')
-        .executeTakeFirst();
-      if (Number(updated.numUpdatedRows ?? 0) === 0) {
+      const updated = await getDataStore().actionableItems.dismissOwn(subject, cardId);
+      if (updated === 0) {
         return errText(
           'No dismissable card with that id: it does not exist, is not yours, or was already decided.'
         );
@@ -238,18 +202,8 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       const cardId = typeof args.cardId === 'string' ? args.cardId.trim() : '';
       if (!cardId) return errText('cardId is required.');
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
-      const updated = await dbResult.val
-        .updateTable('actionable_items')
-        .set({ archived_at: sql`NOW()`, archived_by: subject, updated_at: sql`NOW()` })
-        .where('id', '=', cardId)
-        .where('owner_subject', '=', subject)
-        .where('status', '!=', 'suggested')
-        .where('archived_at', 'is', null)
-        .executeTakeFirst();
-      if (Number(updated.numUpdatedRows ?? 0) === 0) {
+      const updated = await getDataStore().actionableItems.archiveOwnDecided(subject, cardId);
+      if (updated === 0) {
         return errText(
           'No archivable card with that id: it does not exist, is not yours, is still ' +
             'awaiting a decision (dismiss it instead), or is already archived.'
@@ -286,36 +240,14 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
       const limit =
         typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 20;
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
-      let query = dbResult.val
-        .selectFrom('actionable_items as c')
-        // An approval card belongs to a run of an agent; the join is left
-        // because an info card belongs to neither.
-        .leftJoin('agents as a', 'a.id', 'c.created_by_agent_id')
-        .select([
-          'c.id as id',
-          'c.kind as kind',
-          'c.source as source',
-          'c.status as status',
-          'c.title as title',
-          'c.summary as summary',
-          'c.created_at as created_at',
-          'c.archived_at as archived_at',
-          'c.run_id as runId',
-          'a.id as agentId',
-          'a.name as agentName',
-        ])
-        // The same visibility rule as the web feed: mine, or tenant-wide.
-        .where((eb) =>
-          eb.or([eb('c.owner_subject', 'is', null), eb('c.owner_subject', '=', subject)])
-        )
-        .orderBy('c.created_at', 'desc')
-        .limit(limit);
-      if (typeof args.status === 'string') query = query.where('c.status', '=', args.status);
-      if (args.includeArchived !== true) query = query.where('c.archived_at', 'is', null);
-      const rows = await query.execute();
+      // The same visibility rule as the web feed: mine, or tenant-wide. An
+      // approval card names the run and agent it belongs to; an info card
+      // belongs to neither.
+      const rows = await getDataStore().actionableItems.listVisible(subject, {
+        limit,
+        includeArchived: args.includeArchived === true,
+        ...(typeof args.status === 'string' ? { status: args.status } : {}),
+      });
 
       if (rows.length === 0) return textResult('No cards match.');
       const lines = [`${rows.length} card(s), newest first:`];
@@ -334,7 +266,7 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
         lines.push(
           '',
           `- ${row.title} — ${row.kind} · ${row.status} · from ${row.source}` +
-            `${row.archived_at ? ' · archived' : ''} — ${new Date(row.created_at).toISOString()}`,
+            `${row.archivedAt ? ' · archived' : ''} — ${row.createdAt.toISOString()}`,
           `  cardId: ${row.id}`,
           ...(pauseKind && row.runId
             ? [

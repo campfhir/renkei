@@ -1,8 +1,9 @@
 import { like, orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
 import { metadataMatches, metadataText } from './metadata-filter';
-import { escapeLike, liveSources } from './postgres';
+import { escapeLike, liveSources, objectChunkFromRow, withoutNul } from './postgres';
 import type { ChunkCandidate, ChunkFilters, ChunkSource, KnowledgeChunkStore } from './types';
+import { jsonbConcat } from '../provider-grants/record';
 
 type Chunk = Row<'knowledge_chunks'>;
 
@@ -229,6 +230,39 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
         )
         .map((r) => cosineDistance(parseVector(r.embedding), vector));
       return distances.length === 0 ? null : Math.min(...distances);
+    },
+    async objectChunks(provider, refId) {
+      const rows = tables.select(
+        'knowledge_chunks',
+        (r) => r.provider === provider && (r.ref_id === refId || r.ref_id.startsWith(`${refId}#`))
+      );
+      return orderBy(rows, [(r) => r.ref_id], [(r) => r.id]).map(objectChunkFromRow);
+    },
+    async rewriteChunk(id, { title, keywords, lexical }) {
+      const searchText = [lexical.title, (lexical.keywords ?? []).join(', '), lexical.text]
+        .map(withoutNul)
+        .join(' ');
+      const key = tables.param('knowledge_chunks', 'id', id);
+      tables.update(
+        'knowledge_chunks',
+        (r) => r.id === key,
+        (r) => ({
+          ...(title !== undefined
+            ? { metadata: JSON.stringify(jsonbConcat(r.metadata, { title })) }
+            : {}),
+          keywords,
+          search_text: searchText,
+        })
+      );
+    },
+    async listByRefPrefix(provider, prefix) {
+      const rows = tables.select(
+        'knowledge_chunks',
+        (r) => r.provider === provider && r.ref_id.startsWith(prefix)
+      );
+      return orderBy(rows, [(r) => r.source_at, 'desc'], [(r) => r.ref_id], [(r) => r.id]).map(
+        objectChunkFromRow
+      );
     },
   };
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
 import { SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS } from '@/lib/oauth-client-auth';
@@ -23,10 +23,7 @@ const LIMITS = {
  * Dynamic Client Registration endpoint (RFC 7591)
  * Clients register themselves for this deployment's MCP server.
  */
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const verdict = checkInboundLimit('oauth/register', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
@@ -79,12 +76,6 @@ export async function POST(
     ? requestedAuthMethod
     : 'client_secret_basic';
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   try {
     // Verify tenant exists
     // Generate client credentials
@@ -92,19 +83,16 @@ export async function POST(
     const clientSecret = generateSecret(32);
 
     // Store the client for this tenant
-    await db
-      .insertInto('oauth_clients')
-      .values({
-        client_id: clientId,
-        // Only the digest is stored; the secret itself exists solely in the
-        // registration response below and in the client that receives it.
-        client_secret_hash: hashToken(clientSecret),
-        client_name,
-        redirect_uris,
-        response_types,
-        grant_types,
-      })
-      .execute();
+    await getDataStore().oauthConsents.registerClient({
+      clientId,
+      // Only the digest is stored; the secret itself exists solely in the
+      // registration response below and in the client that receives it.
+      clientSecretHash: hashToken(clientSecret),
+      clientName: client_name ?? null,
+      redirectUris: redirect_uris,
+      responseTypes: response_types,
+      grantTypes: grant_types,
+    });
 
     // Who registered is unknown by design (RFC 7591 is unauthenticated), so
     // the trail records what: the Access page and the consent page both

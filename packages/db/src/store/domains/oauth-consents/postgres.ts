@@ -1,6 +1,13 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { clientFromRow, clientValues, codeValues, requestFromRow, requestValues } from './record';
+import {
+  authorizationCodeFromRow,
+  clientFromRow,
+  clientValues,
+  codeValues,
+  requestFromRow,
+  requestValues,
+} from './record';
 import type { OAuthConsentStore } from './types';
 
 export function postgresOAuthConsents(db: () => Kysely<DB>): OAuthConsentStore {
@@ -52,6 +59,29 @@ export function postgresOAuthConsents(db: () => Kysely<DB>): OAuthConsentStore {
     },
     async registerClient(client) {
       await db().insertInto('oauth_clients').values(clientValues(client)).execute();
+    },
+    async getClientCredentials(clientId) {
+      const row = await db()
+        .selectFrom('oauth_clients')
+        .select(['client_id', 'client_secret_hash'])
+        .where('client_id', '=', clientId)
+        .executeTakeFirst();
+      return row ? { clientId: row.client_id, secretHash: row.client_secret_hash ?? null } : null;
+    },
+    async getAuthorizationCode(code) {
+      const row = await db()
+        .selectFrom('oauth_authorization_codes')
+        .selectAll()
+        .where('code', '=', code)
+        .executeTakeFirst();
+      return row ? authorizationCodeFromRow(row) : null;
+    },
+    async deleteAuthorizationCode(code) {
+      const result = await db()
+        .deleteFrom('oauth_authorization_codes')
+        .where('code', '=', code)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows ?? 0);
     },
   };
 }

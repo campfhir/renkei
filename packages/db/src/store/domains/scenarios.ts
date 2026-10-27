@@ -60,6 +60,11 @@ import { userKeyScenarios } from './user-keys/scenarios';
 import { queueScenarios } from './queues/scenarios';
 import { runTokenScenarios } from './run-tokens/scenarios';
 import { knowledgeReindexRunScenarios } from './knowledge-reindex-runs/scenarios';
+import { oauthTokenScenarios } from './oauth-tokens/scenarios';
+import { phiAccessScenarios } from './phi-access/scenarios';
+import { mailBulkJobScenarios } from './mail-bulk-jobs/scenarios';
+import { webexSentMessageScenarios } from './webex-sent-messages/scenarios';
+import { toolSurfaceScenarios } from './tool-surface/scenarios';
 import { contentWatchScenarios } from './content-watches/scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
@@ -125,5 +130,10 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...queueScenarios,
   ...runTokenScenarios,
   ...knowledgeReindexRunScenarios,
+  ...oauthTokenScenarios,
+  ...phiAccessScenarios,
+  ...mailBulkJobScenarios,
+  ...webexSentMessageScenarios,
+  ...toolSurfaceScenarios,
   ...contentWatchScenarios,
 ];

@@ -12,15 +12,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { listPhiAccessEvents } from '@/lib/phi-access';
 
 const DEFAULT_LIMIT = 100;
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -35,9 +32,6 @@ export async function GET(
     return NextResponse.json({ error: 'before must be an ISO 8601 date-time' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const events = await listPhiAccessEvents(dbResult.val, { subject, limit, before });
+  const events = await listPhiAccessEvents({ subject, limit, before });
   return NextResponse.json({ events });
 }

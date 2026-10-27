@@ -1,7 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { compileMetadataFilter } from './metadata-filter';
-import type { ChunkCandidate, ChunkFilters, ChunkSource, KnowledgeChunkStore } from './types';
+import type {
+  ChunkCandidate,
+  ChunkFilters,
+  ChunkSource,
+  KnowledgeChunkStore,
+  KnowledgeObjectChunk,
+} from './types';
 
 /** A row as either retrieval query returns it. */
 interface CandidateRow {
@@ -33,6 +39,38 @@ function candidateFromRow(row: CandidateRow): ChunkCandidate {
     lexicalHit: row.lexical_hit ?? null,
   };
 }
+
+export function objectChunkFromRow(row: {
+  id: string;
+  ref_id: string;
+  content: string;
+  metadata: unknown;
+  keywords: string[] | null;
+  source_at: Date | null;
+}): KnowledgeObjectChunk {
+  return {
+    id: row.id,
+    refId: row.ref_id,
+    content: row.content,
+    metadata: row.metadata ?? null,
+    keywords: row.keywords ?? null,
+    sourceAt: row.source_at ? new Date(row.source_at) : null,
+  };
+}
+
+/** Text as Postgres accepts it in a `text` parameter: NUL bytes out. */
+export function withoutNul(value: string): string {
+  return value.includes('\u0000') ? value.split('\u0000').join('') : value;
+}
+
+const OBJECT_CHUNK_COLUMNS = [
+  'id',
+  'ref_id',
+  'content',
+  'metadata',
+  'keywords',
+  'source_at',
+] as const;
 
 export function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
@@ -280,6 +318,47 @@ export function postgresKnowledgeChunks(db: () => Kysely<DB>): KnowledgeChunkSto
       `.execute(db());
       const distance = result.rows[0]?.distance;
       return distance === undefined || distance === null ? null : Number(distance);
+    },
+    async objectChunks(provider, refId) {
+      const rows = await db()
+        .selectFrom('knowledge_chunks')
+        .select(OBJECT_CHUNK_COLUMNS)
+        .where('provider', '=', provider)
+        .where((eb) =>
+          eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
+        )
+        .orderBy('ref_id')
+        .orderBy('id')
+        .execute();
+      return rows.map(objectChunkFromRow);
+    },
+    async rewriteChunk(id, { title, keywords, lexical }) {
+      const vector = (text: string) =>
+        sql<string>`to_tsvector(${lexical.config}::regconfig, ${withoutNul(text)})`;
+      const phrases = (lexical.keywords ?? []).join(', ');
+      await db()
+        .updateTable('knowledge_chunks')
+        .set({
+          ...(title !== undefined
+            ? { metadata: sql`metadata || jsonb_build_object('title', ${title}::text)` }
+            : {}),
+          keywords,
+          search_text: sql<string>`setweight(${vector(lexical.title)}, 'A') || setweight(${vector(phrases)}, 'B') || setweight(${vector(lexical.text)}, 'C')`,
+        })
+        .where('id', '=', id)
+        .execute();
+    },
+    async listByRefPrefix(provider, prefix) {
+      const rows = await db()
+        .selectFrom('knowledge_chunks')
+        .select(OBJECT_CHUNK_COLUMNS)
+        .where('provider', '=', provider)
+        .where('ref_id', 'like', `${escapeLike(prefix)}%`)
+        .orderBy('source_at', 'desc')
+        .orderBy('ref_id')
+        .orderBy('id')
+        .execute();
+      return rows.map(objectChunkFromRow);
     },
   };
 }

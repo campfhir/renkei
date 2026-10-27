@@ -11,23 +11,14 @@
  *   - a 300 from the archive POST is a refusal, never a success.
  *
  * The worker seam is faked at the OnBaseAuth boundary; the upload-slot
- * read in archive is faked at @renkei/db.
+ * read in archive is faked at @renkei/db's data store.
  */
 
 let slotRow: Record<string, unknown> | undefined;
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({
-          where: function whereChain() {
-            return { where: whereChain, executeTakeFirst: () => Promise.resolve(slotRow) };
-          },
-        }),
-      }),
-    },
+  getDataStore: () => ({
+    uploadSlots: { get: async () => slotRow ?? null },
   }),
 }));
 

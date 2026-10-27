@@ -67,4 +67,30 @@ export interface OAuthConsentStore {
   insertAuthorizationCode(code: NewAuthorizationCode): Promise<void>;
   /** Register a client; a client id already taken is refused (23505). */
   registerClient(client: NewOAuthClient): Promise<void>;
+  /** The client's secret digest, or null when no such client is registered. */
+  getClientCredentials(clientId: string): Promise<OAuthClientCredentialRecord | null>;
+  /** A minted code, expired or not, or null. */
+  getAuthorizationCode(code: string): Promise<AuthorizationCodeRecord | null>;
+  /** Spend a code; returns how many rows went (0 or 1). */
+  deleteAuthorizationCode(code: string): Promise<number>;
+}
+
+/** A client's stored secret digest, for the token endpoint to check a presented secret against. */
+export interface OAuthClientCredentialRecord {
+  clientId: string;
+  /** SHA-256 hex of the secret; null on a row from before digests (never matches). */
+  secretHash: string | null;
+}
+
+/** A minted authorization code, as the token endpoint exchanges it. */
+export interface AuthorizationCodeRecord {
+  code: string;
+  clientId: string;
+  subject: string;
+  scope: string | null;
+  redirectUri: string;
+  codeChallenge: string | null;
+  codeChallengeMethod: string | null;
+  roles: string[];
+  expiresAt: Date;
 }

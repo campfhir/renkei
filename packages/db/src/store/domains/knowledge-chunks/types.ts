@@ -151,4 +151,44 @@ export interface KnowledgeChunkStore {
     vector: readonly number[],
     scope: { refIdPrefix: string; excludeRefId: string; since: Date }
   ): Promise<number | null>;
+  /**
+   * Every chunk of one object: `ref_id` exactly `refId`, or `refId#…` (a
+   * chunk suffix), by ref id then id.
+   */
+  objectChunks(provider: string, refId: string): Promise<KnowledgeObjectChunk[]>;
+  /**
+   * Rewrite one chunk's searchable fields in place (content and embedding
+   * untouched): `title` laid over `metadata.title` when given, the keywords
+   * replaced, and the lexical entry rebuilt from PLAINTEXT `lexical` — the
+   * title weighted A, the keywords (joined ", ") B, the text C, under the
+   * text search configuration `lexical.config`, NUL bytes dropped.
+   * Postgres builds that tsvector; memory stores the three parts joined by
+   * spaces, which is what its lexical arm searches.
+   */
+  rewriteChunk(
+    id: string,
+    fields: {
+      title?: string;
+      keywords: string[] | null;
+      lexical: { config: string; title: string; keywords: string[] | null; text: string };
+    }
+  ): Promise<void>;
+  /**
+   * One provider's chunks whose ref id starts with `prefix` (case
+   * sensitive), newest `source_at` first (undated first, as DESC puts
+   * nulls), then by ref id and id.
+   */
+  listByRefPrefix(provider: string, prefix: string): Promise<KnowledgeObjectChunk[]>;
+}
+
+/** One stored chunk of an object (a note, an issue), still ciphertext. */
+export interface KnowledgeObjectChunk {
+  id: string;
+  refId: string;
+  /** As stored (encrypted at rest). */
+  content: string;
+  /** Parsed JSON, unread. */
+  metadata: unknown;
+  keywords: string[] | null;
+  sourceAt: Date | null;
 }

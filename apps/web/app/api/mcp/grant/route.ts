@@ -25,8 +25,10 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  const store = getDataStore();
+
   try {
-    const [grant] = await getDataStore().providerGrants.listForSubject(session.subject, {
+    const [grant] = await store.providerGrants.listForSubject(session.subject, {
       provider: 'atlassian',
     });
 
@@ -40,7 +42,7 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     // One transaction: a grant deleted while its tokens survive is the state
     // this route exists to avoid, and the reverse leaves a caller unable to
     // reach the tools while their Jira access is still stored.
-    await getDataStore().providerGrants.disconnectWithMcpTokens('atlassian', session.subject);
+    await store.providerGrants.disconnectWithMcpTokens('atlassian', session.subject);
 
     logger.info('Revoked by owner', {
       component: 'grants/store',

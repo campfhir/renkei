@@ -18,7 +18,24 @@ jest.mock('@renkei/provider-grants', () => ({
   ATLASSIAN_CONFLUENCE: 'atlassian-confluence',
   MICROSOFT: 'microsoft',
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
+// No reachable database: every data-store method rejects.
+jest.mock('@renkei/db', () => ({
+  getDataStore: () =>
+    new Proxy(
+      {},
+      {
+        get: () =>
+          new Proxy(
+            {},
+            {
+              get: () => async () => {
+                throw new Error('no data store in this suite');
+              },
+            }
+          ),
+      }
+    ),
+}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/connector-config', () => ({
   readConnectorConfigCached: async () => ({ ok: false }),

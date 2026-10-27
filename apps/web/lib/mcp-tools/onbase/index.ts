@@ -49,7 +49,7 @@ import {
   type OnBaseQueryKeyword,
   type QueryTargetKind,
 } from '@renkei/connector-onbase';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import { createUploadSlot } from '../upload-slots';
 import type { OnBaseAuth } from './onbase-auth';
@@ -873,13 +873,10 @@ export function registerOnbaseTools(
       comment?: string;
       storeAsNew?: boolean;
     }) => {
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const slot = await dbResult.val
-        .selectFrom('upload_slots')
-        .select(['id', 'kind', 'status', 'destination', 'filename', 'subject'])
-        .where('id', '=', args.uploadId)
-        .executeTakeFirst();
+      const slot = await getDataStore()
+        .uploadSlots.get(args.uploadId)
+        .catch(() => 'unavailable' as const);
+      if (slot === 'unavailable') return errText('Database unavailable.');
       if (!slot || slot.kind !== 'onbase-document' || slot.subject !== context.subject) {
         return errText('No OnBase upload with that id belongs to you.');
       }

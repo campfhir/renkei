@@ -90,4 +90,20 @@ export interface ToolUsageStore {
   byAgent(filter: ToolCallFilter): Promise<{ agentId: string; calls: number }[]>;
   /** The failed calls (status not 'ok'), newest first (ties by id). */
   recentFailures(filter: ToolCallFilter, limit: number): Promise<ToolFailure[]>;
+  /** Append one call to the ledger. */
+  recordCall(call: ToolCallEntry): Promise<void>;
+}
+
+/** One tool call as the MCP server's usage wrapper records it. */
+export interface ToolCallEntry {
+  id: string;
+  subject: string | null;
+  agentId: string | null;
+  tool: string;
+  connector: string | null;
+  status: string;
+  startedAt: Date;
+  endedAt: Date;
+  durationMs: number;
+  errorSummary: string | null;
 }

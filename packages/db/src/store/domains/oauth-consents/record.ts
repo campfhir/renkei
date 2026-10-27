@@ -1,6 +1,15 @@
 import type { Selectable } from 'kysely';
-import type { OauthClients, OauthConsentRequests } from '../../../db.types';
-import type { ConsentRequestRecord, NewOAuthClient, OAuthClientRecord } from './types';
+import type {
+  OauthClients,
+  OauthConsentRequests,
+  OauthAuthorizationCodes,
+} from '../../../db.types';
+import type {
+  ConsentRequestRecord,
+  NewOAuthClient,
+  OAuthClientRecord,
+  AuthorizationCodeRecord,
+} from './types';
 
 export function clientFromRow(row: Selectable<OauthClients>): OAuthClientRecord {
   return {
@@ -63,5 +72,21 @@ export function codeValues(code: import('./types').NewAuthorizationCode) {
     code_challenge_method: code.codeChallengeMethod,
     roles: code.roles,
     expires_at: code.expiresAt,
+  };
+}
+
+export function authorizationCodeFromRow(
+  row: Selectable<OauthAuthorizationCodes>
+): AuthorizationCodeRecord {
+  return {
+    code: row.code,
+    clientId: row.client_id,
+    subject: row.subject,
+    scope: row.scope,
+    redirectUri: row.redirect_uri,
+    codeChallenge: row.code_challenge,
+    codeChallengeMethod: row.code_challenge_method,
+    roles: row.roles ?? [],
+    expiresAt: new Date(row.expires_at),
   };
 }

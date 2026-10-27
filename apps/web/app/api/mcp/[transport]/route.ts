@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { attemptFromHeaders, withAttempt } from '@/lib/mcp-tools/attempt-context';
 import { runIdFromHeaders, withRun } from '@/lib/mcp-tools/run-context';
 import { getOrgSettings } from '@renkei/settings';
@@ -46,8 +46,6 @@ import { resolveAudience } from '@/lib/connectors/audience';
 import { toolSurfaceVersion } from '@/lib/mcp-tools/surface-version';
 import { getHandler, setHandler } from '@/lib/mcp-tools/handler-cache';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 
 /**
@@ -106,16 +104,11 @@ async function resolveJiraGrant(
  * the logs to say why.
  */
 async function resolveJsmGrant(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ auth: AuthedFetch; cloudId: string; accountId: string; scopes?: string[] } | null> {
-  const row = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id'])
-    .where('provider', '=', ATLASSIAN_JSM)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
+  const [row] = await getDataStore().providerGrants.listForSubject(subject, {
+    provider: ATLASSIAN_JSM,
+  });
   if (!row) return null;
 
   const failed = (reason: string): null => {
@@ -126,7 +119,7 @@ async function resolveJsmGrant(
     return null;
   };
 
-  const ref = { provider: ATLASSIAN_JSM, accountId: row.provider_account_id };
+  const ref = { provider: ATLASSIAN_JSM, accountId: row.accountId };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) return failed(`grant describe failed: ${described.err.type}`);
   const grant = described.val;
@@ -141,12 +134,6 @@ async function resolveJsmGrant(
 }
 
 const handler = async (request: NextRequest): Promise<Response> => {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   // request.url is the internal URL behind a reverse proxy (localhost:3000), so any
   // link built from it is unreachable for the user. getOrigin resolves the public one.
   const originResult = await getOrigin(request);
@@ -209,7 +196,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // or gets rebuilt correctly as soon as a request computes the new
     // version, exactly the "reuse whatever is cached, next request corrects
     // it" fallback this cache is designed around.
-    const surfaceVersion = await toolSurfaceVersion(db, subject);
+    const surfaceVersion = await toolSurfaceVersion(subject);
     // Roles ride in the cache key, not just surfaceVersion: they come from
     // the token, not a row surfaceVersion watches, and two tokens for the
     // same subject can carry different roles (a re-authorize after the IdP
@@ -232,13 +219,9 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
     // this caller, and serving it would let one user act as another in Jira.
-    const grants = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id as account_id'])
-      .where('provider', '=', 'atlassian')
-      .where('subject', '=', subject)
-      .limit(1)
-      .execute();
+    const grants = (
+      await getDataStore().providerGrants.listForSubject(subject, { provider: ATLASSIAN })
+    ).slice(0, 1);
 
     // Which connectors this caller has, resolved BEFORE the Jira decision:
     // a caller with no Jira but a Microsoft grant gets their real (Jira-less)
@@ -314,7 +297,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
 
     let grant: JiraGrantContext | null = null;
     if (grants.length > 0) {
-      const resolved = await resolveJiraGrant(grants[0].account_id);
+      const resolved = await resolveJiraGrant(grants[0].accountId);
       if (resolved === 'failed') {
         return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
           status: 500,
@@ -335,7 +318,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
       }
       grant = resolved;
     }
-    const accountId = grant ? grants[0].account_id : '';
+    const accountId = grant ? grants[0].accountId : '';
 
     // Org policy (read-only mode, limits) comes from the database per tenant.
     const settingsResult = await getOrgSettings();
@@ -389,7 +372,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // The second Atlassian app's grant ("Renkei JSM": JSM + Ops scopes) —
     // JSM/Ops tools run on this grant when it exists; absent, they fall back
     // to the main grant, the pre-split single-app shape.
-    const jsmGrant = await resolveJsmGrant(db, subject);
+    const jsmGrant = await resolveJsmGrant(subject);
 
     // cacheKey (identity plus a version derived from the rows the tool
     // surface is built from) was captured above, before availability/settings/
@@ -463,7 +446,6 @@ const handler = async (request: NextRequest): Promise<Response> => {
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
               roles,
-              db,
             };
 
             // Register all tools, filtered through the per-user capability

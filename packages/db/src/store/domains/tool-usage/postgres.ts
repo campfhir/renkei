@@ -1,7 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
 import { bucketSql, inWindowSql } from './window';
-import type { ToolCallFilter, ToolUsageStore } from './types';
+import type { ToolCallEntry, ToolCallFilter, ToolUsageStore } from './types';
 
 const CALLS = sql<string>`count(*)`;
 const ERRORS = sql<string>`count(*) FILTER (WHERE tool_calls.status <> 'ok')`;
@@ -146,5 +146,24 @@ export function postgresToolUsage(db: () => Kysely<DB>): ToolUsageStore {
         email: row.email,
       }));
     },
+    async recordCall(call) {
+      await db().insertInto('tool_calls').values(toolCallValues(call)).execute();
+    },
+  };
+}
+
+/** A ledger entry as the `tool_calls` row it becomes. */
+export function toolCallValues(call: ToolCallEntry) {
+  return {
+    id: call.id,
+    subject: call.subject,
+    agent_id: call.agentId,
+    tool: call.tool,
+    connector: call.connector,
+    status: call.status,
+    started_at: call.startedAt,
+    ended_at: call.endedAt,
+    duration_ms: call.durationMs,
+    error_summary: call.errorSummary,
   };
 }

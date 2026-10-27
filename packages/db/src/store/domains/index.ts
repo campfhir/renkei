@@ -63,6 +63,11 @@ import { userKeys } from './user-keys';
 import { queues } from './queues';
 import { runTokens } from './run-tokens';
 import { knowledgeReindexRuns } from './knowledge-reindex-runs';
+import { oauthTokens } from './oauth-tokens';
+import { phiAccess } from './phi-access';
+import { mailBulkJobs } from './mail-bulk-jobs';
+import { webexSentMessages } from './webex-sent-messages';
+import { toolSurface } from './tool-surface';
 import { contentWatches } from './content-watches';
 
 export const DOMAINS = {
@@ -125,5 +130,10 @@ export const DOMAINS = {
   queues,
   runTokens,
   knowledgeReindexRuns,
+  oauthTokens,
+  phiAccess,
+  mailBulkJobs,
+  webexSentMessages,
+  toolSurface,
   contentWatches,
 };

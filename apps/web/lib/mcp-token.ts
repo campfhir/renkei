@@ -10,8 +10,7 @@
 
 import { timingSafeEqual } from 'crypto';
 import type { NextRequest } from 'next/server';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { sha256Hex, generateSecret } from '@renkei/crypto';
 import { logger } from '@/lib/logger';
 
@@ -131,31 +130,16 @@ export async function storeAccessToken(params: {
   ttlSeconds: number;
   application?: Application;
   roles?: string[];
-  /**
-   * The connection to write on — a transaction when the caller's other
-   * writes (a refresh-token rotation) must land with this one or not at all.
-   */
-  db?: Kysely<DB>;
 }): Promise<void> {
-  let db = params.db;
-  if (!db) {
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('Database unavailable');
-    db = dbResult.val;
-  }
-
-  await db
-    .insertInto('oauth_access_tokens')
-    .values({
-      token_hash: hashToken(params.token),
-      client_id: params.clientId,
-      subject: params.subject,
-      application: params.application ?? 'jira',
-      scope: params.scope,
-      roles: params.roles ?? [],
-      expires_at: new Date(Date.now() + params.ttlSeconds * 1000),
-    })
-    .execute();
+  await getDataStore().oauthTokens.insertAccessToken({
+    tokenHash: hashToken(params.token),
+    clientId: params.clientId,
+    subject: params.subject,
+    application: params.application ?? 'jira',
+    scope: params.scope,
+    roles: params.roles ?? [],
+    expiresAt: new Date(Date.now() + params.ttlSeconds * 1000),
+  });
 }
 
 /**
@@ -166,49 +150,30 @@ export async function resolveAccessToken(
   token: string,
   application: Application = 'jira'
 ): Promise<AccessTokenRecord | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const db = dbResult.val;
-
+  const tokens = getDataStore().oauthTokens;
   const tokenHash = hashToken(token);
 
-  const row = await db
-    .selectFrom('oauth_access_tokens')
-    .select([
-      'token_hash',
-      'subject',
-      'client_id',
-      'scope',
-      'expires_at',
-      'application',
-      'agent_id',
-      'roles',
-      'tool_names',
-    ])
-    .where('token_hash', '=', tokenHash)
-    .where('application', '=', application)
-    .executeTakeFirst();
-
+  const row = await tokens.findAccessToken(tokenHash, application);
   if (!row) return null;
 
   // The lookup above already matched on the digest; this guards against a
   // non-constant-time comparison sneaking in via a future query change.
-  if (!digestsMatch(row.token_hash, tokenHash)) return null;
+  if (!digestsMatch(row.tokenHash, tokenHash)) return null;
 
-  if (new Date(row.expires_at) < new Date()) {
-    await db.deleteFrom('oauth_access_tokens').where('token_hash', '=', tokenHash).execute();
+  if (row.expiresAt < new Date()) {
+    await tokens.deleteAccessToken(tokenHash);
     logger.debug('Expired access token discarded', { component: 'mcp/token' });
     return null;
   }
 
   return {
     subject: row.subject,
-    clientId: row.client_id,
+    clientId: row.clientId,
     scope: row.scope,
     application: row.application,
-    agentId: row.agent_id,
-    roles: row.roles ?? [],
-    toolNames: row.tool_names ?? null,
+    agentId: row.agentId,
+    roles: row.roles,
+    toolNames: row.toolNames,
   };
 }
 

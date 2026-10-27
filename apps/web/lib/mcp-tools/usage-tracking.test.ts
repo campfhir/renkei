@@ -16,20 +16,20 @@ const inserted: Record<string, unknown>[] = [];
 let dbAvailable = true;
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () =>
-    dbAvailable
-      ? {
-          ok: true,
-          val: {
-            insertInto: () => ({
-              values: (row: Record<string, unknown>) => {
-                inserted.push(row);
-                return { execute: async () => [] };
-              },
-            }),
-          },
-        }
-      : { ok: false },
+  getDataStore: () => ({
+    toolUsage: {
+      recordCall: async (row: Record<string, unknown>) => {
+        if (!dbAvailable) throw new Error('connection refused');
+        inserted.push(row);
+      },
+    },
+    // Identity lookup explodes on every call — see the logging test below.
+    identities: {
+      get: async () => {
+        throw new Error('identities unavailable');
+      },
+    },
+  }),
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -76,12 +76,12 @@ describe('withUsageTracking', () => {
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({
       subject: 'subject-1',
-      agent_id: null,
+      agentId: null,
       tool: 'jira_search_issues',
       connector: 'jira',
       status: 'ok',
     });
-    expect(typeof inserted[0]!.duration_ms).toBe('number');
+    expect(typeof inserted[0]!.durationMs).toBe('number');
   });
 
   it("stamps the acting agent on an agent run's calls, under the owner's subject", async () => {
@@ -93,7 +93,7 @@ describe('withUsageTracking', () => {
     await registered.get('jira_search_issues')!({ jql: 'project = ENG' });
     await flush();
 
-    expect(inserted[0]).toMatchObject({ subject: 'subject-1', agent_id: 'agent-9' });
+    expect(inserted[0]).toMatchObject({ subject: 'subject-1', agentId: 'agent-9' });
   });
 
   it('never records arguments or results', async () => {
@@ -145,8 +145,8 @@ describe('withUsageTracking', () => {
     await registered.get('sharepoint_get_document')!({});
     await flush();
 
-    expect(inserted[0]!.error_summary).toBe('Could not download "plan.docx".');
-    expect(inserted[1]!.error_summary).toBeNull();
+    expect(inserted[0]!.errorSummary).toBe('Could not download "plan.docx".');
+    expect(inserted[1]!.errorSummary).toBeNull();
   });
 
   it('caps the error summary at the schema limit', async () => {
@@ -159,7 +159,7 @@ describe('withUsageTracking', () => {
     await registered.get('jira_get_issue')!({});
     await flush();
 
-    expect(String(inserted[0]!.error_summary)).toHaveLength(500);
+    expect(String(inserted[0]!.errorSummary)).toHaveLength(500);
   });
 
   it('records a throw and lets it propagate untouched', async () => {
@@ -177,7 +177,7 @@ describe('withUsageTracking', () => {
       tool: 'zoom_get_transcript',
       // The thrown message is the only trace a crash leaves; without it the
       // row says "failed" and nothing else.
-      error_summary: 'boom',
+      errorSummary: 'boom',
     });
   });
 
@@ -212,7 +212,7 @@ describe('withUsageTracking', () => {
 
 describe('tool-call logging never affects the tool call', () => {
   it('runs the tool and returns its result even when identity lookup explodes', async () => {
-    // This file's @renkei/db mock exports no describeActor at all, so the
+    // This file's @renkei/db mock fails every identity lookup, so the
     // logging path throws on every call — which is exactly the point: a log
     // line must never be able to take a working tool down with it.
     const { server, registered } = harness();

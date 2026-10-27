@@ -28,7 +28,6 @@
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { WidgetKind } from '@renkei/mcp-client';
-import { getDatabase, memoryDataStoreRequested } from '@renkei/db';
 import { grantRow } from './grant-row';
 import { getOrgSettings } from '@renkei/settings';
 import { buildProjection } from '@/lib/mcp-tools/projection';
@@ -281,14 +280,6 @@ export async function listAvailableTools(
     jsmGrant: jsm
       ? { auth: null, cloudId: '', accountId: jsm.accountId, scopes: jsm.scopes }
       : undefined,
-    // Registration only enumerates; a tool reaches for the database when
-    // it runs, which enumeration never does. On the memory store there is
-    // no database to hand over.
-    get db() {
-      if (memoryDataStoreRequested()) return undefined;
-      const dbResult = getDatabase();
-      return dbResult.ok ? dbResult.val : undefined;
-    },
   };
 
   const { server, tools } = collectingServer();

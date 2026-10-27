@@ -24,7 +24,7 @@
  * it once. That is why this is a warning rather than a debug line.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 /**
@@ -45,21 +45,9 @@ export async function recordSentWebexMessage(
     });
     return;
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.warn('could not record sent WebEx message {messageId}: database unavailable', {
-      component: 'mcp/webex-sent-ledger',
-      messageId,
-    });
-    return;
-  }
   try {
-    await dbResult.val
-      .insertInto('webex_sent_messages')
-      .values({ message_id: messageId, account_id: accountId })
-      // A retried send of the same id is the same fact.
-      .onConflict((conflict) => conflict.columns(['message_id']).doNothing())
-      .execute();
+    // A retried send of the same id is the same fact (a no-op).
+    await getDataStore().webexSentMessages.record(messageId, accountId);
   } catch (error) {
     logger.warn('could not record sent WebEx message {messageId}: {error}', {
       component: 'mcp/webex-sent-ledger',

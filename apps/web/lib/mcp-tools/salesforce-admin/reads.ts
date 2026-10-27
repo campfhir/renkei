@@ -13,7 +13,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { soqlString, summarizeDescribe, takesChanges } from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import type { SalesforceAuth } from '../salesforce/salesforce-auth';
@@ -285,13 +284,6 @@ export function registerAdminReadTools(
     },
     async (args) => {
       if (!context.subject) return errText('No signed-in identity on this request.');
-      const db =
-        context.db ??
-        (() => {
-          const result = getDatabase();
-          return result.ok ? result.val : null;
-        })();
-      if (!db) return errText('Could not read your change requests.');
       const everyone = args.everyone === true && context.roles?.includes(ROLE_OPERATOR) === true;
       const found = everyone
         ? await listAllChangeRequests({ limit: args.limit ?? 20 })

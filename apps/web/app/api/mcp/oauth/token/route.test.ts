@@ -4,14 +4,16 @@
  * settings or the database are read.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
 jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn() }));
 
 import { NextRequest } from 'next/server';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { getDataStore: mockGetDataStore } = jest.requireMock<{ getDataStore: jest.Mock }>(
+  '@renkei/db'
+);
 const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
   '@renkei/settings'
 );
@@ -31,7 +33,7 @@ describe('POST /api/mcp/oauth/token throttle', () => {
   beforeEach(() => {
     resetInboundLimits();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: false, err: 'DB_ERROR' });
-    mockGetDatabase.mockReset().mockReturnValue({ ok: false, err: 'DB_ERROR' });
+    mockGetDataStore.mockReset();
   });
 
   it('refuses the 61st request from one address in a minute before reading anything', async () => {
@@ -40,14 +42,14 @@ describe('POST /api/mcp/oauth/token throttle', () => {
       expect(response.status).not.toBe(429);
     }
     mockGetOrgSettings.mockClear();
-    mockGetDatabase.mockClear();
+    mockGetDataStore.mockClear();
 
     const throttled = await POST(tokenRequest('203.0.113.1'));
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(await throttled.json()).toMatchObject({ error: 'slow_down' });
     expect(mockGetOrgSettings).not.toHaveBeenCalled();
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockGetDataStore).not.toHaveBeenCalled();
   });
 
   it('keeps a different address on its own budget', async () => {

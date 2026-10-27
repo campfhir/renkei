@@ -1,5 +1,6 @@
 import { groupBy, orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
+import { toolCallValues } from './postgres';
 import { bucketOf, inWindow, percentileDisc } from './window';
 import type { ToolCallFilter, ToolUsageStore } from './types';
 
@@ -99,6 +100,9 @@ export function memoryToolUsage(tables: MemoryTables): ToolUsageStore {
           email: person?.email ?? null,
         };
       });
+    },
+    async recordCall(call) {
+      tables.insert('tool_calls', toolCallValues(call));
     },
   };
 }

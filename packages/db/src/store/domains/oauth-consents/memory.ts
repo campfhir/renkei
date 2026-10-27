@@ -1,5 +1,12 @@
 import type { MemoryTables } from '../../memory/tables';
-import { clientFromRow, clientValues, codeValues, requestFromRow, requestValues } from './record';
+import {
+  authorizationCodeFromRow,
+  clientFromRow,
+  clientValues,
+  codeValues,
+  requestFromRow,
+  requestValues,
+} from './record';
 import type { OAuthConsentStore } from './types';
 
 export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
@@ -38,6 +45,17 @@ export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
     },
     async registerClient(client) {
       tables.insert('oauth_clients', clientValues(client));
+    },
+    async getClientCredentials(clientId) {
+      const row = tables.first('oauth_clients', (r) => r.client_id === clientId);
+      return row ? { clientId: row.client_id, secretHash: row.client_secret_hash ?? null } : null;
+    },
+    async getAuthorizationCode(code) {
+      const row = tables.first('oauth_authorization_codes', (r) => r.code === code);
+      return row ? authorizationCodeFromRow(row) : null;
+    },
+    async deleteAuthorizationCode(code) {
+      return tables.delete('oauth_authorization_codes', (r) => r.code === code).length;
     },
   };
 }

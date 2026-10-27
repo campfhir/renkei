@@ -894,4 +894,17 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
       };
     },
   },
+  {
+    method: 'agentRuns.findRunOrigin',
+    name: 'the run’s agent and trigger kind, or null; a malformed id is refused',
+    fixture,
+    run: async (store) => [
+      await store.agentRuns.findRunOrigin(id(15)),
+      await store.agentRuns.findRunOrigin(id(99)),
+      await store.agentRuns.findRunOrigin('nope').then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      ),
+    ],
+  },
 ];

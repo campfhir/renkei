@@ -39,6 +39,10 @@ const fixture = {
 const settled = (record: UploadSlotRecord | null) =>
   record ? { ...record, completedAt: record.completedAt !== null } : null;
 
+const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
+
 export const uploadSlotScenarios: Scenario<DataStore>[] = [
   {
     method: 'uploadSlots.get',
@@ -115,6 +119,46 @@ export const uploadSlotScenarios: Scenario<DataStore>[] = [
         (await store.uploadSlots.get(SLOT.open))?.destination,
         (await store.uploadSlots.get(SLOT.bobs))?.destination,
       ];
+    },
+  },
+  {
+    method: 'uploadSlots.get',
+    name: 'by id whoever owns it; unknown and malformed ids',
+    fixture,
+    run: async (store) => [
+      await store.uploadSlots.get(id(1)),
+      await store.uploadSlots.get(id(4)),
+      await store.uploadSlots.get(id(9)),
+      await store.uploadSlots.get('nope').then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      ),
+    ],
+  },
+  {
+    method: 'uploadSlots.create',
+    name: 'pending after; a reused id is refused',
+    fixture,
+    run: async (store) => {
+      const fresh = {
+        id: id(7),
+        tokenHash: 'h7',
+        subject: 'cy',
+        accountId: 'acct-c',
+        kind: 'jira-attachment',
+        destination: { issueKey: 'PROJ-1' },
+        filename: 'a.txt',
+        contentType: 'text/plain',
+        maxBytes: 20,
+        expiresAt: at(15),
+      };
+      await store.uploadSlots.create(fresh);
+      const again = await store.uploadSlots.create(fresh).then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      );
+      const read = await store.uploadSlots.get(id(7));
+      return { again, read: read ? { ...read, createdAt: null } : null };
     },
   },
 ];

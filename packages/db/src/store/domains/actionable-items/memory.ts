@@ -1,6 +1,6 @@
 import { orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
-import { actionableItemFromRow } from './record';
+import { actionableItemFromRow, itemPatchValues, newItemValues } from './record';
 import type { ActionableItemStore } from './types';
 
 export function memoryActionableItems(tables: MemoryTables): ActionableItemStore {
@@ -14,11 +14,14 @@ export function memoryActionableItems(tables: MemoryTables): ActionableItemStore
   };
 
   return {
-    async listVisible(subject, { limit, offset = 0, includeArchived }) {
+    async listVisible(subject, { limit, offset = 0, includeArchived, status }) {
       const isVisible = visible(subject);
       const rows = tables.select(
         'actionable_items',
-        (r) => isVisible(r) && (includeArchived || r.archived_at === null)
+        (r) =>
+          isVisible(r) &&
+          (includeArchived || r.archived_at === null) &&
+          (status === undefined || r.status === status)
       );
       return page(orderBy(rows, [(r) => r.created_at, 'desc'], [(r) => r.id]), limit, offset).map(
         withAgent
@@ -64,6 +67,50 @@ export function memoryActionableItems(tables: MemoryTables): ActionableItemStore
               updated_at: now,
             }
           : { status: 'approved', decided_by: by, decided_at: now, updated_at: now }
+      ).length;
+    },
+    async create(card) {
+      tables.insert('actionable_items', newItemValues(card));
+    },
+    async updateOwnCreated(subject, id, patch) {
+      const key = idOf(id);
+      return tables.update(
+        'actionable_items',
+        (r) =>
+          r.id === key &&
+          r.owner_subject === subject &&
+          r.created_by !== null &&
+          r.status === 'suggested',
+        { ...itemPatchValues(patch), updated_at: new Date() }
+      ).length;
+    },
+    async dismissOwn(subject, id) {
+      const key = idOf(id);
+      const now = new Date();
+      return tables.update(
+        'actionable_items',
+        (r) => r.id === key && r.owner_subject === subject && r.status === 'suggested',
+        {
+          status: 'dismissed',
+          decided_by: subject,
+          decided_at: now,
+          archived_at: now,
+          archived_by: subject,
+          updated_at: now,
+        }
+      ).length;
+    },
+    async archiveOwnDecided(subject, id) {
+      const key = idOf(id);
+      const now = new Date();
+      return tables.update(
+        'actionable_items',
+        (r) =>
+          r.id === key &&
+          r.owner_subject === subject &&
+          r.status !== 'suggested' &&
+          r.archived_at === null,
+        { archived_at: now, archived_by: subject, updated_at: now }
       ).length;
     },
     async recordOutcome(id, status, result) {
