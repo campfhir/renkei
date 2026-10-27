@@ -55,6 +55,8 @@ import { personalAccount } from './personal-account';
 import { activityLogs } from './activity-logs';
 import { toolUsage } from './tool-usage';
 import { knowledgeChunks } from './knowledge-chunks';
+import { pendingSignins } from './pending-signins';
+import { webhookSubscriptions } from './webhook-subscriptions';
 
 export const DOMAINS = {
   sessions,
@@ -108,4 +110,6 @@ export const DOMAINS = {
   activityLogs,
   toolUsage,
   knowledgeChunks,
+  pendingSignins,
+  webhookSubscriptions,
 };

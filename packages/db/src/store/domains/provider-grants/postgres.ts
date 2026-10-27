@@ -3,6 +3,16 @@ import type { DB } from '../../../db.types';
 import { grantSummaryFromRow, prefixPattern } from './record';
 import type { ProviderGrantStore } from './types';
 
+const SUMMARY_COLUMNS = [
+  'provider',
+  'provider_account_id',
+  'subject',
+  'display_name',
+  'requested_scopes',
+  'granted_scopes',
+  'metadata',
+] as const;
+
 export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore {
   return {
     async listForSubject(subject, { provider, providerPrefix } = {}) {
@@ -46,6 +56,52 @@ export function postgresProviderGrants(db: () => Kysely<DB>): ProviderGrantStore
         .where('provider_account_id', '=', accountId)
         .executeTakeFirst();
       return Number(result.numUpdatedRows ?? 0);
+    },
+    async find(provider, accountId) {
+      const row = await db()
+        .selectFrom('provider_grants')
+        .select(SUMMARY_COLUMNS)
+        .where('provider', '=', provider)
+        .where('provider_account_id', '=', accountId)
+        .executeTakeFirst();
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async latestOf(providers, { subject } = {}) {
+      if (providers.length === 0) return null;
+      let query = db()
+        .selectFrom('provider_grants')
+        .select(SUMMARY_COLUMNS)
+        .where('provider', 'in', providers)
+        .orderBy('updated_at', 'desc')
+        .orderBy('provider')
+        .orderBy('provider_account_id');
+      if (subject !== undefined) query = query.where('subject', '=', subject);
+      const row = await query.executeTakeFirst();
+      return row ? grantSummaryFromRow(row) : null;
+    },
+    async disconnectWithMcpTokens(provider, subject) {
+      return db()
+        .transaction()
+        .execute(async (trx) => {
+          const grants = await trx
+            .deleteFrom('provider_grants')
+            .where('provider', '=', provider)
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          const accessTokens = await trx
+            .deleteFrom('oauth_access_tokens')
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          const refreshTokens = await trx
+            .deleteFrom('oauth_refresh_tokens')
+            .where('subject', '=', subject)
+            .executeTakeFirst();
+          return {
+            grants: Number(grants.numDeletedRows ?? 0),
+            accessTokens: Number(accessTokens.numDeletedRows ?? 0),
+            refreshTokens: Number(refreshTokens.numDeletedRows ?? 0),
+          };
+        });
     },
   };
 }

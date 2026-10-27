@@ -1,4 +1,3 @@
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/settings', () => ({
   getOrgSettings: jest.fn(),
   DEFAULT_ORG_SETTINGS: { enableDcr: false },
@@ -6,36 +5,38 @@ jest.mock('@renkei/settings', () => ({
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 
 import { NextRequest } from 'next/server';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type NewOAuthClient,
+} from '@renkei/db';
 import { POST } from './route';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 
-// Fetched through requireMock rather than the typed import: these stubs
-// stand in for a Kysely instance, which cannot be satisfied structurally,
-// and the codebase bans type assertions.
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
   '@renkei/settings'
 );
 
 /**
- * A minimal chainable Kysely stand-in covering the one query this route
- * issues: an `oauth_clients` insert. Recording the insert's values is what
- * lets the success test confirm the client actually lands.
+ * A memory data store recording every client registration, which is the
+ * one write this route makes; the client also lands in the store, so the
+ * success test can read it back.
  */
-function stubDb() {
-  const inserted: { table: string; values: Record<string, unknown> }[] = [];
-  const db = {
-    insertInto(table: string) {
-      return {
-        values(values: Record<string, unknown>) {
-          inserted.push({ table, values });
-          return { async execute() {} };
-        },
-      };
+function stubStore() {
+  const inserted: NewOAuthClient[] = [];
+  const store = createMemoryDataStore();
+  registerDataStore({
+    ...store,
+    oauthConsents: {
+      ...store.oauthConsents,
+      registerClient: (client) => {
+        inserted.push(client);
+        return store.oauthConsents.registerClient(client);
+      },
     },
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
-  return { inserted };
+  });
+  return { inserted, store };
 }
 
 function requestWith(options: { referer?: string; redirectUris?: string[] } = {}): NextRequest {
@@ -57,13 +58,14 @@ function requestWith(options: { referer?: string; redirectUris?: string[] } = {}
  */
 describe('POST /api/oauth/register (system-level)', () => {
   beforeEach(() => {
-    mockGetDatabase.mockReset();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: true, val: { enableDcr: true } });
     resetInboundLimits();
   });
 
+  afterEach(() => resetDataStore());
+
   it("honours the organization's registration setting", async () => {
-    const { inserted } = stubDb();
+    const { inserted } = stubStore();
     mockGetOrgSettings.mockResolvedValue({ ok: true, val: { enableDcr: false } });
     const response = await POST(requestWith());
     expect(response.status).toBe(403);
@@ -72,8 +74,7 @@ describe('POST /api/oauth/register (system-level)', () => {
   });
 
   it('refuses a redirect URI the policy refuses before touching the database', async () => {
-    const { inserted } = stubDb();
-    mockGetDatabase.mockClear();
+    const { inserted } = stubStore();
     const response = await POST(
       requestWith({ redirectUris: ['http://attacker.example/callback'] })
     );
@@ -81,38 +82,34 @@ describe('POST /api/oauth/register (system-level)', () => {
     const body = await response.json();
     expect(body.error).toBe('invalid_redirect_uri');
     expect(body.error_description).toMatch(/must use https/);
-    expect(mockGetDatabase).not.toHaveBeenCalled();
     expect(inserted).toHaveLength(0);
   });
 
   it('refuses the eleventh registration from one address in ten minutes before the database', async () => {
-    stubDb();
+    const { inserted } = stubStore();
     for (let i = 0; i < 10; i += 1) {
-      const response = await POST(
-        requestWith()
-      );
+      const response = await POST(requestWith());
       expect(response.status).not.toBe(429);
     }
-    mockGetDatabase.mockClear();
+    inserted.length = 0;
 
-    const throttled = await POST(
-      requestWith()
-    );
+    const throttled = await POST(requestWith());
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(inserted).toHaveLength(0);
   });
 
   it('registers the client', async () => {
-    const { inserted } = stubDb();
-    const response = await POST(
-      requestWith()
-    );
+    const { inserted, store } = stubStore();
+    const response = await POST(requestWith());
     expect(response.status).toBe(201);
     const body = await response.json();
     expect(body.client_id).toMatch(/^client_/);
     expect(inserted).toHaveLength(1);
-    expect(inserted[0].table).toBe('oauth_clients');
-    expect(inserted[0].values.client_id).toBe(body.client_id);
+    expect(inserted[0].clientId).toBe(body.client_id);
+    expect(inserted[0].clientSecretHash).not.toBe(body.client_secret);
+    const stored = await store.oauthConsents.getClient(body.client_id);
+    expect(stored?.clientName).toBe('Test Client');
+    expect(stored?.redirectUris).toEqual(['https://client.example/callback']);
   });
 });

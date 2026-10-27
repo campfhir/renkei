@@ -54,6 +54,8 @@ import { activityLogScenarios } from './activity-logs/scenarios';
 import { toolUsageScenarios } from './tool-usage/scenarios';
 import { knowledgeChunkScenarios } from './knowledge-chunks/scenarios';
 
+import { pendingSigninScenarios } from './pending-signins/scenarios';
+import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
   ...identityScenarios,
@@ -106,4 +108,6 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...activityLogScenarios,
   ...toolUsageScenarios,
   ...knowledgeChunkScenarios,
+  ...pendingSigninScenarios,
+  ...webhookSubscriptionScenarios,
 ];

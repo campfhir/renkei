@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
 import { bindConnectFlow } from '@/lib/connect-flow-binding';
@@ -19,15 +19,7 @@ import { logger } from '@/lib/logger';
  * prompts installing the App on an org/repos first when it is not
  * installed yet — one click either way.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
+export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     // The resulting grant is bound to whoever completes this flow.
     const session = await getSessionFromRequest(request);
@@ -71,19 +63,15 @@ export async function GET(
 
     const state = randomUUID();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await db
-      .insertInto('pending_oidc_signin')
-      .values({
-        id: randomUUID(),
-        state,
-        nonce: randomUUID(),
-        subject: session.subject,
-        provider: 'github',
-        scopes: effectiveScopes,
-        expires_at: expiresAt.toISOString(),
-        created_at: new Date().toISOString(),
-      })
-      .execute();
+    await getDataStore().pendingSignins.create({
+      id: randomUUID(),
+      state,
+      nonce: randomUUID(),
+      subject: session.subject,
+      provider: 'github',
+      scopes: effectiveScopes,
+      expiresAt: expiresAt,
+    });
 
     // No scope parameter, deliberately: GitHub App permissions are fixed
     // on the App's registration, not requested here.

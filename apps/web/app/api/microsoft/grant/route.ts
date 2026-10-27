@@ -12,7 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -22,58 +22,41 @@ import { deleteGraphSubscription } from '@renkei/connector-microsoft';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { logger } from '@/lib/logger';
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
-  const grantRow = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'metadata'])
-    .where('provider', '=', MICROSOFT)
-    .where('subject', '=', session.subject)
-    .executeTakeFirst();
+  const [grantRow] = await getDataStore().providerGrants.listForSubject(session.subject, {
+    provider: MICROSOFT,
+  });
 
   if (!grantRow) {
     return NextResponse.json({ message: 'Nothing to disconnect' });
   }
-  const accountId = grantRow.provider_account_id;
+  const accountId = grantRow.accountId;
 
   // Best-effort provider-side cleanup while the grant still exists: each
   // subscription is deleted through the grant's own fetcher, so the token
   // never passes through this process.
-  const subscriptions = await db
-    .selectFrom('webhook_subscriptions')
-    .select(['subscription_id'])
-    .where('provider', '=', MICROSOFT)
-    .where('account_id', '=', accountId)
-    .execute();
+  const subscriptions = await getDataStore().webhookSubscriptions.listForAccount(
+    MICROSOFT,
+    accountId
+  );
   const auth = grantFetch({ provider: MICROSOFT, accountId });
   for (const row of subscriptions) {
-    if (!row.subscription_id) continue;
-    const deleted = await deleteGraphSubscription(auth, row.subscription_id);
+    if (!row.subscriptionId) continue;
+    const deleted = await deleteGraphSubscription(auth, row.subscriptionId);
     if (!deleted.ok) {
       logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
         component: 'connectors/microsoft',
-        subscriptionId: row.subscription_id,
+        subscriptionId: row.subscriptionId,
       });
     }
   }
 
-  await db
-    .deleteFrom('webhook_subscriptions')
-    .where('provider', '=', MICROSOFT)
-    .where('account_id', '=', accountId)
-    .execute();
+  await getDataStore().webhookSubscriptions.deleteForAccount(MICROSOFT, accountId);
 
   // Purge this mailbox's chunks. The refId prefix is the owner's upn.
   const metadata: Record<string, unknown> =

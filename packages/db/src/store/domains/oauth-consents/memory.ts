@@ -1,5 +1,5 @@
 import type { MemoryTables } from '../../memory/tables';
-import { clientFromRow, codeValues, requestFromRow, requestValues } from './record';
+import { clientFromRow, clientValues, codeValues, requestFromRow, requestValues } from './record';
 import type { OAuthConsentStore } from './types';
 
 export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
@@ -35,6 +35,9 @@ export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
     },
     async insertAuthorizationCode(code) {
       tables.insert('oauth_authorization_codes', codeValues(code));
+    },
+    async registerClient(client) {
+      tables.insert('oauth_clients', clientValues(client));
     },
   };
 }

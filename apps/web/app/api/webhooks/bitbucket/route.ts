@@ -24,7 +24,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
@@ -45,10 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   // Throttle, then the credential's presence, then a bounded body — all
   // before any config or database read (lib/webhook-intake.ts). Bitbucket's
   // credential is a shared secret, not an HMAC, so "shape" here is only
@@ -71,10 +67,6 @@ export async function POST(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
   const configResult = await readConnectorConfigCached(
     ATLASSIAN_BITBUCKET_CONNECTOR,
     keyResult.val

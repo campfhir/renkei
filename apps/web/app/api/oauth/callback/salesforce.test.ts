@@ -9,7 +9,6 @@
  * Nothing here reaches Salesforce or the delegate: both are stubbed.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@renkei/queue', () => ({ webhookEventsQueue: () => ({ producer: {} }) }));
 jest.mock('@renkei/delegate-client', () => ({
@@ -30,9 +29,9 @@ jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ invalidateToolCatalogCache: j
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GET } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
 }>('@/lib/session');
@@ -51,26 +50,20 @@ const STATE = '0b6c7d8e-1f2a-4b3c-8d4e-5f6a7b8c9d0e';
 const ORG = '00D000000000062EAA';
 const USER = '005000000000001AAA';
 
-function stubDb(codeVerifier: string | null, connectorKey: string | null = 'uat') {
-  const db = {
-    selectFrom: () => {
-      const chain = {
-        select: () => chain,
-        where: () => chain,
-        executeTakeFirst: async () => ({
-          expires_at: new Date(Date.now() + 60_000).toISOString(),
-          subject: SUBJECT,
-          provider: 'salesforce',
-          scopes: 'sf-records-read sf-reports',
-          code_verifier: codeVerifier,
-          connector_key: connectorKey,
-        }),
-      };
-      return chain;
-    },
-    deleteFrom: () => ({ where: () => ({ async execute() {} }) }),
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
+async function stubStore(codeVerifier: string | null, connectorKey: string | null = 'uat') {
+  const store = createMemoryDataStore();
+  await store.pendingSignins.create({
+    id: '00000000-0000-4000-8000-0000000005f0',
+    state: STATE,
+    nonce: 'nonce',
+    expiresAt: new Date(Date.now() + 60_000),
+    subject: SUBJECT,
+    provider: 'salesforce',
+    scopes: 'sf-records-read sf-reports',
+    codeVerifier,
+    connectorKey,
+  });
+  registerDataStore(store);
 }
 
 function stubDelegate(instanceUrl: string) {
@@ -104,6 +97,8 @@ function callback(): NextRequest {
   return new NextRequest(`https://renkei.example/api/oauth/callback?code=the-code&state=${STATE}`);
 }
 
+afterEach(() => resetDataStore());
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetSession.mockResolvedValue({ id: 's', subject: SUBJECT, roles: [], expiresAt: new Date() });
@@ -129,7 +124,7 @@ beforeEach(() => {
 
 describe('GET /api/oauth/callback — Salesforce', () => {
   it('exchanges with the PKCE verifier and stores the grant keyed by org and user', async () => {
-    stubDb('the-verifier');
+    await stubStore('the-verifier');
     const { exchange, commit, revoke } = stubDelegate(
       'https://acme--uat.sandbox.my.salesforce.com'
     );
@@ -171,7 +166,7 @@ describe('GET /api/oauth/callback — Salesforce', () => {
   });
 
   it('revokes an earlier connection to the same connector as someone else', async () => {
-    stubDb('the-verifier');
+    await stubStore('the-verifier');
     const { revoke } = stubDelegate('https://acme--uat.sandbox.my.salesforce.com');
     mockConnections.mockResolvedValue([
       { accountId: `${ORG}/005000000000002AAA`, connector: 'uat' },
@@ -189,7 +184,7 @@ describe('GET /api/oauth/callback — Salesforce', () => {
   });
 
   it('refuses a flow for a connector that is no longer set up', async () => {
-    stubDb('the-verifier', 'gone');
+    await stubStore('the-verifier', 'gone');
     const { exchange } = stubDelegate('https://acme--uat.sandbox.my.salesforce.com');
 
     const response = await GET(callback());
@@ -199,7 +194,7 @@ describe('GET /api/oauth/callback — Salesforce', () => {
   });
 
   it('refuses a token from another org and stores nothing', async () => {
-    stubDb('the-verifier');
+    await stubStore('the-verifier');
     // Production's token on the UAT connector's flow: the wrong org.
     const { commit } = stubDelegate('https://acme.my.salesforce.com');
 
@@ -213,7 +208,7 @@ describe('GET /api/oauth/callback — Salesforce', () => {
   });
 
   it('refuses a pending flow with no PKCE verifier before any exchange', async () => {
-    stubDb(null);
+    await stubStore(null);
     const { exchange } = stubDelegate('https://acme--uat.sandbox.my.salesforce.com');
 
     const response = await GET(callback());

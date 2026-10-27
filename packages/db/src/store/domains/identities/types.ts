@@ -18,4 +18,9 @@ export interface IdentityStore {
   listBySubjects(subjects: string[]): Promise<IdentityRecord[]>;
   /** Every distinct group value anyone carried at sign-in, ascending. */
   distinctGroups(): Promise<string[]>;
+  /**
+   * The subject recorded with exactly this email (the caller normalizes
+   * case), the first by subject when several share it; null when none does.
+   */
+  subjectByEmail(email: string): Promise<string | null>;
 }

@@ -18,7 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { logger } from '@/lib/logger';
 import { throttleLog } from '@/lib/log-throttle';
@@ -72,26 +72,23 @@ export async function POST(
     return NextResponse.json({ accepted: 0 }, { status: 202 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    // 500 so Graph retries the delivery instead of dropping it.
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   // Every subscription this route can legitimately hear about: this
   // tenant's, this account's. A delivery naming any other subscription is
   // either stale or forged, and is dropped either way.
-  const subscriptionRows = await db
-    .selectFrom('webhook_subscriptions')
-    .select(['subscription_id', 'client_state'])
-    .where('provider', '=', MICROSOFT_SOURCE)
-    .where('account_id', '=', accountId)
-    .execute();
+  let subscriptionRows: { subscriptionId: string | null; clientState: string }[];
+  try {
+    subscriptionRows = await getDataStore().webhookSubscriptions.listForAccount(
+      MICROSOFT_SOURCE,
+      accountId
+    );
+  } catch {
+    // 500 so Graph retries the delivery instead of dropping it.
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
   const clientStateBySubscription = new Map<string, string>();
   for (const row of subscriptionRows) {
-    if (row.subscription_id !== null) {
-      clientStateBySubscription.set(row.subscription_id, row.client_state);
+    if (row.subscriptionId !== null) {
+      clientStateBySubscription.set(row.subscriptionId, row.clientState);
     }
   }
 

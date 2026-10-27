@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -19,31 +19,20 @@ import { delegateGrants } from '@renkei/delegate-client';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { logger } from '@/lib/logger';
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
-  const grantRow = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'metadata'])
-    .where('provider', '=', ZOOM)
-    .where('subject', '=', session.subject)
-    .executeTakeFirst();
+  const [grantRow] = await getDataStore().providerGrants.listForSubject(session.subject, {
+    provider: ZOOM,
+  });
 
   if (!grantRow) {
     return NextResponse.json({ message: 'Nothing to disconnect' });
   }
-  const accountId = grantRow.provider_account_id;
+  const accountId = grantRow.accountId;
 
   // Purge this host's chunks. The refId prefix is the host's email.
   const metadata: Record<string, unknown> =

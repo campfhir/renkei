@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -19,28 +19,16 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
  * answer "Jira grant revoked" on every tool call. Deleting them makes the next
  * request a plain 401 that sends the client back through authorization.
  */
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   try {
-    const grant = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'display_name'])
-      .where('provider', '=', 'atlassian')
-      .where('subject', '=', session.subject)
-      .executeTakeFirst();
+    const [grant] = await getDataStore().providerGrants.listForSubject(session.subject, {
+      provider: 'atlassian',
+    });
 
     if (!grant) {
       return NextResponse.json(
@@ -52,28 +40,12 @@ export async function DELETE(
     // One transaction: a grant deleted while its tokens survive is the state
     // this route exists to avoid, and the reverse leaves a caller unable to
     // reach the tools while their Jira access is still stored.
-    await db.transaction().execute(async (trx) => {
-      await trx
-        .deleteFrom('provider_grants')
-        .where('provider', '=', 'atlassian')
-        .where('subject', '=', session.subject)
-        .execute();
-
-      await trx
-        .deleteFrom('oauth_access_tokens')
-        .where('subject', '=', session.subject)
-        .execute();
-
-      await trx
-        .deleteFrom('oauth_refresh_tokens')
-        .where('subject', '=', session.subject)
-        .execute();
-    });
+    await getDataStore().providerGrants.disconnectWithMcpTokens('atlassian', session.subject);
 
     logger.info('Revoked by owner', {
       component: 'grants/store',
       subject: session.subject,
-      accountId: grant.provider_account_id,
+      accountId: grant.accountId,
     });
     recordAuditEvent({
       actorSubject: session.subject,
@@ -85,12 +57,12 @@ export async function DELETE(
 
     return NextResponse.json({
       revoked: true,
-      account: grant.display_name,
+      account: grant.displayName,
       // Deleting the stored token stops this server using it. Atlassian keeps
       // its own record of the authorisation until the user withdraws it there,
       // so saying so is more honest than implying a full revocation.
       message:
-        `Disconnected ${grant.display_name}. Reconnect any time. To also withdraw this app's ` +
+        `Disconnected ${grant.displayName}. Reconnect any time. To also withdraw this app's ` +
         'access at Atlassian, remove it from your account settings there.',
     });
   } catch (error) {

@@ -10,7 +10,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -18,31 +18,20 @@ import { ONBASE } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
-  const grantRow = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id'])
-    .where('provider', '=', ONBASE)
-    .where('subject', '=', session.subject)
-    .executeTakeFirst();
+  const [grantRow] = await getDataStore().providerGrants.listForSubject(session.subject, {
+    provider: ONBASE,
+  });
 
   if (!grantRow) {
     return NextResponse.json({ message: 'Nothing to disconnect' });
   }
-  const accountId = grantRow.provider_account_id;
+  const accountId = grantRow.accountId;
 
   // The delegate revokes the refresh token at the IdP (the valuable one to
   // kill; revoking it usually invalidates the pair), then deletes the grant.

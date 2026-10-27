@@ -12,8 +12,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { WEBEX_USER } from '@renkei/provider-grants';
 import { generateSecret } from '@renkei/crypto';
 import {
   WebexClient,
@@ -27,9 +27,7 @@ import { resolveWebexUserAccess } from '@/lib/webex-user-access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -38,9 +36,6 @@ export async function POST(
   if (typeof payload.enabled !== 'boolean') {
     return NextResponse.json({ error: 'enabled must be true or false' }, { status: 400 });
   }
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
 
   const access = await resolveWebexUserAccess(session.subject);
   if (!access) {
@@ -69,17 +64,10 @@ export async function POST(
         { status: 502 }
       );
     }
-    await dbResult.val
-      .updateTable('provider_grants')
-      .set({
-        metadata: sql`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({
-          allSpaces: true,
-          allSpacesSecret: secret,
-        })}::jsonb`,
-      })
-      .where('provider', '=', 'webex')
-      .where('provider_account_id', '=', access.accountId)
-      .execute();
+    await getDataStore().providerGrants.mergeMetadata(WEBEX_USER, access.accountId, {
+      allSpaces: true,
+      allSpacesSecret: secret,
+    });
   } else {
     const deleted = await deleteWebexWebhooksFor(client, targetUrl);
     if (!deleted.ok) {
@@ -88,14 +76,9 @@ export async function POST(
         { status: 502 }
       );
     }
-    await dbResult.val
-      .updateTable('provider_grants')
-      .set({
-        metadata: sql`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({ allSpaces: false })}::jsonb`,
-      })
-      .where('provider', '=', 'webex')
-      .where('provider_account_id', '=', access.accountId)
-      .execute();
+    await getDataStore().providerGrants.mergeMetadata(WEBEX_USER, access.accountId, {
+      allSpaces: false,
+    });
   }
 
   recordAuditEvent({

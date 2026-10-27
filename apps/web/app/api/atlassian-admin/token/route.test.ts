@@ -6,7 +6,6 @@
  * grant's site; and removing it is the delegate's delete.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: dbStub }) }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 jest.mock('@/lib/mcp-tools/tool-catalog', () => ({ invalidateToolCatalogCache: jest.fn() }));
@@ -17,6 +16,7 @@ jest.mock('@/lib/mcp-tools/jira-admin/automation-client', () => ({
 }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { POST, DELETE } from './route';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -29,16 +29,19 @@ const grants = {
   delete: jest.fn(),
 };
 
-let tokenRow: { provider_account_id: string } | undefined;
-const dbStub = {
-  selectFrom: () => ({
-    select: () => ({
-      where: () => ({
-        where: () => ({ executeTakeFirst: async () => tokenRow }),
-      }),
-    }),
-  }),
-};
+/** A stored token grant, as the delegate would have written it. */
+function tokenGrant(subject: string, accountId: string) {
+  return {
+    provider: 'atlassian-admin-token',
+    provider_account_id: accountId,
+    subject,
+    client_id: 'api-token',
+    display_name: subject,
+    encrypted_access_token: 'sealed',
+    encrypted_refresh_token: 'sealed',
+    expires_at: '2030-01-01T00:00:00.000Z',
+  };
+}
 
 function post(body: unknown) {
   return POST(
@@ -50,9 +53,11 @@ function post(body: unknown) {
   );
 }
 
+afterEach(() => resetDataStore());
+
 beforeEach(() => {
   jest.clearAllMocks();
-  tokenRow = undefined;
+  registerDataStore(createMemoryDataStore());
   jest.mocked(getSessionFromRequest).mockResolvedValue({
     id: 'session-1',
     subject: 'owner',
@@ -133,7 +138,11 @@ it('needs the Jira Administration grant first, an email and a token', async () =
 });
 
 it('removes the token through the delegate, and only the caller’s', async () => {
-  tokenRow = { provider_account_id: 'acct-1' };
+  const store = createMemoryDataStore();
+  await store.seed({
+    provider_grants: [tokenGrant('someone-else', 'acct-0'), tokenGrant('owner', 'acct-1')],
+  });
+  registerDataStore(store);
   const response = await DELETE(
     new NextRequest('http://localhost/api/atlassian-admin/token', { method: 'DELETE' })
   );

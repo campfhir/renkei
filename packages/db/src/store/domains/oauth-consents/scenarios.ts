@@ -136,4 +136,39 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
       );
     },
   },
+  {
+    method: 'oauthConsents.registerClient',
+    name: 'registers a client readable by id; a taken id is refused',
+    fixture,
+    run: async (store) => {
+      const client = {
+        clientId: 'client_new',
+        clientSecretHash: 'digest',
+        clientName: 'New tool',
+        redirectUris: ['http://127.0.0.1:4000/cb', 'https://tool.test/cb'],
+        responseTypes: ['code'],
+        grantTypes: ['authorization_code', 'refresh_token'],
+      };
+      await store.oauthConsents.registerClient(client);
+      await store.oauthConsents.registerClient({
+        ...client,
+        clientId: 'client_unnamed',
+        clientName: null,
+      });
+      const again = await store.oauthConsents.registerClient(client).then(
+        () => 'accepted',
+        (error: { code?: string }) => error.code
+      );
+      const read = async (id: string) => {
+        const found = await store.oauthConsents.getClient(id);
+        return found && { ...found, createdAt: undefined };
+      };
+      return {
+        again,
+        created: await read('client_new'),
+        unnamed: await read('client_unnamed'),
+        existing: await read('cli-a'),
+      };
+    },
+  },
 ];

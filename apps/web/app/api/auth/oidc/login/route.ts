@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import { sessionCookieName } from '@/lib/session';
@@ -38,12 +38,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   try {
     // Get OIDC config
     const oidcResult = await getTenantOidc();
@@ -67,15 +61,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const stateExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
     // Store pending OIDC state
-    await db
-      .insertInto('pending_oidc_signin')
-      .values({
-        id: randomUUID(),
-        state,
-        nonce,
-        expires_at: stateExpiresAt.toISOString(),
-      })
-      .execute();
+    await getDataStore().pendingSignins.create({
+      id: randomUUID(),
+      state,
+      nonce,
+      expiresAt: stateExpiresAt,
+    });
 
     // Fetch OIDC discovery document to get the authorization endpoint
     const discoveryUrl = oidcDiscoveryUrl(oidc.issuer);

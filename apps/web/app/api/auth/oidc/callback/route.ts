@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import {
@@ -58,11 +58,7 @@ function isOIDCTokenResponse(data: unknown): data is OIDCTokenResponse {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
+  const pendingSignins = getDataStore().pendingSignins;
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
   const state = searchParams.get('state');
@@ -78,19 +74,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   try {
     // Look up pending OIDC state
-    const pendingSignIn = await db
-      .selectFrom('pending_oidc_signin')
-      .select(['expires_at', 'nonce'])
-      .where('state', '=', state)
-      .executeTakeFirst();
+    const pendingSignIn = await pendingSignins.findByState(state);
 
     if (!pendingSignIn) {
       return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
     }
 
     // Verify state is not expired
-    if (new Date(pendingSignIn.expires_at) < new Date()) {
-      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+    if (pendingSignIn.expiresAt < new Date()) {
+      await pendingSignins.deleteByState(state);
       return NextResponse.json({ error: 'State expired' }, { status: 400 });
     }
 
@@ -101,7 +93,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // response below regardless of outcome.
     const stateCookie = request.cookies.get('oidc_state')?.value;
     if (!stateCookie || stateCookie !== state) {
-      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      await pendingSignins.deleteByState(state);
       logger.warn('OIDC state cookie missing or mismatched; rejecting callback', {
         component: 'auth/oidc',
       });
@@ -243,7 +235,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       nonce: pendingSignIn.nonce,
     });
     if (claimError) {
-      await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+      await pendingSignins.deleteByState(state);
       logger.error('id_token claim validation failed: {detail}', {
         component: 'auth/oidc',
         detail: claimError,
@@ -280,14 +272,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (identityClaims) {
       const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
-        console.warn(
-          `[OIDC] could not record identity for subject; gates will fail closed`
-        );
+        console.warn(`[OIDC] could not record identity for subject; gates will fail closed`);
       }
     } else {
-      console.warn(
-        `[OIDC] id_token carries no email claim; gates will fail closed for this user`
-      );
+      console.warn(`[OIDC] id_token carries no email claim; gates will fail closed for this user`);
       const forgotten = await clearIdpGroups(subject);
       if (!forgotten.ok) {
         logger.warn('could not clear recorded groups for a subject whose claims were unreadable', {
@@ -320,16 +308,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           console.error(
             `[OIDC] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
           );
-          return NextResponse.json(
-            { error: 'User role not authorized' },
-            { status: 403 }
-          );
+          return NextResponse.json({ error: 'User role not authorized' }, { status: 403 });
         }
       }
     }
 
     // Delete used state token
-    await db.deleteFrom('pending_oidc_signin').where('state', '=', state).execute();
+    await pendingSignins.deleteByState(state);
 
     // Get redirect target from cookie; without one, land on the home page.
     const redirect = request.cookies.get('oidc_redirect')?.value || '/';
@@ -342,11 +327,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // `expires_in` — that token is never used again after this exchange, and
     // tying our own session to its (often hour-long) lifetime made every
     // sign-in expire far sooner than anyone signing in expects.
-    const sessionResult = await createSession(
-      subject,
-      Array.from(userRoles),
-      SESSION_TTL_SECONDS
-    );
+    const sessionResult = await createSession(subject, Array.from(userRoles), SESSION_TTL_SECONDS);
     if (!sessionResult.ok) {
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }

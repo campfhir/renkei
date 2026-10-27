@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import { clientFromRow, codeValues, requestFromRow, requestValues } from './record';
+import { clientFromRow, clientValues, codeValues, requestFromRow, requestValues } from './record';
 import type { OAuthConsentStore } from './types';
 
 export function postgresOAuthConsents(db: () => Kysely<DB>): OAuthConsentStore {
@@ -49,6 +49,9 @@ export function postgresOAuthConsents(db: () => Kysely<DB>): OAuthConsentStore {
     },
     async insertAuthorizationCode(code) {
       await db().insertInto('oauth_authorization_codes').values(codeValues(code)).execute();
+    },
+    async registerClient(client) {
+      await db().insertInto('oauth_clients').values(clientValues(client)).execute();
     },
   };
 }
