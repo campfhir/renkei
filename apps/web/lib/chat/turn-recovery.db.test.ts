@@ -27,11 +27,19 @@ maybe('turn recovery claims', () => {
   afterAll(async () => {
     await db
       .deleteFrom('chat_messages')
-      .where('chat_id', 'in', db.selectFrom('chats').select('id').where('owner_subject', '=', subject))
+      .where(
+        'chat_id',
+        'in',
+        db.selectFrom('chats').select('id').where('owner_subject', '=', subject)
+      )
       .execute();
     await db
       .deleteFrom('chat_turns')
-      .where('chat_id', 'in', db.selectFrom('chats').select('id').where('owner_subject', '=', subject))
+      .where(
+        'chat_id',
+        'in',
+        db.selectFrom('chats').select('id').where('owner_subject', '=', subject)
+      )
       .execute();
     await db.deleteFrom('chats').where('owner_subject', '=', subject).execute();
     await closeDatabase();
@@ -39,10 +47,7 @@ maybe('turn recovery claims', () => {
 
   async function chat(): Promise<string> {
     const id = randomUUID();
-    await db
-      .insertInto('chats')
-      .values({ id, owner_subject: subject })
-      .execute();
+    await db.insertInto('chats').values({ id, owner_subject: subject }).execute();
     return id;
   }
 
@@ -145,7 +150,7 @@ maybe('turn recovery claims', () => {
     expect((await claim()).map((row) => row.id)).not.toContain(turnId);
     const ended = await interruptExhaustedTurns(db, { ...options, error: 'too many' });
     expect(ended).toContain(turnId);
-    const after = await getTurn(db, chatId, turnId);
+    const after = await getTurn(chatId, turnId);
     expect(after).toMatchObject({ status: 'interrupted', error: 'too many', suspendedAt: null });
     const row = await db
       .selectFrom('chat_messages')

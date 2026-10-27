@@ -12,21 +12,17 @@ import {
   parsePipelineTemplatePayload,
 } from '@/lib/code/pipeline-templates';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const templates = await listPipelineTemplates(dbResult.val);
+  const templates = await listPipelineTemplates();
   return NextResponse.json({ templates });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -35,7 +31,7 @@ export async function POST(
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const created = await createPipelineTemplate(dbResult.val, parsed);
+  const created = await createPipelineTemplate(parsed);
   if (!created.ok) {
     return NextResponse.json({ error: 'A template with that name exists' }, { status: 409 });
   }

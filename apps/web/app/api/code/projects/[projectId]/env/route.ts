@@ -24,20 +24,11 @@ import { recordAuditEvent } from '@/lib/audit-events';
 
 const DOTENV_MAX_CHARS = 200_000;
 
-async function projectFor(
-  request: NextRequest,
-  projectId: string,
-  edit: boolean
-) {
+async function projectFor(request: NextRequest, projectId: string, edit: boolean) {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return { ok: false as const, response: ready.response };
-  const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'chat_project',
-    projectId
-  );
+  const { session } = ready.context;
+  const access = await resolveResourceAccess(session.subject, 'chat_project', projectId);
   if (!access)
     return { ok: false as const, response: jsonError(404, 'not-found', 'No such project') };
   if (edit && access.role === 'viewer') {
@@ -46,7 +37,7 @@ async function projectFor(
       response: jsonError(403, 'read-only', 'Only editors can change this project’s environment.'),
     };
   }
-  const project = await getProjectRow(db, projectId);
+  const project = await getProjectRow(projectId);
   if (!project || project.kind !== 'code') {
     return { ok: false as const, response: jsonError(404, 'not-found', 'No such project') };
   }

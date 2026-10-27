@@ -57,7 +57,7 @@ export async function POST(
   const { projectId, chatId } = await params;
   const ready = await codeProjectContext(request, projectId, { write: true, chatId });
   if (!ready.ok) return ready.response;
-  const { db, session, project, workspaceId, chat } = ready.context;
+  const { session, project, workspaceId, chat } = ready.context;
   if (!workspaceId)
     return jsonError(409, 'not-cloned', 'There is no checkout to switch branches on yet.');
 
@@ -68,7 +68,7 @@ export async function POST(
   if (!ref.ok) return jsonError(400, 'invalid', ref.message);
 
   if (chat) {
-    const running = await getActiveTurn(db, chat.id);
+    const running = await getActiveTurn(chat.id);
     if (running) {
       return jsonError(
         409,

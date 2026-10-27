@@ -17,14 +17,14 @@ export async function PUT(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, session.subject, chatId);
+  const { session } = ready.context;
+  const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
   const body = await readJsonBody(request);
   const queue = parseQueue(body.queue);
   if (!queue) return jsonError(400, 'invalid', 'That is not a queue the composer builds.');
   try {
-    await saveQueuedSends(db, chat.id, queue);
+    await saveQueuedSends(chat.id, queue);
   } catch {
     return jsonError(500, 'database', 'The queue could not be saved.');
   }

@@ -1,5 +1,4 @@
-import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
@@ -33,20 +32,12 @@ export default async function NewChatPage({
     const query = requestedProjectId ? `?project=${encodeURIComponent(requestedProjectId)}` : '';
     redirect(signInUrl(`/chat/new${query}`));
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
 
   // A project the person cannot see is silently left out, as before: the
   // chat starts on its own rather than failing.
   let projectId: string | null = null;
   if (requestedProjectId && isUuid(requestedProjectId)) {
-    const access = await resolveResourceAccess(
-      db,
-      session.subject,
-      'chat_project',
-      requestedProjectId
-    );
+    const access = await resolveResourceAccess(session.subject, 'chat_project', requestedProjectId);
     if (access) projectId = requestedProjectId;
   }
   const input = {
@@ -55,9 +46,9 @@ export default async function NewChatPage({
     toolConfig: null,
     thinkingEnabled: false,
   };
-  const project = projectId ? await getProjectRow(db, projectId) : null;
+  const project = projectId ? await getProjectRow(projectId) : null;
   // A code project's chat starts in auto mode, in a worktree of its own.
-  const chatId = await createChat(db, {
+  const chatId = await createChat({
     ...input,
     projectId,
     autoMode: project?.kind === 'code',

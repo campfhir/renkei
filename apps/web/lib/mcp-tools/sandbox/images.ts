@@ -60,10 +60,8 @@ const DEFAULT_FILENAME = 'image.png';
  * than offered to fail.
  */
 export async function sandboxImageModels(): Promise<ImageModelChoice[]> {
-  const db = getDatabase();
-  if (!db.ok) return [];
   try {
-    return await listImageModels(db.val);
+    return await listImageModels();
   } catch {
     return [];
   }

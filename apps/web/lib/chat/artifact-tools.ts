@@ -121,9 +121,9 @@ export function scoreText(
 
 /** The files a search covers: the project's on-demand artifacts, then the chat's own files. */
 async function searchableFiles(context: LocalToolContext): Promise<AttachmentRow[]> {
-  const own = await listAttachments(context.db, { chatId: context.chatId });
+  const own = await listAttachments({ chatId: context.chatId });
   if (!context.projectId) return own;
-  const held = await listProjectArtifacts(context.db, context.projectId);
+  const held = await listProjectArtifacts(context.projectId);
   // "Always" artifacts are in the prompt already; searching them again adds nothing.
   return [
     ...held.filter((row) => row.mode !== 'always'),
@@ -150,9 +150,8 @@ export async function searchArtifacts(
     const cipher =
       row.keyKind === 'chat' && row.keyRef === context.chatId
         ? context.cipher
-        : ((await resolveArtifactAccess(context.db, context.subject, row, context.projectId))
-            ?.cipher ?? null);
-    const text = cipher ? await getAttachmentText(context.db, row.id, cipher) : null;
+        : ((await resolveArtifactAccess(context.subject, row, context.projectId))?.cipher ?? null);
+    const text = cipher ? await getAttachmentText(row.id, cipher) : null;
     if (!text || text.startsWith('[content unavailable')) {
       unreadable.push(row.filename);
       continue;
@@ -369,7 +368,7 @@ export function artifactRenameTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be renamed.');
       const newName = typeof input.newName === 'string' ? input.newName.trim() : '';
       if (!newName) return errorResult('Say the new name.');
-      const row = await findChatAttachment(context.db, {
+      const row = await findChatAttachment({
         chatId: context.chatId,
         ownerSubject: context.subject,
         id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
@@ -404,14 +403,14 @@ export function artifactDeleteTool(): LocalTool {
     readOnly: false,
     async execute(input, context) {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be deleted.');
-      const row = await findChatAttachment(context.db, {
+      const row = await findChatAttachment({
         chatId: context.chatId,
         ownerSubject: context.subject,
         id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
-      const impact = await artifactImpact(context.db, row);
+      const impact = await artifactImpact(row);
       if (impact.projects.length > 0 || impact.sharedWith.length > 0) {
         const users = [
           ...impact.projects.map((project) => `project ${project.name}`),
@@ -457,7 +456,7 @@ export function artifactDescribeTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be changed.');
       const digest = parseDigest(input);
       if (!digest) return errorResult('Say what the file is about: `summary` is empty.');
-      const row = await findChatAttachment(context.db, {
+      const row = await findChatAttachment({
         chatId: context.chatId,
         ownerSubject: context.subject,
         id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,

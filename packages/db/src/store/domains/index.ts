@@ -37,6 +37,16 @@ import { mirthInstances } from './mirth-instances';
 import { adManagerInstances } from './admanager-instances';
 import { emailSanitizer } from './email-sanitizer';
 import { mailReview } from './mail-review';
+import { resourceGrants } from './resource-grants';
+import { chats } from './chats';
+import { chatThreads } from './chat-threads';
+import { chatProjects } from './chat-projects';
+import { promptLibraries } from './prompt-libraries';
+import { userMemory } from './user-memory';
+import { artifacts } from './artifacts';
+import { codeProjects } from './code-projects';
+import { codeTemplates } from './code-templates';
+import { chatModels } from './chat-models';
 
 export const DOMAINS = {
   sessions,
@@ -72,4 +82,14 @@ export const DOMAINS = {
   adManagerInstances,
   emailSanitizer,
   mailReview,
+  resourceGrants,
+  chats,
+  chatThreads,
+  chatProjects,
+  promptLibraries,
+  userMemory,
+  artifacts,
+  codeProjects,
+  codeTemplates,
+  chatModels,
 };

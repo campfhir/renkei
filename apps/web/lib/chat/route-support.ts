@@ -1,6 +1,9 @@
 /**
- * The three lines every chat route starts with, once: the session, the
- * database, and a JSON error shape the client helpers understand.
+ * The lines every chat route starts with, once: the session and a JSON
+ * error shape the client helpers understand. Routes read through the data
+ * store (`getDataStore()`); `db` is only for the routes whose queries are
+ * not behind it yet, and connects on first use — a route that never
+ * touches it never reaches for the database.
  */
 
 import type { NextRequest } from 'next/server';
@@ -11,8 +14,16 @@ import { getSessionFromRequest, type Session } from '@/lib/session';
 import type { ReadBytesError } from './attachments';
 
 export interface ChatRequestContext {
-  db: Kysely<DB>;
+  /** The database, for code not yet behind the data store; throws when it is unavailable. */
+  readonly db: Kysely<DB>;
   session: Session;
+}
+
+/** The database for code not yet behind the data store, or a thrown error (the route's 500). */
+export function databaseForUnconvertedCode(): Kysely<DB> {
+  const dbResult = getDatabase();
+  if (!dbResult.ok) throw new Error('Database unavailable');
+  return dbResult.val;
 }
 
 export function jsonError(status: number, code: string, message: string): NextResponse {
@@ -24,11 +35,15 @@ export async function chatRequestContext(
 ): Promise<{ ok: true; context: ChatRequestContext } | { ok: false; response: NextResponse }> {
   const session = await getSessionFromRequest(request);
   if (!session) return { ok: false, response: jsonError(401, 'unauthenticated', 'Not signed in') };
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return { ok: false, response: jsonError(500, 'database', 'Database unavailable') };
-  }
-  return { ok: true, context: { db: dbResult.val, session } };
+  return {
+    ok: true,
+    context: {
+      session,
+      get db() {
+        return databaseForUnconvertedCode();
+      },
+    },
+  };
 }
 
 export async function readJsonBody(request: NextRequest): Promise<Record<string, unknown>> {

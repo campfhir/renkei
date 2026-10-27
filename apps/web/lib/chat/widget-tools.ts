@@ -32,7 +32,7 @@
  */
 
 import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type DB } from '@renkei/db';
 import {
   HttpMcpClient,
   mintRunToken,
@@ -87,7 +87,7 @@ export async function confirmWidgetTool(
   // tool" (or, worse, into `not-a-card-tool` masking a stale catalog read
   // that would otherwise have let a second run through).
   if (input.stateKey) {
-    const existing = await getWidgetDecision(db, input.stateKey);
+    const existing = await getWidgetDecision(input.stateKey);
     if (existing) return { ok: false, reason: 'already-decided', decision: existing };
   }
 
@@ -240,7 +240,7 @@ async function waitingOnSiblings(
 ): Promise<boolean> {
   const siblings = await turnWidgetStateKeys(db, chatId, stateKey);
   if (!siblings || siblings.length <= 1) return false;
-  const decisions = await listWidgetDecisions(db, chatId);
+  const decisions = await listWidgetDecisions(chatId);
   return siblings.some((key) => key !== stateKey && !decisions.has(key));
 }
 
@@ -257,7 +257,7 @@ async function turnWidgetStateKeys(
   chatId: string,
   stateKey: string
 ): Promise<string[] | null> {
-  const rows = await listMessages(db, chatId, await chatCipherById(db, chatId));
+  const rows = await listMessages(chatId, await chatCipherById(chatId));
   let turnId: string | null | undefined;
   for (const row of rows) {
     if (row.kind !== 'tool_results') continue;
@@ -303,7 +303,7 @@ export async function appendWidgetModelContext(
       .where('id', '=', input.chatId)
       .forUpdate()
       .executeTakeFirst();
-    if (await getActiveTurn(trx, input.chatId)) return { ok: false, reason: 'turn-running' };
+    if (await getActiveTurn(input.chatId)) return { ok: false, reason: 'turn-running' };
     const inserted = await insertMessage(trx, {
       chatId: input.chatId,
       turnId: null,
@@ -311,7 +311,7 @@ export async function appendWidgetModelContext(
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
-      cipher: await chatCipherById(trx, input.chatId),
+      cipher: await chatCipherById(input.chatId),
     });
     if (!inserted) return { ok: false, reason: 'failed' };
     return {
@@ -393,16 +393,9 @@ export async function recordWidgetDecision(
 }
 
 /** One card's decision, by its own persistence key — `confirmWidgetTool`'s guard. */
-export async function getWidgetDecision(
-  db: Kysely<DB>,
-  stateKey: string
-): Promise<WidgetDecisionState | null> {
-  const row = await db
-    .selectFrom('chat_widget_decisions')
-    .select(['state'])
-    .where('state_key', '=', stateKey)
-    .executeTakeFirst();
-  return row ? widgetDecisionStateOf(row.state) : null;
+export async function getWidgetDecision(stateKey: string): Promise<WidgetDecisionState | null> {
+  const state = await getDataStore().chatThreads.getWidgetDecision(stateKey);
+  return state === null ? null : widgetDecisionStateOf(state);
 }
 
 /**
@@ -412,18 +405,13 @@ export async function getWidgetDecision(
  * once rather than one lookup per card.
  */
 export async function listWidgetDecisions(
-  db: Kysely<DB>,
   chatId: string
 ): Promise<Map<string, WidgetDecisionState>> {
-  const rows = await db
-    .selectFrom('chat_widget_decisions')
-    .select(['state_key', 'state'])
-    .where('chat_id', '=', chatId)
-    .execute();
+  const rows = await getDataStore().chatThreads.listWidgetDecisions(chatId);
   const out = new Map<string, WidgetDecisionState>();
   for (const row of rows) {
     const state = widgetDecisionStateOf(row.state);
-    if (state) out.set(row.state_key, state);
+    if (state) out.set(row.stateKey, state);
   }
   return out;
 }

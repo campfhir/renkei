@@ -18,29 +18,25 @@ import {
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const sidebar = await loadChatSidebar(db, session.subject);
+  const { session } = ready.context;
+  const sidebar = await loadChatSidebar(session.subject);
   return NextResponse.json({ projects: sidebar.projects });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const name = optionalString(body.name, PROJECT_NAME_MAX_CHARS);
   if (!name) return jsonError(400, 'invalid', 'Give the project a name');
   const description = optionalString(body.description, 2_000) ?? null;
   const instructions = optionalString(body.instructions, PROJECT_INSTRUCTIONS_MAX_CHARS) ?? null;
   const toolConfig = body.toolConfig === undefined ? null : parseToolConfig(body.toolConfig);
-  const projectId = await createProject(db, {
+  const projectId = await createProject({
     ownerSubject: session.subject,
     name,
     description: description || null,

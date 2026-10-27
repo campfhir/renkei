@@ -20,10 +20,10 @@ export async function GET(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, session.subject, chatId);
+  const { session } = ready.context;
+  const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  const rows = await listMessages(db, chatId, access.cipher);
+  const rows = await listMessages(chatId, access.cipher);
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   return NextResponse.json({ pullRequest });
 }

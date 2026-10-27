@@ -4,8 +4,7 @@
  * normally, the others read-only), and the viewer's role.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { ProjectAccess } from './access';
 import { listProjectArtifacts, toAttachmentView } from './attachments';
 import { ALWAYS_BUDGET_TOKENS, tokensOf } from './artifact-library';
@@ -46,47 +45,27 @@ export interface ProjectView {
 }
 
 export async function loadProjectView(
-  db: Kysely<DB>,
   viewerSubject: string,
   projectId: string,
   access: ProjectAccess
 ): Promise<ProjectView | null> {
-  const project = await getProjectRow(db, projectId);
+  const project = await getProjectRow(projectId);
   if (!project) return null;
+  const store = getDataStore();
   const [files, memory, chats] = await Promise.all([
-    listProjectArtifacts(db, projectId),
-    readProjectMemory(db, projectId, access.cipher, { maxEntries: 300 }),
-    listProjectChats(db, [projectId], null),
+    listProjectArtifacts(projectId),
+    readProjectMemory(projectId, access.cipher, { maxEntries: 300 }),
+    listProjectChats([projectId], null),
   ]);
   const fileIds = files.map((file) => file.id);
+  const fileChatIds = [...new Set(files.flatMap((file) => (file.chatId ? [file.chatId] : [])))];
   const [textSizes, usage, fileChats] = await Promise.all([
-    fileIds.length > 0
-      ? db
-          .selectFrom('artifacts')
-          .select((eb) => [
-            'id',
-            eb.fn.coalesce(eb.fn('length', ['extracted_text']), sql<number>`0`).as('chars'),
-          ])
-          .where('id', 'in', fileIds)
-          .execute()
-      : [],
-    fileIds.length > 0
-      ? db
-          .selectFrom('artifact_references')
-          .select((eb) => ['artifact_id', eb.fn.count<number>('id').as('count')])
-          .where('artifact_id', 'in', fileIds)
-          .groupBy('artifact_id')
-          .execute()
-      : [],
-    (() => {
-      const chatIds = [...new Set(files.flatMap((file) => (file.chatId ? [file.chatId] : [])))];
-      return chatIds.length > 0
-        ? db.selectFrom('chats').select(['id', 'title']).where('id', 'in', chatIds).execute()
-        : Promise.resolve([]);
-    })(),
+    fileIds.length > 0 ? store.artifacts.textLengths(fileIds) : Promise.resolve([]),
+    fileIds.length > 0 ? store.artifacts.referenceCounts(fileIds) : Promise.resolve([]),
+    fileChatIds.length > 0 ? store.chats.listByIds(fileChatIds) : Promise.resolve([]),
   ]);
-  const charsOf = new Map(textSizes.map((row) => [row.id, Number(row.chars)]));
-  const usingOf = new Map(usage.map((row) => [row.artifact_id, Number(row.count)]));
+  const charsOf = new Map(textSizes.map((row) => [row.id, row.chars]));
+  const usingOf = new Map(usage.map((row) => [row.artifactId, row.count]));
   const chatOf = new Map(fileChats.map((chat) => [chat.id, chat]));
   const subjects = [
     project.ownerSubject,
@@ -95,15 +74,8 @@ export async function loadProjectView(
     ...memory.entries.flatMap((entry) => (entry.authorSubject ? [entry.authorSubject] : [])),
   ];
   const unique = [...new Set(subjects)];
-  const identities =
-    unique.length > 0
-      ? await db
-          .selectFrom('identities')
-          .select(['subject', 'display_name', 'email'])
-          .where('subject', 'in', unique)
-          .execute()
-      : [];
-  const names = new Map(identities.map((row) => [row.subject, row.display_name ?? row.email]));
+  const identities = unique.length > 0 ? await store.identities.listBySubjects(unique) : [];
+  const names = new Map(identities.map((row) => [row.subject, row.displayName ?? row.email]));
   const role = access.role === 'owner' ? 'owner' : access.role === 'editor' ? 'editor' : 'viewer';
   return {
     project: {

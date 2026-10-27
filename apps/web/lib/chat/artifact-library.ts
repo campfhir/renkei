@@ -16,7 +16,7 @@
 
 import type { Kysely } from 'kysely';
 import { sql } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ArtifactRecord, type DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
@@ -103,7 +103,7 @@ export async function createOwnedArtifact(
   }
 ): Promise<Result<AttachmentRow, AttachmentError>> {
   const id = randomUUID();
-  const key = await createKey(db, 'artifact', { id, ownerSubject: input.ownerSubject });
+  const key = await createKey('artifact', { id, ownerSubject: input.ownerSubject });
   if (!key) return err('CONTENT_KEY' as const);
   const created = await createAttachment(db, {
     id,
@@ -120,13 +120,12 @@ export async function createOwnedArtifact(
     origin: input.origin ?? 'upload',
   });
   if (!created.ok) {
-    await deleteKey(db, 'artifact', id);
+    await deleteKey('artifact', id);
     return created;
   }
   if (input.chatId) {
     // Readers of the chat open it through the chat's key, as they do the chat.
     await wrapKeyUnder(
-      db,
       'artifact',
       { id, ownerSubject: input.ownerSubject },
       { kind: 'chat', resourceId: input.chatId }
@@ -160,7 +159,7 @@ export async function promoteKey(
     text = openText(stored.extracted_text, access.cipher);
     if (text.startsWith('[content unavailable')) return err('CONTENT_KEY' as const);
   }
-  const own = await cipherAsOwner(db, 'artifact', { id: row.id, ownerSubject: row.ownerSubject });
+  const own = await cipherAsOwner('artifact', { id: row.id, ownerSubject: row.ownerSubject });
   if (own.unavailable) return err('CONTENT_KEY' as const);
   let sealed: string | null = null;
   if (text !== null) {
@@ -188,36 +187,29 @@ export async function promoteKey(
     .execute();
   const resource = { id: row.id, ownerSubject: row.ownerSubject };
   if (row.chatId) {
-    await wrapKeyUnder(db, 'artifact', resource, { kind: 'chat', resourceId: row.chatId });
+    await wrapKeyUnder('artifact', resource, { kind: 'chat', resourceId: row.chatId });
   }
-  for (const reference of await listReferencesOf(db, row.id)) {
-    await wrapKeyUnder(db, 'artifact', resource, {
+  for (const reference of await listReferencesOf(row.id)) {
+    await wrapKeyUnder('artifact', resource, {
       kind: 'chat_project',
       resourceId: reference.projectId,
     });
   }
-  const promoted = await getAttachment(db, row.id);
+  const promoted = await getAttachment(row.id);
   return promoted ? ok(promoted) : err('CONTENT_KEY' as const);
 }
 
 /** Tokens the project's "always" artifacts already take, with `except` left out. */
 export async function alwaysTokensOf(
-  db: Kysely<DB>,
   projectId: string,
   except: string | null = null
 ): Promise<number> {
-  const rows = await db
-    .selectFrom('artifact_references as r')
-    .innerJoin('artifacts as a', 'a.id', 'r.artifact_id')
-    .select((eb) =>
-      eb.fn.coalesce(eb.fn('length', ['a.extracted_text']), sql<number>`0`).as('chars')
-    )
-    .where('r.project_id', '=', projectId)
-    .where('r.mode', '=', 'always')
-    .where('a.id', '!=', except ?? '00000000-0000-0000-0000-000000000000')
-    .execute();
+  const rows = await getDataStore().artifacts.alwaysTextLengths(
+    projectId,
+    except && isUuid(except) ? except : null
+  );
   // Sealed text is base64 over the plaintext, so this slightly overstates.
-  return rows.reduce((sum, row) => sum + tokensOf(Number(row.chars)), 0);
+  return rows.reduce((sum, row) => sum + tokensOf(row.chars), 0);
 }
 
 /**
@@ -235,14 +227,9 @@ export async function attachToProject(
     mode: ReferenceMode;
   }
 ): Promise<Result<{ referenceId: string; mode: ReferenceMode }, ArtifactActError>> {
-  const access = await resolveArtifactAccess(db, input.actorSubject, input.artifactId);
+  const access = await resolveArtifactAccess(input.actorSubject, input.artifactId);
   if (!access) return err('NOT_FOUND' as const);
-  const project = await resolveResourceAccess(
-    db,
-    input.actorSubject,
-    'chat_project',
-    input.projectId
-  );
+  const project = await resolveResourceAccess(input.actorSubject, 'chat_project', input.projectId);
   if (!project) return err('NOT_FOUND' as const);
   if (project.role === 'viewer') return err('FORBIDDEN' as const);
   // A member may re-attach a project's own artifact (say, to another of
@@ -261,7 +248,6 @@ export async function attachToProject(
     addedBy: input.actorSubject,
   });
   await wrapKeyUnder(
-    db,
     'artifact',
     { id: access.row.id, ownerSubject: access.row.ownerSubject },
     { kind: 'chat_project', resourceId: input.projectId },
@@ -281,7 +267,7 @@ async function alwaysBudgetCheck(
     .select((eb) => eb.fn.coalesce(eb.fn('length', ['extracted_text']), sql<number>`0`).as('chars'))
     .where('id', '=', row.id)
     .executeTakeFirst();
-  const used = await alwaysTokensOf(db, projectId, row.id);
+  const used = await alwaysTokensOf(projectId, row.id);
   if (used + tokensOf(Number(stored?.chars ?? 0)) > ALWAYS_BUDGET_TOKENS)
     return err('BUDGET' as const);
   return ok();
@@ -329,9 +315,9 @@ async function mayManageInProject(
   artifactId: string,
   projectId: string
 ): Promise<Result<AttachmentRow, ArtifactActError>> {
-  const row = await getAttachment(db, artifactId);
+  const row = await getAttachment(artifactId);
   if (!row) return err('NOT_FOUND' as const);
-  const project = await resolveResourceAccess(db, actorSubject, 'chat_project', projectId);
+  const project = await resolveResourceAccess(actorSubject, 'chat_project', projectId);
   if (!project) return err('NOT_FOUND' as const);
   if (project.role === 'viewer' && row.ownerSubject !== actorSubject) {
     return err('FORBIDDEN' as const);
@@ -349,12 +335,12 @@ export async function shareArtifact(
     expiresAt: Date | null;
   }
 ): Promise<Result<void, ArtifactActError>> {
-  const access = await resolveArtifactAccess(db, input.ownerSubject, input.artifactId);
+  const access = await resolveArtifactAccess(input.ownerSubject, input.artifactId);
   if (!access || access.role !== 'owner') return err('NOT_FOUND' as const);
   if (input.granteeSubject === input.ownerSubject) return err('SELF' as const);
   const promoted = await promoteKey(db, access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
-  const outcome = await grantResourceAccess(db, input.ownerSubject, 'artifact', input.artifactId, {
+  const outcome = await grantResourceAccess(input.ownerSubject, 'artifact', input.artifactId, {
     granteeSubject: input.granteeSubject,
     role: 'viewer',
     expiresAt: input.expiresAt,
@@ -362,7 +348,6 @@ export async function shareArtifact(
   if (outcome === 'SELF') return err('SELF' as const);
   if (outcome !== 'OK') return err('NOT_FOUND' as const);
   await shareKey(
-    db,
     'artifact',
     { id: input.artifactId, ownerSubject: input.ownerSubject },
     input.granteeSubject
@@ -378,44 +363,42 @@ export async function shareArtifact(
 }
 
 export async function listArtifactGrants(
-  db: Kysely<DB>,
   ownerSubject: string,
   artifactId: string
 ): Promise<GrantView[]> {
-  return listResourceGrants(db, ownerSubject, 'artifact', artifactId);
+  return listResourceGrants(ownerSubject, 'artifact', artifactId);
 }
 
 /** Owner takes a share back. */
-export async function revokeArtifactShare(
-  db: Kysely<DB>,
-  input: { ownerSubject: string; artifactId: string; grantId: string }
-): Promise<boolean> {
+export async function revokeArtifactShare(input: {
+  ownerSubject: string;
+  artifactId: string;
+  grantId: string;
+}): Promise<boolean> {
   const revoked = await revokeResourceGrant(
-    db,
     input.ownerSubject,
     'artifact',
     input.artifactId,
     input.grantId
   );
   if (!revoked) return false;
-  await revokeKey(db, 'artifact', input.artifactId, revoked);
+  await revokeKey('artifact', input.artifactId, revoked);
   return true;
 }
 
 /** A person it was shared with takes it off their own list; the owner's file is untouched. */
-export async function leaveArtifact(
-  db: Kysely<DB>,
-  input: { subject: string; artifactId: string }
-): Promise<boolean> {
+export async function leaveArtifact(input: {
+  subject: string;
+  artifactId: string;
+}): Promise<boolean> {
   if (!isUuid(input.artifactId)) return false;
-  const deleted = await db
-    .deleteFrom('resource_access_grants')
-    .where('resource_kind', '=', 'artifact')
-    .where('resource_id', '=', input.artifactId)
-    .where('grantee_subject', '=', input.subject)
-    .executeTakeFirst();
-  if (Number(deleted.numDeletedRows) === 0) return false;
-  await revokeKey(db, 'artifact', input.artifactId, input.subject);
+  const deleted = await getDataStore().resourceGrants.removeGrantee(
+    'artifact',
+    input.artifactId,
+    input.subject
+  );
+  if (deleted === 0) return false;
+  await revokeKey('artifact', input.artifactId, input.subject);
   return true;
 }
 
@@ -426,45 +409,23 @@ export interface ArtifactImpact {
 }
 
 /** What deleting (or handing over) an artifact touches: who reads it through what. */
-export async function artifactImpact(db: Kysely<DB>, row: AttachmentRow): Promise<ArtifactImpact> {
-  const references = await listReferencesOf(db, row.id);
+export async function artifactImpact(row: AttachmentRow): Promise<ArtifactImpact> {
+  const store = getDataStore();
+  const references = await listReferencesOf(row.id);
   const projects =
     references.length > 0
-      ? await db
-          .selectFrom('chat_projects as p')
-          .leftJoin('resource_access_grants as g', (join) =>
-            join
-              .onRef('g.resource_id', '=', 'p.id')
-              .on('g.resource_kind', '=', 'chat_project')
-              .on((eb) =>
-                eb.or([eb('g.expires_at', 'is', null), eb('g.expires_at', '>', new Date())])
-              )
-          )
-          .select((eb) => ['p.id', 'p.name', 'p.kind', eb.fn.count<number>('g.id').as('grants')])
-          .where(
-            'p.id',
-            'in',
-            references.map((reference) => reference.projectId)
-          )
-          .groupBy(['p.id', 'p.name', 'p.kind'])
-          .execute()
+      ? await store.chatProjects.withGrantCounts(references.map((reference) => reference.projectId))
       : [];
   const modes = new Map(references.map((reference) => [reference.projectId, reference.mode]));
-  const grants = await listResourceGrants(db, row.ownerSubject, 'artifact', row.id);
-  const chat = row.chatId
-    ? await db
-        .selectFrom('chats')
-        .select(['id', 'title'])
-        .where('id', '=', row.chatId)
-        .executeTakeFirst()
-    : null;
+  const grants = await listResourceGrants(row.ownerSubject, 'artifact', row.id);
+  const chat = row.chatId && isUuid(row.chatId) ? await store.chats.get(row.chatId) : null;
   return {
     projects: projects.map((project) => ({
       id: project.id,
       name: project.name,
       kind: project.kind,
       // The owner and the people granted access.
-      members: Number(project.grants) + 1,
+      members: project.grants + 1,
       mode: modes.get(project.id) ?? 'on_demand',
     })),
     sharedWith: grants
@@ -487,7 +448,7 @@ export async function deleteArtifact(db: Kysely<DB>, row: AttachmentRow): Promis
     .where('resource_kind', '=', 'artifact')
     .where('resource_id', '=', row.id)
     .execute();
-  if (row.keyKind === 'artifact') await deleteKey(db, 'artifact', row.id);
+  if (row.keyKind === 'artifact') await deleteKey('artifact', row.id);
   return true;
 }
 
@@ -501,13 +462,13 @@ export async function transferArtifact(
   db: Kysely<DB>,
   input: { ownerSubject: string; artifactId: string; newOwnerSubject: string }
 ): Promise<Result<void, ArtifactActError>> {
-  const access = await resolveArtifactAccess(db, input.ownerSubject, input.artifactId);
+  const access = await resolveArtifactAccess(input.ownerSubject, input.artifactId);
   if (!access || access.role !== 'owner') return err('NOT_FOUND' as const);
   if (input.newOwnerSubject === input.ownerSubject) return err('SELF' as const);
   const promoted = await promoteKey(db, access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
   const resource = { id: input.artifactId, ownerSubject: input.ownerSubject };
-  const shared = await shareKey(db, 'artifact', resource, input.newOwnerSubject);
+  const shared = await shareKey('artifact', resource, input.newOwnerSubject);
   if (!shared) return err('CONTENT_KEY' as const);
   await db
     .updateTable('artifacts')
@@ -527,7 +488,7 @@ export async function transferArtifact(
     .where('resource_kind', '=', 'artifact')
     .where('resource_id', '=', input.artifactId)
     .execute();
-  await revokeKey(db, 'artifact', input.artifactId, input.ownerSubject);
+  await revokeKey('artifact', input.artifactId, input.ownerSubject);
   notifyArtifactEvent({
     kind: 'artifact_transferred',
     recipientSubject: input.newOwnerSubject,
@@ -556,7 +517,7 @@ export async function copyArtifact(
     redactor: OutboundRedactor | null;
   }
 ): Promise<Result<AttachmentRow, ArtifactActError>> {
-  const access = await resolveArtifactAccess(db, input.actorSubject, input.artifactId);
+  const access = await resolveArtifactAccess(input.actorSubject, input.artifactId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role === 'owner') return err('SELF' as const);
   const object = await readAttachmentBytes(access.row, access.cipher);
@@ -590,9 +551,9 @@ export async function copyArtifact(
   // Extraction ran again on the bytes; when the original had OCR'd text
   // the copy would otherwise lose it, so carry the text across.
   if (created.val.extractStatus !== 'done' && access.row.extractStatus === 'done') {
-    const text = await getAttachmentText(db, access.row.id, access.cipher);
+    const text = await getAttachmentText(access.row.id, access.cipher);
     if (text && !text.startsWith('[content unavailable')) {
-      const own = await cipherAsOwner(db, 'artifact', {
+      const own = await cipherAsOwner('artifact', {
         id: created.val.id,
         ownerSubject: input.actorSubject,
       });
@@ -700,43 +661,28 @@ export interface LibraryItem {
 }
 
 /** Everything in this person's library: what they own, then what was shared with them. */
-export async function listLibrary(db: Kysely<DB>, viewerSubject: string): Promise<LibraryItem[]> {
-  const owned = await db
-    .selectFrom('artifacts')
-    .selectAll()
-    .where('owner_subject', '=', viewerSubject)
-    .orderBy('created_at', 'desc')
-    .execute();
-  const granted = await listGrantedResources(db, viewerSubject, 'artifact');
+export async function listLibrary(viewerSubject: string): Promise<LibraryItem[]> {
+  const store = getDataStore();
+  const owned = await store.artifacts.listOwned(viewerSubject);
+  const granted = await listGrantedResources(viewerSubject, 'artifact');
+  const sharedIds = granted.map((grant) => grant.resourceId).filter(isUuid);
   const sharedRows =
-    granted.length > 0
-      ? await db
-          .selectFrom('artifacts')
-          .selectAll()
-          .where(
-            'id',
-            'in',
-            granted.map((grant) => grant.resourceId)
-          )
-          .orderBy('created_at', 'desc')
-          .execute()
+    sharedIds.length > 0
+      ? [...(await store.artifacts.getMany(sharedIds))].sort(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? -1 : 1)
+        )
       : [];
-  return libraryItems(db, viewerSubject, [...owned, ...sharedRows], () => 'grant');
+  return libraryItems(viewerSubject, [...owned, ...sharedRows], () => 'grant');
 }
 
 /** One artifact as the viewer holds it (artifact-access.ts says how). */
 export async function libraryItemFor(
-  db: Kysely<DB>,
   viewerSubject: string,
   access: ArtifactAccess
 ): Promise<LibraryItem | null> {
-  const raw = await db
-    .selectFrom('artifacts')
-    .selectAll()
-    .where('id', '=', access.row.id)
-    .executeTakeFirst();
+  const raw = await getDataStore().artifacts.get(access.row.id);
   if (!raw) return null;
-  const items = await libraryItems(db, viewerSubject, [raw], () =>
+  const items = await libraryItems(viewerSubject, [raw], () =>
     access.via === 'owner' ? 'grant' : access.via
   );
   return items[0] ?? null;
@@ -744,108 +690,62 @@ export async function libraryItemFor(
 
 /** The rows as library items: where each is used, who shares it, and who owns it, looked up once for the lot. */
 export async function libraryItems(
-  db: Kysely<DB>,
   viewerSubject: string,
-  rows: {
-    id: string;
-    owner_subject: string;
-    chat_id: string | null;
-    filename: string;
-    content_type: string;
-    size_bytes: string | number | bigint;
-    extract_status: string;
-    origin: string;
-    summary: string | null;
-    keywords: string[];
-    digest_status: string;
-    ocr_started_at: Date | null;
-    ocr_pages: number | null;
-    created_at: Date;
-    updated_at: Date;
-  }[],
+  rows: ArtifactRecord[],
   viaOf: (row: { id: string }) => 'grant' | 'project' | 'chat'
 ): Promise<LibraryItem[]> {
   if (rows.length === 0) return [];
+  const store = getDataStore();
   // The estimate's samples are read only when a run is in flight to need one.
-  const samples = rows.some((row) => row.ocr_started_at) ? await ocrSamples(db) : [];
+  const samples = rows.some((row) => row.ocrStartedAt) ? await ocrSamples() : [];
   const now = Date.now();
-  const sharedRows = rows.filter((row) => row.owner_subject !== viewerSubject);
+  const sharedRows = rows.filter((row) => row.ownerSubject !== viewerSubject);
   const ids = rows.map((row) => row.id);
+  const chatIds = [...new Set(rows.flatMap((row) => (row.chatId ? [row.chatId] : [])))];
+  const owners = [...new Set(sharedRows.map((row) => row.ownerSubject))];
   const [references, shares, chats, identities] = await Promise.all([
-    db
-      .selectFrom('artifact_references as r')
-      .innerJoin('chat_projects as p', 'p.id', 'r.project_id')
-      .select(['r.artifact_id', 'r.mode', 'p.id', 'p.name', 'p.kind'])
-      .where('r.artifact_id', 'in', ids)
-      .orderBy('r.created_at', 'asc')
-      .execute(),
-    db
-      .selectFrom('resource_access_grants')
-      .select((eb) => ['resource_id', eb.fn.count<number>('id').as('count')])
-      .where('resource_kind', '=', 'artifact')
-      .where('resource_id', 'in', ids)
-      .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
-      .groupBy('resource_id')
-      .execute(),
-    (() => {
-      const chatIds = [...new Set(rows.flatMap((row) => (row.chat_id ? [row.chat_id] : [])))];
-      return chatIds.length > 0
-        ? db
-            .selectFrom('chats')
-            .select(['id', 'title', 'project_id'])
-            .where('id', 'in', chatIds)
-            .execute()
-        : Promise.resolve([]);
-    })(),
-    (() => {
-      const owners = [...new Set(sharedRows.map((row) => row.owner_subject))];
-      return owners.length > 0
-        ? db
-            .selectFrom('identities')
-            .select(['subject', 'display_name', 'email'])
-            .where('subject', 'in', owners)
-            .execute()
-        : Promise.resolve([]);
-    })(),
+    store.artifacts.projectsUsing(ids),
+    store.resourceGrants.countActive('artifact', ids),
+    chatIds.length > 0 ? store.chats.listByIds(chatIds) : Promise.resolve([]),
+    owners.length > 0 ? store.identities.listBySubjects(owners) : Promise.resolve([]),
   ]);
   const byArtifact = new Map<string, LibraryItem['projects']>();
   for (const reference of references) {
-    const list = byArtifact.get(reference.artifact_id) ?? [];
+    const list = byArtifact.get(reference.artifactId) ?? [];
     list.push({
-      id: reference.id,
+      id: reference.projectId,
       name: reference.name,
       kind: reference.kind,
       mode: reference.mode === 'always' ? 'always' : 'on_demand',
     });
-    byArtifact.set(reference.artifact_id, list);
+    byArtifact.set(reference.artifactId, list);
   }
-  const shareCounts = new Map(shares.map((share) => [share.resource_id, Number(share.count)]));
+  const shareCounts = new Map(shares.map((share) => [share.resourceId, share.count]));
   const chatById = new Map(chats.map((chat) => [chat.id, chat]));
-  const names = new Map(identities.map((row) => [row.subject, row.display_name ?? row.email]));
+  const names = new Map(identities.map((row) => [row.subject, row.displayName ?? row.email]));
   return rows.map((row) => {
-    const chat = row.chat_id ? chatById.get(row.chat_id) : null;
+    const chat = row.chatId ? chatById.get(row.chatId) : null;
     return {
       id: row.id,
       filename: row.filename,
-      contentType: row.content_type,
-      sizeBytes: Number(row.size_bytes),
-      extractStatus: row.extract_status,
+      contentType: row.contentType,
+      sizeBytes: row.sizeBytes,
+      extractStatus: row.extractStatus,
       origin: row.origin,
-      ownerSubject: row.owner_subject,
-      ownerName:
-        row.owner_subject === viewerSubject ? null : (names.get(row.owner_subject) ?? null),
-      via: row.owner_subject === viewerSubject ? 'owner' : viaOf(row),
-      chat: chat ? { id: chat.id, title: chat.title, projectId: chat.project_id } : null,
+      ownerSubject: row.ownerSubject,
+      ownerName: row.ownerSubject === viewerSubject ? null : (names.get(row.ownerSubject) ?? null),
+      via: row.ownerSubject === viewerSubject ? 'owner' : viaOf(row),
+      chat: chat ? { id: chat.id, title: chat.title, projectId: chat.projectId } : null,
       projects: byArtifact.get(row.id) ?? [],
-      sharedWith: row.owner_subject === viewerSubject ? (shareCounts.get(row.id) ?? 0) : 0,
+      sharedWith: row.ownerSubject === viewerSubject ? (shareCounts.get(row.id) ?? 0) : 0,
       summary: row.summary,
       keywords: row.keywords,
-      digestStatus: row.digest_status,
-      ocrSupported: isOcrCandidate(row.filename, row.content_type),
-      ocr: ocrRunFor(row.ocr_started_at, Number(row.size_bytes), samples, now),
-      ocrPages: row.ocr_pages,
-      createdAt: row.created_at.toISOString(),
-      updatedAt: row.updated_at.toISOString(),
+      digestStatus: row.digestStatus,
+      ocrSupported: isOcrCandidate(row.filename, row.contentType),
+      ocr: ocrRunFor(row.ocrStartedAt, row.sizeBytes, samples, now),
+      ocrPages: row.ocrPages,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     };
   });
 }
@@ -872,7 +772,7 @@ export async function replaceArtifactBytes(
   // new row takes the old id after the old row's bytes are dropped.
   const promoted = await promoteKey(db, input.access);
   if (!promoted.ok) return err('CONTENT_KEY' as const);
-  const cipher: ContentCipher = await cipherAsOwner(db, 'artifact', {
+  const cipher: ContentCipher = await cipherAsOwner('artifact', {
     id: row.id,
     ownerSubject: row.ownerSubject,
   });
@@ -924,6 +824,6 @@ export async function replaceArtifactBytes(
       key: row.blobKey,
     });
   }
-  const updated = await getAttachment(db, row.id);
+  const updated = await getAttachment(row.id);
   return updated ? ok(updated) : err('NOT_FOUND' as const);
 }

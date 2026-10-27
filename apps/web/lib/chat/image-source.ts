@@ -90,7 +90,7 @@ export interface SourceScope {
 export async function loadSourceImage(scope: SourceScope, wanted: string): Promise<SourceLoad> {
   let rows: AttachmentRow[];
   try {
-    rows = await listAttachments(scope.db, { chatId: scope.chatId });
+    rows = await listAttachments({ chatId: scope.chatId });
   } catch {
     return { ok: false, reason: 'This chat’s files could not be read just now.' };
   }

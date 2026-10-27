@@ -5,8 +5,7 @@
  * reload or a second tab sees what is still waiting.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { AttachmentView, QueuedSend } from './views';
 
 const MAX_ITEMS = 50;
@@ -73,36 +72,14 @@ export function parseQueue(value: unknown): QueuedSend[] | null {
   return queue;
 }
 
-export async function loadQueuedSends(
-  db: Kysely<DB>,
-  chatId: string
-): Promise<QueuedSend[]> {
-  const row = await db
-    .selectFrom('chat_queued_sends')
-    .select('queue')
-    .where('chat_id', '=', chatId)
-    .executeTakeFirst();
-  return parseQueue(row?.queue) ?? [];
+export async function loadQueuedSends(chatId: string): Promise<QueuedSend[]> {
+  return parseQueue(await getDataStore().chatThreads.getQueue(chatId)) ?? [];
 }
 
-export async function saveQueuedSends(
-  db: Kysely<DB>,
-  chatId: string,
-  queue: QueuedSend[]
-): Promise<void> {
+export async function saveQueuedSends(chatId: string, queue: QueuedSend[]): Promise<void> {
   if (queue.length === 0) {
-    await db
-      .deleteFrom('chat_queued_sends')
-      .where('chat_id', '=', chatId)
-      .execute();
+    await getDataStore().chatThreads.deleteQueue(chatId);
     return;
   }
-  const json = JSON.stringify(queue);
-  await db
-    .insertInto('chat_queued_sends')
-    .values({ chat_id: chatId, queue: json })
-    .onConflict((oc) =>
-      oc.columns(['chat_id']).doUpdateSet({ queue: json, updated_at: new Date() })
-    )
-    .execute();
+  await getDataStore().chatThreads.saveQueue(chatId, queue);
 }

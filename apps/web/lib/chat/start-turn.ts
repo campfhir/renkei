@@ -212,7 +212,7 @@ export async function startChatTurn(
     return err('EMPTY' as const);
   }
   if (text.length > USER_MESSAGE_MAX_CHARS) return err('TOO_LONG' as const);
-  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
@@ -308,7 +308,7 @@ export async function startChatTurn(
           .where('id', 'in', input.attachmentIds.filter(isUuid))
           .execute();
       }
-      await touchChat(trx, chat.id, {
+      await touchChat(chat.id, {
         titleIfMissing: deriveTitle(text || 'Attachment'),
         // The switch is sticky: the chat remembers the model it last used.
         llmModelId: llm.modelConfigId,
@@ -481,9 +481,9 @@ async function executeTurnBody(
   // side wherever one does not feed another, and the whole is logged.
   const preparingSince = Date.now();
   try {
-    const project = input.chat.projectId ? await getProjectRow(db, input.chat.projectId) : null;
+    const project = input.chat.projectId ? await getProjectRow(input.chat.projectId) : null;
     // The project's content — instructions, memory, files — under its own key.
-    const projectCipher = project ? await projectCipherById(db, project.id) : null;
+    const projectCipher = project ? await projectCipherById(project.id) : null;
     const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
     // Only consulted when neither the chat nor the project has its own
     // toolset, so a cache miss here never costs a chat that already has
@@ -544,7 +544,7 @@ async function executeTurnBody(
 
     const readOnly = input.settings?.readOnly ?? false;
     const [initialRows, person, filesAllowed, code, context, models, surface] = await Promise.all([
-      listMessages(db, input.chat.id, input.cipher),
+      listMessages(input.chat.id, input.cipher),
       getIdentityDisplay(input.session.subject),
       tenantBlobStoreConfigured(),
       // A code project's checkout, when it is there to work in: the code_*
@@ -561,7 +561,7 @@ async function executeTurnBody(
       // The roster a chat's sub-agent picks from; a code project's chat has
       // no such sub-agent (see `delegate` below), nor does a caller with
       // its own local tools.
-      input.localTools || project?.kind === 'code' ? null : listChatModels(db),
+      input.localTools || project?.kind === 'code' ? null : listChatModels(),
       surfacing,
     ]);
     // Compaction runs before history is built, not as a background sweep:
@@ -582,8 +582,8 @@ async function executeTurnBody(
         })
       : Promise.resolve();
     const [priorSummary, overheadTokens] = await Promise.all([
-      latestChatSummary(db, input.chat.id, input.cipher),
-      getRequestOverhead(db, input.chat.id),
+      latestChatSummary(input.chat.id, input.cipher),
+      getRequestOverhead(input.chat.id),
     ]);
     if (
       needsCompaction(rows, {
@@ -605,7 +605,7 @@ async function executeTurnBody(
           onProgress: (progress) =>
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
-        if (compacted) rows = await listMessages(db, input.chat.id, input.cipher);
+        if (compacted) rows = await listMessages(input.chat.id, input.cipher);
         // The pass's own end, so the thread's card does not take a reply
         // that fails later for a fold that did not.
         channel.emit({
@@ -639,7 +639,7 @@ async function executeTurnBody(
       input.llm
     );
     if (phiRefusal) throw new TurnRefused(phiRefusal);
-    const chatSummary = await latestChatSummary(db, input.chat.id, input.cipher);
+    const chatSummary = await latestChatSummary(input.chat.id, input.cipher);
     const localContext = {
       db,
       subject: input.session.subject,
@@ -787,7 +787,7 @@ async function executeTurnBody(
     // What this chat's requests carry besides its messages, kept for the
     // context meter and the next turn's compaction check. Not worth failing
     // a turn over.
-    void setRequestOverhead(db, input.chat.id, overheadTokensOf(system, toolDefs)).catch(
+    void setRequestOverhead(input.chat.id, overheadTokensOf(system, toolDefs)).catch(
       (error: unknown) =>
         log('chat request overhead not stored: {message}', {
           message: error instanceof Error ? error.message : String(error),
@@ -807,8 +807,8 @@ async function executeTurnBody(
             channel.emit({ type: 'compaction_progress', turnId: input.turnId, ...progress }),
         });
         if (!compacted) return null;
-        const fresh = await listMessages(db, input.chat.id, input.cipher);
-        const summary = await latestChatSummary(db, input.chat.id, input.cipher);
+        const fresh = await listMessages(input.chat.id, input.cipher);
+        const summary = await latestChatSummary(input.chat.id, input.cipher);
         channel.emit({
           type: 'compaction_progress',
           turnId: input.turnId,
@@ -957,8 +957,8 @@ export async function chatPromptContext(
   chatFiles: Parameters<typeof buildSystemPrompt>[0]['chatFiles'];
 }> {
   const [chatFiles, projectFiles] = await Promise.all([
-    listAttachments(db, { chatId: chat.id }),
-    project ? listProjectArtifacts(db, project.id) : Promise.resolve([]),
+    listAttachments({ chatId: chat.id }),
+    project ? listProjectArtifacts(project.id) : Promise.resolve([]),
   ]);
   const shape = (row: {
     id: string;
@@ -977,8 +977,8 @@ export async function chatPromptContext(
   const alwaysFiles: { id: string; filename: string; text: string }[] = [];
   for (const row of projectFiles) {
     if (row.mode !== 'always' || row.extractStatus !== 'done' || !project) continue;
-    const access = await resolveArtifactAccess(db, chat.ownerSubject, row, project.id);
-    const text = access ? await getAttachmentText(db, row.id, access.cipher) : null;
+    const access = await resolveArtifactAccess(chat.ownerSubject, row, project.id);
+    const text = access ? await getAttachmentText(row.id, access.cipher) : null;
     if (text && !text.startsWith('[content unavailable')) {
       alwaysFiles.push({ id: row.id, filename: row.filename, text });
     }
@@ -995,7 +995,7 @@ export async function chatPromptContext(
             code: null,
           }
         : null,
-    userMemoryText: project ? null : renderUserMemory(await readUserMemory(db, chat.ownerSubject)),
+    userMemoryText: project ? null : renderUserMemory(await readUserMemory(chat.ownerSubject)),
     // A chat upload kept for the project is both the chat's and the
     // project's; it is listed once, where every chat in the project sees it.
     chatFiles: chatFiles
@@ -1009,5 +1009,5 @@ async function projectMemoryText(
   projectId: string,
   cipher: ContentCipher
 ): Promise<string | null> {
-  return renderProjectMemory(await readProjectMemory(db, projectId, cipher));
+  return renderProjectMemory(await readProjectMemory(projectId, cipher));
 }

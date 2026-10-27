@@ -6,8 +6,7 @@
  * every page, since the list sits in the app menu.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { workspaceBranches } from '@/lib/code/branches';
 import { listAccessibleProjectIds, listGrantedResources } from './access';
 import { listProjectsById } from './projects';
@@ -99,26 +98,16 @@ function projectMapFor(
  * one read of the worker's own table, never a worker call from the menu.
  * A chat with no worktree yet (no turn has run) names no branch.
  */
-async function chatBranchesFor(
-  db: Kysely<DB>,
-  chats: ChatRow[]
-): Promise<(chat: ChatRow) => string | null> {
-  const branches = await workspaceBranches(
-    db,
-    chats.map((chat) => chat.workspaceId)
-  );
+async function chatBranchesFor(chats: ChatRow[]): Promise<(chat: ChatRow) => string | null> {
+  const branches = await workspaceBranches(chats.map((chat) => chat.workspaceId));
   return (chat) => (chat.workspaceId ? (branches.get(chat.workspaceId) ?? null) : null);
 }
 
-async function namesFor(db: Kysely<DB>, subjects: string[]): Promise<Map<string, string | null>> {
+async function namesFor(subjects: string[]): Promise<Map<string, string | null>> {
   const unique = [...new Set(subjects)];
   if (unique.length === 0) return new Map();
-  const rows = await db
-    .selectFrom('identities')
-    .select(['subject', 'display_name', 'email'])
-    .where('subject', 'in', unique)
-    .execute();
-  return new Map(rows.map((row) => [row.subject, row.display_name ?? row.email ?? null]));
+  const rows = await getDataStore().identities.listBySubjects(unique);
+  return new Map(rows.map((row) => [row.subject, row.displayName ?? row.email ?? null]));
 }
 
 /**
@@ -128,36 +117,32 @@ async function namesFor(db: Kysely<DB>, subjects: string[]): Promise<Map<string,
  * Passing it is what makes `moreChatsBefore` non-null when there is more.
  */
 export async function loadChatSidebar(
-  db: Kysely<DB>,
   subject: string,
   options: { since?: Date } = {}
 ): Promise<ChatSidebarData> {
   const { since } = options;
   const [owned, grants, projectIds] = await Promise.all([
     // Archived chats ride along, flagged; the list hides them by default.
-    listOwnedChats(db, subject, { includeArchived: true, ...(since ? { since } : {}) }),
-    listGrantedResources(db, subject, 'chat'),
-    listAccessibleProjectIds(db, subject),
+    listOwnedChats(subject, { includeArchived: true, ...(since ? { since } : {}) }),
+    listGrantedResources(subject, 'chat'),
+    listAccessibleProjectIds(subject),
   ]);
   const [grantedAll, inProjects, projects, moreOwned] = await Promise.all([
-    listChatsById(
-      db,
-      grants.map((grant) => grant.resourceId)
-    ),
-    listProjectChats(db, projectIds, subject, since ? { since } : {}),
-    listProjectsById(db, projectIds),
-    since ? hasOwnedChatBefore(db, subject, since) : Promise.resolve(false),
+    listChatsById(grants.map((grant) => grant.resourceId)),
+    listProjectChats(projectIds, subject, since ? { since } : {}),
+    listProjectsById(projectIds),
+    since ? hasOwnedChatBefore(subject, since) : Promise.resolve(false),
   ]);
   // listChatsById fetches by id, not by date, so the window is applied here.
   const granted = since ? grantedAll.filter((chat) => chat.updatedAt >= since) : grantedAll;
   const grantedIds = new Set(granted.map((chat) => chat.id));
-  const names = await namesFor(db, [
+  const names = await namesFor([
     ...granted.map((chat) => chat.ownerSubject),
     ...inProjects.map((chat) => chat.ownerSubject),
     ...projects.map((project) => project.ownerSubject),
   ]);
   const projectsById = projectMapFor(projects);
-  const branchOf = await chatBranchesFor(db, [...owned, ...granted, ...inProjects]);
+  const branchOf = await chatBranchesFor([...owned, ...granted, ...inProjects]);
   const projectOf = (chat: ChatRow) =>
     chat.projectId ? (projectsById.get(chat.projectId) ?? null) : null;
   // "+ New" creates its chat up front; one nothing was said in yet is not
@@ -205,25 +190,24 @@ export async function loadChatSidebar(
  * that the initial `since` load is the whole story.
  */
 export async function loadMoreOwnedChats(
-  db: Kysely<DB>,
   subject: string,
   before: Date
 ): Promise<{ chats: ChatListItem[]; nextBefore: string | null }> {
   const [rows, projectIds] = await Promise.all([
-    listOwnedChats(db, subject, {
+    listOwnedChats(subject, {
       includeArchived: true,
       before,
       limit: CHAT_SIDEBAR_PAGE_SIZE + 1,
     }),
-    listAccessibleProjectIds(db, subject),
+    listAccessibleProjectIds(subject),
   ]);
   const hasMore = rows.length > CHAT_SIDEBAR_PAGE_SIZE;
   const page = (hasMore ? rows.slice(0, CHAT_SIDEBAR_PAGE_SIZE) : rows).filter(
     (chat) => chat.lastMessageAt !== null
   );
-  const projects = await listProjectsById(db, projectIds);
+  const projects = await listProjectsById(projectIds);
   const projectsById = projectMapFor(projects);
-  const branchOf = await chatBranchesFor(db, page);
+  const branchOf = await chatBranchesFor(page);
   const chats = page.map((chat) =>
     item(
       chat,

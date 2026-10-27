@@ -77,7 +77,9 @@ maybe('recordWidgetModelContext', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(db);
+    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(
+      db
+    );
     await sql`DELETE FROM chat_turns WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(db);
     await sql`DELETE FROM chats WHERE id IN (${chatId}, ${modellessChatId})`.execute(db);
     await sql`DELETE FROM llm_model_configs WHERE id = ${modelId}`.execute(db);
@@ -139,7 +141,11 @@ maybe('recordWidgetModelContext', () => {
   it('keeps the note without a turn when the organization has no usable model', async () => {
     // The one model switched off for the length of this test: the chat
     // (any chat) has nothing to answer with.
-    await db.updateTable('llm_model_configs').set({ enabled: false }).where('id', '=', modelId).execute();
+    await db
+      .updateTable('llm_model_configs')
+      .set({ enabled: false })
+      .where('id', '=', modelId)
+      .execute();
     invalidateLlmCache();
     let recorded: Awaited<ReturnType<typeof recordWidgetModelContext>>;
     try {
@@ -150,7 +156,11 @@ maybe('recordWidgetModelContext', () => {
         defer,
       });
     } finally {
-      await db.updateTable('llm_model_configs').set({ enabled: true }).where('id', '=', modelId).execute();
+      await db
+        .updateTable('llm_model_configs')
+        .set({ enabled: true })
+        .where('id', '=', modelId)
+        .execute();
       invalidateLlmCache();
     }
     expect(recorded.ok).toBe(true);
@@ -209,14 +219,16 @@ maybe('chat widget decisions', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
+    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(
+      db
+    );
     await sql`DELETE FROM chats WHERE id IN (${chatId}, ${otherChatId})`.execute(db);
     await closeDatabase();
   });
 
   it('is absent until recorded', async () => {
-    expect(await getWidgetDecision(db, stateKey)).toBeNull();
-    expect(await listWidgetDecisions(db, chatId)).toEqual(new Map());
+    expect(await getWidgetDecision(stateKey)).toBeNull();
+    expect(await listWidgetDecisions(chatId)).toEqual(new Map());
   });
 
   it('records a decision, readable by its own key and by its chat', async () => {
@@ -234,13 +246,13 @@ maybe('chat widget decisions', () => {
     });
     expect(recorded).toEqual({ ok: true });
 
-    expect(await getWidgetDecision(db, stateKey)).toEqual({
+    expect(await getWidgetDecision(stateKey)).toEqual({
       icon: 'sent',
       headline: 'Created issue OPS-1.',
       detail: 'OPS · Task',
       links: [{ label: 'Open in Jira', href: 'https://example.atlassian.net/browse/OPS-1' }],
     });
-    expect(await listWidgetDecisions(db, chatId)).toEqual(
+    expect(await listWidgetDecisions(chatId)).toEqual(
       new Map([
         [
           stateKey,
@@ -254,7 +266,7 @@ maybe('chat widget decisions', () => {
       ])
     );
     // A different chat in the same tenant never sees another chat's card.
-    expect(await listWidgetDecisions(db, otherChatId)).toEqual(new Map());
+    expect(await listWidgetDecisions(otherChatId)).toEqual(new Map());
   });
 
   it('keeps the first decision when a second is reported for the same key', async () => {
@@ -270,7 +282,7 @@ maybe('chat widget decisions', () => {
       state: { icon: 'cancelled', headline: 'Cancelled' },
     });
     expect(recorded).toEqual({ ok: true });
-    expect(await getWidgetDecision(db, stateKey)).toMatchObject({
+    expect(await getWidgetDecision(stateKey)).toMatchObject({
       icon: 'sent',
       headline: 'Created issue OPS-1.',
     });
@@ -346,7 +358,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
-      cipher: await chatCipherById(db, chatId),
+      cipher: await chatCipherById(chatId),
       blocks: [
         { type: 'text', text: 'Two role assignments to review.' },
         { type: 'tool_use', id: toolUseIdA, name: 'entra_assign_app_role_preview', input: {} },
@@ -359,7 +371,7 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
-      cipher: await chatCipherById(db, chatId),
+      cipher: await chatCipherById(chatId),
       blocks: [
         {
           type: 'tool_result',

@@ -138,10 +138,10 @@ describe('codeProjectContext', () => {
     worktree.mockResolvedValue({ ok: true, val: treeOf() });
     const context = await codeProjectContext(db, project('ws-1'), actor());
     expect(worktree).toHaveBeenCalledTimes(1);
-    expect(worktree.mock.calls[0]![2]).toBe('c1234567-0000');
-    expect(worktree.mock.calls[0]![3]).toMatchObject({ id: 'ws-1' });
+    expect(worktree.mock.calls[0]![1]).toBe('c1234567-0000');
+    expect(worktree.mock.calls[0]![2]).toMatchObject({ id: 'ws-1' });
     // The remote is fetched first, with the person's own grant.
-    expect(worktree.mock.calls[0]![4]).toMatchObject({ insteadOf: 'https://bitbucket.org/' });
+    expect(worktree.mock.calls[0]![3]).toMatchObject({ insteadOf: 'https://bitbucket.org/' });
     expect(context?.prelude).toBeNull();
     expect(bound().workspaceId).toBe('wt-1');
   });
@@ -236,7 +236,7 @@ describe('codeProjectContext', () => {
     worktree.mockResolvedValue({ ok: true, val: treeOf({ id: 'wt-2', parentId: 'ws-2' }) });
     const recovered = await bound().recover!('wt-1');
     expect(clone).toHaveBeenCalledTimes(1);
-    expect(worktree.mock.calls[0]![3]).toMatchObject({ id: 'ws-2' });
+    expect(worktree.mock.calls[0]![2]).toMatchObject({ id: 'ws-2' });
     expect(recovered).toMatchObject({ ok: true, workspaceId: 'wt-2', how: 'cloned' });
   }, 10_000);
 

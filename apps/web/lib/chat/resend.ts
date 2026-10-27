@@ -101,10 +101,10 @@ export async function resendFromMessage(
   input: ResendInput
 ): Promise<Result<Resent, ResendError>> {
   if (!isUuid(input.messageId)) return err('NOT_FOUND' as const);
-  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
-  if (await getActiveTurn(db, access.chat.id)) return err('ALREADY_RUNNING' as const);
+  if (await getActiveTurn(access.chat.id)) return err('ALREADY_RUNNING' as const);
 
   const prompt = await db
     .selectFrom('chat_messages')

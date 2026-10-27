@@ -40,7 +40,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     getOrgSettings(),
     getTenantOidcSummary(),
     observedIdpGroups('', 10_000),
-    listSizeRequests(dbResult.val),
+    listSizeRequests(),
   ]);
   if (!settingsResult.ok || !oidcResult.ok) {
     return (

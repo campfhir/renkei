@@ -14,9 +14,7 @@ import {
   parseTemplatePayload,
 } from '@/lib/code/project-templates';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -24,13 +22,11 @@ export async function GET(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const templates = await listCodeProjectTemplates(dbResult.val);
+  const templates = await listCodeProjectTemplates();
   return NextResponse.json({ templates });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -42,7 +38,7 @@ export async function POST(
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
-  const created = await createCodeProjectTemplate(dbResult.val, parsed);
+  const created = await createCodeProjectTemplate(parsed);
   if (!created.ok) {
     return NextResponse.json({ error: 'A template with that name exists' }, { status: 409 });
   }

@@ -9,7 +9,6 @@
  * pick them on Organization usage, which checks their role on every call.
  */
 
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { ROLE_OPERATOR, ROLE_USER } from '@/lib/access';
 import { safeTimeZone } from '../usage/window';
@@ -122,9 +121,6 @@ export async function getUtilizationReport(
     return { ...empty, error: 'Your account has no role in this tenant' };
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ...empty, error: 'Database unavailable' };
-  const db = dbResult.val;
   const subject = session.subject;
   const span = { days: period.days, endOffsetDays: period.endOffsetDays };
 
@@ -151,7 +147,7 @@ export async function getUtilizationReport(
       getVoiceTotals(span, timeZone, subject),
       resolveVoiceProvider(),
       getImageTotals(span, timeZone, subject),
-      listImageModels(db),
+      listImageModels(),
       getDocumentTotals(span, timeZone, subject),
     ]);
     return {

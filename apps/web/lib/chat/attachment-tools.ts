@@ -33,7 +33,7 @@ export async function findAttachment(
   attachmentId: string
 ): Promise<FoundAttachment | null> {
   if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) return null;
-  const row = await getAttachment(context.db, attachmentId);
+  const row = await getAttachment(attachmentId);
   if (!row) return null;
   // The chat's own file, or one its project holds; anything else is "not found".
   if (row.chatId !== context.chatId) {

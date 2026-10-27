@@ -6,8 +6,6 @@
  * worktree its first turn would have made.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import { sbWorkspaceGet, type WireWorkspace } from '@renkei/sandbox-client';
 import type { ProjectRow } from '@/lib/chat/projects';
@@ -16,7 +14,6 @@ import { startChatWorktree, type CodeOutcome } from './projects';
 import { codeProjectTarget } from './scope';
 
 export async function ensureChatWorktree(
-  db: Kysely<DB>,
   project: ProjectRow,
   chat: { id: string; workspaceId: string | null },
   base: WireWorkspace,
@@ -41,7 +38,6 @@ export async function ensureChatWorktree(
     { write: false }
   );
   return startChatWorktree(
-    db,
     project,
     chat.id,
     base,

@@ -1,5 +1,4 @@
-import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { readUserMemory } from '@/lib/chat/user-memory';
@@ -12,9 +11,7 @@ import MemoryIndex from '../_components/memory-index';
 export default async function ChatMemoryPage() {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/chat/memory`));
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const memory = await readUserMemory(dbResult.val, session.subject, {
+  const memory = await readUserMemory(session.subject, {
     maxEntries: 300,
   });
   return (

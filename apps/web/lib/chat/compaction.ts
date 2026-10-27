@@ -51,7 +51,7 @@
 
 import { after } from 'next/server';
 import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -102,25 +102,18 @@ function creatorOf(value: string): ChatSummaryCreator {
 
 /** The newest summary — the only one a prompt ever reads (see file header). */
 export async function latestChatSummary(
-  db: Kysely<DB>,
   chatId: string,
   cipher: ContentCipher
 ): Promise<ChatSummaryRow | null> {
-  const row = await db
-    .selectFrom('chat_summaries')
-    .select(['id', 'content', 'through_seq', 'folded_count', 'created_by', 'created_at'])
-    .where('chat_id', '=', chatId)
-    .orderBy('created_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
+  const row = await getDataStore().chatThreads.latestSummary(chatId);
   if (!row) return null;
   return {
     id: row.id,
     content: openText(row.content, cipher),
-    throughSeq: row.through_seq,
-    foldedCount: row.folded_count,
-    createdBy: creatorOf(row.created_by),
-    createdAt: row.created_at,
+    throughSeq: row.throughSeq,
+    foldedCount: row.foldedCount,
+    createdBy: creatorOf(row.createdBy),
+    createdAt: row.createdAt,
   };
 }
 
@@ -228,25 +221,12 @@ export function overheadTokensOf(system: string, tools: unknown): number {
   return Math.ceil((system.length + JSON.stringify(tools).length) / CHARS_PER_TOKEN);
 }
 
-export async function getRequestOverhead(db: Kysely<DB>, chatId: string): Promise<number | null> {
-  const row = await db
-    .selectFrom('chats')
-    .select('request_overhead_tokens')
-    .where('id', '=', chatId)
-    .executeTakeFirst();
-  return row?.request_overhead_tokens ?? null;
+export async function getRequestOverhead(chatId: string): Promise<number | null> {
+  return getDataStore().chats.getRequestOverhead(chatId);
 }
 
-export async function setRequestOverhead(
-  db: Kysely<DB>,
-  chatId: string,
-  tokens: number
-): Promise<void> {
-  await db
-    .updateTable('chats')
-    .set({ request_overhead_tokens: tokens })
-    .where('id', '=', chatId)
-    .execute();
+export async function setRequestOverhead(chatId: string, tokens: number): Promise<void> {
+  await getDataStore().chats.setRequestOverhead(chatId, tokens);
 }
 
 /** What a model can hold, when the operator recorded it (llm_model_configs.settings). */
@@ -444,7 +424,7 @@ export async function compactChat(
   db: Kysely<DB>,
   input: CompactChatInput
 ): Promise<CompactChatResult | null> {
-  const messages = input.messages ?? (await listMessages(db, input.chatId, input.cipher));
+  const messages = input.messages ?? (await listMessages(input.chatId, input.cipher));
   const unfolded = unfoldedOf(messages);
   const candidates = foldCandidates(unfolded);
   const calls = callsById(unfolded);
@@ -455,7 +435,7 @@ export async function compactChat(
   input.onProgress?.({ foldedSoFar: 0, totalToFold: total });
   if (candidates.length < CHAT_COMPACT_MIN_FOLD) return null;
 
-  let runningSummary = (await latestChatSummary(db, input.chatId, input.cipher))?.content ?? null;
+  let runningSummary = (await latestChatSummary(input.chatId, input.cipher))?.content ?? null;
   for (let start = 0; start < candidates.length; start += CHAT_COMPACT_BATCH_MESSAGES) {
     const batch = candidates.slice(start, start + CHAT_COMPACT_BATCH_MESSAGES);
     runningSummary = await foldBatch(input.llm, runningSummary, batch, calls);
@@ -516,7 +496,7 @@ export async function startCompactionTurn(
   }
 ): Promise<Result<StartedCompactionTurn, StartCompactionError>> {
   const defer = input.defer ?? ((task) => after(task));
-  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;

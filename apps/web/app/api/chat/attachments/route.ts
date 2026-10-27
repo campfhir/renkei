@@ -72,14 +72,14 @@ export async function PUT(request: NextRequest): Promise<Response> {
 
   const chat = chatId
     ? isUuid(chatId)
-      ? await resolveChatAccess(db, session.subject, chatId)
+      ? await resolveChatAccess(session.subject, chatId)
       : null
     : null;
   if (chatId && (!chat || chat.role !== 'owner'))
     return jsonError(404, 'not-found', 'No such chat');
   if (projectId) {
     if (!isUuid(projectId)) return jsonError(404, 'not-found', 'No such project');
-    const access = await resolveProjectAccess(db, session.subject, projectId);
+    const access = await resolveProjectAccess(session.subject, projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     if (access.role === 'viewer') {
       return jsonError(403, 'read-only', 'Only editors can add files to this project.');

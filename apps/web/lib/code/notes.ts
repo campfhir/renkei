@@ -35,7 +35,7 @@ export async function appendChatNote(
       .where('id', '=', input.chatId)
       .forUpdate()
       .executeTakeFirst();
-    if (await getActiveTurn(trx, input.chatId)) return { ok: false, reason: 'turn-running' };
+    if (await getActiveTurn(input.chatId)) return { ok: false, reason: 'turn-running' };
     const inserted = await insertMessage(trx, {
       chatId: input.chatId,
       turnId: null,
@@ -43,7 +43,7 @@ export async function appendChatNote(
       kind: 'note',
       status: 'complete',
       blocks: [{ type: 'text', text }],
-      cipher: await chatCipherById(trx, input.chatId),
+      cipher: await chatCipherById(input.chatId),
     });
     if (!inserted) return { ok: false, reason: 'failed' };
     return {

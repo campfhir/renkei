@@ -22,7 +22,7 @@ export async function PUT(
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const updated = await updatePipelineTemplate(dbResult.val, templateId, parsed);
+  const updated = await updatePipelineTemplate(templateId, parsed);
   if (!updated.ok) {
     const status = updated.error === 'duplicate' ? 409 : 404;
     const error =
@@ -42,7 +42,7 @@ export async function DELETE(
   }
   const dbResult = getDatabase();
   if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const deleted = await deletePipelineTemplate(dbResult.val, templateId);
+  const deleted = await deletePipelineTemplate(templateId);
   if (!deleted) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

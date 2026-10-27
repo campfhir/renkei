@@ -10,12 +10,10 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext } from '@/lib/chat/route-support';
 import { listPipelineTemplates } from '@/lib/code/pipeline-templates';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const provider = request.nextUrl.searchParams.get('provider') ?? undefined;
-  const templates = await listPipelineTemplates(ready.context.db, provider);
+  const templates = await listPipelineTemplates(provider);
   return NextResponse.json({ templates });
 }

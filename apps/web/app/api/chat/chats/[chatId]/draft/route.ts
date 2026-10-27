@@ -16,15 +16,15 @@ export async function PUT(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, session.subject, chatId);
+  const { session } = ready.context;
+  const access = await resolveChatAccess(session.subject, chatId);
   if (!access || access.role !== 'owner') return jsonError(404, 'not-found', 'No such chat');
   const body = await readJsonBody(request);
   if (typeof body.text !== 'string' || body.text.length > MAX_DRAFT_CHARS) {
     return jsonError(400, 'invalid', 'That is not a draft the composer builds.');
   }
   try {
-    const saved = await saveDraft(db, access.chat.id, body.text, access.cipher);
+    const saved = await saveDraft(access.chat.id, body.text, access.cipher);
     if (!saved) return jsonError(409, 'key-unavailable', 'The draft could not be encrypted.');
   } catch {
     return jsonError(500, 'database', 'The draft could not be saved.');

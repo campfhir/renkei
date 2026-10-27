@@ -29,7 +29,7 @@ export function memoryTools(): LocalTool[] {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const note = typeof input.note === 'string' ? input.note.trim() : '';
         if (!note) return errorResult('Nothing to remember: `note` is empty.');
-        const id = await appendProjectMemory(context.db, {
+        const id = await appendProjectMemory({
           projectId: context.projectId,
           content: note,
           authorSubject: context.subject,
@@ -58,7 +58,7 @@ export function memoryTools(): LocalTool[] {
         }
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const id = typeof input.id === 'string' ? input.id : '';
-        const deleted = await forgetProjectMemory(context.db, context.projectId, {
+        const deleted = await forgetProjectMemory(context.projectId, {
           kind: 'entries',
           ids: [id],
         });
@@ -76,14 +76,9 @@ export function memoryTools(): LocalTool[] {
         if (!context.projectId || !context.projectCipher) {
           return errorResult('This chat is not in a project.');
         }
-        const memory = await readProjectMemory(
-          context.db,
-          context.projectId,
-          context.projectCipher,
-          {
-            maxEntries: 100,
-          }
-        );
+        const memory = await readProjectMemory(context.projectId, context.projectCipher, {
+          maxEntries: 100,
+        });
         if (!memory.summary && memory.entries.length === 0)
           return textResult('The project has no memory yet.');
         const lines = [

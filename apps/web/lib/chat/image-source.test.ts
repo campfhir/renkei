@@ -168,7 +168,7 @@ describe('loadSourceImage', () => {
       expect(loaded.image.bytes.subarray(1, 4).toString()).toBe('PNG');
       expect(loaded.image.bytes.includes(Buffer.from('script'))).toBe(false);
     }
-    expect(listAttachmentsMock).toHaveBeenCalledWith(null, { chatId: 'c' });
+    expect(listAttachmentsMock).toHaveBeenCalledWith({ chatId: 'c' });
     expect(cipherMock).toHaveBeenCalledWith(SCOPE, expect.objectContaining({ id: 'a1' }));
     expect(putObject).not.toHaveBeenCalled();
   });

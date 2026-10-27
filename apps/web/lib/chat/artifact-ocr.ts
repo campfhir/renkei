@@ -10,7 +10,7 @@
  */
 
 import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
 import { logger } from '@/lib/logger';
@@ -76,9 +76,9 @@ export async function runArtifactOcr(
   viewerSubject: string
 ): Promise<void> {
   try {
-    const [row] = await getAttachments(db, [artifactId]);
+    const [row] = await getAttachments([artifactId]);
     if (!row) return;
-    const cipher = await artifactCipher(db, row, viewerSubject, 'owner', null);
+    const cipher = await artifactCipher(row, viewerSubject, 'owner', null);
     if (cipher.unavailable) {
       await clearStart(db, artifactId);
       return;
@@ -91,7 +91,7 @@ export async function runArtifactOcr(
       cipher
     );
     if (status === 'done') {
-      await digestPendingArtifacts(db, viewerSubject, await getAttachments(db, [artifactId]));
+      await digestPendingArtifacts(db, viewerSubject, await getAttachments([artifactId]));
     }
   } catch (error) {
     logger.warn('artifact OCR failed: {message}', {
@@ -103,15 +103,8 @@ export async function runArtifactOcr(
 }
 
 /** The finished runs the estimate is built from, org-wide: timings and sizes, never text. */
-export async function ocrSamples(db: Kysely<DB>): Promise<OcrSample[]> {
-  const rows = await db
-    .selectFrom('artifacts')
-    .select(['size_bytes', 'ocr_millis'])
-    .where('ocr_millis', 'is not', null)
-    .orderBy('ocr_finished_at', 'desc')
-    .limit(OCR_SAMPLE_LIMIT)
-    .execute();
-  return rows.map((row) => ({ sizeBytes: Number(row.size_bytes), millis: row.ocr_millis ?? 0 }));
+export async function ocrSamples(): Promise<OcrSample[]> {
+  return getDataStore().artifacts.ocrSamples(OCR_SAMPLE_LIMIT);
 }
 
 export interface OcrRun {

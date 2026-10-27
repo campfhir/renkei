@@ -9,7 +9,6 @@
  * without a database those read as empty rather than failing the page.
  */
 
-import { getDatabase } from '@renkei/db';
 import type { BlackoutEntry } from '@renkei/agents';
 import { DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { getOrgSettings } from '@renkei/settings';
@@ -41,12 +40,11 @@ export async function loadBuilderData(
   subject: string,
   excludeAgentId?: string
 ): Promise<BuilderData> {
-  const db = getDatabase();
   const [tools, agents, modelRows, settings, calendars] = await Promise.all([
     listAvailableTools(subject),
     listAgents(subject),
     // An agent runs on a chat model; an image generation model cannot answer.
-    db.ok ? listChatModels(db.val) : Promise.resolve([]),
+    listChatModels().catch(() => []),
     getOrgSettings(),
     loadCalendarOptions().catch(() => []),
   ]);

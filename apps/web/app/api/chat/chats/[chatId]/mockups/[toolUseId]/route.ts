@@ -48,11 +48,11 @@ export async function GET(
   const { chatId, toolUseId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return problem(401, 'Sign in to see this mockup.');
-  const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, session.subject, chatId);
+  const { session } = ready.context;
+  const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return problem(404, 'No such chat.');
 
-  const messages = await listMessages(db, chatId, access.cipher);
+  const messages = await listMessages(chatId, access.cipher);
   for (const message of messages) {
     for (const block of toMessageView(message).blocks) {
       if (block.type !== 'tool_use' || block.id !== toolUseId) continue;

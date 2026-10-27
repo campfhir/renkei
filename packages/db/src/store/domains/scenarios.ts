@@ -35,6 +35,16 @@ import { mirthInstanceScenarios } from './mirth-instances/scenarios';
 import { adManagerInstanceScenarios } from './admanager-instances/scenarios';
 import { emailSanitizerScenarios } from './email-sanitizer/scenarios';
 import { mailReviewScenarios } from './mail-review/scenarios';
+import { resourceGrantScenarios } from './resource-grants/scenarios';
+import { chatScenarios } from './chats/scenarios';
+import { chatThreadScenarios } from './chat-threads/scenarios';
+import { chatProjectScenarios } from './chat-projects/scenarios';
+import { promptLibraryScenarios } from './prompt-libraries/scenarios';
+import { userMemoryScenarios } from './user-memory/scenarios';
+import { artifactScenarios } from './artifacts/scenarios';
+import { codeProjectScenarios } from './code-projects/scenarios';
+import { codeTemplateScenarios } from './code-templates/scenarios';
+import { chatModelScenarios } from './chat-models/scenarios';
 
 export const SCENARIOS: Scenario<DataStore>[] = [
   ...sessionScenarios,
@@ -70,4 +80,14 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...adManagerInstanceScenarios,
   ...emailSanitizerScenarios,
   ...mailReviewScenarios,
+  ...resourceGrantScenarios,
+  ...chatScenarios,
+  ...chatThreadScenarios,
+  ...chatProjectScenarios,
+  ...promptLibraryScenarios,
+  ...userMemoryScenarios,
+  ...artifactScenarios,
+  ...codeProjectScenarios,
+  ...codeTemplateScenarios,
+  ...chatModelScenarios,
 ];

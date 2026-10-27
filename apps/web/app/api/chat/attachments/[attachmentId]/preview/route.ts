@@ -26,9 +26,9 @@ export async function GET(
   const { attachmentId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const row = await getAttachment(db, attachmentId);
-  const cipher = row ? await attachmentCipherFor(db, session.subject, row) : null;
+  const { session } = ready.context;
+  const row = await getAttachment(attachmentId);
+  const cipher = row ? await attachmentCipherFor(session.subject, row) : null;
   if (!row || !cipher) {
     return jsonError(404, 'not-found', 'No such file');
   }
@@ -51,7 +51,7 @@ export async function GET(
   }
 
   if (kind === 'extract') {
-    const text = await getAttachmentText(db, row.id, cipher);
+    const text = await getAttachmentText(row.id, cipher);
     if (text === null) return jsonError(422, 'no-text', 'No text was extracted from this file.');
     return NextResponse.json(
       {
