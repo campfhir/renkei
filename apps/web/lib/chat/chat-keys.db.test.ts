@@ -79,7 +79,7 @@ maybe('chat and project keys through the chat', () => {
       toolConfig: null,
       thinkingEnabled: false,
     });
-    expect((await openResourceKey(db, ref(chatId), owner)).ok).toBe(true);
+    expect((await openResourceKey(ref(chatId), owner)).ok).toBe(true);
 
     const access = await resolveChatAccess(owner, chatId);
     expect(access?.role).toBe('owner');
@@ -103,7 +103,7 @@ maybe('chat and project keys through the chat', () => {
 
   it('nobody but the owner resolves access, so nobody else gets a cipher', async () => {
     expect(await resolveChatAccess(friend, chatId)).toBeNull();
-    expect((await openResourceKey(db, ref(chatId), friend)).ok).toBe(false);
+    expect((await openResourceKey(ref(chatId), friend)).ok).toBe(false);
   });
 
   it('sharing rewraps the key for the grantee, who then reads the rows', async () => {
@@ -114,7 +114,7 @@ maybe('chat and project keys through the chat', () => {
     });
     expect(granted).toBe('OK');
     expect(await shareKey('chat', { id: chatId, ownerSubject: owner }, friend)).toBe(true);
-    expect((await listResourceKeyHolders(db, ref(chatId))).map((h) => h.holder).sort()).toEqual(
+    expect((await listResourceKeyHolders(ref(chatId))).map((h) => h.holder).sort()).toEqual(
       [friend, owner].sort()
     );
 
@@ -138,12 +138,12 @@ maybe('chat and project keys through the chat', () => {
       expiresAt: null,
     });
     // No shareKey: the access row exists, the wrapping does not.
-    expect((await openResourceKey(db, ref(chatId), stranger)).ok).toBe(false);
+    expect((await openResourceKey(ref(chatId), stranger)).ok).toBe(false);
     const access = await resolveChatAccess(stranger, chatId);
     expect(access?.via).toBe('grant');
     if (!access) return;
     expect(texts(await listMessages(chatId, access.cipher))).toEqual(['the quarterly numbers']);
-    expect((await openResourceKey(db, ref(chatId), stranger)).ok).toBe(true);
+    expect((await openResourceKey(ref(chatId), stranger)).ok).toBe(true);
   });
 
   it('revoking the share forgets the wrapping; the owner is untouched', async () => {
@@ -156,9 +156,9 @@ maybe('chat and project keys through the chat', () => {
     const revoked = await revokeResourceGrant(owner, 'chat', chatId, grant.id);
     expect(revoked).toBe(friend);
     await revokeKey('chat', chatId, friend);
-    expect((await openResourceKey(db, ref(chatId), friend)).ok).toBe(false);
+    expect((await openResourceKey(ref(chatId), friend)).ok).toBe(false);
     expect(await resolveChatAccess(friend, chatId)).toBeNull();
-    expect((await openResourceKey(db, ref(chatId), owner)).ok).toBe(true);
+    expect((await openResourceKey(ref(chatId), owner)).ok).toBe(true);
   });
 
   it('a chat without a key reads as "no key" to a viewer until its owner mints one', async () => {
@@ -174,7 +174,7 @@ maybe('chat and project keys through the chat', () => {
     expect(asViewer?.cipher.keyId).not.toBeNull();
     if (!asViewer) return;
     // Opening as the owner minted the key (and wrapped it for the viewer).
-    expect((await listResourceKeyHolders(db, ref(bareId))).map((h) => h.holder).sort()).toEqual(
+    expect((await listResourceKeyHolders(ref(bareId))).map((h) => h.holder).sort()).toEqual(
       [friend, owner].sort()
     );
     const asOwner = await resolveChatAccess(owner, bareId);
@@ -211,7 +211,7 @@ maybe('chat and project keys through the chat', () => {
       toolConfig: null,
     });
     if (!projectId) throw new Error('no project');
-    expect((await openResourceKey(db, ref(projectId, 'chat_project'), owner)).ok).toBe(true);
+    expect((await openResourceKey(ref(projectId, 'chat_project'), owner)).ok).toBe(true);
     const raw = await db
       .selectFrom('chat_projects')
       .select('instructions')
@@ -274,7 +274,7 @@ maybe('chat and project keys through the chat', () => {
 
   it('deleting the chat deletes its key', async () => {
     expect(await deleteChat(owner, chatId)).toBe(true);
-    expect(await openResourceKey(db, ref(chatId), owner)).toMatchObject({
+    expect(await openResourceKey(ref(chatId), owner)).toMatchObject({
       ok: false,
       err: { type: 'NO_KEY' },
     });

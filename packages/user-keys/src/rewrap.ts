@@ -25,8 +25,7 @@
  * ages them out.
  */
 
-import { sql, type Kysely, type QueryResult, type RawBuilder } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type SealedEnvelopeTable } from '@renkei/db';
 import {
   contentEncryptionKey,
   decrypt,
@@ -53,7 +52,7 @@ export interface RewrapRings {
 
 /** One column of envelopes: the table, how a row is addressed, and the marker before the envelope. */
 export interface RewrapTarget {
-  table: string;
+  table: SealedEnvelopeTable;
   /** The key columns, in the order rows are walked; text columns only. */
   idColumns: readonly string[];
   column: string;
@@ -163,65 +162,36 @@ export function rewrapValue(stored: string, prefix: string, ring: Keyring): stri
   return prefix + encrypt(opened.val, ring);
 }
 
-type Row = Record<string, string | null>;
-
 /** One target, walked in key order in batches of REWRAP_BATCH; only rows not yet under the current key are read. */
 export async function rewrapTarget(
-  db: Kysely<DB>,
   target: RewrapTarget,
   ring: Keyring,
   options: RewrapOptions = {}
 ): Promise<RewrapCounts> {
   const counts: RewrapCounts = { rewrapped: 0, skipped: 0, unreadable: [] };
   const log = options.log ?? (() => undefined);
+  const store = getDataStore().sealedEnvelopes;
   const notCurrent = `${target.prefix}v2.${keyId(ring)}.%`;
-  const ids = sql.join(target.idColumns.map((column) => sql.ref(column)));
-  const idOf = (row: Row): string => target.idColumns.map((column) => row[column] ?? '').join(':');
-  // Keyset pagination on the key columns: `(a, b) > (last_a, last_b)`.
   let last: string[] | null = null;
   for (;;) {
-    const after: RawBuilder<unknown> =
-      last === null
-        ? sql`true`
-        : sql`(${ids}) > (${sql.join(last.map((value) => sql.val(value)))})`;
-    const page: QueryResult<Row> = await sql<Row>`
-      select ${ids}, ${sql.ref(target.column)} as value
-      from ${sql.table(target.table)}
-      where ${sql.ref(target.column)} is not null
-        and ${sql.ref(target.column)} not like ${notCurrent}
-        and ${after}
-      order by ${ids}
-      limit ${REWRAP_BATCH}
-    `.execute(db);
-    if (page.rows.length === 0) break;
-    for (const row of page.rows) {
+    const page = await store.pageNotLike(target, notCurrent, last, REWRAP_BATCH);
+    if (page.length === 0) break;
+    for (const row of page) {
       const stored = row.value;
-      last = target.idColumns.map((column) => row[column] ?? '');
-      if (stored === null) continue;
+      last = row.id;
+      const idOf = row.id.join(':');
       const next = rewrapValue(stored, target.prefix, ring);
       if (next === null) {
         counts.skipped += 1;
-        counts.unreadable.push(idOf(row));
-        log(
-          `  ${target.table}.${target.column} ${idOf(row)}: no key of the ring opens it; left as is`
-        );
+        counts.unreadable.push(idOf);
+        log(`  ${target.table}.${target.column} ${idOf}: no key of the ring opens it; left as is`);
         continue;
       }
-      if (!options.dryRun) {
-        const match = sql.join(
-          target.idColumns.map((column) => sql`${sql.ref(column)} = ${row[column]}`),
-          sql` and `
-        );
-        // Only if nobody rewrote it meanwhile (a saved form, another run).
-        await sql`
-          update ${sql.table(target.table)}
-          set ${sql.ref(target.column)} = ${next}
-          where ${match} and ${sql.ref(target.column)} = ${stored}
-        `.execute(db);
-      }
+      // Only if nobody rewrote it meanwhile (a saved form, another run).
+      if (!options.dryRun) await store.replaceIfUnchanged(target, row.id, stored, next);
       counts.rewrapped += 1;
     }
-    if (page.rows.length < REWRAP_BATCH) break;
+    if (page.length < REWRAP_BATCH) break;
   }
   return counts;
 }
@@ -237,16 +207,11 @@ function hasEncryptedPrivateKey(value: unknown): value is { encryptedPrivateKey:
 
 /** platform_settings.vapid_keys holds its envelope inside a JSON value (packages/notifications vapid.ts). */
 export async function rewrapVapid(
-  db: Kysely<DB>,
   ring: Keyring,
   options: RewrapOptions = {}
 ): Promise<RewrapCounts> {
   const counts: RewrapCounts = { rewrapped: 0, skipped: 0, unreadable: [] };
-  const row = await db
-    .selectFrom('platform_settings')
-    .select('value')
-    .where('key', '=', 'vapid_keys')
-    .executeTakeFirst();
+  const row = await getDataStore().platformSettings.get('vapid_keys');
   if (!row) return counts;
   const value: unknown = typeof row.value === 'string' ? JSON.parse(row.value) : row.value;
   if (!hasEncryptedPrivateKey(value)) {
@@ -264,11 +229,10 @@ export async function rewrapVapid(
     return counts;
   }
   if (!options.dryRun) {
-    await db
-      .updateTable('platform_settings')
-      .set({ value: JSON.stringify({ ...value, encryptedPrivateKey: next }) })
-      .where('key', '=', 'vapid_keys')
-      .execute();
+    await getDataStore().platformSettings.update('vapid_keys', {
+      ...value,
+      encryptedPrivateKey: next,
+    });
   }
   counts.rewrapped += 1;
   return counts;
@@ -276,7 +240,6 @@ export async function rewrapVapid(
 
 /** Every target, then the VAPID row; the report says what moved and what nothing opened. */
 export async function rewrapAll(
-  db: Kysely<DB>,
   rings: RewrapRings,
   options: RewrapOptions = {}
 ): Promise<RewrapReport> {
@@ -288,14 +251,14 @@ export async function rewrapAll(
   for (const target of REWRAP_TARGETS) {
     const name = `${target.table}.${target.column}`;
     log(`${name} (${target.ring} ring, current key ${keyId(rings[target.ring])})`);
-    const counts = await rewrapTarget(db, target, rings[target.ring], options);
+    const counts = await rewrapTarget(target, rings[target.ring], options);
     report.targets[name] = counts;
     log(
       `  ${options.dryRun ? 'would rewrap' : 'rewrapped'} ${counts.rewrapped}, unreadable ${counts.skipped}`
     );
   }
   log(`platform_settings.vapid_keys (token ring)`);
-  report.vapid = await rewrapVapid(db, rings.token, options);
+  report.vapid = await rewrapVapid(rings.token, options);
   log(
     `  ${options.dryRun ? 'would rewrap' : 'rewrapped'} ${report.vapid.rewrapped}, unreadable ${report.vapid.skipped}`
   );

@@ -77,6 +77,12 @@ import { sandboxServices } from './sandbox-services';
 import { codeServiceImageRules } from './code-service-image-rules';
 import { sandboxEnvSecrets } from './sandbox-env-secrets';
 import { sandboxCrawls } from './sandbox-crawls';
+import { resourceKeys } from './resource-keys';
+import { delegateSigningKeys } from './delegate-signing-keys';
+import { delegateAccessEvents } from './delegate-access-events';
+import { delegateGitTickets } from './delegate-git-tickets';
+import { sealedEnvelopes } from './sealed-envelopes';
+import { legacyEnvelopes } from './legacy-envelopes';
 
 export const DOMAINS = {
   sessions,
@@ -152,4 +158,10 @@ export const DOMAINS = {
   sandboxEnvSecrets,
   sandboxCrawls,
   webexDirtyWindows,
+  resourceKeys,
+  delegateSigningKeys,
+  delegateAccessEvents,
+  delegateGitTickets,
+  sealedEnvelopes,
+  legacyEnvelopes,
 };

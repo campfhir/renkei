@@ -13,5 +13,10 @@ export function memoryPlatformSettings(tables: MemoryTables): PlatformSettingSto
         undefined
       );
     },
+    async update(key, value) {
+      return tables.update('platform_settings', (r) => r.key === key, {
+        value: JSON.stringify(value),
+      }).length;
+    },
   };
 }

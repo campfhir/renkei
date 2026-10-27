@@ -88,14 +88,14 @@ maybe('held keys and the resource key store', () => {
       .insertInto('chat_projects')
       .values({ id: projectId, owner_subject: owner, name: 'P' })
       .execute();
-    instance = await registerTestInstance(db);
-    const enrolledOwner = await enrollTestPerson(db, {
+    instance = await registerTestInstance();
+    const enrolledOwner = await enrollTestPerson({
       subject: owner,
       instances: targets(),
     });
     ownerKeys = enrolledOwner.keys;
     ownerSession = enrolledOwner.sessionId;
-    friendKeys = (await enrollTestPerson(db, { subject: friend, instances: targets() })).keys;
+    friendKeys = (await enrollTestPerson({ subject: friend, instances: targets() })).keys;
   });
 
   afterAll(async () => {
@@ -130,9 +130,9 @@ maybe('held keys and the resource key store', () => {
   it('refuses an enrollment whose wrappings do not match the delegated key', async () => {
     const keys = generateBrowserKeys();
     const other = generateBrowserKeys();
-    const sessionId = await ensureSession(db, stranger);
+    const sessionId = await ensureSession(stranger);
     const sealed = sealDelegations(keys, { instances: targets() });
-    const mismatched = await enroll(db, {
+    const mismatched = await enroll({
       subject: stranger,
       sessionId,
       publicKey: keys.pair.publicKey.toString('base64'),
@@ -143,7 +143,7 @@ maybe('held keys and the resource key store', () => {
       automationUntil: null,
     });
     expect(!mismatched.ok && mismatched.err.type).toBe('KEY_MISMATCH');
-    const elsewhere = await enroll(db, {
+    const elsewhere = await enroll({
       subject: stranger,
       sessionId,
       publicKey: keys.pair.publicKey.toString('base64'),
@@ -158,61 +158,61 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('mints a key for the owner, and nobody else can open it', async () => {
-    const created = await createResourceKey(db, ref, owner);
+    const created = await createResourceKey(ref, owner);
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     expect(created.val.key.byteLength).toBe(32);
     const sealed = encryptWithResourceKey('hello', created.val.id, created.val.key);
-    const asOwner = await openResourceKey(db, ref, owner);
+    const asOwner = await openResourceKey(ref, owner);
     expect(asOwner.ok && asOwner.val.id).toBe(created.val.id);
     expect(asOwner.ok && decryptWithResourceKey(sealed, asOwner.val.id, asOwner.val.key).ok).toBe(
       true
     );
-    const asFriend = await openResourceKey(db, ref, friend);
+    const asFriend = await openResourceKey(ref, friend);
     expect(!asFriend.ok && asFriend.err.type).toBe('NO_ACCESS');
-    const asStranger = await openResourceKey(db, ref, stranger);
+    const asStranger = await openResourceKey(ref, stranger);
     expect(!asStranger.ok && asStranger.err.type).toBe('NO_ACCESS');
-    const holders = await listResourceKeyHolders(db, ref);
+    const holders = await listResourceKeyHolders(ref);
     expect(holders).toEqual([
       expect.objectContaining({ holderKind: 'user', holder: owner, grantedBy: null }),
     ]);
   });
 
   it('creating again hands back the key that already exists', async () => {
-    const first = await openResourceKey(db, ref, owner);
-    const again = await createResourceKey(db, ref, owner);
+    const first = await openResourceKey(ref, owner);
+    const again = await createResourceKey(ref, owner);
     expect(first.ok && again.ok && again.val.key.equals(first.val.key)).toBe(true);
-    const ensured = await ensureResourceKey(db, ref, owner);
+    const ensured = await ensureResourceKey(ref, owner);
     expect(first.ok && ensured.ok && ensured.val.key.equals(first.val.key)).toBe(true);
   });
 
   it('sharing seals the key to the grantee’s public key; their first open turns it into their own wrapping', async () => {
-    const shared = await shareResourceKey(db, ref, owner, friend);
+    const shared = await shareResourceKey(ref, owner, friend);
     expect(shared.ok).toBe(true);
-    let holders = await listResourceKeyHolders(db, ref);
+    let holders = await listResourceKeyHolders(ref);
     expect(holders.find((holder) => holder.holder === friend)?.holderKind).toBe('public');
-    const asOwner = await openResourceKey(db, ref, owner);
-    const asFriend = await openResourceKey(db, ref, friend);
+    const asOwner = await openResourceKey(ref, owner);
+    const asFriend = await openResourceKey(ref, friend);
     expect(asOwner.ok && asFriend.ok && asFriend.val.key.equals(asOwner.val.key)).toBe(true);
-    holders = await listResourceKeyHolders(db, ref);
+    holders = await listResourceKeyHolders(ref);
     expect(holders.find((holder) => holder.holder === friend)?.holderKind).toBe('user');
     expect(holders.filter((holder) => holder.holder === friend)).toHaveLength(1);
     // A grantee who has not enrolled has no public key to seal to.
-    const toStranger = await shareResourceKey(db, ref, owner, stranger);
+    const toStranger = await shareResourceKey(ref, owner, stranger);
     expect(!toStranger.ok && toStranger.err.type).toBe('GRANTEE_NOT_ENROLLED');
   });
 
   it('only someone holding the key can share it', async () => {
-    const byStranger = await shareResourceKey(db, ref, stranger, friend);
+    const byStranger = await shareResourceKey(ref, stranger, friend);
     expect(!byStranger.ok && byStranger.err.type).toBe('NO_ACCESS');
   });
 
   it('opens many at once, each as a named person', async () => {
     const otherChat = randomUUID();
     await db.insertInto('chats').values({ id: otherChat, owner_subject: friend }).execute();
-    const friends = await createResourceKey(db, { ...ref, resourceId: otherChat }, friend);
+    const friends = await createResourceKey({ ...ref, resourceId: otherChat }, friend);
     expect(friends.ok).toBe(true);
-    const opened = await openResourceKeys(db, 'chat', [
+    const opened = await openResourceKeys('chat', [
       { resourceId: chatId, subject: friend },
       { resourceId: otherChat, subject: friend },
       { resourceId: otherChat, subject: owner },
@@ -229,34 +229,34 @@ maybe('held keys and the resource key store', () => {
     const ring = await getKeyRing(owner);
     expect(ring.ok && ring.val.scope).toBe('automation');
     expect(ring.ok && ring.val.userKey).toBeNull();
-    const closed = await openResourceKey(db, ref, owner);
+    const closed = await openResourceKey(ref, owner);
     expect(!closed.ok && closed.err.type).toBe('NEEDS_SESSION');
     const sessionOnly = await getKeyRing(owner, 'session');
     expect(!sessionOnly.ok && sessionOnly.err.type).toBe('NEEDS_SESSION');
     // An agent minting a chat for them while they are away wraps under the automation key.
     const agentChat = randomUUID();
     await db.insertInto('chats').values({ id: agentChat, owner_subject: owner }).execute();
-    const minted = await createResourceKey(db, { ...ref, resourceId: agentChat }, owner);
+    const minted = await createResourceKey({ ...ref, resourceId: agentChat }, owner);
     expect(minted.ok).toBe(true);
     expect(
-      (await listResourceKeyHolders(db, { ...ref, resourceId: agentChat })).map((h) => h.holderKind)
+      (await listResourceKeyHolders({ ...ref, resourceId: agentChat })).map((h) => h.holderKind)
     ).toEqual(['automation']);
     // Back at the keyboard: a new session opens the agent's chat through the automation key too.
-    ownerSession = await delegateTestSession(db, {
+    ownerSession = await delegateTestSession({
       subject: owner,
       keys: ownerKeys,
       instances: targets(),
     });
     const back = await getKeyRing(owner);
     expect(back.ok && back.val.scope).toBe('session');
-    const reopened = await openResourceKey(db, { ...ref, resourceId: agentChat }, owner);
+    const reopened = await openResourceKey({ ...ref, resourceId: agentChat }, owner);
     expect(minted.ok && reopened.ok && reopened.val.key.equals(minted.val.key)).toBe(true);
     // And can let agents at the plain chat, which then opens under automation alone.
-    expect((await grantAutomationAccess(db, ref, owner)).ok).toBe(true);
+    expect((await grantAutomationAccess(ref, owner)).ok).toBe(true);
     await db.deleteFrom('sessions').where('id', '=', ownerSession).execute();
-    const viaAutomation = await openResourceKey(db, ref, owner);
+    const viaAutomation = await openResourceKey(ref, owner);
     expect(viaAutomation.ok).toBe(true);
-    ownerSession = await delegateTestSession(db, {
+    ownerSession = await delegateTestSession({
       subject: owner,
       keys: ownerKeys,
       instances: targets(),
@@ -264,18 +264,16 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('a chat’s key under its project’s opens for whoever opens the project', async () => {
-    expect((await createResourceKey(db, projectRef, owner)).ok).toBe(true);
-    expect((await createResourceKey(db, projectChatRef, owner)).ok).toBe(true);
-    expect((await wrapResourceKeyUnder(db, projectChatRef, owner, projectRef)).ok).toBe(true);
-    const beforeShare = await openResourceKey(db, projectChatRef, friend);
+    expect((await createResourceKey(projectRef, owner)).ok).toBe(true);
+    expect((await createResourceKey(projectChatRef, owner)).ok).toBe(true);
+    expect((await wrapResourceKeyUnder(projectChatRef, owner, projectRef)).ok).toBe(true);
+    const beforeShare = await openResourceKey(projectChatRef, friend);
     expect(!beforeShare.ok && beforeShare.err.type).toBe('NO_ACCESS');
-    expect((await shareResourceKey(db, projectRef, owner, friend)).ok).toBe(true);
-    const asFriend = await openResourceKey(db, projectChatRef, friend);
-    const asOwner = await openResourceKey(db, projectChatRef, owner);
+    expect((await shareResourceKey(projectRef, owner, friend)).ok).toBe(true);
+    const asFriend = await openResourceKey(projectChatRef, friend);
+    const asOwner = await openResourceKey(projectChatRef, owner);
     expect(asFriend.ok && asOwner.ok && asFriend.val.key.equals(asOwner.val.key)).toBe(true);
-    const many = await openResourceKeys(db, 'chat', [
-      { resourceId: projectChatId, subject: friend },
-    ]);
+    const many = await openResourceKeys('chat', [{ resourceId: projectChatId, subject: friend }]);
     expect(many.has(projectChatId)).toBe(true);
   });
 
@@ -296,7 +294,7 @@ maybe('held keys and the resource key store', () => {
     expect(!away.ok && away.err.type).toBe('NEEDS_SESSION');
     const sealAway = await sealForSubject(owner, 'x', 'session');
     expect(!sealAway.ok && sealAway.err.type).toBe('NEEDS_SESSION');
-    ownerSession = await delegateTestSession(db, {
+    ownerSession = await delegateTestSession({
       subject: owner,
       keys: ownerKeys,
       instances: targets(),
@@ -304,7 +302,7 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('revoking automation pauses unattended work until the next sign-in', async () => {
-    expect(await revokeAutomation(db, friend)).toBe(1);
+    expect(await revokeAutomation(friend)).toBe(1);
     const status = await delegationStatus(friend);
     expect(status.automationInstances).toEqual([]);
     expect(status.sessionInstances).toEqual([instance.id]);
@@ -319,7 +317,7 @@ maybe('held keys and the resource key store', () => {
       .execute();
     const away = await getKeyRing(friend);
     expect(!away.ok && away.err.type).toBe('NEEDS_DELEGATION');
-    await delegateTestSession(db, {
+    await delegateTestSession({
       subject: friend,
       keys: friendKeys,
       instances: targets(),
@@ -327,7 +325,7 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('rotating the user key moves every wrapping and value; the old key opens nothing', async () => {
-    const before = await openResourceKey(db, ref, owner);
+    const before = await openResourceKey(ref, owner);
     const memory = await sealForSubject(owner, 'remember this', 'session');
     expect(before.ok && memory.ok).toBe(true);
     if (!before.ok || !memory.ok) return;
@@ -337,7 +335,7 @@ maybe('held keys and the resource key store', () => {
       .execute();
     const next: BrowserKeys = { ...ownerKeys, userKey: randomBytes(32) };
     const sealed = sealDelegations(next, { instances: targets() });
-    const rotated = await rotateUserKey(db, {
+    const rotated = await rotateUserKey({
       subject: owner,
       sessionId: ownerSession,
       wrappedPrivateKey: wrapKey(next.pair.privateKey, next.userKey),
@@ -348,7 +346,7 @@ maybe('held keys and the resource key store', () => {
     });
     expect(rotated.ok).toBe(true);
     ownerKeys = next;
-    const after = await openResourceKey(db, ref, owner);
+    const after = await openResourceKey(ref, owner);
     expect(after.ok && after.val.key.equals(before.val.key)).toBe(true);
     const stored = await db
       .selectFrom('chat_user_memories')
@@ -361,7 +359,7 @@ maybe('held keys and the resource key store', () => {
     // A rotation with the automation key swapped is refused: that key is not what rotates.
     const swapped = { ...next, automationKey: randomBytes(32) };
     const sealedSwapped = sealDelegations(swapped, { instances: targets() });
-    const refused = await rotateUserKey(db, {
+    const refused = await rotateUserKey({
       subject: owner,
       sessionId: ownerSession,
       wrappedPrivateKey: wrapKey(swapped.pair.privateKey, swapped.userKey),
@@ -374,11 +372,11 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('revoking forgets one wrapping and leaves the owner whole', async () => {
-    expect(await revokeResourceKey(db, ref, friend)).toBe(true);
-    const asFriend = await openResourceKey(db, ref, friend);
+    expect(await revokeResourceKey(ref, friend)).toBe(true);
+    const asFriend = await openResourceKey(ref, friend);
     expect(!asFriend.ok && asFriend.err.type).toBe('NO_ACCESS');
-    expect((await openResourceKey(db, ref, owner)).ok).toBe(true);
-    expect(await revokeResourceKey(db, ref, friend)).toBe(false);
+    expect((await openResourceKey(ref, owner)).ok).toBe(true);
+    expect(await revokeResourceKey(ref, friend)).toBe(false);
   });
 
   it('a person from before enrolls with everything moved off the managed key', async () => {
@@ -387,10 +385,10 @@ maybe('held keys and the resource key store', () => {
     const legacy = `legacy-${suiteId.slice(0, 8)}`;
     await db.insertInto('chats').values({ id: legacyChat, owner_subject: legacy }).execute();
     const legacyRef = { kind: 'chat' as const, resourceId: legacyChat };
-    const key = await legacyEnsureResourceKey(db, legacyRef, legacy);
+    const key = await legacyEnsureResourceKey(legacyRef, legacy);
     expect(key.ok).toBe(true);
     if (!key.ok) return;
-    const token = await legacySealForSubject(db, legacy, 'tok');
+    const token = await legacySealForSubject(legacy, 'tok');
     expect(token.ok).toBe(true);
     if (!token.ok) return;
     await db
@@ -412,9 +410,9 @@ maybe('held keys and the resource key store', () => {
     const beforeEnroll = await getKeyRing(legacy);
     expect(!beforeEnroll.ok && beforeEnroll.err.type).toBe('NOT_ENROLLED');
     expect((await delegationStatus(legacy)).legacy).toBe(true);
-    expect(await enrollmentCensus(db)).toEqual(expect.objectContaining({ managed: 1 }));
-    await enrollTestPerson(db, { subject: legacy, instances: targets() });
-    const opened = await openResourceKey(db, legacyRef, legacy);
+    expect(await enrollmentCensus()).toEqual(expect.objectContaining({ managed: 1 }));
+    await enrollTestPerson({ subject: legacy, instances: targets() });
+    const opened = await openResourceKey(legacyRef, legacy);
     expect(opened.ok && opened.val.key.equals(key.val.key)).toBe(true);
     const grant = await db
       .selectFrom('provider_grants')
@@ -424,16 +422,16 @@ maybe('held keys and the resource key store', () => {
     expect(grant.encrypted_access_token).not.toBe(token.val);
     const reopened = await openForSubject(legacy, grant.encrypted_access_token);
     expect(reopened.ok && reopened.val).toBe('tok');
-    expect((await enrollmentCensus(db)).managed).toBe(0);
+    expect((await enrollmentCensus()).managed).toBe(0);
   });
 
   it('shredding leaves nothing of the person openable', async () => {
-    const chat = await openResourceKey(db, ref, owner);
+    const chat = await openResourceKey(ref, owner);
     expect(chat.ok).toBe(true);
-    expect(await shredUserKey(db, owner)).toBe(true);
+    expect(await shredUserKey(owner)).toBe(true);
     const gone = await getKeyRing(owner);
     expect(!gone.ok && gone.err.type).toBe('NO_USER_KEY');
-    expect(await listResourceKeyHolders(db, ref)).toEqual([]);
+    expect(await listResourceKeyHolders(ref)).toEqual([]);
     expect(
       await db.selectFrom('key_delegations').select('id').where('subject', '=', owner).execute()
     ).toEqual([]);
@@ -444,13 +442,13 @@ maybe('held keys and the resource key store', () => {
   });
 
   it('deleting the key removes every wrapping; the prune catches a key whose chat is gone', async () => {
-    await deleteResourceKey(db, projectChatRef);
-    expect(await listResourceKeyHolders(db, projectChatRef)).toEqual([]);
+    await deleteResourceKey(projectChatRef);
+    expect(await listResourceKeyHolders(projectChatRef)).toEqual([]);
     const orphan = randomUUID();
     await db
       .insertInto('resource_keys')
       .values({ resource_kind: 'chat', resource_id: orphan })
       .execute();
-    expect(await pruneOrphanResourceKeys(db)).toBeGreaterThanOrEqual(1);
+    expect(await pruneOrphanResourceKeys()).toBeGreaterThanOrEqual(1);
   });
 });

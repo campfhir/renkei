@@ -23,8 +23,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   parseMirthCredentials,
   readConnectionCiphertext as readMirthCiphertext,
@@ -139,7 +137,6 @@ async function relay(upstream: Response, response: ServerResponse): Promise<void
 
 export class Forwarder {
   constructor(
-    private readonly db: Kysely<DB>,
     private readonly grants: Grants,
     /** Injected in tests; production dials the worker. */
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)

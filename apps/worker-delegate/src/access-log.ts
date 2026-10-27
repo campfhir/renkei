@@ -11,8 +11,7 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { DelegateLogger } from './grants';
 
 export type AccessOutcome = 'ok' | 'refused' | 'failed';
@@ -48,10 +47,7 @@ export function outcomeOf(status: number): AccessOutcome {
 }
 
 export class AccessLog {
-  constructor(
-    private readonly db: Kysely<DB>,
-    private readonly logger: DelegateLogger
-  ) {}
+  constructor(private readonly logger: DelegateLogger) {}
 
   async record(event: AccessEvent): Promise<void> {
     const hashed = subjectHash(event.subject);
@@ -66,17 +62,14 @@ export class AccessLog {
     });
     if (!event.persist) return;
     try {
-      await this.db
-        .insertInto('delegate_access_events')
-        .values({
-          caller: event.caller.slice(0, 32),
-          op: event.op.slice(0, 64),
-          subject_hash: event.subject ? hashed : null,
-          target: event.target ? event.target.slice(0, 200) : null,
-          outcome: event.outcome,
-          status: event.status,
-        })
-        .execute();
+      await getDataStore().delegateAccessEvents.record({
+        caller: event.caller.slice(0, 32),
+        op: event.op.slice(0, 64),
+        subjectHash: event.subject ? hashed : null,
+        target: event.target ? event.target.slice(0, 200) : null,
+        outcome: event.outcome,
+        status: event.status,
+      });
     } catch (error) {
       this.logger.warn('delegate access event not recorded for {op}: {error}', {
         component: 'worker-delegate/access',

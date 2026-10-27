@@ -21,5 +21,13 @@ export function postgresPlatformSettings(db: () => Kysely<DB>): PlatformSettingS
         .executeTakeFirst();
       return inserted !== undefined;
     },
+    async update(key, value) {
+      const result = await db()
+        .updateTable('platform_settings')
+        .set({ value: JSON.stringify(value) })
+        .where('key', '=', key)
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows);
+    },
   };
 }

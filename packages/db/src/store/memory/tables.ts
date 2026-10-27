@@ -405,6 +405,44 @@ export class MemoryTables {
     return doomed.size;
   }
 
+  /** `param` for a table and column named at runtime. */
+  paramFor(table: string, column: string, value: unknown): unknown {
+    const schema = this.def(table).columns[column];
+    if (!schema) {
+      throw new MemoryStoreError(
+        '42703',
+        `column "${column}" of relation "${table}" does not exist`,
+        table
+      );
+    }
+    return normalize(table, column, schema, value);
+  }
+
+  /**
+   * SELECT on a table named at runtime (a walk over several tables with
+   * the same shape of work: re-sealing a column wherever it lives). Copies.
+   */
+  selectWhere(table: string, where: (row: Readonly<Fields>) => boolean): Fields[] {
+    return this.rows(table)
+      .filter(where)
+      .map((row) => copyRow(row));
+  }
+
+  /**
+   * UPDATE on a table named at runtime: `changes` written to every matching
+   * row, through the same checks as `update`. Returns how many changed.
+   */
+  updateWhere(
+    table: TableName,
+    where: (row: Readonly<Fields>) => boolean,
+    changes: Readonly<Fields>
+  ): number {
+    const def = this.def(table);
+    const targets = this.rows(table).filter(where);
+    for (const row of targets) this.patchRow(table, def, row, { ...changes });
+    return targets.length;
+  }
+
   private deleteRows(table: string, doomed: Set<Fields>): void {
     if (doomed.size === 0) return;
     this.data.set(

@@ -145,7 +145,7 @@ maybe('rewrap under the current key of the ring', () => {
 
   it('a dry run counts and changes nothing', async () => {
     const before = await stored();
-    const report = await rewrapAll(db, rings, { dryRun: true });
+    const report = await rewrapAll(rings, { dryRun: true });
     expect(report.targets['oidc_config.client_secret']?.rewrapped).toBe(1);
     expect(report.targets['llm_model_configs.encrypted_secrets']?.rewrapped).toBe(1);
     expect(report.targets['connector_configs.encrypted_secrets']?.rewrapped).toBe(1);
@@ -159,7 +159,7 @@ maybe('rewrap under the current key of the ring', () => {
 
   it('moves v1 and old-kid rows under the current key, and they still open', async () => {
     const lines: string[] = [];
-    const report = await rewrapAll(db, rings, { log: (line) => lines.push(line) });
+    const report = await rewrapAll(rings, { log: (line) => lines.push(line) });
     expect(report.targets['oidc_config.client_secret']).toEqual({
       rewrapped: 1,
       skipped: 0,
@@ -201,7 +201,7 @@ maybe('rewrap under the current key of the ring', () => {
   });
 
   it('a second run finds nothing left but the row nobody can open', async () => {
-    const report = await rewrapAll(db, rings);
+    const report = await rewrapAll(rings);
     for (const [name, counts] of Object.entries(report.targets)) {
       expect({ name, rewrapped: counts.rewrapped }).toEqual({ name, rewrapped: 0 });
     }

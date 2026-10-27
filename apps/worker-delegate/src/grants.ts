@@ -19,8 +19,6 @@
 
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   deleteGrant,
   getGrant,
@@ -190,7 +188,6 @@ export class Grants {
   private readonly pending = new Map<string, Pending>();
 
   constructor(
-    private readonly db: Kysely<DB>,
     private readonly encryptionKey: Buffer,
     private readonly logger: DelegateLogger,
     /** Injected in tests; production dials the provider. */
@@ -209,11 +206,11 @@ export class Grants {
   ): Promise<
     { ok: true; grant: ProviderGrant; spec: ProviderSpec } | { ok: false; error: GrantError }
   > {
-    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec) return { ok: false, error: 'unknown_provider' };
-    const row = await grantRow(this.db, provider, by);
+    const row = await grantRow(provider, by);
     if (!row) return { ok: false, error: 'NO_GRANT' };
-    const read = await getGrant(provider, row.provider_account_id);
+    const read = await getGrant(provider, row.accountId);
     if (!read.ok) {
       // The store names the key verdict in its message; the one a caller
       // can act on is "the owner must sign in", which travels as its own tag.
@@ -296,7 +293,7 @@ export class Grants {
         'the grant needs a provider and a subject, accountId or pending handle'
       );
     }
-    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec) return fail('unknown_provider');
     let url: URL;
     try {
@@ -457,7 +454,7 @@ export class Grants {
     const fail = (type: GrantError, message?: string): void =>
       sendJson(response, statusForGrantError(type), { error: { type, message } });
     const provider = str(body.provider);
-    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec || !isRecord(body.form)) return fail(spec ? 'bad_request' : 'unknown_provider');
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(body.form)) {
@@ -578,7 +575,7 @@ export class Grants {
     const accountId = str(body.accountId);
     const displayName = str(body.displayName);
     if (!provider || !handle || !subject || !accountId) return fail('bad_request');
-    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec) return fail('unknown_provider');
     const pending = this.takePending(handle, provider, true);
     if (!pending) return fail('NO_PENDING');
@@ -625,7 +622,7 @@ export class Grants {
     const displayName = str(body.displayName);
     const secret = str(body.secret);
     if (!provider || !subject || !accountId || !secret) return fail('bad_request');
-    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec) return fail('unknown_provider');
     if (!spec.credential) return fail('bad_request', `${provider} takes no typed-in credential`);
     const metadata = isRecord(body.metadata) ? body.metadata : {};
@@ -657,9 +654,9 @@ export class Grants {
     if (!provider || (!subject && !accountId)) {
       return sendJson(response, 400, { error: { type: 'bad_request' } });
     }
-    const row = await grantRow(this.db, provider, { subject, accountId });
+    const row = await grantRow(provider, { subject, accountId });
     if (!row) return sendJson(response, 404, { error: { type: 'NO_GRANT' } });
-    const read = await getGrant(provider, row.provider_account_id);
+    const read = await getGrant(provider, row.accountId);
     if (!read.ok || !read.val)
       return sendJson(response, 502, { error: { type: 'GRANT_UNREADABLE' } });
     sendJson(response, 200, describe(read.val));
@@ -669,7 +666,7 @@ export class Grants {
     const provider = str(body.provider);
     const accountId = str(body.accountId);
     if (!provider || !accountId) return sendJson(response, 400, { error: { type: 'bad_request' } });
-    const spec = await resolveProviderSpec(this.db, this.encryptionKey, provider);
+    const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec) return sendJson(response, 404, { error: { type: 'unknown_provider' } });
 
     // Best effort at the provider while we still hold the token; deleting

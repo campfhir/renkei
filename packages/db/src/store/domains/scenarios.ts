@@ -74,6 +74,13 @@ import { sandboxServiceScenarios } from './sandbox-services/scenarios';
 import { codeServiceImageRuleScenarios } from './code-service-image-rules/scenarios';
 import { sandboxEnvSecretScenarios } from './sandbox-env-secrets/scenarios';
 import { sandboxCrawlScenarios } from './sandbox-crawls/scenarios';
+import { resourceKeyScenarios } from './resource-keys/scenarios';
+import { delegateSigningKeyScenarios } from './delegate-signing-keys/scenarios';
+import { delegateAccessEventScenarios } from './delegate-access-events/scenarios';
+import { delegateGitTicketScenarios } from './delegate-git-tickets/scenarios';
+import { sealedEnvelopeScenarios } from './sealed-envelopes/scenarios';
+import { legacyEnvelopeScenarios } from './legacy-envelopes/scenarios';
+import { agentRunOwnershipScenarios } from './agent-runs/ownership-scenarios';
 
 import { pendingSigninScenarios } from './pending-signins/scenarios';
 import { webhookSubscriptionScenarios } from './webhook-subscriptions/scenarios';
@@ -156,4 +163,11 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...webexDirtyWindowScenarios,
   ...agentSweepScenarios,
   ...agentRunSweepScenarios,
+  ...resourceKeyScenarios,
+  ...delegateSigningKeyScenarios,
+  ...delegateAccessEventScenarios,
+  ...delegateGitTicketScenarios,
+  ...sealedEnvelopeScenarios,
+  ...legacyEnvelopeScenarios,
+  ...agentRunOwnershipScenarios,
 ];

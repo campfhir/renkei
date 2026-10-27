@@ -20,8 +20,6 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { encrypt } from '@renkei/crypto';
 import {
   PROTOCOL_VERSION,
@@ -60,7 +58,6 @@ function statusFor(type: McpPrepareError): number {
 
 export class McpPreparer {
   constructor(
-    private readonly db: Kysely<DB>,
     private readonly encryptionKey: Buffer,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
     /** Tests replace the DNS-resolving guard. */

@@ -72,17 +72,16 @@ describeDb('worker-delegate', () => {
     if (!db.ok) throw new Error('database unavailable');
     const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
     if (!key.ok) throw new Error('bad key');
-    instance = await registerTestInstance(db.val);
+    instance = await registerTestInstance();
     const targets = [{ id: instance.id, publicKey: instance.pair.publicKey }];
-    const enrolledOwner = await enrollTestPerson(db.val, {
+    const enrolledOwner = await enrollTestPerson({
       subject: owner,
       instances: targets,
     });
     ownerSessionId = enrolledOwner.sessionId;
     ownerKeys = enrolledOwner.keys;
-    friendSessionId = (await enrollTestPerson(db.val, { subject: friend, instances: targets }))
-      .sessionId;
-    await enrollTestPerson(db.val, { subject: leaver, instances: targets });
+    friendSessionId = (await enrollTestPerson({ subject: friend, instances: targets })).sessionId;
+    await enrollTestPerson({ subject: leaver, instances: targets });
     const fetchImpl: typeof fetch = async (input, init) => {
       const url =
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -130,9 +129,8 @@ describeDb('worker-delegate', () => {
       };
     };
     server = createDelegateServer({
-      db: db.val,
       encryptionKey: key.val,
-      signer: loadOrCreateSigningKey(db.val, key.val, {
+      signer: loadOrCreateSigningKey(key.val, {
         debug: () => undefined,
         info: () => undefined,
         warn: () => undefined,

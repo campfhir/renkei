@@ -16,8 +16,7 @@
  * on their own.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   decrypt,
   deviceCodeOf,
@@ -40,32 +39,22 @@ export interface InstanceSigner {
 
 /** The deployment's signing key, made on the first boot and read on every later one. */
 export async function loadOrCreateSigningKey(
-  db: Kysely<DB>,
   encryptionKey: Buffer,
   logger: DelegateLogger
 ): Promise<InstanceSigner | null> {
-  let row = await db
-    .selectFrom('delegate_signing_keys')
-    .select(['public_key', 'sealed_private_key'])
-    .executeTakeFirst();
+  const keys = getDataStore().delegateSigningKeys;
+  let row = await keys.find();
   if (!row) {
     const pair = generateEd25519KeyPair();
-    await db
-      .insertInto('delegate_signing_keys')
-      .values({
-        public_key: pair.publicKey.toString('base64'),
-        sealed_private_key: encrypt(pair.privateKey.toString('base64'), encryptionKey),
-      })
-      // Two instances booting at once: one row wins and both read it back.
-      .onConflict((oc) => oc.column('singleton').doNothing())
-      .execute();
-    row = await db
-      .selectFrom('delegate_signing_keys')
-      .select(['public_key', 'sealed_private_key'])
-      .executeTakeFirst();
+    // Two instances booting at once: one row wins and both read it back.
+    await keys.insertIfAbsent({
+      publicKey: pair.publicKey.toString('base64'),
+      sealedPrivateKey: encrypt(pair.privateKey.toString('base64'), encryptionKey),
+    });
+    row = await keys.find();
     if (!row) return null;
   }
-  const opened = decrypt(row.sealed_private_key, encryptionKey);
+  const opened = decrypt(row.sealedPrivateKey, encryptionKey);
   if (!opened.ok) {
     logger.error(
       'the delegate signing key does not open under TOKEN_ENCRYPTION_KEY: instance lists go unsigned until it is replaced',
@@ -74,7 +63,7 @@ export async function loadOrCreateSigningKey(
     return null;
   }
   const privateKey = Buffer.from(opened.val, 'base64');
-  const publicKey = Buffer.from(row.public_key, 'base64');
+  const publicKey = Buffer.from(row.publicKey, 'base64');
   if (privateKey.byteLength !== 32 || publicKey.byteLength !== 32) return null;
   const fingerprint = deviceCodeOf(new Uint8Array(publicKey));
   logger.info('delegate signing key {fingerprint} loaded', {
@@ -82,7 +71,7 @@ export async function loadOrCreateSigningKey(
     fingerprint,
   });
   return {
-    publicKey: row.public_key,
+    publicKey: row.publicKey,
     fingerprint,
     sign: (instances) =>
       signEd25519(privateKey, Buffer.from(instanceListMessage(instances), 'utf8')).toString(

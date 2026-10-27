@@ -76,7 +76,6 @@ export async function startTestDelegate(
   if (!tokenKey.ok) throw new Error('TOKEN_ENCRYPTION_KEY is malformed');
   const apiKey = `test-${randomBytes(8).toString('hex')}`;
   const server: Server = createDelegateServer({
-    db,
     encryptionKey: tokenKey.val,
     apiKeys: [apiKey],
     fetchImpl: options.fetchImpl,
@@ -88,14 +87,14 @@ export async function startTestDelegate(
   const config = { url, apiKey };
   setDelegateClient(new DelegateClient(new DelegateTransport(config)));
   setDelegateGrants(new DelegateGrants(new DelegateTransport(config), url, apiKey));
-  const instance = await registerTestInstance(db);
+  const instance = await registerTestInstance();
   return {
     url,
     apiKey,
     instance,
     enrollPerson: async (subject) =>
       (
-        await enrollTestPerson(db, {
+        await enrollTestPerson({
           subject,
           instances: [{ id: instance.id, publicKey: instance.pair.publicKey }],
         })

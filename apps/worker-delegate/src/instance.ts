@@ -13,8 +13,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { deviceCodeOf, generateX25519KeyPair } from '@renkei/crypto';
 import { createKeyVault, setKeyVault, INSTANCE_LIVE_MS, type KeyVault } from '@renkei/user-keys';
 import type { DelegateLogger } from './grants';
@@ -30,16 +29,11 @@ export interface DelegateInstance {
 }
 
 /** Register this process as a delegate instance and keep its heartbeat going. */
-export async function registerInstance(
-  db: Kysely<DB>,
-  logger: DelegateLogger
-): Promise<DelegateInstance> {
+export async function registerInstance(logger: DelegateLogger): Promise<DelegateInstance> {
   const id = randomUUID();
   const pair = generateX25519KeyPair();
-  await db
-    .insertInto('delegate_instances')
-    .values({ id, public_key: pair.publicKey.toString('base64') })
-    .execute();
+  const instances = getDataStore().userKeys;
+  await instances.registerInstance(id, pair.publicKey.toString('base64'));
   const vault = createKeyVault(id, pair);
   setKeyVault(vault);
   // The fingerprint is what a browser shows when it meets this instance's
@@ -52,15 +46,8 @@ export async function registerInstance(
 
   const beat = async (): Promise<void> => {
     try {
-      await db
-        .updateTable('delegate_instances')
-        .set({ heartbeat_at: new Date() })
-        .where('id', '=', id)
-        .execute();
-      await db
-        .deleteFrom('delegate_instances')
-        .where('heartbeat_at', '<', new Date(Date.now() - STALE_AFTER_MS))
-        .execute();
+      await instances.heartbeatInstance(id, new Date());
+      await instances.deleteStaleInstances(new Date(Date.now() - STALE_AFTER_MS));
     } catch (error) {
       logger.warn('delegate heartbeat failed: {error}', {
         component: 'worker-delegate/instance',
@@ -77,7 +64,7 @@ export async function registerInstance(
       clearInterval(timer);
       setKeyVault(null);
       try {
-        await db.deleteFrom('delegate_instances').where('id', '=', id).execute();
+        await instances.deleteInstance(id);
       } catch {
         // The stale sweep of another instance removes it.
       }

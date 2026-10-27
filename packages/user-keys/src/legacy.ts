@@ -18,8 +18,7 @@
  * with their history unreadable.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   deriveOwnKek,
   deriveUnlockKey,
@@ -73,10 +72,7 @@ export function legacyKekOf(
     ) {
       return err('KEY_LOCKED' as const);
     }
-    const unsealed = unwrapKey(
-      row.sealed_kek,
-      deriveUnlockKey(master.val, salt, domain, subject)
-    );
+    const unsealed = unwrapKey(row.sealed_kek, deriveUnlockKey(master.val, salt, domain, subject));
     return unsealed.ok ? ok(unsealed.val) : err('KEY_LOCKED' as const);
   }
   const master = userKeyMaster();
@@ -91,13 +87,9 @@ export function legacyKekOf(
  * A deployment born single-organization has no such rows and no setting;
  * the empty string then derives nothing anyone stored.
  */
-export async function legacyKeyDomain(db: Kysely<DB>): Promise<string> {
-  const row = await db
-    .selectFrom('settings')
-    .select('value')
-    .where('key', '=', 'legacy_key_domain')
-    .executeTakeFirst();
-  return typeof row?.value === 'string' ? row.value : '';
+export async function legacyKeyDomain(): Promise<string> {
+  const value = await getDataStore().settings.get('legacy_key_domain');
+  return typeof value === 'string' ? value : '';
 }
 
 /** Is the master present, so managed rows can still be moved? */
@@ -111,35 +103,32 @@ export function legacyMasterAvailable(): boolean {
  * their own key is not this function's to touch.
  */
 export async function legacyManagedKek(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<{ key: Buffer; version: number }, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
   const master = userKeyMaster();
   if (!master.ok) return err('MIGRATION_UNAVAILABLE' as const);
-  await db
-    .insertInto('user_encryption_keys')
-    .values({ subject, salt: generateUserKeySalt().toString('base64') })
-    .onConflict((oc) => oc.columns(['subject']).doNothing())
-    .execute();
-  const row = await db
-    .selectFrom('user_encryption_keys')
-    .select(['salt', 'mode', 'version'])
-    .where('subject', '=', subject)
-    .executeTakeFirstOrThrow();
+  const row = await getDataStore().userKeys.ensureLegacyRow(
+    subject,
+    generateUserKeySalt().toString('base64')
+  );
   if (row.mode !== 'managed') return err('NOT_MANAGED' as const);
   return ok({
-    key: deriveUserKek(master.val, Buffer.from(row.salt, 'base64'), await legacyKeyDomain(db), subject),
+    key: deriveUserKek(
+      master.val,
+      Buffer.from(row.salt, 'base64'),
+      await legacyKeyDomain(),
+      subject
+    ),
     version: row.version,
   });
 }
 
 /** The sweep's seal: a `uenc1:` value under the person's managed key. */
 export async function legacySealForSubject(
-  db: Kysely<DB>,
   subject: string,
   plaintext: string
 ): Promise<Result<string, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
-  const kek = await legacyManagedKek(db, subject);
+  const kek = await legacyManagedKek(subject);
   if (!kek.ok) return kek;
   return ok(sealForUser(plaintext, kek.val.key));
 }
@@ -151,70 +140,50 @@ export async function legacySealForSubject(
  * person's held key.
  */
 export async function legacyEnsureResourceKey(
-  db: Kysely<DB>,
   ref: { kind: string; resourceId: string },
   ownerSubject: string
 ): Promise<
   Result<{ id: string; key: Buffer }, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED' | 'DECRYPTION_ERROR'>
 > {
-  const kek = await legacyManagedKek(db, ownerSubject);
+  const kek = await legacyManagedKek(ownerSubject);
   if (!kek.ok) return kek;
-  const existing = await db
-    .selectFrom('resource_keys as k')
-    .leftJoin('resource_key_grants as g', (join) =>
-      join
-        .onRef('g.resource_key_id', '=', 'k.id')
-        .on('g.holder_kind', '=', 'user')
-        .on('g.holder', '=', ownerSubject)
-    )
-    .select(['k.id', 'g.wrapped_key'])
-    .where('k.resource_kind', '=', ref.kind)
-    .where('k.resource_id', '=', ref.resourceId)
-    .executeTakeFirst();
-  if (existing?.wrapped_key) {
-    const key = unwrapKey(existing.wrapped_key, kek.val.key);
+  const store = getDataStore().resourceKeys;
+  const existing = await store.findWithWrapping(ref.kind, ref.resourceId, 'user', ownerSubject);
+  if (existing?.wrappedKey) {
+    const key = unwrapKey(existing.wrappedKey, kek.val.key);
     return key.ok ? ok({ id: existing.id, key: key.val }) : err('DECRYPTION_ERROR' as const);
   }
   if (existing) return err('DECRYPTION_ERROR' as const, { message: 'key held by others only' });
   const key = generateDataKey();
-  const inserted = await db
-    .insertInto('resource_keys')
-    .values({ resource_kind: ref.kind, resource_id: ref.resourceId })
-    .returning('id')
-    .executeTakeFirstOrThrow();
-  await db
-    .insertInto('resource_key_grants')
-    .values({
-      resource_key_id: inserted.id,
-      holder_kind: 'user',
-      holder: ownerSubject,
-      wrapped_key: wrapKey(key, kek.val.key),
-      kek_version: kek.val.version,
-      granted_by: null,
-    })
-    .execute();
-  return ok({ id: inserted.id, key });
+  const inserted = await store.insertIfAbsent(ref.kind, ref.resourceId);
+  // Another writer minted it between the read and here: the sweep runs alone,
+  // so this is a second sweep racing — fail the row rather than guess.
+  if (inserted === null) throw new Error(`resource key for ${ref.kind} ${ref.resourceId} exists`);
+  await store.upsertWrapping({
+    resourceKeyId: inserted,
+    holderKind: 'user',
+    holder: ownerSubject,
+    wrappedKey: wrapKey(key, kek.val.key),
+    kekVersion: kek.val.version,
+    grantedBy: null,
+  });
+  return ok({ id: inserted, key });
 }
 
 export async function legacyShareResourceKey(
-  db: Kysely<DB>,
   key: { id: string; key: Buffer },
   fromSubject: string,
   toSubject: string
 ): Promise<Result<void, 'MIGRATION_UNAVAILABLE' | 'NOT_MANAGED'>> {
-  const kek = await legacyManagedKek(db, toSubject);
+  const kek = await legacyManagedKek(toSubject);
   if (!kek.ok) return kek;
-  await db
-    .insertInto('resource_key_grants')
-    .values({
-      resource_key_id: key.id,
-      holder_kind: 'user',
-      holder: toSubject,
-      wrapped_key: wrapKey(key.key, kek.val.key),
-      kek_version: kek.val.version,
-      granted_by: fromSubject,
-    })
-    .onConflict((oc) => oc.columns(['resource_key_id', 'holder_kind', 'holder']).doNothing())
-    .execute();
+  await getDataStore().resourceKeys.insertWrappingIfAbsent({
+    resourceKeyId: key.id,
+    holderKind: 'user',
+    holder: toSubject,
+    wrappedKey: wrapKey(key.key, kek.val.key),
+    kekVersion: kek.val.version,
+    grantedBy: fromSubject,
+  });
   return ok();
 }

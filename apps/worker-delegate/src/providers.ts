@@ -8,8 +8,7 @@
  * the provider it belongs to.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { readConnectorConfigCached, type ConnectorConfig } from '@renkei/connector-config';
 import {
   getServer,
@@ -282,7 +281,6 @@ export const PROVIDERS: Readonly<Record<string, ProviderSpec>> = {
  * unknown server has no spec, so nothing of it is dialed.
  */
 export async function resolveProviderSpec(
-  db: Kysely<DB>,
   encryptionKey: Buffer,
   provider: string
 ): Promise<ProviderSpec | null> {
@@ -436,17 +434,15 @@ export function clientSecretOf(config: ConnectorConfig | null): string {
 
 /** The grant row for a person on a provider, or by account id when the caller already knows it. */
 export async function grantRow(
-  db: Kysely<DB>,
   provider: string,
   by: { subject?: string; accountId?: string }
-): Promise<{ provider_account_id: string; subject: string | null } | null> {
-  let query = db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'subject'])
-    .where('provider', '=', provider);
-  if (by.accountId) query = query.where('provider_account_id', '=', by.accountId);
-  else if (by.subject) query = query.where('subject', '=', by.subject);
+): Promise<{ accountId: string; subject: string | null } | null> {
+  const grants = getDataStore().providerGrants;
+  let row: { accountId: string; subject: string | null } | null | undefined;
+  if (by.accountId) row = await grants.find(provider, by.accountId);
+  // A person has one grant per provider in practice; with several, the
+  // first by account id answers, so the choice is stable.
+  else if (by.subject) row = (await grants.listForSubject(by.subject, { provider }))[0];
   else return null;
-  const row = await query.limit(1).executeTakeFirst();
-  return row ?? null;
+  return row ? { accountId: row.accountId, subject: row.subject } : null;
 }
