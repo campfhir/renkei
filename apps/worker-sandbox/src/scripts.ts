@@ -50,8 +50,6 @@ import {
 } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join } from 'node:path';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   EXEC_MAX_FILE_BYTES,
   SCRIPT_INPUT_DIR,
@@ -84,7 +82,6 @@ import { logger } from './logger';
 export const DEFAULT_PYTHON = '/opt/sandbox-python/bin/python3';
 
 export interface ScriptRunnerDeps {
-  db: Kysely<DB>;
   /** The directory runs are made under; its own, apart from the data and workspaces roots. */
   runsRoot: string;
   /** The interpreter's path (resolvePython). */
@@ -358,12 +355,10 @@ export class ScriptRunner {
   ): Promise<store.StoredFile[]> {
     const ids =
       fileIds ??
-      (await store.listFiles(this.deps.db, target))
-        .slice(0, SCRIPT_MAX_INPUT_FILES)
-        .map((file) => file.id);
+      (await store.listFiles(target)).slice(0, SCRIPT_MAX_INPUT_FILES).map((file) => file.id);
     const files: store.StoredFile[] = [];
     for (const id of ids) {
-      const file = await store.getFile(this.deps.db, target, id);
+      const file = await store.getFile(target, id);
       if (!file) {
         throw new ScriptRunError({
           type: 'not_found',
@@ -515,7 +510,6 @@ export class ScriptRunner {
         continue;
       }
       const result = await stageBytes(
-        this.deps.db,
         target,
         {
           filename: named.filename,

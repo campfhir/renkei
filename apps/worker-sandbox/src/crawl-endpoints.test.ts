@@ -19,8 +19,6 @@ jest.mock('./secrets-store', () => ({
 }));
 jest.mock('./store', () => ({ listExpired: jest.fn(async () => []), deleteById: jest.fn() }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createSandboxServer } from './server';
@@ -71,7 +69,6 @@ let base: string;
 
 beforeAll(async () => {
   server = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     crawler,
     crawlStore: store,

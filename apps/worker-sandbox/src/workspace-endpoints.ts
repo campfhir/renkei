@@ -23,8 +23,6 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getWorkspaceLimitBytes } from '@renkei/settings';
 import {
   CLONE_DEFAULT_DEPTH,
@@ -107,7 +105,6 @@ import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { logger } from './logger';
 
 export interface WorkspaceHandlerDeps {
-  db: Kysely<DB>;
   /** Whether this worker can run commands for a caller at all (features.ts); off answers every verb 503. */
   capable: boolean;
   /** Whether the organization has code workspaces on (its settings), asked per request. */
@@ -222,7 +219,6 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     return true;
   }
 
-  const { db } = deps;
   const lsp = deps.lsp ?? new LspSessions();
 
   /** The checkout size limit for this caller: the org's, or their approved larger one. */
@@ -238,7 +234,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     response: ServerResponse
   ): Promise<store.StoredWorkspace | null> {
     const id = str(body.id);
-    const workspace = id ? await store.getWorkspace(db, target, id) : undefined;
+    const workspace = id ? await store.getWorkspace(target, id) : undefined;
     if (!workspace) {
       sendError(response, 404, 'not_found', 'No such workspace — see the list.');
       return null;
@@ -283,7 +279,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         callerOnDisk,
         worker: workerInstance(),
       });
-      await store.setWorkspaceStatus(db, workspace.id, 'failed', {
+      await store.setWorkspaceStatus(workspace.id, 'failed', {
         error: `The checkout is no longer on the worker’s disk: ${why}.`,
       });
       sendError(
@@ -315,7 +311,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
 
   async function refreshSize(workspace: store.StoredWorkspace): Promise<number> {
     const sizeBytes = await measureWorkspace(workspaceDir(workspace.storageKey));
-    await store.touchWorkspace(db, workspace.id, { sizeBytes });
+    await store.touchWorkspace(workspace.id, { sizeBytes });
     return sizeBytes;
   }
 
@@ -356,7 +352,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         ? Math.max(0, Math.floor(body.depth))
         : CLONE_DEFAULT_DEPTH;
 
-    if ((await store.countWorkspaces(db, target)) >= WORKSPACE_MAX_PER_SUBJECT) {
+    if ((await store.countWorkspaces(target)) >= WORKSPACE_MAX_PER_SUBJECT) {
       return sendError(
         response,
         429,
@@ -366,7 +362,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
 
     const storageKey = newWorkspaceStorageKey(target.subject);
-    const row = await store.insertWorkspace(db, {
+    const row = await store.insertWorkspace({
       ...target,
       provider: body.provider,
       repoFullName: repo.fullName,
@@ -392,7 +388,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
           repo: repo.fullName,
           error: outcome.message,
         });
-        await store.setWorkspaceStatus(db, row.id, 'failed', { error: outcome.message });
+        await store.setWorkspaceStatus(row.id, 'failed', { error: outcome.message });
         return;
       }
       const sizeBytes = await measureWorkspace(workspaceDir(storageKey));
@@ -406,10 +402,10 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
           id: row.id,
           worker: workerInstance(),
         });
-        await store.setWorkspaceStatus(db, row.id, 'failed', { error });
+        await store.setWorkspaceStatus(row.id, 'failed', { error });
         return;
       }
-      await store.setWorkspaceStatus(db, row.id, 'ready', { sizeBytes, branch: outcome.branch });
+      await store.setWorkspaceStatus(row.id, 'ready', { sizeBytes, branch: outcome.branch });
       logger.info('workspace cloned {repo} ({bytes} bytes)', {
         component: 'worker-sandbox/workspaces',
         repo: repo.fullName,
@@ -420,7 +416,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         component: 'worker-sandbox/workspaces',
         error: error instanceof Error ? error.message : String(error),
       });
-      void store.setWorkspaceStatus(db, row.id, 'failed', {
+      void store.setWorkspaceStatus(row.id, 'failed', {
         error: 'The clone failed unexpectedly.',
       });
     });
@@ -443,22 +439,20 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const ref = validateGitRef(body.branch);
     if (!ref.ok) return sendError(response, 400, 'bad_request', ref.message);
     const baseId = str(body.baseId);
-    const base = baseId ? await store.getWorkspace(db, target, baseId) : undefined;
+    const base = baseId ? await store.getWorkspace(target, baseId) : undefined;
     if (!base || base.parentId) {
       return sendError(response, 404, 'not_found', 'No such base checkout to make a worktree of.');
     }
     if (base.status !== 'ready' || !(await checkoutExists(base.storageKey))) {
       return sendError(response, 409, 'not_ready', 'The base checkout is not ready.');
     }
-    const existing = (await store.listWorktrees(db, target, base.id)).find(
+    const existing = (await store.listWorktrees(target, base.id)).find(
       (candidate) => candidate.status === 'ready' && candidate.branch === ref.ref
     );
     if (existing && (await checkoutExists(existing.storageKey))) {
       return sendJson(response, 200, { workspace: workspaceWire(existing) });
     }
-    if (
-      (await store.countWorkspaces(db, target, { worktrees: true })) >= WORKTREE_MAX_PER_SUBJECT
-    ) {
+    if ((await store.countWorkspaces(target, { worktrees: true })) >= WORKTREE_MAX_PER_SUBJECT) {
       return sendError(
         response,
         429,
@@ -483,7 +477,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       ...(gitProxy ? { gitProxy } : {}),
     });
     if (!outcome.ok) return sendError(response, 409, 'worktree_failed', outcome.message);
-    const row = await store.insertWorkspace(db, {
+    const row = await store.insertWorkspace({
       ...target,
       provider: base.provider,
       repoFullName: base.repoFullName,
@@ -492,14 +486,14 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       parentId: base.id,
       status: 'ready',
     });
-    await store.touchWorkspace(db, row.id, {
+    await store.touchWorkspace(row.id, {
       sizeBytes: await measureWorkspace(workspaceDir(storageKey)),
     });
     sendJson(response, 200, { workspace: workspaceWire(row) });
   }
 
   async function list(target: store.WorkspaceTarget, response: ServerResponse): Promise<void> {
-    const rows = await store.listWorkspaces(db, target);
+    const rows = await store.listWorkspaces(target);
     sendJson(response, 200, { workspaces: rows.map(workspaceWire) });
   }
 
@@ -509,7 +503,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     response: ServerResponse
   ): Promise<void> {
     const id = str(body.id);
-    const workspace = id ? await store.getWorkspace(db, target, id) : undefined;
+    const workspace = id ? await store.getWorkspace(target, id) : undefined;
     if (!workspace) return sendError(response, 404, 'not_found');
     sendJson(response, 200, { workspace: workspaceWire(workspace) });
   }
@@ -520,15 +514,15 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     response: ServerResponse
   ): Promise<void> {
     const id = str(body.id);
-    const deleted = id ? await store.deleteWorkspace(db, target, id) : undefined;
+    const deleted = id ? await store.deleteWorkspace(target, id) : undefined;
     if (!deleted) return sendError(response, 404, 'not_found');
     if (deleted.parentId) {
-      const base = await store.getWorkspace(db, target, deleted.parentId);
+      const base = await store.getWorkspace(target, deleted.parentId);
       await removeWorktree(base?.storageKey ?? null, deleted.storageKey, identityFor(target));
     } else {
       // A base clone takes its worktrees with it: they cannot work without it.
-      for (const child of await store.listWorktrees(db, target, deleted.id)) {
-        await store.deleteWorkspaceById(db, child.id);
+      for (const child of await store.listWorktrees(target, deleted.id)) {
+        await store.deleteWorkspaceById(child.id);
         await removeWorktree(null, child.storageKey, identityFor(target));
       }
       await removeWorkspace(deleted.storageKey);
@@ -734,7 +728,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       content,
       identityFor(workspace)
     );
-    await store.touchWorkspace(db, workspace.id);
+    await store.touchWorkspace(workspace.id);
     sendJson(response, 200, {
       path: path.path,
       created: written.created,
@@ -769,7 +763,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         return sendError(response, 409, 'bad_path', error.message);
       throw error;
     }
-    await store.touchWorkspace(db, workspace.id);
+    await store.touchWorkspace(workspace.id);
     sendJson(response, 200, { path: path.path, created: outcome.created });
   }
 
@@ -825,7 +819,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       );
     }
     await writeWorkspaceFile(dir, path.path, updated, identityFor(workspace));
-    await store.touchWorkspace(db, workspace.id);
+    await store.touchWorkspace(workspace.id);
     sendJson(response, 200, {
       path: path.path,
       replacements: body.replaceAll === true ? occurrences : 1,
@@ -854,7 +848,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       return sendError(response, 404, 'not_found', `No such file or folder: ${path.path}`);
     }
     const sizeBytes = await refreshSize(workspace);
-    await store.touchWorkspace(db, workspace.id, { sizeBytes });
+    await store.touchWorkspace(workspace.id, { sizeBytes });
     sendJson(response, 200, { path: path.path, deleted: true });
   }
 
@@ -901,7 +895,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         return sendError(response, 409, 'move_conflict', error.message);
       throw error;
     }
-    await store.touchWorkspace(db, workspace.id);
+    await store.touchWorkspace(workspace.id);
     sendJson(response, 200, { from: from.path, to: to.path });
   }
 
@@ -938,7 +932,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       runInputFor(workspace, env, timeoutMs, { extraEnv: serviceEnv, signal: gone.signal }),
       command.command
     );
-    await markEnvUsed(db, env);
+    await markEnvUsed(env);
     const sizeBytes = await refreshSize(workspace);
     sendJson(response, 200, {
       exitCode: result.exitCode,
@@ -989,7 +983,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       ]);
       parts.log = scrubEnv(gitText(log), env);
     }
-    await store.touchWorkspace(db, workspace.id, { branch });
+    await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, parts);
   }
 
@@ -1089,7 +1083,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
     const joined = pieces.filter(Boolean).join('');
     const truncated = joined.length > DIFF_MAX_CHARS;
-    await store.touchWorkspace(db, workspace.id, { branch });
+    await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, {
       branch,
       diff: scrubEnv(truncated ? joined.slice(0, DIFF_MAX_CHARS) : joined, env),
@@ -1163,7 +1157,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const branch = await currentBranch(workspace, env);
     const text = patch?.stdout ?? '';
     const truncated = text.length > DIFF_MAX_CHARS;
-    await store.touchWorkspace(db, workspace.id, { branch });
+    await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, {
       branch,
       commit: {
@@ -1241,7 +1235,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
     const head = await runGit(input, ['log', '-1', '--format=%h %s']);
     const branch = await currentBranch(workspace, env);
-    await store.touchWorkspace(db, workspace.id, { branch });
+    await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, { branch, commit: scrubEnv(head.stdout.trim(), env) });
   }
 
@@ -1277,7 +1271,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     ]);
     if (pushed.exitCode !== 0)
       return sendError(response, 409, 'git_failed', scrubEnv(gitText(pushed), env));
-    await store.touchWorkspace(db, workspace.id, { branch });
+    await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, { branch, remoteBranch, output: scrubEnv(gitText(pushed), env) });
   }
 
@@ -1320,7 +1314,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
     const branch = await currentBranch(workspace, env);
     const sizeBytes = await refreshSize(workspace);
-    await store.touchWorkspace(db, workspace.id, { branch, sizeBytes });
+    await store.touchWorkspace(workspace.id, { branch, sizeBytes });
     sendJson(response, 200, { branch, output: scrubEnv(output, env) });
   }
 
@@ -1346,7 +1340,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       return sendError(response, 409, 'git_failed', scrubEnv(gitText(cleaned), env));
     const branch = await currentBranch(workspace, env);
     const sizeBytes = await refreshSize(workspace);
-    await store.touchWorkspace(db, workspace.id, { branch, sizeBytes });
+    await store.touchWorkspace(workspace.id, { branch, sizeBytes });
     sendJson(response, 200, { branch });
   }
 
@@ -1367,7 +1361,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
     switch (op) {
       case 'list': {
-        const rows = await envStore.listEnvSecrets(db, target);
+        const rows = await envStore.listEnvSecrets(target);
         return sendJson(response, 200, { variables: rows.map(envWire) });
       }
       case 'set': {
@@ -1376,8 +1370,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         const value = validateEnvValue(body.value);
         if (!value.ok) return sendError(response, 400, 'bad_request', value.message);
         if (
-          !(await envStore.hasEnvSecret(db, target, name.name)) &&
-          (await envStore.countEnvSecrets(db, target)) >= ENV_MAX_PER_SUBJECT
+          !(await envStore.hasEnvSecret(target, name.name)) &&
+          (await envStore.countEnvSecrets(target)) >= ENV_MAX_PER_SUBJECT
         ) {
           return sendError(
             response,
@@ -1386,7 +1380,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
             `At most ${ENV_MAX_PER_SUBJECT} variables — remove one first.`
           );
         }
-        const row = await envStore.upsertEnvSecret(db, {
+        const row = await envStore.upsertEnvSecret({
           ...target,
           name: name.name,
           sealed: sealEnvValue(value.value, key),
@@ -1396,7 +1390,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       case 'delete': {
         const name = validateEnvName(body.name);
         if (!name.ok) return sendError(response, 400, 'bad_request', name.message);
-        const deleted = await envStore.deleteEnvSecret(db, target, name.name);
+        const deleted = await envStore.deleteEnvSecret(target, name.name);
         if (!deleted) return sendError(response, 404, 'not_found');
         return sendJson(response, 200, { deleted: true, name: deleted.name });
       }
@@ -1421,13 +1415,13 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
           return sendError(response, 429, 'env_limit', `At most ${ENV_MAX_PER_SUBJECT} variables.`);
         }
         const keep = new Set(entries.map((entry) => entry.name));
-        for (const existing of await envStore.listEnvSecrets(db, target)) {
-          if (!keep.has(existing.name)) await envStore.deleteEnvSecret(db, target, existing.name);
+        for (const existing of await envStore.listEnvSecrets(target)) {
+          if (!keep.has(existing.name)) await envStore.deleteEnvSecret(target, existing.name);
         }
         const rows = [];
         for (const entry of entries) {
           rows.push(
-            await envStore.upsertEnvSecret(db, {
+            await envStore.upsertEnvSecret({
               ...target,
               name: entry.name,
               sealed: sealEnvValue(entry.value, key),
@@ -1512,7 +1506,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         bytes,
         identityFor(workspace)
       );
-      await store.touchWorkspace(db, workspace.id);
+      await store.touchWorkspace(workspace.id);
       sendJson(response, 200, {
         path: path.path,
         created: written.created,
@@ -1565,7 +1559,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         clientId,
       });
       if (!opened.ok) return sendError(response, opened.status, opened.type, opened.message);
-      await store.touchWorkspace(db, workspace.id);
+      await store.touchWorkspace(workspace.id);
       return sendJson(response, 200, { ...opened.session, reused: opened.reused });
     }
     const session = str(body.session);
@@ -1599,7 +1593,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         // What a server says reaches the editor scrubbed of the caller's
         // environment values, the rule every other text out keeps —
         // opened once per stream, applied to every message.
-        const env = envSecretsEnabled() ? await openCallerEnv(db, target) : EMPTY_ENV;
+        const env = envSecretsEnabled() ? await openCallerEnv(target) : EMPTY_ENV;
         const subscribed = lsp.subscribe(
           session,
           target,
@@ -1653,7 +1647,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     if (!verb) return sendError(response, 404, 'unknown_operation');
     const workspace = await loadReady(target, body, response);
     if (!workspace) return;
-    const env = envSecretsEnabled() ? await openCallerEnv(db, target) : EMPTY_ENV;
+    const env = envSecretsEnabled() ? await openCallerEnv(target) : EMPTY_ENV;
     try {
       await verb(workspace, env, body, response);
     } catch (error) {
@@ -1673,28 +1667,28 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    */
   async function sweep(limit: number): Promise<void> {
     if (!deps.capable) return;
-    const expired = await store.listExpiredWorkspaces(db, limit);
+    const expired = await store.listExpiredWorkspaces(limit);
     for (const workspace of expired) {
       try {
         if (await checkoutExists(workspace.storageKey)) {
           if (workspace.parentId) {
-            const base = await store.getWorkspaceById(db, workspace.parentId);
+            const base = await store.getWorkspaceById(workspace.parentId);
             await removeWorktree(
               base?.storageKey ?? null,
               workspace.storageKey,
               identityFor(workspace)
             );
           } else {
-            for (const child of await store.listWorktreesOf(db, workspace.id)) {
+            for (const child of await store.listWorktreesOf(workspace.id)) {
               await removeWorktree(null, child.storageKey, identityFor(child));
-              await store.deleteWorkspaceById(db, child.id);
+              await store.deleteWorkspaceById(child.id);
             }
             await removeWorkspace(workspace.storageKey);
           }
         } else if (!orphanedByNow(workspace.expiresAt)) {
           continue;
         }
-        await store.deleteWorkspaceById(db, workspace.id);
+        await store.deleteWorkspaceById(workspace.id);
       } catch (error) {
         logger.warn('sweep could not remove workspace {id}: {error}', {
           component: 'worker-sandbox/workspaces',

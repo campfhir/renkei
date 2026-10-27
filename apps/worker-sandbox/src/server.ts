@@ -29,8 +29,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { Readable } from 'node:stream';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
   assertSafeHttpsUrl,
@@ -119,7 +117,6 @@ export interface BrowserVerbs {
 }
 
 export interface SandboxServerDeps {
-  db: Kysely<DB>;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /** The per-tenant per-file ceiling (the org's attachment limit). */
@@ -330,12 +327,10 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     problems: deps.capabilityProblems ?? {},
   };
   const services = createServiceHandlers({
-    db: deps.db,
     manager: deps.services ?? null,
     enabledFor: async () => (await orgFeatures()).services,
   });
   const scripts = createScriptHandlers({
-    db: deps.db,
     runner: deps.scripts ?? null,
     capability: capabilities.scripts,
     networkIsolation: scriptsNetworkIsolation,
@@ -347,7 +342,6 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     enabledFor: async () => (await orgFeatures()).browser,
   });
   const workspaces = createWorkspaceHandlers({
-    db: deps.db,
     capable: capabilities.workspaces,
     enabledFor: async () => (await orgFeatures()).workspaces,
     // A running service's variables join every command's environment.
@@ -381,7 +375,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       return sendError(response, 400, 'bad_request');
     }
 
-    const headroom = await quotaHeadroom(deps.db, target, batchId);
+    const headroom = await quotaHeadroom(target, batchId);
     if (!headroom.ok) {
       return sendError(
         response,
@@ -434,7 +428,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     }
 
     const contentType = str(body.contentType) || upstream.headers.get('content-type') || null;
-    const summary = await store.insertFile(deps.db, {
+    const summary = await store.insertFile({
       ...target,
       filename: named.filename,
       contentType,
@@ -462,7 +456,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const source = SOURCE_PATTERN.test(rawSource) ? rawSource : 'write';
     const batchId = batchIdOf(url.searchParams.get('batchId'));
 
-    const headroom = await quotaHeadroom(deps.db, target, batchId);
+    const headroom = await quotaHeadroom(target, batchId);
     if (!headroom.ok) {
       return sendError(
         response,
@@ -488,7 +482,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       return sendError(response, 400, 'bad_request', 'The request body was empty.');
     }
 
-    const summary = await store.insertFile(deps.db, {
+    const summary = await store.insertFile({
       ...target,
       filename: named.filename,
       contentType: url.searchParams.get('contentType') || null,
@@ -508,7 +502,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const target = targetOf(body);
     if (!target) return sendError(response, 400, 'bad_request');
     const batchId = batchIdOf(body.batchId) ?? undefined;
-    const files = await store.listFiles(deps.db, target, batchId);
+    const files = await store.listFiles(target, batchId);
     sendJson(response, 200, { files: files.map(summaryWire) });
   }
 
@@ -520,7 +514,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!target) return sendError(response, 400, 'bad_request');
     const fileId = str(body.fileId);
     if (!fileId) return sendError(response, 400, 'bad_request');
-    const file = await store.getFile(deps.db, target, fileId);
+    const file = await store.getFile(target, fileId);
     if (!file) return sendError(response, 404, 'not_found');
     sendJson(response, 200, {
       id: file.id,
@@ -537,7 +531,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!target) return sendError(response, 400, 'bad_request');
     const fileId = str(body.fileId);
     if (!fileId) return sendError(response, 400, 'bad_request');
-    const file = await store.getFile(deps.db, target, fileId);
+    const file = await store.getFile(target, fileId);
     if (!file) return sendError(response, 404, 'not_found');
     const bytes = await disk.readFile(file.storageKey);
     if (!bytes) return sendError(response, 404, 'not_found');
@@ -557,7 +551,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!target) return sendError(response, 400, 'bad_request');
     const fileId = str(body.fileId);
     if (!fileId) return sendError(response, 400, 'bad_request');
-    const file = await store.deleteFile(deps.db, target, fileId);
+    const file = await store.deleteFile(target, fileId);
     if (!file) return sendError(response, 404, 'not_found');
     await disk.deleteFile(file.storageKey);
     sendJson(response, 200, { deleted: true, id: file.id });
@@ -576,7 +570,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     produce: () => Promise<{ bytes: Buffer; source: string }>,
     response: ServerResponse
   ): Promise<SandboxFileSummary | null> {
-    const headroom = await quotaHeadroom(deps.db, target, null);
+    const headroom = await quotaHeadroom(target, null);
     if (!headroom.ok) {
       sendError(response, 429, 'quota_exceeded', 'Too many files staged — delete some first.');
       return null;
@@ -585,11 +579,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       sendError(response, 413, 'quota_exceeded', 'The scratch space quota is full.');
       return null;
     }
-    const cap = Math.min(
-      await maxFileBytes(),
-      DEFAULT_MAX_FILE_BYTES,
-      headroom.remaining
-    );
+    const cap = Math.min(await maxFileBytes(), DEFAULT_MAX_FILE_BYTES, headroom.remaining);
     const produced = await produce();
     if (produced.bytes.byteLength > cap) {
       sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
@@ -601,7 +591,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       sendError(response, 413, 'too_large', `The file exceeds the ${cap}-byte limit.`);
       return null;
     }
-    return store.insertFile(deps.db, {
+    return store.insertFile({
       ...target,
       filename: input.filename,
       contentType: input.contentType,
@@ -865,7 +855,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
           if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
           passphrase = given.passphrase;
         }
-        if ((await secretsStore.countSecrets(deps.db, target)) >= SECRET_MAX_PER_SUBJECT) {
+        if ((await secretsStore.countSecrets(target)) >= SECRET_MAX_PER_SUBJECT) {
           return sendError(
             response,
             429,
@@ -873,7 +863,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
             `At most ${SECRET_MAX_PER_SUBJECT} secrets — revoke one first.`
           );
         }
-        if (await secretsStore.getSecretByName(deps.db, target, name.name)) {
+        if (await secretsStore.getSecretByName(target, name.name)) {
           return sendError(
             response,
             409,
@@ -882,7 +872,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
           );
         }
         const sealed = sealSecretFields(fields.fields, passphrase);
-        const stored = await secretsStore.insertSecret(deps.db, {
+        const stored = await secretsStore.insertSecret({
           ...target,
           name: name.name,
           fields: Object.keys(fields.fields),
@@ -898,7 +888,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
         });
       }
       case 'list': {
-        const rows = await secretsStore.listSecrets(deps.db, target);
+        const rows = await secretsStore.listSecrets(target);
         return sendJson(response, 200, {
           secrets: await Promise.all(
             rows.map(async (row) => secretWire(await secretSummary(row, vault)))
@@ -907,7 +897,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       }
       case 'unlock': {
         const id = str(body.id);
-        const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
+        const secret = id ? await secretsStore.getSecret(target, id) : undefined;
         if (!secret) return sendError(response, 404, 'not_found');
         const given = validatePassphrase(body.passphrase);
         if (!given.ok) return sendError(response, 400, 'bad_request', given.message);
@@ -926,7 +916,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       }
       case 'lock': {
         const id = str(body.id);
-        const secret = id ? await secretsStore.getSecret(deps.db, target, id) : undefined;
+        const secret = id ? await secretsStore.getSecret(target, id) : undefined;
         if (!secret) return sendError(response, 404, 'not_found');
         await vault.lock(secret.id);
         return sendJson(response, 200, {
@@ -935,7 +925,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       }
       case 'revoke': {
         const id = str(body.id);
-        const deleted = id ? await secretsStore.deleteSecret(deps.db, target, id) : undefined;
+        const deleted = id ? await secretsStore.deleteSecret(target, id) : undefined;
         if (!deleted) return sendError(response, 404, 'not_found');
         await vault.lock(deleted.id);
         return sendJson(response, 200, { revoked: true, id: deleted.id, name: deleted.name });
@@ -1099,7 +1089,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       // Only a file on THIS instance's disk is this instance's to remove
       // (several instances sweep the same rows); one elsewhere waits for
       // its instance, until the grace after which the row alone goes.
-      const expired = await store.listExpired(deps.db, SWEEP_BATCH);
+      const expired = await store.listExpired(SWEEP_BATCH);
       for (const file of expired) {
         try {
           if (await disk.fileExists(file.storageKey)) {
@@ -1107,7 +1097,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
           } else if (!orphanedByNow(file.expiresAt)) {
             continue;
           }
-          await store.deleteById(deps.db, file.id);
+          await store.deleteById(file.id);
         } catch (error) {
           logger.warn('sweep could not remove {id}: {error}', {
             component: 'worker-sandbox/sweep',
@@ -1124,11 +1114,11 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       // Secrets past their lifetime: the key first, then the row; and
       // held keys past their window, wherever they are kept.
       await vault.sweepExpired();
-      const expiredSecrets = await secretsStore.listExpiredSecrets(deps.db, SWEEP_BATCH);
+      const expiredSecrets = await secretsStore.listExpiredSecrets(SWEEP_BATCH);
       for (const secret of expiredSecrets) {
         try {
           await vault.lock(secret.id);
-          await secretsStore.deleteSecretById(deps.db, secret.id);
+          await secretsStore.deleteSecretById(secret.id);
         } catch (error) {
           logger.warn('sweep could not remove secret {id}: {error}', {
             component: 'worker-sandbox/sweep',

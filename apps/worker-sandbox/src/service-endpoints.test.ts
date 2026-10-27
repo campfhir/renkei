@@ -13,7 +13,7 @@ jest.mock('./service-store', () => {
   const rows = new Map<string, any>();
   return {
     __rows: rows,
-    insertService: jest.fn(async (_db: unknown, input: any) => {
+    insertService: jest.fn(async (input: any) => {
       const row = {
         id: `svc-${rows.size + 1}`,
         subject: input.subject,
@@ -33,23 +33,23 @@ jest.mock('./service-store', () => {
       rows.set(row.id, row);
       return { ...row };
     }),
-    listServices: jest.fn(async (_db: unknown, target: any) =>
+    listServices: jest.fn(async (target: any) =>
       [...rows.values()]
         .filter((row) => row.tenantId === target.tenantId && row.subject === target.subject)
         .map((row) => ({ ...row }))
     ),
-    getServiceByName: jest.fn(async (_db: unknown, target: any, name: string) => {
+    getServiceByName: jest.fn(async (target: any, name: string) => {
       const row = [...rows.values()].find(
         (r) => r.tenantId === target.tenantId && r.subject === target.subject && r.name === name
       );
       return row ? { ...row } : undefined;
     }),
-    updateService: jest.fn(async (_db: unknown, id: string, input: any) => {
+    updateService: jest.fn(async (id: string, input: any) => {
       const row = rows.get(id);
       if (row) Object.assign(row, input);
     }),
     touchServices: jest.fn(async () => undefined),
-    deleteServiceById: jest.fn(async (_db: unknown, id: string) => {
+    deleteServiceById: jest.fn(async (id: string) => {
       rows.delete(id);
     }),
     listExpiredServices: jest.fn(async () => []),
@@ -100,8 +100,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { createSandboxServer } from './server';
 import { ALL_ORG_FEATURES } from './features';
 import type { ContainerSpec, ContainerState, DockerEngine } from './docker';
@@ -289,14 +287,12 @@ beforeAll(async () => {
   await mkdir(join(root, 'tenant-1', 'hash', 'home'), { recursive: true });
   engine = scriptedEngine();
   manager = new ServiceManager({
-    db: {} as Kysely<DB>,
     engine,
     network: NETWORK,
     selfContainer: 'self-1',
     limits: async () => ({ memoryBytes: 1_073_741_824, pidsLimit: 512 }),
   });
   enabledServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     browser: null,
     workspaces: true,
@@ -304,7 +300,6 @@ beforeAll(async () => {
     orgFeatures: async () => ALL_ORG_FEATURES,
   });
   disabledServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     browser: null,
     workspaces: true,
@@ -312,7 +307,6 @@ beforeAll(async () => {
   });
   // The engine is there; this organization has not turned services on.
   orgOffServer = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     browser: null,
     workspaces: true,
@@ -576,7 +570,7 @@ describe('a running service and the project’s commands', () => {
     expect(ran.json.stdout.trim()).toBe(
       '172.20.0.1:5432 postgres://postgres:pw@172.20.0.1:5432/app'
     );
-    expect(serviceStore.touchServices).toHaveBeenCalledWith(expect.anything(), ['svc-1']);
+    expect(serviceStore.touchServices).toHaveBeenCalledWith(['svc-1']);
   });
 
   it('a service that stopped on its own drops out of the environment and reads stopped', async () => {
@@ -693,7 +687,7 @@ describe('tail', () => {
 
 describe('rules', () => {
   it('a rule is normalized and its secret sealed, never returned', async () => {
-    ruleStore.insertImageRule.mockImplementation(async (_db: unknown, input: any) => ({
+    ruleStore.insertImageRule.mockImplementation(async (input: any) => ({
       id: '11111111-1111-4111-8111-111111111111',
       pattern: input.pattern,
       note: input.note,
@@ -714,13 +708,13 @@ describe('rules', () => {
       registryUsername: 'sp-pull',
     });
     expect(JSON.stringify(json)).not.toContain('topsecret');
-    const stored = ruleStore.insertImageRule.mock.calls[0]![1];
+    const stored = ruleStore.insertImageRule.mock.calls[0]![0];
     expect(stored.registrySealed).toMatch(/^reg1\./);
     expect(openRegistrySecret(stored.registrySealed, envSecretsKey()!)).toBe('topsecret');
   });
 
   it('a tag on a rule is dropped and said so; a lone username is refused', async () => {
-    ruleStore.insertImageRule.mockImplementation(async (_db: unknown, input: any) => ({
+    ruleStore.insertImageRule.mockImplementation(async (input: any) => ({
       id: '22222222-2222-4222-8222-222222222222',
       pattern: input.pattern,
       note: null,
@@ -749,9 +743,7 @@ describe('rules', () => {
 
   it('list, delete and restore go to the store', async () => {
     ruleStore.listImageRules.mockResolvedValue([]);
-    expect((await post(enabledBase, 'services/rules/list', { })).json).toEqual(
-      { rules: [] }
-    );
+    expect((await post(enabledBase, 'services/rules/list', {})).json).toEqual({ rules: [] });
     ruleStore.deleteImageRule.mockResolvedValue(false);
     expect(
       (
@@ -760,14 +752,9 @@ describe('rules', () => {
         })
       ).status
     ).toBe(404);
-    expect(
-      (await post(enabledBase, 'services/rules/delete', { id: 'nope' }))
-        .status
-    ).toBe(400);
+    expect((await post(enabledBase, 'services/rules/delete', { id: 'nope' })).status).toBe(400);
     ruleStore.restoreDefaultImageRules.mockResolvedValue(3);
-    expect(
-      (await post(enabledBase, 'services/rules/restore', { })).json.added
-    ).toBe(3);
+    expect((await post(enabledBase, 'services/rules/restore', {})).json.added).toBe(3);
   });
 });
 
