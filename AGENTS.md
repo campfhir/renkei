@@ -81,15 +81,19 @@ Postgres returns them, in tables built from a schema generated off the
 migrations (`store/schema.generated.ts`): defaults, keys, foreign keys and
 cascades behave as they do in the database.
 
-- **Pages, layouts and the API routes they load from call
-  `getDataStore()`, never `getDatabase()`.** On the memory store,
+- **Nothing outside `packages/db` touches the database: pages, API
+  routes, workers, shared packages and their scripts call
+  `getDataStore()`, never `getDatabase()`/`getPool()`.** On the memory store,
   `getDatabase()` fails and records its caller; the crawl spec
   (`apps/web/e2e/memory/crawl.spec.ts`) loads every page and fails when one
   reached the database directly. A new page gets a `CrawlPage` entry in
-  `e2e/memory/crawl/<area>.ts`. Statically, `apps/web/lib/data-store-seam.test.ts`
-  fails any non-test module under `app/`, `lib/` or `components/` that
-  calls `getDatabase()`/`getPool()`, imports `kysely`, or builds a query;
-  a file that truly needs the pg handle is listed there with its reason.
+  `e2e/memory/crawl/<area>.ts`. Statically, `packages/db/src/store/seam.test.ts`
+  scans every app and package and fails any non-test module that calls
+  `getDatabase()`/`getPool()`, imports `kysely` or `pg`, or builds a
+  query; a file that truly needs the pg handle is listed there with its
+  reason. Tests, e2e specs and `test-support/` may still seed Postgres
+  directly. Logging and boot go through `createLogAdapter`,
+  `checkDataStore()` and `closeDataStore()` from `@renkei/db`.
 - **A new or changed repository method** changes `types.ts`, `postgres.ts`
   and `memory.ts` together and gets at least one differential scenario in
   `scenarios.ts`: fixture rows plus a call, run against a freshly
@@ -112,6 +116,9 @@ cascades behave as they do in the database.
   delegate, the stubs or a real chat turn. `E2E_MEMORY_PORT` moves its
   server; on a box whose preinstalled Chromium doesn't match Playwright's,
   set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
-- Workers still use `getDatabase()`; outside the web app's memory mode
-  `getDataStore()` is the Postgres store, so shared package functions can
-  go through it.
+- Outside the web app's memory mode `getDataStore()` is the Postgres
+  store, so workers and shared packages go through it like the web app.
+  What only Postgres can do stays inside a store method: queue claims
+  (`FOR UPDATE SKIP LOCKED`, `queues.claim`), advisory locks
+  (`advisoryLocks.withTryLock`), pgvector and full-text search; the
+  memory store gives single-process equivalents.
