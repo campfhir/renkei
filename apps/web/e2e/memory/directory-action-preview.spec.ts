@@ -1,9 +1,13 @@
 /**
  * The ADManager Plus connector's own preview card (directory-action-preview.ts),
- * exercised the same way widget-card.spec.ts exercises Jira's issue-preview
- * card: seeded straight into the tables, rendered by the real
- * /api/tenant/.../chat/widgets route from the real built bundle, inside the
- * real chat thread.
+ * inside the real chat thread, rendered by the real /api/chat/widgets route
+ * from the real built bundle. The person asks in a chat on the stand-in
+ * model and the turn runs for real; what ADManager's preview tool would
+ * have answered the model with — it needs an ADManager connection the
+ * memory server cannot make — is handed to the page as that turn's rows
+ * at the stream's browser edge (e2e/support/tool-cards.ts). The confirm
+ * button's `tools/call` is answered there too (for real it would reach
+ * ADManager); the note and the model's reply after it are real.
  *
  * Two things this card needed to prove beyond widget-card.spec.ts's coverage
  * of the shared preview mechanics (which already covers confirm/cancel/
@@ -16,67 +20,26 @@
  *    dropping groups the confirm button is about to act on.
  */
 
-import { createCipheriv, randomBytes, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { keyFor } from './keys';
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { LLM_STUB_REPLY } from './constants';
+import { addStubModel, removeModel } from '../support/stub-model';
+import { createChat, sendForCards, widgetUri, type ToolCard } from '../support/tool-cards';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const COLD = { timeout: 30_000 };
-const STUB_MODEL_BASE_URL = 'http://127.0.0.1:8092/anthropic';
+const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
+const PROMPT = 'Give Jane Doe the same groups as Sam Source.';
 
-function widgetUri(generatedFile: string, name: string): string {
-  const source = readFileSync(
-    path.join(import.meta.dirname, '..', 'lib', 'mcp-widgets', 'generated', generatedFile),
-    'utf8'
-  );
-  const match = source.match(/_HASH: string = "([0-9a-f]+)"/);
-  if (!match) throw new Error(`No hash constant found in ${generatedFile}`);
-  return `ui://widget/${name}.${match[1]}.html`;
-}
 const DIRECTORY_ACTION_PREVIEW_URI = widgetUri(
   'directory-action-preview.ts',
   'directory-action-preview'
 );
 
-function idsFor(project: string, variant: '1' | '2' | '3') {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    chatId: `dddddddd-dddd-4ddd-8ddd-ddddddddd${variant}${digit}1`,
-    turnId: `dddddddd-dddd-4ddd-8ddd-ddddddddd${variant}${digit}2`,
-    modelId: `dddddddd-dddd-4ddd-8ddd-ddddddddd${variant}${digit}3`,
-    toolUseId: `toolu_dirpreview_${variant}${digit}`,
-    title: `AD directory action (${variant}${digit})`,
-    modelLabel: `Directory preview model ${variant}${digit}`,
-  };
-}
-type Ids = ReturnType<typeof idsFor>;
-
-function secretbox(plaintext: string, encoded: string): string {
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
-const sealSecret = (plaintext: string) =>
-  secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
+// Staging the stand-in model on the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 /** 120 plausible AD group names — plenty to prove the pill list scrolls
  *  instead of either dropping entries or stretching the card unusably tall. */
@@ -106,88 +69,43 @@ function structuredContent(previewId: string) {
   };
 }
 
-async function seedChat(client: Client, ids: Ids, previewId: string): Promise<void> {
-  await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-  await client.query(
-    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
-    [ids.modelId, ids.modelLabel, STUB_MODEL_BASE_URL, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
-  );
-  await client.query(
-    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
-    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
-  );
-  const chatKey = await keyFor(client, {
-    kind: 'chat',
-    resourceId: ids.chatId,
-    ownerSubject: E2E_SUBJECT,
+function previewCard(previewId: string): ToolCard {
+  return {
+    toolUseId: `toolu_dirpreview_${previewId.slice(0, 8)}`,
+    tool: 'admanager_copy_group_membership_preview',
+    input: {
+      instanceId: 'i1',
+      domainName: 'corp.example.com',
+      targetSam: 'jdoe',
+      sourceSam: 'ssource',
+    },
+    content:
+      'The group copy is awaiting the user’s decision on the preview card. ' +
+      'Do not write it another way and do not repeat its contents in your reply.',
+    uiResourceUri: DIRECTORY_ACTION_PREVIEW_URI,
+    structuredContent: structuredContent(previewId),
+  };
+}
+
+/** A chat of the person's own on the stand-in model, the card shown as the reply. */
+async function openCardChat(page: Page, modelId: string, tag: string) {
+  const title = `AD directory action (${tag})`;
+  const chatId = await createChat(page.request, { modelId, title });
+  await page.goto(`/chat/${chatId}`);
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible(COLD);
+  await sendForCards(page, {
+    chatId,
+    modelId,
+    prompt: PROMPT,
+    assistantText: 'Here’s a preview — nothing changes until you confirm.',
+    cards: [previewCard(randomUUID())],
   });
-  await client.query(
-    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
-    [ids.turnId, ids.chatId, ids.modelId]
-  );
-  const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
-    {
-      seq: 1,
-      role: 'user',
-      kind: 'prompt',
-      blocks: [{ type: 'text', text: 'Give Jane Doe the same groups as Sam Source.' }],
-    },
-    {
-      seq: 2,
-      role: 'assistant',
-      kind: 'assistant',
-      blocks: [
-        { type: 'text', text: 'Here’s a preview — nothing changes until you confirm.' },
-        {
-          type: 'tool_use',
-          id: ids.toolUseId,
-          name: 'admanager_copy_group_membership_preview',
-          input: {
-            instanceId: 'i1',
-            domainName: 'corp.example.com',
-            targetSam: 'jdoe',
-            sourceSam: 'ssource',
-          },
-        },
-      ],
-    },
-    {
-      seq: 3,
-      role: 'user',
-      kind: 'tool_results',
-      blocks: [
-        {
-          type: 'tool_result',
-          toolUseId: ids.toolUseId,
-          content:
-            'The group copy is awaiting the user’s decision on the preview card. ' +
-            'Do not write it another way and do not repeat its contents in your reply.',
-          uiResourceUri: DIRECTORY_ACTION_PREVIEW_URI,
-          structuredContent: structuredContent(previewId),
-        },
-      ],
-    },
-  ];
-  for (const row of rows) {
-    const assistant = row.role === 'assistant';
-    await client.query(
-      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
-      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
-    );
-  }
+  return chatId;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      name
-    ),
+    path: path.join(RESULTS, 'screens', testInfo.project.name, name),
     fullPage: true,
   });
 }
@@ -218,33 +136,14 @@ async function waitForCardHeightBelow(page: Page, maxHeight: number): Promise<vo
   await expect.poll(() => cardHeight(page), COLD).toBeLessThan(maxHeight);
 }
 
-async function decisionTurn(
-  client: Client,
-  chatId: string
-): Promise<{ status: string; noteTurnId: string | null } | null> {
-  const { rows } = await client.query<{ status: string; note_turn_id: string | null }>(
-    `SELECT t.status, m.turn_id AS note_turn_id
-       FROM chat_messages m
-       LEFT JOIN chat_turns t ON t.id = m.turn_id
-      WHERE m.chat_id = $1 AND m.kind = 'note'
-      ORDER BY m.seq DESC LIMIT 1`,
-    [chatId]
-  );
-  const row = rows[0];
-  return row ? { status: row.status, noteTurnId: row.note_turn_id } : null;
-}
-
 test('a long group list stays inside a bounded, scrollable pane, with every group still confirmed', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const ids = idsFor(testInfo.project.name, '1');
-  const previewId = randomUUID();
+  test.setTimeout(150_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
   try {
-    await seedChat(client, ids, previewId);
-
     const confirmCall: { value: { name: unknown; arguments: unknown } | null } = { value: null };
     await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
       confirmCall.value = route.request().postDataJSON();
@@ -259,8 +158,7 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
       });
     });
 
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+    await openCardChat(page, modelId, tag);
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
     await expect(frame.locator('.card-title')).toHaveText(
@@ -290,7 +188,7 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
     // of what 120 wrapped pills would take unclipped.
     const listBox = await frame.locator('.chip-row').boundingBox();
     expect(listBox).not.toBeNull();
-    expect(listBox!.height).toBeLessThan(150);
+    expect(listBox?.height ?? Infinity).toBeLessThan(150);
 
     const confirmButton = frame.getByRole('button', { name: 'Copy groups' });
     await expect(confirmButton).toBeVisible();
@@ -318,26 +216,23 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
       'The user confirmed "Copy groups from Sam Source to Jane Doe" on the preview card'
     );
     await expect(note).toBeVisible(COLD);
-    const reply = page.getByText('Stub model: I saw');
-    await expect(reply).toBeVisible(COLD);
-    await expect
-      .poll(() => decisionTurn(client, ids.chatId), COLD)
-      .toEqual({ status: 'completed', noteTurnId: expect.any(String) });
+    // The decision opened a turn of its own, and the model answered it.
+    await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
   } finally {
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });
 
-test('the card still renders at phone width with a long group list', async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const ids = idsFor(testInfo.project.name, '2');
+test('the card still renders at phone width with a long group list', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
   try {
-    await seedChat(client, ids, randomUUID());
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.title })).toBeVisible();
+    await openCardChat(page, modelId, tag);
 
     const frame = page.frameLocator('iframe[title="Preview card"]');
     await expect(frame.locator('.card-title')).toHaveText(
@@ -351,6 +246,6 @@ test('the card still renders at phone width with a long group list', async ({ pa
     expect(bodyWidth).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
     await shot(page, testInfo, 'directory-action-preview-mobile.png');
   } finally {
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });

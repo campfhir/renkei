@@ -1,21 +1,181 @@
 /**
  * Screenshot sweep of the agent surfaces — a dev aid for LOOKING at layouts
- * (light/dark/mobile via the three projects), not a pixel-diff gate. Each
- * test anchors on page content (never the <title>, which is still the
- * create-next-app default) and then captures a full-page PNG under
- * test-results/screens/<project>/.
+ * (light and dark via the two projects), not a pixel-diff gate. Each test
+ * anchors on page content and then captures a full-page PNG under
+ * test-results/memory/screens/<project>/.
+ *
+ * What the pages show is made the way the app makes it, once per worker,
+ * for an operator of the sweep's own: a "rich" agent (a schedule and an
+ * API trigger, tools) run on the stand-in model by the in-process engine —
+ * it remembers a fact, stages a change, is accepted through the card's
+ * route and finishes, so there is a run with an accepted batch, memory,
+ * and model usage; an agent whose run fails; and a plain one that never
+ * ran.
+ *
+ * What the old Postgres seed wrote and no route or in-process worker can:
+ * a dead-lettered event (the events monitor's "Failed · 1"), a run parked
+ * for the owner's sign-in, a memory summary the maintenance sweep
+ * compacted, usage rows from before the model was recorded, voice usage,
+ * and a Jira grant on the access table. Those pages are captured with what
+ * they show for this person (their headings, their empty states), and a
+ * Jira tool in the picker becomes Renkei's own card tool. "My usage"'s
+ * voice card is not captured: it shows only with a voice service
+ * configured (a vendor, org-wide) or voice usage on record.
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import {
-  E2E_SUBJECT,
-  AGENT_RICH_ID,
-  AGENT_PLAIN_ID,
-  AGENT_DEEP_ID,
-  RUN_STEP_FAILED_ID,
-  RUN_ITERATIONS_ID,
-} from './seed';
+import { randomUUID } from 'node:crypto';
+import { request as playwrightRequest, type APIRequestContext } from '@playwright/test';
+import type { Page, TestInfo } from '@playwright/test';
+import { test as base, expect } from '@playwright/test';
+import { MEMORY_BASE_URL } from './constants';
+import { createPerson, signIn, type Person } from '../support/person';
+import { addStubModel, removeModel } from '../support/stub-model';
+import { createAgent, feedItems, runAgent, stubScript } from '../support/agents';
+
+const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
+
+interface Staged {
+  person: Person;
+  modelId: string;
+  richId: string;
+  richName: string;
+  richRunId: string;
+  plainId: string;
+  failedId: string;
+  failedRunId: string;
+}
+
+let api: APIRequestContext;
+let staged: Staged;
+
+const test = base.extend<{ sweep: Staged }>({
+  sweep: async ({ page }, use) => {
+    await signIn(page.context(), staged.person);
+    await use(staged);
+  },
+});
+
+async function runPage(agentId: string, runId: string): Promise<string> {
+  return (await api.get(`/agents/${agentId}/runs/${runId}`)).text();
+}
+
+base.describe.configure({ timeout: 120_000 });
+
+// eslint-disable-next-line no-empty-pattern
+base.beforeAll(async ({}, testInfo) => {
+  testInfo.setTimeout(240_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const setup = await playwrightRequest.newContext({ baseURL: MEMORY_BASE_URL });
+  const person = await createPerson(setup, {
+    roles: ['renkei-user', 'renkei-operator'],
+    displayName: 'Sweep Tester',
+  });
+  await setup.dispose();
+  api = await playwrightRequest.newContext({
+    baseURL: MEMORY_BASE_URL,
+    extraHTTPHeaders: person.headers,
+  });
+  const modelId = await addStubModel(api, tag);
+
+  const richName = `Triage yesterday into tickets ${tag}`;
+  const richId = await createAgent(api, {
+    name: richName,
+    llmModelId: modelId,
+    tools: ['card_list', 'card_create'],
+    triggers: [
+      {
+        draft: {
+          kind: 'schedule',
+          recurrences: [{ every: 'weekday', at: '09:00' }],
+          timezone: 'UTC',
+        },
+        enabled: true,
+      },
+      { draft: { kind: 'api', inputs: [] }, enabled: true },
+    ],
+    instructions: [
+      '## Goal',
+      '',
+      'Turn yesterday’s unanswered requests into tickets.',
+      '',
+      stubScript([
+        { tool: 'remember', args: { note: 'Filed OPS-7 for the VPN outage on 10/19.' } },
+        {
+          text: 'One request needs a ticket.',
+          tool: 'stage_actions',
+          args: {
+            summary: 'File a ticket for the VPN outage.',
+            actions: [
+              {
+                tool: 'card_create',
+                args: { title: 'OPS-7', summary: 'VPN outage, no reply yet.' },
+                reason: 'Nobody has answered it.',
+              },
+            ],
+          },
+        },
+      ]),
+    ].join('\n'),
+  });
+  const richRunId = await runAgent(api, richId);
+  // The batch waits on a person: accept it through the card's own route.
+  const title = `${richName} — wants to make a change`;
+  let cardId = '';
+  await expect
+    .poll(
+      async () => {
+        cardId = (await feedItems(api)).find((item) => item.title === title)?.id ?? '';
+        return cardId;
+      },
+      { timeout: 60_000 }
+    )
+    .not.toBe('');
+  const accepted = await api.post(`/api/actionable-items/${cardId}/approval`, {
+    data: { decision: 'approve', comment: 'Go ahead.' },
+  });
+  expect(accepted.ok(), await accepted.text()).toBe(true);
+  await expect
+    .poll(async () => (await runPage(richId, richRunId)).includes('Succeeded'), {
+      timeout: 60_000,
+    })
+    .toBe(true);
+
+  const failedId = await createAgent(api, {
+    name: `Daily activity digest ${tag}`,
+    llmModelId: modelId,
+    instructions: [
+      '## Goal',
+      '',
+      'Summarise yesterday’s activity.',
+      '',
+      stubScript([
+        {
+          tool: 'finish_run',
+          args: { outcome: 'failed', summary: 'The activity feed could not be read.' },
+        },
+      ]),
+    ].join('\n'),
+  });
+  const failedRunId = await runAgent(api, failedId);
+  await expect
+    .poll(async () => (await runPage(failedId, failedRunId)).includes('Failed'), {
+      timeout: 60_000,
+    })
+    .toBe(true);
+
+  const plainId = await createAgent(api, {
+    name: `Plain agent ${tag}`,
+    instructions: '## Goal\n\nSay hello.',
+    enabled: false,
+  });
+  staged = { person, modelId, richId, richName, richRunId, plainId, failedId, failedRunId };
+});
+
+base.afterAll(async () => {
+  if (staged) await removeModel(api, staged.modelId);
+  await api?.dispose();
+});
 
 async function shot(
   page: Page,
@@ -24,14 +184,7 @@ async function shot(
   options: { fullPage?: boolean } = {}
 ): Promise<void> {
   await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      `${name}.png`
-    ),
+    path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
     // fullPage's temporary viewport resize can remount client subtrees and
     // lose transient state (an opened <details>); shots of transient UI
     // pass fullPage: false and capture the viewport instead.
@@ -39,7 +192,7 @@ async function shot(
   });
 }
 
-test('admin — agent oversight totals', async ({ page }, testInfo) => {
+test('admin — agent oversight totals', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/admin/agents`);
   await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
   // One period at a time: the toggle drives the org card AND every agent
@@ -51,33 +204,31 @@ test('admin — agent oversight totals', async ({ page }, testInfo) => {
   await shot(page, testInfo, 'admin-agent-oversight');
 });
 
-test('admin — agent oversight sorted by tokens', async ({ page }, testInfo) => {
+test('admin — agent oversight sorted by tokens', async ({ page, sweep }, testInfo) => {
   await page.goto(`/admin/agents`);
   await expect(page.getByRole('heading', { name: 'Agent oversight' })).toBeVisible();
   await page.getByRole('button', { name: 'This year' }).click();
   await page.getByLabel('Sort by').selectOption('tokensIn');
-  // The seeded spender comes first; the org card names the seeded models.
-  await expect(page.getByRole('link', { name: 'Triage yesterday into tickets' })).toBeVisible();
-  await expect(page.getByText('claude-opus-5', { exact: false }).first()).toBeVisible();
+  // The sweep's spender is listed; the org card names the model it ran on.
+  await expect(page.getByRole('link', { name: sweep.richName })).toBeVisible();
+  await expect(page.getByText('stub-model', { exact: false }).first()).toBeVisible();
   await shot(page, testInfo, 'admin-agent-oversight-by-tokens');
 });
 
-test('admin — agent detail with usage by model', async ({ page }, testInfo) => {
-  await page.goto(`/admin/agents/${AGENT_RICH_ID}`);
-  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+test('admin — agent detail with usage by model', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/admin/agents/${sweep.richId}`);
+  await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
   await expect(page.getByText('By model · this month')).toBeVisible();
   await shot(page, testInfo, 'admin-agent-detail');
 });
 
-test('admin — event monitor', async ({ page }, testInfo) => {
+test('admin — event monitor', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/admin/events`);
   await expect(page.getByRole('heading', { name: 'Events' })).toBeVisible();
-  // One seeded row per renderable status, failed (dead-lettered) included.
-  await expect(page.getByText('Failed · 1')).toBeVisible();
   await shot(page, testInfo, 'admin-events');
 });
 
-test('admin — cleaner script reach', async ({ page }, testInfo) => {
+test('admin — cleaner script reach', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/admin/email-sanitizer`);
   await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
   // The reach control is the point of the shot: a script says which content
@@ -91,126 +242,107 @@ test('admin — cleaner script reach', async ({ page }, testInfo) => {
   await shot(page, testInfo, 'admin-cleaner-script-reach');
 });
 
-test('agents list', async ({ page }, testInfo) => {
+test('agents list', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-  await expect(page.getByText('Triage yesterday into tickets')).toBeVisible();
+  await expect(page.getByText(sweep.richName)).toBeVisible();
   await shot(page, testInfo, 'agents-list');
 });
 
-test('agent overview', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}`);
-  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
+test('agent overview', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}`);
+  await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
   await shot(page, testInfo, 'agent-overview');
 });
 
-test('agent overview — memory section open', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}`);
-  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
-  const isMobile = testInfo.project.name === 'mobile';
-  if (isMobile) {
-    // On phones the section is a button that opens a modal.
-    await page.getByRole('button', { name: 'Memory' }).click();
-    await expect(page.getByRole('dialog', { name: 'Memory' })).toBeVisible();
-  } else {
-    await page.getByText('Memory', { exact: true }).click();
-  }
-  await expect(page.getByText('Summary (compacted', { exact: false })).toBeVisible();
+test('agent overview — memory section open', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}`);
+  await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
+  await page.locator('summary', { hasText: /^Memory$/ }).click();
+  // What the run remembered.
+  await expect(page.getByText('Filed OPS-7 for the VPN outage on 10/19.').first()).toBeVisible();
   await shot(page, testInfo, 'agent-overview-memory-open');
 });
 
-test('agent overview — usage open', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}`);
-  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
-  if (testInfo.project.name === 'mobile') {
-    await page.getByRole('button', { name: 'Usage' }).click();
-    await expect(page.getByRole('dialog', { name: 'Usage' })).toBeVisible();
-  } else {
-    await page.getByText('Usage', { exact: true }).click();
-  }
+test('agent overview — usage open', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}`);
+  await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
+  await page.getByText('Usage', { exact: true }).click();
   await expect(page.getByText('Overall · this month')).toBeVisible();
   await page.getByRole('button', { name: 'All time' }).click();
-  // The seeded pre-098 rows: real spend with no model on them.
-  await expect(page.getByText('Model not recorded').first()).toBeVisible();
+  await expect(page.getByText('stub-model', { exact: false }).first()).toBeVisible();
   await shot(page, testInfo, 'agent-overview-usage-open', { fullPage: false });
 });
 
-test('agent overview — invocations open', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}`);
-  await expect(page.getByRole('heading', { name: 'Triage yesterday into tickets' })).toBeVisible();
-  if (testInfo.project.name === 'mobile') {
-    await page.getByRole('button', { name: 'Invocations' }).click();
-    await expect(page.getByRole('dialog', { name: 'Invocations' })).toBeVisible();
-  } else {
-    await page.getByText('Invocations', { exact: true }).click();
-  }
-  await expect(page.getByText('All time')).toBeVisible();
-  // Seeded counters: 3 today +4 this week (2d ago) +6 this month (12d) …
+test('agent overview — invocations open', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}`);
+  await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
+  await page.getByText('Invocations', { exact: true }).click();
+  await expect(page.getByRole('term').filter({ hasText: 'All time' })).toBeVisible();
   await expect(page.getByText('per-day cap', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-invocations-open');
 });
 
-test('runs list', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}/runs`);
+test('runs list', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}/runs`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-  // The run parked for the owner's key reads as paused-for-sign-in, not
-  // as waiting on an approval.
-  await expect(page.getByText('Paused: sign in', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Succeeded', { exact: true }).first()).toBeVisible();
   await shot(page, testInfo, 'runs-list');
 });
 
-test('failed run detail', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}/runs/${RUN_STEP_FAILED_ID}`);
+test('failed run detail', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.failedId}/runs/${sweep.failedRunId}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // Failed runs carry a copy-to-clipboard of the full debug context, for
   // pasting into Claude Code or another dev tool.
   await expect(page.getByRole('button', { name: 'Copy for debugging' })).toBeVisible();
+  await expect(page.getByText('The activity feed could not be read.').first()).toBeVisible();
   await shot(page, testInfo, 'run-detail-failed');
 });
 
-test('builder — new agent', async ({ page }, testInfo) => {
+test('builder — new agent', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/agents/new`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-new');
 });
 
-test('builder — edit rich agent', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
+test('builder — edit rich agent', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-edit');
 });
 
-test('builder — tool picker filtered', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
+test('builder — tool picker filtered', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-  await page.getByLabel('Search tools').fill('comment');
-  await expect(page.getByText('jira_add_comment', { exact: true })).toBeVisible();
+  await page.getByLabel('Search tools').fill('card');
+  await expect(page.getByText('card_create', { exact: true }).first()).toBeVisible();
   await shot(page, testInfo, 'builder-tool-picker');
 });
 
-test('builder — schedule editor open (wide panel)', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
+test('builder — schedule editor open (wide panel)', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await page.getByRole('button', { name: /Every weekday/ }).click();
   await expect(page.getByText('Blackout dates', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'builder-schedule-editor');
 });
 
-test('builder — edit plain agent', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_PLAIN_ID}/edit`);
+test('builder — edit plain agent', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.plainId}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await shot(page, testInfo, 'builder-edit-plain');
 });
 
-test('run timeline with a staged batch', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_DEEP_ID}/runs/${RUN_ITERATIONS_ID}`);
+test('run timeline with a staged batch', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}/runs/${sweep.richRunId}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   await expect(page.getByTestId('staged-batch')).toBeVisible();
   await expect(page.getByText('Accepted and carried out.')).toBeVisible();
   await shot(page, testInfo, 'run-timeline-batch');
 });
 
-test('admin — cleaner script editor with types', async ({ page }, testInfo) => {
+test('admin — cleaner script editor with types', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/admin/email-sanitizer`);
   await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
 
@@ -276,89 +408,59 @@ test('admin — cleaner script editor with types', async ({ page }, testInfo) =>
   await shot(page, testInfo, 'admin-cleaner-script-editor');
 });
 
-test('connectors — grid', async ({ page }, testInfo) => {
+test('connectors — grid', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/connectors`);
   await expect(page.getByRole('heading', { name: 'Connectors', level: 1 })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'MCP endpoint' })).toBeVisible();
   await shot(page, testInfo, 'connectors-grid');
 });
 
-test('tools — headline cards', async ({ page }, testInfo) => {
+test('tools — headline cards', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/usage`);
-  // The seeded session is an operator, so all three cards render.
+  // The sweep's person is an operator, so all three cards render.
   await expect(page.getByRole('heading', { name: 'Most used across the org' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Most used by you' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Failing most' })).toBeVisible();
   await shot(page, testInfo, 'tools-top-cards');
 });
 
-test('my usage — surface breakdown and efficiency', async ({ page }, testInfo) => {
+test('my usage — surface breakdown and efficiency', async ({ page, sweep }, testInfo) => {
   await page.goto(`/utilization`);
   await expect(page.getByRole('heading', { name: 'My usage' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Tokens by surface' })).toBeVisible();
-  // The seeded llm_calls rows all belong to this same subject, so the
-  // agent surface here matches the org page's agent total exactly.
+  // The sweep's runs are this person's own, so their agents rank here.
   await expect(page.getByRole('heading', { name: 'Most efficient agents' })).toBeVisible();
-  // Also linked from the agent table and (for this agent) the attention
-  // panel, so this page — unlike the org one — needs .first() here.
-  await expect(
-    page.getByRole('link', { name: 'Triage yesterday into tickets' }).first()
-  ).toBeVisible();
+  await expect(page.getByRole('link', { name: sweep.richName }).first()).toBeVisible();
   await shot(page, testInfo, 'my-usage-surface-and-efficiency');
 });
 
-test('my usage — voice card', async ({ page }, testInfo) => {
-  await page.goto(`/utilization`);
-  await expect(page.getByRole('heading', { name: 'My usage' })).toBeVisible();
-  const voice = page.getByRole('heading', { name: 'Voice', exact: true });
-  await expect(voice).toBeVisible();
-  await expect(page.getByText('Read aloud', { exact: true })).toBeVisible();
-  await expect(page.getByText('Spoken', { exact: true })).toBeVisible();
-  await voice.scrollIntoViewIfNeeded();
-  await shot(page, testInfo, 'my-usage-voice', { fullPage: false });
-});
-
 test.describe('admin — organization usage', () => {
-  test('voice card and boards', async ({ page }, testInfo) => {
+  test('voice card and boards', async ({ page, sweep: _sweep }, testInfo) => {
     await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     const listeners = page.getByRole('heading', { name: 'Top listeners' });
     await expect(listeners).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Top speakers' })).toBeVisible();
-    // The seeded person listens most and the other subject talks most.
-    await expect(page.getByRole('button', { name: 'E2E Tester' }).first()).toBeVisible();
-    await expect(
-      page.getByRole('button', { name: 'e2e-colleague@example.com' }).first()
-    ).toBeVisible();
     await listeners.scrollIntoViewIfNeeded();
     await shot(page, testInfo, 'admin-organization-usage-voice', { fullPage: false });
   });
 
-  test('overview', async ({ page }, testInfo) => {
+  test('overview', async ({ page, sweep: _sweep }, testInfo) => {
     await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Tokens by surface' })).toBeVisible();
-    // Only one identity is seeded, and every seeded token is spent under it —
-    // "everyone active" is the deterministic case, in any period.
-    await expect(page.getByText('1 / 1')).toBeVisible();
-    await expect(page.getByText('100% used at least one token')).toBeVisible();
-    // Agent spend is real (llm_calls), so the two seeded agents rank by it.
+    // Agent spend is real (the sweep's runs, and every other spec's on the
+    // same server): the board ranks whoever spent most.
     await expect(page.getByRole('heading', { name: 'Top agents' })).toBeVisible();
-    await expect(
-      page.getByRole('link', { name: 'Triage yesterday into tickets' }).first()
-    ).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Daily activity digest' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Most efficient agents' })).toBeVisible();
-    // Tool calls are real too, org-wide across both seeded subjects.
     await expect(page.getByRole('heading', { name: 'Top tools' })).toBeVisible();
-    await expect(page.getByText('jira_search_issues')).toBeVisible();
 
     await page.getByRole('button', { name: '90 days' }).click();
     await expect(page.getByText('Over the last 90 days')).toBeVisible();
     await shot(page, testInfo, 'admin-organization-usage');
   });
 
-  test('top users toggle', async ({ page }, testInfo) => {
+  test('top users toggle', async ({ page, sweep: _sweep }, testInfo) => {
     await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
     const chatsOnly = page.getByRole('button', { name: 'Chats only' });
@@ -370,16 +472,14 @@ test.describe('admin — organization usage', () => {
     await shot(page, testInfo, 'admin-organization-usage-top-users', { fullPage: false });
   });
 
-  test('tokens by model', async ({ page }) => {
+  test('tokens by model', async ({ page, sweep: _sweep }) => {
     await page.goto(`/admin/usage`);
     await expect(page.getByRole('heading', { name: 'Tokens by model' })).toBeVisible();
-    // The seeded ledger names three models plus rows written before the
-    // model was recorded, which surface as one labelled row.
-    await expect(page.getByText('claude-opus-5', { exact: true })).toBeVisible();
-    await expect(page.getByText('Model not recorded')).toBeVisible();
+    // The sweep's runs spent on the stand-in model.
+    await expect(page.getByText('stub-model', { exact: false }).first()).toBeVisible();
   });
 
-  test('today, by the hour', async ({ page }, testInfo) => {
+  test('today, by the hour', async ({ page, sweep: _sweep }, testInfo) => {
     await page.goto(`/admin/usage?period=today`);
     await expect(page.getByRole('button', { name: 'Today' })).toHaveAttribute(
       'aria-pressed',
@@ -391,21 +491,20 @@ test.describe('admin — organization usage', () => {
     await shot(page, testInfo, 'admin-organization-usage-yesterday');
   });
 
-  test('scoped to one person', async ({ page }, testInfo) => {
+  test('scoped to one person', async ({ page, sweep }, testInfo) => {
     // Reached by link, the way Sites points here: the picker lands on the
     // person and the whole page is theirs — identity card, active days in
-    // place of active users, and their own rank in Top users.
-    await page.goto(`/admin/usage?user=${encodeURIComponent(E2E_SUBJECT)}&period=1m`);
+    // place of active users.
+    const subject = sweep.person.subject;
+    await page.goto(`/admin/usage?user=${encodeURIComponent(subject)}&period=1m`);
     await expect(page.getByRole('heading', { name: 'Organization usage' })).toBeVisible();
-    await expect(page.getByRole('combobox')).toHaveValue(E2E_SUBJECT);
-    await expect(page.getByRole('heading', { name: 'E2E Tester' })).toBeVisible();
+    await expect(page.getByRole('combobox')).toHaveValue(subject);
+    await expect(page.getByRole('heading', { name: sweep.person.displayName })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Groups (IdP)' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Agents', exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Connectors on Access' })).toBeVisible();
     await expect(page.getByRole('figure', { name: 'Active days' })).toBeVisible();
     await expect(page.getByRole('group', { name: 'Activity by day' })).toBeVisible();
-    // The only spender is the selected person, so they rank first, highlighted.
-    await expect(page.getByText('#1')).toBeVisible();
     await shot(page, testInfo, 'admin-organization-usage-person');
 
     // A quarter lays the days out as tiny month calendars.
@@ -428,27 +527,21 @@ test.describe('admin — organization usage', () => {
   });
 });
 
-test('admin — access table', async ({ page }, testInfo) => {
+test('admin — access table', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/admin/access`);
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
-  // One seeded person with one seeded grant: a row naming both, with the
-  // disconnect on it, and the name linking to their usage.
-  await expect(page.getByRole('link', { name: 'E2E Tester' })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'Jira', exact: true })).toBeVisible();
-  await expect(page.getByRole('cell', { name: 'E2E Jira', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Disconnect Jira' })).toBeVisible();
   await shot(page, testInfo, 'admin-access');
 });
 
-test('about — changelog', async ({ page }, testInfo) => {
+test('about — changelog', async ({ page, sweep: _sweep }, testInfo) => {
   await page.goto(`/about`);
   // The heading uses a typographic apostrophe, so match on the stable words.
   await expect(page.getByRole('heading', { name: /changed/ })).toBeVisible();
   await shot(page, testInfo, 'about-changelog');
 });
 
-test('builder — trigger editor with header remove', async ({ page }, testInfo) => {
-  await page.goto(`/agents/${AGENT_RICH_ID}/edit`);
+test('builder — trigger editor with header remove', async ({ page, sweep }, testInfo) => {
+  await page.goto(`/agents/${sweep.richId}/edit`);
   // Trigger cards are named by their own summary text, so anchor on the
   // "gives:" line every one of them carries and let the click bubble.
   await page.getByText('gives:').first().click();
