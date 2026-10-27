@@ -741,4 +741,100 @@ export const agentScenarios: Scenario<DataStore>[] = [
       await store.agents.recentNoteChunks(id(3), { ...noteScope, limit: 10 }),
     ],
   },
+  {
+    method: 'agents.findRunSettings',
+    name: 'the switches as stored, defaults included; a missing agent is null',
+    fixture: {
+      agents: [
+        {
+          ...agent(1, 'ann', 'Alpha', 1),
+          guardrails: 'never email',
+          can_ask_questions: true,
+          auto_accept_actions: true,
+        },
+        agent(2, 'bob', 'Beta', 2),
+      ],
+    },
+    run: async (store) => [
+      await store.agents.findRunSettings(id(1)),
+      await store.agents.findRunSettings(id(2)),
+      await store.agents.findRunSettings(id(99)),
+    ],
+  },
+  {
+    method: 'agents.listChainTargets',
+    name: 'enabled agent triggers naming the caller, on enabled agents of any owner, by trigger id',
+    fixture: {
+      agents: [
+        agent(1, 'ann', 'Caller', 1),
+        { ...agent(2, 'bob', 'Bob chained', 2), enabled: true, llm_model_id: null },
+        agent(3, 'carol', 'Carol chained', 3),
+        { ...agent(4, 'dan', 'Disabled agent', 4), enabled: false },
+      ],
+      agent_triggers: [
+        {
+          id: id(14),
+          agent_id: id(3),
+          kind: 'agent',
+          config: JSON.stringify({ callerAgentId: id(1) }),
+        },
+        {
+          id: id(12),
+          agent_id: id(2),
+          kind: 'agent',
+          config: JSON.stringify({ callerAgentId: id(1) }),
+        },
+        {
+          id: id(13),
+          agent_id: id(2),
+          kind: 'agent',
+          enabled: false,
+          config: JSON.stringify({ callerAgentId: id(1) }),
+        },
+        {
+          id: id(15),
+          agent_id: id(4),
+          kind: 'agent',
+          config: JSON.stringify({ callerAgentId: id(1) }),
+        },
+        {
+          id: id(16),
+          agent_id: id(3),
+          kind: 'agent',
+          config: JSON.stringify({ callerAgentId: id(2) }),
+        },
+        {
+          id: id(17),
+          agent_id: id(3),
+          kind: 'event',
+          config: JSON.stringify({ callerAgentId: id(1) }),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.agents.listChainTargets(id(1)),
+      await store.agents.listChainTargets(id(3)),
+    ],
+  },
+  {
+    method: 'agents.markTriggerFailed',
+    name: 'the last error is set; when it last fired stays; other triggers untouched',
+    fixture: {
+      agents: [agent(1, 'ann', 'Alpha', 1)],
+      agent_triggers: [
+        { id: id(11), agent_id: id(1), kind: 'agent', config: '{}', last_fired_at: at(5) },
+        { id: id(12), agent_id: id(1), kind: 'agent', config: '{}', created_at: at(6) },
+      ],
+    },
+    run: async (store) => {
+      await store.agents.markTriggerFailed(id(11), 'chain refused');
+      await store.agents.markTriggerFailed(id(99), 'nobody');
+      const triggers = await store.agents.listTriggers(id(1));
+      return triggers.map((t) => ({
+        id: t.id,
+        lastError: t.lastError,
+        lastFiredAt: t.lastFiredAt,
+      }));
+    },
+  },
 ];

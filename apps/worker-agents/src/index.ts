@@ -99,7 +99,7 @@ async function main(): Promise<void> {
     actionsProducer: queue.producer,
     // Chained agents go back onto OUR queue; failure notifications go to
     // the interactive worker's, which owns the connector delivery paths.
-    onFinalized: createFinalizeHook(db, queue.producer, webhookEventsQueue().producer),
+    onFinalized: createFinalizeHook(queue.producer, webhookEventsQueue().producer),
     stopRequested: () => stopRequested,
   });
   // The only path an agent's changes are made by: accepted batches, under

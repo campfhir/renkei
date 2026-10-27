@@ -19,19 +19,14 @@
  * controls whether and what it says.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
 import type { FinalizedRun } from './engine';
 import { logger } from './logger';
 
-export function createFinalizeHook(
-  db: Kysely<DB>,
-  agentProducer: QueueProducer,
-  eventsProducer: QueueProducer
-) {
+export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer: QueueProducer) {
   return async function onFinalized(run: FinalizedRun): Promise<void> {
     // A quiet stop is the run ASKING for invisibility: no notification,
     // no chained agents. History still has it; nothing else. A 'stopped'
@@ -70,37 +65,15 @@ export function createFinalizeHook(
     }
 
     // The parent run's chain state seeds the children's guards.
-    const parent = await db
-      .selectFrom('agent_runs')
-      .select(['lineage'])
-      .where('id', '=', run.runId)
-      .executeTakeFirst();
+    const store = getDataStore();
+    const parent = await store.agentRuns.findChainLink(run.runId);
     const parentLineage = Array.isArray(parent?.lineage)
       ? parent.lineage.filter((entry): entry is string => typeof entry === 'string')
       : [];
 
-    const finishedAgent = await db
-      .selectFrom('agents')
-      .select('name')
-      .where('id', '=', run.agentId)
-      .executeTakeFirst();
+    const finishedAgent = await store.agents.findRunSettings(run.agentId);
 
-    const chained = await db
-      .selectFrom('agent_triggers as t')
-      .innerJoin('agents as a', 'a.id', 't.agent_id')
-      .select([
-        't.id as trigger_id',
-        't.agent_id',
-        'a.owner_subject',
-        'a.instructions',
-        'a.tools',
-        'a.llm_model_id',
-      ])
-      .where('t.kind', '=', 'agent')
-      .where('t.enabled', '=', true)
-      .where('a.enabled', '=', true)
-      .where(sql<string>`t.config->>'callerAgentId'`, '=', run.agentId)
-      .execute();
+    const chained = await store.agents.listChainTargets(run.agentId);
 
     for (const trigger of chained) {
       const produced = [
@@ -108,11 +81,11 @@ export function createFinalizeHook(
         ...(run.vars.result ? [`Its result:\n${run.vars.result}`] : []),
       ].join('\n');
       const result = await createAgentRun(agentProducer, {
-        agentId: trigger.agent_id,
-        ownerSubject: trigger.owner_subject,
+        agentId: trigger.agentId,
+        ownerSubject: trigger.ownerSubject,
         definition: agentDefinitionOf(trigger),
-        llmModelId: trigger.llm_model_id,
-        triggerId: trigger.trigger_id,
+        llmModelId: trigger.llmModelId,
+        triggerId: trigger.triggerId,
         triggerKind: 'agent',
         parentRunId: run.runId,
         lineage: [...parentLineage, run.agentId],
@@ -121,21 +94,12 @@ export function createFinalizeHook(
         },
       });
       if (result.ok) {
-        await db
-          .updateTable('agent_triggers')
-          .set({ last_fired_at: sql`NOW()`, last_error: null, updated_at: sql`NOW()` })
-          .where('id', '=', trigger.trigger_id)
-          .execute();
+        await store.agents.markTriggerFired(trigger.triggerId);
       } else {
-        await db
-          .updateTable('agent_triggers')
-          .set({
-            last_error:
-              result.err.message ?? `The chained run could not be started (${result.err.type}).`,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', trigger.trigger_id)
-          .execute();
+        await store.agents.markTriggerFailed(
+          trigger.triggerId,
+          result.err.message ?? `The chained run could not be started (${result.err.type}).`
+        );
       }
     }
   };

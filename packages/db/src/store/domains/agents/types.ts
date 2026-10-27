@@ -276,4 +276,33 @@ export interface AgentStore {
     agentId: string,
     options: { provider: string; scope: string; limit: number }
   ): Promise<AgentNoteChunkRecord[]>;
+  /** What a run reads live off its agent each time it executes, or null when it is gone. */
+  findRunSettings(agentId: string): Promise<AgentRunSettingsRecord | null>;
+  /**
+   * The enabled agents chained after `callerAgentId`, whoever owns them:
+   * one entry per enabled `agent` trigger whose config names it as the
+   * caller, by trigger id.
+   */
+  listChainTargets(callerAgentId: string): Promise<AgentChainTargetRecord[]>;
+  /** Record why a trigger could not fire; when it last fired stays as it was. */
+  markTriggerFailed(triggerId: string, error: string): Promise<void>;
+}
+
+/** The agent's switches and guardrails, as a run reads them live. */
+export interface AgentRunSettingsRecord {
+  name: string;
+  enabled: boolean;
+  guardrails: string | null;
+  canAskQuestions: boolean;
+  autoAcceptActions: boolean;
+}
+
+/** A chained agent to start after another finishes, with its definition. */
+export interface AgentChainTargetRecord {
+  triggerId: string;
+  agentId: string;
+  ownerSubject: string;
+  instructions: string;
+  tools: Json;
+  llmModelId: string | null;
 }

@@ -2,6 +2,13 @@ import { sql, type Kysely } from 'kysely';
 import type { DB, Json } from '../../../db.types';
 import {
   batchFromRow,
+  batchStateFromRow,
+  executionColumns,
+  executionFromRow,
+  TURN_CARD_INDEX,
+  turnCardValues,
+  turnFromRow,
+  turnWriteColumns,
   LIVE_STATUSES,
   likePattern,
   newRunValues,
@@ -581,6 +588,308 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           attempts = excluded.attempts,
           steps_version = excluded.steps_version
       `.execute(db());
+    },
+    async findForExecution(runId) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select([
+          'id',
+          'agent_id',
+          'owner_subject',
+          'definition_snapshot',
+          'llm_model_id',
+          'initial_state',
+          'status',
+          'started_at',
+          'waiting_until',
+          'cancel_requested_at',
+          'resumed_at',
+          'resume_guidance',
+          'resume_failure',
+          'error_kind',
+          'trigger_kind',
+          'parent_run_id',
+          'active_ms',
+        ])
+        .where('id', '=', runId)
+        .executeTakeFirst();
+      return row ? executionFromRow(row) : null;
+    },
+    async updateExecution(runId, patch) {
+      await db()
+        .updateTable('agent_runs')
+        .set({ ...executionColumns(patch), updated_at: sql`NOW()` })
+        .where('id', '=', runId)
+        .execute();
+    },
+    async findCancelState(runId) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(['cancel_requested_at', 'status'])
+        .where('id', '=', runId)
+        .executeTakeFirst();
+      return row ? { status: row.status, cancelRequestedAt: row.cancel_requested_at } : null;
+    },
+    async findChainLink(runId) {
+      const row = await db()
+        .selectFrom('agent_runs')
+        .select(['trigger_kind', 'parent_run_id', 'lineage'])
+        .where('id', '=', runId)
+        .executeTakeFirst();
+      return row
+        ? { triggerKind: row.trigger_kind, parentRunId: row.parent_run_id, lineage: row.lineage }
+        : null;
+    },
+    async listTurns(runId, stepId) {
+      const rows = await db()
+        .selectFrom('agent_run_steps')
+        .select(['id', 'attempt', 'status', 'created_at', 'tool_call_count', 'detail'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', stepId)
+        .orderBy('attempt')
+        .orderBy('id')
+        .execute();
+      return rows.map(turnFromRow);
+    },
+    async openTurn(turn) {
+      await db()
+        .insertInto('agent_run_steps')
+        .values({
+          id: turn.id,
+          run_id: turn.runId,
+          step_id: turn.stepId,
+          step_index: turn.attempt,
+          attempt: turn.attempt,
+          iteration: 0,
+          status: 'running',
+          started_at: sql`NOW()`,
+          detail: turn.detail,
+        })
+        .execute();
+    },
+    async writeTurn(turnId, write) {
+      await db()
+        .updateTable('agent_run_steps')
+        .set({
+          ...turnWriteColumns(write),
+          ...(write.finished ? { finished_at: sql`NOW()` } : {}),
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', turnId)
+        .execute();
+    },
+    async closeOpenTurns(runId, status) {
+      await db()
+        .updateTable('agent_run_steps')
+        .set({ status, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+        .where('run_id', '=', runId)
+        .where('status', 'in', ['running', 'waiting'])
+        .execute();
+    },
+    async finishExecution(runId, { status, errorKind, error }) {
+      await db()
+        .transaction()
+        .execute(async (trx) => {
+          await trx
+            .updateTable('agent_runs')
+            .set({
+              status,
+              error_kind: errorKind,
+              error,
+              waiting_until: null,
+              finished_at: sql`NOW()`,
+              updated_at: sql`NOW()`,
+            })
+            .where('id', '=', runId)
+            .execute();
+          await trx
+            .updateTable('agent_run_steps')
+            .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+            .where('run_id', '=', runId)
+            .where('status', 'in', ['running', 'waiting'])
+            .execute();
+        });
+    },
+    async cancelWaiting(runId, reason) {
+      await db()
+        .transaction()
+        .execute(async (trx) => {
+          await trx
+            .updateTable('agent_runs')
+            .set({
+              status: 'canceled',
+              waiting_until: null,
+              finished_at: sql`NOW()`,
+              updated_at: sql`NOW()`,
+            })
+            .where('id', '=', runId)
+            .execute();
+          await trx
+            .updateTable('actionable_items')
+            .set({
+              status: 'expired',
+              decided_at: sql`NOW()`,
+              archived_at: sql`NOW()`,
+              result: JSON.stringify({ reason }),
+              updated_at: sql`NOW()`,
+            })
+            .where('run_id', '=', runId)
+            .where('status', '=', 'suggested')
+            .execute();
+          await trx
+            .updateTable('agent_action_batches')
+            .set({ status: 'expired', updated_at: sql`NOW()` })
+            .where('run_id', '=', runId)
+            .where('status', '=', 'proposed')
+            .execute();
+          await trx
+            .updateTable('agent_run_steps')
+            .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
+            .where('run_id', '=', runId)
+            .where('status', 'in', ['running', 'waiting'])
+            .execute();
+        });
+    },
+    async stageBatch(batch) {
+      await db()
+        .insertInto('agent_action_batches')
+        .values({
+          id: batch.id,
+          run_id: batch.runId,
+          agent_id: batch.agentId,
+          owner_subject: batch.ownerSubject,
+          turn: batch.turn,
+          status: batch.status,
+          summary: batch.summary,
+          actions: JSON.stringify(batch.actions),
+          review_reason: batch.reviewReason,
+          accepted_by: batch.acceptedBy,
+          decided_at: batch.decided ? sql`NOW()` : null,
+          waiting_until: batch.waitingUntil,
+        })
+        .execute();
+    },
+    async findBatchState(batchId) {
+      const row = await db()
+        .selectFrom('agent_action_batches as b')
+        .innerJoin('agent_runs as r', 'r.id', 'b.run_id')
+        .innerJoin('agents as a', 'a.id', 'b.agent_id')
+        .select([
+          'b.id',
+          'b.run_id',
+          'b.agent_id',
+          'b.owner_subject',
+          'b.status',
+          'b.actions',
+          'b.results',
+          'b.accepted_by',
+          'b.comment',
+          'b.waiting_until',
+          'b.updated_at',
+          'r.status as run_status',
+          'r.cancel_requested_at',
+          'a.name as agent_name',
+        ])
+        .where('b.id', '=', batchId)
+        .executeTakeFirst();
+      return row ? batchStateFromRow(row) : null;
+    },
+    async settleProposedBatch(batchId, { status, acceptedBy, decidedBy, comment }) {
+      const moved = await db()
+        .updateTable('agent_action_batches')
+        .set({
+          status,
+          accepted_by: acceptedBy,
+          decided_by: decidedBy,
+          decided_at: sql`NOW()`,
+          comment,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', batchId)
+        .where('status', '=', 'proposed')
+        .executeTakeFirst();
+      return Number(moved.numUpdatedRows ?? 0) > 0;
+    },
+    async expireLiveBatch(batchId, comment) {
+      await db()
+        .updateTable('agent_action_batches')
+        .set({
+          status: 'expired',
+          comment,
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', batchId)
+        .where('status', 'in', ['accepted', 'executing'])
+        .execute();
+    },
+    async claimBatch(batchId) {
+      const claimed = await db()
+        .updateTable('agent_action_batches')
+        .set({ status: 'executing', started_at: sql`NOW()`, updated_at: sql`NOW()` })
+        .where('id', '=', batchId)
+        .where('status', '=', 'accepted')
+        .executeTakeFirst();
+      return Number(claimed.numUpdatedRows ?? 0) > 0;
+    },
+    async saveBatchProgress(batchId, results) {
+      await db()
+        .updateTable('agent_action_batches')
+        .set({
+          ...(results === undefined ? {} : { results: JSON.stringify(results) }),
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', batchId)
+        .execute();
+    },
+    async completeBatch(batchId, results) {
+      await db()
+        .updateTable('agent_action_batches')
+        .set({
+          status: 'completed',
+          results: JSON.stringify(results),
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', batchId)
+        .execute();
+    },
+    async raiseTurnCard(card) {
+      try {
+        await db().insertInto('actionable_items').values(turnCardValues(card)).execute();
+        return true;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes(TURN_CARD_INDEX)) return false;
+        throw error;
+      }
+    },
+    async findTurnCard(runId, stepId, attempt) {
+      const row = await db()
+        .selectFrom('actionable_items')
+        .select(['id', 'status', 'result', 'decided_by'])
+        .where('run_id', '=', runId)
+        .where('step_id', '=', stepId)
+        .where('attempt', '=', attempt)
+        .orderBy('id')
+        .executeTakeFirst();
+      return row
+        ? { id: row.id, status: row.status, result: row.result, decidedBy: row.decided_by }
+        : null;
+    },
+    async expireCard(cardId, result) {
+      const claimed = await db()
+        .updateTable('actionable_items')
+        .set({
+          status: 'expired',
+          decided_at: sql`NOW()`,
+          archived_at: sql`NOW()`,
+          result: JSON.stringify(result),
+          updated_at: sql`NOW()`,
+        })
+        .where('id', '=', cardId)
+        .where('status', '=', 'suggested')
+        .executeTakeFirst();
+      return Number(claimed.numUpdatedRows ?? 0) > 0;
     },
   };
 }

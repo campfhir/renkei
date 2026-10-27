@@ -298,6 +298,214 @@ export interface AgentRunStore {
    * An upsert: the row is written even when creation's insert was missed.
    */
   recordOutcome(outcome: AgentRunOutcomeInput): Promise<void>;
+
+  // The executor's own reads and writes (worker-agents: engine, actions).
+  // Every write stamps `updated_at`; "now" is the database's clock.
+
+  /** The run as its executor reads it on each delivery, or null. */
+  findForExecution(runId: string): Promise<AgentRunExecutionRecord | null>;
+  /** Change a run's execution state: only the fields given are written. */
+  updateExecution(runId: string, patch: AgentRunExecutionPatch): Promise<void>;
+  /** Whether the run is still wanted: its status and cancel request, or null. */
+  findCancelState(
+    runId: string
+  ): Promise<{ status: string; cancelRequestedAt: Date | null } | null>;
+  /** How the run was started and by which parent (its lineage as stored), or null. */
+  findChainLink(
+    runId: string
+  ): Promise<{ triggerKind: string; parentRunId: string | null; lineage: Json } | null>;
+  /** The run's rows of `stepId`, by attempt (ties by id). */
+  listTurns(runId: string, stepId: string): Promise<AgentRunTurnRecord[]>;
+  /**
+   * Open a turn row: running, started now, iteration 0, step index =
+   * attempt. A second row for the same (run, step, iteration, attempt) is
+   * refused (23505) — the tripwire against two executors of one run.
+   */
+  openTurn(turn: AgentRunTurnInput): Promise<void>;
+  /** Rewrite a turn row's status, billing and detail; `finished` stamps finished_at. */
+  writeTurn(turnId: string, write: AgentRunTurnWrite): Promise<void>;
+  /** The run's running and waiting rows to `status`, finished now. */
+  closeOpenTurns(runId: string, status: string): Promise<void>;
+  /**
+   * End the run: status, error, no deadline, finished now — and every
+   * row still running or waiting canceled, in one transaction.
+   */
+  finishExecution(
+    runId: string,
+    outcome: { status: string; errorKind: string | null; error: string | null }
+  ): Promise<void>;
+  /**
+   * Cancel a run that waits (or was never started), in one transaction:
+   * the run canceled and finished, its undecided cards expired with
+   * `{ reason }` as their result, its proposed batches expired, its
+   * running and waiting rows canceled.
+   */
+  cancelWaiting(runId: string, reason: string): Promise<void>;
+  /** Insert a staged batch; a second batch for the same (run, turn) is refused (23505). */
+  stageBatch(batch: AgentRunNewBatchInput): Promise<void>;
+  /** A batch with its run's status and cancel request and its agent's name, or null. */
+  findBatchState(batchId: string): Promise<AgentRunBatchStateRecord | null>;
+  /**
+   * Record the decision on a proposed batch (decided now). False when it
+   * was no longer proposed — someone else moved it first.
+   */
+  settleProposedBatch(
+    batchId: string,
+    decision: {
+      status: string;
+      acceptedBy: string | null;
+      decidedBy: string | null;
+      comment: string | null;
+    }
+  ): Promise<boolean>;
+  /** An accepted or executing batch to expired with `comment`, finished now. */
+  expireLiveBatch(batchId: string, comment: string): Promise<void>;
+  /** Claim an accepted batch for execution (started now). False when it was not accepted. */
+  claimBatch(batchId: string): Promise<boolean>;
+  /**
+   * Mark progress on an executing batch: the results so far, when given
+   * (stored as JSON) — otherwise only the touch, which says a call began.
+   */
+  saveBatchProgress(batchId: string, results?: unknown): Promise<void>;
+  /** The batch completed with these results (stored as JSON), finished now. */
+  completeBatch(batchId: string, results: unknown): Promise<void>;
+  /**
+   * Raise a run's approval or question card for one turn. False when the
+   * (run, step, iteration 0, attempt) already has one — a racing executor
+   * raised it.
+   */
+  raiseTurnCard(card: AgentRunTurnCardInput): Promise<boolean>;
+  /** The card raised for a run's turn (iteration 0), or null; ties by id. */
+  findTurnCard(
+    runId: string,
+    stepId: string,
+    attempt: number
+  ): Promise<{
+    id: string;
+    status: string;
+    result: Json | null;
+    decidedBy: string | null;
+  } | null>;
+  /**
+   * Expire an undecided card (decided and archived now, `result` stored as
+   * JSON). False when it was decided meanwhile.
+   */
+  expireCard(cardId: string, result: unknown): Promise<boolean>;
+}
+
+/** A run as its executor reads it (worker-agents engine). */
+export interface AgentRunExecutionRecord {
+  id: string;
+  agentId: string;
+  ownerSubject: string;
+  definitionSnapshot: Json | null;
+  llmModelId: string | null;
+  initialState: Json | null;
+  status: string;
+  startedAt: Date | null;
+  waitingUntil: Date | null;
+  cancelRequestedAt: Date | null;
+  resumedAt: Date | null;
+  resumeGuidance: string | null;
+  resumeFailure: string | null;
+  errorKind: string | null;
+  triggerKind: string;
+  parentRunId: string | null;
+  activeMs: number;
+}
+
+/** What the executor changes on a run; a field left out is left as it is. */
+export interface AgentRunExecutionPatch {
+  status?: string;
+  startedAt?: Date;
+  waitingUntil?: Date | null;
+  llmModelId?: string | null;
+  errorKind?: string | null;
+  error?: string | null;
+  activeMs?: number;
+}
+
+/** One turn row, as the executor rebuilds a conversation from. `detail` as stored. */
+export interface AgentRunTurnRecord {
+  id: string;
+  attempt: number;
+  status: string;
+  createdAt: Date;
+  toolCallCount: number;
+  detail: Json | null;
+}
+
+/** A turn row to open; `detail` is JSON text (its content half already sealed). */
+export interface AgentRunTurnInput {
+  id: string;
+  runId: string;
+  stepId: string;
+  attempt: number;
+  detail: string;
+}
+
+/** A turn row's rewrite; `detail` is JSON text. */
+export interface AgentRunTurnWrite {
+  status: string;
+  toolCallCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  outcome: string | null;
+  detail: string;
+  /** Stamp finished_at now (a row that is neither running nor waiting). */
+  finished: boolean;
+}
+
+/** A staged batch to insert; `actions` is stored as JSON. */
+export interface AgentRunNewBatchInput {
+  id: string;
+  runId: string;
+  agentId: string;
+  ownerSubject: string;
+  turn: number;
+  status: string;
+  summary: string;
+  actions: unknown;
+  reviewReason: string | null;
+  acceptedBy: string | null;
+  /** Stamp decided_at now (an auto-accepted batch). */
+  decided: boolean;
+  waitingUntil: Date | null;
+}
+
+/** A batch with the state of its run and the name of its agent. */
+export interface AgentRunBatchStateRecord {
+  id: string;
+  runId: string;
+  agentId: string;
+  ownerSubject: string;
+  status: string;
+  actions: Json;
+  results: Json;
+  acceptedBy: string | null;
+  comment: string | null;
+  waitingUntil: Date | null;
+  updatedAt: Date;
+  runStatus: string;
+  runCancelRequestedAt: Date | null;
+  agentName: string;
+}
+
+/** A run's card for one turn (source 'agents', suggested, no evidence). */
+export interface AgentRunTurnCardInput {
+  id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  /** Stored as JSON. */
+  suggestedAction: unknown;
+  ownerSubject: string;
+  agentId: string;
+  runId: string;
+  stepId: string;
+  attempt: number;
 }
 
 export interface RunRestartSourceRecord {

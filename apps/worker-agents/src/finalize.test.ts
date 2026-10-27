@@ -151,7 +151,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(parentRunId, a, 'succeeded'));
@@ -184,7 +183,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(bRunId, b, 'succeeded'));
@@ -210,7 +208,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )({
@@ -226,7 +223,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(runId, agentId, 'failed'));
@@ -245,7 +241,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(runId, a, 'failed'));

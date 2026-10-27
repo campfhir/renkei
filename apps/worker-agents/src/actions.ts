@@ -23,8 +23,8 @@
  *    stopped the whole time.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB, Json } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import type { Json } from '@renkei/db';
 import {
   ACTION_RESULT_CHARS,
   clipActionResult,
@@ -46,7 +46,11 @@ const TOKEN_TTL_SECONDS = 30 * 60;
 const ABANDONED_AFTER_MS = 2 * 60_000;
 
 export interface ActionsDeps {
-  db: Kysely<DB>;
+  /**
+   * Only for the notifier (./notifications.ts), which still takes a
+   * handle; the executor's own reads and writes go through getDataStore().
+   */
+  db: Parameters<typeof notifierFor>[0];
   webBaseUrl: string;
   /** Where the run goes back to once the batch has an outcome. */
   runProducer: QueueProducer;
@@ -70,7 +74,8 @@ function clip(text: string, max: number): string {
 }
 
 export function createActionsHandler(deps: ActionsDeps) {
-  const db = deps.db;
+  const { db } = deps;
+  const store = () => getDataStore();
   const createClient =
     deps.createMcpClient ??
     ((token: string, base: string, runId?: string) =>
@@ -104,25 +109,7 @@ export function createActionsHandler(deps: ActionsDeps) {
       });
       return;
     }
-    const batch = await db
-      .selectFrom('agent_action_batches as b')
-      .innerJoin('agent_runs as r', 'r.id', 'b.run_id')
-      .innerJoin('agents as a', 'a.id', 'b.agent_id')
-      .select([
-        'b.id',
-        'b.run_id',
-        'b.agent_id',
-        'b.owner_subject',
-        'b.status',
-        'b.actions',
-        'b.results',
-        'b.updated_at',
-        'r.status as run_status',
-        'r.cancel_requested_at',
-        'a.name as agent_name',
-      ])
-      .where('b.id', '=', payload.batchId)
-      .executeTakeFirst();
+    const batch = await store().agentRuns.findBatchState(payload.batchId);
     if (!batch) {
       logger.warn('actions job for unknown batch {batchId}; dropping', {
         component: 'worker-agents/actions',
@@ -132,7 +119,7 @@ export function createActionsHandler(deps: ActionsDeps) {
     }
     // Settled already (a duplicate message): make sure the run heard.
     if (batch.status === 'completed' || batch.status === 'declined' || batch.status === 'expired') {
-      if (batch.run_status === 'waiting') await wakeRun(batch.run_id, batch.agent_id);
+      if (batch.runStatus === 'waiting') await wakeRun(batch.runId, batch.agentId);
       return;
     }
     if (batch.status !== 'accepted' && batch.status !== 'executing') return;
@@ -140,20 +127,13 @@ export function createActionsHandler(deps: ActionsDeps) {
     // A run that ended (canceled while the batch waited in the queue) must
     // not act after the fact.
     const runOver =
-      batch.cancel_requested_at !== null ||
-      ['succeeded', 'failed', 'canceled', 'stopped'].includes(batch.run_status);
+      batch.runCancelRequestedAt !== null ||
+      ['succeeded', 'failed', 'canceled', 'stopped'].includes(batch.runStatus);
     if (runOver) {
-      await db
-        .updateTable('agent_action_batches')
-        .set({
-          status: 'expired',
-          comment: 'The run ended before the batch could be carried out.',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', batch.id)
-        .where('status', 'in', ['accepted', 'executing'])
-        .execute();
+      await store().agentRuns.expireLiveBatch(
+        batch.id,
+        'The run ended before the batch could be carried out.'
+      );
       return;
     }
 
@@ -164,7 +144,7 @@ export function createActionsHandler(deps: ActionsDeps) {
       // Someone else's claim. Fresh: they are working on it — come back
       // later. Stale: they died mid-batch, and the action they were on has
       // an unknown outcome.
-      if (now() - new Date(batch.updated_at).getTime() < ABANDONED_AFTER_MS) {
+      if (now() - batch.updatedAt.getTime() < ABANDONED_AFTER_MS) {
         throw new TransientFailure('the batch is being executed elsewhere');
       }
       const interrupted = actions[results.length];
@@ -177,43 +157,34 @@ export function createActionsHandler(deps: ActionsDeps) {
         });
       }
     } else {
-      const claimed = await db
-        .updateTable('agent_action_batches')
-        .set({ status: 'executing', started_at: sql`NOW()`, updated_at: sql`NOW()` })
-        .where('id', '=', batch.id)
-        .where('status', '=', 'accepted')
-        .executeTakeFirst();
-      if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+      const claimed = await store().agentRuns.claimBatch(batch.id);
+      if (!claimed) {
         throw new TransientFailure('the batch was claimed concurrently');
       }
     }
 
     const saveResults = async () => {
-      await db
-        .updateTable('agent_action_batches')
-        .set({ results: JSON.stringify(results), updated_at: sql`NOW()` })
-        .where('id', '=', batch.id)
-        .execute();
+      await store().agentRuns.saveBatchProgress(batch.id, results);
     };
 
     const failedEarlier = () => results.some((result) => result.outcome !== 'succeeded');
     let canceledMidway = false;
     if (results.length < actions.length && !failedEarlier()) {
       const token = await mint({
-        subject: batch.owner_subject,
-        agentId: batch.agent_id,
+        subject: batch.ownerSubject,
+        agentId: batch.agentId,
         ttlSeconds: TOKEN_TTL_SECONDS,
         tools: [...new Set([...actions.map((action) => action.tool), ...NOTIFIER_TOOLS])],
       });
       try {
-        const mcp = createClient(token, deps.webBaseUrl, batch.run_id);
+        const mcp = createClient(token, deps.webBaseUrl, batch.runId);
         await mcp.initialize();
         const toolsByName = new Map((await mcp.listTools()).map((tool) => [tool.name, tool]));
         const notifier = await notifierFor(db, {
-          subject: batch.owner_subject,
-          agentId: batch.agent_id,
-          agentName: batch.agent_name,
-          runId: batch.run_id,
+          subject: batch.ownerSubject,
+          agentId: batch.agentId,
+          agentName: batch.agentName,
+          runId: batch.runId,
           mcp,
           toolsByName,
           ownerEmail: undefined,
@@ -222,12 +193,8 @@ export function createActionsHandler(deps: ActionsDeps) {
           if (failedEarlier()) break;
           // A cancel that lands mid-batch stops it before the next action:
           // what was made stays made, the rest is never made.
-          const live = await db
-            .selectFrom('agent_runs')
-            .select(['cancel_requested_at', 'status'])
-            .where('id', '=', batch.run_id)
-            .executeTakeFirst();
-          if (!live || live.cancel_requested_at !== null || live.status === 'canceled') {
+          const live = await store().agentRuns.findCancelState(batch.runId);
+          if (!live || live.cancelRequestedAt !== null || live.status === 'canceled') {
             canceledMidway = true;
             break;
           }
@@ -244,11 +211,7 @@ export function createActionsHandler(deps: ActionsDeps) {
           }
           // Recorded as started before the call: a crash from here on
           // reads as "outcome unknown", never as "not yet made".
-          await db
-            .updateTable('agent_action_batches')
-            .set({ updated_at: sql`NOW()` })
-            .where('id', '=', batch.id)
-            .execute();
+          await store().agentRuns.saveBatchProgress(batch.id);
           const startedAt = now();
           let result: McpToolResult;
           try {
@@ -280,8 +243,8 @@ export function createActionsHandler(deps: ActionsDeps) {
           } else {
             logger.warn('staged action {tool} failed for run {runId}', {
               component: 'worker-agents/actions',
-              runId: batch.run_id,
-              agentId: batch.agent_id,
+              runId: batch.runId,
+              agentId: batch.agentId,
               tool: action.tool,
               error: clip(text, 500),
             });
@@ -303,22 +266,13 @@ export function createActionsHandler(deps: ActionsDeps) {
         durationMs: 0,
       });
     }
-    await db
-      .updateTable('agent_action_batches')
-      .set({
-        status: 'completed',
-        results: JSON.stringify(results),
-        finished_at: sql`NOW()`,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', batch.id)
-      .execute();
+    await store().agentRuns.completeBatch(batch.id, results);
     logger.info('batch {batchId} executed for run {runId}: {summary}', {
       component: 'worker-agents/actions',
       batchId: batch.id,
-      runId: batch.run_id,
+      runId: batch.runId,
       summary: results.map((result) => `${result.tool}=${result.outcome}`).join(', '),
     });
-    await wakeRun(batch.run_id, batch.agent_id);
+    await wakeRun(batch.runId, batch.agentId);
   };
 }

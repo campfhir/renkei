@@ -3,6 +3,12 @@ import type { MemoryTables } from '../../memory/tables';
 import { jsonbText, jsonField } from '../agents/json';
 import {
   batchFromRow,
+  batchStateFromRow,
+  executionColumns,
+  executionFromRow,
+  turnCardValues,
+  turnFromRow,
+  turnWriteColumns,
   LIVE_STATUSES,
   likePattern,
   newRunValues,
@@ -18,6 +24,17 @@ const SETTLED: readonly string[] = ['succeeded', 'failed', 'stopped'];
 export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
   const runId = (value: string) => tables.param('agent_runs', 'id', value);
   const agentOf = (value: string) => tables.param('agent_runs', 'agent_id', value);
+  const batchId = (value: string) => tables.param('agent_action_batches', 'id', value);
+
+  /** The run's running and waiting rows to `status`, finished now. */
+  function closeTurns(run: unknown, status: string): void {
+    const now = new Date();
+    tables.update(
+      'agent_run_steps',
+      (r) => r.run_id === run && (r.status === 'running' || r.status === 'waiting'),
+      { status, finished_at: now, updated_at: now }
+    );
+  }
 
   return {
     async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
@@ -460,6 +477,223 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         ...update
       } = values;
       tables.upsert('agent_run_log', values, ['run_id'], update);
+    },
+    async findForExecution(wanted) {
+      const id = runId(wanted);
+      const row = tables.first('agent_runs', (r) => r.id === id);
+      return row ? executionFromRow(row) : null;
+    },
+    async updateExecution(wanted, patch) {
+      const id = runId(wanted);
+      tables.update('agent_runs', (r) => r.id === id, {
+        ...executionColumns(patch),
+        updated_at: new Date(),
+      });
+    },
+    async findCancelState(wanted) {
+      const id = runId(wanted);
+      const row = tables.first('agent_runs', (r) => r.id === id);
+      return row ? { status: row.status, cancelRequestedAt: row.cancel_requested_at } : null;
+    },
+    async findChainLink(wanted) {
+      const id = runId(wanted);
+      const row = tables.first('agent_runs', (r) => r.id === id);
+      return row
+        ? { triggerKind: row.trigger_kind, parentRunId: row.parent_run_id, lineage: row.lineage }
+        : null;
+    },
+    async listTurns(wanted, stepId) {
+      const id = tables.param('agent_run_steps', 'run_id', wanted);
+      return orderBy(
+        tables.select('agent_run_steps', (r) => r.run_id === id && r.step_id === stepId),
+        [(r) => r.attempt],
+        [(r) => r.id]
+      ).map(turnFromRow);
+    },
+    async openTurn(turn) {
+      const now = new Date();
+      tables.insert('agent_run_steps', {
+        id: turn.id,
+        run_id: turn.runId,
+        step_id: turn.stepId,
+        step_index: turn.attempt,
+        attempt: turn.attempt,
+        iteration: 0,
+        status: 'running',
+        started_at: now,
+        detail: turn.detail,
+      });
+    },
+    async writeTurn(turnId, write) {
+      const id = tables.param('agent_run_steps', 'id', turnId);
+      const now = new Date();
+      tables.update('agent_run_steps', (r) => r.id === id, {
+        ...turnWriteColumns(write),
+        ...(write.finished ? { finished_at: now } : {}),
+        updated_at: now,
+      });
+    },
+    async closeOpenTurns(wanted, status) {
+      closeTurns(runId(wanted), status);
+    },
+    async finishExecution(wanted, { status, errorKind, error }) {
+      const id = runId(wanted);
+      const now = new Date();
+      tables.update('agent_runs', (r) => r.id === id, {
+        status,
+        error_kind: errorKind,
+        error,
+        waiting_until: null,
+        finished_at: now,
+        updated_at: now,
+      });
+      closeTurns(id, 'canceled');
+    },
+    async cancelWaiting(wanted, reason) {
+      const id = runId(wanted);
+      const now = new Date();
+      tables.update('agent_runs', (r) => r.id === id, {
+        status: 'canceled',
+        waiting_until: null,
+        finished_at: now,
+        updated_at: now,
+      });
+      tables.update('actionable_items', (r) => r.run_id === id && r.status === 'suggested', {
+        status: 'expired',
+        decided_at: now,
+        archived_at: now,
+        result: JSON.stringify({ reason }),
+        updated_at: now,
+      });
+      tables.update('agent_action_batches', (r) => r.run_id === id && r.status === 'proposed', {
+        status: 'expired',
+        updated_at: now,
+      });
+      closeTurns(id, 'canceled');
+    },
+    async stageBatch(batch) {
+      const now = new Date();
+      tables.insert('agent_action_batches', {
+        id: batch.id,
+        run_id: batch.runId,
+        agent_id: batch.agentId,
+        owner_subject: batch.ownerSubject,
+        turn: batch.turn,
+        status: batch.status,
+        summary: batch.summary,
+        actions: JSON.stringify(batch.actions),
+        review_reason: batch.reviewReason,
+        accepted_by: batch.acceptedBy,
+        decided_at: batch.decided ? now : null,
+        waiting_until: batch.waitingUntil,
+      });
+    },
+    async findBatchState(wanted) {
+      const id = batchId(wanted);
+      const batch = tables.first('agent_action_batches', (r) => r.id === id);
+      if (!batch) return null;
+      const run = tables.first('agent_runs', (r) => r.id === batch.run_id);
+      const agent = tables.first('agents', (r) => r.id === batch.agent_id);
+      if (!run || !agent) return null;
+      return batchStateFromRow({
+        ...batch,
+        run_status: run.status,
+        cancel_requested_at: run.cancel_requested_at,
+        agent_name: agent.name,
+      });
+    },
+    async settleProposedBatch(wanted, { status, acceptedBy, decidedBy, comment }) {
+      const id = batchId(wanted);
+      const now = new Date();
+      return (
+        tables.update('agent_action_batches', (r) => r.id === id && r.status === 'proposed', {
+          status,
+          accepted_by: acceptedBy,
+          decided_by: decidedBy,
+          decided_at: now,
+          comment,
+          updated_at: now,
+        }).length > 0
+      );
+    },
+    async expireLiveBatch(wanted, comment) {
+      const id = batchId(wanted);
+      const now = new Date();
+      tables.update(
+        'agent_action_batches',
+        (r) => r.id === id && (r.status === 'accepted' || r.status === 'executing'),
+        { status: 'expired', comment, finished_at: now, updated_at: now }
+      );
+    },
+    async claimBatch(wanted) {
+      const id = batchId(wanted);
+      const now = new Date();
+      return (
+        tables.update('agent_action_batches', (r) => r.id === id && r.status === 'accepted', {
+          status: 'executing',
+          started_at: now,
+          updated_at: now,
+        }).length > 0
+      );
+    },
+    async saveBatchProgress(wanted, results) {
+      const id = batchId(wanted);
+      tables.update('agent_action_batches', (r) => r.id === id, {
+        ...(results === undefined ? {} : { results: JSON.stringify(results) }),
+        updated_at: new Date(),
+      });
+    },
+    async completeBatch(wanted, results) {
+      const id = batchId(wanted);
+      const now = new Date();
+      tables.update('agent_action_batches', (r) => r.id === id, {
+        status: 'completed',
+        results: JSON.stringify(results),
+        finished_at: now,
+        updated_at: now,
+      });
+    },
+    async raiseTurnCard(card) {
+      // The partial unique index (run, step, iteration, attempt) where
+      // run_id is set, which the generated schema does not carry.
+      const run = tables.param('actionable_items', 'run_id', card.runId);
+      const taken = tables.first(
+        'actionable_items',
+        (r) =>
+          r.run_id === run &&
+          r.step_id === card.stepId &&
+          r.iteration === 0 &&
+          r.attempt === card.attempt
+      );
+      if (taken) return false;
+      tables.insert('actionable_items', turnCardValues(card));
+      return true;
+    },
+    async findTurnCard(wanted, stepId, attempt) {
+      const run = tables.param('actionable_items', 'run_id', wanted);
+      const [row] = orderBy(
+        tables.select(
+          'actionable_items',
+          (r) => r.run_id === run && r.step_id === stepId && r.attempt === attempt
+        ),
+        [(r) => r.id]
+      );
+      return row
+        ? { id: row.id, status: row.status, result: row.result, decidedBy: row.decided_by }
+        : null;
+    },
+    async expireCard(cardId, result) {
+      const id = tables.param('actionable_items', 'id', cardId);
+      const now = new Date();
+      return (
+        tables.update('actionable_items', (r) => r.id === id && r.status === 'suggested', {
+          status: 'expired',
+          decided_at: now,
+          archived_at: now,
+          result: JSON.stringify(result),
+          updated_at: now,
+        }).length > 0
+      );
     },
   };
 }

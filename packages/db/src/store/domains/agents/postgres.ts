@@ -535,5 +535,55 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
         sourceAt: row.source_at,
       }));
     },
+    async findRunSettings(agentId) {
+      const row = await db()
+        .selectFrom('agents')
+        .select(['enabled', 'name', 'guardrails', 'can_ask_questions', 'auto_accept_actions'])
+        .where('id', '=', agentId)
+        .executeTakeFirst();
+      return row
+        ? {
+            name: row.name,
+            enabled: row.enabled,
+            guardrails: row.guardrails,
+            canAskQuestions: row.can_ask_questions,
+            autoAcceptActions: row.auto_accept_actions,
+          }
+        : null;
+    },
+    async listChainTargets(callerAgentId) {
+      const rows = await db()
+        .selectFrom('agent_triggers as t')
+        .innerJoin('agents as a', 'a.id', 't.agent_id')
+        .select([
+          't.id as trigger_id',
+          't.agent_id',
+          'a.owner_subject',
+          'a.instructions',
+          'a.tools',
+          'a.llm_model_id',
+        ])
+        .where('t.kind', '=', 'agent')
+        .where('t.enabled', '=', true)
+        .where('a.enabled', '=', true)
+        .where(sql<string>`t.config->>'callerAgentId'`, '=', callerAgentId)
+        .orderBy('t.id')
+        .execute();
+      return rows.map((row) => ({
+        triggerId: row.trigger_id,
+        agentId: row.agent_id,
+        ownerSubject: row.owner_subject,
+        instructions: row.instructions,
+        tools: row.tools,
+        llmModelId: row.llm_model_id,
+      }));
+    },
+    async markTriggerFailed(triggerId, error) {
+      await db()
+        .updateTable('agent_triggers')
+        .set({ last_error: error, updated_at: sql`NOW()` })
+        .where('id', '=', triggerId)
+        .execute();
+    },
   };
 }

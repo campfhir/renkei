@@ -34,11 +34,9 @@
  * the same run fail loudly instead of acting twice.
  */
 
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
 import { randomUUID } from 'node:crypto';
-import { describeActor as describeActorRaw } from '@renkei/db';
-import type { DB, Json } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import type { AgentRunExecutionRecord, Json } from '@renkei/db';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
   BUILTIN_VARIABLES,
@@ -185,7 +183,11 @@ export interface FinalizedRun {
 }
 
 export interface EngineDeps {
-  db: Kysely<DB>;
+  /**
+   * Only for the notifier (./notifications.ts), which still takes a
+   * handle; the engine's own reads and writes go through getDataStore().
+   */
+  db: Parameters<typeof notifierFor>[0];
   /** Base URL the worker reaches the web app on (RENKEI_WEB_INTERNAL_URL). */
   webBaseUrl: string;
   /** Where accepted batches go for the action executor (actions.ts). */
@@ -211,27 +213,8 @@ export interface EngineDeps {
   now?: () => number;
 }
 
-interface RunRow {
-  id: string;
-  agent_id: string;
-  owner_subject: string;
-  definition_snapshot: Json | null;
-  llm_model_id: string | null;
-  initial_state: Json | null;
-  status: string;
-  started_at: Date | null;
-  waiting_until: Date | null;
-  cancel_requested_at: Date | null;
-  resumed_at: Date | null;
-  resume_guidance: string | null;
-  resume_failure: string | null;
-  /** Why the run stopped or waits; 'needs-sign-in' marks a run parked for its owner's key. */
-  error_kind: string | null;
-  /** What started the run: 'event' | 'schedule' | 'agent' | 'api' | 'manual' (runs.ts). */
-  trigger_kind: string;
-  parent_run_id: string | null;
-  active_ms: string | number;
-}
+/** The run as the executor holds it for one delivery. */
+type RunRow = AgentRunExecutionRecord;
 
 /** One tool call as the timeline shows it. */
 interface ToolCallRecord {
@@ -465,14 +448,12 @@ export function requestLogFieldOf(
 }
 
 /** The owner's name for a log line — total: a run never fails over a display name. */
-async function describeActor(
-  db: Kysely<DB>,
-  subject: string | null | undefined
-): Promise<{ subject: string; displayName: string }> {
+async function describeActor(subject: string): Promise<{ subject: string; displayName: string }> {
   try {
-    return await describeActorRaw(db, subject);
+    const identity = await getDataStore().identities.get(subject);
+    return { subject, displayName: identity?.displayName || identity?.email || subject };
   } catch {
-    return { subject: subject ?? '(none)', displayName: subject ?? '(none)' };
+    return { subject, displayName: subject };
   }
 }
 
@@ -627,7 +608,8 @@ function toolUsesOf(blocks: LlmContentBlock[] | undefined): ToolUseBlock[] {
 }
 
 export function createAgentRunHandler(deps: EngineDeps) {
-  const db = deps.db;
+  const { db } = deps;
+  const store = () => getDataStore();
   const createClient =
     deps.createMcpClient ??
     ((token: string, base: string, runId?: string) =>
@@ -648,29 +630,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
     const runId = payload.runId;
 
-    const run = await db
-      .selectFrom('agent_runs')
-      .select([
-        'id',
-        'agent_id',
-        'owner_subject',
-        'definition_snapshot',
-        'llm_model_id',
-        'initial_state',
-        'status',
-        'started_at',
-        'waiting_until',
-        'cancel_requested_at',
-        'resumed_at',
-        'resume_guidance',
-        'resume_failure',
-        'error_kind',
-        'trigger_kind',
-        'parent_run_id',
-        'active_ms',
-      ])
-      .where('id', '=', runId)
-      .executeTakeFirst();
+    const run = await store().agentRuns.findForExecution(runId);
     if (!run) {
       logger.warn('agent job for unknown run {runId}; dropping', {
         component: 'worker-agents/engine',
@@ -703,7 +663,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     if (!settingsResult.ok) throw new TransientFailure('org settings unavailable');
     const settings = settingsResult.val;
 
-    const definition = parseAgentDefinition(run.definition_snapshot);
+    const definition = parseAgentDefinition(run.definitionSnapshot);
     if (!definition) {
       await finalizeRun(run, 'failed', 'config', 'The saved instructions could not be read.', {});
       return;
@@ -711,11 +671,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     // Guardrails and the question/auto-accept switches are LIVE-READ: a
     // rule tightened mid-flight bites this run's next model call.
-    const agentRow = await db
-      .selectFrom('agents')
-      .select(['enabled', 'name', 'guardrails', 'can_ask_questions', 'auto_accept_actions'])
-      .where('id', '=', run.agent_id)
-      .executeTakeFirst();
+    const agentRow = await store().agents.findRunSettings(run.agentId);
     if (!agentRow) {
       await finalizeRun(run, 'failed', 'config', 'The agent no longer exists.', {});
       return;
@@ -725,25 +681,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // (docs/delegate-key-design.md). Without it the run is PARKED —
     // 'waiting', error_kind 'needs-sign-in' — and the owner's next sign-in
     // re-queues it.
-    const owner = await delegateClient().forRun(runId).keyStatus(run.owner_subject);
+    const owner = await delegateClient().forRun(runId).keyStatus(run.ownerSubject);
     if (!owner.ok) throw new TransientFailure('key service unavailable');
     const delegated =
       owner.val.enrolled &&
       (owner.val.automationInstances.length > 0 || owner.val.sessionInstances.length > 0);
-    if (!delegated && !run.cancel_requested_at) {
-      await db
-        .updateTable('agent_runs')
-        .set({
-          status: 'waiting',
-          waiting_until: null,
-          error_kind: 'needs-sign-in',
-          error: owner.val.enrolled
-            ? 'Paused: your encryption key is not available to your agents. Sign in to resume.'
-            : 'Paused: finish setting up your encryption key by signing in, then this run resumes.',
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', runId)
-        .execute();
+    if (!delegated && !run.cancelRequestedAt) {
+      await store().agentRuns.updateExecution(runId, {
+        status: 'waiting',
+        waitingUntil: null,
+        errorKind: 'needs-sign-in',
+        error: owner.val.enrolled
+          ? 'Paused: your encryption key is not available to your agents. Sign in to resume.'
+          : 'Paused: finish setting up your encryption key by signing in, then this run resumes.',
+      });
       logger.info('run {runId} parked: owner key not delegated', {
         component: 'worker-agents/engine',
         runId,
@@ -754,7 +705,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // A cancel request — or a disabled agent — wins over resuming.
     // Run-status transitions belong to the ENGINE alone: the route that
     // took the cancel click only set the flag and woke us.
-    const cancelReason = run.cancel_requested_at
+    const cancelReason = run.cancelRequestedAt
       ? 'canceled-by-owner'
       : !agentRow.enabled
         ? 'agent-disabled'
@@ -764,7 +715,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       return;
     }
 
-    const llmResult = await resolveLlm(run.llm_model_id);
+    const llmResult = await resolveLlm(run.llmModelId);
     if (!llmResult.ok) {
       if (llmResult.err.type === 'DB_ERROR') throw new TransientFailure('model config unavailable');
       await finalizeRun(
@@ -799,8 +750,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     // which act, and it carries the notifier's mail/WebEx calls. The model
     // never reaches it.
     const probeToken = await mint({
-      subject: run.owner_subject,
-      agentId: run.agent_id,
+      subject: run.ownerSubject,
+      agentId: run.agentId,
       ttlSeconds: tokenTtl,
       tools: [...new Set([...definition.tools, ...NOTIFIER_TOOLS])],
     });
@@ -819,13 +770,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const actTools = selected.filter((tool) => tool.kind !== 'read');
       const missing = definition.tools.filter((name) => !toolsByName.has(name));
 
-      const context = await loadRunContext(run.agent_id);
+      const context = await loadRunContext(run.agentId);
       // The MODEL's token: read tools only. However the conversation goes,
       // nothing the agent calls can change a system — the gateway does not
       // register an act tool for this token at all.
       const agentToken = await mint({
-        subject: run.owner_subject,
-        agentId: run.agent_id,
+        subject: run.ownerSubject,
+        agentId: run.agentId,
         ttlSeconds: tokenTtl,
         tools: [
           ...readTools.map((tool) => tool.name),
@@ -842,8 +793,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
       const vars = await baseVariables(run);
       const notifier = await notifierFor(db, {
-        subject: run.owner_subject,
-        agentId: run.agent_id,
+        subject: run.ownerSubject,
+        agentId: run.agentId,
         agentName: agentRow.name,
         runId: run.id,
         mcp: probe,
@@ -852,25 +803,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
       });
 
       // Becoming 'running': a fresh run, a wake from a pause, a resume.
-      const firstStart = run.status === 'queued' && run.started_at === null;
+      const firstStart = run.status === 'queued' && run.startedAt === null;
       if (run.status === 'queued' || run.status === 'waiting') {
-        await db
-          .updateTable('agent_runs')
-          .set({
-            status: 'running',
-            started_at: run.started_at ?? new Date(now()),
-            // waiting_until stays: a pause that is still pending re-parks
-            // with the deadline it already had.
-            llm_model_id: llm.modelConfigId,
-            ...(run.error_kind === 'needs-sign-in' ? { error_kind: null, error: null } : {}),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', runId)
-          .execute();
+        await store().agentRuns.updateExecution(runId, {
+          status: 'running',
+          startedAt: run.startedAt ?? new Date(now()),
+          // waiting_until stays: a pause that is still pending re-parks
+          // with the deadline it already had.
+          llmModelId: llm.modelConfigId,
+          ...(run.errorKind === 'needs-sign-in' ? { errorKind: null, error: null } : {}),
+        });
       }
-      if (firstStart && run.resumed_at === null) void notifier.runStarted();
+      if (firstStart && run.resumedAt === null) void notifier.runStarted();
 
-      const canAsk = agentRow.can_ask_questions === true;
+      const canAsk = agentRow.canAskQuestions;
       const offered: LlmToolDef[] = [
         FINISH_RUN_DEF,
         ...(actTools.length > 0
@@ -903,7 +849,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         agentName: agentRow.name,
         guardrails: agentRow.guardrails ?? '',
         canAsk,
-        autoAccept: agentRow.auto_accept_actions === true,
+        autoAccept: agentRow.autoAcceptActions,
         externallyTriggered: await runIsExternallyTriggered(run),
         actPolicy: settings.agentActStepsRequireApproval,
         approvalWaitCapHours: settings.agentApprovalMaxWaitDays * 24,
@@ -966,7 +912,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     constructor(input: LoopInput) {
       this.input = input;
-      this.priorActiveMs = Number(input.run.active_ms ?? 0);
+      this.priorActiveMs = Number(input.run.activeMs ?? 0);
     }
 
     private get runRow(): RunRow {
@@ -995,11 +941,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     /** Persist the active-time clock — on every turn, and before control leaves. */
     private async saveClock(): Promise<void> {
-      await db
-        .updateTable('agent_runs')
-        .set({ active_ms: Math.round(this.activeMs()), updated_at: sql`NOW()` })
-        .where('id', '=', this.runRow.id)
-        .execute();
+      await store().agentRuns.updateExecution(this.runRow.id, {
+        activeMs: Math.round(this.activeMs()),
+      });
     }
 
     async execute(): Promise<void> {
@@ -1026,12 +970,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     }
 
     private async closeOpenTurn(status: 'failed' | 'canceled'): Promise<void> {
-      await db
-        .updateTable('agent_run_steps')
-        .set({ status, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-        .where('run_id', '=', this.runRow.id)
-        .where('status', 'in', ['running', 'waiting'])
-        .execute();
+      await store().agentRuns.closeOpenTurns(this.runRow.id, status);
     }
 
     private async drive(): Promise<void> {
@@ -1047,8 +986,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // from before an owner's resume is history: the run goes on past it.
         const resumedPast =
           last !== undefined &&
-          this.runRow.resumed_at !== null &&
-          new Date(this.runRow.resumed_at).getTime() > last.created_at.getTime();
+          this.runRow.resumedAt !== null &&
+          new Date(this.runRow.resumedAt).getTime() > last.created_at.getTime();
         if (last && !resumedPast && last.status === 'succeeded' && last.detail.finish) {
           // Finished, but the run row did not say so (a crash between the
           // two writes): finalize from what the row recorded.
@@ -1101,27 +1040,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
     /** Every turn row of this run, opened, oldest first. */
     private async loadTurns(): Promise<TurnRow[]> {
-      const rows = await db
-        .selectFrom('agent_run_steps')
-        .select(['id', 'attempt', 'status', 'created_at', 'tool_call_count', 'detail'])
-        .where('run_id', '=', this.runRow.id)
-        .where('step_id', '=', TURN_STEP_ID)
-        .orderBy('attempt')
-        .execute();
+      const rows = await store().agentRuns.listTurns(this.runRow.id, TURN_STEP_ID);
       const opened = await openDetails(this.runRow, rows);
       return opened.map((row) => ({
         id: row.id,
         attempt: row.attempt,
         status: row.status,
-        created_at: new Date(row.created_at),
-        tool_call_count: row.tool_call_count,
+        created_at: row.createdAt,
+        tool_call_count: row.toolCallCount,
         detail: turnDetailOf(row.detail),
       }));
     }
 
     /** Tool calls billed since the run started — or since its last resume. */
     private toolCallsSpent(turns: TurnRow[]): number {
-      const since = this.runRow.resumed_at ? new Date(this.runRow.resumed_at).getTime() : 0;
+      const since = this.runRow.resumedAt ? new Date(this.runRow.resumedAt).getTime() : 0;
       return turns
         .filter((turn) => turn.created_at.getTime() >= since)
         .reduce((sum, turn) => sum + turn.tool_call_count, 0);
@@ -1140,7 +1073,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
      */
     private async openTurn(turns: TurnRow[]): Promise<TurnRow> {
       const attempt = (turns[turns.length - 1]?.attempt ?? 0) + 1;
-      const resumedAt = this.runRow.resumed_at ? new Date(this.runRow.resumed_at).getTime() : null;
+      const resumedAt = this.runRow.resumedAt ? new Date(this.runRow.resumedAt).getTime() : null;
       const resumedSinceLastTurn =
         resumedAt !== null &&
         turns.length > 0 &&
@@ -1151,8 +1084,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
         detail.opening = this.openingText();
       } else if (resumedSinceLastTurn) {
         detail.opening = resumeMessage({
-          failure: this.runRow.resume_failure,
-          guidance: this.runRow.resume_guidance,
+          failure: this.runRow.resumeFailure,
+          guidance: this.runRow.resumeGuidance,
         });
       } else if (previous?.detail.assistant && toolUsesOf(previous.detail.assistant).length === 0) {
         // The last reply called no tool: the conversation needs a user
@@ -1161,20 +1094,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       const id = randomUUID();
       try {
-        await db
-          .insertInto('agent_run_steps')
-          .values({
-            id,
-            run_id: this.runRow.id,
-            step_id: TURN_STEP_ID,
-            step_index: attempt,
-            attempt,
-            iteration: 0,
-            status: 'running',
-            started_at: sql`NOW()`,
-            detail: await sealedDetailJson(this.runRow, { ...detail }),
-          })
-          .execute();
+        await store().agentRuns.openTurn({
+          id,
+          runId: this.runRow.id,
+          stepId: TURN_STEP_ID,
+          attempt,
+          detail: await sealedDetailJson(this.runRow, { ...detail }),
+        });
       } catch (error) {
         // The unique (run, step, iteration, attempt) tripwire: another
         // executor holds this run. Back off; the queue redelivers.
@@ -1208,7 +1134,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const opening = buildRunOpening({
         facts,
         triggerValues,
-        startedBy: startedByText(this.runRow.trigger_kind),
+        startedBy: startedByText(this.runRow.triggerKind),
       }).content[0].text;
       return missing.length > 0
         ? `${opening}\n\nNot available to you this run (the owner no longer has them): ${missing.join(', ')}.`
@@ -1738,9 +1664,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
         logger.warn('agent "{agentName}": {toolLabel} failed — {error}', {
           component: 'worker-agents/engine',
           runId: this.runRow.id,
-          agentId: this.runRow.agent_id,
+          agentId: this.runRow.agentId,
           agentName: this.input.agentName,
-          subject: this.runRow.owner_subject,
+          subject: this.runRow.ownerSubject,
           toolLabel: friendlyToolName(use.name, null),
           tool: use.name,
           durationMs,
@@ -1787,7 +1713,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
     ): Promise<void> {
       const refuse = (use: ToolUseBlock, content: string) =>
         reply({ type: 'tool_result', toolUseId: use.id, content, isError: true });
-      const since = this.runRow.resumed_at ? new Date(this.runRow.resumed_at).getTime() : 0;
+      const since = this.runRow.resumedAt ? new Date(this.runRow.resumedAt).getTime() : 0;
       const recorded = () =>
         turns
           .filter((turn) => turn.created_at.getTime() >= since)
@@ -2032,13 +1958,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       if (!remembered) return { text: 'remember needs {note}, a non-empty string.', isError: true };
       try {
         const { inserted } = await appendAgentMemory({
-          agentId: this.runRow.agent_id,
+          agentId: this.runRow.agentId,
           content: remembered.note,
           runId: this.runRow.id,
         });
         if (!inserted) return { text: 'Already remembered — no change.', isError: false };
         this.input.context.memoryText = renderAgentMemory(
-          await readAgentMemory(this.runRow.agent_id)
+          await readAgentMemory(this.runRow.agentId)
         );
         return { text: 'Remembered.', isError: false };
       } catch (error) {
@@ -2064,27 +1990,22 @@ export function createAgentRunHandler(deps: EngineDeps) {
     private async writeTurnNow(row: TurnRow, status: string): Promise<void> {
       row.status = status;
       const usage = row.detail.usage ?? emptyUsage();
-      await db
-        .updateTable('agent_run_steps')
-        .set({
-          status,
-          tool_call_count: row.tool_call_count,
-          input_tokens: usage.inputTokens,
-          output_tokens: usage.outputTokens,
-          cache_read_input_tokens: usage.cacheReadInputTokens,
-          cache_write_input_tokens: usage.cacheWriteInputTokens,
-          outcome:
-            status === 'succeeded' && row.detail.finish
-              ? row.detail.finish
-              : status === 'waiting'
-                ? (row.detail.pause?.kind ?? null)
-                : null,
-          detail: await sealedDetailJson(this.runRow, { ...row.detail }),
-          ...(status === 'running' || status === 'waiting' ? {} : { finished_at: sql`NOW()` }),
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', row.id)
-        .execute();
+      await store().agentRuns.writeTurn(row.id, {
+        status,
+        toolCallCount: row.tool_call_count,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cacheReadInputTokens: usage.cacheReadInputTokens,
+        cacheWriteInputTokens: usage.cacheWriteInputTokens,
+        outcome:
+          status === 'succeeded' && row.detail.finish
+            ? row.detail.finish
+            : status === 'waiting'
+              ? (row.detail.pause?.kind ?? null)
+              : null,
+        detail: await sealedDetailJson(this.runRow, { ...row.detail }),
+        finished: status !== 'running' && status !== 'waiting',
+      });
     }
 
     /**
@@ -2115,23 +2036,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const batchId = randomUUID();
       const waitingUntil = reason ? new Date(now() + waitHours * 3_600_000) : null;
       try {
-        await db
-          .insertInto('agent_action_batches')
-          .values({
-            id: batchId,
-            run_id: this.runRow.id,
-            agent_id: this.runRow.agent_id,
-            owner_subject: this.runRow.owner_subject,
-            turn: row.attempt,
-            status: reason ? 'proposed' : 'accepted',
-            summary,
-            actions: JSON.stringify(actions),
-            review_reason: reason,
-            accepted_by: reason ? null : 'auto',
-            decided_at: reason ? null : sql`NOW()`,
-            waiting_until: waitingUntil,
-          })
-          .execute();
+        await store().agentRuns.stageBatch({
+          id: batchId,
+          runId: this.runRow.id,
+          agentId: this.runRow.agentId,
+          ownerSubject: this.runRow.ownerSubject,
+          turn: row.attempt,
+          status: reason ? 'proposed' : 'accepted',
+          summary,
+          actions,
+          reviewReason: reason,
+          acceptedBy: reason ? null : 'auto',
+          decided: !reason,
+          waitingUntil,
+        });
       } catch (error) {
         throw new TransientFailure(
           `batch for turn ${row.attempt} already exists: ${error instanceof Error ? error.message : String(error)}`
@@ -2152,11 +2070,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       ];
       await this.writeTurn(row, 'waiting');
       await this.saveClock();
-      await db
-        .updateTable('agent_runs')
-        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
-        .where('id', '=', this.runRow.id)
-        .execute();
+      await store().agentRuns.updateExecution(this.runRow.id, {
+        status: 'waiting',
+        waitingUntil,
+      });
       if (reason) {
         await this.raiseBatchCard(row.attempt, batchId, summary, actions);
       } else {
@@ -2179,47 +2096,33 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const path = runPagePath(this.runRow);
       const link = approvalLink(path);
       const { agentName } = this.input;
-      try {
-        await db
-          .insertInto('actionable_items')
-          .values({
-            id: randomUUID(),
-            source: 'agents',
-            status: 'suggested',
-            kind: 'approval',
-            title: `${agentName} — ${actions.length === 1 ? 'wants to make a change' : `wants to make ${actions.length} changes`}`,
-            summary: clip(summary, PREVIEW_CHARS),
-            evidence: JSON.stringify([]),
-            // A snapshot: what a person is looking at keeps showing what it
-            // showed. The executor reads the BATCH row, never this.
-            suggested_action: JSON.stringify({ batchId, summary, actions }),
-            owner_subject: this.runRow.owner_subject,
-            created_by: this.runRow.owner_subject,
-            created_by_agent_id: this.runRow.agent_id,
-            run_id: this.runRow.id,
-            step_id: TURN_STEP_ID,
-            iteration: 0,
-            attempt: turn,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
-          return; // a racing executor raised it already
-        }
-        throw error;
-      }
+      const raised = await store().agentRuns.raiseTurnCard({
+        id: randomUUID(),
+        kind: 'approval',
+        title: `${agentName} — ${actions.length === 1 ? 'wants to make a change' : `wants to make ${actions.length} changes`}`,
+        summary: clip(summary, PREVIEW_CHARS),
+        // A snapshot: what a person is looking at keeps showing what it
+        // showed. The executor reads the BATCH row, never this.
+        suggestedAction: { batchId, summary, actions },
+        ownerSubject: this.runRow.ownerSubject,
+        agentId: this.runRow.agentId,
+        runId: this.runRow.id,
+        stepId: TURN_STEP_ID,
+        attempt: turn,
+      });
+      if (!raised) return; // a racing executor raised it already
       const heading = `Agent “${agentName}” wants your go-ahead`;
       await writeNotificationRow(
         db,
         {
-          subject: this.runRow.owner_subject,
-          agentId: this.runRow.agent_id,
+          subject: this.runRow.ownerSubject,
+          agentId: this.runRow.agentId,
           agentName,
           runId: this.runRow.id,
         },
         { kind: 'approval', headline: heading, stepId: null, refUrl: path }
       );
-      const prefs = await getNotificationPrefs(this.runRow.owner_subject);
+      const prefs = await getNotificationPrefs(this.runRow.ownerSubject);
       const { deliverOwnerNotifications } = notificationDeliverer(
         this.input.probe,
         this.input.toolsByName
@@ -2266,11 +2169,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       ];
       await this.writeTurn(row, 'waiting');
       await this.saveClock();
-      await db
-        .updateTable('agent_runs')
-        .set({ status: 'waiting', waiting_until: waitingUntil, updated_at: sql`NOW()` })
-        .where('id', '=', this.runRow.id)
-        .execute();
+      await store().agentRuns.updateExecution(this.runRow.id, {
+        status: 'waiting',
+        waitingUntil,
+      });
       await this.raiseQuestionCard(row.attempt, asked.message, asked.form);
     }
 
@@ -2282,45 +2184,31 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const path = runPagePath(this.runRow);
       const link = approvalLink(path);
       const { agentName } = this.input;
-      try {
-        await db
-          .insertInto('actionable_items')
-          .values({
-            id: randomUUID(),
-            source: 'agents',
-            status: 'suggested',
-            kind: 'question',
-            title: `${agentName} — has a question`,
-            summary: clip(message, PREVIEW_CHARS),
-            evidence: JSON.stringify([]),
-            suggested_action: JSON.stringify({ message, form }),
-            owner_subject: this.runRow.owner_subject,
-            created_by: this.runRow.owner_subject,
-            created_by_agent_id: this.runRow.agent_id,
-            run_id: this.runRow.id,
-            step_id: TURN_STEP_ID,
-            iteration: 0,
-            attempt: turn,
-          })
-          .execute();
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('idx_actionable_items_run_step')) {
-          return;
-        }
-        throw error;
-      }
+      const raised = await store().agentRuns.raiseTurnCard({
+        id: randomUUID(),
+        kind: 'question',
+        title: `${agentName} — has a question`,
+        summary: clip(message, PREVIEW_CHARS),
+        suggestedAction: { message, form },
+        ownerSubject: this.runRow.ownerSubject,
+        agentId: this.runRow.agentId,
+        runId: this.runRow.id,
+        stepId: TURN_STEP_ID,
+        attempt: turn,
+      });
+      if (!raised) return;
       const heading = `Agent “${agentName}” has a question`;
       await writeNotificationRow(
         db,
         {
-          subject: this.runRow.owner_subject,
-          agentId: this.runRow.agent_id,
+          subject: this.runRow.ownerSubject,
+          agentId: this.runRow.agentId,
           agentName,
           runId: this.runRow.id,
         },
         { kind: 'question', headline: heading, stepId: null, refUrl: path }
       );
-      const prefs = await getNotificationPrefs(this.runRow.owner_subject);
+      const prefs = await getNotificationPrefs(this.runRow.ownerSubject);
       const { deliverOwnerNotifications } = notificationDeliverer(
         this.input.probe,
         this.input.toolsByName
@@ -2350,11 +2238,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
           ? await this.resolveBatch(row, pause)
           : await this.resolveQuestion(row, pause);
       if (content === null) {
-        await db
-          .updateTable('agent_runs')
-          .set({ status: 'waiting', updated_at: sql`NOW()` })
-          .where('id', '=', this.runRow.id)
-          .execute();
+        await store().agentRuns.updateExecution(this.runRow.id, { status: 'waiting' });
         return 'waiting';
       }
       row.detail.results = [
@@ -2363,11 +2247,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       ];
       row.detail.pause = undefined;
       await this.writeTurn(row, 'running');
-      await db
-        .updateTable('agent_runs')
-        .set({ status: 'running', waiting_until: null, updated_at: sql`NOW()` })
-        .where('id', '=', this.runRow.id)
-        .execute();
+      await store().agentRuns.updateExecution(this.runRow.id, {
+        status: 'running',
+        waitingUntil: null,
+      });
       return 'resolved';
     }
 
@@ -2376,46 +2259,29 @@ export function createAgentRunHandler(deps: EngineDeps) {
       row: TurnRow,
       pause: Extract<Pause, { kind: 'actions' }>
     ): Promise<string | null> {
-      const batch = await db
-        .selectFrom('agent_action_batches')
-        .select(['id', 'status', 'actions', 'results', 'accepted_by', 'comment', 'waiting_until'])
-        .where('id', '=', pause.batchId)
-        .executeTakeFirst();
+      const batch = await store().agentRuns.findBatchState(pause.batchId);
       if (!batch) return 'The batch could not be found; none of its actions were made.';
       // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the column only holds these
       let status = batch.status as ActionBatchStatus;
       let comment = batch.comment;
-      let acceptedBy = batch.accepted_by;
+      let acceptedBy = batch.acceptedBy;
 
       if (status === 'proposed') {
-        const card = await db
-          .selectFrom('actionable_items')
-          .select(['id', 'status', 'result', 'decided_by'])
-          .where('run_id', '=', this.runRow.id)
-          .where('step_id', '=', TURN_STEP_ID)
-          .where('attempt', '=', row.attempt)
-          .executeTakeFirst();
+        const card = await store().agentRuns.findTurnCard(
+          this.runRow.id,
+          TURN_STEP_ID,
+          row.attempt
+        );
         if (!card) {
           // A crash between the batch and its card: raise it now.
           await this.raiseBatchCard(row.attempt, batch.id, '', parseStoredActions(batch.actions));
           return null;
         }
         if (card.status === 'suggested') {
-          const due = batch.waiting_until ? new Date(batch.waiting_until).getTime() : Infinity;
+          const due = batch.waitingUntil ? batch.waitingUntil.getTime() : Infinity;
           if (now() < due) return null;
-          const claimed = await db
-            .updateTable('actionable_items')
-            .set({
-              status: 'expired',
-              decided_at: sql`NOW()`,
-              archived_at: sql`NOW()`,
-              result: JSON.stringify({ reason: 'timeout' }),
-              updated_at: sql`NOW()`,
-            })
-            .where('id', '=', card.id)
-            .where('status', '=', 'suggested')
-            .executeTakeFirst();
-          if (Number(claimed.numUpdatedRows ?? 0) === 0) return this.resolveBatch(row, pause);
+          const claimed = await store().agentRuns.expireCard(card.id, { reason: 'timeout' });
+          if (!claimed) return this.resolveBatch(row, pause);
           card.status = 'expired';
         }
         comment = commentOf(card.result);
@@ -2425,31 +2291,20 @@ export function createAgentRunHandler(deps: EngineDeps) {
         } else {
           status = card.status === 'declined' ? 'declined' : 'expired';
         }
-        const moved = await db
-          .updateTable('agent_action_batches')
-          .set({
-            status,
-            accepted_by: acceptedBy,
-            decided_by: card.decided_by,
-            decided_at: sql`NOW()`,
-            comment,
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', batch.id)
-          .where('status', '=', 'proposed')
-          .executeTakeFirst();
-        if (Number(moved.numUpdatedRows ?? 0) === 0) return this.resolveBatch(row, pause);
+        const moved = await store().agentRuns.settleProposedBatch(batch.id, {
+          status,
+          acceptedBy,
+          decidedBy: card.decidedBy,
+          comment,
+        });
+        if (!moved) return this.resolveBatch(row, pause);
       }
 
       if (status === 'accepted' || status === 'executing') {
         // Handed to the executor (again, harmlessly, if the first enqueue
         // was lost — its claim is the arbiter). It wakes the run when done.
         await enqueueBatch(this.runRow, batch.id);
-        await db
-          .updateTable('agent_runs')
-          .set({ waiting_until: null, updated_at: sql`NOW()` })
-          .where('id', '=', this.runRow.id)
-          .execute();
+        await store().agentRuns.updateExecution(this.runRow.id, { waitingUntil: null });
         return null;
       }
       return batchReportForAgent({
@@ -2466,35 +2321,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
       row: TurnRow,
       pause: Extract<Pause, { kind: 'question' }>
     ): Promise<string | null> {
-      const card = await db
-        .selectFrom('actionable_items')
-        .select(['id', 'status', 'result'])
-        .where('run_id', '=', this.runRow.id)
-        .where('step_id', '=', TURN_STEP_ID)
-        .where('attempt', '=', row.attempt)
-        .executeTakeFirst();
+      const card = await store().agentRuns.findTurnCard(this.runRow.id, TURN_STEP_ID, row.attempt);
       if (!card) {
         await this.raiseQuestionCard(row.attempt, pause.message, pause.form);
         return null;
       }
       if (card.status === 'suggested') {
-        const due = this.runRow.waiting_until
-          ? new Date(this.runRow.waiting_until).getTime()
-          : Infinity;
+        const due = this.runRow.waitingUntil ? this.runRow.waitingUntil.getTime() : Infinity;
         if (now() < due) return null;
-        const claimed = await db
-          .updateTable('actionable_items')
-          .set({
-            status: 'expired',
-            decided_at: sql`NOW()`,
-            archived_at: sql`NOW()`,
-            result: JSON.stringify({ reason: 'timeout' }),
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', card.id)
-          .where('status', '=', 'suggested')
-          .executeTakeFirst();
-        if (Number(claimed.numUpdatedRows ?? 0) === 0) return this.resolveQuestion(row, pause);
+        const claimed = await store().agentRuns.expireCard(card.id, { reason: 'timeout' });
+        if (!claimed) return this.resolveQuestion(row, pause);
         return 'Nobody answered before the deadline. Carry on without the answer, or finish if you cannot.';
       }
       if (card.status !== 'answered') {
@@ -2533,8 +2369,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
   ): Promise<void> {
     if (usage.inputTokens === 0 && usage.outputTokens === 0) return;
     const ledger = await recordLlmCall({
-      subject: run.owner_subject,
-      agentId: run.agent_id,
+      subject: run.ownerSubject,
+      agentId: run.agentId,
       runId: run.id,
       purpose: 'run',
       inputTokens: usage.inputTokens,
@@ -2558,7 +2394,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
   async function enqueueBatch(run: RunRow, batchId: string): Promise<void> {
     const enqueued = await deps.actionsProducer.enqueue({
-      source: `agents:${run.agent_id}`,
+      source: `agents:${run.agentId}`,
       type: 'actions',
       payload: { batchId },
       // Its own lane: a batch must never queue behind the run waiting on it.
@@ -2568,57 +2404,21 @@ export function createAgentRunHandler(deps: EngineDeps) {
   }
 
   async function cancelWaiting(run: RunRow, reason: string): Promise<void> {
-    await db
-      .updateTable('agent_runs')
-      .set({
-        status: 'canceled',
-        waiting_until: null,
-        finished_at: sql`NOW()`,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', run.id)
-      .execute();
-    await db
-      .updateTable('actionable_items')
-      .set({
-        status: 'expired',
-        decided_at: sql`NOW()`,
-        archived_at: sql`NOW()`,
-        result: JSON.stringify({ reason }),
-        updated_at: sql`NOW()`,
-      })
-      .where('run_id', '=', run.id)
-      .where('status', '=', 'suggested')
-      .execute();
-    // A batch nobody accepted will never run now. One already accepted is
-    // the executor's to finish or refuse — it checks the run first.
-    await db
-      .updateTable('agent_action_batches')
-      .set({ status: 'expired', updated_at: sql`NOW()` })
-      .where('run_id', '=', run.id)
-      .where('status', '=', 'proposed')
-      .execute();
-    await db
-      .updateTable('agent_run_steps')
-      .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-      .where('run_id', '=', run.id)
-      .where('status', 'in', ['running', 'waiting'])
-      .execute();
+    // The run, its undecided cards, the batches nobody accepted (one
+    // already accepted is the executor's to finish or refuse — it checks
+    // the run first) and its open turns, together.
+    await store().agentRuns.cancelWaiting(run.id, reason);
     await recordAgentRunOutcome({
-      agentId: run.agent_id,
+      agentId: run.agentId,
       runId: run.id,
-      ownerSubject: run.owner_subject,
+      ownerSubject: run.ownerSubject,
       status: 'canceled',
     });
   }
 
   async function isCanceled(runId: string): Promise<boolean> {
-    const row = await db
-      .selectFrom('agent_runs')
-      .select(['cancel_requested_at'])
-      .where('id', '=', runId)
-      .executeTakeFirst();
-    return Boolean(row?.cancel_requested_at);
+    const row = await store().agentRuns.findCancelState(runId);
+    return Boolean(row?.cancelRequestedAt);
   }
 
   /** Memory + knowledge notes, rendered and bounded; '' halves on failure. */
@@ -2654,17 +2454,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
    * walked reads as external — the fail-closed direction.
    */
   async function runIsExternallyTriggered(run: RunRow): Promise<boolean> {
-    let kind = run.trigger_kind;
-    let parentId = run.parent_run_id;
+    let kind = run.triggerKind;
+    let parentId = run.parentRunId;
     for (let hops = 0; kind === 'agent' && parentId && hops < MAX_CHAIN_WALK; hops += 1) {
-      const parent = await db
-        .selectFrom('agent_runs')
-        .select(['trigger_kind', 'parent_run_id'])
-        .where('id', '=', parentId)
-        .executeTakeFirst();
+      const parent = await store().agentRuns.findChainLink(parentId);
       if (!parent) return true;
-      kind = parent.trigger_kind;
-      parentId = parent.parent_run_id;
+      kind = parent.triggerKind;
+      parentId = parent.parentRunId;
     }
     return isExternallyTriggered(kind);
   }
@@ -2672,15 +2468,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
   /** Builtins + trigger.* from initial_state. */
   async function baseVariables(run: RunRow): Promise<Record<string, string>> {
     const vars: Record<string, string> = { today: new Date(now()).toISOString().slice(0, 10) };
-    const identity = await db
-      .selectFrom('identities')
-      .select(['email', 'display_name'])
-      .where('subject', '=', run.owner_subject)
-      .executeTakeFirst();
-    if (identity?.display_name) vars['user.name'] = identity.display_name;
+    const identity = await store().identities.get(run.ownerSubject);
+    if (identity?.displayName) vars['user.name'] = identity.displayName;
     if (identity?.email) vars['user.email'] = identity.email;
-    if (isRecord(run.initial_state)) {
-      for (const [key, value] of Object.entries(run.initial_state)) {
+    if (isRecord(run.initialState)) {
+      for (const [key, value] of Object.entries(run.initialState)) {
         if (value === null || value === undefined) continue;
         vars[`trigger.${key}`] =
           typeof value === 'string' ? value : clip(JSON.stringify(value), TOOL_RESULT_CHARS);
@@ -2690,7 +2482,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
   }
 
   function runPagePath(run: RunRow): string {
-    return `/agents/${run.agent_id}/runs/${run.id}`;
+    return `/agents/${run.agentId}/runs/${run.id}`;
   }
 
   function approvalLink(path: string | null): string | null {
@@ -2700,11 +2492,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
 
   async function agentNameOf(agentId: string): Promise<string> {
     try {
-      const row = await db
-        .selectFrom('agents')
-        .select('name')
-        .where('id', '=', agentId)
-        .executeTakeFirst();
+      const row = await store().agents.findRunSettings(agentId);
       return row?.name?.trim() || '(unnamed agent)';
     } catch {
       return '(unknown agent)';
@@ -2719,31 +2507,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
     vars: Record<string, string>,
     quiet = false
   ): Promise<void> {
-    await db
-      .updateTable('agent_runs')
-      .set({
-        status,
-        error_kind: errorKind,
-        error,
-        waiting_until: null,
-        finished_at: sql`NOW()`,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', run.id)
-      .execute();
     // No turn is ever left "running" under a run that is done.
-    await db
-      .updateTable('agent_run_steps')
-      .set({ status: 'canceled', finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-      .where('run_id', '=', run.id)
-      .where('status', 'in', ['running', 'waiting'])
-      .execute();
-    const actor = await describeActor(db, run.owner_subject);
-    const agentName = await agentNameOf(run.agent_id);
+    await store().agentRuns.finishExecution(run.id, { status, errorKind, error });
+    const actor = await describeActor(run.ownerSubject);
+    const agentName = await agentNameOf(run.agentId);
     const common = {
       component: 'worker-agents/engine',
       runId: run.id,
-      agentId: run.agent_id,
+      agentId: run.agentId,
       agentName,
       userName: actor.displayName,
       subject: actor.subject,
@@ -2752,8 +2523,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     };
     if (status === 'succeeded' || status === 'failed') {
       const notifier = await notifierFor(db, {
-        subject: run.owner_subject,
-        agentId: run.agent_id,
+        subject: run.ownerSubject,
+        agentId: run.agentId,
         agentName,
         runId: run.id,
         ownerEmail: undefined,
@@ -2769,9 +2540,9 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.debug('agent "{agentName}" ({userName}) run {status}', common);
     }
     const logged = await recordAgentRunOutcome({
-      agentId: run.agent_id,
+      agentId: run.agentId,
       runId: run.id,
-      ownerSubject: run.owner_subject,
+      ownerSubject: run.ownerSubject,
       status,
       errorKind,
       error,
@@ -2786,8 +2557,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
       try {
         await deps.onFinalized({
           runId: run.id,
-          agentId: run.agent_id,
-          ownerSubject: run.owner_subject,
+          agentId: run.agentId,
+          ownerSubject: run.ownerSubject,
           status,
           errorKind,
           error,
@@ -2833,16 +2604,12 @@ function startedByText(triggerKind: string): string {
  * than written around in the clear.
  */
 async function sealedDetailJson(
-  run: Pick<RunRow, 'owner_subject'>,
+  run: Pick<RunRow, 'ownerSubject'>,
   detail: Record<string, unknown>
 ): Promise<string> {
   const { clear, plaintext } = splitDetailForSealing(detail);
   if (plaintext === null) return JSON.stringify(clear);
-  const sealed = await delegateClient().sealForSubject(
-    run.owner_subject,
-    [plaintext],
-    'automation'
-  );
+  const sealed = await delegateClient().sealForSubject(run.ownerSubject, [plaintext], 'automation');
   if (!sealed.ok) {
     throw new TransientFailure(`turn detail could not be sealed: ${sealed.err.type}`);
   }
@@ -2856,13 +2623,13 @@ async function sealedDetailJson(
  * cannot read.
  */
 async function openDetails<T extends { detail: Json | null }>(
-  run: Pick<RunRow, 'owner_subject'>,
+  run: Pick<RunRow, 'ownerSubject'>,
   rows: T[]
 ): Promise<T[]> {
   const envelopes = rows.map((row) => sealedDetailOf(row.detail));
   const stored = envelopes.flatMap((envelope) => (envelope === null ? [] : [envelope]));
   if (stored.length === 0) return rows;
-  const opened = await delegateClient().openForSubject(run.owner_subject, stored);
+  const opened = await delegateClient().openForSubject(run.ownerSubject, stored);
   if (!opened.ok) {
     throw new TransientFailure(`turn detail could not be opened: ${opened.err.type}`);
   }

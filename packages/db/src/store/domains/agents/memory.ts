@@ -474,5 +474,51 @@ export function memoryAgents(tables: MemoryTables): AgentStore {
         sourceAt: row.source_at,
       }));
     },
+    async findRunSettings(agentId) {
+      const id = uuid(agentId);
+      const row = tables.first('agents', (r) => r.id === id);
+      return row
+        ? {
+            name: row.name,
+            enabled: row.enabled,
+            guardrails: row.guardrails,
+            canAskQuestions: row.can_ask_questions,
+            autoAcceptActions: row.auto_accept_actions,
+          }
+        : null;
+    },
+    async listChainTargets(callerAgentId) {
+      const chained = tables
+        .select(
+          'agent_triggers',
+          (t) =>
+            t.kind === 'agent' &&
+            t.enabled &&
+            jsonField(t.config, 'callerAgentId') === callerAgentId
+        )
+        .flatMap((t) => {
+          const agent = tables.first('agents', (a) => a.id === t.agent_id && a.enabled);
+          return agent
+            ? [
+                {
+                  triggerId: t.id,
+                  agentId: t.agent_id,
+                  ownerSubject: agent.owner_subject,
+                  instructions: agent.instructions,
+                  tools: agent.tools,
+                  llmModelId: agent.llm_model_id,
+                },
+              ]
+            : [];
+        });
+      return orderBy(chained, [(r) => r.triggerId]);
+    },
+    async markTriggerFailed(triggerId, error) {
+      const id = tables.param('agent_triggers', 'id', triggerId);
+      tables.update('agent_triggers', (r) => r.id === id, {
+        last_error: error,
+        updated_at: new Date(),
+      });
+    },
   };
 }
