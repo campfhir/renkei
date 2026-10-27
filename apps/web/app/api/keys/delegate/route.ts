@@ -21,7 +21,7 @@ import { automationDaysOfBody, sealedDelegationsOf, setAutomationDays } from '@/
 export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const sessionDelegations = sealedDelegationsOf(body.session ?? []);
   const automation = sealedDelegationsOf(body.automation ?? []);
