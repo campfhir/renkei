@@ -20,11 +20,10 @@ export const adminPages: CrawlPage[] = [
     },
     expectText: /Crawl audit agent crawl-/,
   },
-  {
-    path: '/admin/events',
-    expectText: 'Nothing yet — events appear as connected providers deliver webhooks.',
-  },
-  { path: '/admin/sites', expectText: /^None yet — they appear when someone connects/ },
+  // The organization's webhook events and Atlassian sites: other specs'
+  // connections add to them, so each is checked by its heading.
+  { path: '/admin/events', expectText: /^Events$/ },
+  { path: '/admin/sites', expectText: /^Sites$/ },
   { path: '/admin/settings', expectText: 'Organization name' },
   { path: '/admin/storage', expectText: 'Storage' },
   { path: '/admin/usage', expectText: 'Organization usage' },

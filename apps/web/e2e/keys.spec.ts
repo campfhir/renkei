@@ -171,7 +171,7 @@ async function expectChatReadable(page: Page, chatId: string, title: string): Pr
 /** Preferences → "Forget this device": the browser no longer holds the key. */
 async function forgetDevice(page: Page): Promise<void> {
   await page.goto(`/preferences`);
-  const section = page.getByTestId('encryption-key').first();
+  const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
   await section.getByRole('button', { name: 'Forget this device' }).click();
   await expect(section.getByTestId('encryption-key-device')).toContainText(
     'does not hold your key'
@@ -214,7 +214,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
 
   // The preferences section says what the person now has.
   await page.goto(`/preferences`);
-  const section = page.getByTestId('encryption-key').first();
+  const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
   await expect(section.getByTestId('encryption-key-mode')).toContainText('You hold your own key');
   await expect(section.getByTestId('encryption-key-state')).toContainText(
     'Your agents can run until'
@@ -315,7 +315,7 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
 
     // Rotation: a new key, shown once; the chat still opens afterwards.
     await page.goto(`/preferences`);
-    const section = page.getByTestId('encryption-key').first();
+    const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
     await section.getByTestId('encryption-key-rotate-start').click();
     await section.getByTestId('encryption-key-rotate-confirm').click();
     const revealed = section.getByTestId('encryption-key-revealed');
@@ -429,7 +429,7 @@ test('the key dialog and the section at phone width', async ({ page, request }, 
   await shot(page, testInfo, 'keys-mobile-01-dialog');
   await page.getByTestId('key-reveal-confirm').click();
   await page.goto(`/preferences`);
-  const section = page.getByTestId('encryption-key').first();
+  const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
   await expect(section.getByTestId('encryption-key-mode')).toContainText('You hold your own key');
   const sectionBox = await section.boundingBox();
   expect(sectionBox).not.toBeNull();

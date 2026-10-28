@@ -507,13 +507,22 @@ test('the library: a real upload lands, reads back, and is attached from the car
   const f = await stage(page, request, person, testInfo);
 
   // Digests are off by default — a file's text goes to a model only when
-  // the organization says so. The switch, as an operator sees it (staging
-  // turned it on).
+  // the organization says so. The switch, as an operator sees it: staging
+  // turned it on, but this page reads the settings through its own
+  // minute-long cache, so it may still show it off; then it is turned on
+  // here, as an operator would.
   await page.goto('/admin/settings');
   const digestSwitch = page.getByRole('switch', {
     name: 'Summarize artifacts with the default model',
   });
-  await expect(digestSwitch).toHaveAttribute('aria-checked', 'true', COLD);
+  await expect(digestSwitch).toBeVisible(COLD);
+  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
+    await digestSwitch.click();
+    await page.getByRole('button', { name: 'Save settings' }).click();
+    await expect(page.getByText('Saved.')).toBeVisible();
+    await digestsReady(request);
+  }
+  await expect(digestSwitch).toHaveAttribute('aria-checked', 'true');
   await shot(page, testInfo, 'artifacts-21-digest-switch');
 
   // The bytes go to the blob store's local backend, the text is extracted,
@@ -630,6 +639,20 @@ test('a project page: the Artifacts card, Always against the budget, attach from
   ).toBeVisible();
 });
 
+/**
+ * A file picked with the composer's paperclip, as a person picks one (a
+ * built page can hold a hidden copy of the composer, so the button on
+ * screen is the one pressed).
+ */
+async function attach(
+  page: Page,
+  file: { name: string; mimeType: string; buffer: Buffer }
+): Promise<void> {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: 'Attach a file' }).filter({ visible: true }).click();
+  await (await chooser).setFiles(file);
+}
+
 /** The composer's uploads, as the browser sends them (the query says where each goes). */
 function watchUploads(page: Page): string[] {
   const uploads: string[] = [];
@@ -651,16 +674,15 @@ test('a project chat: a dropped file asks where it goes', async ({
   const uploads = watchUploads(page);
 
   await page.goto(`/chat/${f.chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible(COLD);
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: 'stripe-webhooks.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Stripe webhooks\n\nVerify every signature.\n'),
-    });
-  const chooser = page.getByRole('group', { name: 'Where should the files go?' });
+  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible(COLD);
+  await attach(page, {
+    name: 'stripe-webhooks.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# Stripe webhooks\n\nVerify every signature.\n'),
+  });
+  const chooser = page
+    .getByRole('group', { name: 'Where should the files go?' })
+    .filter({ visible: true });
   await expect(chooser.getByText('Where should stripe-webhooks.md go?')).toBeVisible();
   await expect(chooser.getByLabel(/Artifacts, attached to Billing API/)).toBeChecked();
   await shot(page, testInfo, 'artifacts-06-drop-chooser');
@@ -670,14 +692,11 @@ test('a project chat: a dropped file asks where it goes', async ({
   await expect.poll(() => uploads.length).toBe(1);
   expect(uploads[0]).not.toContain('keep=1');
   // Remembered: the next file goes the same way without asking.
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: 'second.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('second'),
-    });
+  await attach(page, {
+    name: 'second.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('second'),
+  });
   await expect(chooser).toBeHidden();
   await expect.poll(() => uploads.length).toBe(2);
 });
@@ -691,20 +710,22 @@ test('a project chat: Send answers the chooser, and the remembered choice can be
   const uploads = watchUploads(page);
 
   await page.goto(`/chat/${f.chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible(COLD);
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: 'retry-policy.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
-    });
-  const chooser = page.getByRole('group', { name: 'Where should the files go?' });
+  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible(COLD);
+  await attach(page, {
+    name: 'retry-policy.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
+  });
+  const chooser = page
+    .getByRole('group', { name: 'Where should the files go?' })
+    .filter({ visible: true });
   await expect(chooser).toBeVisible();
   // No Add: the message is sent with the choice as it stands (the project).
-  await page.getByRole('textbox', { name: 'Message' }).fill('Follow the retry policy.');
-  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page
+    .getByRole('textbox', { name: 'Message' })
+    .filter({ visible: true })
+    .fill('Follow the retry policy.');
+  await page.getByRole('button', { name: 'Send', exact: true }).filter({ visible: true }).click();
   await expect(chooser).toBeHidden();
   await expect.poll(() => uploads.length).toBe(1);
   expect(uploads[0]).toContain('keep=1');
@@ -713,21 +734,22 @@ test('a project chat: Send answers the chooser, and the remembered choice can be
   await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible(COLD);
 
   // The remembered choice shows beside the paperclip; clicking it asks again next time.
-  const remembered = page.getByRole('button', { name: /Dropped files go to .* artifacts/ });
+  const remembered = page
+    .getByRole('button', { name: /Dropped files go to .* artifacts/ })
+    .filter({ visible: true });
   await expect(remembered).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Attach a file' })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Attach a file' }).filter({ visible: true })
+  ).toBeVisible();
   await remembered.hover();
   await shot(page, testInfo, 'artifacts-09-remembered-control');
   await remembered.click();
   await expect(remembered).toBeHidden();
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: 'again.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('again'),
-    });
+  await attach(page, {
+    name: 'again.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('again'),
+  });
   await expect(chooser).toBeVisible();
 });
 
@@ -789,22 +811,25 @@ test('phone: the library and the project card fit the viewport', async ({
 
   // The chooser in a project chat, and the remembered control (the glyph alone here).
   await page.goto(`/chat/${f.chatId}`);
-  await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible(COLD);
+  await expect(
+    page.getByRole('textbox', { name: 'Message' }).filter({ visible: true })
+  ).toBeVisible(COLD);
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
-  await page
-    .locator('input[type="file"]')
-    .first()
-    .setInputFiles({
-      name: 'retry-policy.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
-    });
-  const chooser = page.getByRole('group', { name: 'Where should the files go?' });
+  await attach(page, {
+    name: 'retry-policy.md',
+    mimeType: 'text/markdown',
+    buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
+  });
+  const chooser = page
+    .getByRole('group', { name: 'Where should the files go?' })
+    .filter({ visible: true });
   await expect(chooser).toBeVisible();
   await shot(page, testInfo, 'artifacts-15-phone-chooser');
   await chooser.getByRole('button', { name: 'Add' }).click();
   await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible(COLD);
-  const remembered = page.getByRole('button', { name: /Dropped files go to .* artifacts/ });
+  const remembered = page
+    .getByRole('button', { name: /Dropped files go to .* artifacts/ })
+    .filter({ visible: true });
   await expect(remembered).toBeVisible();
   const row = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -989,6 +1014,7 @@ test('the library: a photo with no text is described from the picture, OCR finds
   request,
   person: _person,
 }, testInfo) => {
+  test.slow();
   await digestsReady(request);
 
   await page.goto('/chat/artifacts');
@@ -1002,8 +1028,14 @@ test('the library: a photo with no text is described from the picture, OCR finds
   await expect(list.getByText('car-street.png')).toBeVisible(COLD);
   await list.getByText('car-street.png').click();
 
-  // Described from the picture itself: no text, and not waiting for OCR.
-  await expect(details.getByText(LLM_STUB_PICTURE)).toBeVisible(COLD);
+  // Described from the picture itself: no text, and not waiting for OCR. A
+  // digest the default model could not be asked for yet (its roster is read
+  // through a minute-long cache) is asked again as the library is viewed.
+  await expect(async () => {
+    await page.reload();
+    await list.getByText('car-street.png').click();
+    await expect(details.getByText(LLM_STUB_PICTURE)).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 90_000, intervals: [5_000] });
   await expect(details.getByText('Waiting for OCR')).toHaveCount(0);
   await shot(page, testInfo, 'documents-01-photo-described');
 

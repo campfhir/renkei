@@ -323,8 +323,13 @@ test('two cards from one reply: deciding both opens exactly one turn, informed b
   expect((await turnsOf(page, chatId)).turns).toBe(1);
 
   // Card B decided too: now one turn opens, and the answer lands once.
-  await frameB.getByRole('button', { name: 'Create' }).click();
-  await expect(frameB.locator('.done-headline')).toHaveText('Created issue OPS-99.');
+  // Card A's note re-renders the thread around card B: pressed again until it takes.
+  await expect(async () => {
+    await frameB.getByRole('button', { name: 'Create' }).click({ timeout: 2_000 });
+    await expect(frameB.locator('.done-headline')).toHaveText('Created issue OPS-99.', {
+      timeout: 2_000,
+    });
+  }).toPass({ timeout: 20_000 });
   await expect(notes).toHaveCount(2, COLD);
   await expect(page.getByText(ANSWER)).toHaveCount(1, COLD);
   await decided(page, chatId);

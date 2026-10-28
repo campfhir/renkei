@@ -86,7 +86,7 @@ test('setup: the Voice connector in the admin catalog and its form', async ({ pa
   await mockVendor(page);
   await page.goto(`/admin/connectors`);
   await expect(page.getByRole('heading', { name: 'Connector setup' })).toBeVisible();
-  await page.getByLabel('Find a connector').fill('voice');
+  await page.getByLabel('Find a connector').filter({ visible: true }).fill('voice');
   await expect(page.getByRole('link', { name: 'Open Voice' })).toBeVisible();
   await shot(page, testInfo, 'voice-01-admin-catalog');
 

@@ -485,7 +485,7 @@ test.describe('admin — organization usage', () => {
       'aria-pressed',
       'true'
     );
-    await expect(page.getByText('Today, by hour')).toBeVisible();
+    await expect(page.getByText('Today, by hour').filter({ visible: true })).toBeVisible();
     await page.getByRole('button', { name: 'Yesterday' }).click();
     await expect(page.getByText('Yesterday, by hour')).toBeVisible();
     await shot(page, testInfo, 'admin-organization-usage-yesterday');
