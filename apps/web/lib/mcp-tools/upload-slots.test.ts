@@ -39,11 +39,15 @@ function slotRow(extra: Record<string, unknown> = {}) {
     subject: 'subject-1',
     account_id: 'acct-1',
     kind: 'onbase-document',
-    destination: JSON.stringify({}),
+    destination: {},
     filename: 'report.pdf',
     content_type: 'application/pdf',
     max_bytes: 1024,
     expires_at: new Date(Date.now() + 60_000),
+    status: 'pending',
+    result: null,
+    completed_at: null,
+    created_at: new Date(),
     ...extra,
   };
 }

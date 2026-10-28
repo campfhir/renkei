@@ -142,6 +142,9 @@ async function seedSubscription(subscription: Subscription): Promise<void> {
         provider: 'github',
         repo_full_name: 'acme/site',
         watch_pipelines: true,
+        status: 'active',
+        created_at: new Date(),
+        updated_at: new Date(),
         ...subscription,
       },
     ],
@@ -215,9 +218,12 @@ describe('createGitHubPrPipelineHandler', () => {
       pr_pipeline_events: [
         {
           subscription_id: SUB,
+          id: '00000000-0000-4000-8000-000000000999',
           provider_run_id: '999',
           conclusion: 'success',
           action_taken: 'merged',
+          raw_payload: {},
+          observed_at: new Date(),
         },
       ],
     });

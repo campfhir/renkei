@@ -24,7 +24,7 @@ const { recordAuditEvent: mockAudit } = jest.requireMock<{ recordAuditEvent: jes
 
 const TARGET = 'bob@example.com';
 const OTHER = 'ann@example.com';
-const EXPIRES = '2030-01-01T00:00:00.000Z';
+const EXPIRES = new Date('2030-01-01T00:00:00.000Z');
 
 /** Two of everything for the target, one of everything for someone else. */
 async function seededStore(): Promise<MemoryDataStore> {

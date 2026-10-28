@@ -639,7 +639,7 @@ async function storeWithClaimedSlot() {
         subject: 'subject-1',
         account_id: 'acct-1',
         kind: 'jira-attachment',
-        destination: JSON.stringify({ issueKey: 'PROJ-1' }),
+        destination: { issueKey: 'PROJ-1' },
         filename: 'report.pdf',
         content_type: 'application/pdf',
         max_bytes: 1024,

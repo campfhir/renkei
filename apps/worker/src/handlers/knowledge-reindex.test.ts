@@ -60,7 +60,22 @@ let store: MemoryDataStore;
 function seedRun(runId: string, status: string | null) {
   if (status) {
     void store.seed({
-      knowledge_reindex_runs: [{ id: runId, kind: 'lexical', status, requested_by: 'op' }],
+      knowledge_reindex_runs: [
+        {
+          id: runId,
+          kind: 'lexical',
+          status,
+          requested_by: 'op',
+          cursor: null,
+          processed: 0,
+          skipped: 0,
+          failed: 0,
+          last_error: null,
+          started_at: null,
+          finished_at: null,
+          created_at: new Date(),
+        },
+      ],
     });
   }
   return {

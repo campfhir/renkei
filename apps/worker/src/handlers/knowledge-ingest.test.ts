@@ -301,7 +301,7 @@ describe('enrich.item', () => {
       status,
       title: 'card',
       summary: 'summary',
-      evidence: JSON.stringify({ quote: 'the message text' }),
+      evidence: { quote: 'the message text' },
       owner_subject: 'alice',
     });
     await store.seed({ actionable_items: [card(ITEM, 'suggested'), card(DECIDED, 'approved')] });

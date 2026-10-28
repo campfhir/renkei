@@ -31,9 +31,7 @@ async function seedDraft(owner: string): Promise<void> {
   registerDataStore(store);
   await store.seed({
     agents: [{ id: AGENT, owner_subject: owner, name: 'Agent' }],
-    agent_drafts: [
-      { id: DRAFT, owner_subject: owner, agent_id: null, request: JSON.stringify({}) },
-    ],
+    agent_drafts: [{ id: DRAFT, owner_subject: owner, agent_id: null, request: {} }],
   });
 }
 

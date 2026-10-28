@@ -53,10 +53,22 @@ function item(n: number, fields: Record<string, unknown> = {}) {
     status: 'suggested',
     title: `card ${n}`,
     summary: `summary ${n}`,
-    evidence: JSON.stringify({}),
+    evidence: {},
     owner_subject: ALICE,
     created_by: ALICE,
+    created_by_agent_id: null,
+    suggested_action: null,
+    result: null,
+    run_id: null,
+    step_id: null,
+    attempt: null,
+    iteration: null,
+    decided_at: null,
+    decided_by: null,
+    archived_at: null,
+    archived_by: null,
     created_at: new Date(Date.UTC(2026, 7, 28, 9, n)),
+    updated_at: new Date(Date.UTC(2026, 7, 28, 9, n)),
     ...fields,
   };
 }
@@ -68,7 +80,17 @@ async function seed(rows: NonNullable<TableRows['actionable_items']> = []): Prom
   await store.seed({
     agents: [{ id: AGENT, name: 'Refund triage', owner_subject: ALICE }],
     agent_runs: [
-      { id: RUN, agent_id: AGENT, owner_subject: ALICE, trigger_kind: 'manual', status: 'waiting' },
+      {
+        id: RUN,
+        agent_id: AGENT,
+        owner_subject: ALICE,
+        trigger_kind: 'manual',
+        status: 'waiting',
+        waiting_until: null,
+        cancel_requested_at: null,
+        created_at: new Date(Date.UTC(2026, 7, 28, 9)),
+        updated_at: new Date(Date.UTC(2026, 7, 28, 9)),
+      },
     ],
     actionable_items: rows,
   });

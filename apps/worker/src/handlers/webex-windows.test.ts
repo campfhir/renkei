@@ -337,7 +337,7 @@ describe('markWebexWindowDirty / deleteLegacyMessageRows', () => {
       ref_id: refId,
       content: 'enc',
       embedding: '[1,0,0]',
-      source_at: sourceAt,
+      source_at: new Date(sourceAt),
     });
     await store.seed({
       knowledge_chunks: [

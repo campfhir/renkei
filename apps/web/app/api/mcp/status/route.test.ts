@@ -11,7 +11,7 @@
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 
 import { NextRequest } from 'next/server';
-import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import { createMemoryDataStore, registerDataStore, resetDataStore, toJson } from '@renkei/db';
 import { GET } from './route';
 
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
@@ -33,7 +33,7 @@ function grant(
     encrypted_access_token: 'sealed-access',
     encrypted_refresh_token: 'sealed-refresh',
     expires_at: new Date(Date.now() + 60_000),
-    metadata: JSON.stringify(metadata),
+    metadata: toJson(metadata),
   };
 }
 

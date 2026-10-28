@@ -50,6 +50,36 @@ const QUESTION_FORM = [
   { kind: 'field', name: 'the issue key', label: 'Which issue?', type: 'text', required: true },
 ];
 
+/** An agent_runs row's columns besides the ones a test names. */
+const RUN_DEFAULTS = {
+  trigger_id: null,
+  triggered_by_subject: null,
+  parent_run_id: null,
+  lineage: [],
+  depth: 0,
+  definition_snapshot: null,
+  legacy_steps_snapshot: null,
+  initial_state: null,
+  llm_model_id: null,
+  current_step_id: null,
+  error: null,
+  error_kind: null,
+  active_ms: '0',
+  started_at: null,
+  finished_at: null,
+  waiting_until: null,
+  cancel_requested_at: null,
+  cancel_requested_by: null,
+  resume_count: 0,
+  resume_failure: null,
+  resume_guidance: null,
+  resume_step_id: null,
+  resumed_at: null,
+  resumed_by: null,
+  created_at: new Date('2026-08-28T08:00:00.000Z'),
+  updated_at: new Date('2026-08-28T08:00:00.000Z'),
+};
+
 function card(n: number, extra: Partial<NewRow<'actionable_items'>>): NewRow<'actionable_items'> {
   return {
     id: id(n),
@@ -60,9 +90,20 @@ function card(n: number, extra: Partial<NewRow<'actionable_items'>>): NewRow<'ac
     summary: 'Refund Dana and tell her.',
     run_id: RUN,
     created_by_agent_id: AGENT,
-    suggested_action: JSON.stringify(BATCH),
-    evidence: '{}',
-    created_at: '2026-08-28T09:00:00.000Z',
+    suggested_action: BATCH,
+    evidence: {},
+    status: 'suggested',
+    result: null,
+    created_by: null,
+    step_id: null,
+    attempt: null,
+    iteration: null,
+    decided_at: null,
+    decided_by: null,
+    archived_at: null,
+    archived_by: null,
+    created_at: new Date('2026-08-28T09:00:00.000Z'),
+    updated_at: new Date('2026-08-28T09:00:00.000Z'),
     ...extra,
   };
 }
@@ -80,7 +121,8 @@ function fixture(cards: NewRow<'actionable_items'>[]): TableRows {
         owner_subject: 'alice',
         trigger_kind: 'manual',
         status: 'waiting',
-        waiting_until: '2026-08-31T09:00:00.000Z',
+        ...RUN_DEFAULTS,
+        waiting_until: new Date('2026-08-31T09:00:00.000Z'),
       },
       {
         id: RUN_2,
@@ -88,6 +130,7 @@ function fixture(cards: NewRow<'actionable_items'>[]): TableRows {
         owner_subject: 'alice',
         trigger_kind: 'manual',
         status: 'waiting',
+        ...RUN_DEFAULTS,
       },
     ],
     actionable_items: cards,
@@ -120,7 +163,7 @@ describe('listPendingApprovals', () => {
     await store.seed(
       fixture([
         card(21, {}),
-        card(23, { suggested_action: '{}', created_at: '2026-08-29T09:00:00.000Z' }),
+        card(23, { suggested_action: {}, created_at: new Date('2026-08-29T09:00:00.000Z') }),
       ])
     );
     const [approval, empty] = await listPendingApprovals('alice');
@@ -239,7 +282,7 @@ const questionCard = (extra: Partial<NewRow<'actionable_items'>> = {}) =>
     title: 'Sunday Deep Sweep — has a question',
     run_id: RUN_2,
     created_by_agent_id: AGENT_2,
-    suggested_action: JSON.stringify({ message: 'Which issue tracks this?', form: QUESTION_FORM }),
+    suggested_action: { message: 'Which issue tracks this?', form: QUESTION_FORM },
     ...extra,
   });
 
@@ -301,7 +344,7 @@ describe('answerQuestion', () => {
   ];
   const formCard = () =>
     questionCard({
-      suggested_action: JSON.stringify({ message: 'Which issue tracks this?', form: FORM }),
+      suggested_action: { message: 'Which issue tracks this?', form: FORM },
     });
 
   it('refuses a card that is not this caller’s', async () => {

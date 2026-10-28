@@ -37,7 +37,7 @@ async function seedStore() {
         owner_subject: 'alice',
         name: 'Portfolio Updater',
         instructions: '## Goal\n\nGo.',
-        tools: JSON.stringify([]),
+        tools: [],
         llm_model_id: null,
         enabled: true,
       },

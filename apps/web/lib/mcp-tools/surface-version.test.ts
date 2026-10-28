@@ -16,9 +16,7 @@ describe('toolSurfaceVersion', () => {
   it('returns the newest timestamp it found', async () => {
     const store = createMemoryDataStore();
     await store.seed({
-      settings: [
-        { key: 'a', value: JSON.stringify(1), updated_at: new Date('2026-08-28T23:43:06.647Z') },
-      ],
+      settings: [{ key: 'a', value: 1, updated_at: new Date('2026-08-28T23:43:06.647Z') }],
       identities: [
         { subject: 's1', email: 's1@x.test', updated_at: new Date('2026-08-01T00:00:00Z') },
       ],

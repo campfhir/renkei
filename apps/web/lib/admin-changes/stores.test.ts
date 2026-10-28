@@ -196,11 +196,11 @@ describe('Salesforce connections', () => {
           encrypted_access_token: 'sealed',
           encrypted_refresh_token: 'sealed',
           expires_at: new Date(Date.now() + 3_600_000),
-          metadata: JSON.stringify({
+          metadata: {
             connector: 'uat',
             instanceUrl: 'https://acme--uat.sandbox.my.salesforce.com',
             username: 'ann@acme.test',
-          }),
+          },
           requested_scopes: ['api'],
         },
       ],

@@ -17,6 +17,7 @@ import {
   createMemoryDataStore,
   registerDataStore,
   resetDataStore,
+  toJson,
   type MemoryDataStore,
 } from '@renkei/db';
 import type { WebexWebhook, WebexWebhooksClient } from '@renkei/connector-webex';
@@ -60,7 +61,7 @@ function dbWithGrants(rows: GrantRow[]) {
       encrypted_access_token: 'sealed-a',
       encrypted_refresh_token: 'sealed-r',
       expires_at: new Date('2030-01-01T00:00:00Z'),
-      metadata: JSON.stringify(row.metadata),
+      metadata: toJson(row.metadata),
     })),
   });
   const before = new Map(

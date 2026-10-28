@@ -24,7 +24,7 @@ const { invalidateToolCatalogCache: mockInvalidate } = jest.requireMock<{
   invalidateToolCatalogCache: jest.Mock;
 }>('@/lib/mcp-tools/tool-catalog');
 
-const EXPIRES = '2030-01-01T00:00:00.000Z';
+const EXPIRES = new Date('2030-01-01T00:00:00.000Z');
 
 /** One microsoft grant (owner `subject`), plus tokens for its owner and for someone else. */
 async function seededStore(subject: string | null): Promise<MemoryDataStore> {

@@ -42,7 +42,7 @@ function grant(account: string, displayName: string) {
     encrypted_access_token: 'a',
     encrypted_refresh_token: 'r',
     expires_at: new Date(Date.now() + 60_000),
-    metadata: JSON.stringify({ siteUrl: 'https://example.atlassian.net' }),
+    metadata: { siteUrl: 'https://example.atlassian.net' },
   };
 }
 

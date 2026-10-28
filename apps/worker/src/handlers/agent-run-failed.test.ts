@@ -77,7 +77,7 @@ async function seedStore(): Promise<void> {
         subject: OWNER_SUBJECT,
         encrypted_access_token: 'sealed-a',
         encrypted_refresh_token: 'sealed-r',
-        expires_at: '2030-01-01T00:00:00.000Z',
+        expires_at: new Date('2030-01-01T00:00:00.000Z'),
       },
     ],
   });

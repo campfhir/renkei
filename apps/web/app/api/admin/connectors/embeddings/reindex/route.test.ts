@@ -43,7 +43,7 @@ interface RunSeed {
   status: string;
   cursor?: string | null;
   last_error?: string | null;
-  finished_at?: string | null;
+  finished_at?: Date | null;
 }
 
 /** A memory store holding one reindex run (or none), registered as the data store. */
@@ -130,7 +130,7 @@ describe('POST .../reindex', () => {
       status: 'failed',
       cursor: 'row-3328',
       last_error: 'embeddings endpoint returned 500',
-      finished_at: '2026-01-01T00:00:00.000Z',
+      finished_at: new Date('2026-01-01T00:00:00.000Z'),
     });
 
     const response = await POST(reqOf({ kind: 'embed', action: 'resume', runId: RUN }));

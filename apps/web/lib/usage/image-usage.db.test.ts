@@ -100,7 +100,7 @@ describe('image usage ledger', () => {
 
   it('stores one content-free row per picture', async () => {
     // Nothing of the prompt or the picture is a column at all.
-    expect(Object.keys(store.tables.columnsOf('image_usage')).sort()).toEqual(
+    expect(Object.keys(store.tables.select('image_usage')[0] ?? {}).sort()).toEqual(
       [
         'created_at',
         'height',

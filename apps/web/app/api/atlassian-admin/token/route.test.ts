@@ -39,7 +39,7 @@ function tokenGrant(subject: string, accountId: string) {
     display_name: subject,
     encrypted_access_token: 'sealed',
     encrypted_refresh_token: 'sealed',
-    expires_at: '2030-01-01T00:00:00.000Z',
+    expires_at: new Date('2030-01-01T00:00:00.000Z'),
   };
 }
 

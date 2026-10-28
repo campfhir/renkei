@@ -29,7 +29,7 @@ function chunk(n: number, chunkCount: number) {
     ref_id: `ENG-${n}#000${n}`,
     content: `text ${n}`,
     embedding: '[1,0,0]',
-    metadata: JSON.stringify({ chunkCount, title: `Issue ${n}` }),
+    metadata: { chunkCount, title: `Issue ${n}` },
   };
 }
 
