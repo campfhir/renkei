@@ -226,36 +226,6 @@ function envWire(variable) {
   return { ...variable };
 }
 
-/** A form-encoded body (an OAuth token request), as URLSearchParams. */
-function readForm(request) {
-  return new Promise((resolve) => {
-    const chunks = [];
-    request.on('data', (chunk) => chunks.push(chunk));
-    request.on('end', () => resolve(new URLSearchParams(Buffer.concat(chunks).toString('utf8'))));
-  });
-}
-
-/**
- * A connect flow's token, one per authorization code, so every person a
- * spec connects is a different account; the identity reads answer by it.
- */
-function issueToken(request, response, host) {
-  void readForm(request).then((form) => {
-    const code = form.get('code') || 'e2e-code';
-    json(response, 200, {
-      access_token: `e2e-${host}-${code}`,
-      refresh_token: `e2e-${host}-refresh-${code}`,
-      token_type: 'bearer',
-      expires_in: 365 * 86_400,
-    });
-  });
-}
-
-/** Whose token this request carries (the delegate attaches it as a Bearer). */
-function bearerOf(request) {
-  return (request.headers.authorization ?? '').replace(/^Bearer\s+/i, '') || 'e2e-anonymous';
-}
-
 function readBody(request) {
   return new Promise((resolve) => {
     const chunks = [];
@@ -1262,15 +1232,6 @@ function handleBitbucket(request, url, response) {
       environmentVariables[4]
     );
   }
-  // The connect flow's identity read (app/api/oauth/callback): who the
-  // token belongs to, keyed by the uuid the grant is stored under.
-  if (path === '/user') {
-    return json(response, 200, {
-      uuid: `{${bearerOf(request)}}`,
-      username: 'e2e-dev',
-      display_name: 'E2E Dev',
-    });
-  }
   // The membership listing the app reads (bare /workspaces is deprecated
   // and refuses newer tokens): workspace_access rows wrapping each workspace.
   if (path === '/user/workspaces') {
@@ -1418,9 +1379,89 @@ const JIRA_SPACES = new Map();
 let nextSpaceId = 30000;
 
 function jiraSpaces(cloudId) {
-  if (!JIRA_SPACES.has(cloudId)) JIRA_SPACES.set(cloudId, new Map());
+  if (!JIRA_SPACES.has(cloudId)) {
+    JIRA_SPACES.set(cloudId, new Map(seededSpaces().map((space) => [space.key, space])));
+  }
   return JIRA_SPACES.get(cloudId);
 }
+
+/**
+ * The company-managed spaces every site starts with: OPS, with its roles,
+ * components and schemes (what a template is saved from), and HR, which
+ * shares a screen with it. Their work types are the site's, read live.
+ */
+function seededSpaces() {
+  const group = (groupId, name) => ({
+    type: 'atlassian-group-role-actor',
+    actorGroup: { name, displayName: name, groupId },
+  });
+  const base = {
+    projectTypeKey: 'software',
+    assigneeType: 'UNASSIGNED',
+    style: 'classic',
+    simplified: false,
+    versions: [],
+    seeded: true,
+  };
+  return [
+    {
+      ...base,
+      id: '10000',
+      key: 'OPS',
+      name: 'Operations',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+      components: [
+        {
+          id: '50001',
+          name: 'Backend',
+          description: 'Services and jobs',
+          assigneeType: 'PROJECT_DEFAULT',
+        },
+        { id: '50002', name: 'Reports', assigneeType: 'PROJECT_LEAD' },
+      ],
+      roles: {
+        10002: [group('g-admins', 'ops-admins')],
+        10001: [group('g-users', 'jira-software-users')],
+      },
+    },
+    {
+      ...base,
+      id: '10100',
+      key: 'HELP',
+      name: 'Help desk',
+      projectTypeKey: 'service_desk',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+      issueTypes: [
+        { id: '10011', name: 'Incident', subtask: false },
+        { id: '10012', name: 'Service request', subtask: false },
+      ],
+      components: [],
+      roles: {},
+    },
+    {
+      ...base,
+      id: '10300',
+      key: 'HR',
+      name: 'People',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+      components: [],
+      roles: { 10002: [group('g-hr', 'hr-admins')] },
+    },
+  ];
+}
+
+/** A space as GET /project/{key} answers it: a seeded one with the site's live work types. */
+function spaceWire(cloudId, space) {
+  if (!space.seeded || space.issueTypes) return space;
+  const issueTypes = jiraWorkTypeSite(cloudId).types.map(({ id, name, subtask }) => ({
+    id,
+    name,
+    subtask,
+  }));
+  return { ...space, issueTypes };
+}
+
+const ROLE_NAMES = { 10002: 'Administrators', 10001: 'Developers' };
 
 function handleJiraSpaces(request, url, response, cloudId, path) {
   const spaces = jiraSpaces(cloudId);
@@ -1461,8 +1502,41 @@ function handleJiraSpaces(request, url, response, cloudId, path) {
   }
   const one = /^\/rest\/api\/3\/project\/([^/]+)$/.exec(path);
   if (one && request.method === 'GET') {
-    const space = spaces.get(one[1]);
-    return space ? json(response, 200, space) : jiraError(response, 404, 'No project.');
+    const space =
+      spaces.get(one[1]) ?? [...spaces.values()].find((candidate) => candidate.id === one[1]);
+    return space
+      ? json(response, 200, spaceWire(cloudId, space))
+      : jiraError(response, 404, 'No project.');
+  }
+  const roleList = /^\/rest\/api\/3\/project\/([^/]+)\/role$/.exec(path);
+  if (roleList && request.method === 'GET') {
+    const space = spaces.get(roleList[1]);
+    if (!space) return jiraError(response, 404, 'No project.');
+    return json(
+      response,
+      200,
+      Object.fromEntries(
+        Object.entries(ROLE_NAMES).map(([id, name]) => [
+          name,
+          `https://stub.atlassian.net/rest/api/3/project/${space.id}/role/${id}`,
+        ])
+      )
+    );
+  }
+  const schemeOf =
+    /^\/rest\/api\/3\/project\/([^/]+)\/(permissionscheme|notificationscheme|issuesecuritylevelscheme)$/.exec(
+      path
+    );
+  if (schemeOf && request.method === 'GET') {
+    if (!spaces.get(schemeOf[1])) return jiraError(response, 404, 'No project.');
+    const schemes = {
+      permissionscheme: { id: 15, name: 'Internal permissions' },
+      notificationscheme: { id: 16, name: 'Quiet notifications' },
+    };
+    const scheme = schemes[schemeOf[2]];
+    return scheme
+      ? json(response, 200, scheme)
+      : jiraError(response, 404, 'No issue security scheme.');
   }
   const listing = /^\/rest\/api\/3\/project\/([^/]+)\/(components|versions)$/.exec(path);
   if (listing && request.method === 'GET') {
@@ -1541,8 +1615,42 @@ let nextTabId = 430;
 function jiraFieldSite(cloudId) {
   if (!JIRA_FIELDS.has(cloudId)) {
     JIRA_FIELDS.set(cloudId, {
-      fields: [],
-      contexts: new Map(),
+      // Source, a select list with a context of OPS's own (10200, its
+      // options the three every context starts with) beside the global
+      // one, for proposing option changes (lib/mcp-tools/jira-admin/changes.ts).
+      fields: [
+        {
+          id: 'customfield_10100',
+          name: 'Source',
+          schema: {
+            type: 'option',
+            custom: 'com.atlassian.jira.plugin.system.customfieldtypes:select',
+          },
+          searcherKey: 'com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher',
+          isLocked: false,
+        },
+      ],
+      contexts: new Map([
+        [
+          'customfield_10100',
+          [
+            {
+              id: '10199',
+              name: 'Default Configuration Scheme for Source',
+              isGlobalContext: true,
+              isAnyIssueType: true,
+              projectIds: [],
+            },
+            {
+              id: '10200',
+              name: 'Ops context',
+              isGlobalContext: false,
+              isAnyIssueType: true,
+              projectIds: ['10000'],
+            },
+          ],
+        ],
+      ]),
       screens: new Map([
         [
           '40',
@@ -1560,6 +1668,13 @@ function jiraFieldSite(cloudId) {
     });
   }
   return JIRA_FIELDS.get(cloudId);
+}
+
+/** Jira's own fields a screen can show, beside the site's custom ones. */
+const SYSTEM_FIELDS = { priority: 'Priority', labels: 'Labels' };
+
+function fieldName(site, id) {
+  return SYSTEM_FIELDS[id] ?? site.fields.find((field) => field.id === id)?.name ?? id;
 }
 
 function paged(url, all) {
@@ -1680,6 +1795,19 @@ function handleJiraFields(request, url, response, cloudId, path) {
     });
     return json(response, 200, paged(url, holding));
   }
+  const available = /^\/rest\/api\/3\/screens\/([^/]+)\/availableFields$/.exec(path);
+  if (available && request.method === 'GET') {
+    const screen = site.screens.get(available[1]);
+    if (!screen) return jiraError(response, 404, 'The screen was not found.');
+    const shown = new Set(screen.tabs.flatMap((tab) => tab.fields));
+    return json(
+      response,
+      200,
+      [...Object.keys(SYSTEM_FIELDS), ...site.fields.map((field) => field.id)]
+        .filter((id) => !shown.has(id))
+        .map((id) => ({ id, name: fieldName(site, id) }))
+    );
+  }
   const tabs = /^\/rest\/api\/3\/screens\/([^/]+)\/tabs(?:\/([^/]+)\/fields)?$/.exec(path);
   if (tabs) {
     const screen = site.screens.get(tabs[1]);
@@ -1697,7 +1825,7 @@ function handleJiraFields(request, url, response, cloudId, path) {
       return json(
         response,
         200,
-        tab.fields.map((id) => ({ id, name: id }))
+        tab.fields.map((id) => ({ id, name: fieldName(site, id) }))
       );
     }
     if (request.method === 'POST') {
@@ -1768,6 +1896,19 @@ function handleJiraFields(request, url, response, cloudId, path) {
       json(response, 200, { id: Number(tab.id), name: tab.name });
     });
     return;
+  }
+  if (path === '/rest/api/3/screens' && request.method === 'GET') {
+    const ids = url.searchParams.getAll('id');
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        [...site.screens.entries()]
+          .filter(([id]) => ids.length === 0 || ids.includes(id))
+          .map(([id, screen]) => ({ id: Number(id), name: screen.name }))
+      )
+    );
   }
   const screenOne = /^\/rest\/api\/3\/screens\/([^/]+)$/.exec(path);
   if (screenOne && request.method === 'PUT') {
@@ -1964,12 +2105,73 @@ function handleJiraWorkTypes(request, url, response, cloudId, path) {
     return;
   }
   if (path === '/rest/api/3/screenscheme' && request.method === 'GET') {
-    const names = { 30: 'OPS screen scheme', 31: 'Bug screen scheme' };
+    // OPS creates on its own screen and edits and views on the shared bug
+    // screen, which HR's work type screen scheme (14) uses too.
+    const schemes = {
+      30: {
+        name: 'OPS screen scheme',
+        screens: { create: 41, default: 42 },
+        issueTypeScreenSchemes: [{ id: '12' }],
+      },
+      31: {
+        name: 'Bug screen scheme',
+        screens: { default: 42 },
+        issueTypeScreenSchemes: [{ id: '12' }, { id: '14' }],
+      },
+    };
     const ids = url.searchParams.getAll('id');
+    const expand = url.searchParams.get('expand') === 'issueTypeScreenSchemes';
     return json(response, 200, {
       isLast: true,
-      values: ids.filter((id) => names[id]).map((id) => ({ id: Number(id), name: names[id] })),
+      values: Object.entries(schemes)
+        .filter(([id]) => (ids.length > 0 ? ids.includes(id) : expand))
+        .map(([id, scheme]) => ({
+          id: Number(id),
+          name: scheme.name,
+          screens: scheme.screens,
+          ...(expand ? { issueTypeScreenSchemes: scheme.issueTypeScreenSchemes } : {}),
+        })),
     });
+  }
+  const screensProjects = /^\/rest\/api\/3\/issuetypescreenscheme\/([^/]+)\/project$/.exec(path);
+  if (screensProjects && request.method === 'GET') {
+    const projects = {
+      12: [{ id: '10000', key: 'OPS' }],
+      14: [{ id: '10300', key: 'HR' }],
+    };
+    return json(response, 200, paged(url, projects[screensProjects[1]] ?? []));
+  }
+  if (path === '/rest/api/3/issuetypescheme' && request.method === 'GET') {
+    const scheme = site.issueTypeScheme;
+    const ids = url.searchParams.getAll('id');
+    return json(
+      response,
+      200,
+      paged(url, ids.includes(scheme.id) ? [{ id: scheme.id, name: scheme.name }] : [])
+    );
+  }
+  if (path === '/rest/api/3/issuetypescreenscheme' && request.method === 'GET') {
+    const scheme = site.screensScheme;
+    const ids = url.searchParams.getAll('id');
+    return json(
+      response,
+      200,
+      paged(url, ids.includes(scheme.id) ? [{ id: scheme.id, name: scheme.name }] : [])
+    );
+  }
+  const workflowScheme = /^\/rest\/api\/3\/workflowscheme\/(\d+)(\/projectUsages)?$/.exec(path);
+  if (workflowScheme && request.method === 'GET') {
+    const scheme = site.workflowScheme;
+    if (workflowScheme[1] !== scheme.id) {
+      return jiraError(response, 404, 'The workflow scheme was not found.');
+    }
+    // OPS and HR run on it.
+    return workflowScheme[2]
+      ? json(response, 200, {
+          workflowSchemeId: scheme.id,
+          projects: { values: [{ id: '10000' }, { id: '10300' }] },
+        })
+      : json(response, 200, { id: Number(scheme.id), name: scheme.name });
   }
   if (path === '/rest/api/3/workflowscheme/project' && request.method === 'GET') {
     const scheme = site.workflowScheme;
@@ -2243,7 +2445,84 @@ function handleAutomation(request, url, response) {
   return json(response, 404, { message: 'The stub does not answer that path.' });
 }
 
+/**
+ * The site's own lookups a space proposal makes (lib/jira-admin/people.ts,
+ * lib/jira-admin/space-config.ts): its project roles, its people and
+ * groups, and its schemes by id — the ones OPS runs on.
+ */
+const JIRA_PEOPLE = [
+  {
+    accountId: 'acct-dana',
+    accountType: 'atlassian',
+    displayName: 'Dana Admin',
+    emailAddress: 'dana@example.com',
+    active: true,
+  },
+];
+const JIRA_GROUPS = [
+  { groupId: 'g-admins', name: 'ops-admins' },
+  { groupId: 'g-users', name: 'jira-software-users' },
+  { groupId: 'g-hr', name: 'hr-admins' },
+];
+
+function handleJiraSite(request, url, response, path) {
+  if (request.method !== 'GET') return jiraError(response, 405, 'Method not allowed.');
+  if (path === '/rest/api/3/role') {
+    return json(
+      response,
+      200,
+      Object.entries(ROLE_NAMES).map(([id, name]) => ({ id: Number(id), name }))
+    );
+  }
+  if (path === '/rest/api/3/user') {
+    const person = JIRA_PEOPLE.find(
+      (candidate) => candidate.accountId === url.searchParams.get('accountId')
+    );
+    return person ? json(response, 200, person) : jiraError(response, 404, 'No user.');
+  }
+  if (path === '/rest/api/3/user/search') {
+    const query = (url.searchParams.get('query') ?? '').toLowerCase();
+    return json(
+      response,
+      200,
+      JIRA_PEOPLE.filter(
+        (person) =>
+          person.displayName.toLowerCase().includes(query) ||
+          person.emailAddress.toLowerCase().startsWith(query)
+      )
+    );
+  }
+  if (path === '/rest/api/3/group/bulk') {
+    const names = url.searchParams.getAll('groupName');
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        JIRA_GROUPS.filter((group) => names.includes(group.name))
+      )
+    );
+  }
+  // OPS is on the system default field configuration: no scheme row.
+  if (path === '/rest/api/3/fieldconfigurationscheme/project') {
+    return json(response, 200, paged(url, []));
+  }
+  const scheme = /^\/rest\/api\/3\/(permissionscheme|notificationscheme)\/(\d+)$/.exec(path);
+  if (scheme) {
+    const known = { permissionscheme: '15', notificationscheme: '16' };
+    return scheme[2] === known[scheme[1]]
+      ? json(response, 200, { id: Number(scheme[2]) })
+      : jiraError(response, 404, 'No such scheme.');
+  }
+  return jiraError(response, 404, 'The stub does not answer that path.');
+}
+
 function handleJiraAdmin(request, url, response) {
+  const siteLookups =
+    /^\/jira\/[^/]+(\/rest\/api\/3\/(?:role|user|user\/search|group\/bulk|fieldconfigurationscheme\/project|permissionscheme\/\d+|notificationscheme\/\d+))$/.exec(
+      url.pathname
+    );
+  if (siteLookups) return handleJiraSite(request, url, response, siteLookups[1]);
   const workTypes =
     /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:issuetype|avatar|issuetypescheme|issuetypescreenscheme|screenscheme|workflowscheme|workflows|project\/search)(?:\/.*)?|\/rest\/servicedeskapi\/.*)$/.exec(
       url.pathname
@@ -2522,26 +2801,11 @@ const server = createServer((request, response) => {
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
-  // GitHub's OAuth token endpoint and identity read, the same way (the app
-  // is pointed at /github with GITHUB_API_BASE_URL); nothing else of
-  // GitHub's API is stood in for.
-  if (request.method === 'POST' && url.pathname === '/login/oauth/access_token') {
-    return issueToken(request, response, 'github');
-  }
-  if (url.pathname === '/github/user') {
-    // A stable numeric id per token, as GitHub's account ids are numbers.
-    const token = bearerOf(request);
-    let id = 7;
-    for (const char of token) id = (id * 31 + char.charCodeAt(0)) % 2_000_000_000;
-    return json(response, 200, { id, login: 'e2e-dev', name: 'E2E Dev' });
-  }
+  // GitHub, stood in for (the app is pointed at /github with
+  // GITHUB_API_BASE_URL); the connect flow's token and identity are the
+  // in-memory app's own fake OAuth, and nothing else of GitHub's API is
+  // stood in for.
   if (url.pathname.startsWith('/github/')) return error(response, 404, 'not_found');
-  // Bitbucket's OAuth token endpoint, at its own path on this origin (the
-  // delegate exchanges a stand-in provider's codes here): any code buys a
-  // long-lived token of its own, so a spec can drive the real connect flow.
-  if (request.method === 'POST' && url.pathname === '/site/oauth2/access_token') {
-    return issueToken(request, response, 'bitbucket');
-  }
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);
