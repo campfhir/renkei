@@ -4,20 +4,19 @@
  * list and save route (a login.salesforce.com address is refused — each must
  * be the org's own My Domain), a person finds one card per org on the
  * connectors page, narrows Renkei's capabilities on the sandbox's card, and
- * that connector's authorize route turns it into a PKCE consent redirect to
+ * that connector's authorize route turns it into a PKCE consent request to
  * the sandbox's own My Domain with the sandbox's own consumer key — the
- * fixed Salesforce scopes sent. Finally the operator removes the sandbox
- * connector and its card goes.
+ * fixed Salesforce scopes sent. The person connects the sandbox (its card
+ * shows the narrowed capabilities the connect recorded; production stays
+ * unconnected) and disconnects it again. Finally the operator removes the
+ * sandbox connector and its card goes.
  *
- * Nothing here reaches Salesforce: the authorize route is read with
- * redirects off (the Location header is the assertion).
- *
- * Not reachable here: the connected sandbox card and the real disconnect
- * (a grant the OAuth callback writes after a code exchange with the org's
- * My Domain, made server-side), and the pending sign-in row's narrowed
- * scopes, verifier and connector key, which no route reads back — what the
- * person's browser carries away (state, the S256 challenge) is asserted
- * instead.
+ * Nothing here reaches Salesforce: on the in-memory app the consent is the
+ * app's own fake OAuth (packages/provider-grants/src/fake-oauth.ts), whose
+ * code carries the request Salesforce would have been sent (read with
+ * `fakeConsentRequest`); the delegate trades it for a fake token set naming
+ * the sandbox's own instance, and the callback stores the grant as
+ * production does.
  *
  * Connector configs are organization-wide: the `salesforce` row is this
  * spec's alone on the server, its two orgs are removed again through the
@@ -31,7 +30,7 @@
 
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
-import { addConnectors } from '../support/connectors';
+import { addConnectors, fakeConsentRequest } from '../support/connectors';
 import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
@@ -223,7 +222,7 @@ test('salesforce: one connector per org — register, narrow a sandbox’s conne
 
   // --- The person sees one card per org, and connects the sandbox. ---
   await addConnectors(page.request, ['salesforce']);
-  const cards = page.locator('[data-coach="card-salesforce"]');
+  const cards = page.locator('[data-coach="card-salesforce"]').filter({ visible: true });
   // The connectors page reads the config through a 60-second cache
   // (@renkei/connector-config) that a save in another module instance does
   // not clear: a run soon after the last one may first see its leftovers.
@@ -253,14 +252,14 @@ test('salesforce: one connector per org — register, narrow a sandbox’s conne
   await shot(page, testInfo, 'salesforce-02-narrowed-dark');
   await page.emulateMedia({ colorScheme: 'light' });
 
-  // The sandbox's authorize route sends the person to the sandbox's own My
-  // Domain with its own consumer key, PKCE and Salesforce's fixed scopes;
-  // the narrowing and the connector stay with Renkei.
+  // The sandbox's authorize route asks the sandbox's own My Domain, with its
+  // own consumer key, PKCE and Salesforce's fixed scopes; the narrowing and
+  // the connector stay with Renkei (the connected card shows them below).
   const href = await connect.getAttribute('href');
   expect(href).toMatch(/^\/api\/salesforce\/uat\/authorize/);
   const authorize = await page.request.get(href ?? '', { maxRedirects: 0 });
   expect([302, 307]).toContain(authorize.status());
-  const consent = new URL(authorize.headers()['location'] ?? '');
+  const consent = fakeConsentRequest(authorize.headers()['location'] ?? '');
   expect(consent.origin + consent.pathname).toBe(`https://${UAT}/services/oauth2/authorize`);
   expect(consent.searchParams.get('client_id')).toBe('e2e-uat-client');
   expect(consent.searchParams.get('scope')).toBe('api refresh_token id');
@@ -279,6 +278,25 @@ test('salesforce: one connector per org — register, narrow a sandbox’s conne
     maxRedirects: 0,
   });
   expect(unknown.status()).toBe(503);
+
+  // --- Connected to UAT only, through its own link; then the real disconnect. ---
+  await connect.click();
+  await page.waitForURL(/\/connectors(\?|$)/, { timeout: 30_000 });
+  await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
+  // The fake Salesforce user, and their username.
+  await expect(uat.getByText(/Salesforce user [0-9a-f]{6}/)).toBeVisible();
+  await expect(uat.getByText(/\(fake-[0-9a-f]{8}@example\.com\)/)).toBeVisible();
+  // What the connect recorded is the narrowed choice, not Salesforce's scopes.
+  await expect(uat.getByText(/2 permissions/)).toBeVisible();
+  await expect(production.getByText('Not connected')).toBeVisible();
+  await shot(page, testInfo, 'salesforce-03-connected');
+
+  await uat.getByRole('button', { name: 'Disconnect Salesforce · UAT' }).click();
+  await expect(uat.getByText(/Your other Salesforce connections are not affected/)).toBeVisible();
+  await uat.getByRole('button', { name: 'Yes, disconnect' }).click();
+  await expect(uat.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
+  await page.reload();
+  await expect(uat.getByText('Not connected')).toBeVisible();
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);

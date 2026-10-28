@@ -3,30 +3,39 @@
  * second Entra app through the real admin form and save route, a person
  * finds its own card on the connectors page, narrows its directory-wide
  * scopes in the live picker, and the authorize route turns that into a
- * Microsoft consent redirect carrying exactly those scopes — and refuses
- * a scope beyond what the org allows.
+ * Microsoft consent request carrying exactly those scopes — and refuses
+ * a scope beyond what the org allows. Then the person connects for real,
+ * beside a connected Microsoft 365 card, and disconnects Entra Developer
+ * alone: separate apps, separate grants.
  *
- * Nothing here reaches Microsoft: the authorize route is read with
- * redirects off (the Location header is the assertion).
+ * Nothing here reaches Microsoft: on the in-memory app the authorize
+ * route's consent is the app's own fake OAuth
+ * (packages/provider-grants/src/fake-oauth.ts), which sends the browser
+ * straight back to the callback with a code carrying the request
+ * Microsoft would have been sent (read with `fakeConsentRequest`); the
+ * delegate trades it for a fake token set and the callback stores the
+ * grant as production does.
  *
- * Not reachable here: the connected state and the real disconnect, and the
- * connected Microsoft 365 card beside it that the Postgres spec checked
- * was left alone. Both are grants the OAuth callback writes after a code
- * exchange with login.microsoftonline.com, made server-side by the
- * delegate, which no route or `page.route` can stand in for.
- *
- * The connector config is organization-wide (one row for the whole
+ * The connector configs are organization-wide (one row each for the whole
  * server): the flow runs once, in desktop-light, with the dark theme as an
- * `emulateMedia` screenshot, and the config is put back as it was
- * afterwards (disabled again when the test made it — the admin route has
- * no delete).
+ * `emulateMedia` screenshot. Entra Developer's config is put back as it
+ * was afterwards (disabled again when the test made it — the admin route
+ * has no delete); Microsoft 365's is left on, since other specs connect
+ * through it too.
  *
  * Pinned Chromium; "mobile" is a resized viewport, per AGENTS.md.
  */
 
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
-import { addConnectors, connectorConfig, saveConnectorConfig } from '../support/connectors';
+import {
+  addConnectors,
+  connectThrough,
+  connectorConfig,
+  fakeConsentRequest,
+  registerConnector,
+  saveConnectorConfig,
+} from '../support/connectors';
 import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
@@ -52,6 +61,21 @@ test('entra developer: register the app, connect with narrowed scopes', async ({
   );
   const before = await connectorConfig(page.request, 'entra-developer');
   try {
+    // Microsoft 365, the first Entra app, registered (and left on: other
+    // specs connect through it too) and connected first.
+    await registerConnector(
+      page.request,
+      'microsoft',
+      {
+        clientId: 'e2e-microsoft-client',
+        clientSecret: 'e2e-microsoft-secret',
+        directoryTenantId: DIRECTORY_ID,
+      },
+      ['directoryTenantId']
+    );
+    await addConnectors(page.request, ['microsoft']);
+    await connectThrough(page, '/api/microsoft/authorize');
+
     // --- The operator registers the second Entra app. ---
     await page.goto(`/admin/connectors/entra-developer`);
     await expect(page.getByRole('heading', { name: 'Entra Developer', level: 1 })).toBeVisible();
@@ -102,7 +126,9 @@ test('entra developer: register the app, connect with narrowed scopes', async ({
     // --- The person connects it from its own card. ---
     await addConnectors(page.request, ['entra-developer']);
     await page.goto(`/connectors`);
-    const card = page.locator('[data-coach="card-entra-developer"]');
+    const microsoftCard = page.locator('[data-coach="card-microsoft"]').filter({ visible: true });
+    await expect(microsoftCard.getByText('Connected', { exact: true })).toBeVisible();
+    const card = page.locator('[data-coach="card-entra-developer"]').filter({ visible: true });
     await expect(card.getByRole('heading', { name: 'Entra Developer' })).toBeVisible();
     await expect(card.getByText('Not connected')).toBeVisible();
 
@@ -121,13 +147,13 @@ test('entra developer: register the app, connect with narrowed scopes', async ({
     await page.emulateMedia({ colorScheme: 'light' });
 
     // The authorize route turns the narrowed choice into Microsoft's consent
-    // redirect — read with redirects off, so nothing leaves this machine —
+    // request — read with redirects off, from the fake consent's code —
     // against the org's own directory, never `common`.
     const href = await connect.getAttribute('href');
     expect(href).toMatch(new RegExp(`^/api/entra-developer/authorize`));
     const authorize = await page.request.get(href ?? '', { maxRedirects: 0 });
     expect([302, 307]).toContain(authorize.status());
-    const consent = new URL(authorize.headers()['location'] ?? '');
+    const consent = fakeConsentRequest(authorize.headers()['location'] ?? '');
     expect(consent.origin + consent.pathname).toBe(
       `https://login.microsoftonline.com/${DIRECTORY_ID}/oauth2/v2.0/authorize`
     );
@@ -152,6 +178,25 @@ test('entra developer: register the app, connect with narrowed scopes', async ({
       { maxRedirects: 0 }
     );
     expect(widened.status()).toBe(400);
+
+    // --- Connected through the card's own link, then the real disconnect. ---
+    await connect.click();
+    await page.waitForURL(/\/connectors(\?|$)/, { timeout: 30_000 });
+    await expect(card).toHaveCount(1);
+    await expect(card.getByText('Connected', { exact: true })).toBeVisible();
+    await expect(card.getByText('Connected as')).toBeVisible();
+    // The fake directory user, the same one Microsoft 365 connected as.
+    await expect(card.getByText(/Microsoft user [0-9a-f]{6}/)).toBeVisible();
+    await shot(page, testInfo, 'entra-developer-03-connected');
+
+    await card.getByRole('button', { name: 'Disconnect Entra Developer' }).click();
+    await expect(card.getByText(/Your Microsoft 365 connection is not affected/)).toBeVisible();
+    await card.getByRole('button', { name: 'Yes, disconnect' }).click();
+    await expect(card.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
+    // Separate apps, separate grants: Microsoft 365 is still connected.
+    await page.reload();
+    await expect(microsoftCard.getByText('Connected', { exact: true })).toBeVisible();
+    await expect(card.getByText('Not connected')).toBeVisible();
 
     // Mobile: a resized Chromium viewport, not a device descriptor.
     await page.setViewportSize(MOBILE_VIEWPORT);

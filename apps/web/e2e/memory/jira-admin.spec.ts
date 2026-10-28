@@ -2,31 +2,38 @@
  * Jira Administration, end to end in a browser: an operator registers the
  * fifth Atlassian app through the real admin form and save route, a person
  * finds its card on the connectors page, narrows its classic scopes in the
- * live picker, and the authorize route turns that into a consent redirect
+ * live picker, and the authorize route turns that into a consent request
  * carrying exactly those scopes — and refuses a scope the org held back.
+ * Then the person connects for real and disconnects again, without
+ * touching their everyday Jira, which is connected alongside it the whole
+ * time (and whose connected panel once took the whole page down: a
+ * server-rendered card handing a function to a client component).
  *
- * Nothing here reaches Atlassian: the authorize route is read with
- * redirects off (the Location header is the assertion).
+ * Nothing here reaches Atlassian: on the in-memory app the consent is the
+ * app's own fake OAuth (packages/provider-grants/src/fake-oauth.ts), whose
+ * code carries the request Atlassian would have been sent (read with
+ * `fakeConsentRequest`); the delegate trades it for a fake token set, and
+ * the callback stores the grant as production does.
  *
- * Not reachable here: the connected state, the real disconnect, and the
- * connected everyday-Jira card beside it (whose connected panel once took
- * the whole page down). Each is a grant the OAuth callback writes after a
- * code exchange with auth.atlassian.com, made server-side by the delegate
- * against a fixed token endpoint, which no route or `page.route` can stand
- * in for.
- *
- * The connector config is organization-wide (one row for the whole
+ * The connector configs are organization-wide (one row each for the whole
  * server): the flow runs once, in desktop-light, with the dark theme as an
- * `emulateMedia` screenshot, and the config is put back as it was
- * afterwards (disabled again when the test made it — the admin route has
- * no delete).
+ * `emulateMedia` screenshot. The Jira Administration ceiling it narrows is
+ * put back afterwards; both registrations are left on, since the Jira
+ * administration specs beside this one connect through them.
  *
  * Pinned Chromium; "mobile" is a resized viewport, per AGENTS.md.
  */
 
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
-import { addConnectors, connectorConfig, saveConnectorConfig } from '../support/connectors';
+import {
+  addConnectors,
+  connectThrough,
+  connectorConfig,
+  fakeConsentRequest,
+  registerConnector,
+  saveConnectorConfig,
+} from '../support/connectors';
 import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
@@ -51,6 +58,14 @@ test('jira administration: register the app, connect with narrowed classic scope
   );
   const before = await connectorConfig(page.request, 'atlassian-admin');
   try {
+    // Everyday Jira, the first Atlassian app, registered and connected first.
+    await registerConnector(page.request, 'atlassian', {
+      clientId: 'e2e-jira-client',
+      clientSecret: 'e2e-jira-secret',
+    });
+    await addConnectors(page.request, ['jira']);
+    await connectThrough(page, '/api/mcp/authorize');
+
     // --- The operator registers the fifth Atlassian app. ---
     await page.goto(`/admin/connectors/atlassian-admin`);
     await expect(
@@ -91,7 +106,10 @@ test('jira administration: register the app, connect with narrowed classic scope
     // --- The person connects it from its card. ---
     await addConnectors(page.request, ['jira-admin']);
     await page.goto(`/connectors`);
-    const panel = page.locator('[data-coach="card-jira-admin"]');
+    const jiraPanel = page.locator('[data-coach="card-jira"]').filter({ visible: true });
+    await expect(jiraPanel.getByText('Connected', { exact: true })).toBeVisible();
+    await expect(jiraPanel.getByRole('button', { name: 'Disconnect Jira' })).toBeVisible();
+    const panel = page.locator('[data-coach="card-jira-admin"]').filter({ visible: true });
     await expect(panel.getByRole('heading', { name: 'Jira Administration' })).toBeVisible();
     await expect(panel.getByText('Not connected')).toBeVisible();
 
@@ -113,12 +131,12 @@ test('jira administration: register the app, connect with narrowed classic scope
     await page.emulateMedia({ colorScheme: 'light' });
 
     // The authorize route turns the narrowed choice into Atlassian's consent
-    // redirect — read with redirects off, so nothing leaves this machine.
+    // request — read with redirects off, from the fake consent's code.
     const href = await connect.getAttribute('href');
     expect(href).toMatch(new RegExp(`^/api/atlassian-admin/authorize`));
     const authorize = await page.request.get(href ?? '', { maxRedirects: 0 });
     expect([302, 307]).toContain(authorize.status());
-    const consent = new URL(authorize.headers()['location'] ?? '');
+    const consent = fakeConsentRequest(authorize.headers()['location'] ?? '');
     expect(consent.origin + consent.pathname).toBe('https://auth.atlassian.com/authorize');
     expect(consent.searchParams.get('client_id')).toBe('e2e-admin-client');
     expect(consent.searchParams.get('scope')?.split(' ').sort()).toEqual(
@@ -133,6 +151,24 @@ test('jira administration: register the app, connect with narrowed classic scope
     );
     expect(widened.status()).toBe(400);
 
+    // --- Connected through the card's own link, then the real disconnect. ---
+    await connect.click();
+    await page.waitForURL(/\/connectors(\?|$)/, { timeout: 30_000 });
+    await expect(panel).toHaveCount(1);
+    await expect(panel.getByText('Connected as')).toBeVisible();
+    // The fake Atlassian account, the same one everyday Jira connected as.
+    await expect(panel.getByText(/Atlassian user [0-9a-f]{6}/)).toBeVisible();
+    await shot(page, testInfo, 'jira-admin-03-connected');
+
+    await panel.getByRole('button', { name: 'Disconnect Jira Administration' }).click();
+    await expect(panel.getByText(/Your Jira connection is not affected/)).toBeVisible();
+    await panel.getByRole('button', { name: 'Yes, disconnect' }).click();
+    await expect(panel.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
+    // Separate apps, separate grants: everyday Jira is still connected.
+    await page.reload();
+    await expect(panel.getByText('Not connected')).toBeVisible();
+    await expect(jiraPanel.getByText('Connected', { exact: true })).toBeVisible();
+
     // Mobile: a resized Chromium viewport, not a device descriptor.
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(panel.getByRole('heading', { name: 'Jira Administration' })).toBeVisible();
@@ -143,13 +179,15 @@ test('jira administration: register the app, connect with narrowed classic scope
     expect(overflow).toBeLessThanOrEqual(0);
     await shot(page, testInfo, 'jira-admin-04-mobile');
   } finally {
-    // As it was: the earlier registration, or none in use.
+    // Its ceiling as it was (the whole default one when none was saved),
+    // and on: the Jira administration specs beside this one connect
+    // through the same registration (e2e/support/jira-admin.ts).
     const after = await connectorConfig(page.request, 'atlassian-admin');
     // Nothing to put back when the test stopped before it saved one.
     if (after.configured === true)
       await saveConnectorConfig(page.request, 'atlassian-admin', {
         clientId: before.configured === true ? before.clientId : after.clientId,
-        enabled: before.configured === true && before.enabled === true,
+        enabled: true,
         ...(typeof before.scopes === 'string' ? { scopes: before.scopes } : {}),
       });
   }
