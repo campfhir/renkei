@@ -264,7 +264,9 @@ test.describe('chat compaction', () => {
         .getByRole('button', { name: 'Remove "Left this for when it is free." from the queue' })
         .click();
       await expect(dialog).toBeHidden();
-      await expect(page.getByText('Compact this conversation')).toBeVisible();
+      await expect(
+        page.getByText('Compact this conversation').filter({ visible: true })
+      ).toBeVisible();
       await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
 
       // The queue is durable: the server holds it (the chat reads it back),
@@ -274,7 +276,9 @@ test.describe('chat compaction', () => {
         .toEqual(['compact']);
       await page.reload();
       await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
-      await expect(page.getByText('Compact this conversation')).toBeVisible();
+      await expect(
+        page.getByText('Compact this conversation').filter({ visible: true })
+      ).toBeVisible();
       await expect(page.getByText('queued', { exact: true })).toBeVisible();
 
       // The model finishes its reply — nobody clicks anything, the queued

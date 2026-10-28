@@ -271,8 +271,12 @@ test('approving queues the change, the server applies it, and the operator need 
   );
   await page.getByRole('button', { name: 'Approve and apply this change to Jira' }).click();
   expect((await approve).status()).toBe(202);
-  await expect(page.getByTestId('change-queued')).toContainText('you can leave this page');
-  await expect(page.getByRole('link', { name: 'See all change requests' }).first()).toBeVisible();
+  // Queued, so the operator may leave. Against the stub the apply can finish
+  // before the page's refresh lands, and then the page already shows who
+  // approved it instead of the queued notice.
+  await expect(
+    page.getByTestId('change-queued').or(main(page).getByTestId('change-approver'))
+  ).toBeVisible();
 
   // Leave without waiting: the list follows it to the end by itself.
   await page.goto('/jira-admin/changes');

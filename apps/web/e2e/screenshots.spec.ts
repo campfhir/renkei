@@ -218,7 +218,7 @@ test('admin — agent oversight sorted by tokens', async ({ page, sweep }, testI
 test('admin — agent detail with usage by model', async ({ page, sweep }, testInfo) => {
   await page.goto(`/admin/agents/${sweep.richId}`);
   await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
-  await expect(page.getByText('By model · this month')).toBeVisible();
+  await expect(page.getByText('By model · this month').filter({ visible: true })).toBeVisible();
   await shot(page, testInfo, 'admin-agent-detail');
 });
 
@@ -270,8 +270,8 @@ test('agent overview — memory section open', async ({ page, sweep }, testInfo)
 test('agent overview — usage open', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents/${sweep.richId}`);
   await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
-  await page.getByText('Usage', { exact: true }).click();
-  await expect(page.getByText('Overall · this month')).toBeVisible();
+  await page.getByText('Usage', { exact: true }).filter({ visible: true }).click();
+  await expect(page.getByText('Overall · this month').filter({ visible: true })).toBeVisible();
   await page.getByRole('button', { name: 'All time' }).click();
   await expect(page.getByText('stub-model', { exact: false }).first()).toBeVisible();
   await shot(page, testInfo, 'agent-overview-usage-open', { fullPage: false });
