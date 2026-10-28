@@ -360,7 +360,7 @@ export function standInViolations(env: NodeJS.ProcessEnv = process.env): string[
 /**
  * A stand-in's origin, honoured outside production — and on the in-memory
  * data store, which is never a deployment (nothing is persisted): the
- * memory UI suite runs a production build on it in CI, its delegate in
+ * browser suite runs a production build on it in CI, its delegate in
  * the web app's own process (apps/web/lib/memory-delegate.ts).
  */
 function standInOrigin(provider: string): string | null {

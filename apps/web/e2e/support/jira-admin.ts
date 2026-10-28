@@ -28,7 +28,7 @@ import {
   fakeAccount,
   fakeAtlassianSite,
 } from '../../../../packages/provider-grants/src/fake-accounts';
-import { MEMORY_BASE_URL, SANDBOX_STUB_URL } from '../memory/constants';
+import { MEMORY_BASE_URL, SANDBOX_STUB_URL } from '../constants';
 import { askAndWait, createChat } from './code-host';
 import { addConnectors, connectThrough } from './connectors';
 import { createPerson } from './person';

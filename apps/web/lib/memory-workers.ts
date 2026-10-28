@@ -1,6 +1,6 @@
 /**
  * The background workers a UI flow waits on, for a web server on the
- * in-memory data store (RENKEI_DATA_STORE=memory, the memory UI suite):
+ * in-memory data store (RENKEI_DATA_STORE=memory, the browser suite):
  * the agents worker's agent_jobs consumer — the run engine and the action
  * executor (apps/worker-agents/src/embedded.ts) — and the event
  * dispatcher (apps/worker/src/embedded.ts), started inside this process
@@ -10,7 +10,7 @@
  *
  * Only the consumers: no sweeps, ingest or schedule loops. Tools run
  * through this server's own MCP endpoint, at RENKEI_WEB_INTERNAL_URL
- * (playwright.memory.config.ts names it) or this server's own port.
+ * (playwright.config.ts names it) or this server's own port.
  *
  * Only instrumentation.ts calls this, and only on the memory store. A
  * deployment on Postgres runs each worker as its own process and never

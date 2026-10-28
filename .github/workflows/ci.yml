@@ -114,10 +114,10 @@ jobs:
       - name: Differential and contract
         run: pnpm --filter @renkei/db test:contract
 
-  # The UI suite on the in-memory data store (apps/web/playwright.memory.config.ts):
-  # one production build of the web app with RENKEI_DATA_STORE=memory, no
-  # Postgres, no delegate, no stubs — layout and navigation checked without
-  # the IO of a full deployment. The full browser suite stays local-only.
+  # The browser suite (apps/web/playwright.config.ts): one production build of
+  # the web app on the in-memory data store (RENKEI_DATA_STORE=memory, no
+  # Postgres), its delegate and workers in-process, beside the sandbox, MCP and
+  # model stubs.
   e2e-memory:
     name: e2e (memory store)
     runs-on: ubuntu-latest
@@ -137,8 +137,8 @@ jobs:
       - name: Install Chromium
         run: pnpm --filter renkei exec playwright install --with-deps chromium
 
-      - name: Memory-store UI suite
-        run: pnpm --filter renkei e2e:memory
+      - name: Browser suite
+        run: pnpm --filter renkei e2e
 
   # Every change to the product (apps/, packages/, docker/) needs an entry in
   # apps/web/lib/changelog.ts in the same pull request, or a commit that says

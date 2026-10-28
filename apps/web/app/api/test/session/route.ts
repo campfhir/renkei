@@ -1,5 +1,5 @@
 /**
- * Sign-in for the memory UI suite (playwright.memory.config.ts): the one
+ * Sign-in for the browser suite (playwright.config.ts): the one
  * thing a spec cannot do through the app's own routes, because OIDC needs
  * an identity provider. Everything else a spec stages through the REST
  * routes the UI calls.

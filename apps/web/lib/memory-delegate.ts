@@ -1,6 +1,6 @@
 /**
  * The delegate for a web server on the in-memory data store
- * (RENKEI_DATA_STORE=memory, the memory UI suite): the real delegate
+ * (RENKEI_DATA_STORE=memory, the browser suite): the real delegate
  * server (apps/worker-delegate/src/embedded.ts) started inside this
  * process on a loopback port, because the memory store lives in this
  * process and the delegate has to read and write the same rows the pages
@@ -10,7 +10,7 @@
  * grants all run for real.
  *
  * The environment names where it listens and the key it accepts
- * (playwright.memory.config.ts passes a loopback URL, a key and
+ * (playwright.config.ts passes a loopback URL, a key and
  * TOKEN_ENCRYPTION_KEY). Whatever it leaves out is made up here and
  * written back to process.env — but a dev server is best given all three:
  * `next dev` notices an environment that changed under it and rebuilds

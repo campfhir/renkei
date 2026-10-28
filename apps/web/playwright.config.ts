@@ -1,47 +1,60 @@
 /**
- * Playwright config for screenshot-driven UI work (specs live in e2e/,
- * named *.spec.ts so Jest's glob for .test.ts files never collects them).
+ * The UI suite on the in-memory data store (packages/db/src/store/memory.ts):
+ * one Next server with RENKEI_DATA_STORE=memory, and no Postgres anywhere.
  *
- * Local-only tooling: it needs the dev Postgres from the repo's
- * docker-compose.yml plus the root .env.development — CI runs no browser
- * suite. Traces are OFF on purpose: a trace artifact once captured a live
- * Azure AD client secret (see .gitignore's note); opt in per-run with
- * `--trace on` only against pages that render no credentials.
+ * The server runs, in its own process and on the same store, the real
+ * delegate (lib/memory-delegate.ts) — so people enroll and chats open
+ * their keys exactly as in a deployment — and the background consumers a
+ * UI flow waits on (lib/memory-workers.ts): the agents worker's run
+ * engine and action executor, and the event dispatcher. Beside it start
+ * three stateless stubs: the sandbox worker (:8092), a remote MCP server
+ * (:8093) and a model (:8094, e2e/llm-stub.mjs).
+ *
+ * Specs sign in through the one test-only route (app/api/test/session,
+ * via e2e/fixtures.ts → e2e/support/person.ts) and stage everything else
+ * through the REST routes the UI itself calls.
+ *
+ * Locally: `pnpm e2e` or `npx playwright test <spec>` (a dev server on
+ * :3100, reused while it is up). In CI the app is built and started
+ * instead — a production build answers a cold route in milliseconds where
+ * dev compiles it first.
  */
 
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
-import { E2E_SETUP_SECRET } from './e2e/setup-secret';
+import {
+  MEMORY_SEED_TOKEN,
+  MEMORY_BASE_URL,
+  MEMORY_PORT,
+  MEMORY_TOKEN_ENCRYPTION_KEY,
+  MEMORY_DELEGATE_URL,
+  MEMORY_DELEGATE_API_KEY,
+  LLM_STUB_PORT,
+  SANDBOX_STUB_PORT,
+  SANDBOX_STUB_URL,
+  E2E_SETUP_SECRET,
+} from './e2e/constants';
 
-// Env (DATABASE_URL, TOKEN_ENCRYPTION_KEY) lives in the repo-root
-// .env.development; absent file is fine when the vars are already exported.
 const HERE = import.meta.dirname;
-try {
-  process.loadEnvFile(path.resolve(HERE, '../../.env.development'));
-} catch {
-  // Already-set environment wins; the webServer env below passes it through.
-}
 
-const BASE_URL = 'http://127.0.0.1:3000';
+// A Chromium other than the one this Playwright version downloads (a
+// sandbox's preinstalled browser): name it, and every project uses it.
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
+const launchOptions = executablePath ? { executablePath, args: ['--no-sandbox'] } : {};
 
 export default defineConfig({
   testDir: './e2e',
-  // The in-memory store's specs run against their own server
-  // (playwright.memory.config.ts), never this one.
-  testIgnore: ['memory/**'],
   outputDir: 'test-results',
-  reporter: [['html', { open: 'never' }]],
-  globalSetup: './e2e/global-setup.ts',
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   timeout: 60_000,
+  fullyParallel: true,
   use: {
-    baseURL: BASE_URL,
-    storageState: path.join(HERE, 'test-results', 'storage-state.json'),
-    // LocalTime SSRs UTC and swaps to the browser zone on hydration; pinning
-    // UTC makes both renders identical, so screenshots never flake on time.
+    baseURL: MEMORY_BASE_URL,
     timezoneId: 'UTC',
     locale: 'en-US',
     trace: 'off',
     screenshot: 'off',
+    launchOptions,
   },
   projects: [
     {
@@ -50,6 +63,7 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
         colorScheme: 'light',
+        launchOptions,
       },
     },
     {
@@ -58,94 +72,66 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
         colorScheme: 'dark',
+        launchOptions,
       },
-    },
-    {
-      name: 'mobile',
-      use: { ...devices['iPhone 14'] },
     },
   ],
   webServer: [
     {
-      // A stand-in sandbox worker for the Code pages (e2e/sandbox-stub.mjs):
-      // the app reaches it at the SANDBOX_WORKER_URL the env file names.
-      command: 'node e2e/sandbox-stub.mjs',
-      url: 'http://127.0.0.1:8092/health',
+      // A stand-in sandbox worker (e2e/sandbox-stub.mjs): Code pages, the
+      // chat's sandbox tools, Bitbucket's and Jira administration's APIs.
+      // No vendor's OAuth: connect flows are the in-memory app's own fake
+      // grants (packages/provider-grants/src/fake-oauth.ts).
+      // SANDBOX_STUB_PORT moves it.
+      command: `SANDBOX_STUB_PORT=${SANDBOX_STUB_PORT} node e2e/sandbox-stub.mjs`,
+      url: `${SANDBOX_STUB_URL}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
     {
-      // A stand-in remote MCP server with its own OAuth (e2e/mcp-stub.mjs):
-      // dynamic registration, PKCE, both transports, one open endpoint.
+      // A stand-in remote MCP server with its own OAuth (e2e/mcp-stub.mjs).
       command: 'node e2e/mcp-stub.mjs',
-      url: 'http://127.0.0.1:8093/health',
+      url: `http://127.0.0.1:${process.env.E2E_MCP_STUB_PORT ?? 8093}/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
     },
     {
-      // The delegate (apps/worker-delegate): the one process that holds a
-      // key. Chat pages, connector credentials and the own-key preferences
-      // all go through it, so the specs run the real one against the dev
-      // database, on the same USER_KEY_ENCRYPTION_KEY e2e/keys.ts seeds with.
-      command: 'pnpm --filter @renkei/worker-delegate start',
-      url: 'http://127.0.0.1:8096/health',
+      // A stand-in model (e2e/llm-stub.mjs): the fixed reply that lets an
+      // agent run or a chat turn finish.
+      command: 'node e2e/llm-stub.mjs',
+      url: `http://127.0.0.1:${LLM_STUB_PORT}/health`,
       reuseExistingServer: !process.env.CI,
-      timeout: 60_000,
-      env: {
-        ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
-        ...(process.env.TOKEN_ENCRYPTION_KEY
-          ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
-          : {}),
-        ...(process.env.USER_KEY_ENCRYPTION_KEY
-          ? { USER_KEY_ENCRYPTION_KEY: process.env.USER_KEY_ENCRYPTION_KEY }
-          : {}),
-        ...(process.env.LOG_ENCRYPTION_KEY
-          ? { LOG_ENCRYPTION_KEY: process.env.LOG_ENCRYPTION_KEY }
-          : {}),
-        DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',
-        DELEGATE_WORKER_PORT: '8096',
-        // The same stand-ins the dev server below is pointed at: the
-        // delegate lets a provider's token travel to them too.
-        BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
-        JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
-        JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
-      },
+      timeout: 30_000,
     },
     {
-      command: 'pnpm dev',
-      url: BASE_URL,
+      command: process.env.CI
+        ? `pnpm build && pnpm start -p ${MEMORY_PORT}`
+        : `pnpm dev -p ${MEMORY_PORT}`,
+      url: `${MEMORY_BASE_URL}/api/health`,
       reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      timeout: 300_000,
       env: {
-        ...(process.env.DATABASE_URL ? { DATABASE_URL: process.env.DATABASE_URL } : {}),
-        ...(process.env.TOKEN_ENCRYPTION_KEY
-          ? { TOKEN_ENCRYPTION_KEY: process.env.TOKEN_ENCRYPTION_KEY }
-          : {}),
-        // First-run setup's credential (setup.spec.ts presents it); the
-        // app ignores it while an identity provider exists, which is every
-        // other spec's situation.
+        RENKEI_DATA_STORE: 'memory',
+        RENKEI_MEMORY_SEED_TOKEN: MEMORY_SEED_TOKEN,
+        // The server starts its own delegate (lib/memory-delegate.ts) at
+        // this URL with this key: named here, never made up at boot, since
+        // `next dev` rebuilds and reloads every page when the environment
+        // changes under it. The secrets key is the suite's fixed one,
+        // which specs seal with too.
+        DELEGATE_WORKER_URL: MEMORY_DELEGATE_URL,
+        DELEGATE_WORKER_API_KEY: MEMORY_DELEGATE_API_KEY,
+        TOKEN_ENCRYPTION_KEY: MEMORY_TOKEN_ENCRYPTION_KEY,
+        // The in-process agents worker runs tools through this server's
+        // own MCP endpoint (lib/memory-workers.ts).
+        RENKEI_WEB_INTERNAL_URL: MEMORY_BASE_URL,
+        // The sandbox stub stands in for the sandbox worker and the hosts' APIs.
+        SANDBOX_WORKER_URL: SANDBOX_STUB_URL,
+        SANDBOX_WORKER_API_KEY: 'e2e-sandbox-key',
         SETUP_SECRET: E2E_SETUP_SECRET,
-        // Every key the app needs it gets from the delegate above.
-        DELEGATE_WORKER_URL: 'http://127.0.0.1:8096',
-        DELEGATE_WORKER_API_KEY: 'e2e-delegate-key',
-        // instrumentation.ts refuses to boot without this, so a shot run dies
-        // before the first page loads. Passed through when set, exactly like
-        // the other two — no key is invented here.
-        ...(process.env.LOG_ENCRYPTION_KEY
-          ? { LOG_ENCRYPTION_KEY: process.env.LOG_ENCRYPTION_KEY }
-          : {}),
-        // Bitbucket is the stub too (e2e/sandbox-stub.mjs): the browser in
-        // the new-project form and a project page's README read from it.
-        BITBUCKET_API_BASE_URL: 'http://127.0.0.1:8092/bitbucket/2.0',
-        // And Jira administration's option endpoints: applying a change
-        // request from its review page writes to the stub, never Atlassian.
-        JIRA_ADMIN_API_BASE_URL: 'http://127.0.0.1:8092/jira',
-        // The Automation API too, on the person's API token (Basic auth).
-        JIRA_AUTOMATION_API_BASE_URL: 'http://127.0.0.1:8092/automation',
-        // File storage: the blob store's local backend, files under
-        // test-results, unless the environment names a store of its own —
-        // so uploads, downloads and text extraction run for real in a spec
-        // and the composer's paperclip is on screen.
+        BITBUCKET_API_BASE_URL: `${SANDBOX_STUB_URL}/bitbucket/2.0`,
+        GITHUB_API_BASE_URL: `${SANDBOX_STUB_URL}/github`,
+        JIRA_ADMIN_API_BASE_URL: `${SANDBOX_STUB_URL}/jira`,
+        JIRA_AUTOMATION_API_BASE_URL: `${SANDBOX_STUB_URL}/automation`,
         BLOB_STORE_PROVIDER: process.env.BLOB_STORE_PROVIDER ?? 'local',
         BLOB_STORE_LOCAL_DIR:
           process.env.BLOB_STORE_LOCAL_DIR ?? path.join(HERE, 'test-results', 'blobs'),

@@ -4,8 +4,9 @@
  * the database — no handle, no Kysely, no SQL. The web app, every worker,
  * every shared package, their scripts, their tests and test-support are
  * scanned: a test seeds its rows with the store methods the application
- * writes them with. Only the e2e directories are left out (the Playwright
- * suite drives a running deployment from outside it).
+ * writes them with. The e2e directories are held further still: the
+ * Playwright suite drives a running app from outside, through its routes,
+ * so it imports nothing of @renkei/db and writes no SQL at all.
  *
  * A file that genuinely needs the pg handle goes in ALLOWED with the
  * reason, not around this test.
@@ -31,7 +32,15 @@ const FORBIDDEN: [RegExp, string][] = [
   [/from\s+['"]@renkei\/db\/[^'"]+['"]/, 'a deep import past @renkei/db'],
 ];
 
-const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'e2e', 'coverage']);
+/** What an e2e directory may not do on top of the rest. */
+const FORBIDDEN_IN_E2E: [RegExp, string][] = [
+  [/from\s+['"]@renkei\/db['"]|import\(\s*['"]@renkei\/db['"]\s*\)/, 'an import from @renkei/db'],
+  [/\b(SELECT\s+[\w*].*\bFROM|INSERT\s+INTO|DELETE\s+FROM|UPDATE\s+\w+\s+SET)\b/, 'SQL'],
+];
+
+const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'coverage']);
+
+const inE2e = (path: string): boolean => path.split('/').includes('e2e');
 
 function isSource(name: string): boolean {
   return /\.(ts|tsx|js|mjs|cjs)$/.test(name) && !name.endsWith('.d.ts');
@@ -73,6 +82,9 @@ describe('data store seam', () => {
     for (const workspace of ['apps/web', 'apps/worker', 'apps/worker-agents', 'packages/queue']) {
       expect(scanned.has(workspace)).toBe(true);
     }
+    // The browser suite too: its specs, support and stubs.
+    const e2e = join('apps', 'web', 'e2e');
+    expect(files.some((file) => relative(REPO, file).startsWith(e2e))).toBe(true);
     expect(files.length).toBeGreaterThan(1000);
   });
 
@@ -81,8 +93,9 @@ describe('data store seam', () => {
     for (const file of files) {
       const path = relative(REPO, file).split(sep).join('/');
       if (path in ALLOWED) continue;
+      const forbidden = inE2e(path) ? [...FORBIDDEN, ...FORBIDDEN_IN_E2E] : FORBIDDEN;
       codeLines(readFileSync(file, 'utf8')).forEach((line, index) => {
-        for (const [pattern, what] of FORBIDDEN) {
+        for (const [pattern, what] of forbidden) {
           if (pattern.test(line)) found.push(`${path}:${index + 1} uses ${what}`);
         }
       });

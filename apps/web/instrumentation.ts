@@ -38,7 +38,7 @@ export async function register() {
 
     // RENKEI_DATA_STORE=memory: the data store is plain JavaScript in this
     // process (packages/db/src/store/memory.ts), for the UI suite that
-    // needs no database (playwright.memory.config.ts). Nothing here then
+    // needs no database (playwright.config.ts). Nothing here then
     // has a database to reach — no log table, no schema to check, no turn
     // or apply-job rows to recover — so boot stops after registering it.
     // Specs stage their data through the app's own routes, signed in

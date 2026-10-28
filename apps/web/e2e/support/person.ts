@@ -1,5 +1,5 @@
 /**
- * The memory suite's one helper: a signed-in, enrolled person of a spec's
+ * The browser suite's one helper: a signed-in, enrolled person of a spec's
  * own.
  *
  *   1. POST /api/test/session — the suite's only test-only route (OIDC
@@ -20,7 +20,7 @@
 
 import { randomBytes } from 'node:crypto';
 import type { APIRequestContext, BrowserContext } from '@playwright/test';
-import { MEMORY_BASE_URL, MEMORY_SEED_TOKEN } from '../memory/constants';
+import { MEMORY_BASE_URL, MEMORY_SEED_TOKEN } from '../constants';
 import { sealToPublicKey, secretbox, x25519Pair } from './crypto';
 
 export interface Person {

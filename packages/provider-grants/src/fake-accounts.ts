@@ -104,7 +104,7 @@ export function fakeAccount(subject: string, provider: string): FakeAccount {
  * Who a person works for, as far as a vendor's sites go: their email
  * address's domain — people of one organization share its Atlassian site,
  * as they do in Jira — or, when their address is no more than their
- * subject (the memory suite's sign-in gives a person none of their own),
+ * subject (the browser suite's sign-in gives a person none of their own),
  * the person alone, in a site nobody else works in.
  */
 export function fakeOrganization(subject: string, email: string | null | undefined): string {

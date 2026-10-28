@@ -9,7 +9,7 @@
  *     database;
  *   - memory: the same answers from plain JavaScript tables in the web
  *     process (memory/tables.ts), for the UI suite that checks layout and
- *     navigation without a database (apps/web/playwright.memory.config.ts)
+ *     navigation without a database (apps/web/playwright.config.ts)
  *     and for unit tests.
  *
  * The two are held to each other by the differential suite

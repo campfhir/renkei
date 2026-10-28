@@ -55,7 +55,7 @@ import { createServer } from 'node:http';
 import { deflateSync } from 'node:zlib';
 
 const PORT = Number(process.env.E2E_LLM_STUB_PORT ?? 8094);
-// Mirrored by LLM_STUB_REPLY in e2e/memory/constants.ts.
+// Mirrored by LLM_STUB_REPLY in e2e/constants.ts.
 const STUB_REPLY = 'The stub model finished the work.';
 // Mirrored by LLM_STUB_PICTURE.
 const STUB_PICTURE = 'A picture the stub model looked at.';

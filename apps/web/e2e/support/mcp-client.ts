@@ -14,7 +14,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { expect, type APIRequestContext } from '@playwright/test';
-import { MEMORY_BASE_URL } from '../memory/constants';
+import { MEMORY_BASE_URL } from '../constants';
 import type { Person } from './person';
 
 export interface McpClient {

@@ -15,7 +15,7 @@
  */
 
 import type { APIRequestContext } from '@playwright/test';
-import { LLM_STUB_BASE_URL } from '../memory/constants';
+import { LLM_STUB_BASE_URL } from '../constants';
 
 /** One model response; llm-stub.mjs plays them in order, a tool round trip apart. */
 export interface StubStep {

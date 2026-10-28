@@ -1,5 +1,5 @@
 /**
- * The memory suite's sign-in: a fresh identity and session on the memory
+ * The browser suite's sign-in: a fresh identity and session on the memory
  * store, the cookie set — and a 404 for anything else.
  */
 

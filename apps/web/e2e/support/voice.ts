@@ -9,9 +9,8 @@
  * the mocked synthesis returns.
  *
  * The speech service is organization-wide and every voice spec needs it
- * on, side by side, so it is written the same each time and left on (as
- * the Postgres suite's seed left it): one spec turning it off would pull
- * it out from under another mid-test. The caller must be an operator.
+ * on, side by side, so it is written the same each time and left on: one
+ * spec turning it off would pull it out from under another mid-test. The caller must be an operator.
  */
 
 import path from 'node:path';

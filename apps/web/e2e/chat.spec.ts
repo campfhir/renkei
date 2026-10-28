@@ -1,0 +1,467 @@
+/**
+ * The chat thread as a finished turn leaves it: a user prompt, a reply
+ * carrying thinking, a tool call and Markdown, and the tool's result —
+ * written by the app's own turn engine against the scripted stand-in
+ * model (e2e/support/stub-model.ts, in Anthropic's dialect, so the
+ * thinking is signed and the thinking switch shows). A file the model
+ * wrote (chat_write_file, a real PDF in the blob store) sits behind
+ * Artifacts. Asserts the sidebar lists the chat, the thread shows every
+ * block kind, the folds hold the tool input and result, and nothing
+ * spills horizontally.
+ */
+
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { LLM_STUB_REPLY } from './constants';
+import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
+import { createChat, send } from './support/chat';
+
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
+
+const QUESTION = 'Which issues slipped out of the last OPS sprint?';
+const NOTE = 'OPS-41 and OPS-44 slipped out of the last OPS sprint.';
+
+const REPLY_MARKDOWN = [
+  'Two issues slipped out of the sprint:',
+  '',
+  '| Key | Summary | Status |',
+  '| --- | --- | --- |',
+  '| OPS-41 | Rotate the Zoom webhook secret | In Progress |',
+  '| OPS-44 | Backfill the fileshare index | To Do |',
+  '| OPS-45 | Clear `.next` after `pnpm build`, then retry | To Do |',
+  '',
+  'Both are still assigned. The search I ran was:',
+  '',
+  '```sql',
+  'project = OPS AND sprint in closedSprints() AND status != Done ORDER BY updated DESC',
+  '```',
+  '',
+  'To carry them over, the board script would be:',
+  '',
+  '```ts',
+  "const carried = issues.filter((issue) => issue.status !== 'Done');",
+  '```',
+  '',
+  '```yml',
+  'sprint:',
+  '  name: OPS Sprint 12',
+  '  carry_over: true',
+  '```',
+  '',
+  'Want me to **move them** into the next sprint?',
+].join('\n');
+
+/**
+ * The person's own prompt, with a fence and a backtick of its own: the
+ * same Markdown renderer as the reply's, so this should read as a
+ * code-block card and inline monospace rather than literal backticks.
+ */
+const FENCE_PROMPT = [
+  'One more thing — does `status != Done` cover every closed state, or should it run as:',
+  '',
+  '```jql',
+  'project = OPS AND sprint in closedSprints() AND status not in (Done, Cancelled)',
+  '```',
+].join('\n');
+
+function shot(page: Page, testInfo: TestInfo, name: string): Promise<Buffer> {
+  return page.screenshot({
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
+    fullPage: true,
+  });
+}
+
+test('chat thread: sidebar, blocks, folds, no overflow', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const title = `Which sprint issues slipped? ${tag}`;
+  const modelLabel = `E2E model ${tag}`;
+  const modelId = await addStubModel(page.request, tag, {
+    provider: 'anthropic',
+    label: modelLabel,
+  });
+  const fenced = scripted(FENCE_PROMPT, [
+    toolStep('chat_write_file', {
+      filename: 'sprint-report.pdf',
+      content: '# Sprint report\n\nOPS-41 and OPS-44 slipped.',
+    }),
+    { text: 'It does; the report is attached.' },
+  ]);
+  const asked = scripted(QUESTION, [
+    {
+      reasoning: 'The closed sprint is the one to search; anything not Done in it slipped.',
+      // The model call takes a moment, so its time reads apart from the tool's.
+      delayMs: 2_000,
+      tools: [{ name: 'project_memory_remember', input: { note: NOTE } }],
+    },
+    { text: REPLY_MARKDOWN },
+  ]);
+  try {
+    const project = await page.request.post('/api/chat/projects', {
+      data: { name: 'Sprint hygiene' },
+    });
+    expect(project.status(), await project.text()).toBe(201);
+    const { projectId } = await project.json();
+    const chatId = await createChat(page.request, {
+      llmModelId: modelId,
+      projectId,
+      thinkingEnabled: true,
+      title,
+    });
+    // Both tools act, so each turn asks first: allowed once, as the card would.
+    await send(page.request, chatId, fenced, modelId, { allow: true });
+    await send(page.request, chatId, asked, modelId, { allow: true });
+    // An archived chat of the same person: hidden until "Show archived".
+    const archivedId = await createChat(page.request, {
+      llmModelId: modelId,
+      title: `${title} (archived)`,
+    });
+    await send(page.request, archivedId, 'An old question.', modelId);
+    const archived = await page.request.patch(`/api/chat/chats/${archivedId}`, {
+      data: { archived: true },
+    });
+    expect(archived.ok()).toBe(true);
+
+    await page.goto(`/chat/${chatId}`);
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+    // The project the chat sits in reads as a subheading under the name.
+    await expect(
+      page.locator('header').getByRole('link', { name: 'Sprint hygiene' })
+    ).toBeVisible();
+
+    // The app menu's Chat section lists the chat in the column beside the
+    // page. The row's name runs on into its project line, and the archived
+    // twin's into "(archived)": anchor the title and rule the twin out.
+    const rowName = new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?! \\(archived)`);
+    const row = page
+      .getByRole('navigation', { name: 'Chats' })
+      .getByRole('link', { name: rowName });
+    await expect(row).toBeVisible();
+    // The row names the chat's project underneath, and leads with the mark
+    // of a chat in a chat project (a code project's chats get another).
+    await expect(row.getByText('Sprint hygiene')).toBeVisible();
+    await expect(row.locator('[data-kind="project"]')).toHaveCount(1);
+    await expect(page.getByRole('link', { name: 'Prompt libraries' })).toBeVisible();
+
+    // The row's "⋯" menu opens dialogs from inside the menu's sticky
+    // column. Each dialog must still cover the whole viewport and take
+    // input: rendered in place it sat under the page's own content.
+    const openRowDialog = async (action: string, name: string) => {
+      await row.hover();
+      await row.locator('..').getByRole('button', { name: 'Chat actions' }).click();
+      await page.getByRole('button', { name: action, exact: true }).click();
+      const dialog = page.getByRole('dialog', { name });
+      await expect(dialog).toBeVisible();
+      return dialog;
+    };
+    const coversViewport = async (dialog: ReturnType<typeof page.getByRole>) => {
+      const viewport = page.viewportSize();
+      const overlay = await dialog.boundingBox();
+      expect(overlay?.x).toBe(0);
+      expect(overlay?.y).toBe(0);
+      expect(overlay?.width).toBe(viewport?.width);
+      expect(overlay?.height).toBe(viewport?.height);
+    };
+
+    const renameDialog = await openRowDialog('Rename', 'Rename chat');
+    await shot(page, testInfo, 'chat-rename-dialog.png');
+    await coversViewport(renameDialog);
+    const draft = renameDialog.getByRole('textbox');
+    await expect(draft).toHaveValue(title);
+    // fill() hit-tests the field: it fails if anything paints over it.
+    await draft.fill(`${title} — draft`);
+    await expect(draft).toHaveValue(`${title} — draft`);
+    await renameDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(renameDialog).toBeHidden();
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+
+    const deleteDialog = await openRowDialog('Delete', 'Delete chat');
+    await shot(page, testInfo, 'chat-delete-dialog.png');
+    await coversViewport(deleteDialog);
+    await expect(deleteDialog.getByText(/deletes the chat/)).toBeVisible();
+    await deleteDialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(deleteDialog).toBeHidden();
+    await expect(row).toBeVisible();
+    const archivedRow = page
+      .getByRole('navigation', { name: 'Chats' })
+      .getByRole('link', { name: `${title} (archived)` });
+    await expect(archivedRow).toBeHidden();
+    // The top bar's search finds a chat by what was said in it, not only by
+    // its title: the phrase below sits in the reply's table and nowhere in
+    // the title, and the result found that way shows the matching line.
+    const search = page.getByRole('searchbox', { name: 'Search Renkei' });
+    const results = page.getByRole('listbox', { name: 'Results' });
+    await search.fill('rotate the zoom webhook');
+    await expect(
+      results.getByRole('option', { name: /Rotate the Zoom webhook secret/ })
+    ).toBeVisible();
+    await search.fill('a phrase no chat has ever held');
+    // No chat matches, and nothing else does either.
+    await expect(results).toContainText('Nothing matches');
+    await search.fill('');
+    await expect(results).toBeHidden();
+    await expect(row).toBeVisible();
+    // The funnel above the list picks the states shown: active, archived, or both.
+    await page.getByRole('button', { name: 'Filter chats' }).click();
+    const archivedOption = page.getByRole('menuitemcheckbox', { name: /Archived/ });
+    await expect(archivedOption).toHaveAttribute('aria-checked', 'false');
+    await archivedOption.click();
+    await expect(archivedRow).toBeVisible();
+    await expect(row).toBeVisible();
+    await shot(page, testInfo, 'chat-filter.png');
+    await archivedOption.click();
+    await expect(archivedRow).toBeHidden();
+    await page.keyboard.press('Escape');
+
+    // The prompt, then the reply's work — thinking and the tool call in one
+    // collapsed line — and the Markdown answer.
+    await expect(page.getByText(QUESTION)).toBeVisible();
+    const work = page.locator('details.chat-fold', { hasText: 'Thought · 1 tool call' });
+    await expect(work).toBeVisible();
+    // Where the time went, from the rows' own timing: the model call
+    // apart from the tool it waited on.
+    await expect(work.locator('> summary')).toContainText(/2(\.\d)?s model, [\d.]+m?s tools/);
+    await expect(work.getByText(/closed sprint is the one to search/)).toBeHidden();
+    await work.locator('> summary').click();
+    await expect(work.getByText(/closed sprint is the one to search/)).toBeVisible();
+
+    const call = work.locator('details.chat-fold', { hasText: 'Called' });
+    await expect(call).toBeVisible();
+    await expect(call.locator('[data-call-duration]')).toHaveText(/^[\d.]+m?s$/);
+    await call.locator('> summary').click();
+    await expect(call.getByText('Input')).toBeVisible();
+    await expect(call.getByText('Result')).toBeVisible();
+    await expect(call.getByText(/Remembered/)).toBeVisible();
+    // The call's JSON input is coloured as JSON.
+    await expect(call.locator('.chat-pre .hljs-attr', { hasText: 'note' })).toBeVisible();
+    await expect(call.locator('.chat-pre .hljs-string', { hasText: 'OPS-44' })).toBeVisible();
+    await shot(page, testInfo, 'chat-work-open.png');
+    await work.locator('> summary').click();
+
+    const markdown = page.locator('.chat-markdown').last();
+    await expect(markdown.getByRole('table')).toBeVisible();
+    await expect(markdown.locator('pre code').first()).toContainText('closedSprints()');
+    await expect(markdown.locator('strong', { hasText: 'move them' })).toBeVisible();
+
+    // Each fenced block is a card: the language named in its header, the
+    // code coloured by that language's grammar — the fence's own word
+    // (`yml`) resolved to the grammar and to a proper name (YAML) — and a
+    // Copy button that is always there, not only under a pointer.
+    const sqlBlock = markdown.locator('.chat-code', { hasText: 'closedSprints()' });
+    await expect(sqlBlock.locator('.chat-code-lang')).toHaveText('SQL');
+    await expect(sqlBlock.locator('.hljs-keyword', { hasText: 'ORDER' })).toBeVisible();
+    const tsBlock = markdown.locator('.chat-code', { hasText: 'issues.filter' });
+    await expect(tsBlock.locator('.chat-code-lang')).toHaveText('TypeScript');
+    await expect(tsBlock.locator('.hljs-keyword', { hasText: 'const' })).toBeVisible();
+    await expect(tsBlock.locator('.hljs-string', { hasText: "'Done'" })).toBeVisible();
+    const yamlBlock = markdown.locator('.chat-code', { hasText: 'carry_over' });
+    await expect(yamlBlock.locator('.chat-code-lang')).toHaveText('YAML');
+    await expect(yamlBlock.locator('.hljs-attr', { hasText: 'sprint' }).first()).toBeVisible();
+    await expect(yamlBlock.locator('.hljs-literal', { hasText: 'true' })).toBeVisible();
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+    const copy = tsBlock.getByRole('button', { name: 'Copy' });
+    await expect(copy).toBeVisible();
+    await copy.click();
+    await expect(tsBlock.getByRole('button', { name: 'Copied' })).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+      "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
+    );
+    await shot(page, testInfo, 'chat-code-blocks.png');
+
+    // At phone width a table row is a card; a cell mixing text and inline
+    // code must stay one value beside its label, not split into a grid
+    // cell per text/code run.
+    const tableViewport = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mixedCell = markdown.locator('td', { hasText: 'Clear' }).first();
+    await expect(mixedCell.locator('.chat-cell')).toContainText('Clear .next after pnpm build');
+    const cellBoxes = await mixedCell.evaluate((td) => {
+      const box = (el: Element) => el.getBoundingClientRect();
+      const valueCell = td.querySelector('.chat-cell');
+      if (!valueCell) return [];
+      const value = box(valueCell);
+      return [...td.querySelectorAll('code')].map((code) => ({
+        left: box(code).left,
+        valueLeft: value.left,
+      }));
+    });
+    expect(cellBoxes.length).toBe(2);
+    // Inline code sits inside the value column (right of the label), not
+    // at the card's left edge.
+    for (const { left, valueLeft } of cellBoxes) expect(left).toBeGreaterThanOrEqual(valueLeft - 1);
+    await shot(page, testInfo, 'chat-table-card-inline-code.png');
+    if (tableViewport) await page.setViewportSize(tableViewport);
+
+    // The person's own prompt goes through the identical renderer: their
+    // fence is the same code-block card (on the blue bubble's own
+    // colours) and their backtick is monospace, not a literal character.
+    const userFence = page.locator('.chat-markdown-user').filter({ hasText: 'closedSprints()' });
+    await expect(userFence.locator('code', { hasText: 'status != Done' })).toBeVisible();
+    const userCode = userFence.locator('.chat-code');
+    await expect(userCode.locator('.chat-code-lang')).toHaveText('JQL');
+    // Off by default: no gutter class, and Copy hands back bare code —
+    // read from the clipboard rather than the button's transient label,
+    // which a stray re-render could flip back before this reads it.
+    await expect(userCode).not.toHaveClass(/line-numbers/);
+    await userCode.getByRole('button', { name: 'Copy' }).click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe('project = OPS AND sprint in closedSprints() AND status not in (Done, Cancelled)\n');
+
+    // Line numbers are this person's Appearance preference (off by
+    // default, as just shown) — on, every block gets a gutter, a pure
+    // CSS counter rather than a character the markup carries, so Copy
+    // above and here both still return bare code, numbers or not.
+    const numbers = await page.request.put('/api/preferences', {
+      data: { theme: { mode: 'auto', codeLineNumbers: true } },
+    });
+    expect(numbers.ok()).toBe(true);
+    try {
+      await page.reload();
+      const numberedSql = markdown.locator('.chat-code.line-numbers', {
+        hasText: 'closedSprints()',
+      });
+      await expect(numberedSql).toBeVisible();
+      // The gutter's digits are `::before` generated content — not a DOM
+      // text node, so nothing here can read the rendered "1" back out
+      // the way Copy or a selection would; what a script CAN confirm is
+      // that every line is wired to the counter that draws it.
+      const codeLines = numberedSql.locator('.chat-code-line');
+      await expect(codeLines).toHaveCount(1);
+      await expect
+        .poll(() => codeLines.first().evaluate((el) => getComputedStyle(el).counterIncrement))
+        .toContain('chat-code-line');
+      await numberedSql.getByRole('button', { name: 'Copy' }).click();
+      await expect
+        .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+        .toBe(
+          'project = OPS AND sprint in closedSprints() AND status != Done ORDER BY updated DESC\n'
+        );
+    } finally {
+      await page.request.put('/api/preferences', {
+        data: { theme: { mode: 'auto', codeLineNumbers: false } },
+      });
+      await page.reload();
+    }
+
+    // At phone width the header, and Copy in it, are still there — no hover
+    // to bring a button out — and the block scrolls rather than the page.
+    // (The 16px-fields rule that keeps iOS from zooming is for a touch
+    // device, which a resized desktop viewport is not.)
+    const wide = page.viewportSize();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(tsBlock.locator('.chat-code-lang')).toHaveText('TypeScript');
+    await expect(tsBlock.getByRole('button', { name: 'Copy' })).toBeVisible();
+    await expect(tsBlock.locator('pre')).toBeVisible();
+    expect(await tsBlock.locator('pre').evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+      true
+    );
+    await shot(page, testInfo, 'chat-code-blocks-phone.png');
+    if (wide) await page.setViewportSize(wide);
+
+    // The owner renames the chat in place with the title bar's pencil.
+    const renameViaTitleBar = async (next: string) => {
+      await page.getByRole('button', { name: 'Rename chat' }).click();
+      const nameField = page.getByRole('textbox', { name: 'Chat name' });
+      await nameField.fill(next);
+      await nameField.press('Enter');
+    };
+    await renameViaTitleBar(`${title} — renamed`);
+    await expect(page.getByRole('heading', { level: 1, name: `${title} — renamed` })).toBeVisible();
+    await expect(
+      page
+        .getByRole('navigation', { name: 'Chats' })
+        .getByRole('link', { name: `${title} — renamed` })
+    ).toBeVisible();
+    await renameViaTitleBar(title);
+    await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+
+    // Files the assistant produced sit behind Artifacts, each a download.
+    await page.getByRole('button', { name: /Artifacts/ }).click();
+    const artifact = page.getByRole('menuitem', { name: /sprint-report\.pdf/ });
+    await expect(artifact).toBeVisible();
+    await shot(page, testInfo, 'chat-artifacts.png');
+    // Picking one opens the modal: save it here, or copy it to a share.
+    await artifact.click();
+    // (The reply shows the PDF inline with a Download of its own; this one is the modal's.)
+    const download = page.getByRole('dialog').getByRole('link', { name: 'Download' });
+    await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
+    await expect(page.getByText('Copy to a network share')).toBeVisible();
+    await shot(page, testInfo, 'chat-artifact-modal.png');
+    await page.keyboard.press('Escape');
+    await expect(download).toBeHidden();
+
+    // The owner gets a composer with the model menu, thinking switch inside.
+    await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
+    await page.getByRole('button', { name: 'Model' }).click();
+    await expect(
+      page.getByRole('menuitemradio', { name: new RegExp(`^${modelLabel}`) })
+    ).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByRole('menuitemcheckbox', { name: /Extended thinking/ })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
+    await shot(page, testInfo, 'chat-model-menu.png');
+    await page.keyboard.press('Escape');
+
+    // The owner can rewrite a prompt: Edit fills the box with its text and
+    // says what sending will do; Cancel empties it again. Resend asks
+    // first. Scoped to this prompt's own group — the fenced prompt earlier
+    // in the chat carries the identical Edit/Resend pair.
+    const promptGroup = page.locator('div.group.items-end', { hasText: QUESTION });
+    const bubble = promptGroup.getByText(QUESTION);
+    await bubble.hover();
+    await promptGroup.getByRole('button', { name: 'Edit' }).click();
+    const box = page.getByRole('textbox', { name: 'Message' });
+    await expect(box).toHaveValue(asked);
+    await expect(page.getByText(/Editing an earlier message/)).toBeVisible();
+    await shot(page, testInfo, 'chat-edit.png');
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(box).toHaveValue('');
+    await bubble.hover();
+    await promptGroup.getByRole('button', { name: 'Resend' }).click();
+    await expect(page.getByRole('heading', { name: 'Resend this message?' })).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel' }).click();
+
+    // The fenced prompt's own reply is the model's too.
+    await expect(page.getByText('It does; the report is attached.')).toBeVisible();
+
+    // Nothing spills horizontally.
+    const fits = await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+    );
+    expect(fits).toBe(true);
+
+    await shot(page, testInfo, 'chat-thread.png');
+
+    // "Chat" lands on the most recent chat; "+ New" on an empty one.
+    await page.goto(`/chat`);
+    await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`));
+    // "+ New" creates the empty chat up front and lands on its own address,
+    // so the first Send never has to move the page.
+    await page.goto(`/chat/new`);
+    await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`));
+    await expect(page.getByRole('heading', { level: 1, name: 'New chat' })).toBeVisible();
+    const newChatId = page.url().match(/\/chat\/([0-9a-f-]{36})$/)?.[1] ?? null;
+    expect(newChatId).not.toBeNull();
+    // Empty, it is not in the menu.
+    await expect(page.locator(`a[href="/chat/${newChatId}"]`)).toHaveCount(0);
+    // The archived chat's turn ran on the plain stub reply.
+    await page.goto(`/chat/${archivedId}`);
+    await expect(page.getByText(LLM_STUB_REPLY).filter({ visible: true })).toBeVisible();
+  } finally {
+    await removeModel(page.request, modelId);
+  }
+});

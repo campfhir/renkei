@@ -23,7 +23,7 @@
  */
 
 import type { APIRequestContext, Page } from '@playwright/test';
-import { MEMORY_BASE_URL } from '../memory/constants';
+import { MEMORY_BASE_URL } from '../constants';
 import { createPerson } from './person';
 import { addStubModel } from './stub-model';
 

@@ -19,7 +19,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, rm, rmdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const DIR = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory', '.locks');
+const DIR = path.join(import.meta.dirname, '..', '..', 'test-results', '.locks');
 const POLL_MS = 200;
 
 const pause = () => new Promise((resolve) => setTimeout(resolve, POLL_MS));
