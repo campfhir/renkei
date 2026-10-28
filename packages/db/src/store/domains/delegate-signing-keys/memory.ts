@@ -16,7 +16,13 @@ export function memoryDelegateSigningKeys(tables: MemoryTables): DelegateSigning
       return (
         tables.upsert(
           'delegate_signing_keys',
-          { public_key: key.publicKey, sealed_private_key: key.sealedPrivateKey },
+          {
+            id: globalThis.crypto.randomUUID(),
+            public_key: key.publicKey,
+            sealed_private_key: key.sealedPrivateKey,
+            singleton: true,
+            created_at: new Date(),
+          },
           ['singleton']
         ) !== undefined
       );

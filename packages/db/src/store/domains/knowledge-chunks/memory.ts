@@ -3,7 +3,7 @@ import { metadataMatches, metadataText } from './metadata-filter';
 import { escapeLike, liveSources, objectChunkFromRow, withoutNul } from './postgres';
 import type { ChunkCandidate, ChunkFilters, ChunkSource, KnowledgeChunkStore } from './types';
 import { jsonbConcat } from '../provider-grants/record';
-import { MemoryStoreError, type MemoryTables, type Row } from '../../memory/tables';
+import { toJson, type MemoryTables, type Row } from '../../memory/tables';
 
 type Chunk = Row<'knowledge_chunks'>;
 
@@ -157,7 +157,7 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
     },
     async upsert(chunk) {
       const values = {
-        metadata: JSON.stringify(chunk.metadata),
+        metadata: toJson(chunk.metadata),
         content: chunk.content,
         embedding: `[${chunk.embedding.join(',')}]`,
         keywords: chunk.keywords,
@@ -173,6 +173,7 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
           provider: chunk.provider,
           ref_id: chunk.refId,
           ...values,
+          created_at: new Date(),
         },
         ['provider', 'ref_id'],
         values
@@ -242,14 +243,12 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
       const searchText = [lexical.title, (lexical.keywords ?? []).join(', '), lexical.text]
         .map(withoutNul)
         .join(' ');
-      const key = tables.param('knowledge_chunks', 'id', id);
+      const key = id;
       tables.update(
         'knowledge_chunks',
         (r) => r.id === key,
         (r) => ({
-          ...(title !== undefined
-            ? { metadata: JSON.stringify(jsonbConcat(r.metadata, { title })) }
-            : {}),
+          ...(title !== undefined ? { metadata: toJson(jsonbConcat(r.metadata, { title })) } : {}),
           keywords,
           search_text: searchText,
         })
@@ -283,7 +282,7 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
       return page(orderBy(rows, [(r) => r.id]), limit).map(objectChunkFromRow);
     },
     async setSearchText(id, search) {
-      const key = tables.param('knowledge_chunks', 'id', id);
+      const key = id;
       tables.update('knowledge_chunks', (r) => r.id === key, {
         search_text: search
           ? [search.title, search.keywords, search.content].join(' ').toLowerCase()
@@ -293,17 +292,9 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
     async listMultiChunk(after, limit) {
       const rows = tables.select('knowledge_chunks', (r) => {
         const count = metadataText(r.metadata, 'chunkCount');
-        if (count === null) return false;
-        if (!/^\s*[+-]?[0-9]+\s*$/.test(count)) {
-          throw new MemoryStoreError(
-            '22P02',
-            `invalid input syntax for type integer: "${count}"`,
-            'knowledge_chunks'
-          );
-        }
-        return Number.parseInt(count, 10) > 1;
+        return count !== null && Number.parseInt(count, 10) > 1;
       });
-      const from = after === null ? null : tables.param('knowledge_chunks', 'id', after);
+      const from = after === null ? null : after;
       return page(
         orderBy(
           rows.filter((r) => from === null || compareAsc(r.id, from) > 0),
@@ -313,7 +304,7 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
       ).map(objectChunkFromRow);
     },
     async setEmbedding(id, embedding) {
-      const key = tables.param('knowledge_chunks', 'id', id);
+      const key = id;
       tables.update('knowledge_chunks', (r) => r.id === key, {
         embedding: `[${embedding.join(',')}]`,
       });
@@ -337,7 +328,7 @@ export function memoryKnowledgeChunks(tables: MemoryTables): KnowledgeChunkStore
       }));
     },
     async setContent(id, content) {
-      const key = tables.param('knowledge_chunks', 'id', id);
+      const key = id;
       tables.update('knowledge_chunks', (r) => r.id === key, { content });
     },
   };

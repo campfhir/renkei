@@ -24,10 +24,19 @@ export function memoryAdminChangeQueue(tables: MemoryTables): AdminChangeQueueSt
         headline: notice.headline,
         ref_id: notice.refId,
         ref_url: notice.refUrl,
+        category: null,
+        tool: null,
+        step_id: null,
+        agent_id: null,
+        agent_name: null,
+        run_id: null,
+        meta: null,
+        read_at: null,
+        created_at: new Date(),
       });
     },
     async agentName(agentId) {
-      const key = tables.param('agents', 'id', agentId);
+      const key = agentId;
       return tables.first('agents', (r) => r.id === key)?.name ?? null;
     },
   };

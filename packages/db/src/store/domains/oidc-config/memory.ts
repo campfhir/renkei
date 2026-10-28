@@ -2,13 +2,13 @@ import type { MemoryTables } from '../../memory/tables';
 import { oidcConfigFromRow, oidcConfigPatch, oidcConfigValues } from './record';
 import type { OidcConfigStore } from './types';
 
-/**
- * oidc_config's single-row rule is a unique index on the constant `(true)`,
- * which the generated schema cannot express: here, "a row exists" is the
- * conflict.
- */
+/** oidc_config holds one row at most: "a row exists" is the conflict. */
 export function memoryOidcConfig(tables: MemoryTables): OidcConfigStore {
   const existing = () => tables.select('oidc_config')[0];
+  const newRow = (config: Parameters<OidcConfigStore['save']>[0]) => {
+    const values = oidcConfigValues(config);
+    return { ...values, role_claim: values.role_claim ?? null, created_at: new Date() };
+  };
   return {
     async get() {
       const row = existing();
@@ -16,13 +16,13 @@ export function memoryOidcConfig(tables: MemoryTables): OidcConfigStore {
     },
     async createIfAbsent(config) {
       if (existing()) return false;
-      tables.insert('oidc_config', oidcConfigValues(config));
+      tables.insert('oidc_config', newRow(config));
       return true;
     },
     async save(config) {
       const row = existing();
       if (!row) {
-        tables.insert('oidc_config', oidcConfigValues(config));
+        tables.insert('oidc_config', newRow(config));
         return;
       }
       tables.update('oidc_config', (r) => r.id === row.id, oidcConfigPatch(config));
@@ -43,7 +43,7 @@ export function memoryOidcConfig(tables: MemoryTables): OidcConfigStore {
     async setRoleMapping({ id, idpRole, renkeiRole }) {
       tables.upsert(
         'oidc_role_mappings',
-        { id, idp_role: idpRole, renkei_role: renkeiRole },
+        { id, idp_role: idpRole, renkei_role: renkeiRole, created_at: new Date() },
         ['idp_role'],
         { renkei_role: renkeiRole }
       );

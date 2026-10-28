@@ -13,7 +13,15 @@ export function memorySandboxEnvSecrets(tables: MemoryTables): SandboxEnvSecretS
     async upsert(secret) {
       const row = tables.upsert(
         'sandbox_env_secrets',
-        { id: secret.id, subject: secret.subject, name: secret.name, sealed: secret.sealed },
+        {
+          id: secret.id,
+          subject: secret.subject,
+          name: secret.name,
+          sealed: secret.sealed,
+          last_used_at: null,
+          created_at: secret.updatedAt,
+          updated_at: secret.updatedAt,
+        },
         ['subject', 'name'],
         { sealed: secret.sealed, updated_at: secret.updatedAt }
       );
@@ -36,7 +44,7 @@ export function memorySandboxEnvSecrets(tables: MemoryTables): SandboxEnvSecretS
       return byName(subject).map((row) => ({ id: row.id, name: row.name, sealed: row.sealed }));
     },
     async touchUsed(ids, at) {
-      const wanted = new Set(ids.map((id) => tables.param('sandbox_env_secrets', 'id', id)));
+      const wanted = new Set(ids.map((id) => id));
       tables.update('sandbox_env_secrets', (r) => wanted.has(r.id), { last_used_at: at });
     },
     async delete(subject, name) {

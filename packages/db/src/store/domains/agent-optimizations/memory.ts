@@ -1,23 +1,32 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import { jsonbConcat, optimizationFromRow, outcomeColumns } from './record';
 import type { AgentOptimizationStore } from './types';
 
 export function memoryAgentOptimizations(tables: MemoryTables): AgentOptimizationStore {
-  const idOf = (value: string) => tables.param('agent_optimizations', 'id', value);
-  const agentOf = (value: string) => tables.param('agent_optimizations', 'agent_id', value);
-
   return {
     async create({ ownerSubject, agentId, request }) {
+      const now = new Date();
       return tables.insert('agent_optimizations', {
+        id: globalThis.crypto.randomUUID(),
         owner_subject: ownerSubject,
         agent_id: agentId,
         status: 'queued',
-        request: JSON.stringify(request),
+        request: toJson(request),
+        result: null,
+        error: null,
+        error_detail: null,
+        attempts: 0,
+        applied_at: null,
+        input_tokens: 0,
+        output_tokens: 0,
+        finished_at: null,
+        created_at: now,
+        updated_at: now,
       }).id;
     },
     async find(ownerSubject, optimizationId) {
-      const id = idOf(optimizationId);
+      const id = optimizationId;
       const row = tables.first(
         'agent_optimizations',
         (r) => r.owner_subject === ownerSubject && r.id === id
@@ -25,7 +34,7 @@ export function memoryAgentOptimizations(tables: MemoryTables): AgentOptimizatio
       return row ? optimizationFromRow(row) : null;
     },
     async latest(ownerSubject, agentId) {
-      const agent = agentOf(agentId);
+      const agent = agentId;
       const [row] = orderBy(
         tables.select(
           'agent_optimizations',
@@ -37,7 +46,7 @@ export function memoryAgentOptimizations(tables: MemoryTables): AgentOptimizatio
       return row ? optimizationFromRow(row) : null;
     },
     async inFlight(agentId) {
-      const agent = agentOf(agentId);
+      const agent = agentId;
       const [row] = orderBy(
         tables.select(
           'agent_optimizations',
@@ -49,7 +58,7 @@ export function memoryAgentOptimizations(tables: MemoryTables): AgentOptimizatio
       return row ? { id: row.id } : null;
     },
     async claim(optimizationId) {
-      const id = idOf(optimizationId);
+      const id = optimizationId;
       return (
         tables.update(
           'agent_optimizations',
@@ -59,27 +68,30 @@ export function memoryAgentOptimizations(tables: MemoryTables): AgentOptimizatio
       );
     },
     async finish(optimizationId, outcome) {
-      const id = idOf(optimizationId);
-      tables.update('agent_optimizations', (r) => r.id === id, outcomeColumns(outcome, new Date()));
+      const id = optimizationId;
+      tables.update('agent_optimizations', (r) => r.id === id, {
+        ...outcomeColumns(outcome, new Date()),
+        ...(outcome.status === 'succeeded' ? { result: toJson(outcome.result) } : {}),
+      });
     },
     async markApplied(ownerSubject, optimizationId, draftId) {
-      const id = idOf(optimizationId);
+      const id = optimizationId;
       tables.update(
         'agent_optimizations',
         (r) => r.owner_subject === ownerSubject && r.id === id,
         (row) => ({
-          result: JSON.stringify(jsonbConcat(row.result, { draftId })),
+          result: toJson(jsonbConcat(row.result, { draftId })),
           applied_at: new Date(),
           updated_at: new Date(),
         })
       );
     },
     async delete(optimizationId) {
-      const id = idOf(optimizationId);
+      const id = optimizationId;
       tables.delete('agent_optimizations', (r) => r.id === id);
     },
     async ownerOf(optimizationId) {
-      const id = idOf(optimizationId);
+      const id = optimizationId;
       const row = tables.first('agent_optimizations', (r) => r.id === id);
       return row ? { ownerSubject: row.owner_subject, agentId: row.agent_id } : null;
     },

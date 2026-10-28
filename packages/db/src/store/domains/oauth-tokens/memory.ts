@@ -3,13 +3,7 @@ import type { MemoryTables } from '../../memory/tables';
 import { accessTokenFromRow } from './postgres';
 import type { OAuthTokenStore } from './types';
 
-/**
- * The rotation is synchronous here, so it is atomic without a lock; a
- * refused write part-way (a duplicate successor digest) can leave the
- * presented token marked rotated, which Postgres's transaction would undo.
- * The successor is inserted before the presented token is marked, so the
- * likely refusals come first.
- */
+/** The rotation is synchronous here, so it is atomic without a lock. */
 export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
   return {
     async insertAccessToken(token) {
@@ -21,6 +15,9 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         scope: token.scope,
         roles: token.roles,
         expires_at: token.expiresAt,
+        agent_id: null,
+        tool_names: null,
+        created_at: new Date(),
       });
     },
     async findAccessToken(tokenHash, application) {
@@ -42,6 +39,9 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         roles: token.roles,
         token_hash: token.tokenHash,
         expires_at: token.expiresAt,
+        family_id: globalThis.crypto.randomUUID(),
+        rotated_at: null,
+        created_at: new Date(),
       });
     },
     async rotateRefreshToken({ presentedHash, clientId, now, next, access }) {
@@ -82,6 +82,8 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         token_hash: next.tokenHash,
         family_id: family,
         expires_at: token.expires_at,
+        rotated_at: null,
+        created_at: now,
       });
       tables.insert('oauth_access_tokens', {
         token_hash: access.tokenHash,
@@ -91,6 +93,9 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         scope: token.scope,
         roles,
         expires_at: access.expiresAt,
+        agent_id: null,
+        tool_names: null,
+        created_at: now,
       });
       tables.update('oauth_refresh_tokens', (r) => r.token_id === token.token_id, {
         rotated_at: now,

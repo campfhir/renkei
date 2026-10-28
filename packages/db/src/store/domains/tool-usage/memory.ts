@@ -16,9 +16,7 @@ function latencyOf(rows: Call[], latency: boolean) {
 
 export function memoryToolUsage(tables: MemoryTables): ToolUsageStore {
   const calls = (filter: ToolCallFilter): Call[] => {
-    const agents = filter.agentIds
-      ? new Set(filter.agentIds.map((id) => tables.param('tool_calls', 'agent_id', id)))
-      : null;
+    const agents = filter.agentIds ? new Set(filter.agentIds.map((id) => id)) : null;
     return tables.select(
       'tool_calls',
       (r) =>

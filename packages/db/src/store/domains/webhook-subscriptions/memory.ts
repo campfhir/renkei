@@ -4,7 +4,6 @@ import { providerPatchValues, syncStateFromRow } from './postgres';
 import type { WebhookSubscriptionStore } from './types';
 
 export function memoryWebhookSubscriptions(tables: MemoryTables): WebhookSubscriptionStore {
-  const idOf = (id: string) => tables.param('webhook_subscriptions', 'id', id);
   return {
     async listForAccount(provider, accountId) {
       const rows = tables.select(
@@ -35,6 +34,16 @@ export function memoryWebhookSubscriptions(tables: MemoryTables): WebhookSubscri
           account_id: row.accountId,
           resource: row.resource,
           client_state: row.clientState,
+          subject: null,
+          subscription_id: null,
+          delta_link: null,
+          expires_at: null,
+          sync_status: 'idle',
+          last_synced_at: null,
+          last_run_items: 0,
+          total_items: 0,
+          created_at: new Date(),
+          updated_at: new Date(),
         },
         ['provider', 'account_id', 'resource']
       );
@@ -59,7 +68,7 @@ export function memoryWebhookSubscriptions(tables: MemoryTables): WebhookSubscri
       return row ? syncStateFromRow(row) : null;
     },
     async setProviderSubscription(id, patch) {
-      const key = idOf(id);
+      const key = id;
       tables.update('webhook_subscriptions', (r) => r.id === key, {
         ...providerPatchValues(patch),
         updated_at: new Date(),
@@ -73,7 +82,7 @@ export function memoryWebhookSubscriptions(tables: MemoryTables): WebhookSubscri
       ).length;
     },
     async restartDelta(id) {
-      const key = idOf(id);
+      const key = id;
       tables.update('webhook_subscriptions', (r) => r.id === key, {
         delta_link: null,
         sync_status: 'syncing',
@@ -81,7 +90,7 @@ export function memoryWebhookSubscriptions(tables: MemoryTables): WebhookSubscri
       });
     },
     async recordDeltaRound(id, round) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       tables.update(
         'webhook_subscriptions',
@@ -110,7 +119,7 @@ export function memoryWebhookSubscriptions(tables: MemoryTables): WebhookSubscri
       );
     },
     async delete(id) {
-      const key = tables.param('webhook_subscriptions', 'id', id);
+      const key = id;
       return tables.delete('webhook_subscriptions', (r) => r.id === key).length;
     },
     async listStale(provider, accountId, updatedBefore) {

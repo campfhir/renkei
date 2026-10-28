@@ -31,7 +31,7 @@ export function llmModelValues(input: LlmModelConfigInput) {
   };
 }
 
-/** A unique violation on the label constraint, from pg or the memory tables. */
+/** A unique violation on the label constraint, as pg reports it. */
 export function isLabelConflict(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   const code: unknown = Reflect.get(error, 'code');

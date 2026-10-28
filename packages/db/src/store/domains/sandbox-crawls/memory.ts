@@ -1,5 +1,5 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import {
   crawlFromRow,
   crawlPageFromRow,
@@ -7,23 +7,35 @@ import {
   crawlPageValues,
   crawlRecipeFromRow,
   crawlValues,
-  json,
 } from './record';
 import type { SandboxCrawlStore } from './types';
 
 export function memorySandboxCrawls(tables: MemoryTables): SandboxCrawlStore {
-  const id = (value: string) => tables.param('sandbox_crawls', 'id', value);
   return {
     async create(crawl) {
-      return crawlFromRow(tables.insert('sandbox_crawls', crawlValues(crawl)));
+      const now = new Date();
+      return crawlFromRow(
+        tables.insert('sandbox_crawls', {
+          id: globalThis.crypto.randomUUID(),
+          ...crawlValues(crawl),
+          recipe: toJson(crawl.recipe),
+          queue: toJson(crawl.queue),
+          pages_done: 0,
+          pages_failed: 0,
+          error: null,
+          finished_at: null,
+          created_at: now,
+          updated_at: now,
+        })
+      );
     },
     async get(subject, crawlId) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       const row = tables.first('sandbox_crawls', (r) => r.id === wanted && r.subject === subject);
       return row ? crawlFromRow(row) : null;
     },
     async getById(crawlId) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       const row = tables.first('sandbox_crawls', (r) => r.id === wanted);
       return row ? crawlFromRow(row) : null;
     },
@@ -34,7 +46,7 @@ export function memorySandboxCrawls(tables: MemoryTables): SandboxCrawlStore {
       );
     },
     async transition(crawlId, from, to, change) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       const states = new Set(from);
       return (
         tables.update('sandbox_crawls', (r) => r.id === wanted && states.has(r.status), {
@@ -46,18 +58,18 @@ export function memorySandboxCrawls(tables: MemoryTables): SandboxCrawlStore {
       );
     },
     async progress(crawlId, update) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       tables.update('sandbox_crawls', (r) => r.id === wanted, {
-        queue: json(update.queue),
+        queue: toJson(update.queue),
         pages_done: update.done,
         pages_failed: update.failed,
         updated_at: update.at,
       });
     },
     async extend(crawlId, recipe, at) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       tables.update('sandbox_crawls', (r) => r.id === wanted, {
-        recipe: json(recipe),
+        recipe: toJson(recipe),
         status: 'queued',
         error: null,
         updated_at: at,
@@ -66,18 +78,18 @@ export function memorySandboxCrawls(tables: MemoryTables): SandboxCrawlStore {
     async putPage(crawlId, visited, at) {
       tables.upsert(
         'sandbox_crawl_pages',
-        crawlPageValues(crawlId, visited, at),
+        { ...crawlPageValues(crawlId, visited, at) },
         ['crawl_id', 'url'],
         crawlPagePatch(visited, at)
       );
     },
     async visitedUrls(crawlId) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       const rows = tables.select('sandbox_crawl_pages', (r) => r.crawl_id === wanted);
       return orderBy(rows, [(r) => r.url]).map((row) => row.url);
     },
     async pages(subject, crawlId, query) {
-      const wanted = id(crawlId);
+      const wanted = crawlId;
       if (!tables.first('sandbox_crawls', (r) => r.id === wanted && r.subject === subject)) {
         return [];
       }
@@ -93,9 +105,16 @@ export function memorySandboxCrawls(tables: MemoryTables): SandboxCrawlStore {
     async saveRecipe(subject, name, recipe, crawlId, at) {
       tables.upsert(
         'sandbox_crawl_recipes',
-        { subject, name, recipe: json(recipe), last_crawl_id: crawlId, updated_at: at },
+        {
+          subject,
+          name,
+          recipe: toJson(recipe),
+          last_crawl_id: crawlId,
+          created_at: at,
+          updated_at: at,
+        },
         ['subject', 'name'],
-        { recipe: json(recipe), last_crawl_id: crawlId, updated_at: at }
+        { recipe: toJson(recipe), last_crawl_id: crawlId, updated_at: at }
       );
     },
     async recipe(subject, name) {
@@ -119,7 +138,20 @@ export function memorySandboxCrawls(tables: MemoryTables): SandboxCrawlStore {
       ).length;
     },
     async sweepExpired(now) {
-      return tables.delete('sandbox_crawls', (r) => r.expires_at.getTime() < now.getTime()).length;
+      const expired = tables.delete(
+        'sandbox_crawls',
+        (r) => r.expires_at.getTime() < now.getTime()
+      );
+      const ids = new Set(expired.map((r) => r.id));
+      tables.delete('sandbox_crawl_pages', (r) => ids.has(r.crawl_id));
+      tables.update(
+        'sandbox_crawl_recipes',
+        (r) => r.last_crawl_id !== null && ids.has(r.last_crawl_id),
+        {
+          last_crawl_id: null,
+        }
+      );
+      return expired.length;
     },
   };
 }

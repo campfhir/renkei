@@ -10,7 +10,7 @@ export function memoryLegacyEnvelopes(tables: MemoryTables): LegacyEnvelopeStore
 
   return {
     async chatsPage(after, limit) {
-      const from = after === null ? null : tables.param('chats', 'id', after);
+      const from = after === null ? null : after;
       const rows = tables.select('chats', (r) => from === null || compareAsc(r.id, from) > 0);
       return page(byId(rows), limit).map((row) => ({
         id: row.id,
@@ -25,7 +25,7 @@ export function memoryLegacyEnvelopes(tables: MemoryTables): LegacyEnvelopeStore
       }));
     },
     async chatRows(chatId, notLike) {
-      const chat = tables.param('chat_messages', 'chat_id', chatId);
+      const chat = chatId;
       return {
         messages: byId(
           tables.select('chat_messages', (r) => r.chat_id === chat && notLikeOf(r.content, notLike))
@@ -51,7 +51,7 @@ export function memoryLegacyEnvelopes(tables: MemoryTables): LegacyEnvelopeStore
       };
     },
     async attachments(keyKind, keyRef, notLike) {
-      const ref = tables.param('artifacts', 'key_ref', keyRef);
+      const ref = keyRef;
       const rows = tables.select(
         'artifacts',
         (r) => r.key_kind === keyKind && r.key_ref === ref && notLikeOf(r.extracted_text, notLike)
@@ -59,7 +59,7 @@ export function memoryLegacyEnvelopes(tables: MemoryTables): LegacyEnvelopeStore
       return byId(rows).map((row) => ({ id: row.id, extractedText: row.extracted_text ?? '' }));
     },
     async projectMemories(projectId, notLike) {
-      const project = tables.param('chat_project_memories', 'project_id', projectId);
+      const project = projectId;
       return byId(
         tables.select(
           'chat_project_memories',
@@ -106,11 +106,11 @@ export function memoryLegacyEnvelopes(tables: MemoryTables): LegacyEnvelopeStore
         case 'chat_summaries':
         case 'chat_project_memories':
         case 'chat_user_memories': {
-          const id = tables.paramFor(write.table, 'id', write.id);
+          const id = write.id;
           return tables.updateWhere(write.table, (r) => r.id === id, { content: write.content });
         }
         case 'chat_subagent_runs': {
-          const id = tables.param('chat_subagent_runs', 'id', write.id);
+          const id = write.id;
           const set = {
             ...(write.task !== undefined ? { task: write.task } : {}),
             ...(write.instructions !== undefined ? { instructions: write.instructions } : {}),
@@ -121,13 +121,13 @@ export function memoryLegacyEnvelopes(tables: MemoryTables): LegacyEnvelopeStore
           return tables.update('chat_subagent_runs', (r) => r.id === id, set).length;
         }
         case 'artifacts': {
-          const id = tables.param('artifacts', 'id', write.id);
+          const id = write.id;
           return tables.update('artifacts', (r) => r.id === id, {
             extracted_text: write.extractedText,
           }).length;
         }
         case 'chat_projects': {
-          const id = tables.param('chat_projects', 'id', write.id);
+          const id = write.id;
           return tables.update('chat_projects', (r) => r.id === id, {
             instructions: write.instructions,
           }).length;

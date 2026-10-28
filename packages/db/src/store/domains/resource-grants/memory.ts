@@ -10,13 +10,12 @@ function active(row: Grant, now: Date): boolean {
 }
 
 export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
-  const resource = (value: string) => tables.param('resource_access_grants', 'resource_id', value);
   const oldestFirst = (rows: Grant[]) => orderBy(rows, [(r) => r.created_at], [(r) => r.id]);
 
   return {
     async ownerOf(kind, resourceId) {
       const table = tableOfKind(kind);
-      const id = tables.param(table, 'id', resourceId);
+      const id = resourceId;
       const row =
         table === 'chats'
           ? tables.first('chats', (r) => r.id === id)
@@ -28,7 +27,7 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
       return row?.owner_subject ?? null;
     },
     async activeRole(kind, resourceId, granteeSubject) {
-      const id = resource(resourceId);
+      const id = resourceId;
       const now = new Date();
       const row = tables.first(
         'resource_access_grants',
@@ -50,7 +49,7 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
       ).map(grantFromRow);
     },
     async activeGrantees(kind, resourceId) {
-      const id = resource(resourceId);
+      const id = resourceId;
       const now = new Date();
       return oldestFirst(
         tables.select(
@@ -69,13 +68,15 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
           grantee_subject: grant.granteeSubject,
           role: grant.role,
           expires_at: grant.expiresAt,
+          id: globalThis.crypto.randomUUID(),
+          created_at: new Date(),
         },
         ['resource_kind', 'resource_id', 'grantee_subject'],
         { role: grant.role, expires_at: grant.expiresAt }
       );
     },
     async listForOwner(ownerSubject, kind, resourceId) {
-      const id = resource(resourceId);
+      const id = resourceId;
       const rows = orderBy(
         tables.select(
           'resource_access_grants',
@@ -95,8 +96,8 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
       });
     },
     async revoke(ownerSubject, kind, resourceId, grantId) {
-      const id = resource(resourceId);
-      const grant = tables.param('resource_access_grants', 'id', grantId);
+      const id = resourceId;
+      const grant = grantId;
       const [deleted] = tables.delete(
         'resource_access_grants',
         (r) =>
@@ -108,7 +109,7 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
       return deleted?.grantee_subject ?? null;
     },
     async removeGrantee(kind, resourceId, granteeSubject) {
-      const id = resource(resourceId);
+      const id = resourceId;
       return tables.delete(
         'resource_access_grants',
         (r) =>
@@ -116,7 +117,7 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
       ).length;
     },
     async deleteForResource(kind, resourceId) {
-      const id = resource(resourceId);
+      const id = resourceId;
       return tables.delete(
         'resource_access_grants',
         (r) => r.resource_kind === kind && r.resource_id === id
@@ -124,7 +125,7 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
     },
     async countActive(kind, resourceIds) {
       if (resourceIds.length === 0) return [];
-      const ids = new Set(resourceIds.map(resource));
+      const ids = new Set(resourceIds);
       const now = new Date();
       const counts = new Map<string, number>();
       for (const row of tables.select(
@@ -140,7 +141,7 @@ export function memoryResourceGrants(tables: MemoryTables): ResourceGrantStore {
     },
     async deleteForResources(kind, resourceIds) {
       if (resourceIds.length === 0) return 0;
-      const ids = new Set(resourceIds.map(resource));
+      const ids = new Set(resourceIds);
       return tables.delete(
         'resource_access_grants',
         (r) => r.resource_kind === kind && ids.has(r.resource_id)

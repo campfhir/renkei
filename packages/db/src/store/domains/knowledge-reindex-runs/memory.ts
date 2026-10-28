@@ -4,7 +4,6 @@ import { ACTIVE, reindexRunFromRow, RESUMABLE } from './record';
 import type { KnowledgeReindexRunStore } from './types';
 
 export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReindexRunStore {
-  const key = (id: string) => tables.param('knowledge_reindex_runs', 'id', id);
   return {
     async listRecent(limit) {
       const rows = orderBy(
@@ -15,7 +14,7 @@ export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReind
       return page(rows, limit).map(reindexRunFromRow);
     },
     async find(id, kind) {
-      const wanted = key(id);
+      const wanted = id;
       const row = tables.first('knowledge_reindex_runs', (r) => r.id === wanted && r.kind === kind);
       return row ? reindexRunFromRow(row) : null;
     },
@@ -32,10 +31,19 @@ export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReind
         id: run.id,
         kind: run.kind,
         requested_by: run.requestedBy,
+        status: 'queued',
+        cursor: null,
+        processed: 0,
+        skipped: 0,
+        failed: 0,
+        last_error: null,
+        started_at: null,
+        finished_at: null,
+        created_at: new Date(),
       });
     },
     async pause(id, kind) {
-      const wanted = key(id);
+      const wanted = id;
       return tables.update(
         'knowledge_reindex_runs',
         (r) => r.id === wanted && r.kind === kind && ACTIVE.includes(r.status),
@@ -43,7 +51,7 @@ export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReind
       ).length;
     },
     async resume(id) {
-      const wanted = key(id);
+      const wanted = id;
       return tables.update(
         'knowledge_reindex_runs',
         (r) => r.id === wanted && RESUMABLE.includes(r.status),
@@ -51,26 +59,26 @@ export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReind
       ).length;
     },
     async markFailed(id, error) {
-      const wanted = key(id);
+      const wanted = id;
       tables.update('knowledge_reindex_runs', (r) => r.id === wanted, {
         status: 'failed',
         last_error: error,
       });
     },
     async get(id) {
-      const wanted = key(id);
+      const wanted = id;
       const row = tables.first('knowledge_reindex_runs', (r) => r.id === wanted);
       return row ? reindexRunFromRow(row) : null;
     },
     async markRunning(id) {
-      const wanted = key(id);
+      const wanted = id;
       tables.update('knowledge_reindex_runs', (r) => r.id === wanted, {
         status: 'running',
         started_at: new Date(),
       });
     },
     async failRun(id, error) {
-      const wanted = key(id);
+      const wanted = id;
       tables.update('knowledge_reindex_runs', (r) => r.id === wanted, {
         status: 'failed',
         last_error: error,
@@ -78,7 +86,7 @@ export function memoryKnowledgeReindexRuns(tables: MemoryTables): KnowledgeReind
       });
     },
     async recordProgress(id, progress) {
-      const wanted = key(id);
+      const wanted = id;
       tables.update(
         'knowledge_reindex_runs',
         (r) => r.id === wanted,

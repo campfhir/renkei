@@ -1,5 +1,5 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables, Row } from '../../memory/tables';
+import { toJson, type MemoryTables, type Row } from '../../memory/tables';
 import { sizeRequestFromRow } from './postgres';
 import type { CodeProjectStore, PrSubscriptionKey } from './types';
 
@@ -23,7 +23,7 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
   return {
     async workspaceBranches(workspaceIds) {
       if (workspaceIds.length === 0) return [];
-      const ids = new Set(workspaceIds.map((id) => tables.param('sandbox_workspaces', 'id', id)));
+      const ids = new Set(workspaceIds.map((id) => id));
       return orderBy(
         tables.select(
           'sandbox_workspaces',
@@ -33,7 +33,7 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
       ).map((r) => ({ id: r.id, branch: r.branch }));
     },
     async usageByChat(projectId) {
-      const project = tables.param('chats', 'project_id', projectId);
+      const project = projectId;
       const chats = new Set(
         tables.select('chats', (c) => c.project_id === project).map((c) => c.id)
       );
@@ -74,8 +74,14 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
         tables.insert('sandbox_size_requests', {
           subject: request.subject,
           requested_by: request.requestedBy,
-          requested_bytes: request.requestedBytes,
+          requested_bytes: String(request.requestedBytes),
           reason: request.reason,
+          id: globalThis.crypto.randomUUID(),
+          status: 'pending',
+          decided_by: null,
+          decided_at: null,
+          decision_note: null,
+          created_at: new Date(),
         })
       );
     },
@@ -93,7 +99,7 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
       }));
     },
     async decideSizeRequest(decision) {
-      const id = tables.param('sandbox_size_requests', 'id', decision.id);
+      const id = decision.id;
       const [row] = tables.update(
         'sandbox_size_requests',
         (r) => r.id === id && r.status === 'pending',
@@ -103,7 +109,7 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
           decided_at: new Date(),
           decision_note: decision.note,
           ...(decision.status === 'approved' && decision.approvedBytes !== undefined
-            ? { requested_bytes: decision.approvedBytes }
+            ? { requested_bytes: String(decision.approvedBytes) }
             : {}),
         }
       );
@@ -127,6 +133,10 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
           language: gap.language,
           reason: gap.reason,
           sample_path: gap.samplePath,
+          id: globalThis.crypto.randomUUID(),
+          open_count: 1,
+          first_seen_at: new Date(),
+          last_seen_at: new Date(),
         },
         ['extension', 'language', 'reason'],
         (existing) => ({
@@ -171,7 +181,7 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
         : null;
     },
     async latestPrPipelineEvent(subscriptionId) {
-      const id = tables.param('pr_pipeline_events', 'subscription_id', subscriptionId);
+      const id = subscriptionId;
       const [row] = orderBy(
         tables.select('pr_pipeline_events', (r) => r.subscription_id === id),
         [(r) => r.observed_at, 'desc'],
@@ -195,6 +205,9 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
           auto_fix: subscription.autoFix,
           auto_merge: subscription.autoMerge,
           status: 'active',
+          id: globalThis.crypto.randomUUID(),
+          created_at: new Date(),
+          updated_at: new Date(),
         },
         ['provider', 'repo_full_name', 'pr_number', 'subscriber_subject'],
         {
@@ -234,7 +247,7 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
       }));
     },
     async hasPrPipelineEvent(subscriptionId, providerRunId) {
-      const id = tables.param('pr_pipeline_events', 'subscription_id', subscriptionId);
+      const id = subscriptionId;
       return (
         tables.first(
           'pr_pipeline_events',
@@ -247,8 +260,10 @@ export function memoryCodeProjects(tables: MemoryTables): CodeProjectStore {
         subscription_id: event.subscriptionId,
         provider_run_id: event.providerRunId,
         conclusion: event.conclusion,
-        raw_payload: JSON.stringify(event.rawPayload),
+        raw_payload: toJson(event.rawPayload),
         action_taken: event.actionTaken,
+        id: globalThis.crypto.randomUUID(),
+        observed_at: new Date(),
       });
     },
   };

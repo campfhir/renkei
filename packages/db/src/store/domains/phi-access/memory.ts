@@ -6,7 +6,11 @@ import type { PhiAccessStore } from './types';
 export function memoryPhiAccess(tables: MemoryTables): PhiAccessStore {
   return {
     async record(event) {
-      tables.insert('phi_access_events', phiEventValues(event));
+      tables.insert('phi_access_events', {
+        ...phiEventValues(event),
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
+      });
     },
     async list({ subject, limit, before }) {
       const rows = tables.select(

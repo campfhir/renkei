@@ -28,12 +28,11 @@ function digestMatches(row: Artifact, query: string): boolean {
 }
 
 export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
-  const artifactId = (value: string) => tables.param('artifacts', 'id', value);
   const oldestFirst = (rows: Artifact[]) => orderBy(rows, [(r) => r.created_at], [(r) => r.id]);
   const inChat = (selection: ArtifactChatSelection) => {
     if (selection.artifactIds.length === 0) return [];
-    const chat = tables.param('artifacts', 'chat_id', selection.chatId);
-    const wanted = new Set(selection.artifactIds.map(artifactId));
+    const chat = selection.chatId;
+    const wanted = new Set(selection.artifactIds);
     return tables.select(
       'artifacts',
       (r) => r.owner_subject === selection.ownerSubject && r.chat_id === chat && wanted.has(r.id)
@@ -51,10 +50,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       : null;
   };
   const admits = (filter: LibraryFilter) => {
-    const shared = new Set(filter.sharedIds.map(artifactId));
-    const project = filter.projectId
-      ? tables.param('artifact_references', 'project_id', filter.projectId)
-      : null;
+    const shared = new Set(filter.sharedIds);
+    const project = filter.projectId ? filter.projectId : null;
     const inProject = project
       ? new Set(
           tables
@@ -86,17 +83,17 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
 
   return {
     async get(id) {
-      const wanted = artifactId(id);
+      const wanted = id;
       const row = tables.first('artifacts', (r) => r.id === wanted);
       return row ? artifactFromRow(row) : null;
     },
     async getMany(ids) {
       if (ids.length === 0) return [];
-      const wanted = new Set(ids.map(artifactId));
+      const wanted = new Set(ids);
       return oldestFirst(tables.select('artifacts', (r) => wanted.has(r.id))).map(artifactFromRow);
     },
     async listByChat(chatId, options = {}) {
-      const chat = tables.param('artifacts', 'chat_id', chatId);
+      const chat = chatId;
       return oldestFirst(
         tables.select(
           'artifacts',
@@ -106,8 +103,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
     },
     async findInChat(input) {
       if (!input.id && !input.filename) return null;
-      const chat = tables.param('artifacts', 'chat_id', input.chatId);
-      const id = input.id ? artifactId(input.id) : null;
+      const chat = input.chatId;
+      const id = input.id ? input.id : null;
       const [row] = orderBy(
         tables.select(
           'artifacts',
@@ -122,20 +119,20 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       return row ? artifactFromRow(row) : null;
     },
     async getText(id) {
-      const wanted = artifactId(id);
+      const wanted = id;
       return tables.first('artifacts', (r) => r.id === wanted)?.extracted_text ?? null;
     },
     async textLengths(ids) {
       if (ids.length === 0) return [];
-      const wanted = new Set(ids.map(artifactId));
+      const wanted = new Set(ids);
       return orderBy(
         tables.select('artifacts', (r) => wanted.has(r.id)),
         [(r) => r.id]
       ).map((r) => ({ id: r.id, chars: r.extracted_text ? [...r.extracted_text].length : 0 }));
     },
     async alwaysTextLengths(projectId, exceptId) {
-      const project = tables.param('artifact_references', 'project_id', projectId);
-      const except = exceptId ? artifactId(exceptId) : null;
+      const project = projectId;
+      const except = exceptId ? exceptId : null;
       const ids = new Set(
         tables
           .select(
@@ -150,7 +147,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       ).map((r) => ({ id: r.id, chars: r.extracted_text ? [...r.extracted_text].length : 0 }));
     },
     async listForProject(projectId) {
-      const project = tables.param('artifact_references', 'project_id', projectId);
+      const project = projectId;
       return orderBy(
         tables.select('artifact_references', (r) => r.project_id === project),
         [(r) => r.created_at],
@@ -161,8 +158,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       });
     },
     async getForProject(projectId, id) {
-      const project = tables.param('artifact_references', 'project_id', projectId);
-      const wanted = artifactId(id);
+      const project = projectId;
+      const wanted = id;
       const reference = tables.first(
         'artifact_references',
         (r) => r.project_id === project && r.artifact_id === wanted
@@ -170,7 +167,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       return reference ? withReference(reference) : null;
     },
     async listReferences(id) {
-      const wanted = artifactId(id);
+      const wanted = id;
       return orderBy(
         tables.select('artifact_references', (r) => r.artifact_id === wanted),
         [(r) => r.created_at],
@@ -184,7 +181,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
     },
     async referenceCounts(ids) {
       if (ids.length === 0) return [];
-      const wanted = new Set(ids.map(artifactId));
+      const wanted = new Set(ids);
       const counts = new Map<string, number>();
       for (const r of tables.select('artifact_references', (r) => wanted.has(r.artifact_id))) {
         counts.set(r.artifact_id, (counts.get(r.artifact_id) ?? 0) + 1);
@@ -195,7 +192,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
     },
     async projectsUsing(ids) {
       if (ids.length === 0) return [];
-      const wanted = new Set(ids.map(artifactId));
+      const wanted = new Set(ids);
       return orderBy(
         tables.select('artifact_references', (r) => wanted.has(r.artifact_id)),
         [(r) => r.created_at],
@@ -249,7 +246,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       ).map(artifactFromRow);
     },
     async libraryPosition(filter, focusId) {
-      const wanted = artifactId(focusId);
+      const wanted = focusId;
       const rows = tables.select('artifacts', admits(filter));
       const focused = rows.find((r) => r.id === wanted);
       if (!focused) return null;
@@ -269,7 +266,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
     },
     async countExisting(ids) {
       if (ids.length === 0) return 0;
-      const wanted = new Set(ids.map(artifactId));
+      const wanted = new Set(ids);
       return tables.select('artifacts', (r) => wanted.has(r.id)).length;
     },
     async listNeedingOcr(selection) {
@@ -296,15 +293,24 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
           blob_key: input.blobKey,
           filename: input.filename,
           content_type: input.contentType,
-          size_bytes: input.sizeBytes,
+          size_bytes: String(input.sizeBytes),
           extracted_text: input.extractedText,
           extract_status: input.extractStatus,
           digest_status: input.digestStatus,
+          summary: null,
+          keywords: [],
+          search_vector: null,
+          ocr_started_at: null,
+          ocr_finished_at: null,
+          ocr_pages: null,
+          ocr_millis: null,
+          created_at: new Date(),
+          updated_at: new Date(),
         })
       );
     },
     async update(id, patch) {
-      const wanted = artifactId(id);
+      const wanted = id;
       return (
         tables.update('artifacts', (r) => r.id === wanted, {
           key_kind: patch.keyKind,
@@ -321,7 +327,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       );
     },
     async rename(input) {
-      const wanted = artifactId(input.artifactId);
+      const wanted = input.artifactId;
       return (
         tables.update(
           'artifacts',
@@ -331,11 +337,13 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       );
     },
     async delete(id) {
-      const wanted = artifactId(id);
-      return tables.delete('artifacts', (r) => r.id === wanted).length > 0;
+      const wanted = id;
+      const deleted = tables.delete('artifacts', (r) => r.id === wanted).length > 0;
+      tables.delete('artifact_references', (r) => r.artifact_id === wanted);
+      return deleted;
     },
     async transferOwnership(id, newOwnerSubject) {
-      const wanted = artifactId(id);
+      const wanted = id;
       const grantOf = (g: Row<'resource_access_grants'>) =>
         g.resource_kind === 'artifact' && g.resource_id === wanted;
       tables.update('artifacts', (r) => r.id === wanted, {
@@ -349,8 +357,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       tables.update('resource_access_grants', grantOf, { owner_subject: newOwnerSubject });
     },
     async adoptContent(targetId, sourceId) {
-      const target = artifactId(targetId);
-      const sourceKey = artifactId(sourceId);
+      const target = targetId;
+      const sourceKey = sourceId;
       const source = tables.first('artifacts', (r) => r.id === sourceKey);
       if (!source) return false;
       const changed = tables.update('artifacts', (r) => r.id === target, {
@@ -368,10 +376,11 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       });
       if (changed.length === 0) return false;
       tables.delete('artifacts', (r) => r.id === sourceKey);
+      tables.delete('artifact_references', (r) => r.artifact_id === sourceKey);
       return true;
     },
     async storeDigest(id, digest) {
-      const wanted = artifactId(id);
+      const wanted = id;
       tables.update(
         'artifacts',
         (r) => r.id === wanted,
@@ -389,8 +398,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       );
     },
     async copyDigest(input) {
-      const target = artifactId(input.targetId);
-      const sourceKey = artifactId(input.sourceId);
+      const target = input.targetId;
+      const sourceKey = input.sourceId;
       const source = tables.first('artifacts', (r) => r.id === sourceKey);
       tables.update('artifacts', (r) => r.id === target, {
         summary: input.summary,
@@ -400,7 +409,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       });
     },
     async claimDigest(id, staleBefore) {
-      const wanted = artifactId(id);
+      const wanted = id;
       return (
         tables.update(
           'artifacts',
@@ -413,7 +422,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       );
     },
     async claimOcr(id, now, staleBefore) {
-      const wanted = artifactId(id);
+      const wanted = id;
       return (
         tables.update(
           'artifacts',
@@ -432,6 +441,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
           project_id: input.projectId,
           mode: input.mode,
           added_by: input.addedBy,
+          id: globalThis.crypto.randomUUID(),
+          created_at: new Date(),
         },
         ['artifact_id', 'project_id'],
         { mode: input.mode }
@@ -440,8 +451,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       return row.id;
     },
     async setReferenceMode(input) {
-      const project = tables.param('artifact_references', 'project_id', input.projectId);
-      const wanted = artifactId(input.artifactId);
+      const project = input.projectId;
+      const wanted = input.artifactId;
       return (
         tables.update(
           'artifact_references',
@@ -451,8 +462,8 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
       );
     },
     async removeReference(input) {
-      const project = tables.param('artifact_references', 'project_id', input.projectId);
-      const wanted = artifactId(input.artifactId);
+      const project = input.projectId;
+      const wanted = input.artifactId;
       return (
         tables.delete(
           'artifact_references',
@@ -462,7 +473,7 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
     },
     async listBlobsInChats(chatIds) {
       if (chatIds.length === 0) return [];
-      const ids = new Set(chatIds.map((id) => tables.param('artifacts', 'chat_id', id)));
+      const ids = new Set(chatIds.map((id) => id));
       return orderBy(
         tables.select('artifacts', (r) => r.chat_id !== null && ids.has(r.chat_id)),
         [(r) => r.id]

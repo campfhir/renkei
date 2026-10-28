@@ -1,12 +1,17 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { parseJson, type MemoryTables } from '../../memory/tables';
 import { auditEventValues, platformEventFromRow, platformEventValues } from './record';
 import type { AuditEventStore } from './types';
 
 export function memoryAuditEvents(tables: MemoryTables): AuditEventStore {
   return {
     async record(event) {
-      tables.insert('audit_events', auditEventValues(event));
+      const values = auditEventValues(event);
+      tables.insert('audit_events', {
+        created_at: new Date(),
+        ...values,
+        details: parseJson(values.details),
+      });
     },
     async listRecent(limit) {
       const rows = page(
@@ -36,7 +41,12 @@ export function memoryAuditEvents(tables: MemoryTables): AuditEventStore {
       });
     },
     async recordPlatform(event) {
-      tables.insert('platform_audit_log', platformEventValues(event));
+      const values = platformEventValues(event);
+      tables.insert('platform_audit_log', {
+        ...values,
+        details: parseJson(values.details),
+        created_at: new Date(),
+      });
     },
     async listPlatformFor(resourceId) {
       return orderBy(

@@ -3,12 +3,9 @@ import type { MemoryTables } from '../../memory/tables';
 import type { AgentSweepStore } from './sweep-types';
 
 export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
-  const agentOf = (value: string) => tables.param('agent_memories', 'agent_id', value);
-  const triggerOf = (value: string) => tables.param('agent_triggers', 'id', value);
-
   /** The agent's entries, newest first (ties by id, descending). */
   function entriesOf(agentId: string) {
-    const agent = agentOf(agentId);
+    const agent = agentId;
     return orderBy(
       tables.select('agent_memories', (r) => r.agent_id === agent && r.kind === 'entry'),
       [(r) => r.created_at, 'desc'],
@@ -38,7 +35,7 @@ export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
     async memoryFoldSet(agentId, { keepRecent, limit }) {
       const entries = page(entriesOf(agentId), limit, keepRecent);
       if (entries.length === 0) return null;
-      const agent = agentOf(agentId);
+      const agent = agentId;
       const summary = tables.first(
         'agent_memories',
         (r) => r.agent_id === agent && r.kind === 'summary'
@@ -57,7 +54,7 @@ export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
       return tables.delete('agent_memories', (r) => over.has(r.id)).length;
     },
     async listPlaintextMemory({ afterId, sealedPrefix, limit }) {
-      const after = afterId === null ? null : String(tables.param('agent_memories', 'id', afterId));
+      const after = afterId === null ? null : String(afterId);
       const ownerOf = owners();
       const rows = tables.select(
         'agent_memories',
@@ -73,7 +70,7 @@ export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
       }));
     },
     async replaceMemoryContent(id, expected, content) {
-      const key = tables.param('agent_memories', 'id', id);
+      const key = id;
       return (
         tables.update('agent_memories', (r) => r.id === key && r.content === expected, {
           content,
@@ -110,7 +107,7 @@ export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
       });
     },
     async disableTrigger(triggerId, lastError) {
-      const key = triggerOf(triggerId);
+      const key = triggerId;
       tables.update('agent_triggers', (r) => r.id === key, {
         enabled: false,
         last_error: lastError,
@@ -118,7 +115,7 @@ export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
       });
     },
     async advanceScheduleTrigger(triggerId, observed, next) {
-      const key = triggerOf(triggerId);
+      const key = triggerId;
       const now = new Date();
       return (
         tables.update(
@@ -132,7 +129,7 @@ export function memoryAgentSweeps(tables: MemoryTables): AgentSweepStore {
       );
     },
     async setTriggerError(triggerId, lastError) {
-      const key = triggerOf(triggerId);
+      const key = triggerId;
       tables.update('agent_triggers', (r) => r.id === key, {
         last_error: lastError,
         updated_at: new Date(),

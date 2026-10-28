@@ -1,13 +1,11 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
-import { json } from '../salesforce-changes/record';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import { JIRA_CHANGES as TABLE, jiraChangeFromRow } from './record';
 import type { JiraChangeStore } from './types';
 
 const HOUR_MS = 3_600_000;
 
 export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
-  const idOf = (id: string) => tables.param(TABLE, 'id', id);
   const live = (expiresAt: Date, now: Date) => expiresAt.getTime() > now.getTime();
 
   return {
@@ -21,15 +19,25 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
         kind: input.kind,
         title: input.title,
         reason: input.reason,
-        payload: json(input.payload),
+        payload: toJson(input.payload),
         expires_at: new Date(now.getTime() + input.ttlHours * HOUR_MS),
+        id: globalThis.crypto.randomUUID(),
+        status: 'pending',
+        results: null,
+        step: null,
+        resolution: null,
+        applied_by: null,
+        applied_at: null,
+        approved_by: null,
+        approved_at: null,
+        cancelled_at: null,
         created_at: now,
         updated_at: now,
       });
       return jiraChangeFromRow(row);
     },
     async get(id, options = {}) {
-      const key = idOf(id);
+      const key = id;
       const row = tables.first(
         TABLE,
         (r) => r.id === key && (options.subject === undefined || r.subject === options.subject)
@@ -59,7 +67,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       ).length;
     },
     async claim(subject, id) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -74,12 +82,12 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       );
     },
     async finish(id, outcome) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(TABLE, (r) => r.id === key && r.status === 'applying', {
           status: outcome.status,
-          results: json(outcome.results),
+          results: toJson(outcome.results),
           applied_by: outcome.appliedBy,
           applied_at: now,
           updated_at: now,
@@ -88,7 +96,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       );
     },
     async cancel(id, { subject, resolution }) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -107,7 +115,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       );
     },
     async queue(id, { approvedBy, step, exceptKind }) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -122,7 +130,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       );
     },
     async startQueued(id, step) {
-      const key = idOf(id);
+      const key = id;
       return (
         tables.update(TABLE, (r) => r.id === key && r.status === 'queued', {
           status: 'applying',
@@ -132,7 +140,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       );
     },
     async reclaimStale(id, staleMs) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -146,7 +154,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       );
     },
     async setStep(id, step) {
-      const key = idOf(id);
+      const key = id;
       return (
         tables.update(
           TABLE,
@@ -167,7 +175,7 @@ export function memoryJiraChanges(tables: MemoryTables): JiraChangeStore {
       }));
     },
     async closeAsProposed(id, { kind, resolution }) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(TABLE, (r) => r.id === key && r.kind === kind && r.status === 'pending', {

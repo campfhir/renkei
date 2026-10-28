@@ -12,12 +12,20 @@ export function memoryRunTokens(tables: MemoryTables): RunTokenStore {
           client_name: client.clientName,
           client_secret_hash: client.secretHash,
           redirect_uris: [],
+          response_types: ['code'],
+          grant_types: ['authorization_code', 'refresh_token'],
+          created_at: new Date(),
+          updated_at: new Date(),
         },
         ['client_id']
       );
     },
     async insert(token) {
-      tables.insert('oauth_access_tokens', runTokenValues(token));
+      tables.insert('oauth_access_tokens', {
+        roles: [],
+        created_at: new Date(),
+        ...runTokenValues(token),
+      });
     },
     async delete(tokenHash) {
       return tables.delete('oauth_access_tokens', (r) => r.token_hash === tokenHash).length;

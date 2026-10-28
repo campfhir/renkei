@@ -19,10 +19,18 @@ export function memoryCoachMarks(tables: MemoryTables): CoachMarkStore {
         (r) => r.subject === subject && r.tour_id === tourId
       );
       const record = next(existing ? coachMarkFromRow(existing) : null);
-      const values = coachMarkValues(record, new Date().toISOString());
+      const date = (value: string | null) => (value === null ? null : new Date(value));
+      const values = {
+        ...coachMarkValues(record, ''),
+        last_viewed_at: new Date(record.lastViewedAt),
+        completed_at: date(record.completedAt),
+        dismissed_at: date(record.dismissedAt),
+        reported_at: new Date(record.reportedAt),
+        updated_at: new Date(),
+      };
       tables.upsert(
         'coach_mark_progress',
-        { subject, tour_id: tourId, first_viewed_at: record.firstViewedAt, ...values },
+        { subject, tour_id: tourId, first_viewed_at: new Date(record.firstViewedAt), ...values },
         ['subject', 'tour_id'],
         values
       );

@@ -219,6 +219,7 @@ function serialize(
 
 function writeRecord(tables: MemoryTables, record: LogRecord, cipher: LogCipher | undefined) {
   const row = tables.insert('logs', {
+    log_id: String(tables.nextSerial('logs', 'log_id')),
     message: record.message,
     logged_timestamp: record.timestamp,
     level: record.level.toUpperCase(),
@@ -233,6 +234,7 @@ function writeRecord(tables: MemoryTables, record: LogRecord, cipher: LogCipher 
   }
   for (const [key, entry] of entries) {
     tables.insert('log_attr', {
+      attr_id: String(tables.nextSerial('log_attr', 'attr_id')),
       log_id: row.log_id,
       val_name: key,
       val: entry.val,

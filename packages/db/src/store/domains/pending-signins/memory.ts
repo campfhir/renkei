@@ -6,7 +6,11 @@ import type { PendingSigninStore } from './types';
 export function memoryPendingSignins(tables: MemoryTables): PendingSigninStore {
   return {
     async create(pending) {
-      tables.insert('pending_oidc_signin', pendingSigninValues(pending));
+      tables.insert('pending_oidc_signin', {
+        ...pendingSigninValues(pending),
+        expires_at: pending.expiresAt,
+        created_at: pending.createdAt ?? new Date(),
+      });
     },
     async findByState(state) {
       const [row] = orderBy(

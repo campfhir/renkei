@@ -1,7 +1,13 @@
 import { metadataText } from '../knowledge-chunks/metadata-filter';
 import { like, orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
-import { grantSummaryFromRow, jsonbConcat, prefixPattern, sealedGrantFromRow, sealedGrantValues } from './record';
+import { toJson, type MemoryTables } from '../../memory/tables';
+import {
+  grantSummaryFromRow,
+  jsonbConcat,
+  prefixPattern,
+  sealedGrantFromRow,
+  sealedGrantValues,
+} from './record';
 import type { ProviderGrantStore } from './types';
 
 export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
@@ -27,7 +33,7 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
         'provider_grants',
         (r) => r.provider === provider && r.provider_account_id === accountId,
         (r) => ({
-          metadata: JSON.stringify(jsonbConcat(r.metadata, patch)),
+          metadata: toJson(jsonbConcat(r.metadata, patch)),
           ...(touch ? { updated_at: new Date() } : {}),
         })
       ).length;
@@ -72,7 +78,10 @@ export function memoryProviderGrants(tables: MemoryTables): ProviderGrantStore {
     },
     async upsertSealed(provider, grant) {
       const now = new Date();
-      const values = sealedGrantValues(provider, grant, now);
+      const values = {
+        ...sealedGrantValues(provider, grant, now),
+        metadata: toJson(grant.metadata),
+      };
       tables.upsert('provider_grants', values, ['provider', 'provider_account_id'], (existing) => ({
         encrypted_access_token: values.encrypted_access_token,
         encrypted_refresh_token: grant.keepStoredRefreshToken

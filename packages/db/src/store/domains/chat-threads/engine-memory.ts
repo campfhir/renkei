@@ -1,5 +1,5 @@
 import { orderBy } from '../../memory/order';
-import { MemoryStoreError, type MemoryTables, type Row } from '../../memory/tables';
+import { toJson, uniqueViolation, type MemoryTables, type Row } from '../../memory/tables';
 import { messageFromRow, subagentRunFromRow, turnFromRow } from './record';
 import type {
   ChatMessageInsert,
@@ -15,32 +15,39 @@ import type {
  * undoing what a failed multi-row write already did.
  */
 export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore {
-  const chatParam = (value: string) => tables.param('chats', 'id', value);
-  const turnParam = (value: string) => tables.param('chat_turns', 'id', value);
-
   const insertTurn = (turn: ChatTurnInsert): string => {
-    const chatId = chatParam(turn.chatId);
+    const chatId = turn.chatId;
     if (tables.first('chat_turns', (r) => r.chat_id === chatId && r.status === 'running')) {
-      throw new MemoryStoreError(
-        '23505',
-        'duplicate key value violates unique constraint "chat_turns_one_running"',
-        'chat_turns',
-        'chat_turns_one_running'
-      );
+      // The duplicate-turn tripwire the chat's start-turn flow answers.
+      throw uniqueViolation('chat_turns', 'chat_turns_one_running');
     }
+    const now = new Date();
     return tables.insert('chat_turns', {
+      id: globalThis.crypto.randomUUID(),
       chat_id: turn.chatId,
       status: 'running',
       kind: turn.kind,
       llm_model_id: turn.llmModelId,
       thinking_budget: turn.thinkingBudget,
-      runner:
-        turn.runner === null || turn.runner === undefined ? null : JSON.stringify(turn.runner),
+      runner: turn.runner === null || turn.runner === undefined ? null : toJson(turn.runner),
+      error: null,
+      stage: null,
+      stage_at: null,
+      tool_permission: null,
+      input_tokens: 0,
+      output_tokens: 0,
+      iterations: 0,
+      resume_count: 0,
+      cancel_requested_at: null,
+      suspended_at: null,
+      finished_at: null,
+      started_at: now,
+      updated_at: now,
     }).id;
   };
 
   const insertMessage = (message: ChatMessageInsert): InsertedChatMessage => {
-    const chatId = chatParam(message.chatId);
+    const chatId = message.chatId;
     const seq =
       tables
         .select('chat_messages', (r) => r.chat_id === chatId)
@@ -56,12 +63,20 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       llm_model_id: message.llmModelId ?? null,
       provider: message.provider ?? null,
       model: message.model ?? null,
+      id: globalThis.crypto.randomUUID(),
+      error: null,
+      stop_reason: null,
+      summary_id: null,
+      timing: null,
+      usage: null,
+      created_at: new Date(),
+      updated_at: new Date(),
     });
     return { id: row.id, seq: row.seq, createdAt: row.created_at };
   };
 
   const runningTurn = (turnId: string) => {
-    const id = turnParam(turnId);
+    const id = turnId;
     return (r: Row<'chat_turns'>) => r.id === id && r.status === 'running';
   };
 
@@ -87,8 +102,8 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
         const link = input.link;
         const target = link ? messages[link.messageIndex] : undefined;
         if (link && target && link.artifactIds.length > 0) {
-          const chatId = chatParam(input.turn.chatId);
-          const ids = link.artifactIds.map((id) => tables.param('artifacts', 'id', id));
+          const chatId = input.turn.chatId;
+          const ids = link.artifactIds.map((id) => id);
           tables.update(
             'artifacts',
             (r) =>
@@ -109,47 +124,49 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       return insertMessage(message);
     },
     async insertMessageWhenIdle(message) {
-      const chatId = chatParam(message.chatId);
+      const chatId = message.chatId;
       if (tables.first('chat_turns', (r) => r.chat_id === chatId && r.status === 'running')) {
         return null;
       }
       return insertMessage(message);
     },
     async getMessage(chatId, messageId) {
-      const chat = chatParam(chatId);
-      const id = tables.param('chat_messages', 'id', messageId);
+      const chat = chatId;
+      const id = messageId;
       const row = tables.first('chat_messages', (r) => r.chat_id === chat && r.id === id);
       return row ? messageFromRow(row) : null;
     },
     async updateMessage(messageId, patch) {
-      const id = tables.param('chat_messages', 'id', messageId);
+      const id = messageId;
       tables.update('chat_messages', (r) => r.id === id, {
         ...(patch.content !== undefined ? { content: patch.content } : {}),
         ...(patch.status !== undefined ? { status: patch.status } : {}),
         ...(patch.stopReason !== undefined ? { stop_reason: patch.stopReason } : {}),
         ...(patch.usage !== undefined
-          ? { usage: patch.usage === null ? null : JSON.stringify(patch.usage) }
+          ? { usage: patch.usage === null ? null : toJson(patch.usage) }
           : {}),
         ...(patch.timing !== undefined
-          ? { timing: patch.timing === null ? null : JSON.stringify(patch.timing) }
+          ? { timing: patch.timing === null ? null : toJson(patch.timing) }
           : {}),
         ...(patch.error !== undefined ? { error: patch.error } : {}),
         updated_at: new Date(),
       });
     },
     async deleteMessage(messageId) {
-      const id = tables.param('chat_messages', 'id', messageId);
+      const id = messageId;
       tables.delete('chat_messages', (r) => r.id === id);
+      // A file the message carried stays in the chat, unattached.
+      tables.update('artifacts', (r) => r.message_id === id, { message_id: null });
     },
     async settleStreamingMessages(turnId, status) {
-      const id = tables.param('chat_messages', 'turn_id', turnId);
+      const id = turnId;
       tables.update('chat_messages', (r) => r.turn_id === id && r.status === 'streaming', {
         status,
         updated_at: new Date(),
       });
     },
     async truncateFrom(chatId, fromSeq) {
-      const chat = chatParam(chatId);
+      const chat = chatId;
       const doomed = tables.select('chat_messages', (r) => r.chat_id === chat && r.seq >= fromSeq);
       const messageIds = new Set(doomed.map((row) => row.id));
       const turnIds = new Set(doomed.flatMap((row) => (row.turn_id ? [row.turn_id] : [])));
@@ -168,6 +185,11 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       tables.delete('artifacts', (r) => artifactIds.has(r.id));
       tables.delete('chat_messages', (r) => messageIds.has(r.id));
       tables.delete('chat_turns', (r) => r.chat_id === chat && turnIds.has(r.id));
+      // Uploads the cut messages carried stay, unattached; the cut turns' subagents go.
+      tables.update('artifacts', (r) => r.message_id !== null && messageIds.has(r.message_id), {
+        message_id: null,
+      });
+      tables.delete('chat_subagent_runs', (r) => turnIds.has(r.turn_id));
       return artifacts.map((row) => ({ id: row.id, blobKey: row.blob_key }));
     },
     async heartbeatTurn(turnId, iterations, stage) {
@@ -250,8 +272,8 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       return ids;
     },
     async requestTurnCancel(chatId, turnId) {
-      const chat = chatParam(chatId);
-      const id = turnParam(turnId);
+      const chat = chatId;
+      const id = turnId;
       const updated = tables.update(
         'chat_turns',
         (r) => r.chat_id === chat && r.id === id && r.status === 'running',
@@ -261,13 +283,13 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
     },
     async setToolPermission(turnId, ask) {
       tables.update('chat_turns', runningTurn(turnId), {
-        tool_permission: JSON.stringify(ask),
+        tool_permission: toJson(ask),
         updated_at: new Date(),
       });
     },
     async decideToolPermission(chatId, turnId, toolUseId, answer) {
-      const chat = chatParam(chatId);
-      const id = turnParam(turnId);
+      const chat = chatId;
+      const id = turnId;
       const pendingFor = (value: unknown): Record<string, unknown> | null => {
         if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
         const record: Record<string, unknown> = { ...value };
@@ -289,7 +311,7 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
           r.status === 'running' &&
           pendingFor(r.tool_permission) !== null,
         (r) => ({
-          tool_permission: JSON.stringify({
+          tool_permission: toJson({
             ...pendingFor(r.tool_permission),
             decision: answer.decision,
             decidedAt: answer.decidedAt,
@@ -299,11 +321,11 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       return updated.length > 0;
     },
     async getToolPermission(turnId) {
-      const id = turnParam(turnId);
+      const id = turnId;
       return tables.first('chat_turns', (r) => r.id === id)?.tool_permission ?? null;
     },
     async clearToolPermission(turnId) {
-      const id = turnParam(turnId);
+      const id = turnId;
       tables.update('chat_turns', (r) => r.id === id, { tool_permission: null });
     },
     async insertSummary(summary) {
@@ -313,8 +335,10 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
         through_seq: summary.throughSeq,
         folded_count: summary.foldedCount,
         created_by: summary.createdBy,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
       });
-      const ids = new Set(summary.messageIds.map((id) => tables.param('chat_messages', 'id', id)));
+      const ids = new Set(summary.messageIds.map((id) => id));
       tables.update('chat_messages', (r) => ids.has(r.id), { summary_id: inserted.id });
       return inserted.id;
     },
@@ -325,15 +349,16 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
           chat_id: decision.chatId,
           state_key: decision.stateKey,
           decision: decision.decision,
-          state: JSON.stringify(decision.state),
+          state: toJson(decision.state),
           decided_by: decision.decidedBy,
+          decided_at: new Date(),
         },
         ['state_key']
       );
     },
     async searchMessages(chatIds, options) {
       if (chatIds.length === 0 || options.kinds.length === 0) return [];
-      const ids = new Set(chatIds.map(chatParam));
+      const ids = new Set(chatIds);
       const chats = new Map(
         tables.select('chats', (r) => ids.has(r.id)).map((row) => [row.id, row])
       );
@@ -364,6 +389,19 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
           llm_model_id: run.llmModelId,
           provider: run.provider,
           model: run.model,
+          id: globalThis.crypto.randomUUID(),
+          status: 'running',
+          steps: 0,
+          tool_calls: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          last_tool: null,
+          report: null,
+          transcript: null,
+          error: null,
+          finished_at: null,
+          started_at: now,
+          updated_at: now,
         },
         ['chat_id', 'tool_use_id'],
         {
@@ -393,7 +431,7 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       return row.id;
     },
     async progressSubagentRun(runId, state) {
-      const id = tables.param('chat_subagent_runs', 'id', runId);
+      const id = runId;
       tables.update(
         'chat_subagent_runs',
         (r) => r.id === id && r.status === 'running',
@@ -408,7 +446,7 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       );
     },
     async finishSubagentRun(runId, outcome) {
-      const id = tables.param('chat_subagent_runs', 'id', runId);
+      const id = runId;
       const now = new Date();
       tables.update('chat_subagent_runs', (r) => r.id === id, {
         status: outcome.status,
@@ -422,7 +460,7 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       });
     },
     async interruptSubagentRuns(turnId, error) {
-      const id = tables.param('chat_subagent_runs', 'turn_id', turnId);
+      const id = turnId;
       const now = new Date();
       tables.update('chat_subagent_runs', (r) => r.turn_id === id && r.status === 'running', {
         status: 'interrupted',
@@ -432,7 +470,7 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
       });
     },
     async getSubagentRunByCall(chatId, toolUseId) {
-      const chat = chatParam(chatId);
+      const chat = chatId;
       const row = tables.first(
         'chat_subagent_runs',
         (r) => r.chat_id === chat && r.tool_use_id === toolUseId

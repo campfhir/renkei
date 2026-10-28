@@ -1,6 +1,6 @@
 import { compareAsc, orderBy } from '../../memory/order';
 import { wakeQueue } from '../../memory/signals';
-import type { MemoryTables, Row } from '../../memory/tables';
+import { toJson, type MemoryTables, type Row } from '../../memory/tables';
 import type { QueueClaimOptions, QueueDeadLetterTable, QueueStore, QueueTable } from './types';
 
 const DEAD_LETTERS: Record<QueueTable, QueueDeadLetterTable> = {
@@ -69,8 +69,15 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
         id: globalThis.crypto.randomUUID(),
         source: message.source,
         type: message.type,
-        payload: JSON.stringify(message.payload),
+        payload: toJson(message.payload),
         ordering_key: key,
+        status: 'pending',
+        attempts: 0,
+        last_error: null,
+        locked_at: null,
+        run_after: new Date(),
+        created_at: new Date(),
+        updated_at: new Date(),
       });
       wakeQueue(tables, table);
     },
@@ -157,17 +164,17 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
     },
 
     async complete(table, id, outcome, options = {}) {
-      const key = tables.param(table, 'id', id);
+      const key = id;
       tables.update(table, (r) => r.id === key, {
         status: outcome,
         locked_at: null,
         updated_at: new Date(),
-        ...(options.clearPayload ? { payload: '{}' } : {}),
+        ...(options.clearPayload ? { payload: {} } : {}),
       });
     },
 
     async release(table, id, attempts) {
-      const key = tables.param(table, 'id', id);
+      const key = id;
       const at = new Date();
       tables.update(
         table,
@@ -184,7 +191,7 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
     },
 
     async retry(table, id, error, delaySeconds) {
-      const key = tables.param(table, 'id', id);
+      const key = id;
       const at = new Date();
       tables.update(table, (r) => r.id === key, {
         status: 'pending',
@@ -196,25 +203,25 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
     },
 
     async deadLetter(table, id, error) {
-      const key = tables.param(table, 'id', id);
-      // Insert, then delete: a collision fails the move with nothing lost.
+      const key = id;
       for (const row of tables.select(table, (r) => r.id === key)) {
         tables.insert(DEAD_LETTERS[table], {
           id: row.id,
           source: row.source,
           type: row.type,
-          payload: JSON.stringify(row.payload),
+          payload: toJson(row.payload),
           ordering_key: row.ordering_key,
           attempts: row.attempts,
           last_error: error,
           created_at: row.created_at,
+          dead_at: new Date(),
         });
       }
       tables.delete(table, (r) => r.id === key);
     },
 
     async find(table, id) {
-      const key = tables.param(table, 'id', id);
+      const key = id;
       const row = tables.first(table, (r) => r.id === key);
       if (!row) return null;
       return {
@@ -252,25 +259,25 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
 
     async requeueDeadLetters(table, ids) {
       if (ids.length === 0) return 0;
-      const keys = new Set(ids.map((id) => tables.param(table, 'id', id)));
-      // Insert first, then delete: a collision with a live row fails the
-      // whole move with nothing lost, as the one Postgres statement does.
+      const keys = new Set(ids.map((id) => id));
       const moved = tables.select(DEAD_LETTERS[table], (r) => keys.has(r.id));
       const at = new Date();
-      tables.insertMany(
-        table,
-        moved.map((row) => ({
+      for (const row of moved) {
+        tables.insert(table, {
           id: row.id,
           source: row.source,
           type: row.type,
-          payload: JSON.stringify(row.payload),
+          payload: toJson(row.payload),
           ordering_key: row.ordering_key,
           status: 'pending',
           attempts: 0,
+          last_error: null,
+          locked_at: null,
           run_after: at,
           created_at: row.created_at,
-        }))
-      );
+          updated_at: at,
+        });
+      }
       tables.delete(DEAD_LETTERS[table], (r) => keys.has(r.id));
       if (moved.length > 0) wakeQueue(tables, table);
       return moved.length;
@@ -278,7 +285,7 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
 
     async purgeDeadLetters(table, ids) {
       if (ids.length === 0) return 0;
-      const keys = new Set(ids.map((id) => tables.param(table, 'id', id)));
+      const keys = new Set(ids.map((id) => id));
       return tables.delete(DEAD_LETTERS[table], (r) => keys.has(r.id)).length;
     },
     async hasLiveAgentRunJob(runId) {

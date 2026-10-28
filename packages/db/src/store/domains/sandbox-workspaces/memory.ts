@@ -1,19 +1,30 @@
 import { orderBy, page } from '../../memory/order';
 import type { MemoryTables, Row } from '../../memory/tables';
-import { sandboxWorkspaceFromRow, sandboxWorkspaceValues, sizeAndBranch } from './record';
+import { sandboxWorkspaceFromRow, sandboxWorkspaceValues } from './record';
 import type { SandboxWorkspaceStore } from './types';
 
 type WorkspaceRow = Row<'sandbox_workspaces'>;
+
+/** sizeAndBranch, with the int8 size as Postgres reads it back. */
+const sizeAndBranch = (change: { sizeBytes?: number; branch?: string }) => ({
+  ...(change.sizeBytes !== undefined ? { size_bytes: String(change.sizeBytes) } : {}),
+  ...(change.branch !== undefined ? { branch: change.branch } : {}),
+});
 
 const oldestFirst = (rows: WorkspaceRow[]) =>
   orderBy(rows, [(r) => r.created_at], [(r) => r.id]).map(sandboxWorkspaceFromRow);
 
 export function memorySandboxWorkspaces(tables: MemoryTables): SandboxWorkspaceStore {
-  const id = (value: string) => tables.param('sandbox_workspaces', 'id', value);
   return {
     async insert(workspace) {
       return sandboxWorkspaceFromRow(
-        tables.insert('sandbox_workspaces', sandboxWorkspaceValues(workspace))
+        tables.insert('sandbox_workspaces', {
+          ...sandboxWorkspaceValues(workspace),
+          size_bytes: '0',
+          error: null,
+          last_used_at: new Date(),
+          created_at: new Date(),
+        })
       );
     },
     async list(subject) {
@@ -29,7 +40,7 @@ export function memorySandboxWorkspaces(tables: MemoryTables): SandboxWorkspaceS
       ).length;
     },
     async get(subject, workspaceId) {
-      const wanted = id(workspaceId);
+      const wanted = workspaceId;
       const row = tables.first(
         'sandbox_workspaces',
         (r) => r.subject === subject && r.id === wanted
@@ -37,7 +48,7 @@ export function memorySandboxWorkspaces(tables: MemoryTables): SandboxWorkspaceS
       return row ? sandboxWorkspaceFromRow(row) : null;
     },
     async setStatus(workspaceId, status, change) {
-      const wanted = id(workspaceId);
+      const wanted = workspaceId;
       tables.update('sandbox_workspaces', (r) => r.id === wanted, {
         status,
         error: change.error,
@@ -45,13 +56,13 @@ export function memorySandboxWorkspaces(tables: MemoryTables): SandboxWorkspaceS
       });
     },
     async listWorktrees(subject, parentId) {
-      const wanted = id(parentId);
+      const wanted = parentId;
       return oldestFirst(
         tables.select('sandbox_workspaces', (r) => r.subject === subject && r.parent_id === wanted)
       );
     },
     async touch(workspaceId, change) {
-      const wanted = id(workspaceId);
+      const wanted = workspaceId;
       const parent = tables.first('sandbox_workspaces', (r) => r.id === wanted)?.parent_id;
       if (parent) {
         tables.update('sandbox_workspaces', (r) => r.id === parent, {
@@ -65,7 +76,7 @@ export function memorySandboxWorkspaces(tables: MemoryTables): SandboxWorkspaceS
       });
     },
     async delete(subject, workspaceId) {
-      const wanted = id(workspaceId);
+      const wanted = workspaceId;
       const [row] = tables.delete(
         'sandbox_workspaces',
         (r) => r.subject === subject && r.id === wanted
@@ -82,16 +93,16 @@ export function memorySandboxWorkspaces(tables: MemoryTables): SandboxWorkspaceS
       );
     },
     async deleteById(workspaceId) {
-      const wanted = id(workspaceId);
+      const wanted = workspaceId;
       tables.delete('sandbox_workspaces', (r) => r.id === wanted);
     },
     async getById(workspaceId) {
-      const wanted = id(workspaceId);
+      const wanted = workspaceId;
       const row = tables.first('sandbox_workspaces', (r) => r.id === wanted);
       return row ? sandboxWorkspaceFromRow(row) : null;
     },
     async listWorktreesOf(parentId) {
-      const wanted = id(parentId);
+      const wanted = parentId;
       return oldestFirst(tables.select('sandbox_workspaces', (r) => r.parent_id === wanted));
     },
   };

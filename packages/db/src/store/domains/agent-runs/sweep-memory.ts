@@ -1,5 +1,5 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import type { AgentRunSweepStore } from './sweep-types';
 
 const DECIDED: readonly string[] = ['approved', 'declined', 'expired', 'answered'];
@@ -7,15 +7,29 @@ const SETTLED: readonly string[] = ['succeeded', 'failed', 'canceled', 'stopped'
 const IN_PROGRESS: readonly string[] = ['queued', 'running'];
 const OPEN: readonly string[] = ['waiting', 'running', 'queued'];
 
+/**
+ * What goes with deleted runs: their turn rows, batches, cards and
+ * notifications; child runs keep going without a parent.
+ */
+export function deleteRunRows(tables: MemoryTables, runIds: readonly string[]): void {
+  const ids = new Set(runIds);
+  tables.delete('agent_run_steps', (r) => ids.has(r.run_id));
+  tables.delete('agent_action_batches', (r) => ids.has(r.run_id));
+  tables.delete('actionable_items', (r) => r.run_id !== null && ids.has(r.run_id));
+  tables.delete('agent_notifications', (r) => r.run_id !== null && ids.has(r.run_id));
+  tables.update('agent_runs', (r) => r.parent_run_id !== null && ids.has(r.parent_run_id), {
+    parent_run_id: null,
+  });
+}
+
 export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
-  const runOf = (value: string) => tables.param('agent_runs', 'id', value);
   const expireCard = (reason: string) => {
     const now = new Date();
     return {
       status: 'expired',
       decided_at: now,
       archived_at: now,
-      result: JSON.stringify({ reason }),
+      result: toJson({ reason }),
       updated_at: now,
     };
   };
@@ -33,7 +47,7 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
       return page(orderBy(rows, [(r) => r.waiting_until], [(r) => r.id]), limit).map(ref);
     },
     async expireWaitingCard(runId, reason) {
-      const run = tables.param('actionable_items', 'run_id', runId);
+      const run = runId;
       return (
         tables.update(
           'actionable_items',
@@ -99,7 +113,9 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
           limit
         ).map((r) => r.id)
       );
-      return tables.delete('agent_runs', (r) => doomed.has(r.id)).length;
+      const deleted = tables.delete('agent_runs', (r) => doomed.has(r.id)).length;
+      deleteRunRows(tables, [...doomed]);
+      return deleted;
     },
     async listStaleInProgress(createdBefore, limit) {
       const rows = tables.select(
@@ -114,7 +130,7 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
       }));
     },
     async failAbandoned(runId, { errorKind, error }) {
-      const id = runOf(runId);
+      const id = runId;
       const now = new Date();
       return (
         tables.update('agent_runs', (r) => r.id === id && IN_PROGRESS.includes(r.status), {

@@ -17,6 +17,12 @@ export function memoryMailReview(tables: MemoryTables): MailReviewStore {
           owner_upn: entry.ownerUpn,
           account_id: entry.accountId,
           ...outcome,
+          override_action: null,
+          override_category: null,
+          override_sender_key: null,
+          overridden_at: null,
+          created_at: new Date(),
+          updated_at: new Date(),
         },
         ['provider', 'ref_id'],
         { ...outcome, updated_at: new Date() }

@@ -1,5 +1,5 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, uniqueViolation, type MemoryTables } from '../../memory/tables';
 import {
   instanceValues,
   mergedSettings,
@@ -9,9 +9,14 @@ import {
 import type { AdManagerInstanceStore } from './types';
 
 export function memoryAdmanagerInstances(tables: MemoryTables): AdManagerInstanceStore {
-  const instanceId = (id: string) => tables.param('admanager_instances', 'id', id);
+  // The connector's store turns a taken name into its own answer (23505).
+  const refuseTakenName = (name: string, except?: string) => {
+    if (tables.first('admanager_instances', (r) => r.name === name && r.id !== except)) {
+      throw uniqueViolation('admanager_instances', 'idx_admanager_instances_name');
+    }
+  };
   const connectionOf = (id: string, subject: string) => {
-    const wanted = tables.param('admanager_instance_connections', 'instance_id', id);
+    const wanted = id;
     return (r: { instance_id: string; subject: string }) =>
       r.instance_id === wanted && r.subject === subject;
   };
@@ -36,6 +41,7 @@ export function memoryAdmanagerInstances(tables: MemoryTables): AdManagerInstanc
       return row ? adManagerConnectionFromRow(row) : null;
     },
     async upsertConnection(id, subject, connection) {
+      const now = new Date();
       tables.upsert(
         'admanager_instance_connections',
         {
@@ -44,6 +50,8 @@ export function memoryAdmanagerInstances(tables: MemoryTables): AdManagerInstanc
           encrypted_credentials: connection.encryptedCredentials,
           technician_name: connection.technicianName,
           permissions: [...connection.permissions],
+          created_at: now,
+          updated_at: now,
         },
         ['instance_id', 'subject'],
         {
@@ -81,31 +89,40 @@ export function memoryAdmanagerInstances(tables: MemoryTables): AdManagerInstanc
       );
     },
     async get(id) {
-      const wanted = instanceId(id);
+      const wanted = id;
       const row = tables.first('admanager_instances', (r) => r.id === wanted);
       return row ? adManagerInstanceFromRow(row) : null;
     },
     async create(instance) {
+      refuseTakenName(instance.name);
+      const now = new Date();
       return tables.insert('admanager_instances', {
         ...instanceValues(instance),
+        id: globalThis.crypto.randomUUID(),
         ca_pem: instance.caPem ?? null,
-        settings: JSON.stringify(instance.settings.values),
+        settings: toJson(instance.settings.values),
+        created_at: now,
+        updated_at: now,
       }).id;
     },
     async update(id, instance) {
-      const wanted = instanceId(id);
+      const wanted = id;
+      if (tables.first('admanager_instances', (r) => r.id === wanted)) {
+        refuseTakenName(instance.name, wanted);
+      }
       return tables.update(
         'admanager_instances',
         (r) => r.id === wanted,
         (row) => ({
           ...instanceValues(instance),
           updated_at: new Date(),
-          settings: JSON.stringify(mergedSettings(row.settings, instance.settings)),
+          settings: toJson(mergedSettings(row.settings, instance.settings)),
         })
       ).length;
     },
     async delete(id) {
-      const wanted = instanceId(id);
+      const wanted = id;
+      tables.delete('admanager_instance_connections', (r) => r.instance_id === wanted);
       return tables.delete('admanager_instances', (r) => r.id === wanted).length;
     },
   };

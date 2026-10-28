@@ -12,10 +12,11 @@ export function memoryDelegateGitTickets(tables: MemoryTables): DelegateGitTicke
         write: ticket.write,
         secret_hash: ticket.secretHash,
         expires_at: ticket.expiresAt,
+        created_at: new Date(),
       });
     },
     async find(id) {
-      const wanted = tables.param('delegate_git_tickets', 'id', id);
+      const wanted = id;
       const row = tables.first('delegate_git_tickets', (r) => r.id === wanted);
       return row
         ? {

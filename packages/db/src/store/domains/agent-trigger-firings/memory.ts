@@ -5,9 +5,8 @@ import type { AgentTriggerFiringStore } from './types';
 const DAY_MS = 24 * 60 * 60_000;
 
 export function memoryAgentTriggerFirings(tables: MemoryTables): AgentTriggerFiringStore {
-  const trigger = (value: string) => tables.param('agent_trigger_firings', 'trigger_id', value);
   const matches = (triggerId: string, dedupeKey: string) => {
-    const id = trigger(triggerId);
+    const id = triggerId;
     return (r: { trigger_id: string; dedupe_key: string }) =>
       r.trigger_id === id && r.dedupe_key === dedupeKey;
   };
@@ -15,7 +14,7 @@ export function memoryAgentTriggerFirings(tables: MemoryTables): AgentTriggerFir
     async claim(triggerId, dedupeKey) {
       const inserted = tables.upsert(
         'agent_trigger_firings',
-        { trigger_id: triggerId, dedupe_key: dedupeKey, run_id: null },
+        { trigger_id: triggerId, dedupe_key: dedupeKey, run_id: null, created_at: new Date() },
         ['trigger_id', 'dedupe_key']
       );
       return inserted !== undefined;

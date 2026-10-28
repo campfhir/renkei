@@ -10,7 +10,9 @@ function sum(rows: { size_bytes: number }[]): number {
 export function memorySandboxFiles(tables: MemoryTables): SandboxFileStore {
   return {
     async insert(file) {
-      return sandboxFileFromRow(tables.insert('sandbox_files', sandboxFileValues(file)));
+      return sandboxFileFromRow(
+        tables.insert('sandbox_files', { ...sandboxFileValues(file), created_at: new Date() })
+      );
     },
     async list(subject, batchId) {
       const rows = tables.select(
@@ -32,12 +34,12 @@ export function memorySandboxFiles(tables: MemoryTables): SandboxFileStore {
       return sum(tables.select('sandbox_files', (r) => r.batch_id === batchId));
     },
     async get(subject, id) {
-      const wanted = tables.param('sandbox_files', 'id', id);
+      const wanted = id;
       const row = tables.first('sandbox_files', (r) => r.subject === subject && r.id === wanted);
       return row ? sandboxFileFromRow(row) : null;
     },
     async delete(subject, id) {
-      const wanted = tables.param('sandbox_files', 'id', id);
+      const wanted = id;
       const [row] = tables.delete('sandbox_files', (r) => r.subject === subject && r.id === wanted);
       return row ? sandboxFileFromRow(row) : null;
     },
@@ -48,7 +50,7 @@ export function memorySandboxFiles(tables: MemoryTables): SandboxFileStore {
       );
     },
     async deleteById(id) {
-      const wanted = tables.param('sandbox_files', 'id', id);
+      const wanted = id;
       tables.delete('sandbox_files', (r) => r.id === wanted);
     },
   };

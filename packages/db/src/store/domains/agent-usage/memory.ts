@@ -82,8 +82,7 @@ function bySpend<T extends { provider: string | null; model: string | null; spen
 }
 
 export function memoryAgentUsage(tables: MemoryTables): AgentUsageStore {
-  const agentIdsOf = (ids: readonly string[]) =>
-    new Set(ids.map((id) => tables.param('llm_calls', 'agent_id', id)));
+  const agentIdsOf = (ids: readonly string[]) => new Set(ids.map((id) => id));
   const ledger = (ids: readonly string[] | null) => {
     if (ids === null) return tables.select('llm_calls');
     const wanted = agentIdsOf(ids);
@@ -124,7 +123,7 @@ export function memoryAgentUsage(tables: MemoryTables): AgentUsageStore {
     },
     async toolUsage(agentIds, days) {
       if (agentIds.length === 0) return [];
-      const wanted = new Set(agentIds.map((id) => tables.param('tool_calls', 'agent_id', id)));
+      const wanted = new Set(agentIds.map((id) => id));
       const since = Date.now() - days * DAY_MS;
       const rows = tables.select(
         'tool_calls',
@@ -188,7 +187,7 @@ export function memoryAgentUsage(tables: MemoryTables): AgentUsageStore {
     },
     async tokensByRun(runIds) {
       if (runIds.length === 0) return [];
-      const wanted = new Set(runIds.map((id) => tables.param('llm_calls', 'run_id', id)));
+      const wanted = new Set(runIds.map((id) => id));
       const groups = groupBy(
         tables.select('llm_calls', (r) => r.run_id !== null && wanted.has(r.run_id)),
         (row) => row.run_id ?? ''
@@ -199,7 +198,7 @@ export function memoryAgentUsage(tables: MemoryTables): AgentUsageStore {
       }));
     },
     async runTokensByModel(runId) {
-      const id = tables.param('llm_calls', 'run_id', runId);
+      const id = runId;
       const groups = groupBy(
         tables.select('llm_calls', (r) => r.run_id === id),
         (row) => JSON.stringify([row.provider, row.model])
@@ -213,7 +212,7 @@ export function memoryAgentUsage(tables: MemoryTables): AgentUsageStore {
       return bySpend(rows).map(({ provider, model, totals }) => ({ provider, model, totals }));
     },
     async invocationCounts(agentId) {
-      const id = tables.param('agent_run_log', 'agent_id', agentId);
+      const id = agentId;
       const now = new Date();
       const all = tables.select('agent_run_log');
       return {

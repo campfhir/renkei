@@ -1,5 +1,6 @@
 import { groupBy, like, orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { parseJson, toJson, uniqueViolation, type MemoryTables } from '../../memory/tables';
+import { itemDefaults } from '../actionable-items/memory';
 import { jsonbText, jsonField } from '../agents/json';
 import {
   batchFromRow,
@@ -16,17 +17,13 @@ import {
   stepFromRow,
   summaryFromRow,
 } from './record';
-import { memoryAgentRunSweeps } from './sweep-memory';
+import { deleteRunRows, memoryAgentRunSweeps } from './sweep-memory';
 import type { AgentRunStore } from './types';
 
 const LIVE: readonly string[] = LIVE_STATUSES;
 const SETTLED: readonly string[] = ['succeeded', 'failed', 'stopped'];
 
 export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
-  const runId = (value: string) => tables.param('agent_runs', 'id', value);
-  const agentOf = (value: string) => tables.param('agent_runs', 'agent_id', value);
-  const batchId = (value: string) => tables.param('agent_action_batches', 'id', value);
-
   /** The run's running and waiting rows to `status`, finished now. */
   function closeTurns(run: unknown, status: string): void {
     const now = new Date();
@@ -40,8 +37,8 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
   return {
     ...memoryAgentRunSweeps(tables),
     async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
-      const agent = agentOf(agentId);
-      const id = matchId ? runId(matchId) : undefined;
+      const agent = agentId;
+      const id = matchId ? matchId : undefined;
       const pattern = q ? likePattern(q) : null;
       const rows = tables.select('agent_runs', (r) => {
         if (r.agent_id !== agent) return false;
@@ -64,8 +61,8 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async findDetail({ agentId, runId: wanted, ownerSubject, audience }) {
-      const agent = agentOf(agentId);
-      const id = runId(wanted);
+      const agent = agentId;
+      const id = wanted;
       const row = tables.first(
         'agent_runs',
         (r) =>
@@ -98,7 +95,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       };
     },
     async findPauseCard(wanted, ownerSubject) {
-      const id = tables.param('actionable_items', 'run_id', wanted);
+      const id = wanted;
       const [row] = orderBy(
         tables.select(
           'actionable_items',
@@ -122,8 +119,8 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         : null;
     },
     async findStatus({ agentId, runId: wanted, ownerSubject }) {
-      const id = runId(wanted);
-      const agent = agentOf(agentId);
+      const id = wanted;
+      const agent = agentId;
       const row = tables.first(
         'agent_runs',
         (r) =>
@@ -134,8 +131,8 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       return row ? { id: row.id, status: row.status, ownerSubject: row.owner_subject } : null;
     },
     async findRestartSource({ agentId, runId: wanted, ownerSubject }) {
-      const id = runId(wanted);
-      const agent = agentOf(agentId);
+      const id = wanted;
+      const agent = agentId;
       const row = tables.first(
         'agent_runs',
         (r) => r.id === id && r.agent_id === agent && r.owner_subject === ownerSubject
@@ -151,7 +148,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         : null;
     },
     async forceCancel(wanted, { bySubject, errorKind, error }) {
-      const id = runId(wanted);
+      const id = wanted;
       const now = new Date();
       const claimed = tables.update(
         'agent_runs',
@@ -175,7 +172,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       return true;
     },
     async requestCancel(wanted, bySubject) {
-      const id = runId(wanted);
+      const id = wanted;
       const now = new Date();
       return (
         tables.update(
@@ -197,7 +194,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     },
     async listPendingCards(subject, { kind, agentId, limit }) {
-      const agent = agentId ? tables.param('agents', 'id', agentId) : undefined;
+      const agent = agentId ? agentId : undefined;
       const rows = tables.select(
         'actionable_items',
         (r) =>
@@ -229,7 +226,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async findCard(cardId, subject) {
-      const id = tables.param('actionable_items', 'id', cardId);
+      const id = cardId;
       const row = tables.first(
         'actionable_items',
         (r) => r.id === id && r.owner_subject === subject
@@ -246,12 +243,12 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         : null;
     },
     async claimCard(cardId, { status, result, decidedBy }) {
-      const id = tables.param('actionable_items', 'id', cardId);
+      const id = cardId;
       const now = new Date();
       return (
         tables.update('actionable_items', (r) => r.id === id && r.status === 'suggested', {
           status,
-          result: JSON.stringify(result),
+          result: toJson(result),
           decided_by: decidedBy,
           decided_at: now,
           archived_at: now,
@@ -261,22 +258,22 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async findRunAgent(wanted) {
-      const id = runId(wanted);
+      const id = wanted;
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row ? { id: row.id, agentId: row.agent_id } : null;
     },
     async findRunOrigin(wanted) {
-      const id = runId(wanted);
+      const id = wanted;
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row ? { agentId: row.agent_id, triggerKind: row.trigger_kind } : null;
     },
     async findRunError(wanted) {
-      const id = runId(wanted);
+      const id = wanted;
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row ? { error: row.error } : null;
     },
     async optimizationEvidence({ ownerSubject, agentId, days, maxFailures, maxTools }) {
-      const agent = agentOf(agentId);
+      const agent = agentId;
       const since = Date.now() - days * 86_400_000;
       const logged = tables.select(
         'agent_run_log',
@@ -357,11 +354,38 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       return tables.select('agent_runs', (r) => r.created_at.getTime() > since.getTime()).length;
     },
     async createQueued(run) {
-      tables.insert('agent_runs', newRunValues(run));
+      const values = newRunValues(run);
+      const now = new Date();
+      tables.insert('agent_runs', {
+        ...values,
+        lineage: parseJson(values.lineage),
+        definition_snapshot: parseJson(values.definition_snapshot),
+        initial_state: parseJson(values.initial_state),
+        legacy_steps_snapshot: null,
+        active_ms: '0',
+        current_step_id: null,
+        error: null,
+        error_kind: null,
+        started_at: null,
+        finished_at: null,
+        waiting_until: null,
+        cancel_requested_at: null,
+        cancel_requested_by: null,
+        resume_count: 0,
+        resume_failure: null,
+        resume_guidance: null,
+        resume_step_id: null,
+        resumed_at: null,
+        resumed_by: null,
+        created_at: now,
+        updated_at: now,
+      });
     },
     async deleteRun(runId) {
-      const key = tables.param('agent_runs', 'id', runId);
-      return tables.delete('agent_runs', (r) => r.id === key).length;
+      const key = runId;
+      const deleted = tables.delete('agent_runs', (r) => r.id === key).length;
+      if (deleted > 0) deleteRunRows(tables, [key]);
+      return deleted;
     },
     async logRunCreated(entry) {
       tables.insert('agent_run_log', {
@@ -370,10 +394,22 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         owner_subject: entry.ownerSubject,
         trigger_kind: entry.triggerKind,
         status: entry.status,
+        step_id: null,
+        step_name: null,
+        steps_version: null,
+        attempts: 0,
+        tool_calls: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        error: null,
+        error_kind: null,
+        outcome_code: null,
+        finished_at: null,
+        created_at: new Date(),
       });
     },
     async findInProgress(agentId) {
-      const key = tables.param('agent_runs', 'agent_id', agentId);
+      const key = agentId;
       const rows = tables.select(
         'agent_runs',
         (r) => r.agent_id === key && (r.status === 'queued' || r.status === 'running')
@@ -382,8 +418,8 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       return row ? { id: row.id, status: row.status } : null;
     },
     async findForResume(runId, agentId, ownerSubject) {
-      const id = tables.param('agent_runs', 'id', runId);
-      const agent = tables.param('agent_runs', 'agent_id', agentId);
+      const id = runId;
+      const agent = agentId;
       const row = tables.first(
         'agent_runs',
         (r) => r.id === id && r.agent_id === agent && r.owner_subject === ownerSubject
@@ -391,7 +427,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       return row ? { status: row.status, error: row.error, errorKind: row.error_kind } : null;
     },
     async markResumed(runId, resume) {
-      const id = tables.param('agent_runs', 'id', runId);
+      const id = runId;
       const now = new Date();
       return (
         tables.update(
@@ -404,7 +440,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
             started_at: null,
             finished_at: null,
             waiting_until: null,
-            active_ms: 0,
+            active_ms: '0',
             cancel_requested_at: null,
             cancel_requested_by: null,
             resumed_at: now,
@@ -418,7 +454,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async restoreFailure(runId, failure) {
-      const id = tables.param('agent_runs', 'id', runId);
+      const id = runId;
       const now = new Date();
       tables.update('agent_runs', (r) => r.id === id && r.status === 'queued', {
         status: 'failed',
@@ -429,19 +465,19 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       });
     },
     async findRunLog(runId) {
-      const id = tables.param('agent_run_log', 'run_id', runId);
+      const id = runId;
       const row = tables.first('agent_run_log', (r) => r.run_id === id);
       return row ? runLogFromRow(row) : null;
     },
     async markLogQueued(runId) {
-      const id = tables.param('agent_run_log', 'run_id', runId);
+      const id = runId;
       tables.update('agent_run_log', (r) => r.run_id === id, {
         status: 'queued',
         finished_at: null,
       });
     },
     async recordOutcome(outcome) {
-      const id = tables.param('agent_run_log', 'run_id', outcome.runId);
+      const id = outcome.runId;
       const run = tables.first('agent_runs', (r) => r.id === id);
       const steps = tables.select('agent_run_steps', (r) => r.run_id === id);
       const lastFailed = outcome.failed
@@ -486,31 +522,31 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       tables.upsert('agent_run_log', values, ['run_id'], update);
     },
     async findForExecution(wanted) {
-      const id = runId(wanted);
+      const id = wanted;
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row ? executionFromRow(row) : null;
     },
     async updateExecution(wanted, patch) {
-      const id = runId(wanted);
+      const id = wanted;
       tables.update('agent_runs', (r) => r.id === id, {
         ...executionColumns(patch),
         updated_at: new Date(),
       });
     },
     async findCancelState(wanted) {
-      const id = runId(wanted);
+      const id = wanted;
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row ? { status: row.status, cancelRequestedAt: row.cancel_requested_at } : null;
     },
     async findChainLink(wanted) {
-      const id = runId(wanted);
+      const id = wanted;
       const row = tables.first('agent_runs', (r) => r.id === id);
       return row
         ? { triggerKind: row.trigger_kind, parentRunId: row.parent_run_id, lineage: row.lineage }
         : null;
     },
     async listTurns(wanted, stepId) {
-      const id = tables.param('agent_run_steps', 'run_id', wanted);
+      const id = wanted;
       return orderBy(
         tables.select('agent_run_steps', (r) => r.run_id === id && r.step_id === stepId),
         [(r) => r.attempt],
@@ -519,6 +555,16 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
     },
     async openTurn(turn) {
       const now = new Date();
+      // The executor's tripwire: a second executor of one run finds its turn taken.
+      const taken = tables.first(
+        'agent_run_steps',
+        (r) =>
+          r.run_id === turn.runId &&
+          r.step_id === turn.stepId &&
+          r.iteration === 0 &&
+          r.attempt === turn.attempt
+      );
+      if (taken) throw uniqueViolation('agent_run_steps', 'agent_run_steps_run_step_attempt');
       tables.insert('agent_run_steps', {
         id: turn.id,
         run_id: turn.runId,
@@ -528,23 +574,34 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         iteration: 0,
         status: 'running',
         started_at: now,
-        detail: turn.detail,
+        detail: parseJson(turn.detail),
+        finished_at: null,
+        outcome: null,
+        outcome_code: null,
+        tool_call_count: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_input_tokens: null,
+        cache_write_input_tokens: null,
+        created_at: now,
+        updated_at: now,
       });
     },
     async writeTurn(turnId, write) {
-      const id = tables.param('agent_run_steps', 'id', turnId);
+      const id = turnId;
       const now = new Date();
       tables.update('agent_run_steps', (r) => r.id === id, {
         ...turnWriteColumns(write),
+        detail: parseJson(write.detail),
         ...(write.finished ? { finished_at: now } : {}),
         updated_at: now,
       });
     },
     async closeOpenTurns(wanted, status) {
-      closeTurns(runId(wanted), status);
+      closeTurns(wanted, status);
     },
     async finishExecution(wanted, { status, errorKind, error }) {
-      const id = runId(wanted);
+      const id = wanted;
       const now = new Date();
       tables.update('agent_runs', (r) => r.id === id, {
         status,
@@ -557,7 +614,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       closeTurns(id, 'canceled');
     },
     async cancelWaiting(wanted, reason) {
-      const id = runId(wanted);
+      const id = wanted;
       const now = new Date();
       tables.update('agent_runs', (r) => r.id === id, {
         status: 'canceled',
@@ -569,7 +626,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         status: 'expired',
         decided_at: now,
         archived_at: now,
-        result: JSON.stringify({ reason }),
+        result: toJson({ reason }),
         updated_at: now,
       });
       tables.update('agent_action_batches', (r) => r.run_id === id && r.status === 'proposed', {
@@ -580,6 +637,15 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
     },
     async stageBatch(batch) {
       const now = new Date();
+      // The executor's tripwire: one batch per (run, turn).
+      if (
+        tables.first(
+          'agent_action_batches',
+          (r) => r.run_id === batch.runId && r.turn === batch.turn
+        )
+      ) {
+        throw uniqueViolation('agent_action_batches', 'agent_action_batches_run_id_turn_key');
+      }
       tables.insert('agent_action_batches', {
         id: batch.id,
         run_id: batch.runId,
@@ -588,15 +654,22 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         turn: batch.turn,
         status: batch.status,
         summary: batch.summary,
-        actions: JSON.stringify(batch.actions),
+        actions: toJson(batch.actions),
         review_reason: batch.reviewReason,
         accepted_by: batch.acceptedBy,
         decided_at: batch.decided ? now : null,
         waiting_until: batch.waitingUntil,
+        decided_by: null,
+        comment: null,
+        results: [],
+        started_at: null,
+        finished_at: null,
+        created_at: now,
+        updated_at: now,
       });
     },
     async findBatchState(wanted) {
-      const id = batchId(wanted);
+      const id = wanted;
       const batch = tables.first('agent_action_batches', (r) => r.id === id);
       if (!batch) return null;
       const run = tables.first('agent_runs', (r) => r.id === batch.run_id);
@@ -610,7 +683,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       });
     },
     async settleProposedBatch(wanted, { status, acceptedBy, decidedBy, comment }) {
-      const id = batchId(wanted);
+      const id = wanted;
       const now = new Date();
       return (
         tables.update('agent_action_batches', (r) => r.id === id && r.status === 'proposed', {
@@ -624,7 +697,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async expireLiveBatch(wanted, comment) {
-      const id = batchId(wanted);
+      const id = wanted;
       const now = new Date();
       tables.update(
         'agent_action_batches',
@@ -633,7 +706,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async claimBatch(wanted) {
-      const id = batchId(wanted);
+      const id = wanted;
       const now = new Date();
       return (
         tables.update('agent_action_batches', (r) => r.id === id && r.status === 'accepted', {
@@ -644,18 +717,18 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
     },
     async saveBatchProgress(wanted, results) {
-      const id = batchId(wanted);
+      const id = wanted;
       tables.update('agent_action_batches', (r) => r.id === id, {
-        ...(results === undefined ? {} : { results: JSON.stringify(results) }),
+        ...(results === undefined ? {} : { results: toJson(results) }),
         updated_at: new Date(),
       });
     },
     async completeBatch(wanted, results) {
-      const id = batchId(wanted);
+      const id = wanted;
       const now = new Date();
       tables.update('agent_action_batches', (r) => r.id === id, {
         status: 'completed',
-        results: JSON.stringify(results),
+        results: toJson(results),
         finished_at: now,
         updated_at: now,
       });
@@ -663,7 +736,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
     async raiseTurnCard(card) {
       // The partial unique index (run, step, iteration, attempt) where
       // run_id is set, which the generated schema does not carry.
-      const run = tables.param('actionable_items', 'run_id', card.runId);
+      const run = card.runId;
       const taken = tables.first(
         'actionable_items',
         (r) =>
@@ -673,11 +746,17 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
           r.attempt === card.attempt
       );
       if (taken) return false;
-      tables.insert('actionable_items', turnCardValues(card));
+      const values = turnCardValues(card);
+      tables.insert('actionable_items', {
+        ...itemDefaults(new Date()),
+        ...values,
+        evidence: [],
+        suggested_action: parseJson(values.suggested_action),
+      });
       return true;
     },
     async findTurnCard(wanted, stepId, attempt) {
-      const run = tables.param('actionable_items', 'run_id', wanted);
+      const run = wanted;
       const [row] = orderBy(
         tables.select(
           'actionable_items',
@@ -690,14 +769,14 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         : null;
     },
     async expireCard(cardId, result) {
-      const id = tables.param('actionable_items', 'id', cardId);
+      const id = cardId;
       const now = new Date();
       return (
         tables.update('actionable_items', (r) => r.id === id && r.status === 'suggested', {
           status: 'expired',
           decided_at: now,
           archived_at: now,
-          result: JSON.stringify(result),
+          result: toJson(result),
           updated_at: now,
         }).length > 0
       );

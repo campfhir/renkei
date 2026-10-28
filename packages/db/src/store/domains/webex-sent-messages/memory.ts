@@ -5,9 +5,11 @@ import type { WebexSentMessageStore } from './types';
 export function memoryWebexSentMessages(tables: MemoryTables): WebexSentMessageStore {
   return {
     async record(messageId, accountId) {
-      tables.upsert('webex_sent_messages', { message_id: messageId, account_id: accountId }, [
-        'message_id',
-      ]);
+      tables.upsert(
+        'webex_sent_messages',
+        { message_id: messageId, account_id: accountId, created_at: new Date() },
+        ['message_id']
+      );
     },
     async find(messageId) {
       const row = tables.first('webex_sent_messages', (r) => r.message_id === messageId);

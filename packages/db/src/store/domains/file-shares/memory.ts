@@ -1,12 +1,17 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, uniqueViolation, type MemoryTables } from '../../memory/tables';
 import { connectionFromRow, fileShareFromRow, shareValues } from './record';
 import type { FileShareStore } from './types';
 
 export function memoryFileShares(tables: MemoryTables): FileShareStore {
-  const shareId = (id: string) => tables.param('file_shares', 'id', id);
+  // The connector's store turns a taken name into its own answer (23505).
+  const refuseTakenName = (name: string, except?: string) => {
+    if (tables.first('file_shares', (r) => r.name === name && r.id !== except)) {
+      throw uniqueViolation('file_shares', 'idx_file_shares_name');
+    }
+  };
   const connectionOf = (id: string, subject: string) => {
-    const wanted = tables.param('file_share_connections', 'share_id', id);
+    const wanted = id;
     return (r: { share_id: string; subject: string }) =>
       r.share_id === wanted && r.subject === subject;
   };
@@ -41,6 +46,8 @@ export function memoryFileShares(tables: MemoryTables): FileShareStore {
           username: connection.username,
           tool_access: connection.toolAccess,
           allow_delete: connection.allowDelete,
+          created_at: new Date(),
+          updated_at: new Date(),
         },
         ['share_id', 'subject'],
         {
@@ -76,23 +83,31 @@ export function memoryFileShares(tables: MemoryTables): FileShareStore {
       return orderBy(tables.select('file_shares'), [(r) => r.name]).map(fileShareFromRow);
     },
     async get(id) {
-      const wanted = shareId(id);
+      const wanted = id;
       const row = tables.first('file_shares', (r) => r.id === wanted);
       return row ? fileShareFromRow(row) : null;
     },
     async create(share) {
-      return tables.insert('file_shares', { ...shareValues(share), settings: JSON.stringify({}) })
-        .id;
+      refuseTakenName(share.name);
+      const now = new Date();
+      return tables.insert('file_shares', {
+        ...shareValues(share),
+        id: globalThis.crypto.randomUUID(),
+        settings: toJson({}),
+        created_at: now,
+        updated_at: now,
+      }).id;
     },
     async update(id, share) {
-      const wanted = shareId(id);
+      const wanted = id;
+      if (tables.first('file_shares', (r) => r.id === wanted)) refuseTakenName(share.name, wanted);
       return tables.update('file_shares', (r) => r.id === wanted, {
         ...shareValues(share),
         updated_at: new Date(),
       }).length;
     },
     async recordHostKeyFingerprint(id, fingerprint) {
-      const wanted = shareId(id);
+      const wanted = id;
       return tables.update(
         'file_shares',
         (r) => r.id === wanted && r.host_key_fingerprint === null,
@@ -100,7 +115,9 @@ export function memoryFileShares(tables: MemoryTables): FileShareStore {
       ).length;
     },
     async delete(id) {
-      const wanted = shareId(id);
+      const wanted = id;
+      tables.delete('file_share_connections', (r) => r.share_id === wanted);
+      tables.delete('batch_processed_files', (r) => r.share_id === wanted);
       return tables.delete('file_shares', (r) => r.id === wanted).length;
     },
   };

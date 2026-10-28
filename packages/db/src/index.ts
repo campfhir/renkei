@@ -25,6 +25,7 @@ export type { QueueSignal } from './store/memory/signals';
 export {
   MemoryTables,
   MemoryStoreError,
+  toJson,
   type Row,
   type NewRow,
   type TableName,

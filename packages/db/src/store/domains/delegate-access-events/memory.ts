@@ -12,6 +12,8 @@ export function memoryDelegateAccessEvents(tables: MemoryTables): DelegateAccess
         target: event.target,
         outcome: event.outcome,
         status: event.status,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
       });
     },
     async recent(limit) {

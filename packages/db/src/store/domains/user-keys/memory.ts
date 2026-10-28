@@ -1,9 +1,15 @@
 import { orderBy, type OrderTerm } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import type { MemoryTables, Row } from '../../memory/tables';
 import { USER_KEY_SEALED_ORDER, USER_KEY_SEALED_TABLES } from './sealed';
 import type { UserKeyDelegationWrite, UserKeySealedRows, UserKeyStore } from './types';
 
 export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
+  /** Delegate instances, and the key delegations sealed to them. */
+  const deleteInstances = (where: (r: Row<'delegate_instances'>) => boolean) => {
+    const gone = new Set(tables.delete('delegate_instances', where).map((r) => r.id));
+    tables.delete('key_delegations', (r) => gone.has(r.instance_id));
+    return gone.size;
+  };
   return {
     async findKeyRow(subject) {
       const row = tables.first('user_encryption_keys', (r) => r.subject === subject);
@@ -20,7 +26,7 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
         : null;
     },
     async liveDelegations(subject, instanceId, now) {
-      const instance = tables.param('key_delegations', 'instance_id', instanceId);
+      const instance = instanceId;
       const rows = tables.select(
         'key_delegations',
         (r) =>
@@ -57,19 +63,24 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
       }));
     },
     async registerInstance(id, publicKey) {
-      tables.insert('delegate_instances', { id, public_key: publicKey });
+      const now = new Date();
+      tables.insert('delegate_instances', {
+        id,
+        public_key: publicKey,
+        started_at: now,
+        heartbeat_at: now,
+      });
     },
     async heartbeatInstance(id, at) {
-      const instance = tables.param('delegate_instances', 'id', id);
+      const instance = id;
       tables.update('delegate_instances', (r) => r.id === instance, { heartbeat_at: at });
     },
     async deleteStaleInstances(before) {
-      return tables.delete('delegate_instances', (r) => r.heartbeat_at.getTime() < before.getTime())
-        .length;
+      return deleteInstances((r) => r.heartbeat_at.getTime() < before.getTime());
     },
     async deleteInstance(id) {
-      const instance = tables.param('delegate_instances', 'id', id);
-      return tables.delete('delegate_instances', (r) => r.id === instance).length;
+      const instance = id;
+      return deleteInstances((r) => r.id === instance);
     },
     async writeDelegations(subject, write) {
       writeDelegations(subject, write);
@@ -85,6 +96,7 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
         'resource_key_grants',
         (r) => r.holder === subject && HELD_OR_PUBLIC.includes(r.holder_kind)
       );
+      tables.delete('key_delegations', (r) => r.subject === subject);
       return tables.delete('user_encryption_keys', (r) => r.subject === subject).length > 0;
     },
     async countByMode() {
@@ -98,7 +110,25 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
       );
     },
     async ensureLegacyRow(subject, salt) {
-      tables.upsert('user_encryption_keys', { subject, salt }, ['subject']);
+      tables.upsert(
+        'user_encryption_keys',
+        {
+          subject,
+          salt,
+          mode: 'managed',
+          version: 1,
+          public_key: null,
+          wrapped_private_key: null,
+          wrapped_automation_key: null,
+          enrolled_at: null,
+          rotated_at: null,
+          verifier: null,
+          sealed_kek: null,
+          unlocked_until: null,
+          created_at: new Date(),
+        },
+        ['subject']
+      );
       const row = tables.first('user_encryption_keys', (r) => r.subject === subject);
       if (!row) throw new Error('no result');
       return { salt: row.salt, mode: row.mode, version: row.version };
@@ -118,11 +148,7 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
       const decided = await plan(current, async () => readSealed(subject));
       if (!decided.commit) return decided.answer;
       for (const wrapping of decided.rewrite.wrappings) {
-        const keyId = tables.param(
-          'resource_key_grants',
-          'resource_key_id',
-          wrapping.resourceKeyId
-        );
+        const keyId = wrapping.resourceKeyId;
         tables.update(
           'resource_key_grants',
           (r) =>
@@ -161,7 +187,13 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
         };
         tables.upsert(
           'user_encryption_keys',
-          { subject, salt: change.salt, ...held, rotated_at: change.rotatedAt },
+          {
+            subject,
+            salt: change.salt,
+            ...held,
+            rotated_at: change.rotatedAt,
+            created_at: new Date(),
+          },
           ['subject'],
           { ...held, rotated_at: change.enrolledAt }
         );
@@ -181,7 +213,7 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
 
   function writeDelegations(subject: string, write: UserKeyDelegationWrite): void {
     const known = new Set(tables.select('delegate_instances').map((row) => row.id));
-    const session = tables.param('key_delegations', 'session_id', write.sessionId);
+    const session = write.sessionId;
     tables.delete(
       'key_delegations',
       (r) => r.subject === subject && r.scope === 'session' && r.session_id === session
@@ -190,32 +222,34 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
     const isKnown = (entry: { instanceId: string }) => known.has(entry.instanceId);
     const sessionRows = write.session.filter(isKnown);
     if (sessionRows.length > 0) {
-      tables.insertMany(
-        'key_delegations',
-        sessionRows.map((entry) => ({
+      for (const entry of sessionRows) {
+        tables.insert('key_delegations', {
+          id: globalThis.crypto.randomUUID(),
           subject,
           instance_id: entry.instanceId,
           scope: 'session',
           session_id: write.sessionId,
           sealed_key: entry.sealedKey,
           expires_at: write.sessionExpiresAt,
-        }))
-      );
+          created_at: new Date(),
+        });
+      }
     }
     const automation = write.automation.filter(isKnown);
     if (automation.length > 0) {
       tables.delete('key_delegations', (r) => r.subject === subject && r.scope === 'automation');
-      tables.insertMany(
-        'key_delegations',
-        automation.map((entry) => ({
+      for (const entry of automation) {
+        tables.insert('key_delegations', {
+          id: globalThis.crypto.randomUUID(),
           subject,
           instance_id: entry.instanceId,
           scope: 'automation',
           session_id: null,
           sealed_key: entry.sealedKey,
           expires_at: write.automationExpiresAt,
-        }))
-      );
+          created_at: new Date(),
+        });
+      }
     }
   }
 

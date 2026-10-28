@@ -1,12 +1,11 @@
 import { compareAsc, groupBy, orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
-import { SALESFORCE_CHANGES as TABLE, json, salesforceChangeFromRow } from './record';
+import { toJson, type MemoryTables } from '../../memory/tables';
+import { SALESFORCE_CHANGES as TABLE, salesforceChangeFromRow } from './record';
 import type { SalesforceChangeStore } from './types';
 
 const HOUR_MS = 3_600_000;
 
 export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeStore {
-  const idOf = (id: string) => tables.param(TABLE, 'id', id);
   const live = (expiresAt: Date, now: Date) => expiresAt.getTime() > now.getTime();
 
   return {
@@ -21,22 +20,33 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
         kind: input.kind,
         title: input.title,
         reason: input.reason,
-        payload: json(input.payload),
+        payload: toJson(input.payload),
         expires_at: new Date(now.getTime() + input.ttlHours * HOUR_MS),
+        id: globalThis.crypto.randomUUID(),
+        status: 'pending',
+        results: null,
+        step: null,
+        resolution: null,
+        applied_by: null,
+        applied_at: null,
+        approved_by: null,
+        approved_at: null,
+        cancelled_at: null,
+        validation: null,
         created_at: now,
         updated_at: now,
       });
       return salesforceChangeFromRow(row);
     },
     async setValidation(id, validation) {
-      const key = idOf(id);
+      const key = id;
       tables.update(TABLE, (r) => r.id === key, {
-        validation: json(validation),
+        validation: toJson(validation),
         updated_at: new Date(),
       });
     },
     async get(id, options = {}) {
-      const key = idOf(id);
+      const key = id;
       const row = tables.first(
         TABLE,
         (r) => r.id === key && (options.subject === undefined || r.subject === options.subject)
@@ -70,7 +80,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
         .sort((a, b) => compareAsc(a.connectorKey, b.connectorKey));
     },
     async claim(subject, id) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -85,19 +95,19 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       );
     },
     async recordDeployStarted(id, results) {
-      const key = idOf(id);
+      const key = id;
       tables.update(TABLE, (r) => r.id === key && r.status === 'applying', {
-        results: json(results),
+        results: toJson(results),
         updated_at: new Date(),
       });
     },
     async finish(id, outcome) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(TABLE, (r) => r.id === key && r.status === 'applying', {
           status: outcome.status,
-          results: json(outcome.results),
+          results: toJson(outcome.results),
           applied_by: outcome.appliedBy,
           applied_at: now,
           updated_at: now,
@@ -106,7 +116,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       );
     },
     async cancel(id, { subject, resolution }) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -125,7 +135,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       );
     },
     async queue(id, { approvedBy, step, exceptKind }) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -140,7 +150,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       );
     },
     async startQueued(id, step) {
-      const key = idOf(id);
+      const key = id;
       return (
         tables.update(TABLE, (r) => r.id === key && r.status === 'queued', {
           status: 'applying',
@@ -150,7 +160,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       );
     },
     async reclaimStale(id, staleMs) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(
@@ -164,7 +174,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       );
     },
     async setStep(id, step) {
-      const key = idOf(id);
+      const key = id;
       return (
         tables.update(
           TABLE,
@@ -185,7 +195,7 @@ export function memorySalesforceChanges(tables: MemoryTables): SalesforceChangeS
       }));
     },
     async closeAsProposed(id, { kind, resolution }) {
-      const key = idOf(id);
+      const key = id;
       const now = new Date();
       return (
         tables.update(TABLE, (r) => r.id === key && r.kind === kind && r.status === 'pending', {

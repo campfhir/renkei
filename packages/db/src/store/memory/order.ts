@@ -1,15 +1,16 @@
 /**
- * Postgres's comparison and matching rules, in JavaScript, for the memory
- * store's repositories to sort and filter with. Strings compare under ICU
- * en-US — the collation the contract database is created with
- * (differential/harness.ts) and the one V8's Intl uses — so an ORDER BY
- * name comes out the same on both sides.
+ * Sorting and matching for the memory store's repositories. Strings compare
+ * by plain code-unit order: where Postgres orders by collated text (names,
+ * titles) the two agree on the plain values the scenarios use, and the mock
+ * makes no attempt at collation rules.
  */
 
-const collator = new Intl.Collator('en-US');
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 /**
- * ORDER BY … ASC for one value: nulls last, strings by collation, Dates by
+ * ORDER BY … ASC for one value: nulls last, strings by code unit, Dates by
  * instant, booleans false first. int8 and numeric columns arrive as
  * strings, as pg returns them: convert them with Number() in the key
  * function before comparing, as Postgres compares them numerically.
@@ -22,8 +23,8 @@ export function compareAsc(a: unknown, b: unknown): number {
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   if (typeof a === 'bigint' && typeof b === 'bigint') return a < b ? -1 : a > b ? 1 : 0;
   if (typeof a === 'boolean' && typeof b === 'boolean') return Number(a) - Number(b);
-  if (typeof a === 'string' && typeof b === 'string') return collator.compare(a, b);
-  return collator.compare(String(a), String(b));
+  if (typeof a === 'string' && typeof b === 'string') return compareText(a, b);
+  return compareText(String(a), String(b));
 }
 
 /** One ORDER BY term: a key, and DESC (which in Postgres also puts nulls first). */

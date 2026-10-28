@@ -356,6 +356,8 @@ export function memoryUsage(tables: MemoryTables): UsageStore {
         provider: call.provider,
         model: call.model,
         duration_ms: call.durationMs,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
       });
     },
 
@@ -367,6 +369,8 @@ export function memoryUsage(tables: MemoryTables): UsageStore {
         pages: usage.pages,
         input_tokens: usage.inputTokens,
         output_tokens: usage.outputTokens,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
       });
     },
 
@@ -377,11 +381,13 @@ export function memoryUsage(tables: MemoryTables): UsageStore {
         provider: usage.provider,
         model: usage.model,
         images: 1,
-        image_bytes: usage.imageBytes,
+        image_bytes: String(usage.imageBytes),
         width: usage.width,
         height: usage.height,
         input_tokens: usage.inputTokens,
         output_tokens: usage.outputTokens,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
       });
     },
 
@@ -394,6 +400,8 @@ export function memoryUsage(tables: MemoryTables): UsageStore {
         provider: usage.provider,
         voice: usage.voice,
         locale: usage.locale,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
       });
     },
 

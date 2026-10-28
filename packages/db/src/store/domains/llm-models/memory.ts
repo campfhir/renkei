@@ -1,6 +1,6 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
-import { isImageSurface, isLabelConflict, llmModelFromRow, llmModelValues } from './record';
+import { toJson, type MemoryTables } from '../../memory/tables';
+import { isImageSurface, llmModelFromRow, llmModelValues } from './record';
 import type { LlmModelStore } from './types';
 
 export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
@@ -11,7 +11,7 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
       );
     },
     async findEnabledChatModel(id) {
-      const key = id ? tables.param('llm_model_configs', 'id', id) : null;
+      const key = id ? id : null;
       const rows = tables.select(
         'llm_model_configs',
         (r) =>
@@ -21,7 +21,7 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
       return row ? llmModelFromRow(row) : null;
     },
     async findEnabledImageModel(id) {
-      const key = id ? tables.param('llm_model_configs', 'id', id) : null;
+      const key = id ? id : null;
       const rows = tables.select(
         'llm_model_configs',
         (r) => r.enabled && isImageSurface(r.settings) && (key === null || r.id === key)
@@ -30,7 +30,7 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
       return row ? llmModelFromRow(row) : null;
     },
     async get(id) {
-      const key = tables.param('llm_model_configs', 'id', id);
+      const key = id;
       const row = tables.first('llm_model_configs', (r) => r.id === key);
       return row ? llmModelFromRow(row) : null;
     },
@@ -39,9 +39,14 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
       if (tables.first('llm_model_configs', (r) => r.label === input.label)) {
         return 'duplicate-label';
       }
-      // Insert first (a malformed or taken id is refused before any change),
-      // then hand it the default; nothing awaits in between.
-      const created = tables.insert('llm_model_configs', { id, ...llmModelValues(input) });
+      const now = new Date();
+      const created = tables.insert('llm_model_configs', {
+        id,
+        ...llmModelValues(input),
+        settings: toJson(input.settings),
+        created_at: now,
+        updated_at: now,
+      });
       if (input.isDefault) {
         tables.update('llm_model_configs', (r) => r.is_default && r.id !== created.id, {
           is_default: false,
@@ -51,7 +56,7 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
       return 'created';
     },
     async update(id, input) {
-      const key = tables.param('llm_model_configs', 'id', id);
+      const key = id;
       if (!tables.first('llm_model_configs', (r) => r.id === key)) return 'not-found';
       if (tables.first('llm_model_configs', (r) => r.label === input.label && r.id !== key)) {
         return 'duplicate-label';
@@ -62,20 +67,21 @@ export function memoryLlmModels(tables: MemoryTables): LlmModelStore {
           updated_at: new Date(),
         });
       }
-      try {
-        tables.update('llm_model_configs', (r) => r.id === key, {
-          ...llmModelValues(input),
-          updated_at: new Date(),
-        });
-      } catch (error) {
-        if (isLabelConflict(error)) return 'duplicate-label';
-        throw error;
-      }
+      tables.update('llm_model_configs', (r) => r.id === key, {
+        ...llmModelValues(input),
+        settings: toJson(input.settings),
+        updated_at: new Date(),
+      });
       return 'updated';
     },
     async delete(id) {
-      const key = tables.param('llm_model_configs', 'id', id);
-      return tables.delete('llm_model_configs', (r) => r.id === key).length > 0;
+      const key = id;
+      const deleted = tables.delete('llm_model_configs', (r) => r.id === key).length > 0;
+      // Whatever named the model falls back to the default.
+      for (const table of ['agents', 'chats', 'chat_turns', 'chat_messages'] as const) {
+        tables.updateWhere(table, (r) => r.llm_model_id === key, { llm_model_id: null });
+      }
+      return deleted;
     },
   };
 }

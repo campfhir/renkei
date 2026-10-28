@@ -1,5 +1,5 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import { connectorConfigFromRow } from './record';
 import type { ConnectorConfigStore } from './types';
 
@@ -14,7 +14,7 @@ export function memoryConnectorConfigs(tables: MemoryTables): ConnectorConfigSto
       return orderBy(rows, [(r) => r.connector]).map(connectorConfigFromRow);
     },
     async upsert({ connector, enabled, settings, encryptedSecrets }) {
-      const json = JSON.stringify(settings);
+      const json = toJson(settings);
       const now = new Date();
       tables.upsert(
         'connector_configs',

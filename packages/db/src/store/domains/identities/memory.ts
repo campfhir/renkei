@@ -27,7 +27,14 @@ export function memoryIdentities(tables: MemoryTables): IdentityStore {
     async upsert({ subject, email, displayName, idpGroups }) {
       tables.upsert(
         'identities',
-        { subject, email, display_name: displayName, idp_groups: idpGroups },
+        {
+          subject,
+          email,
+          display_name: displayName,
+          idp_groups: idpGroups,
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
         ['subject'],
         { email, display_name: displayName, idp_groups: idpGroups, updated_at: new Date() }
       );

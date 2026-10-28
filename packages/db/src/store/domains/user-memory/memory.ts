@@ -10,7 +10,6 @@ export function memoryUserMemory(tables: MemoryTables): UserMemoryStore {
       [(r) => r.created_at, 'desc'],
       [(r) => r.id]
     );
-  const memoryId = (value: string) => tables.param('chat_user_memories', 'id', value);
 
   return {
     async list(ownerSubject, limit) {
@@ -22,6 +21,9 @@ export function memoryUserMemory(tables: MemoryTables): UserMemoryStore {
         kind: 'entry',
         content: entry.content,
         chat_id: entry.chatId,
+        id: globalThis.crypto.randomUUID(),
+        created_at: new Date(),
+        updated_at: new Date(),
       });
       const beyond = new Set(
         rowsOf(entry.ownerSubject)
@@ -33,7 +35,7 @@ export function memoryUserMemory(tables: MemoryTables): UserMemoryStore {
       return inserted.id;
     },
     async edit(ownerSubject, id, content) {
-      const wanted = memoryId(id);
+      const wanted = id;
       return (
         tables.update(
           'chat_user_memories',
@@ -44,7 +46,7 @@ export function memoryUserMemory(tables: MemoryTables): UserMemoryStore {
     },
     async forget(ownerSubject, target) {
       if (target.kind === 'entries' && target.ids.length === 0) return 0;
-      const ids = target.kind === 'entries' ? new Set(target.ids.map(memoryId)) : null;
+      const ids = target.kind === 'entries' ? new Set(target.ids) : null;
       return tables.delete(
         'chat_user_memories',
         (r) => r.owner_subject === ownerSubject && (!ids || ids.has(r.id))

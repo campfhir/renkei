@@ -1,5 +1,5 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { parseJson, type MemoryTables } from '../../memory/tables';
 import { isEmptyTarget, notificationFromRow, notificationValues } from './record';
 import type { NotificationStore, NotificationTarget } from './types';
 
@@ -46,7 +46,14 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
       return tables.delete('agent_notifications', (r) => r.subject === subject && hit(r.id)).length;
     },
     async insert(notification) {
-      tables.insert('agent_notifications', notificationValues(notification));
+      const values = notificationValues(notification);
+      tables.insert('agent_notifications', {
+        ref_id: null,
+        step_id: null,
+        created_at: new Date(),
+        ...values,
+        meta: parseJson(values.meta),
+      });
     },
     async markReadByRef(subject, kind, refId) {
       return tables.update(
@@ -56,7 +63,7 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
       ).length;
     },
     async find(subject, id) {
-      const wanted = tables.param('agent_notifications', 'id', id);
+      const wanted = id;
       const row = tables.first(
         'agent_notifications',
         (r) => r.subject === subject && r.id === wanted
@@ -72,6 +79,7 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
           endpoint: subscription.endpoint,
           p256dh: subscription.p256dh,
           auth: subscription.auth,
+          created_at: new Date(),
         },
         ['endpoint'],
         { subject, p256dh: subscription.p256dh, auth: subscription.auth }
@@ -103,7 +111,7 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
       );
     },
     async wasWatchingChat(subject, chatId, since) {
-      const wanted = tables.param('chat_presence', 'chat_id', chatId);
+      const wanted = chatId;
       return (
         tables.first(
           'chat_presence',
@@ -119,7 +127,7 @@ export function memoryNotifications(tables: MemoryTables): NotificationStore {
         .length;
     },
     async setHeadline(id, headline) {
-      const wanted = tables.param('agent_notifications', 'id', id);
+      const wanted = id;
       tables.update('agent_notifications', (r) => r.id === wanted, { headline });
     },
     async pruneBefore(before, limit) {

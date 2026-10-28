@@ -1,5 +1,5 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import type { SettingsStore } from './types';
 
 export function memorySettings(tables: MemoryTables): SettingsStore {
@@ -13,8 +13,8 @@ export function memorySettings(tables: MemoryTables): SettingsStore {
       return tables.first('settings', (r) => r.key === key)?.value;
     },
     async set(key, value) {
-      const json = JSON.stringify(value);
-      tables.upsert('settings', { key, value: json }, ['key'], {
+      const json = toJson(value);
+      tables.upsert('settings', { key, value: json, updated_at: new Date() }, ['key'], {
         value: json,
         updated_at: new Date(),
       });

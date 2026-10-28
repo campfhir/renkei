@@ -1,16 +1,34 @@
 import { orderBy, sameValue } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, uniqueViolation, type MemoryTables } from '../../memory/tables';
 import { scheduleFromRow, schedulePatch, scheduleValues } from './record';
 import type { BatchJobScheduleStore } from './types';
 
 export function memoryBatchJobSchedules(tables: MemoryTables): BatchJobScheduleStore {
-  const key = (scheduleId: string) => tables.param('batch_job_schedules', 'id', scheduleId);
+  // The schedules store answers a taken name as a duplicate (by constraint name).
+  const refuseTakenName = (name: string, except?: string) => {
+    if (tables.first('batch_job_schedules', (r) => r.name === name && r.id !== except)) {
+      throw uniqueViolation('batch_job_schedules', 'batch_job_schedules_name');
+    }
+  };
   return {
     async create(schedule) {
-      return scheduleFromRow(tables.insert('batch_job_schedules', scheduleValues(schedule)));
+      refuseTakenName(schedule.name);
+      const now = new Date();
+      return scheduleFromRow(
+        tables.insert('batch_job_schedules', {
+          ...scheduleValues(schedule),
+          config: toJson(schedule.config ?? {}),
+          schedule_config: toJson(schedule.scheduleConfig ?? {}),
+          enabled: true,
+          last_fired_at: null,
+          last_error: null,
+          created_at: now,
+          updated_at: now,
+        })
+      );
     },
     async get(scheduleId) {
-      const id = key(scheduleId);
+      const id = scheduleId;
       const row = tables.first('batch_job_schedules', (r) => sameValue(r.id, id));
       return row ? scheduleFromRow(row) : undefined;
     },
@@ -19,19 +37,25 @@ export function memoryBatchJobSchedules(tables: MemoryTables): BatchJobScheduleS
       return orderBy(rows, [(r) => r.name], [(r) => r.id]).map(scheduleFromRow);
     },
     async update(scheduleId, patch) {
-      const id = key(scheduleId);
+      const id = scheduleId;
+      if (patch.name !== undefined) refuseTakenName(patch.name, id);
       const [row] = tables.update('batch_job_schedules', (r) => sameValue(r.id, id), {
         ...schedulePatch(patch),
+        ...(patch.config !== undefined ? { config: toJson(patch.config ?? {}) } : {}),
+        ...(patch.scheduleConfig !== undefined
+          ? { schedule_config: toJson(patch.scheduleConfig ?? {}) }
+          : {}),
         updated_at: new Date(),
       });
       return row ? scheduleFromRow(row) : undefined;
     },
     async delete(scheduleId) {
-      const id = key(scheduleId);
+      const id = scheduleId;
+      tables.update('batch_jobs', (r) => r.schedule_id === id, { schedule_id: null });
       return tables.delete('batch_job_schedules', (r) => sameValue(r.id, id)).length > 0;
     },
     async calendarDates(calendarId) {
-      const id = tables.param('schedule_calendars', 'id', calendarId);
+      const id = calendarId;
       const row = tables.first('schedule_calendars', (r) => sameValue(r.id, id));
       return row ? row.dates : undefined;
     },
@@ -46,7 +70,7 @@ export function memoryBatchJobSchedules(tables: MemoryTables): BatchJobScheduleS
         .map(scheduleFromRow);
     },
     async advance(scheduleId, observed, next) {
-      const id = key(scheduleId);
+      const id = scheduleId;
       const now = new Date();
       return (
         tables.update(
@@ -57,14 +81,14 @@ export function memoryBatchJobSchedules(tables: MemoryTables): BatchJobScheduleS
       );
     },
     async clearError(scheduleId) {
-      const id = key(scheduleId);
+      const id = scheduleId;
       tables.update('batch_job_schedules', (r) => sameValue(r.id, id), {
         last_error: null,
         updated_at: new Date(),
       });
     },
     async recordError(scheduleId, message, { disable = false } = {}) {
-      const id = key(scheduleId);
+      const id = scheduleId;
       tables.update('batch_job_schedules', (r) => sameValue(r.id, id), {
         last_error: message,
         updated_at: new Date(),

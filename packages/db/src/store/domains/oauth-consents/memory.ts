@@ -10,7 +10,6 @@ import {
 import type { OAuthConsentStore } from './types';
 
 export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
-  const idOf = (id: string) => tables.param('oauth_consent_requests', 'id', id);
   return {
     async getClient(clientId) {
       const row = tables.first('oauth_clients', (r) => r.client_id === clientId);
@@ -21,10 +20,13 @@ export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
         .length;
     },
     async createRequest(request) {
-      tables.insert('oauth_consent_requests', requestValues(request));
+      tables.insert('oauth_consent_requests', {
+        ...requestValues(request),
+        created_at: new Date(),
+      });
     },
     async getRequest(id) {
-      const key = idOf(id);
+      const key = id;
       const row = tables.first('oauth_consent_requests', (r) => r.id === key);
       if (!row) return null;
       const client = tables.first('oauth_clients', (c) => c.client_id === row.client_id);
@@ -36,15 +38,16 @@ export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
       };
     },
     async takeRequest(id) {
-      const key = idOf(id);
+      const key = id;
       const [row] = tables.delete('oauth_consent_requests', (r) => r.id === key);
       return row ? requestFromRow(row) : null;
     },
     async insertAuthorizationCode(code) {
-      tables.insert('oauth_authorization_codes', codeValues(code));
+      tables.insert('oauth_authorization_codes', { ...codeValues(code), created_at: new Date() });
     },
     async registerClient(client) {
-      tables.insert('oauth_clients', clientValues(client));
+      const now = new Date();
+      tables.insert('oauth_clients', { ...clientValues(client), created_at: now, updated_at: now });
     },
     async getClientCredentials(clientId) {
       const row = tables.first('oauth_clients', (r) => r.client_id === clientId);

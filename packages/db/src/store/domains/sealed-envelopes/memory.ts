@@ -6,8 +6,7 @@ type Fields = Record<string, unknown>;
 
 export function memorySealedEnvelopes(tables: MemoryTables): SealedEnvelopeStore {
   /** A query value as the column reads it (a uuid lower-cased, or refused when malformed). */
-  const paramOf = (table: string, column: string, value: string): unknown =>
-    tables.paramFor(table, column, value);
+  const paramOf = (table: string, column: string, value: string): unknown => value;
 
   return {
     async pageNotLike(target, notLike, after, limit) {

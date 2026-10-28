@@ -1,12 +1,17 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, uniqueViolation, type MemoryTables } from '../../memory/tables';
 import { instanceValues, mirthConnectionFromRow, mirthInstanceFromRow } from './record';
 import type { MirthInstanceStore } from './types';
 
 export function memoryMirthInstances(tables: MemoryTables): MirthInstanceStore {
-  const instanceId = (id: string) => tables.param('mirth_instances', 'id', id);
+  // The connector's store turns a taken name into its own answer (23505).
+  const refuseTakenName = (name: string, except?: string) => {
+    if (tables.first('mirth_instances', (r) => r.name === name && r.id !== except)) {
+      throw uniqueViolation('mirth_instances', 'idx_mirth_instances_name');
+    }
+  };
   const connectionOf = (id: string, subject: string) => {
-    const wanted = tables.param('mirth_instance_connections', 'instance_id', id);
+    const wanted = id;
     return (r: { instance_id: string; subject: string }) =>
       r.instance_id === wanted && r.subject === subject;
   };
@@ -39,6 +44,8 @@ export function memoryMirthInstances(tables: MemoryTables): MirthInstanceStore {
           encrypted_credentials: connection.encryptedCredentials,
           username: connection.username,
           permissions: [...connection.permissions],
+          created_at: new Date(),
+          updated_at: new Date(),
         },
         ['instance_id', 'subject'],
         {
@@ -72,26 +79,35 @@ export function memoryMirthInstances(tables: MemoryTables): MirthInstanceStore {
       return orderBy(tables.select('mirth_instances'), [(r) => r.name]).map(mirthInstanceFromRow);
     },
     async get(id) {
-      const wanted = instanceId(id);
+      const wanted = id;
       const row = tables.first('mirth_instances', (r) => r.id === wanted);
       return row ? mirthInstanceFromRow(row) : null;
     },
     async create(instance) {
+      refuseTakenName(instance.name);
+      const now = new Date();
       return tables.insert('mirth_instances', {
         ...instanceValues(instance),
+        id: globalThis.crypto.randomUUID(),
         ca_pem: instance.caPem ?? null,
-        settings: JSON.stringify({}),
+        settings: toJson({}),
+        created_at: now,
+        updated_at: now,
       }).id;
     },
     async update(id, instance) {
-      const wanted = instanceId(id);
+      const wanted = id;
+      if (tables.first('mirth_instances', (r) => r.id === wanted)) {
+        refuseTakenName(instance.name, wanted);
+      }
       return tables.update('mirth_instances', (r) => r.id === wanted, {
         ...instanceValues(instance),
         updated_at: new Date(),
       }).length;
     },
     async delete(id) {
-      const wanted = instanceId(id);
+      const wanted = id;
+      tables.delete('mirth_instance_connections', (r) => r.instance_id === wanted);
       return tables.delete('mirth_instances', (r) => r.id === wanted).length;
     },
   };

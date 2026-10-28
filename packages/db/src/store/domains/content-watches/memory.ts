@@ -1,7 +1,7 @@
 import { orderBy } from '../../memory/order';
 import { REBUILD_RESET, contentWatchFromRow, contentWatchSyncStateFromRow } from './record';
 import type { ContentWatchStore, ContentWatchScopeCount } from './types';
-import { MemoryStoreError, type MemoryTables } from '../../memory/tables';
+import type { MemoryTables } from '../../memory/tables';
 import { metadataText } from '../knowledge-chunks/metadata-filter';
 
 function sortedCounts(counts: Map<string | null, number>): ContentWatchScopeCount[] {
@@ -28,7 +28,7 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
       return row ? contentWatchFromRow(row) : null;
     },
     async resetForRebuild(id) {
-      const wanted = tables.param('content_watches', 'id', id);
+      const wanted = id;
       return tables.update('content_watches', (r) => r.id === wanted, {
         ...REBUILD_RESET,
         updated_at: new Date(),
@@ -66,22 +66,20 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
         scope_key: scopeKey,
         scope_label: scopeLabel,
         cursor: sibling?.cursor ?? null,
+        enabled: true,
+        sync_status: 'idle',
+        last_error: null,
+        last_synced_at: null,
+        last_run_items: 0,
+        total_items: 0,
+        created_at: new Date(),
+        updated_at: new Date(),
       });
       return { created: true };
     },
     async repair(owner, { provider, scopeType, scopeKey }) {
       const onScope = (r: { provider: string; scope_type: string; scope_key: string }) =>
         r.provider === provider && r.scope_type === scopeType && r.scope_key === scopeKey;
-      // Every row on the scope takes the same subject, so two or more
-      // collide on the unique key: Postgres refuses the whole statement,
-      // and so does this, before changing any.
-      if (tables.select('content_watches', onScope).length > 1) {
-        throw new MemoryStoreError(
-          '23505',
-          'duplicate key value violates unique constraint',
-          'content_watches'
-        );
-      }
       return tables.update('content_watches', onScope, {
         subject: owner.subject,
         account_id: owner.accountId,
@@ -136,12 +134,12 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
       return { indexed: sortedCounts(indexed), queued: sortedCounts(queued) };
     },
     async getSyncState(id) {
-      const key = tables.param('content_watches', 'id', id);
+      const key = id;
       const row = tables.first('content_watches', (r) => r.id === key);
       return row ? contentWatchSyncStateFromRow(row) : null;
     },
     async recordRound(id, round) {
-      const key = tables.param('content_watches', 'id', id);
+      const key = id;
       const now = new Date();
       tables.update(
         'content_watches',
@@ -158,7 +156,7 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
       );
     },
     async restartCursor(id) {
-      const key = tables.param('content_watches', 'id', id);
+      const key = id;
       tables.update('content_watches', (r) => r.id === key, {
         cursor: null,
         sync_status: 'syncing',
@@ -191,7 +189,7 @@ export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
         }));
     },
     async recordSyncFailure(id, message) {
-      const key = tables.param('content_watches', 'id', id);
+      const key = id;
       const now = new Date();
       tables.update('content_watches', (r) => r.id === key, {
         sync_status: 'error',

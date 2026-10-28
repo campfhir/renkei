@@ -12,15 +12,11 @@ import { MemoryTables, type TableRows } from './tables';
 export interface MemoryDataStore extends DataStore {
   readonly kind: 'memory';
   readonly tables: MemoryTables;
-  /**
-   * Add fixture rows, by table (parents before children is handled);
-   * `replace` overwrites rows whose primary key is already stored.
-   */
-  seed(fixtures: TableRows, options?: { replace?: boolean }): Promise<void>;
+  /** Add fixture rows, by table, as given. */
+  seed(fixtures: TableRows): Promise<void>;
   /**
    * Forget everything, or only what one subject owns: rows of every table
-   * whose `subject` or `owner_subject` is theirs, and what cascades from
-   * those.
+   * whose `subject` or `owner_subject` is theirs.
    */
   reset(subject?: string): void;
   /**
@@ -43,8 +39,8 @@ export function createMemoryDataStore(tables: MemoryTables = new MemoryTables())
     ...repositories,
     kind: 'memory' as const,
     tables,
-    async seed(fixtures: TableRows, options: { replace?: boolean } = {}) {
-      tables.seed(fixtures, options);
+    async seed(fixtures: TableRows) {
+      tables.seed(fixtures);
     },
     queueSignal(table: QueueTable) {
       return queueSignal(tables, table);
@@ -55,11 +51,7 @@ export function createMemoryDataStore(tables: MemoryTables = new MemoryTables())
         return;
       }
       for (const table of tables.tableNames()) {
-        const columns = Object.keys(tables.columnsOf(table)).filter((c) =>
-          OWNER_COLUMNS.includes(c)
-        );
-        if (columns.length === 0) continue;
-        tables.deleteWhere(table, (row) => columns.some((c) => row[c] === subject));
+        tables.deleteWhere(table, (row) => OWNER_COLUMNS.some((c) => row[c] === subject));
       }
     },
   };

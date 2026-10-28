@@ -1,5 +1,5 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables, Row } from '../../memory/tables';
+import { toJson, type MemoryTables, type Row } from '../../memory/tables';
 import { chatFromRow, chatPatchValues, newChatValues } from './record';
 import type { ChatStore } from './types';
 
@@ -7,16 +7,43 @@ type Chat = Row<'chats'>;
 
 const newestFirst = (rows: Chat[]) => orderBy(rows, [(r) => r.updated_at, 'desc'], [(r) => r.id]);
 
+/** What a chat's delete takes with it: its thread, files and side rows. */
+function deleteChatRows(tables: MemoryTables, chatIds: Set<string>): void {
+  const ofChat = (r: { chat_id: string }) => chatIds.has(r.chat_id);
+  for (const table of [
+    'chat_drafts',
+    'chat_messages',
+    'chat_presence',
+    'chat_queued_sends',
+    'chat_subagent_runs',
+    'chat_summaries',
+    'chat_turns',
+    'chat_widget_decisions',
+  ] as const) {
+    tables.delete(table, ofChat);
+  }
+  tables.delete('artifacts', (r) => r.chat_id !== null && chatIds.has(r.chat_id));
+  for (const table of [
+    'chat_project_memories',
+    'chat_user_memories',
+    'pr_subscriptions',
+  ] as const) {
+    tables.update(table, (r) => r.chat_id !== null && chatIds.has(r.chat_id), { chat_id: null });
+  }
+}
+
+const toolConfigOf = (value: unknown) =>
+  value === null || value === undefined ? null : toJson(value);
+
 export function memoryChats(tables: MemoryTables): ChatStore {
-  const chatId = (value: string) => tables.param('chats', 'id', value);
   const ownChat = (ownerSubject: string, id: string) => {
-    const wanted = chatId(id);
+    const wanted = id;
     return (r: Chat) => r.owner_subject === ownerSubject && r.id === wanted;
   };
 
   return {
     async get(id) {
-      const wanted = chatId(id);
+      const wanted = id;
       const row = tables.first('chats', (r) => r.id === wanted);
       return row ? chatFromRow(row) : null;
     },
@@ -32,7 +59,7 @@ export function memoryChats(tables: MemoryTables): ChatStore {
       return page(newestFirst(rows), options.limit).map(chatFromRow);
     },
     async listOwnedInProject(ownerSubject, projectId, limit) {
-      const project = tables.param('chats', 'project_id', projectId);
+      const project = projectId;
       const rows = tables.select(
         'chats',
         (r) =>
@@ -53,7 +80,7 @@ export function memoryChats(tables: MemoryTables): ChatStore {
     },
     async listInProjects(projectIds, options) {
       if (projectIds.length === 0) return [];
-      const ids = new Set(projectIds.map((id) => tables.param('chats', 'project_id', id)));
+      const ids = new Set(projectIds.map((id) => id));
       const rows = tables.select(
         'chats',
         (r) =>
@@ -67,17 +94,33 @@ export function memoryChats(tables: MemoryTables): ChatStore {
     },
     async listByIds(chatIds) {
       if (chatIds.length === 0) return [];
-      const ids = new Set(chatIds.map(chatId));
+      const ids = new Set(chatIds);
       return newestFirst(tables.select('chats', (r) => ids.has(r.id))).map(chatFromRow);
     },
     async create(chat) {
-      return tables.insert('chats', newChatValues(chat)).id;
+      const now = new Date();
+      return tables.insert('chats', {
+        ...newChatValues(chat),
+        id: globalThis.crypto.randomUUID(),
+        tool_config: toolConfigOf(chat.toolConfig),
+        title: null,
+        archived_at: null,
+        last_message_at: null,
+        auto_title_asked: false,
+        request_overhead_tokens: null,
+        workspace_id: null,
+        created_at: now,
+        updated_at: now,
+      }).id;
     },
     async update(ownerSubject, id, patch) {
       const now = new Date();
       return (
         tables.update('chats', ownChat(ownerSubject, id), {
           ...chatPatchValues(patch),
+          ...(patch.toolConfig !== undefined
+            ? { tool_config: toolConfigOf(patch.toolConfig) }
+            : {}),
           ...(patch.archived !== undefined ? { archived_at: patch.archived ? now : null } : {}),
           updated_at: now,
         }).length > 0
@@ -92,10 +135,12 @@ export function memoryChats(tables: MemoryTables): ChatStore {
       );
     },
     async delete(ownerSubject, id) {
-      return tables.delete('chats', ownChat(ownerSubject, id)).length > 0;
+      const deleted = tables.delete('chats', ownChat(ownerSubject, id));
+      deleteChatRows(tables, new Set(deleted.map((row) => row.id)));
+      return deleted.length > 0;
     },
     async touch(id, input) {
-      const wanted = chatId(id);
+      const wanted = id;
       const now = new Date();
       tables.update(
         'chats',
@@ -109,14 +154,14 @@ export function memoryChats(tables: MemoryTables): ChatStore {
       );
     },
     async claimAutoTitle(id) {
-      const wanted = chatId(id);
+      const wanted = id;
       const [row] = tables.update('chats', (r) => r.id === wanted && !r.auto_title_asked, {
         auto_title_asked: true,
       });
       return row ? { placeholder: row.title } : null;
     },
     async renameIfTitledAs(id, expected, title) {
-      const wanted = chatId(id);
+      const wanted = id;
       return (
         tables.update(
           'chats',
@@ -126,15 +171,15 @@ export function memoryChats(tables: MemoryTables): ChatStore {
       );
     },
     async getRequestOverhead(id) {
-      const wanted = chatId(id);
+      const wanted = id;
       return tables.first('chats', (r) => r.id === wanted)?.request_overhead_tokens ?? null;
     },
     async setRequestOverhead(id, tokens) {
-      const wanted = chatId(id);
+      const wanted = id;
       tables.update('chats', (r) => r.id === wanted, { request_overhead_tokens: tokens });
     },
     async setWorkspace(id, workspaceId) {
-      const wanted = chatId(id);
+      const wanted = id;
       tables.update('chats', (r) => r.id === wanted, { workspace_id: workspaceId });
     },
     async deleteAbandoned(createdBefore) {
@@ -142,7 +187,7 @@ export function memoryChats(tables: MemoryTables): ChatStore {
         ...tables.select('chat_messages').map((m) => m.chat_id),
         ...tables.select('artifacts').flatMap((a) => (a.chat_id === null ? [] : [a.chat_id])),
       ]);
-      return tables
+      const deleted = tables
         .delete(
           'chats',
           (r) =>
@@ -152,6 +197,8 @@ export function memoryChats(tables: MemoryTables): ChatStore {
         )
         .map((row) => row.id)
         .sort();
+      deleteChatRows(tables, new Set(deleted));
+      return deleted;
     },
     async archiveIdle(ownerSubject, updatedBefore) {
       const running = new Set(
@@ -182,8 +229,10 @@ export function memoryChats(tables: MemoryTables): ChatStore {
     },
     async deleteMany(chatIds) {
       if (chatIds.length === 0) return 0;
-      const ids = new Set(chatIds.map(chatId));
-      return tables.delete('chats', (r) => ids.has(r.id)).length;
+      const ids = new Set(chatIds);
+      const deleted = tables.delete('chats', (r) => ids.has(r.id));
+      deleteChatRows(tables, new Set(deleted.map((row) => row.id)));
+      return deleted.length;
     },
   };
 }

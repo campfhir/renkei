@@ -1,26 +1,16 @@
 import { orderBy, page, sameValue } from '../../memory/order';
-import type { MemoryTables, Row, RowPatch } from '../../memory/tables';
-import {
-  TERMINAL_STATUSES,
-  batchFromRow,
-  batchValues,
-  itemFromRow,
-  itemValues,
-  json,
-} from './record';
+import { toJson, type MemoryTables, type Row, type RowPatch } from '../../memory/tables';
+import { TERMINAL_STATUSES, batchFromRow, batchValues, itemFromRow, itemValues } from './record';
 import type { BatchJobStore } from './types';
 
 export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
-  const batchKey = (batchId: string) => tables.param('batch_jobs', 'id', batchId);
-  const itemKey = (itemId: string) => tables.param('batch_job_items', 'id', itemId);
-
   /** UPDATE batch_jobs … WHERE id = $1 [AND guard] RETURNING …, for one row. */
   function updateBatch(
     batchId: string,
     guard: (status: string) => boolean,
     patch: (row: Row<'batch_jobs'>) => RowPatch<'batch_jobs'>
   ) {
-    const key = batchKey(batchId);
+    const key = batchId;
     const [row] = tables.update(
       'batch_jobs',
       (r) => sameValue(r.id, key) && guard(r.status),
@@ -33,17 +23,31 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
 
   return {
     async create(batch) {
-      return batchFromRow(tables.insert('batch_jobs', batchValues(batch)));
+      const now = new Date();
+      return batchFromRow(
+        tables.insert('batch_jobs', {
+          ...batchValues(batch),
+          config: toJson(batch.config ?? {}),
+          status: 'queued',
+          total: null,
+          succeeded: 0,
+          failed: 0,
+          skipped: 0,
+          last_error: null,
+          started_at: null,
+          finished_at: null,
+          created_at: now,
+          updated_at: now,
+        })
+      );
     },
     async get(batchId) {
-      const key = batchKey(batchId);
+      const key = batchId;
       const row = tables.first('batch_jobs', (r) => sameValue(r.id, key));
       return row ? batchFromRow(row) : undefined;
     },
     async list(subject, options = {}) {
-      const scheduleKey = options.scheduleId
-        ? tables.param('batch_jobs', 'schedule_id', options.scheduleId)
-        : undefined;
+      const scheduleKey = options.scheduleId ? options.scheduleId : undefined;
       const rows = tables.select(
         'batch_jobs',
         (r) =>
@@ -87,7 +91,7 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
       );
     },
     async addCounts(batchId, counts) {
-      const key = batchKey(batchId);
+      const key = batchId;
       const [row] = tables.update(
         'batch_jobs',
         (r) => sameValue(r.id, key),
@@ -108,15 +112,26 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
       );
     },
     async insertItem(batchId, item) {
-      return itemFromRow(tables.insert('batch_job_items', itemValues(batchId, item)));
+      const now = new Date();
+      return itemFromRow(
+        tables.insert('batch_job_items', {
+          ...itemValues(batchId, item),
+          payload: toJson(item.payload ?? {}),
+          status: item.status || 'pending',
+          result: item.result === undefined ? null : toJson(item.result),
+          error: null,
+          created_at: now,
+          updated_at: now,
+        })
+      );
     },
     async getItem(itemId) {
-      const key = itemKey(itemId);
+      const key = itemId;
       const row = tables.first('batch_job_items', (r) => sameValue(r.id, key));
       return row ? itemFromRow(row) : undefined;
     },
     async claimItem(itemId) {
-      const key = itemKey(itemId);
+      const key = itemId;
       const [row] = tables.update(
         'batch_job_items',
         (r) => sameValue(r.id, key) && r.status === 'pending',
@@ -125,16 +140,16 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
       return row ? itemFromRow(row) : undefined;
     },
     async setItemOutcome(itemId, outcome) {
-      const key = itemKey(itemId);
+      const key = itemId;
       tables.update('batch_job_items', (r) => sameValue(r.id, key), {
         status: outcome.status,
-        result: json(outcome.result),
+        result: toJson(outcome.result),
         error: outcome.error,
         updated_at: new Date(),
       });
     },
     async listItems(batchId, options = {}) {
-      const key = tables.param('batch_job_items', 'batch_id', batchId);
+      const key = batchId;
       const rows = tables.select(
         'batch_job_items',
         (r) => sameValue(r.batch_id, key) && (!options.status || r.status === options.status)
@@ -146,7 +161,7 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
     },
     async findProcessedByPath(shareId, paths) {
       if (paths.length === 0) return [];
-      const share = tables.param('batch_processed_files', 'share_id', shareId);
+      const share = shareId;
       const wanted = new Set(paths);
       const rows = tables.select(
         'batch_processed_files',
@@ -161,7 +176,7 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
     },
     async findProcessedHashes(shareId, hashes) {
       if (hashes.length === 0) return [];
-      const share = tables.param('batch_processed_files', 'share_id', shareId);
+      const share = shareId;
       const wanted = new Set(hashes);
       const rows = tables.select(
         'batch_processed_files',
@@ -185,6 +200,7 @@ export function memoryBatchJobs(tables: MemoryTables): BatchJobStore {
             share_id: shareId,
             content_hash: file.contentHash,
             ...values,
+            processed_at: new Date(),
           },
           ['share_id', 'content_hash'],
           { ...values, processed_at: new Date() }

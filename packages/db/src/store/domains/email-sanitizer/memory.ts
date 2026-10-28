@@ -1,5 +1,5 @@
 import { orderBy } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import {
   apiSurfaceOf,
   ruleFromRow,
@@ -11,8 +11,6 @@ import {
 import type { EmailSanitizerStore } from './types';
 
 export function memoryEmailSanitizer(tables: MemoryTables): EmailSanitizerStore {
-  const ruleId = (id: string) => tables.param('email_classifier_rules', 'id', id);
-  const scriptId = (id: string) => tables.param('email_cleaner_scripts', 'id', id);
   return {
     async listRules() {
       return orderBy(
@@ -32,18 +30,17 @@ export function memoryEmailSanitizer(tables: MemoryTables): EmailSanitizerStore 
     },
     async insertRules(rules) {
       const now = new Date();
-      tables.insertMany(
-        'email_classifier_rules',
-        rules.map((rule) => ({
+      for (const rule of rules) {
+        tables.insert('email_classifier_rules', {
           id: rule.id,
           ...ruleValues(rule),
           created_at: now,
           updated_at: now,
-        }))
-      );
+        });
+      }
     },
     async deleteRule(id) {
-      const wanted = ruleId(id);
+      const wanted = id;
       return tables.delete('email_classifier_rules', (r) => r.id === wanted).length;
     },
     async listActiveTemplates() {
@@ -68,17 +65,12 @@ export function memoryEmailSanitizer(tables: MemoryTables): EmailSanitizerStore 
         sender_key: senderKey,
         version,
         status: 'active',
-        spec: JSON.stringify(spec),
+        spec: toJson(spec),
         match_threshold: matchThreshold,
         derived_by_upn: derivedByUpn,
+        superseded_at: null,
+        created_at: new Date(),
       };
-      // All or nothing, as the Postgres transaction is: a taken id makes
-      // the insert refuse (23505) — let it refuse here, before the
-      // supersede changes anything.
-      const newId = tables.param('email_extraction_templates', 'id', id);
-      if (tables.first('email_extraction_templates', (r) => r.id === newId)) {
-        tables.insert('email_extraction_templates', row);
-      }
       if (previous) {
         tables.update('email_extraction_templates', (r) => r.id === previous.id, {
           status: 'superseded',
@@ -96,10 +88,17 @@ export function memoryEmailSanitizer(tables: MemoryTables): EmailSanitizerStore 
       ).map(scriptFromRow);
     },
     async insertScript(script) {
-      tables.insert('email_cleaner_scripts', { id: script.id, ...scriptValues(script) });
+      const now = new Date();
+      tables.insert('email_cleaner_scripts', {
+        id: script.id,
+        ...scriptValues(script),
+        last_error: null,
+        created_at: now,
+        updated_at: now,
+      });
     },
     async updateScript(script) {
-      const wanted = scriptId(script.id);
+      const wanted = script.id;
       return tables.update('email_cleaner_scripts', (r) => r.id === wanted, {
         ...scriptValues(script),
         last_error: null,
@@ -107,11 +106,11 @@ export function memoryEmailSanitizer(tables: MemoryTables): EmailSanitizerStore 
       }).length;
     },
     async deleteScript(id) {
-      const wanted = scriptId(id);
+      const wanted = id;
       return tables.delete('email_cleaner_scripts', (r) => r.id === wanted).length;
     },
     async setScriptError(id, error) {
-      const wanted = scriptId(id);
+      const wanted = id;
       return tables.update('email_cleaner_scripts', (r) => r.id === wanted, {
         last_error: error,
         updated_at: new Date(),

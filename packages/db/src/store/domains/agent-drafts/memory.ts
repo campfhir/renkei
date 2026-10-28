@@ -1,22 +1,30 @@
 import { orderBy, page } from '../../memory/order';
-import type { MemoryTables } from '../../memory/tables';
+import { toJson, type MemoryTables } from '../../memory/tables';
 import { draftFromRow, outcomeColumns } from './record';
 import type { AgentDraftStore } from './types';
 
 export function memoryAgentDrafts(tables: MemoryTables): AgentDraftStore {
-  const idOf = (value: string) => tables.param('agent_drafts', 'id', value);
-
   return {
     async create({ ownerSubject, agentId, request }) {
+      const now = new Date();
       return tables.insert('agent_drafts', {
+        id: globalThis.crypto.randomUUID(),
         owner_subject: ownerSubject,
         agent_id: agentId,
         status: 'queued',
-        request: JSON.stringify(request),
+        request: toJson(request),
+        result: null,
+        error: null,
+        error_detail: null,
+        attempts: 0,
+        consumed_at: null,
+        finished_at: null,
+        created_at: now,
+        updated_at: now,
       }).id;
     },
     async find(ownerSubject, draftId) {
-      const id = idOf(draftId);
+      const id = draftId;
       const row = tables.first(
         'agent_drafts',
         (r) => r.owner_subject === ownerSubject && r.id === id
@@ -24,7 +32,7 @@ export function memoryAgentDrafts(tables: MemoryTables): AgentDraftStore {
       return row ? draftFromRow(row) : null;
     },
     async latestReady(ownerSubject, agentId) {
-      const agent = agentId === null ? null : tables.param('agent_drafts', 'agent_id', agentId);
+      const agent = agentId === null ? null : agentId;
       const [row] = orderBy(
         tables.select(
           'agent_drafts',
@@ -40,7 +48,7 @@ export function memoryAgentDrafts(tables: MemoryTables): AgentDraftStore {
       return row ? draftFromRow(row) : null;
     },
     async consume(ownerSubject, draftId) {
-      const id = idOf(draftId);
+      const id = draftId;
       const now = new Date();
       tables.update('agent_drafts', (r) => r.owner_subject === ownerSubject && r.id === id, {
         consumed_at: now,
@@ -48,7 +56,7 @@ export function memoryAgentDrafts(tables: MemoryTables): AgentDraftStore {
       });
     },
     async claim(draftId) {
-      const id = idOf(draftId);
+      const id = draftId;
       return (
         tables.update(
           'agent_drafts',
@@ -58,15 +66,18 @@ export function memoryAgentDrafts(tables: MemoryTables): AgentDraftStore {
       );
     },
     async finish(draftId, outcome) {
-      const id = idOf(draftId);
-      tables.update('agent_drafts', (r) => r.id === id, outcomeColumns(outcome, new Date()));
+      const id = draftId;
+      tables.update('agent_drafts', (r) => r.id === id, {
+        ...outcomeColumns(outcome, new Date()),
+        ...(outcome.status === 'succeeded' ? { result: toJson(outcome.result) } : {}),
+      });
     },
     async delete(draftId) {
-      const id = idOf(draftId);
+      const id = draftId;
       tables.delete('agent_drafts', (r) => r.id === id);
     },
     async ownerOf(draftId) {
-      const id = idOf(draftId);
+      const id = draftId;
       const row = tables.first('agent_drafts', (r) => r.id === id);
       return row ? { ownerSubject: row.owner_subject, agentId: row.agent_id } : null;
     },

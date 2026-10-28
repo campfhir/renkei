@@ -6,7 +6,6 @@ import type { DeviceKeyRequestStore } from './types';
 const TABLE = 'device_key_requests';
 
 export function memoryDeviceKeyRequests(tables: MemoryTables): DeviceKeyRequestStore {
-  const idOf = (id: string) => tables.param(TABLE, 'id', id);
   return {
     async listPending(subject, now) {
       const rows = tables.select(
@@ -41,16 +40,23 @@ export function memoryDeviceKeyRequests(tables: MemoryTables): DeviceKeyRequestS
           asking_session_id: input.askingSessionId,
           user_agent: input.userAgent,
           expires_at: input.expiresAt,
+          id: globalThis.crypto.randomUUID(),
+          attempts: 0,
+          sealed_key: null,
+          approved_by_session_id: null,
+          denied_at: null,
+          consumed_at: null,
+          created_at: new Date(),
         })
       );
     },
     async get(subject, id) {
-      const key = idOf(id);
+      const key = id;
       const row = tables.first(TABLE, (r) => r.id === key && r.subject === subject);
       return row ? deviceKeyRequestFromRow(row) : null;
     },
     async recordMiss(id, attempts, deniedAt) {
-      const key = idOf(id);
+      const key = id;
       tables.update(
         TABLE,
         (r) => r.id === key,
@@ -58,11 +64,11 @@ export function memoryDeviceKeyRequests(tables: MemoryTables): DeviceKeyRequestS
       );
     },
     async consume(id, at) {
-      const key = idOf(id);
+      const key = id;
       tables.update(TABLE, (r) => r.id === key, { sealed_key: null, consumed_at: at });
     },
     async seal(id, sealedKey, approvedBySessionId, now) {
-      const key = idOf(id);
+      const key = id;
       return tables.update(
         TABLE,
         (r) =>
@@ -74,7 +80,7 @@ export function memoryDeviceKeyRequests(tables: MemoryTables): DeviceKeyRequestS
       ).length;
     },
     async deny(subject, id, at) {
-      const key = idOf(id);
+      const key = id;
       return tables.update(
         TABLE,
         (r) => r.id === key && r.subject === subject && r.denied_at === null,
