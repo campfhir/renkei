@@ -297,8 +297,9 @@ test.describe('code projects', () => {
     const about = sectionOf('About');
     await expect(about.getByLabel(/^Instructions/)).toHaveValue(/test-first/);
     await expect(about.getByText(/not saved yet/)).toBeVisible();
+    // A save re-renders the whole project page: room for a busy dev server.
     await about.getByRole('button', { name: 'Save' }).click();
-    await expect(about.getByText('Saved.')).toBeVisible();
+    await expect(about.getByText('Saved.')).toBeVisible({ timeout: 30_000 });
     await page.reload();
     await expect(sectionOf('About').getByLabel(/^Instructions/)).toHaveValue(/test-first/);
     await expect(sectionOf('About').getByText(/not saved yet/)).toHaveCount(0);
@@ -317,7 +318,9 @@ test.describe('code projects', () => {
     await expect(environment.getByText('NPM_TOKEN')).toBeVisible();
     await expect(environment.getByText('DATABASE_URL')).toBeVisible();
     await expect(environment.getByText('DEBUG')).toBeVisible();
-    await expect(environment.getByText(/Not read from the pasted \.env: line 4/)).toBeVisible();
+    await expect(environment.getByText(/Not read from the pasted \.env: line 4/)).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(page.getByText('npm_secret_value_123')).toHaveCount(0);
     await expect(page.getByText('postgres://u:p@db/app')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);

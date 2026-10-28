@@ -10,11 +10,12 @@
  * Which page each tour is walked on comes from WALKS below: most start
  * on the tour's own start path, and the ones about a particular record
  * (an agent's page, its runs, a project, a prompt library) stage that
- * record for the test's own person through the routes the UI uses. A
+ * record for the test's own person through the routes the UI uses — a
+ * code project's chat among them, on a Bitbucket the person connects
+ * through the in-memory app's fake OAuth (e2e/support/code-host.ts). A
  * tour whose page needs data the memory server has no way to make (a
- * connected Bitbucket, a pending permission ask) is walked anyway —
- * every step then falls back to the centred card — and says so in
- * `spotlight`.
+ * pending permission ask) is walked anyway — every step then falls back
+ * to the centred card — and says so in `spotlight`.
  *
  * Each test signs in a person of its own, with auto-start off, so no
  * page's own tour greets the walker before the one it came for. The tours
@@ -24,12 +25,13 @@
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Page } from '@playwright/test';
+import type { APIRequestContext, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { COACH_MARK_TOURS } from '../../lib/coach-marks/tours';
 import { createAgent, runAgent } from '../support/agents';
 import { addStubModel, removeModel } from '../support/stub-model';
 import { holdShared, type Release } from '../support/org-lock';
+import { setUpCode, stageCodeProject } from '../support/code-host';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 
@@ -81,7 +83,7 @@ async function stageAgent(page: Page): Promise<string> {
  */
 interface Walk {
   /** Where to land, or how to stage what the page is about and where it is. */
-  path: string | ((page: Page) => Promise<string>);
+  path: string | ((page: Page, request: APIRequestContext) => Promise<string>);
   /** Whether at least one step should find its target on this page. */
   spotlight: boolean;
   /** The address to wait for first, when `path` redirects (a client-side hop). */
@@ -150,11 +152,23 @@ const WALKS: Record<string, Walk> = {
   // has nothing to offer.
   code: { path: `/code`, spotlight: false },
   // Starts only where the file tree's "new file" button is mounted: a code
-  // project's chat, and a code project needs a Bitbucket or GitHub grant.
+  // project's chat, cloned by its first turn, on a connected Bitbucket.
   'code-tree': {
-    path: `/chat/new`,
-    spotlight: false,
-    unreachable: 'A code project needs a Bitbucket or GitHub grant (OAuth only).',
+    path: async (page, request) => {
+      const tag = randomUUID().slice(0, 8);
+      const modelId = await setUpCode(page, request, `tour-${tag}`);
+      staged.push(modelId);
+      const { chatIds } = await stageCodeProject(page.request, {
+        name: `Tour code project (${tag})`,
+        repository: 'acme/billing-service',
+        branch: 'main',
+        chats: [`Tour code chat (${tag})`],
+        clone: true,
+        llmModelId: modelId,
+      });
+      return `/chat/${chatIds[0]}`;
+    },
+    spotlight: true,
   },
   'code-new': { path: `/code`, spotlight: false },
   // The catalog greets its first opening; the walk opens it.
@@ -207,11 +221,11 @@ async function shot(page: Page, project: string, name: string): Promise<void> {
 }
 
 for (const tour of COACH_MARK_TOURS) {
-  test(`tour: ${tour.id} — ${tour.title}`, async ({ page, person: _person }, testInfo) => {
+  test(`tour: ${tour.id} — ${tour.title}`, async ({ page, request, person: _person }, testInfo) => {
     test.setTimeout(120_000);
     const walk: Walk = WALKS[tour.id] ?? { path: tour.startPath, spotlight: true };
     test.skip(walk.unreachable !== undefined, walk.unreachable);
-    const landing = typeof walk.path === 'string' ? walk.path : await walk.path(page);
+    const landing = typeof walk.path === 'string' ? walk.path : await walk.path(page, request);
     // Land first, then ask: a start path that redirects ('/chat/new' makes
     // a thread and goes there) would drop the query on the way.
     await page.goto(landing);
