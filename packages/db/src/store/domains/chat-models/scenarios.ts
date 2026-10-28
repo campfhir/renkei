@@ -15,16 +15,16 @@ function model(id: string, label: string, extra: Record<string, unknown> = {}) {
 
 const fixture = {
   llm_model_configs: [
-    model(uid(1400), 'beta', { settings: JSON.stringify({ contextWindow: 1000 }) }),
-    model(uid(1401), 'Alpha', { provider: 'openai' }),
-    model(uid(1402), 'Default', { is_default: true }),
-    model(uid(1403), 'Off', { enabled: false }),
-    model(uid(1404), 'Images', { settings: JSON.stringify({ apiSurface: 'images' }) }),
-    model(uid(1405), 'Flux', { settings: JSON.stringify({ apiSurface: 'flux' }) }),
-    model(uid(1406), 'Chat surface', { settings: JSON.stringify({ apiSurface: 'chat' }) }),
-    model(uid(1407), 'Images off', {
+    model(uid(1400), 'beta', { settings: { contextWindow: 1000 } }),
+    model(uid(1401), 'alpha', { provider: 'openai' }),
+    model(uid(1402), 'default', { is_default: true }),
+    model(uid(1403), 'off', { enabled: false }),
+    model(uid(1404), 'images', { settings: { apiSurface: 'images' } }),
+    model(uid(1405), 'flux', { settings: { apiSurface: 'flux' } }),
+    model(uid(1406), 'chat surface', { settings: { apiSurface: 'chat' } }),
+    model(uid(1407), 'images off', {
       enabled: false,
-      settings: JSON.stringify({ apiSurface: 'images' }),
+      settings: { apiSurface: 'images' },
     }),
   ],
 };

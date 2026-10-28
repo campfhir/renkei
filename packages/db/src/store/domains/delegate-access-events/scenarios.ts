@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-15${String(n).padStart(10, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function event(n: number, minute: number, op: string) {
   return {

@@ -14,11 +14,11 @@ function row(n: number, subject: string, name: string, expires: number, containe
     status: 'running',
     error: null,
     host: container ? `10.0.0.${n}` : null,
-    ports: JSON.stringify(n === 1 ? [5432, 'x', 1.5] : [5432]),
-    exports: JSON.stringify(n === 1 ? { DATABASE_URL: 'postgres://{host}', bad: 3 } : {}),
-    created_at: at(n).toISOString(),
-    last_used_at: at(n).toISOString(),
-    expires_at: at(expires).toISOString(),
+    ports: n === 1 ? [5432, 'x', 1.5] : [5432],
+    exports: n === 1 ? { DATABASE_URL: 'postgres://{host}', bad: 3 } : {},
+    created_at: at(n),
+    last_used_at: at(n),
+    expires_at: at(expires),
   };
 }
 

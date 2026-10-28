@@ -3,7 +3,6 @@ import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-ab${String(n).padStart(10, '0')}`;
 const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
-const iso = (minute: number) => at(minute).toISOString();
 
 const MODEL = id(90);
 
@@ -20,8 +19,8 @@ function memory(n: number, agent: number, minute: number, extra: Record<string, 
     agent_id: id(agent),
     kind: 'entry',
     content: `note ${n}`,
-    created_at: iso(minute),
-    updated_at: iso(minute),
+    created_at: at(minute),
+    updated_at: at(minute),
     ...extra,
   };
 }
@@ -62,28 +61,28 @@ function trigger(n: number, agent: number, extra: Record<string, unknown> = {}) 
     id: id(200 + n),
     agent_id: id(agent),
     kind: 'schedule',
-    config: JSON.stringify({ recurrences: [{ every: 'day' }], timezone: 'UTC' }),
+    config: { recurrences: [{ every: 'day' }], timezone: 'UTC' },
     enabled: true,
-    created_at: iso(1),
-    updated_at: iso(1),
+    created_at: at(1),
+    updated_at: at(1),
     ...extra,
   };
 }
 
 const triggerFixture = {
   agents: [
-    { ...agents[0], llm_model_id: null, instructions: 'do it', tools: JSON.stringify(['x']) },
+    { ...agents[0], llm_model_id: null, instructions: 'do it', tools: ['x'] },
     ...agents.slice(1),
   ],
   agent_triggers: [
-    trigger(1, 1, { next_run_at: iso(10) }),
-    trigger(2, 2, { next_run_at: iso(5) }),
-    trigger(3, 1, { next_run_at: iso(10) }),
-    trigger(4, 1, { next_run_at: iso(30) }),
+    trigger(1, 1, { next_run_at: at(10) }),
+    trigger(2, 2, { next_run_at: at(5) }),
+    trigger(3, 1, { next_run_at: at(10) }),
+    trigger(4, 1, { next_run_at: at(30) }),
     trigger(5, 1, { next_run_at: null }),
-    trigger(6, 1, { next_run_at: iso(1), enabled: false }),
-    trigger(7, 4, { next_run_at: iso(1) }),
-    trigger(8, 3, { next_run_at: iso(2), kind: 'event' }),
+    trigger(6, 1, { next_run_at: at(1), enabled: false }),
+    trigger(7, 4, { next_run_at: at(1) }),
+    trigger(8, 3, { next_run_at: at(2), kind: 'event' }),
   ],
 };
 

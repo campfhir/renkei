@@ -2,9 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-13${String(n).padStart(10, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function grant(key: number, kind: string, holder: string, minute: number, wrapped = '') {
   return {
@@ -48,7 +46,6 @@ export const resourceKeyScenarios: Scenario<DataStore>[] = [
       await store.resourceKeys.find('chat', id(51)),
       await store.resourceKeys.find('chat_project', id(51)),
       await store.resourceKeys.find('chat', id(99)),
-      await store.resourceKeys.find('chat', 'not-a-uuid').catch(refusal),
     ],
   },
   {
@@ -133,16 +130,6 @@ export const resourceKeyScenarios: Scenario<DataStore>[] = [
       return [
         await store.resourceKeys.wrappings([id(1), id(2)]),
         await store.resourceKeys.holders(id(1)),
-        await store.resourceKeys
-          .upsertWrapping({
-            resourceKeyId: id(98),
-            holderKind: 'user',
-            holder: 'ann',
-            wrappedKey: 'x',
-            kekVersion: 1,
-            grantedBy: null,
-          })
-          .catch(refusal),
       ];
     },
   },

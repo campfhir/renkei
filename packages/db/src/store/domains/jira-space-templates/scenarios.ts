@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { JiraSpaceTemplateRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-7e${String(n).padStart(10, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function row(n: number, cloudId: string, name: string) {
   return {
@@ -14,7 +14,7 @@ function row(n: number, cloudId: string, name: string) {
     name_key: name.trim().toLowerCase(),
     description: n % 2 ? `about ${name}` : null,
     source_space_key: n % 2 ? 'OPS' : null,
-    document: JSON.stringify({ version: 1, roles: [{ roleId: '1', groups: [] }] }),
+    document: { version: 1, roles: [{ roleId: '1', groups: [] }] },
     created_by: 'ann',
     updated_by: 'ann',
     created_at: at(n),

@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { AgentDraftRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-f${String(n).padStart(11, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 const agents = [
   { id: id(1), owner_subject: 'ann', name: 'A' },
@@ -21,7 +21,7 @@ function draft(
     id: id(n),
     agent_id: agent === null ? null : id(agent),
     owner_subject: owner,
-    request: JSON.stringify({ text: `draft ${n}` }),
+    request: { text: `draft ${n}` },
     created_at: at(minute),
     ...extra,
   };
@@ -30,7 +30,7 @@ function draft(
 const fixture = {
   agents,
   agent_drafts: [
-    draft(11, 1, 'ann', 1, { status: 'succeeded', result: JSON.stringify({ name: 'x' }) }),
+    draft(11, 1, 'ann', 1, { status: 'succeeded', result: { name: 'x' } }),
     draft(12, 1, 'ann', 3, { status: 'succeeded', consumed_at: at(4) }),
     draft(13, 1, 'ann', 2, { status: 'failed', error: 'no' }),
     draft(14, null, 'ann', 5, { status: 'succeeded' }),

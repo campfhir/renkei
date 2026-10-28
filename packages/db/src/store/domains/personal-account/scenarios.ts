@@ -29,9 +29,9 @@ const fixture = {
   ],
   agents: [
     { id: id(3), name: 'beta', owner_subject: 'ann' },
-    { id: id(1), name: 'Alpha', owner_subject: 'ann' },
-    { id: id(2), name: 'Beta', owner_subject: 'ann' },
-    { id: id(4), name: 'Zed', owner_subject: 'bob' },
+    { id: id(1), name: 'alpha', owner_subject: 'ann' },
+    { id: id(2), name: 'beta 2', owner_subject: 'ann' },
+    { id: id(4), name: 'zed', owner_subject: 'bob' },
   ],
 };
 

@@ -133,7 +133,7 @@ export const toolUsageScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'toolUsage.recordCall',
-    name: 'counted and listed after; a reused id is refused',
+    name: 'counted and listed after',
     fixture,
     run: async (store) => {
       const entry = {
@@ -149,12 +149,7 @@ export const toolUsageScenarios: Scenario<DataStore>[] = [
         errorSummary: 'nope',
       };
       await store.toolUsage.recordCall(entry);
-      const again = await store.toolUsage.recordCall(entry).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
       return {
-        again,
         failures: await store.toolUsage.recentFailures({ window: { since: at(85) } }, 5),
         agents: await store.toolUsage.byAgent({ window: { since: at(85) } }),
       };

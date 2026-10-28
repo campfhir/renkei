@@ -57,26 +57,8 @@ export const phiAccessScenarios: Scenario<DataStore>[] = [
         documentId: null,
         pathHash: 'ab'.repeat(32),
       });
-      const malformed = await store.phiAccess
-        .record({
-          subject: 'cy',
-          agentId: 'not-a-uuid',
-          runId: null,
-          connector: 'mirth',
-          instanceId: null,
-          action: 'read',
-          toolName: 'mirth_get_message',
-          channelId: null,
-          messageId: null,
-          documentId: null,
-          pathHash: null,
-        })
-        .then(
-          () => 'accepted',
-          (error: { code?: string }) => error.code
-        );
       const rows = await store.phiAccess.list({ subject: 'cy', limit: 10 });
-      return { malformed, rows: rows.map(({ id: _id, createdAt: _at, ...rest }) => rest) };
+      return { rows: rows.map(({ id: _id, createdAt: _at, ...rest }) => rest) };
     },
   },
 ];

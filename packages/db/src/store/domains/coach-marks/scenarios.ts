@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 import type { CoachMarkProgressRecord } from './types';
 
-function row(subject: string, tourId: string, updatedAt: string, status = 'viewed') {
+function row(subject: string, tourId: string, updatedAt: Date, status = 'viewed') {
   return {
     subject,
     tour_id: tourId,
@@ -13,21 +13,21 @@ function row(subject: string, tourId: string, updatedAt: string, status = 'viewe
     view_count: 2,
     completed_count: status === 'completed' ? 1 : 0,
     dismissed_count: 0,
-    first_viewed_at: '2026-01-01T00:00:00.000Z',
-    last_viewed_at: '2026-01-02T00:00:00.000Z',
-    completed_at: status === 'completed' ? '2026-01-02T00:00:00.000Z' : null,
+    first_viewed_at: new Date('2026-01-01T00:00:00.000Z'),
+    last_viewed_at: new Date('2026-01-02T00:00:00.000Z'),
+    completed_at: status === 'completed' ? new Date('2026-01-02T00:00:00.000Z') : null,
     dismissed_at: null,
-    reported_at: '2026-01-02T00:00:00.000Z',
+    reported_at: new Date('2026-01-02T00:00:00.000Z'),
     updated_at: updatedAt,
   };
 }
 
 const fixture = {
   coach_mark_progress: [
-    row('ann', 'welcome', '2026-01-03T00:00:00.000Z', 'completed'),
-    row('ann', 'agents', '2026-01-05T00:00:00.000Z'),
-    row('bob', 'welcome', '2026-01-04T00:00:00.000Z'),
-    row('cat', 'chat', '2026-01-04T00:00:00.000Z'),
+    row('ann', 'welcome', new Date('2026-01-03T00:00:00.000Z'), 'completed'),
+    row('ann', 'agents', new Date('2026-01-05T00:00:00.000Z')),
+    row('bob', 'welcome', new Date('2026-01-04T00:00:00.000Z')),
+    row('cat', 'chat', new Date('2026-01-04T00:00:00.000Z')),
   ],
 };
 

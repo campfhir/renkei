@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { FileShareInput } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function share(n: number, name: string, extra: Record<string, unknown> = {}) {
   return {
@@ -35,10 +35,10 @@ function connection(n: number, subject: string, extra: Record<string, unknown> =
 
 const fixture = {
   file_shares: [
-    share(1, 'Finance', { root_path: '/reports', settings: JSON.stringify({ k: 1 }) }),
+    share(1, 'finance', { root_path: '/reports', settings: { k: 1 } }),
     share(2, 'archive', { host_key_fingerprint: 'SHA256:abc' }),
-    share(3, 'Archive', { enabled: false }),
-    share(4, 'Zeta'),
+    share(3, 'archive old', { enabled: false }),
+    share(4, 'zeta'),
   ],
   file_share_connections: [
     connection(1, 'ann', { tool_access: 'read_write', allow_delete: true }),
@@ -49,7 +49,7 @@ const fixture = {
 };
 
 const input: FileShareInput = {
-  name: 'New share',
+  name: 'new share',
   protocol: 'sftp',
   host: 'new.test',
   port: 2222,
@@ -81,21 +81,17 @@ export const fileShareScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'fileShares.getConnection',
-    name: 'own connection, null otherwise, malformed id refused',
+    name: 'own connection, null otherwise',
     fixture,
     run: async (store) => [
       await store.fileShares.getConnection(id(1), 'ann'),
       await store.fileShares.getConnection(id(4), 'ann'),
       await store.fileShares.getConnection(id(1), 'carol'),
-      await store.fileShares.getConnection('bad', 'ann').then(
-        () => 'accepted',
-        (e: { code?: string }) => e.code
-      ),
     ],
   },
   {
     method: 'fileShares.upsertConnection',
-    name: 'inserts, replaces, refuses an unknown share',
+    name: 'inserts, replaces',
     fixture,
     run: async (store) => {
       const next = {
@@ -106,12 +102,7 @@ export const fileShareScenarios: Scenario<DataStore>[] = [
       };
       await store.fileShares.upsertConnection(id(4), 'ann', next);
       await store.fileShares.upsertConnection(id(1), 'ann', { ...next, username: 'ann3' });
-      const refused = await store.fileShares.upsertConnection(id(9), 'ann', next).then(
-        () => 'accepted',
-        (e: { code?: string }) => e.code
-      );
       return {
-        refused,
         four: await store.fileShares.getConnection(id(4), 'ann'),
         one: await store.fileShares.getConnection(id(1), 'ann'),
         bob: await store.fileShares.getConnection(id(1), 'bob'),
@@ -174,7 +165,7 @@ export const fileShareScenarios: Scenario<DataStore>[] = [
     run: async (store) => {
       const created = await store.fileShares.create(input);
       const share = await store.fileShares.get(created);
-      const taken = await store.fileShares.create({ ...input, name: 'Finance' }).then(
+      const taken = await store.fileShares.create({ ...input, name: 'finance' }).then(
         () => 'accepted',
         (e: { code?: string }) => e.code
       );

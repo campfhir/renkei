@@ -21,9 +21,9 @@ function row(
     status: options.status ?? 'ready',
     error: null,
     size_bytes: String(n * 100),
-    created_at: at(minute).toISOString(),
-    last_used_at: at(minute).toISOString(),
-    expires_at: at(options.expires ?? 100 + n).toISOString(),
+    created_at: at(minute),
+    last_used_at: at(minute),
+    expires_at: at(options.expires ?? 100 + n),
   };
 }
 

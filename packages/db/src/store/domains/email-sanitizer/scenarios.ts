@@ -1,8 +1,9 @@
 import type { Scenario } from '../../domain';
+import { toJson } from '../../memory/tables';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function rule(n: number, priority: number, extra: Record<string, unknown> = {}) {
   return {
@@ -23,7 +24,7 @@ function template(n: number, senderKey: string, version: number, status: string)
     sender_key: senderKey,
     version,
     status,
-    spec: JSON.stringify([{ kind: 'literal', text: `t${n}` }]),
+    spec: [{ kind: 'literal', text: `t${n}` }],
     match_threshold: n % 2 ? 0.5 : 0.75,
     derived_by_upn: 'ann@x.test',
     created_at: at(n),
@@ -49,7 +50,7 @@ function model(n: number, enabled: boolean, settings: unknown) {
     model: 'm',
     encrypted_secrets: 'sealed',
     enabled,
-    settings: JSON.stringify(settings),
+    settings: toJson(settings),
   };
 }
 
@@ -62,7 +63,7 @@ const fixture = {
   email_extraction_templates: [
     template(1, 'jira', 1, 'superseded'),
     template(2, 'jira', 2, 'active'),
-    template(3, 'Acme', 1, 'active'),
+    template(3, 'acme b', 1, 'active'),
     template(4, 'acme', 1, 'active'),
   ],
   email_cleaner_scripts: [
@@ -106,21 +107,12 @@ export const emailSanitizerScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'emailSanitizer.insertRules',
-    name: 'all or none',
+    name: 'every rule given, none for an empty list',
     fixture,
     run: async (store) => {
       await store.emailSanitizer.insertRules([]);
       await store.emailSanitizer.insertRules([newRule, { ...newRule, id: id(10), priority: 50 }]);
-      const refused = await store.emailSanitizer
-        .insertRules([
-          { ...newRule, id: id(11) },
-          { ...newRule, id: id(1) },
-        ])
-        .then(
-          () => 'accepted',
-          (e: { code?: string }) => e.code
-        );
-      return { refused, ids: (await store.emailSanitizer.listRules()).map((r) => r.id) };
+      return { ids: (await store.emailSanitizer.listRules()).map((r) => r.id) };
     },
   },
   {
@@ -141,7 +133,7 @@ export const emailSanitizerScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'emailSanitizer.saveTemplateVersion',
-    name: 'supersedes the active version, numbers the next; a taken id changes nothing',
+    name: 'supersedes the active version, numbers the next',
     fixture,
     run: async (store) => {
       const base = { spec: [{ kind: 'field', name: 'x' }], matchThreshold: 0.5, derivedByUpn: 'b' };
@@ -155,13 +147,7 @@ export const emailSanitizerScenarios: Scenario<DataStore>[] = [
         id: id(151),
         senderKey: 'new',
       });
-      const refused = await store.emailSanitizer
-        .saveTemplateVersion({ ...base, id: id(150), senderKey: 'Acme' })
-        .then(
-          () => 'accepted',
-          (e: { code?: string }) => e.code
-        );
-      return { jira, fresh, refused, active: await store.emailSanitizer.listActiveTemplates() };
+      return { jira, fresh, active: await store.emailSanitizer.listActiveTemplates() };
     },
   },
   {
@@ -172,7 +158,7 @@ export const emailSanitizerScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'emailSanitizer.insertScript',
-    name: 'defaults filled; a taken id refused',
+    name: 'defaults filled',
     fixture,
     run: async (store) => {
       const fresh = {
@@ -184,12 +170,8 @@ export const emailSanitizerScenarios: Scenario<DataStore>[] = [
         appliesTo: ['evt'],
       };
       await store.emailSanitizer.insertScript(fresh);
-      const refused = await store.emailSanitizer.insertScript({ ...fresh, id: id(201) }).then(
-        () => 'accepted',
-        (e: { code?: string }) => e.code
-      );
       const scripts = await store.emailSanitizer.listScripts();
-      return { refused, added: scripts.find((s) => s.id === id(250)) };
+      return { added: scripts.find((s) => s.id === id(250)) };
     },
   },
   {

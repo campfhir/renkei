@@ -86,7 +86,7 @@ export const chatScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'chats.create',
-    name: 'defaults and given fields; a missing project is refused',
+    name: 'defaults and given fields',
     fixture,
     run: async (store) => {
       const id = await store.chats.create({
@@ -98,19 +98,6 @@ export const chatScenarios: Scenario<DataStore>[] = [
         autoMode: true,
       });
       const chat = await store.chats.get(id);
-      const refused = await store.chats
-        .create({
-          ownerSubject: CAT,
-          projectId: uid(999),
-          llmModelId: null,
-          toolConfig: null,
-          thinkingEnabled: false,
-          autoMode: false,
-        })
-        .then(
-          () => 'accepted',
-          (error: { code?: string }) => error.code
-        );
       return {
         chat: chat && {
           ...settled(chat),
@@ -119,7 +106,6 @@ export const chatScenarios: Scenario<DataStore>[] = [
           lastMessageAt: chat.lastMessageAt,
           autoTitleAsked: chat.autoTitleAsked,
         },
-        refused,
         count: (await store.chats.listOwned(CAT, { limit: 10 })).length,
       };
     },

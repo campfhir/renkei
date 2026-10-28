@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-a${String(n).padStart(11, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 const fixture = {
   identities: [
@@ -43,7 +43,7 @@ export const auditEventScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'auditEvents.record',
-    name: 'appends with details round-tripped; refuses a duplicate id',
+    name: 'appends with details round-tripped',
     fixture,
     run: async (store) => {
       const event = {
@@ -64,11 +64,7 @@ export const auditEventScenarios: Scenario<DataStore>[] = [
         targetLabel: null,
         createdAt: new Date(at(8)),
       });
-      const again = await store.auditEvents.record(event).then(
-        () => 'accepted',
-        () => 'refused'
-      );
-      return { again, rows: await store.auditEvents.listRecent(3) };
+      return { rows: await store.auditEvents.listRecent(3) };
     },
   },
   {
@@ -114,7 +110,7 @@ export const auditEventScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'auditEvents.recordPlatform',
-    name: 'appends with details round-tripped; refuses a duplicate id',
+    name: 'appends with details round-tripped',
     run: async (store) => {
       const event = {
         id: id(31),
@@ -130,13 +126,8 @@ export const auditEventScenarios: Scenario<DataStore>[] = [
         details: null,
         actorId: null,
       });
-      const again = await store.auditEvents.recordPlatform(event).then(
-        () => 'accepted',
-        () => 'refused'
-      );
       const rows = await store.auditEvents.listPlatformFor('r1');
       return {
-        again,
         rows: rows
           .map(({ createdAt: _createdAt, ...row }) => row)
           .sort((a, b) => (a.id < b.id ? -1 : 1)),

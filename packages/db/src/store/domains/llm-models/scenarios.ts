@@ -13,23 +13,23 @@ const row = (n: number, label: string, isDefault = false) => ({
   encrypted_secrets: `sealed-${n}`,
   enabled: n !== 3,
   is_default: isDefault,
-  created_at: '2026-01-01T00:00:00.000Z',
-  updated_at: '2026-01-01T00:00:00.000Z',
+  created_at: new Date('2026-01-01T00:00:00.000Z'),
+  updated_at: new Date('2026-01-01T00:00:00.000Z'),
 });
 
 const fixture = {
-  llm_model_configs: [row(1, 'Sonnet', true), row(2, 'haiku'), row(3, 'Opus'), row(4, 'opus')],
+  llm_model_configs: [row(1, 'sonnet', true), row(2, 'haiku'), row(3, 'opus-old'), row(4, 'opus')],
 };
 
 const surfaceFixture = {
   llm_model_configs: [
-    row(1, 'Sonnet', true),
+    row(1, 'sonnet', true),
     row(2, 'haiku'),
-    row(3, 'Opus'),
-    { ...row(5, 'Painter'), settings: { apiSurface: 'images' } },
-    { ...row(6, 'Flux'), settings: { apiSurface: 'flux' } },
+    row(3, 'opus-old'),
+    { ...row(5, 'painter'), settings: { apiSurface: 'images' } },
+    { ...row(6, 'flux model'), settings: { apiSurface: 'flux' } },
     { ...row(7, 'Off image'), settings: { apiSurface: 'images' }, enabled: false },
-    { ...row(8, 'Responses'), settings: { apiSurface: 'responses' } },
+    { ...row(8, 'responses'), settings: { apiSurface: 'responses' } },
   ],
 };
 
@@ -73,7 +73,7 @@ export const llmModelScenarios: Scenario<DataStore>[] = [
       await shape(store),
       await store.llmModels.create(id(6), input('haiku', true)),
       await shape(store),
-      await store.llmModels.create(id(7), input('Other', false)),
+      await store.llmModels.create(id(7), input('other', false)),
       await shape(store),
     ],
   },
@@ -84,9 +84,9 @@ export const llmModelScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.llmModels.update(id(2), input('haiku', true)),
       await shape(store),
-      await store.llmModels.update(id(3), input('Sonnet', true)),
+      await store.llmModels.update(id(3), input('sonnet', true)),
       await shape(store),
-      await store.llmModels.update(id(9), input('Nobody', true)),
+      await store.llmModels.update(id(9), input('nobody', true)),
       await shape(store),
       (await store.llmModels.get(id(2)))?.settings,
     ],

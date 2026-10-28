@@ -10,13 +10,12 @@ const DAY_MS = 86_400_000;
  * different days; the suite takes seconds.)
  */
 const NOW = Date.now();
-const daysAgo = (days: number, minutes = 0) =>
-  new Date(NOW - days * DAY_MS - minutes * 60_000).toISOString();
+const daysAgo = (days: number, minutes = 0) => new Date(NOW - days * DAY_MS - minutes * 60_000);
 
 const agents = [
   { id: id(1), owner_subject: 'ann', name: 'beta' },
-  { id: id(2), owner_subject: 'ann', name: 'Alpha' },
-  { id: id(3), owner_subject: 'bob', name: 'Gamma' },
+  { id: id(2), owner_subject: 'ann', name: 'alpha' },
+  { id: id(3), owner_subject: 'bob', name: 'gamma' },
 ];
 
 function call(
@@ -242,41 +241,71 @@ export const agentUsageScenarios: Scenario<DataStore>[] = [
           agent_id: id(1),
           owner_subject: 'ann',
           trigger_kind: 'manual',
-          created_at: '2025-01-03T00:00:00.000Z',
+          created_at: new Date('2025-01-03T00:00:00.000Z'),
         },
         {
           run_id: id(302),
           agent_id: id(1),
           owner_subject: 'ann',
           trigger_kind: 'manual',
-          created_at: '2025-01-01T00:00:00.000Z',
+          created_at: new Date('2025-01-01T00:00:00.000Z'),
         },
         {
           run_id: id(303),
           agent_id: id(3),
           owner_subject: 'bob',
           trigger_kind: 'manual',
-          created_at: '2025-01-01T00:00:00.000Z',
+          created_at: new Date('2025-01-01T00:00:00.000Z'),
         },
         {
           run_id: id(304),
           agent_id: id(1),
           owner_subject: 'ann',
           trigger_kind: 'manual',
-          created_at: '2025-06-01T00:00:00.000Z',
+          created_at: new Date('2025-06-01T00:00:00.000Z'),
         },
       ],
       llm_calls: [
-        { id: id(311), subject: 'ann', purpose: 'chat', created_at: '2025-01-02T00:00:00.000Z' },
-        { id: id(312), subject: 'bob', purpose: 'chat', created_at: '2025-07-02T00:00:00.000Z' },
+        {
+          id: id(311),
+          subject: 'ann',
+          purpose: 'chat',
+          created_at: new Date('2025-01-02T00:00:00.000Z'),
+        },
+        {
+          id: id(312),
+          subject: 'bob',
+          purpose: 'chat',
+          created_at: new Date('2025-07-02T00:00:00.000Z'),
+        },
       ],
       voice_usage: [
-        { id: id(321), subject: 'ann', kind: 'transcribe', created_at: '2025-01-02T00:00:00.000Z' },
-        { id: id(322), subject: 'ann', kind: 'transcribe', created_at: '2025-01-01T00:00:00.000Z' },
-        { id: id(323), subject: 'ann', kind: 'transcribe', created_at: '2025-01-05T00:00:00.000Z' },
+        {
+          id: id(321),
+          subject: 'ann',
+          kind: 'transcribe',
+          created_at: new Date('2025-01-02T00:00:00.000Z'),
+        },
+        {
+          id: id(322),
+          subject: 'ann',
+          kind: 'transcribe',
+          created_at: new Date('2025-01-01T00:00:00.000Z'),
+        },
+        {
+          id: id(323),
+          subject: 'ann',
+          kind: 'transcribe',
+          created_at: new Date('2025-01-05T00:00:00.000Z'),
+        },
       ],
       image_usage: [
-        { id: id(331), subject: 'ann', surface: 'chat', created_at: '2025-01-02T00:00:00.000Z' },
+        {
+          id: id(331),
+          subject: 'ann',
+          surface: 'chat',
+          created_at: new Date('2025-01-02T00:00:00.000Z'),
+        },
       ],
       document_usage: [],
     },

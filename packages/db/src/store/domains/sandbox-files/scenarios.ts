@@ -21,8 +21,8 @@ function row(
     storage_key: `key-${n}`,
     source: 'upload',
     batch_id: batch,
-    created_at: at(minute).toISOString(),
-    expires_at: at(100 + n).toISOString(),
+    created_at: at(minute),
+    expires_at: at(100 + n),
   };
 }
 

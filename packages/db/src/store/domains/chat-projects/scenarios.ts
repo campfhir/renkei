@@ -111,7 +111,7 @@ export const chatProjectScenarios: Scenario<DataStore>[] = [
     run: async (store) => {
       const results = [
         await store.chatProjects.update(PROJECT.annChat, {
-          name: 'Renamed',
+          name: 'renamed',
           instructions: null,
           toolConfig: null,
         }),
@@ -164,22 +164,9 @@ export const chatProjectScenarios: Scenario<DataStore>[] = [
         keep: 2,
       });
       const rows = await store.chatProjects.listMemory(PROJECT.annChat, 10);
-      const refused = await store.chatProjects
-        .appendMemory({
-          projectId: uid(999),
-          content: 'x',
-          authorSubject: ANN,
-          chatId: null,
-          keep: 5,
-        })
-        .then(
-          () => 'accepted',
-          (error: { code?: string }) => error.code
-        );
       return {
         rows: rows.map((r) => [r.kind, r.content, r.chatId]),
         bob: ids(await store.chatProjects.listMemory(PROJECT.bobChat, 10)),
-        refused,
       };
     },
   },

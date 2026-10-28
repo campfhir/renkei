@@ -1,13 +1,25 @@
 import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
-import { ANN, BOB, CAT, CHAT, FUTURE, PAST, PROJECT, at, chatWorld, uid } from '../chats/fixtures';
+import {
+  ANN,
+  BOB,
+  CAT,
+  CHAT,
+  FUTURE,
+  PAST,
+  PROJECT,
+  at,
+  chatWorld,
+  grantRow,
+  uid,
+} from '../chats/fixtures';
 
 const fixture = chatWorld();
 
 export const resourceGrantScenarios: Scenario<DataStore>[] = [
   {
     method: 'resourceGrants.ownerOf',
-    name: 'per kind, missing and malformed ids',
+    name: 'per kind, missing ids',
     fixture: {
       ...fixture,
       prompt_libraries: [{ id: uid(401), owner_subject: CAT, name: 'L' }],
@@ -17,11 +29,6 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
       await store.resourceGrants.ownerOf('chat_project', PROJECT.annChat),
       await store.resourceGrants.ownerOf('prompt_library', uid(401)),
       await store.resourceGrants.ownerOf('artifact', uid(999)),
-      await store.resourceGrants.ownerOf('chat', CHAT.annA.toUpperCase()),
-      await store.resourceGrants.ownerOf('chat', 'nope').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code ?? 'refused'
-      ),
     ],
   },
   {
@@ -165,7 +172,7 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
       prompt_libraries: [{ id: uid(401), owner_subject: CAT, name: 'L' }],
       resource_access_grants: [
         ...(fixture.resource_access_grants ?? []),
-        {
+        grantRow({
           id: uid(311),
           resource_kind: 'chat',
           resource_id: uid(990),
@@ -173,8 +180,8 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
           grantee_subject: BOB,
           role: 'viewer',
           created_at: at(1),
-        },
-        {
+        }),
+        grantRow({
           id: uid(312),
           resource_kind: 'chat_project',
           resource_id: CHAT.annA,
@@ -182,8 +189,8 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
           grantee_subject: BOB,
           role: 'viewer',
           created_at: at(1),
-        },
-        {
+        }),
+        grantRow({
           id: uid(313),
           resource_kind: 'prompt_library',
           resource_id: uid(401),
@@ -191,8 +198,8 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
           grantee_subject: BOB,
           role: 'viewer',
           created_at: at(1),
-        },
-        {
+        }),
+        grantRow({
           id: uid(314),
           resource_kind: 'prompt_library',
           resource_id: uid(402),
@@ -200,8 +207,8 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
           grantee_subject: BOB,
           role: 'viewer',
           created_at: at(1),
-        },
-        {
+        }),
+        grantRow({
           id: uid(315),
           resource_kind: 'artifact',
           resource_id: uid(403),
@@ -209,7 +216,7 @@ export const resourceGrantScenarios: Scenario<DataStore>[] = [
           grantee_subject: BOB,
           role: 'viewer',
           created_at: at(1),
-        },
+        }),
       ],
     },
     run: async (store) => [

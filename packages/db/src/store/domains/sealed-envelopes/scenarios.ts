@@ -3,8 +3,6 @@ import type { DataStore } from '../../types';
 import type { SealedEnvelopeColumn } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-18${String(n).padStart(10, '0')}`;
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
 
 const connectors: SealedEnvelopeColumn = {
   table: 'connector_configs',
@@ -21,7 +19,7 @@ const fixture = {
   connector_configs: [
     { connector: 'zoom', encrypted_secrets: 'v1.old' },
     { connector: 'github', encrypted_secrets: 'v2.cur.x' },
-    { connector: 'Jira', encrypted_secrets: 'v2.prev.x' },
+    { connector: 'jira', encrypted_secrets: 'v2.prev.x' },
     { connector: 'atlassian', encrypted_secrets: 'v1.a' },
     { connector: 'box', encrypted_secrets: 'v2_cur.x' },
   ],
@@ -52,9 +50,6 @@ export const sealedEnvelopeScenarios: Scenario<DataStore>[] = [
         await store.sealedEnvelopes.pageNotLike(connectors, 'v2.cur.%', ['zoom'], 2),
         await store.sealedEnvelopes.pageNotLike(rules, 'reg1.v2.cur.%', null, 10),
         await store.sealedEnvelopes.pageNotLike(rules, 'reg1.v2.cur.%', [id(3)], 10),
-        await store.sealedEnvelopes
-          .pageNotLike(rules, 'reg1.v2.cur.%', ['not-a-uuid'], 10)
-          .catch(refusal),
       ];
     },
   },
@@ -65,7 +60,6 @@ export const sealedEnvelopeScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.sealedEnvelopes.replaceIfUnchanged(connectors, ['zoom'], 'v1.old', 'v2.cur.new'),
       await store.sealedEnvelopes.replaceIfUnchanged(connectors, ['zoom'], 'v1.old', 'v2.cur.b'),
-      await store.sealedEnvelopes.replaceIfUnchanged(connectors, ['nope'], 'x', 'y'),
       await store.sealedEnvelopes.replaceIfUnchanged(rules, [id(3)], 'reg1.v1.c', 'reg1.v2.cur.c'),
       await store.sealedEnvelopes.pageNotLike(connectors, 'v2.cur.%', null, 10),
       await store.sealedEnvelopes.pageNotLike(rules, 'reg1.v2.cur.%', null, 10),

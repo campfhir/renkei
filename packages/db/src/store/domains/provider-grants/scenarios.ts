@@ -15,7 +15,7 @@ function grant(
     subject,
     encrypted_access_token: 'sealed-a',
     encrypted_refresh_token: 'sealed-r',
-    expires_at: '2026-01-01T01:00:00.000Z',
+    expires_at: new Date('2026-01-01T01:00:00.000Z'),
     ...extra,
   };
 }
@@ -25,7 +25,7 @@ const fixture = {
     grant('zoom', 'z1', 'ann', {
       requested_scopes: ['a', 'b'],
       granted_scopes: ['a'],
-      metadata: JSON.stringify({ allSpaces: true }),
+      metadata: { allSpaces: true },
     }),
     grant('atlassian', 'b2', 'ann'),
     grant('atlassian', 'a1', 'ann', { granted_scopes: null }),
@@ -33,20 +33,20 @@ const fixture = {
     grant('mcpx', 'm2', 'ann'),
     grant('mcp:00000000-0000-4000-8000-000000000002', 'm3', 'bob'),
     grant('microsoft', 'ms1', 'ann', {
-      metadata: JSON.stringify({ tenant: 't', indexing: { mail: false } }),
+      metadata: { tenant: 't', indexing: { mail: false } },
     }),
     grant('microsoft', 'ms2', null),
   ],
 };
 
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 const latestFixture = {
   provider_grants: [
     grant('atlassian', 'a-old', 'ann', { updated_at: at(1) }),
     grant('atlassian', 'b-tie', 'bob', {
       updated_at: at(5),
-      metadata: JSON.stringify({ cloudId: 'c1' }),
+      metadata: { cloudId: 'c1' },
     }),
     grant('atlassian', 'a-tie', 'carol', { updated_at: at(5) }),
     grant('atlassian-jsm', 'j1', 'ann', { updated_at: at(3) }),
@@ -66,9 +66,24 @@ const disconnectFixture = {
     { client_id: 'client-1', client_secret_hash: 'h', redirect_uris: ['https://x.test'] },
   ],
   oauth_access_tokens: [
-    { token_hash: 'a1', client_id: 'client-1', subject: 'ann', expires_at: '2030-01-01T00:00:00Z' },
-    { token_hash: 'a2', client_id: 'client-1', subject: 'ann', expires_at: '2030-01-01T00:00:00Z' },
-    { token_hash: 'a3', client_id: 'client-1', subject: 'bob', expires_at: '2030-01-01T00:00:00Z' },
+    {
+      token_hash: 'a1',
+      client_id: 'client-1',
+      subject: 'ann',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
+    },
+    {
+      token_hash: 'a2',
+      client_id: 'client-1',
+      subject: 'ann',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
+    },
+    {
+      token_hash: 'a3',
+      client_id: 'client-1',
+      subject: 'bob',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
+    },
   ],
   oauth_refresh_tokens: [
     {
@@ -76,7 +91,7 @@ const disconnectFixture = {
       token_id: '00000000-0000-4000-8000-5f0000000001',
       client_id: 'client-1',
       subject: 'ann',
-      expires_at: '2030-01-01T00:00:00Z',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
     },
   ],
 };
@@ -84,11 +99,11 @@ const disconnectFixture = {
 /** Grants long past expiry (abandoned) beside one that expired an hour ago (alive). */
 const staleFixture = {
   provider_grants: [
-    grant('atlassian', 'old-2', 'ann', { expires_at: '2020-01-01T00:00:00.000Z' }),
-    grant('atlassian', 'old-1', 'bob', { expires_at: '2021-01-01T00:00:00.000Z' }),
-    grant('microsoft', 'old-3', null, { expires_at: '2020-06-01T00:00:00.000Z' }),
+    grant('atlassian', 'old-2', 'ann', { expires_at: new Date('2020-01-01T00:00:00.000Z') }),
+    grant('atlassian', 'old-1', 'bob', { expires_at: new Date('2021-01-01T00:00:00.000Z') }),
+    grant('microsoft', 'old-3', null, { expires_at: new Date('2020-06-01T00:00:00.000Z') }),
     grant('atlassian', 'fresh', 'ann', {
-      expires_at: new Date(Date.now() - 60 * 60_000).toISOString(),
+      expires_at: new Date(Date.now() - 60 * 60_000),
     }),
   ],
 };
@@ -275,7 +290,7 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
     name: 'the lock time, or null',
     fixture: {
       provider_refresh_locks: [
-        { provider: 'zoom', account_id: 'z1', locked_at: '2026-01-01T00:05:00.000Z' },
+        { provider: 'zoom', account_id: 'z1', locked_at: new Date('2026-01-01T00:05:00.000Z') },
       ],
     },
     run: async (store) => [
@@ -288,8 +303,8 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
     name: 'released, then free to take again',
     fixture: {
       provider_refresh_locks: [
-        { provider: 'zoom', account_id: 'z1', locked_at: '2026-01-01T00:05:00.000Z' },
-        { provider: 'zoom', account_id: 'z2', locked_at: '2026-01-01T00:05:00.000Z' },
+        { provider: 'zoom', account_id: 'z1', locked_at: new Date('2026-01-01T00:05:00.000Z') },
+        { provider: 'zoom', account_id: 'z2', locked_at: new Date('2026-01-01T00:05:00.000Z') },
       ],
     },
     run: async (store) => {
@@ -327,11 +342,11 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
     name: 'exact match on one provider, first by account id; misses and other keys',
     fixture: {
       provider_grants: [
-        grant('zoom', 'z9', 'ann', { metadata: JSON.stringify({ email: 'host@x.test' }) }),
-        grant('zoom', 'z2', 'bob', { metadata: JSON.stringify({ email: 'host@x.test' }) }),
-        grant('zoom', 'z3', 'carol', { metadata: JSON.stringify({ email: 'Host@x.test' }) }),
-        grant('zoom', 'z4', 'dan', { metadata: JSON.stringify({ other: 'host@x.test' }) }),
-        grant('webex', 'w1', 'erin', { metadata: JSON.stringify({ email: 'solo@x.test' }) }),
+        grant('zoom', 'z9', 'ann', { metadata: { email: 'host@x.test' } }),
+        grant('zoom', 'z2', 'bob', { metadata: { email: 'host@x.test' } }),
+        grant('zoom', 'z3', 'carol', { metadata: { email: 'Host@x.test' } }),
+        grant('zoom', 'z4', 'dan', { metadata: { other: 'host@x.test' } }),
+        grant('webex', 'w1', 'erin', { metadata: { email: 'solo@x.test' } }),
         grant('zoom', 'z5', 'fay'),
       ],
     },
@@ -393,19 +408,19 @@ export const providerGrantScenarios: Scenario<DataStore>[] = [
       provider_grants: [
         grant('webex', 'w-b', 'ann', {
           updated_at: at(1),
-          metadata: JSON.stringify({ allSpaces: 'true', windowsBackfilledAt: 'x' }),
+          metadata: { allSpaces: 'true', windowsBackfilledAt: 'x' },
         }),
         grant('webex', 'w-a', 'bob', {
           updated_at: at(5),
-          metadata: JSON.stringify({ allSpaces: true }),
+          metadata: { allSpaces: true },
         }),
         grant('webex', 'w-c', 'carol', {
           updated_at: at(5),
-          metadata: JSON.stringify({ allSpaces: 'true', windowsBackfilledAt: null }),
+          metadata: { allSpaces: 'true', windowsBackfilledAt: null },
         }),
-        grant('webex', 'w-d', 'dan', { metadata: JSON.stringify({ allSpaces: false }) }),
-        grant('webex', 'w-e', null, { metadata: JSON.stringify({ other: 1 }) }),
-        grant('zoom', 'z1', 'ann', { metadata: JSON.stringify({ allSpaces: true }) }),
+        grant('webex', 'w-d', 'dan', { metadata: { allSpaces: false } }),
+        grant('webex', 'w-e', null, { metadata: { other: 1 } }),
+        grant('zoom', 'z1', 'ann', { metadata: { allSpaces: true } }),
       ],
     },
     run: async (store) => {

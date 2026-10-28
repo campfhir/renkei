@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { McpServerRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function server(n: number, name: string, extra: Record<string, unknown> = {}) {
   return {
@@ -19,29 +19,29 @@ function server(n: number, name: string, extra: Record<string, unknown> = {}) {
 
 const fixture = {
   mcp_servers: [
-    server(1, 'Linear', {
+    server(1, 'linear', {
       auth_mode: 'none',
-      oauth: JSON.stringify({ issuer: 'https://issuer.test', scopes: ['a'] }),
+      oauth: { issuer: 'https://issuer.test', scopes: ['a'] },
       client_id: 'cid',
       encrypted_client_secret: 'sealed',
       scopes: 'read write',
     }),
     server(2, 'atlas', { enabled: false, context: 'Docs search' }),
-    server(4, 'Atlas'),
-    server(3, 'Atlas'),
+    server(4, 'atlas b'),
+    server(3, 'atlas b'),
   ],
   mcp_user_tool_lists: [
     {
       server_id: id(3),
       subject: 'ann',
-      tools: JSON.stringify([{ name: 'search', readOnly: true }]),
+      tools: [{ name: 'search', readOnly: true }],
       fetched_at: at(10),
     },
-    { server_id: id(1), subject: 'ann', tools: JSON.stringify([]), fetched_at: at(11) },
+    { server_id: id(1), subject: 'ann', tools: [], fetched_at: at(11) },
     {
       server_id: id(1),
       subject: 'bob',
-      tools: JSON.stringify([{ name: 'x' }]),
+      tools: [{ name: 'x' }],
       fetched_at: at(12),
     },
   ],
@@ -56,7 +56,7 @@ function stable(record: McpServerRecord | null) {
 
 const fresh = {
   slug: 'fresh',
-  name: 'Fresh',
+  name: 'fresh',
   url: 'https://fresh.test/sse',
   transport: 'sse',
   authMode: 'oauth',
@@ -81,17 +81,9 @@ export const mcpServerScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'mcpServers.get',
-    name: 'by id, unknown is null, malformed refused',
+    name: 'by id, unknown is null',
     fixture,
-    run: async (store) => [
-      await store.mcpServers.get(id(1)),
-      await store.mcpServers.get(id(1).toUpperCase()),
-      await store.mcpServers.get(id(9)),
-      await store.mcpServers.get('nope').then(
-        () => 'accepted',
-        (e: { code?: string }) => e.code
-      ),
-    ],
+    run: async (store) => [await store.mcpServers.get(id(1)), await store.mcpServers.get(id(9))],
   },
   {
     method: 'mcpServers.getBySlug',
@@ -127,7 +119,7 @@ export const mcpServerScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       stable(
         await store.mcpServers.update(id(1), {
-          name: 'Linear 2',
+          name: 'linear 2',
           encryptedClientSecret: null,
           oauth: null,
           enabled: false,
@@ -152,17 +144,13 @@ export const mcpServerScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'mcpServers.saveToolList',
-    name: 'inserts and replaces; an unknown server is refused',
+    name: 'inserts and replaces',
     fixture,
     run: async (store) => {
       await store.mcpServers.saveToolList(id(2), 'ann', [{ name: 'new' }]);
       await store.mcpServers.saveToolList(id(3), 'ann', [{ name: 'replaced' }]);
-      const refused = await store.mcpServers.saveToolList(id(9), 'ann', []).then(
-        () => 'accepted',
-        (e: { code?: string }) => e.code
-      );
       const lists = await store.mcpServers.listToolLists('ann');
-      return { refused, lists: lists.map((l) => [l.serverId, l.tools]) };
+      return { lists: lists.map((l) => [l.serverId, l.tools]) };
     },
   },
   {

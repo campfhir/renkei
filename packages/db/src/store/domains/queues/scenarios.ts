@@ -1,8 +1,9 @@
 import type { Scenario } from '../../domain';
+import { toJson } from '../../memory/tables';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-13${String(n).padStart(10, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function message(
   n: number,
@@ -14,7 +15,7 @@ function message(
     id: id(n),
     source: extra.source ?? 'knowledge:jira',
     type,
-    payload: JSON.stringify(payload),
+    payload: toJson(payload),
     ordering_key: extra.ordering_key ?? null,
     status: extra.status ?? 'pending',
     created_at: at(extra.minute ?? n),
@@ -39,8 +40,8 @@ const fixture = {
   ],
 };
 
-const PAST = new Date(Date.UTC(2026, 0, 1)).toISOString();
-const FUTURE = new Date(Date.UTC(2099, 0, 1)).toISOString();
+const PAST = new Date(Date.UTC(2026, 0, 1));
+const FUTURE = new Date(Date.UTC(2099, 0, 1));
 const STALE = { staleClaimMinutes: 10 };
 
 export const queueScenarios: Scenario<DataStore>[] = [
@@ -131,8 +132,8 @@ export const queueScenarios: Scenario<DataStore>[] = [
         message(24, 'run', { runId: 'r2' }, { source: 'agents:a' }),
       ],
       agent_jobs_dead_letters: [
-        { id: id(31), source: 'agents:a', type: 'run', payload: JSON.stringify({ runId: 'r1' }) },
-        { id: id(32), source: 'agents:a', type: 'run', payload: JSON.stringify({ runId: 'r2' }) },
+        { id: id(31), source: 'agents:a', type: 'run', payload: { runId: 'r1' } },
+        { id: id(32), source: 'agents:a', type: 'run', payload: { runId: 'r2' } },
       ],
     },
     run: async (store) => [
@@ -167,8 +168,8 @@ function live(
     status?: string;
     ordering_key?: string;
     minute?: number;
-    run_after?: string;
-    locked_at?: string | null;
+    run_after?: Date;
+    locked_at?: Date | null;
     attempts?: number;
     payload?: unknown;
   } = {}
@@ -191,7 +192,7 @@ function deadRow(n: number, minute: number, extra: { ordering_key?: string } = {
     id: id(n),
     source: 'webex',
     type: 'msg',
-    payload: JSON.stringify({ n }),
+    payload: { n },
     ordering_key: extra.ordering_key ?? null,
     attempts: 5,
     last_error: `boom ${n}`,

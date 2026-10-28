@@ -16,16 +16,16 @@ function crawl(
     id: id(n),
     subject,
     recipe_name: n === 1 ? 'segments' : null,
-    recipe: JSON.stringify(recipe),
+    recipe: recipe,
     status,
-    queue: JSON.stringify([{ url: `https://hl7.example/${n}`, depth: 0 }]),
+    queue: [{ url: `https://hl7.example/${n}`, depth: 0 }],
     pages_done: n,
     pages_failed: 0,
     error: null,
-    created_at: at(minute).toISOString(),
-    updated_at: at(options.updated ?? minute).toISOString(),
+    created_at: at(minute),
+    updated_at: at(options.updated ?? minute),
     finished_at: null,
-    expires_at: at(options.expires ?? 1000).toISOString(),
+    expires_at: at(options.expires ?? 1000),
   };
 }
 
@@ -41,7 +41,7 @@ function pageRow(crawlId: number, url: string, seq: number, content: string | nu
     text_chars: content ? content.length : 0,
     table_count: 0,
     error: content ? null : 'Could not load the page',
-    fetched_at: at(seq).toISOString(),
+    fetched_at: at(seq),
   };
 }
 
@@ -62,26 +62,26 @@ const fixture = {
     {
       subject: 'ann',
       name: 'segments',
-      recipe: JSON.stringify(recipe),
+      recipe: recipe,
       last_crawl_id: id(1),
-      created_at: at(1).toISOString(),
-      updated_at: at(6).toISOString(),
+      created_at: at(1),
+      updated_at: at(6),
     },
     {
       subject: 'ann',
       name: 'Fields',
-      recipe: JSON.stringify({ ...recipe, maxPages: 9 }),
+      recipe: { ...recipe, maxPages: 9 },
       last_crawl_id: id(3),
-      created_at: at(1).toISOString(),
-      updated_at: at(6).toISOString(),
+      created_at: at(1),
+      updated_at: at(6),
     },
     {
       subject: 'bob',
       name: 'segments',
-      recipe: JSON.stringify(recipe),
+      recipe: recipe,
       last_crawl_id: null,
-      created_at: at(1).toISOString(),
-      updated_at: at(9).toISOString(),
+      created_at: at(1),
+      updated_at: at(9),
     },
   ],
 };

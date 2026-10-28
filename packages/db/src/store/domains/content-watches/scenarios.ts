@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-16${String(n).padStart(10, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function watch(n: number, subject: string, provider: string, scopeKey: string, extra = {}) {
   return {
@@ -29,7 +29,7 @@ const fixture = {
     }),
     watch(2, 'ann', 'confluence', 'ENG', { enabled: false, last_error: 'gone' }),
     watch(3, 'ann', 'jira', 'ENG'),
-    watch(4, 'ann', 'jira', 'eng'),
+    watch(4, 'ann', 'jira', 'FIN'),
     watch(5, 'bob', 'jira', 'OPS'),
   ],
 };
@@ -163,7 +163,7 @@ export const contentWatchScenarios: Scenario<DataStore>[] = [
         ref_id: String(refId),
         content: 'enc',
         embedding: '[1,0,0]',
-        metadata: JSON.stringify(metadata),
+        metadata: metadata,
       })),
       embedding_jobs: [
         ['confluence', 'pending', { spaceId: 'OPS' }],
@@ -176,7 +176,7 @@ export const contentWatchScenarios: Scenario<DataStore>[] = [
         source: 'knowledge',
         type: 'embed',
         status: String(status),
-        payload: JSON.stringify(metadata ? { provider, metadata } : { provider }),
+        payload: metadata ? { provider, metadata } : { provider },
       })),
     },
     run: async (store) => [

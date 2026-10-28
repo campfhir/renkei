@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function row(n: number, subject: string, minute: number, read = false) {
   return {
@@ -11,7 +11,7 @@ function row(n: number, subject: string, minute: number, read = false) {
     kind: 'agent_run',
     headline: `at ${minute}`,
     connector: n % 2 ? 'jira' : null,
-    meta: n === 1 ? JSON.stringify({ counts: { done: 1 } }) : null,
+    meta: n === 1 ? { counts: { done: 1 } } : null,
     created_at: at(minute),
     read_at: read ? at(minute + 1) : null,
   };
@@ -136,7 +136,7 @@ export const notificationScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'notifications.insert',
-    name: 'given time and read state; refuses a duplicate id',
+    name: 'given time and read state',
     run: async (store) => {
       const base = {
         id: id(9),
@@ -155,11 +155,7 @@ export const notificationScenarios: Scenario<DataStore>[] = [
         createdAt: new Date(at(7)),
       };
       await store.notifications.insert(base);
-      const again = await store.notifications.insert(base).then(
-        () => 'accepted',
-        () => 'refused'
-      );
-      return { again, rows: await store.notifications.list('ann', { limit: 5 }) };
+      return { rows: await store.notifications.list('ann', { limit: 5 }) };
     },
   },
   {

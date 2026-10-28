@@ -3,15 +3,15 @@ import type { DataStore } from '../../types';
 import { DAY_MS } from './record';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 /** Relative to when the suite loads: the lookback windows are relative to now() on both sides. */
-const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS).toISOString();
+const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
 
 function log(
   n: number,
   owner: string,
   category: string,
-  created: string,
+  created: Date,
   extra: Record<string, unknown> = {}
 ) {
   return {

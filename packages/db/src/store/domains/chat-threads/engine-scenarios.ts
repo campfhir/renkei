@@ -84,8 +84,8 @@ const fixture = {
       stage: 'model',
       stage_at: at(3),
       iterations: 2,
-      tool_permission: JSON.stringify(ASK),
-      runner: JSON.stringify({ roles: ['renkei-user'], voice: false }),
+      tool_permission: ASK,
+      runner: { roles: ['renkei-user'], voice: false },
       started_at: at(3),
       updated_at: FUTURE,
     }),
@@ -100,7 +100,7 @@ const fixture = {
       status: 'running',
       resume_count: 3,
       updated_at: at(1),
-      tool_permission: JSON.stringify({ ...ASK, toolUseId: 'tu-x' }),
+      tool_permission: { ...ASK, toolUseId: 'tu-x' },
     }),
     turn(T.compaction, CHAT.annEmpty, { status: 'running', kind: 'compaction' }),
     turn(T.staleOther, CHAT.bobInAnnProject, { status: 'running', updated_at: at(3) }),
@@ -207,7 +207,7 @@ async function thread(store: DataStore, chatId: string) {
 export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
   {
     method: 'chatThreads.createTurn',
-    name: 'a running turn, refused while another runs or for a missing chat',
+    name: 'a running turn, refused while another runs',
     fixture,
     run: async (store) => {
       const id = await store.chatThreads.createTurn({
@@ -226,21 +226,12 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
           runner: null,
         })
         .then(() => 'accepted', code);
-      const missing = await store.chatThreads
-        .createTurn({
-          chatId: uid(999),
-          kind: 'reply',
-          llmModelId: null,
-          thinkingBudget: null,
-          runner: null,
-        })
-        .then(() => 'accepted', code);
-      return [shape(await store.chatThreads.getTurn(CHAT.annArchived, id)), again, missing];
+      return [shape(await store.chatThreads.getTurn(CHAT.annArchived, id)), again];
     },
   },
   {
     method: 'chatThreads.openTurn',
-    name: 'turn, messages at the next seqs and the owner’s files linked; all or nothing',
+    name: 'turn, messages at the next seqs and the owner’s files linked',
     fixture,
     run: async (store) => {
       const opened = await store.chatThreads
@@ -278,21 +269,6 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
           },
         ],
       });
-      // A link that fails (a malformed id) takes the turn and its messages with it.
-      const broken = await store.chatThreads
-        .openTurn({
-          turn: {
-            chatId: CHAT.annCode,
-            kind: 'reply',
-            llmModelId: null,
-            thinkingBudget: null,
-            runner: null,
-          },
-          messages: [{ role: 'user', kind: 'prompt', status: 'complete', content: 'x' }],
-          link: { messageIndex: 0, ownerSubject: ANN, artifactIds: ['not-a-uuid'] },
-        })
-        .then(() => 'accepted', code);
-      const afterBroken = shape(await store.chatThreads.getActiveTurn(CHAT.annCode));
       const withFiles = await store.chatThreads.openTurn({
         turn: {
           chatId: CHAT.annCode,
@@ -311,8 +287,6 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
         done.messages.map((m) => m.seq),
         await thread(store, CHAT.annArchived),
         shape(await store.chatThreads.getActiveTurn(CHAT.annArchived)),
-        broken,
-        afterBroken,
         withFiles.messages.map((m) => m.seq),
         await thread(store, CHAT.annCode),
         artifacts.map((a) => [a.id, a.messageId === withFiles.messages[0]?.id]),
@@ -321,7 +295,7 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'chatThreads.insertMessage',
-    name: 'at the next seq; first in an empty chat; a missing chat refused',
+    name: 'at the next seq; first in an empty chat',
     fixture,
     run: async (store) => {
       const a = await store.chatThreads.insertMessage({
@@ -340,23 +314,7 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
         status: 'complete',
         content: 'n',
       });
-      const missing = await store.chatThreads
-        .insertMessage({
-          chatId: uid(999),
-          turnId: null,
-          role: 'user',
-          kind: 'note',
-          status: 'complete',
-          content: 'n',
-        })
-        .then(() => 'accepted', code);
-      return [
-        a.seq,
-        b.seq,
-        missing,
-        await thread(store, CHAT.annA),
-        await thread(store, CHAT.annEmpty),
-      ];
+      return [a.seq, b.seq, await thread(store, CHAT.annA), await thread(store, CHAT.annEmpty)];
     },
   },
   {

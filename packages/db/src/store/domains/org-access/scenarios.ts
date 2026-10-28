@@ -17,9 +17,9 @@ const grant = (
   client_id: 'client',
   encrypted_access_token: 'sealed-a',
   encrypted_refresh_token: 'sealed-r',
-  expires_at: '2026-06-01T00:00:00.000Z',
+  expires_at: new Date('2026-06-01T00:00:00.000Z'),
   metadata,
-  created_at: '2026-01-01T00:00:00.000Z',
+  created_at: new Date('2026-01-01T00:00:00.000Z'),
 });
 
 const fixture = {
@@ -37,8 +37,18 @@ const fixture = {
     { client_id: 'client-1', client_secret_hash: 'h', redirect_uris: ['https://x.test'] },
   ],
   oauth_access_tokens: [
-    { token_hash: 'a1', client_id: 'client-1', subject: 'ann', expires_at: '2030-01-01T00:00:00Z' },
-    { token_hash: 'a2', client_id: 'client-1', subject: 'bob', expires_at: '2030-01-01T00:00:00Z' },
+    {
+      token_hash: 'a1',
+      client_id: 'client-1',
+      subject: 'ann',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
+    },
+    {
+      token_hash: 'a2',
+      client_id: 'client-1',
+      subject: 'bob',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
+    },
   ],
   oauth_refresh_tokens: [
     {
@@ -46,7 +56,7 @@ const fixture = {
       token_id: '00000000-0000-4000-8000-3b0000000001',
       client_id: 'client-1',
       subject: 'ann',
-      expires_at: '2030-01-01T00:00:00Z',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
     },
   ],
   user_encryption_keys: [

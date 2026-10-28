@@ -5,10 +5,12 @@
  * (Postgres vs memory, when CONTRACT_DATABASE_URL names a contract
  * database) and coverage.test.ts (memory against itself, always).
  *
- * The contract database is created with ICU en-US collation — the
- * collation memory/order.ts sorts by — and is TRUNCATED before every
- * scenario, so the harness refuses any database whose name does not end
- * in `_contract`:
+ * The memory store is seeded with the fixture as Postgres stored it (every
+ * column, defaults filled), so the two start from identical rows. The
+ * contract database is TRUNCATED before every scenario, so the harness
+ * refuses any database whose name does not end in `_contract`. Scenarios
+ * use values that sort the same under a plain compare (the memory store's)
+ * and under the database's collation:
  *
  *   CREATE DATABASE renkei_contract TEMPLATE template0
  *     LOCALE_PROVIDER icu ICU_LOCALE 'en-US' LOCALE 'C.UTF-8';
@@ -21,9 +23,8 @@ import { Pool } from 'pg';
 import type { DB } from '../../db.types';
 import type { Scenario } from '../domain';
 import { createMemoryDataStore } from '../memory';
-import { MemoryTables, type TableRows } from '../memory/tables';
+import type { TableRows } from '../memory/tables';
 import { createPostgresDataStore } from '../postgres';
-import { STORE_SCHEMA } from '../schema.generated';
 import type { DataStore } from '../types';
 
 /** An answer made comparable: Dates, bytes and Maps as plain data, undefined fields dropped. */
@@ -77,9 +78,17 @@ export async function outcomeOf(run: () => Promise<unknown>): Promise<Outcome> {
   }
 }
 
-export async function runOnMemory(scenario: Scenario<DataStore>): Promise<Outcome> {
+/**
+ * The scenario on a fresh memory store, seeded with `rows` when given (the
+ * fixture as Postgres stored it, defaults filled) or else the fixture as
+ * written.
+ */
+export async function runOnMemory(
+  scenario: Scenario<DataStore>,
+  rows: TableRows | undefined = scenario.fixture
+): Promise<Outcome> {
   const store = createMemoryDataStore();
-  if (scenario.fixture) await store.seed(scenario.fixture);
+  if (rows) await store.seed(rows);
   return outcomeOf(() => scenario.run(store));
 }
 
@@ -102,33 +111,92 @@ export function openContractDatabase(url: string): ContractDatabase {
   return { db, close: () => db.destroy() };
 }
 
-const ALL_TABLES = Object.keys(STORE_SCHEMA);
+interface Catalog {
+  tables: string[];
+  /** For each table, the tables its foreign keys point at. */
+  parents: Map<string, string[]>;
+  /** For each table, its json and jsonb columns. */
+  jsonColumns: Map<string, Set<string>>;
+}
+
+const catalogs = new WeakMap<Kysely<DB>, Promise<Catalog>>();
+
+/** The contract database's tables, references and JSON columns, read once per connection. */
+function catalogOf(db: Kysely<DB>): Promise<Catalog> {
+  let catalog = catalogs.get(db);
+  if (!catalog) {
+    catalog = readCatalog(db);
+    catalogs.set(db, catalog);
+  }
+  return catalog;
+}
+
+async function readCatalog(db: Kysely<DB>): Promise<Catalog> {
+  const tables = await sql<{ name: string }>`
+    SELECT tablename AS name FROM pg_tables
+    WHERE schemaname = 'public' AND tablename NOT IN ('kysely_migration', 'kysely_migration_lock')
+    ORDER BY tablename`.execute(db);
+  const references = await sql<{ child: string; parent: string }>`
+    SELECT c.conrelid::regclass::text AS child, c.confrelid::regclass::text AS parent
+    FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+    WHERE c.contype = 'f' AND n.nspname = 'public'`.execute(db);
+  const json = await sql<{ table_name: string; column_name: string }>`
+    SELECT table_name, column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND data_type IN ('json', 'jsonb')`.execute(db);
+  const parents = new Map<string, string[]>();
+  for (const { child, parent } of references.rows) {
+    parents.set(child, [...(parents.get(child) ?? []), parent]);
+  }
+  const jsonColumns = new Map<string, Set<string>>();
+  for (const row of json.rows) {
+    const columns = jsonColumns.get(row.table_name) ?? new Set<string>();
+    columns.add(row.column_name);
+    jsonColumns.set(row.table_name, columns);
+  }
+  return { tables: tables.rows.map((row) => row.name), parents, jsonColumns };
+}
+
+/** Tables ordered so every parent comes before the tables that reference it. */
+function insertionOrder(tables: string[], parents: Map<string, string[]>): string[] {
+  const wanted = new Set(tables);
+  const ordered: string[] = [];
+  const visiting = new Set<string>();
+  const visit = (table: string) => {
+    if (ordered.includes(table) || visiting.has(table)) return;
+    visiting.add(table);
+    for (const parent of parents.get(table) ?? []) {
+      if (wanted.has(parent) && parent !== table) visit(parent);
+    }
+    visiting.delete(table);
+    ordered.push(table);
+  };
+  for (const table of tables) visit(table);
+  return ordered;
+}
 
 export async function truncateAll(db: Kysely<DB>): Promise<void> {
-  const list = ALL_TABLES.map((table) => `"${table}"`).join(', ');
+  const { tables } = await catalogOf(db);
+  const list = tables.map((table) => `"${table}"`).join(', ');
   await sql.raw(`TRUNCATE ${list} RESTART IDENTITY CASCADE`).execute(db);
 }
 
 /**
- * The fixture into Postgres, parents first. jsonb values that are not
- * already JSON text are encoded (pg would send a JS array as a Postgres
- * array literal); everything else goes as given — the memory store reads
- * the same values through the same rules.
+ * The fixture into Postgres, parents first. Fixture rows hold values as
+ * the store reads them back (parsed JSON, Dates); a JSON column's value
+ * goes as JSON text (pg would send a JS array as a Postgres array literal),
+ * everything else as given.
  */
 export async function seedPostgres(db: Kysely<DB>, fixtures: TableRows): Promise<void> {
-  const order = new MemoryTables().insertionOrder(Object.keys(fixtures));
-  for (const table of order) {
+  const { parents, jsonColumns } = await catalogOf(db);
+  for (const table of insertionOrder(Object.keys(fixtures), parents)) {
     const rows: unknown = Reflect.get(fixtures, table);
     if (!Array.isArray(rows) || rows.length === 0) continue;
-    const columns = STORE_SCHEMA[table].columns;
+    const json = jsonColumns.get(table) ?? new Set<string>();
     for (const row of rows) {
       const values: Record<string, unknown> = {};
       for (const [column, value] of Object.entries(Object(row))) {
-        const type = columns[column]?.type;
-        values[column] =
-          (type === 'jsonb' || type === 'json') && value !== null && typeof value !== 'string'
-            ? JSON.stringify(value)
-            : value;
+        if (value === undefined) continue;
+        values[column] = json.has(column) && value !== null ? JSON.stringify(value) : value;
       }
       const names = Object.keys(values);
       await sql`INSERT INTO ${sql.table(table)} (${sql.join(names.map((n) => sql.ref(n)))})
@@ -137,14 +205,37 @@ export async function seedPostgres(db: Kysely<DB>, fixtures: TableRows): Promise
   }
 }
 
+/** Every row of the fixture's tables, as Postgres stored them (defaults filled). */
+async function storedRows(db: Kysely<DB>, fixtures: TableRows): Promise<TableRows> {
+  const rows: TableRows = {};
+  for (const table of Object.keys(fixtures)) {
+    const result = await sql<Record<string, unknown>>`SELECT * FROM ${sql.table(table)}`.execute(
+      db
+    );
+    // Each row exactly as the store's own Postgres reads would see it.
+    Reflect.set(rows, table, result.rows);
+  }
+  return rows;
+}
+
+/**
+ * The scenario on a freshly truncated Postgres. Besides the outcome, the
+ * fixture as Postgres stored it — the rows the memory store is seeded
+ * with, so both start from identical rows whatever defaults the fixture
+ * left to the database.
+ */
 export async function runOnPostgres(
   database: ContractDatabase,
   scenario: Scenario<DataStore>
-): Promise<Outcome> {
+): Promise<{ outcome: Outcome; rows: TableRows | undefined }> {
   await truncateAll(database.db);
-  if (scenario.fixture) await seedPostgres(database.db, scenario.fixture);
+  let rows: TableRows | undefined;
+  if (scenario.fixture) {
+    await seedPostgres(database.db, scenario.fixture);
+    rows = await storedRows(database.db, scenario.fixture);
+  }
   const store = createPostgresDataStore(() => database.db);
-  return outcomeOf(() => scenario.run(store));
+  return { outcome: await outcomeOf(() => scenario.run(store)), rows };
 }
 
 /** `domain.method` for every method of every repository the store has. */

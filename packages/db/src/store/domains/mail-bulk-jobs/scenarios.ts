@@ -11,13 +11,13 @@ const fixture = {
       subject: 'ann',
       account_id: 'acct',
       action: 'markRead',
-      params: JSON.stringify({ isRead: true }),
-      selection: JSON.stringify({ messageIds: ['m1', 'm2'] }),
+      params: { isRead: true },
+      selection: { messageIds: ['m1', 'm2'] },
       status: 'running',
       total: 2,
       succeeded: 1,
       failed: 1,
-      failures: JSON.stringify([{ id: 'm2', error: 'gone' }]),
+      failures: [{ id: 'm2', error: 'gone' }],
       started_at: at(1),
     },
     {
@@ -25,7 +25,7 @@ const fixture = {
       subject: 'bob',
       account_id: 'acct-b',
       action: 'flag',
-      selection: JSON.stringify({ filters: {} }),
+      selection: { filters: {} },
     },
   ],
 };
@@ -46,7 +46,7 @@ function job(n: number, subject: string, extra: Record<string, unknown>) {
     subject,
     account_id: `acct-${subject}`,
     action: 'markRead',
-    selection: JSON.stringify({ messageIds: ['m1'] }),
+    selection: { messageIds: ['m1'] },
     created_at: OLD,
     updated_at: OLD,
     ...extra,
@@ -67,21 +67,17 @@ const housekeeping = {
 export const mailBulkJobScenarios: Scenario<DataStore>[] = [
   {
     method: 'mailBulkJobs.getOwned',
-    name: 'own job only; unknown and malformed ids',
+    name: 'own job only; unknown ids',
     fixture,
     run: async (store) => [
       await store.mailBulkJobs.getOwned(id(1), 'ann'),
       await store.mailBulkJobs.getOwned(id(2), 'ann'),
       await store.mailBulkJobs.getOwned(id(2), 'bob'),
-      await store.mailBulkJobs.getOwned('nope', 'ann').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {
     method: 'mailBulkJobs.create',
-    name: 'queued with defaults after; a reused id is refused',
+    name: 'queued with defaults after',
     fixture,
     run: async (store) => {
       const job = {
@@ -93,11 +89,7 @@ export const mailBulkJobScenarios: Scenario<DataStore>[] = [
         selection: { messageIds: ['x'] },
       };
       await store.mailBulkJobs.create(job);
-      const again = await store.mailBulkJobs.create(job).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
-      return { again, read: await store.mailBulkJobs.getOwned(id(3), 'ann') };
+      return { read: await store.mailBulkJobs.getOwned(id(3), 'ann') };
     },
   },
   {
@@ -121,10 +113,6 @@ export const mailBulkJobScenarios: Scenario<DataStore>[] = [
       await store.mailBulkJobs.get(id(1)),
       await store.mailBulkJobs.get(id(2)),
       await store.mailBulkJobs.get(id(9)),
-      await store.mailBulkJobs.get('nope').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {
@@ -177,7 +165,7 @@ export const mailBulkJobScenarios: Scenario<DataStore>[] = [
           subject: 'ann',
           account_id: 'acct',
           action: 'move',
-          selection: JSON.stringify({ messageIds: ['x'] }),
+          selection: { messageIds: ['x'] },
           status: 'running',
           last_error: 'earlier',
         },

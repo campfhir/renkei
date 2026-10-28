@@ -3,8 +3,8 @@ import type { DataStore } from '../../types';
 
 const fixture = {
   identities: [
-    { subject: 's-c', email: 'zed@example.test', display_name: null, idp_groups: ['Ops'] },
-    { subject: 's-b', email: 'bea@example.test', display_name: 'bea', idp_groups: ['eng', 'Ops'] },
+    { subject: 's-c', email: 'zed@example.test', display_name: null, idp_groups: ['ops'] },
+    { subject: 's-b', email: 'bea@example.test', display_name: 'bea', idp_groups: ['eng', 'ops'] },
     { subject: 's-d', email: 'amy@example.test', display_name: null, idp_groups: [] },
     { subject: 's-a', email: 'cal@example.test', display_name: 'Abe', idp_groups: ['admins'] },
   ],

@@ -7,18 +7,23 @@ const fixture = {
   schedule_calendars: [
     {
       id: id(1),
-      name: 'US holidays',
+      name: 'us holidays',
       dates: [{ date: '2026-07-04', label: 'Independence Day' }],
-      updated_at: '2026-01-02T00:00:00.000Z',
+      updated_at: new Date('2026-01-02T00:00:00.000Z'),
     },
-    { id: id(2), name: 'office closures', dates: [], updated_at: '2026-01-01T00:00:00.000Z' },
-    { id: id(3), name: 'Company', dates: [{ date: '2026-12-25' }] },
+    {
+      id: id(2),
+      name: 'office closures',
+      dates: [],
+      updated_at: new Date('2026-01-01T00:00:00.000Z'),
+    },
+    { id: id(3), name: 'company', dates: [{ date: '2026-12-25' }] },
   ],
 };
 
 // jsonb arrays go in as JSON text: pg would send a JS array as a Postgres array literal.
 const asJson = (rows: typeof fixture.schedule_calendars) =>
-  rows.map((row) => ({ ...row, dates: JSON.stringify(row.dates) }));
+  rows.map((row) => ({ ...row, dates: row.dates }));
 
 const seeded = { schedule_calendars: asJson(fixture.schedule_calendars) };
 
@@ -45,10 +50,10 @@ export const scheduleCalendarScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.scheduleCalendars.create({
         id: id(4),
-        name: 'EU',
+        name: 'eu',
         dates: [{ date: '2026-05-01' }],
       }),
-      await store.scheduleCalendars.create({ id: id(5), name: 'Company', dates: [] }),
+      await store.scheduleCalendars.create({ id: id(5), name: 'company', dates: [] }),
       await names(store),
     ],
   },
@@ -59,7 +64,7 @@ export const scheduleCalendarScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.scheduleCalendars.update(id(2), { name: 'Closures', dates: [{ date: 'x' }] }),
       await store.scheduleCalendars.update(id(2), { name: 'Closures', dates: [] }),
-      await store.scheduleCalendars.update(id(3), { name: 'US holidays', dates: [] }),
+      await store.scheduleCalendars.update(id(3), { name: 'us holidays', dates: [] }),
       await store.scheduleCalendars.update(id(9), { name: 'Nobody', dates: [] }),
       await names(store),
     ],

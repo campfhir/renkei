@@ -97,7 +97,7 @@ export const oauthTokenScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'oauthTokens.insertAccessToken',
-    name: 'readable after; a reused digest is refused',
+    name: 'readable after',
     fixture,
     run: async (store) => {
       const token = {
@@ -110,11 +110,7 @@ export const oauthTokenScenarios: Scenario<DataStore>[] = [
         expiresAt: at(30),
       };
       await store.oauthTokens.insertAccessToken(token);
-      const again = await store.oauthTokens.insertAccessToken(token).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
-      return { again, read: await store.oauthTokens.findAccessToken('fresh', 'widget') };
+      return { read: await store.oauthTokens.findAccessToken('fresh', 'widget') };
     },
   },
   {

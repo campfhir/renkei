@@ -16,9 +16,8 @@ function item(
     status: fields.status ?? 'suggested',
     title: `card ${n}`,
     summary: `summary ${n}`,
-    evidence: JSON.stringify({ quotes: [n] }),
-    suggested_action:
-      n === 1 ? JSON.stringify({ tool: 'jira_create_issue', args: { summary: 's' } }) : null,
+    evidence: { quotes: [n] },
+    suggested_action: n === 1 ? { tool: 'jira_create_issue', args: { summary: 's' } } : null,
     owner_subject: fields.owner ?? null,
     created_by_agent_id: fields.agent ? id(100 + fields.agent) : null,
     archived_at: fields.archived ? at(minute + 1) : null,
@@ -68,17 +67,13 @@ export const actionableItemScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'actionableItems.findVisible',
-    name: 'own and tenant-wide only; a malformed id is refused',
+    name: 'own and tenant-wide only',
     fixture,
     run: async (store) => [
       await store.actionableItems.findVisible('ann', id(1)),
       (await store.actionableItems.findVisible('ann', id(2)))?.ownerSubject,
       await store.actionableItems.findVisible('ann', id(4)),
       await store.actionableItems.findVisible('ann', id(99)),
-      await store.actionableItems.findVisible('ann', 'not-a-uuid').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {

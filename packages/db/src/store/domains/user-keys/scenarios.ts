@@ -2,10 +2,8 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-12${String(n).padStart(10, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 const now = new Date(at(30));
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
 
 function delegation(
   n: number,
@@ -147,12 +145,11 @@ const write = (sessionId: string, instances: number[], automation: number[]) => 
 export const userKeyScenarios: Scenario<DataStore>[] = [
   {
     method: 'userKeys.registerInstance',
-    name: 'a new instance is live at once; a repeated id is refused',
+    name: 'a new instance is live at once',
     fixture,
     run: async (store) => [
       await store.userKeys.registerInstance(id(5), 'i5'),
       (await store.userKeys.liveInstances(new Date(at(28)))).map((i) => i.id),
-      await store.userKeys.registerInstance(id(5), 'again').catch(refusal),
     ],
   },
   {

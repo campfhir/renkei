@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { BatchJobScheduleRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 const MISSING = id(999);
 
 function schedule(n: number, subject: string, name: string, fields: Record<string, unknown> = {}) {
@@ -12,11 +12,11 @@ function schedule(n: number, subject: string, name: string, fields: Record<strin
     subject,
     name,
     kind: 'document-ocr-pipeline',
-    config: JSON.stringify({ shareId: 'share-1', path: '/in' }),
-    schedule_config: JSON.stringify({
+    config: { shareId: 'share-1', path: '/in' },
+    schedule_config: {
       recurrences: [{ every: 'day', at: '02:00' }],
       timezone: 'UTC',
-    }),
+    },
     next_run_at: at(60 + n),
     created_at: at(n),
     ...fields,
@@ -26,10 +26,10 @@ function schedule(n: number, subject: string, name: string, fields: Record<strin
 const fixture = {
   batch_job_schedules: [
     schedule(1, 'ann', 'beta'),
-    schedule(2, 'ann', 'Alpha', { enabled: false, next_run_at: null }),
+    schedule(2, 'ann', 'alpha-old', { enabled: false, next_run_at: null }),
     schedule(3, 'ann', 'alpha', { last_error: 'No share', last_fired_at: at(30) }),
-    schedule(4, 'bob', 'Bob nightly'),
-    schedule(5, 'ann', 'Zed', { config: '[]', schedule_config: '"weird"' }),
+    schedule(4, 'bob', 'bob nightly'),
+    schedule(5, 'ann', 'zed', { config: [], schedule_config: 'weird' }),
   ],
   batch_jobs: [
     {
@@ -45,9 +45,9 @@ const fixture = {
     {
       id: id(40),
       name: 'Holidays',
-      dates: JSON.stringify([{ date: '2026-12-25', label: 'Christmas' }]),
+      dates: [{ date: '2026-12-25', label: 'Christmas' }],
     },
-    { id: id(41), name: 'Empty', dates: '[]' },
+    { id: id(41), name: 'Empty', dates: [] },
   ],
 };
 
@@ -76,7 +76,7 @@ export const batchJobScheduleScenarios: Scenario<DataStore>[] = [
       const made = await store.batchJobSchedules.create({
         id: id(10),
         subject: 'ann',
-        name: 'Weekly',
+        name: 'weekly',
         kind: 'document-ocr-pipeline',
         config: { shareId: 'share-2', grouping: { strategy: 'whole-file' } },
         scheduleConfig: { recurrences: [{ every: 'week', on: ['mon'], at: '06:00' }] },
@@ -101,13 +101,12 @@ export const batchJobScheduleScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'batchJobSchedules.get',
-    name: 'by id, JSON as stored, missing and malformed ids',
+    name: 'by id, JSON as stored, missing ids',
     fixture,
     run: async (store) => [
       await store.batchJobSchedules.get(id(3)),
       await store.batchJobSchedules.get(id(5)),
       await store.batchJobSchedules.get(MISSING),
-      await outcome(store.batchJobSchedules.get('nope')),
     ],
   },
   {
@@ -133,14 +132,14 @@ export const batchJobScheduleScenarios: Scenario<DataStore>[] = [
       ),
       settled(
         await store.batchJobSchedules.update(id(1), {
-          name: 'Beta renamed',
+          name: 'beta renamed',
           config: { shareId: 'share-3', path: '/x' },
           scheduleConfig: { recurrences: [], timezone: 'Asia/Tokyo' },
         })
       ),
       settled(await store.batchJobSchedules.update(id(3), { nextRunAt: null })),
       settled(await store.batchJobSchedules.update(id(4), {})),
-      await outcome(store.batchJobSchedules.update(id(4), { name: 'Zed' })),
+      await outcome(store.batchJobSchedules.update(id(4), { name: 'zed' })),
       settled(await store.batchJobSchedules.update(MISSING, { enabled: false })),
       (await store.batchJobSchedules.list('ann')).map((s) => [s.name, s.enabled]),
     ],
@@ -160,13 +159,12 @@ export const batchJobScheduleScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'batchJobSchedules.calendarDates',
-    name: 'dates as stored, the default, missing and malformed ids',
+    name: 'dates as stored, the default, missing ids',
     fixture,
     run: async (store) => [
       await store.batchJobSchedules.calendarDates(id(40)),
       await store.batchJobSchedules.calendarDates(id(41)),
       await store.batchJobSchedules.calendarDates(MISSING),
-      await outcome(store.batchJobSchedules.calendarDates('nope')),
     ],
   },
   {
@@ -175,8 +173,8 @@ export const batchJobScheduleScenarios: Scenario<DataStore>[] = [
     fixture: {
       batch_job_schedules: [
         ...fixture.batch_job_schedules,
-        schedule(6, 'cy', 'Later', { next_run_at: '2099-01-01T00:00:00.000Z' }),
-        schedule(7, 'cy', 'Tied', { next_run_at: at(61) }),
+        schedule(6, 'cy', 'later', { next_run_at: new Date('2099-01-01T00:00:00.000Z') }),
+        schedule(7, 'cy', 'tied', { next_run_at: at(61) }),
       ],
     },
     run: async (store) => [

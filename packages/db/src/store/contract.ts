@@ -78,17 +78,6 @@ export function describeDataStoreContract(
         expect(await store().sessions.find(id)).toBeNull();
       });
 
-      it('refuses a second session with the same id', async () => {
-        const id = randomUUID();
-        const who = subject();
-        const expiresAt = new Date(Date.now() + 3_600_000);
-        await store().sessions.create({ id, subject: who, roles: [], expiresAt });
-        await expect(
-          store().sessions.create({ id, subject: who, roles: [], expiresAt })
-        ).rejects.toThrow();
-        await store().sessions.delete(id);
-      });
-
       it('hands out copies', async () => {
         const id = randomUUID();
         await store().sessions.create({

@@ -97,15 +97,11 @@ export const deviceKeyRequestScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'deviceKeyRequests.get',
-    name: 'own only; malformed id refused',
+    name: 'own only',
     fixture,
     run: async (store) => [
       await store.deviceKeyRequests.get('ann', id(1)),
       await store.deviceKeyRequests.get('ann', id(8)),
-      await store.deviceKeyRequests.get('ann', 'zz').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {

@@ -2,14 +2,14 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 import type { ConnectorConfigRecord } from './types';
 
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 const fixture = {
   connector_configs: [
     {
       connector: 'zoom',
       enabled: true,
-      settings: JSON.stringify({ scopes: 'a b', nested: { n: [1, 2] } }),
+      settings: { scopes: 'a b', nested: { n: [1, 2] } },
       encrypted_secrets: 'sealed-zoom',
       created_at: at(1),
       updated_at: at(2),
@@ -17,13 +17,13 @@ const fixture = {
     {
       connector: 'atlassian',
       enabled: false,
-      settings: JSON.stringify({}),
+      settings: {},
       encrypted_secrets: 'sealed-atl',
       created_at: at(3),
       updated_at: at(3),
     },
     {
-      connector: 'Github',
+      connector: 'github',
       enabled: true,
       encrypted_secrets: 'sealed-gh',
       created_at: at(4),
@@ -46,7 +46,7 @@ export const connectorConfigScenarios: Scenario<DataStore>[] = [
     fixture,
     run: async (store) => [
       await store.connectorConfigs.get('zoom'),
-      await store.connectorConfigs.get('Github'),
+      await store.connectorConfigs.get('github'),
       await store.connectorConfigs.get('github'),
       await store.connectorConfigs.get('nobody'),
     ],

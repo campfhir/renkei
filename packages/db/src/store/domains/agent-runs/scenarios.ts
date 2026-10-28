@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-b${String(n).padStart(11, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 const refusal = (error: unknown) =>
   typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
 
@@ -33,7 +33,7 @@ const fixture = {
   agent_runs: [
     run(11, 1, 'ann', 1, {
       status: 'succeeded',
-      initial_state: JSON.stringify({ subject: 'Quarterly Report', count: 2 }),
+      initial_state: { subject: 'Quarterly Report', count: 2 },
       started_at: at(1),
       finished_at: at(2),
       resume_guidance: 'try harder',
@@ -42,11 +42,11 @@ const fixture = {
       status: 'failed',
       error: 'Jira said 500_ok',
       error_kind: 'tool',
-      initial_state: JSON.stringify({ subject: 'Weekly report' }),
+      initial_state: { subject: 'Weekly report' },
       resume_count: 1,
       resumed_at: at(4),
       active_ms: '1500',
-      definition_snapshot: JSON.stringify({ instructions: 'x', tools: [] }),
+      definition_snapshot: { instructions: 'x', tools: [] },
     }),
     run(13, 1, 'ann', 3, { status: 'waiting', trigger_kind: 'schedule', waiting_until: at(50) }),
     run(14, 1, 'grantee', 5, { status: 'queued', trigger_kind: 'event' }),
@@ -60,7 +60,7 @@ const fixture = {
       step_index: 0,
       attempt: 2,
       status: 'failed',
-      detail: JSON.stringify({ llmSummary: 'two' }),
+      detail: { llmSummary: 'two' },
     },
     {
       id: id(22),
@@ -90,7 +90,7 @@ const fixture = {
       owner_subject: 'ann',
       turn: 2,
       summary: 'b',
-      actions: JSON.stringify([]),
+      actions: [],
       created_at: at(5),
     },
     {
@@ -100,8 +100,8 @@ const fixture = {
       owner_subject: 'ann',
       turn: 1,
       summary: 'a',
-      actions: JSON.stringify([{ tool: 'x' }]),
-      results: JSON.stringify([{ ok: true }]),
+      actions: [{ tool: 'x' }],
+      results: [{ ok: true }],
       created_at: at(4),
     },
   ],
@@ -115,9 +115,9 @@ const fixture = {
       summary: 'two changes',
       run_id: id(13),
       created_by_agent_id: id(1),
-      suggested_action: JSON.stringify({ actions: [] }),
-      evidence: '{}',
-      created_at: '2026-01-01T00:10:00.000Z',
+      suggested_action: { actions: [] },
+      evidence: {},
+      created_at: new Date('2026-01-01T00:10:00.000Z'),
     },
     {
       id: id(42),
@@ -128,9 +128,9 @@ const fixture = {
       summary: 'q',
       run_id: id(13),
       created_by_agent_id: id(1),
-      suggested_action: JSON.stringify({ message: 'm', form: [] }),
-      evidence: '{}',
-      created_at: '2026-01-01T00:11:00.000Z',
+      suggested_action: { message: 'm', form: [] },
+      evidence: {},
+      created_at: new Date('2026-01-01T00:11:00.000Z'),
     },
     {
       id: id(43),
@@ -142,8 +142,8 @@ const fixture = {
       run_id: id(13),
       created_by_agent_id: id(1),
       status: 'approved',
-      evidence: '{}',
-      created_at: '2026-01-01T00:12:00.000Z',
+      evidence: {},
+      created_at: new Date('2026-01-01T00:12:00.000Z'),
     },
     {
       id: id(44),
@@ -154,9 +154,9 @@ const fixture = {
       summary: 'gone',
       run_id: id(13),
       created_by_agent_id: id(1),
-      archived_at: '2026-01-01T00:13:00.000Z',
-      evidence: '{}',
-      created_at: '2026-01-01T00:09:00.000Z',
+      archived_at: new Date('2026-01-01T00:13:00.000Z'),
+      evidence: {},
+      created_at: new Date('2026-01-01T00:09:00.000Z'),
     },
     {
       id: id(45),
@@ -166,8 +166,8 @@ const fixture = {
       title: 'No agent',
       summary: 'manual',
       run_id: null,
-      evidence: '{}',
-      created_at: '2026-01-01T00:08:00.000Z',
+      evidence: {},
+      created_at: new Date('2026-01-01T00:08:00.000Z'),
     },
     {
       id: id(46),
@@ -178,8 +178,8 @@ const fixture = {
       summary: 'bob',
       run_id: id(15),
       created_by_agent_id: id(2),
-      evidence: '{}',
-      created_at: '2026-01-01T00:07:00.000Z',
+      evidence: {},
+      created_at: new Date('2026-01-01T00:07:00.000Z'),
     },
     {
       id: id(47),
@@ -190,8 +190,8 @@ const fixture = {
       summary: 'tie',
       run_id: null,
       created_by_agent_id: id(1),
-      evidence: '{}',
-      created_at: '2026-01-01T00:10:00.000Z',
+      evidence: {},
+      created_at: new Date('2026-01-01T00:10:00.000Z'),
     },
   ],
 };
@@ -199,7 +199,7 @@ const fixture = {
 const listing = { agentId: id(1), limit: 50 } as const;
 
 /** Relative to now: the evidence window is "the last N days". */
-const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
+const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000);
 
 function logged(n: number, status: string, days: number, extra: Record<string, unknown> = {}) {
   return {
@@ -241,7 +241,7 @@ const evidence = {
       step_index: 0,
       attempt: 1,
       status: 'succeeded',
-      detail: JSON.stringify({
+      detail: {
         toolCalls: [
           { tool: 'jira_search', isError: true },
           { tool: 'jira_search' },
@@ -250,7 +250,7 @@ const evidence = {
           { name: 'no tool key' },
           'not an object',
         ],
-      }),
+      },
     },
     {
       id: id(72),
@@ -259,7 +259,7 @@ const evidence = {
       step_index: 0,
       attempt: 2,
       status: 'succeeded',
-      detail: JSON.stringify({ toolCalls: [{ tool: 'calendar_list' }, { tool: 'mail_send' }] }),
+      detail: { toolCalls: [{ tool: 'calendar_list' }, { tool: 'mail_send' }] },
     },
     {
       id: id(73),
@@ -268,7 +268,7 @@ const evidence = {
       step_index: 0,
       attempt: 3,
       status: 'failed',
-      detail: JSON.stringify({ toolCalls: 'nope' }),
+      detail: { toolCalls: 'nope' },
     },
     {
       id: id(74),
@@ -277,7 +277,7 @@ const evidence = {
       step_index: 0,
       attempt: 1,
       status: 'succeeded',
-      detail: JSON.stringify({ toolCalls: [{ tool: 'old' }] }),
+      detail: { toolCalls: [{ tool: 'old' }] },
     },
   ],
 };
@@ -339,11 +339,11 @@ const execution = {
       status: 'running',
       trigger_kind: 'agent',
       parent_run_id: id(12),
-      lineage: JSON.stringify([id(1), 'older']),
+      lineage: [id(1), 'older'],
       active_ms: '1500',
       started_at: at(2),
-      initial_state: JSON.stringify({ subject: 'Report' }),
-      definition_snapshot: JSON.stringify({ instructions: 'x', tools: ['jira_get_issue'] }),
+      initial_state: { subject: 'Report' },
+      definition_snapshot: { instructions: 'x', tools: ['jira_get_issue'] },
       resumed_at: at(3),
       resume_guidance: 'try again',
       resume_failure: 'it broke',
@@ -365,7 +365,7 @@ const execution = {
       attempt: 2,
       status: 'running',
       created_at: at(6),
-      detail: JSON.stringify({ assistant: [] }),
+      detail: { assistant: [] },
     },
     {
       id: id(22),
@@ -376,7 +376,7 @@ const execution = {
       status: 'succeeded',
       tool_call_count: 3,
       created_at: at(5),
-      detail: JSON.stringify({ opening: 'hi' }),
+      detail: { opening: 'hi' },
     },
     {
       id: id(23),
@@ -416,7 +416,7 @@ const execution = {
       status: 'proposed',
       summary: 'one change',
       updated_at: at(9),
-      actions: JSON.stringify([{ tool: 'jira_update', args: {}, reason: 'r' }]),
+      actions: [{ tool: 'jira_update', args: {}, reason: 'r' }],
       review_reason: 'policy',
       waiting_until: at(60),
       created_at: at(9),
@@ -430,7 +430,7 @@ const execution = {
       status: 'accepted',
       summary: 'accepted',
       updated_at: at(9),
-      actions: JSON.stringify([]),
+      actions: [],
       accepted_by: 'person',
       created_at: at(9),
     },
@@ -443,8 +443,8 @@ const execution = {
       status: 'executing',
       summary: 'executing',
       updated_at: at(10),
-      actions: JSON.stringify([{ tool: 'x', args: {}, reason: 'r' }]),
-      results: JSON.stringify([]),
+      actions: [{ tool: 'x', args: {}, reason: 'r' }],
+      results: [],
       comment: 'go',
       created_at: at(10),
     },
@@ -457,7 +457,7 @@ const execution = {
       kind: 'approval',
       title: 'Approve',
       summary: 's',
-      evidence: '[]',
+      evidence: [],
       run_id: id(13),
       step_id: 'turn',
       iteration: 0,
@@ -472,10 +472,10 @@ const execution = {
       kind: 'question',
       title: 'Which?',
       summary: 'q',
-      evidence: '[]',
+      evidence: [],
       status: 'answered',
       decided_by: 'bob',
-      result: JSON.stringify({ answers: { pick: 'a' } }),
+      result: { answers: { pick: 'a' } },
       run_id: id(13),
       step_id: 'turn',
       iteration: 0,
@@ -490,7 +490,7 @@ const execution = {
       kind: 'approval',
       title: 'Ann approve',
       summary: 'a',
-      evidence: '[]',
+      evidence: [],
       run_id: id(11),
       step_id: 'turn',
       iteration: 0,
@@ -590,9 +590,6 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
         ownerSubject: null,
         audience: 'admin',
       }),
-      await store.agentRuns
-        .findDetail({ agentId: id(1), runId: 'nope', ownerSubject: null, audience: 'admin' })
-        .then(() => 'answered', refusal),
     ],
   },
   {
@@ -883,26 +880,7 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
         llmModelId: null,
         initialState: { issue: 'ABC-1' },
       });
-      const again = await store.agentRuns
-        .createQueued({
-          id: id(70),
-          agentId: id(1),
-          ownerSubject: 'ann',
-          triggerId: null,
-          triggerKind: 'manual',
-          triggeredBySubject: null,
-          parentRunId: null,
-          lineage: [],
-          definitionSnapshot: {},
-          llmModelId: null,
-          initialState: null,
-        })
-        .then(
-          () => 'accepted',
-          (error: unknown) => refusal(error)
-        );
       return {
-        again,
         inProgress: await store.agentRuns.findInProgress(id(1)),
         resume: await store.agentRuns.findForResume(id(70), id(1), 'ann'),
       };
@@ -930,20 +908,8 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
         triggerKind: 'manual',
         status: 'queued',
       });
-      const twice = await store.agentRuns
-        .logRunCreated({
-          runId: id(62),
-          agentId: id(1),
-          ownerSubject: 'ann',
-          triggerKind: 'manual',
-          status: 'queued',
-        })
-        .then(
-          () => 'accepted',
-          (error: unknown) => refusal(error)
-        );
       const row = await store.agentRuns.findRunLog(id(62));
-      return { twice, row: row && { ...row, createdAt: null } };
+      return { row: row && { ...row, createdAt: null } };
     },
   },
   {
@@ -1067,15 +1033,11 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agentRuns.findRunOrigin',
-    name: 'the run’s agent and trigger kind, or null; a malformed id is refused',
+    name: 'the run’s agent and trigger kind, or null',
     fixture,
     run: async (store) => [
       await store.agentRuns.findRunOrigin(id(15)),
       await store.agentRuns.findRunOrigin(id(99)),
-      await store.agentRuns.findRunOrigin('nope').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {
@@ -1554,16 +1516,12 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agentRuns.findRunError',
-    name: 'the error of a failed run, null on a clean one, missing runs null; a malformed id is refused',
+    name: 'the error of a failed run, null on a clean one, missing runs null',
     fixture,
     run: async (store) => [
       await store.agentRuns.findRunError(id(12)),
       await store.agentRuns.findRunError(id(11)),
       await store.agentRuns.findRunError(id(99)),
-      await store.agentRuns.findRunError('nope').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
 ];

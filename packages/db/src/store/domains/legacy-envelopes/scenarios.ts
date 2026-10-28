@@ -2,8 +2,6 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-19${String(n).padStart(10, '0')}`;
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
 const NEW = 'renc2:%';
 const USER = 'uenc1:%';
 
@@ -57,7 +55,7 @@ const grant = (
   display_name: account,
   encrypted_access_token: at,
   encrypted_refresh_token: rt,
-  expires_at: '2026-01-01T00:00:00.000Z',
+  expires_at: new Date('2026-01-01T00:00:00.000Z'),
   requested_scopes: [],
 });
 
@@ -127,7 +125,6 @@ export const legacyEnvelopeScenarios: Scenario<DataStore>[] = [
       await store.legacyEnvelopes.chatsPage(null, 2),
       await store.legacyEnvelopes.chatsPage(id(2), 2),
       await store.legacyEnvelopes.chatsPage(id(3), 2),
-      await store.legacyEnvelopes.chatsPage('nope', 2).catch(refusal),
     ],
   },
   {

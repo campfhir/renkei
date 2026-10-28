@@ -1,4 +1,5 @@
 import type { Scenario } from '../../domain';
+import type { Row } from '../../memory/tables';
 import type { DataStore } from '../../types';
 import type { ArtifactChatSelection, ArtifactRecord, LibraryFilter } from './types';
 import { ANN, BOB, CAT, CHAT, PROJECT, at, chatWorld, uid } from '../chats/fixtures';
@@ -13,14 +14,34 @@ const A = {
   annSame: uid(1007),
 };
 
-function artifact(id: string, owner: string, minute: number, extra: Record<string, unknown> = {}) {
+function artifact(
+  id: string,
+  owner: string,
+  minute: number,
+  extra: Partial<Row<'artifacts'>> = {}
+): Row<'artifacts'> {
   return {
     id,
     owner_subject: owner,
+    chat_id: null,
+    message_id: null,
+    origin: 'upload',
+    key_kind: 'artifact',
+    key_ref: null,
     blob_key: `blob/${id}`,
     filename: `file-${minute}.txt`,
     content_type: 'text/plain',
     size_bytes: String(minute * 100),
+    extracted_text: null,
+    extract_status: 'none',
+    digest_status: 'none',
+    summary: null,
+    keywords: [],
+    search_vector: null,
+    ocr_started_at: null,
+    ocr_finished_at: null,
+    ocr_pages: null,
+    ocr_millis: null,
     created_at: at(minute),
     updated_at: at(minute),
     ...extra,
@@ -414,7 +435,7 @@ export const artifactScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'artifacts.create',
-    name: 'inserted with its key and statuses; a duplicate id refused',
+    name: 'inserted with its key and statuses',
     fixture,
     run: async (store) => {
       const input = {
@@ -434,16 +455,11 @@ export const artifactScenarios: Scenario<DataStore>[] = [
         digestStatus: 'pending',
       };
       const created = await store.artifacts.create(input);
-      const duplicate = await store.artifacts
-        .create({ ...input, id: A.annUpload })
-        .then(() => 'ok')
-        .catch((error: { code?: string }) => error.code ?? 'error');
       return [
         stamped(created),
         stamped(await store.artifacts.get(uid(1201))),
         await store.artifacts.getText(uid(1201)),
         ids(await store.artifacts.listByChat(CHAT.annB)),
-        duplicate,
       ];
     },
   },

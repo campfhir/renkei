@@ -3,8 +3,8 @@ import type { DataStore } from '../../types';
 
 const fixture = {
   platform_settings: [
-    { key: 'vapid_keys', value: JSON.stringify({ publicKey: 'pub', encryptedPrivateKey: 'enc' }) },
-    { key: 'flag', value: JSON.stringify(false) },
+    { key: 'vapid_keys', value: { publicKey: 'pub', encryptedPrivateKey: 'enc' } },
+    { key: 'flag', value: false },
   ],
 };
 

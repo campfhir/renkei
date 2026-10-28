@@ -7,8 +7,8 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
     name: 'a stored value per subject and key, nothing for the rest',
     fixture: {
       user_preferences: [
-        { subject: 'ann', key: 'theme', value: JSON.stringify({ mode: 'dark', n: [1, 'two'] }) },
-        { subject: 'bob', key: 'theme', value: JSON.stringify({ mode: 'light' }) },
+        { subject: 'ann', key: 'theme', value: { mode: 'dark', n: [1, 'two'] } },
+        { subject: 'bob', key: 'theme', value: { mode: 'light' } },
       ],
     },
     run: async (store) => [
@@ -41,9 +41,9 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
     name: 'one key of one person; reads as never set after',
     fixture: {
       user_preferences: [
-        { subject: 'ann', key: 'chatTools', value: JSON.stringify({ connectors: ['jira'] }) },
-        { subject: 'ann', key: 'theme', value: JSON.stringify({ mode: 'dark' }) },
-        { subject: 'bob', key: 'chatTools', value: JSON.stringify({ connectors: [] }) },
+        { subject: 'ann', key: 'chatTools', value: { connectors: ['jira'] } },
+        { subject: 'ann', key: 'theme', value: { mode: 'dark' } },
+        { subject: 'bob', key: 'chatTools', value: { connectors: [] } },
       ],
     },
     run: async (store) => {
@@ -61,10 +61,10 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
     name: "everyone's value of one key, by subject; other keys left out",
     fixture: {
       user_preferences: [
-        { subject: 'cat', key: 'chatArchive', value: JSON.stringify({ days: 7 }) },
-        { subject: 'Ann', key: 'chatArchive', value: JSON.stringify({ days: 30 }) },
-        { subject: 'bob', key: 'chatArchive', value: JSON.stringify(false) },
-        { subject: 'ann', key: 'theme', value: JSON.stringify({ mode: 'dark' }) },
+        { subject: 'cat', key: 'chatArchive', value: { days: 7 } },
+        { subject: 'Ann', key: 'chatArchive', value: { days: 30 } },
+        { subject: 'bob', key: 'chatArchive', value: false },
+        { subject: 'ann', key: 'theme', value: { mode: 'dark' } },
       ],
     },
     run: async (store) => [

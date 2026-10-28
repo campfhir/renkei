@@ -101,14 +101,14 @@ const fixture = {
     { subject: 'cat', email: 'cat@example.test' },
   ],
   agents: [
-    { id: agent(1), name: 'Triage', owner_subject: 'ann', enabled: true, tools: '[]' },
-    { id: agent(2), name: 'Digest', owner_subject: 'ann', enabled: false, tools: '[]' },
-    { id: agent(3), name: 'Bob bot', owner_subject: 'bob', enabled: true, tools: '[]' },
-    { id: agent(4), name: 'alpha', owner_subject: 'ann', enabled: true, tools: '[]' },
+    { id: agent(1), name: 'triage', owner_subject: 'ann', enabled: true, tools: [] },
+    { id: agent(2), name: 'digest', owner_subject: 'ann', enabled: false, tools: [] },
+    { id: agent(3), name: 'bob bot', owner_subject: 'bob', enabled: true, tools: [] },
+    { id: agent(4), name: 'alpha', owner_subject: 'ann', enabled: true, tools: [] },
   ],
   chat_projects: [
-    { id: id('b9', 1), name: 'Code', owner_subject: 'ann', kind: 'code' },
-    { id: id('b9', 2), name: 'Notes', owner_subject: 'ann' },
+    { id: id('b9', 1), name: 'code', owner_subject: 'ann', kind: 'code' },
+    { id: id('b9', 2), name: 'notes', owner_subject: 'ann' },
   ],
   chats: [
     { id: chat(1), owner_subject: 'ann' },
@@ -232,8 +232,8 @@ const fixture = {
       output_tokens: 50,
       created_at: ago(0),
     },
-    { subject: 'bob', surface: 'chat', images: 1, image_bytes: 300, created_at: ago(1) },
-    { subject: 'ann', surface: 'chat', images: 1, image_bytes: 10, created_at: ago(30) },
+    { subject: 'bob', surface: 'chat', images: 1, image_bytes: '300', created_at: ago(1) },
+    { subject: 'ann', surface: 'chat', images: 1, image_bytes: '10', created_at: ago(30) },
   ],
   voice_usage: [
     { subject: 'ann', kind: 'speech', characters: 120, audio_ms: 4000, created_at: ago(0) },

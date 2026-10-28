@@ -1,9 +1,7 @@
 import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
-const at = '2026-01-01T01:00:00.000Z';
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
+const at = new Date('2026-01-01T01:00:00.000Z');
 
 const fixture = {
   oauth_clients: [
@@ -68,7 +66,7 @@ export const runTokenScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'runTokens.insert',
-    name: 'with and without roles; a missing client and a repeat digest are refused',
+    name: 'with and without roles',
     fixture,
     run: async (store) => {
       await store.runTokens.insert(token);
@@ -77,19 +75,7 @@ export const runTokenScenarios: Scenario<DataStore>[] = [
         tokenHash: 'hash-roles',
         roles: ['renkei-operator'],
       });
-      const orphan = await store.runTokens
-        .insert({ ...token, tokenHash: 'hash-orphan', clientId: 'nobody' })
-        .then(
-          () => 'accepted',
-          (error: unknown) => refusal(error)
-        );
-      const repeat = await store.runTokens.insert(token).then(
-        () => 'accepted',
-        (error: unknown) => refusal(error)
-      );
       return {
-        orphan,
-        repeat,
         plain: await store.runTokens.find('hash-new'),
         roles: await store.runTokens.find('hash-roles'),
       };

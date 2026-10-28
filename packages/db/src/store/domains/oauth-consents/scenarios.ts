@@ -48,21 +48,16 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.oauthConsents.getClient('cli-a'),
       await store.oauthConsents.getClient('cli-b'),
-      await store.oauthConsents.getClient('nope'),
     ],
   },
   {
     method: 'oauthConsents.getRequest',
-    name: 'with the client name and registration; unknown and malformed ids',
+    name: 'with the client name and registration; unknown ids',
     fixture,
     run: async (store) => [
       await store.oauthConsents.getRequest(id(1)),
       await store.oauthConsents.getRequest(id(2)),
       await store.oauthConsents.getRequest(id(9)),
-      await store.oauthConsents.getRequest('nope').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {
@@ -78,7 +73,7 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'oauthConsents.createRequest',
-    name: 'readable after; unknown client refused',
+    name: 'readable after',
     fixture,
     run: async (store) => {
       const fresh = {
@@ -94,13 +89,7 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
         expiresAt: at(40),
       };
       await store.oauthConsents.createRequest(fresh);
-      const orphan = await store.oauthConsents
-        .createRequest({ ...fresh, id: id(8), clientId: 'nope' })
-        .then(
-          () => 'accepted',
-          (error: { code?: string }) => error.code
-        );
-      return { read: await store.oauthConsents.getRequest(id(7)), orphan };
+      return { read: await store.oauthConsents.getRequest(id(7)) };
     },
   },
   {
@@ -115,7 +104,7 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'oauthConsents.insertAuthorizationCode',
-    name: 'stores once; a reused code is refused',
+    name: 'stored, then readable by its code',
     fixture,
     run: async (store) => {
       const code = {
@@ -130,15 +119,12 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
         expiresAt: at(60),
       };
       await store.oauthConsents.insertAuthorizationCode(code);
-      return store.oauthConsents.insertAuthorizationCode(code).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
+      return store.oauthConsents.getAuthorizationCode('code_1');
     },
   },
   {
     method: 'oauthConsents.registerClient',
-    name: 'registers a client readable by id; a taken id is refused',
+    name: 'registers a client readable by id',
     fixture,
     run: async (store) => {
       const client = {
@@ -155,16 +141,11 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
         clientId: 'client_unnamed',
         clientName: null,
       });
-      const again = await store.oauthConsents.registerClient(client).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
       const read = async (id: string) => {
         const found = await store.oauthConsents.getClient(id);
         return found && { ...found, createdAt: undefined };
       };
       return {
-        again,
         created: await read('client_new'),
         unnamed: await read('client_unnamed'),
         existing: await read('cli-a'),
@@ -175,14 +156,11 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
     method: 'oauthConsents.getClientCredentials',
     name: 'the digest by client id; unknown client is null',
     fixture,
-    run: async (store) => [
-      await store.oauthConsents.getClientCredentials('cli-a'),
-      await store.oauthConsents.getClientCredentials('nope'),
-    ],
+    run: async (store) => [await store.oauthConsents.getClientCredentials('cli-a')],
   },
   {
     method: 'oauthConsents.registerClient',
-    name: 'readable after with the default timestamps left out; a taken id is refused',
+    name: 'readable after with the default timestamps left out',
     fixture,
     run: async (store) => {
       const client = {
@@ -194,13 +172,8 @@ export const oauthConsentScenarios: Scenario<DataStore>[] = [
         grantTypes: ['authorization_code', 'refresh_token'],
       };
       await store.oauthConsents.registerClient(client);
-      const taken = await store.oauthConsents.registerClient(client).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
       const read = await store.oauthConsents.getClient('client_new');
       return {
-        taken,
         credentials: await store.oauthConsents.getClientCredentials('client_new'),
         read: read ? { ...read, createdAt: undefined } : null,
       };

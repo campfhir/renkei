@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { BatchJobRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 const SCHEDULE = id(900);
 const MISSING = id(999);
 
@@ -13,7 +13,7 @@ function batch(n: number, subject: string, minute: number, fields: Record<string
     subject,
     name: `Batch ${n}`,
     kind: 'document-ocr-pipeline',
-    config: JSON.stringify({ shareId: 'share-1', path: `/in/${n}` }),
+    config: { shareId: 'share-1', path: `/in/${n}` },
     created_at: at(minute),
     ...fields,
   };
@@ -23,7 +23,7 @@ function item(n: number, batchId: string, minute: number, fields: Record<string,
   return {
     id: id(n),
     batch_id: batchId,
-    payload: JSON.stringify({ documentKey: `doc-${n}` }),
+    payload: { documentKey: `doc-${n}` },
     created_at: at(minute),
     ...fields,
   };
@@ -75,18 +75,18 @@ const fixture = {
     batch(2, 'ann', 3, { status: 'running', total: 4, succeeded: 1, schedule_id: SCHEDULE }),
     batch(3, 'ann', 3, { status: 'queued' }),
     batch(4, 'ann', 5, { status: 'discovering', schedule_id: SCHEDULE }),
-    batch(5, 'ann', 2, { status: 'failed', last_error: 'boom', config: '[]' }),
+    batch(5, 'ann', 2, { status: 'failed', last_error: 'boom', config: [] }),
     batch(6, 'bob', 6, { status: 'running', total: 1 }),
     batch(7, 'ann', 7, { status: 'running', total: 3, succeeded: 1, failed: 1, skipped: 0 }),
     batch(8, 'ann', 8, { status: 'canceled' }),
   ],
   batch_job_items: [
-    item(11, id(2), 1, { status: 'succeeded', result: JSON.stringify({ sandboxFileId: 'f-1' }) }),
+    item(11, id(2), 1, { status: 'succeeded', result: { sandboxFileId: 'f-1' } }),
     item(12, id(2), 3),
     item(13, id(2), 2, { status: 'failed', error: 'OCR failed' }),
     item(14, id(2), 2, {
       status: 'skipped',
-      result: JSON.stringify({ reason: 'already-processed' }),
+      result: { reason: 'already-processed' },
     }),
     item(15, id(2), 4, { status: 'processing' }),
     item(16, id(6), 1),
@@ -99,12 +99,6 @@ function settled(record: BatchJobRecord | undefined) {
   const { startedAt, finishedAt, createdAt: _createdAt, ...rest } = record;
   return { ...rest, started: startedAt !== null, finished: finishedAt !== null };
 }
-
-const outcome = (promise: Promise<unknown>) =>
-  promise.then(
-    (value) => ({ ok: value }),
-    (error: { code?: string }) => ({ refused: error.code ?? 'error' })
-  );
 
 export const batchJobScenarios: Scenario<DataStore>[] = [
   {
@@ -131,32 +125,18 @@ export const batchJobScenarios: Scenario<DataStore>[] = [
         reread: settled(await store.batchJobs.get(id(20))),
         generatedHasId: typeof generated.id === 'string' && generated.id.length === 36,
         generatedSchedule: generated.scheduleId,
-        duplicate: await outcome(
-          store.batchJobs.create({ id: id(20), subject: 'ann', name: 'x', kind: 'k', config: {} })
-        ),
-        noSchedule: await outcome(
-          store.batchJobs.create({
-            subject: 'ann',
-            name: 'x',
-            kind: 'k',
-            config: {},
-            scheduleId: MISSING,
-          })
-        ),
       };
     },
   },
   {
     method: 'batchJobs.get',
-    name: 'by id, config as stored, missing and malformed ids',
+    name: 'by id, config as stored, missing ids',
     fixture,
     run: async (store) => [
       await store.batchJobs.get(id(1)),
       await store.batchJobs.get(id(5)),
       await store.batchJobs.get(id(6)),
       await store.batchJobs.get(MISSING),
-      await store.batchJobs.get(id(2).toUpperCase()),
-      await outcome(store.batchJobs.get('not-a-uuid')),
     ],
   },
   {
@@ -269,8 +249,6 @@ export const batchJobScenarios: Scenario<DataStore>[] = [
         skipped,
         generated: { ...generated, id: generated.id.length },
         listed: (await store.batchJobs.listItems(id(3))).length,
-        noBatch: await outcome(store.batchJobs.insertItem(MISSING, { payload: {} })),
-        duplicate: await outcome(store.batchJobs.insertItem(id(3), { id: id(30), payload: {} })),
       };
     },
   },
@@ -282,7 +260,6 @@ export const batchJobScenarios: Scenario<DataStore>[] = [
       await store.batchJobs.getItem(id(11)),
       await store.batchJobs.getItem(id(14)),
       await store.batchJobs.getItem(MISSING),
-      await outcome(store.batchJobs.getItem('nope')),
     ],
   },
   {

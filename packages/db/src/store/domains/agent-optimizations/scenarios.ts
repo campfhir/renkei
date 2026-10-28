@@ -3,7 +3,7 @@ import type { DataStore } from '../../types';
 import type { AgentOptimizationRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-e${String(n).padStart(11, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 const agents = [
   { id: id(1), owner_subject: 'ann', name: 'A' },
@@ -21,7 +21,7 @@ function pass(
     id: id(n),
     agent_id: id(agent),
     owner_subject: owner,
-    request: JSON.stringify({ windowDays: 30 }),
+    request: { windowDays: 30 },
     created_at: at(minute),
     ...extra,
   };
@@ -32,7 +32,7 @@ const fixture = {
   agent_optimizations: [
     pass(11, 1, 'ann', 1, {
       status: 'succeeded',
-      result: JSON.stringify({ summary: 's' }),
+      result: { summary: 's' },
       finished_at: at(2),
     }),
     pass(12, 1, 'ann', 3, { status: 'failed', error: 'no model' }),

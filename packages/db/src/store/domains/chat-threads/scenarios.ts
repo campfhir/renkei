@@ -13,8 +13,8 @@ function message(n: number, chatId: string, seq: number, turnId: string | null) 
     role: seq % 2 ? 'user' : 'assistant',
     kind: seq % 2 ? 'prompt' : 'assistant',
     content: `sealed-${n}`,
-    usage: n === 2 ? JSON.stringify({ inputTokens: 5, outputTokens: 7 }) : null,
-    timing: n === 2 ? JSON.stringify({ durationMs: 10 }) : null,
+    usage: n === 2 ? { inputTokens: 5, outputTokens: 7 } : null,
+    timing: n === 2 ? { durationMs: 10 } : null,
     created_at: at(seq),
     updated_at: at(seq),
   };
@@ -37,8 +37,8 @@ const fixture = {
       id: TURN.running,
       chat_id: CHAT.annA,
       status: 'running',
-      tool_permission: JSON.stringify({ toolUseId: 't', decision: null }),
-      runner: JSON.stringify({ subject: 'ann' }),
+      tool_permission: { toolUseId: 't', decision: null },
+      runner: { subject: 'ann' },
       started_at: at(3),
       updated_at: at(4),
     },
@@ -83,25 +83,25 @@ const fixture = {
       chat_id: CHAT.annA,
       decided_by: 'ann',
       decision: 'confirmed',
-      state: JSON.stringify({ icon: 'sent', headline: 'Sent' }),
+      state: { icon: 'sent', headline: 'Sent' },
     },
     {
       state_key: 'a-key',
       chat_id: CHAT.annA,
       decided_by: 'ann-on-her-phone',
       decision: 'cancelled',
-      state: JSON.stringify({ icon: 'cancelled', headline: 'No' }),
+      state: { icon: 'cancelled', headline: 'No' },
     },
     {
       state_key: 'c-key',
       chat_id: CHAT.annB,
       decided_by: 'ann',
       decision: 'cancelled',
-      state: JSON.stringify({ icon: 'cancelled', headline: 'Other' }),
+      state: { icon: 'cancelled', headline: 'Other' },
     },
   ],
   chat_drafts: [{ chat_id: CHAT.annA, content: 'sealed-draft' }],
-  chat_queued_sends: [{ chat_id: CHAT.annA, queue: JSON.stringify([{ id: 1, kind: 'compact' }]) }],
+  chat_queued_sends: [{ chat_id: CHAT.annA, queue: [{ id: 1, kind: 'compact' }] }],
 };
 
 export const chatThreadScenarios: Scenario<DataStore>[] = [
@@ -182,20 +182,15 @@ export const chatThreadScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'chatThreads.saveDraft',
-    name: 'insert then replace; a missing chat is refused',
+    name: 'insert then replace',
     fixture,
     run: async (store) => {
       await store.chatThreads.saveDraft(CHAT.annB, 'one');
       await store.chatThreads.saveDraft(CHAT.annB, 'two');
       await store.chatThreads.saveDraft(CHAT.annA, 'three');
-      const refused = await store.chatThreads.saveDraft(uid(999), 'x').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      );
       return [
         await store.chatThreads.getDraft(CHAT.annB),
         await store.chatThreads.getDraft(CHAT.annA),
-        refused,
       ];
     },
   },

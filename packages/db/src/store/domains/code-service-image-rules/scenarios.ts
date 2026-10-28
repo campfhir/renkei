@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 
 function row(n: number, pattern: string, credential = false) {
   return {
@@ -20,7 +20,7 @@ const fixture = {
   code_service_image_rules: [
     row(1, 'postgres:*'),
     row(2, 'ghcr.io/acme/*', true),
-    row(3, 'Redis:*'),
+    row(3, 'redis:*'),
   ],
 };
 
@@ -123,7 +123,7 @@ export const codeServiceImageRuleScenarios: Scenario<DataStore>[] = [
       store.codeServiceImageRules
         .update({
           id: id(1),
-          pattern: 'Redis:*',
+          pattern: 'redis:*',
           note: null,
           updatedAt: new Date(at(30)),
         })

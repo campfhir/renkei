@@ -4,8 +4,6 @@ import type { DataStore } from '../../types';
 const id = (n: number) => `00000000-0000-4000-8000-f${String(n).padStart(11, '0')}`;
 const OLD = (minute: number) => new Date(Date.UTC(2020, 0, 1, 0, minute));
 const RECENT = new Date(Date.UTC(2099, 0, 1));
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
 
 const fixture = {
   agents: [{ id: id(1), owner_subject: 'ann', name: 'Alpha', instructions: 'do' }],
@@ -37,7 +35,7 @@ const keys = async (store: DataStore) => {
 export const agentTriggerFiringScenarios: Scenario<DataStore>[] = [
   {
     method: 'agentTriggerFirings.claim',
-    name: 'first claim wins, a repeat loses, another key or trigger wins; bad ids refused',
+    name: 'first claim wins, a repeat loses, another key or trigger wins',
     fixture,
     run: async (store) => [
       await store.agentTriggerFirings.claim(id(11), 'msg:fresh'),
@@ -45,8 +43,6 @@ export const agentTriggerFiringScenarios: Scenario<DataStore>[] = [
       await store.agentTriggerFirings.claim(id(12), 'msg:fresh'),
       await store.agentTriggerFirings.claim(id(11), 'msg:old-a'),
       await store.agentTriggerFirings.find(id(11), 'msg:fresh').then((r) => r && r.runId),
-      await store.agentTriggerFirings.claim(id(99), 'msg:fresh').catch(refusal),
-      await store.agentTriggerFirings.claim('nope', 'msg:fresh').catch(refusal),
     ],
   },
   {

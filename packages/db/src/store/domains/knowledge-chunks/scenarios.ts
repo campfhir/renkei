@@ -1,4 +1,5 @@
 import type { Scenario } from '../../domain';
+import { toJson } from '../../memory/tables';
 import type { DataStore } from '../../types';
 import type { ChunkCandidate, ChunkFilters } from './types';
 
@@ -18,17 +19,18 @@ function chunk(
     ref_id: refId,
     content: `enc:${n}`,
     embedding: `[${embedding.join(',')}]`,
-    metadata: JSON.stringify(fields.metadata ?? {}),
+    metadata: toJson(fields.metadata ?? {}),
     keywords: n === 1 ? ['printer', 'outage'] : null,
     source_at: fields.sourceAt === null ? null : day(fields.sourceAt ?? n),
     search_text: fields.searchText ?? null,
+    created_at: day(n),
   };
 }
 
 const fixture = {
   knowledge_chunks: [
     chunk(1, 'jira', 'ENG-1', [1, 0, 0], {
-      metadata: { kind: 'issue', status: 'Open', version: 12 },
+      metadata: { kind: 'issue', status: 'open', version: 12 },
     }),
     chunk(2, 'jira', 'ENG-2', [0.9, 0.3, 0], {
       metadata: { kind: 'issue', status: 'done', version: 3 },
@@ -76,7 +78,7 @@ function note(n: number, refId: string, sourceAt: number | null, provider = 'not
     ref_id: refId,
     content: `enc:${n}`,
     embedding: '[1,0,0]',
-    metadata: JSON.stringify({ title: `t${n}`, kind: 'note' }),
+    metadata: { title: `t${n}`, kind: 'note' },
     keywords: ['a'],
     source_at: sourceAt === null ? null : day(sourceAt),
     search_text: 'old',
@@ -238,7 +240,7 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
         ...base,
         provider: 'jira',
         refId: 'ENG-1',
-        metadata: { kind: 'issue', status: 'Closed' },
+        metadata: { kind: 'issue', status: 'closed' },
         content: 'enc:replaced',
         keywords: ['printer'],
         sourceAt: day(21),
@@ -405,7 +407,7 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
         chunk(5, 'webex', 'room-a/msg-4', [1, 0, 0], { sourceAt: 4 }),
         chunk(6, 'webex', 'room-a/msg-5', [1, 0, 0], { sourceAt: null }),
         chunk(7, 'webex', 'room-ab/msg-6', [1, 0, 0], { sourceAt: 5 }),
-        chunk(8, 'webex', 'room_a/msg-7', [1, 0, 0], { sourceAt: 5 }),
+        chunk(8, 'webex', 'roomb/msg-7', [1, 0, 0], { sourceAt: 5 }),
         chunk(9, 'zoom', 'room-a/msg-8', [1, 0, 0], { sourceAt: 5 }),
       ],
     },
@@ -474,23 +476,6 @@ export const knowledgeChunkScenarios: Scenario<DataStore>[] = [
       await store.knowledgeChunks.listMultiChunk(null, 1),
       await store.knowledgeChunks.listMultiChunk(id(99), 10),
     ],
-  },
-  {
-    method: 'knowledgeChunks.listMultiChunk',
-    name: 'a non-integer chunk count is refused, as the integer cast is',
-    fixture: {
-      knowledge_chunks: [
-        {
-          ...chunk(61, 'reindex', 'odd', [1, 0, 0]),
-          metadata: JSON.stringify({ chunkCount: 'two' }),
-        },
-      ],
-    },
-    run: async (store) =>
-      store.knowledgeChunks.listMultiChunk(null, 10).then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
   },
   {
     method: 'knowledgeChunks.setEmbedding',

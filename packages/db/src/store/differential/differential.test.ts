@@ -1,7 +1,8 @@
 /**
  * Postgres and memory, side by side: every scenario of every domain
  * (domains/scenarios.ts) runs against a freshly truncated contract
- * database and a fresh memory store, and the two answers — or the two
+ * database and a fresh memory store seeded with the same rows (the
+ * fixture as Postgres stored it), and the two answers — or the two
  * failures, by SQLSTATE — must be equal. Skipped without
  * CONTRACT_DATABASE_URL (see harness.ts for setting one up); CI's
  * data-store job runs it.
@@ -27,8 +28,8 @@ maybe('postgres and memory answer alike', () => {
     '%s',
     async (_label, scenario) => {
       const postgres = await runOnPostgres(database, scenario);
-      const memory = await runOnMemory(scenario);
-      expect(memory).toEqual(postgres);
+      const memory = await runOnMemory(scenario, postgres.rows);
+      expect(memory).toEqual(postgres.outcome);
     }
   );
 });

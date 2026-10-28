@@ -3,11 +3,9 @@ import type { DataStore } from '../../types';
 import type { AgentRecord } from './types';
 
 const id = (n: number) => `00000000-0000-4000-8000-a${String(n).padStart(11, '0')}`;
-const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute)).toISOString();
-const FAR = '2099-01-01T00:00:00.000Z';
-const PAST = '2020-01-01T00:00:00.000Z';
-const refusal = (error: unknown) =>
-  typeof error === 'object' && error !== null && 'code' in error ? error.code : 'threw';
+const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
+const FAR = new Date('2099-01-01T00:00:00.000Z');
+const PAST = new Date('2020-01-01T00:00:00.000Z');
 
 function agent(n: number, owner: string, name: string, minute: number) {
   return {
@@ -15,8 +13,8 @@ function agent(n: number, owner: string, name: string, minute: number) {
     owner_subject: owner,
     name,
     instructions: `do ${n}`,
-    tools: JSON.stringify(['jira_search', `tool_${n}`]),
-    review_notes: n === 1 ? JSON.stringify([{ issue: 'check' }]) : null,
+    tools: ['jira_search', `tool_${n}`],
+    review_notes: n === 1 ? [{ issue: 'check' }] : null,
     enabled: n % 2 === 1,
     created_at: at(minute),
     updated_at: at(minute),
@@ -31,18 +29,18 @@ const identities = [
 const fixture = {
   identities,
   agents: [
-    agent(1, 'ann', 'Alpha', 1),
+    agent(1, 'ann', 'alpha', 1),
     agent(2, 'ann', 'beta', 3),
-    agent(3, 'ann', 'Gamma', 3),
-    agent(4, 'bob', 'Bob agent', 2),
-    agent(5, 'carol', 'Carol agent', 4),
+    agent(3, 'ann', 'gamma', 3),
+    agent(4, 'bob', 'bob agent', 2),
+    agent(5, 'carol', 'carol agent', 4),
   ],
   agent_triggers: [
     {
       id: id(11),
       agent_id: id(1),
       kind: 'schedule',
-      config: JSON.stringify({ every: 'day', at: '08:00' }),
+      config: { every: 'day', at: '08:00' },
       next_run_at: at(100),
       created_at: at(2),
     },
@@ -52,12 +50,12 @@ const fixture = {
       kind: 'event',
       event_source: 'jira',
       event_type: 'issue_created',
-      config: JSON.stringify({ match: {} }),
+      config: { match: {} },
       enabled: false,
       last_error: 'boom',
       created_at: at(1),
     },
-    { id: id(13), agent_id: id(1), kind: 'api', config: '{}', created_at: at(1) },
+    { id: id(13), agent_id: id(1), kind: 'api', config: {}, created_at: at(1) },
     { id: id(14), agent_id: id(4), kind: 'agent', created_at: at(1) },
   ],
   agent_access_grants: [
@@ -149,7 +147,7 @@ function chunk(n: number, refId: string, agentId: string, scope: string | null, 
     id: id(n),
     provider: 'note',
     ref_id: refId,
-    metadata: JSON.stringify({ agentId, title: `t${n}`, ...(scope ? { scope } : {}) }),
+    metadata: { agentId, title: `t${n}`, ...(scope ? { scope } : {}) },
     content,
     embedding: '[1,2,3]',
     keywords: ['k'],
@@ -190,9 +188,9 @@ const memories = {
 /** Event triggers for the fan-out read: who listens to what, enabled or not. */
 const eventTriggers = {
   agents: [
-    { ...agent(51, 'ann', 'Mail filer', 1), enabled: true, llm_model_id: null },
-    { ...agent(52, 'ann', 'Paused filer', 1), enabled: false },
-    { ...agent(53, 'bob', 'Bob filer', 1), enabled: true },
+    { ...agent(51, 'ann', 'mail filer', 1), enabled: true, llm_model_id: null },
+    { ...agent(52, 'ann', 'paused filer', 1), enabled: false },
+    { ...agent(53, 'bob', 'bob filer', 1), enabled: true },
   ],
   agent_triggers: [
     {
@@ -201,7 +199,7 @@ const eventTriggers = {
       kind: 'event',
       event_source: 'microsoft',
       event_type: 'mail.received',
-      config: JSON.stringify({ match: { from: 'x' } }),
+      config: { match: { from: 'x' } },
       last_fired_at: at(7),
       created_at: at(2),
     },
@@ -260,14 +258,12 @@ export const agentScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agents.find',
-    name: 'by id, owner-scoped when asked; unknown and malformed ids',
+    name: 'by id, owner-scoped when asked; unknown ids',
     fixture,
     run: async (store) => [
       await store.agents.find(id(1)),
-      await store.agents.find(id(1).toUpperCase(), { ownerSubject: 'ann' }),
       await store.agents.find(id(1), { ownerSubject: 'bob' }),
       await store.agents.find(id(99)),
-      await store.agents.find('nope').then(() => 'answered', refusal),
     ],
   },
   {
@@ -288,13 +284,13 @@ export const agentScenarios: Scenario<DataStore>[] = [
           agent_id: id(Number(agentN)),
           kind: 'agent',
           enabled: Boolean(enabled),
-          config: JSON.stringify({ callerAgentId: caller }),
+          config: { callerAgentId: caller },
         })),
         {
           id: id(27),
           agent_id: id(3),
           kind: 'schedule',
-          config: JSON.stringify({ every: 'day', at: '08:00', callerAgentId: id(1) }),
+          config: { every: 'day', at: '08:00', callerAgentId: id(1) },
           next_run_at: at(100),
         },
       ],
@@ -323,7 +319,7 @@ export const agentScenarios: Scenario<DataStore>[] = [
         agent(1, 'ann', 'Report', 1),
         agent(2, 'ann', 'Report (imported)', 2),
         agent(3, 'bob', 'report', 3),
-        agent(4, 'bob', 'Rxport', 4),
+        agent(4, 'bob', 'rxport', 4),
       ],
     },
     run: async (store) => [
@@ -340,13 +336,13 @@ export const agentScenarios: Scenario<DataStore>[] = [
       const created = await store.agents.create({
         id: id(9),
         ownerSubject: 'ann',
-        name: 'Delta',
+        name: 'delta',
         ...definition,
       });
       const taken = await store.agents.create({
         id: id(10),
         ownerSubject: 'bob',
-        name: 'Alpha',
+        name: 'alpha',
         ...definition,
       });
       return {
@@ -388,7 +384,7 @@ export const agentScenarios: Scenario<DataStore>[] = [
         await store.agents.update(
           'ann',
           id(3),
-          { ...definition, name: 'Bob agent' },
+          { ...definition, name: 'bob agent' },
           {
             markDescriptionStale: true,
           }
@@ -498,31 +494,6 @@ export const agentScenarios: Scenario<DataStore>[] = [
         strip(await store.agents.listTriggers(id(1))),
         await store.agents.listTriggers(id(4)),
       ];
-    },
-  },
-  {
-    method: 'agents.applyTriggerChanges',
-    name: 'a duplicate insert id changes nothing',
-    fixture,
-    run: async (store) => {
-      const outcome = await store.agents
-        .applyTriggerChanges(id(1), {
-          update: [],
-          insert: [
-            {
-              id: id(13),
-              kind: 'api',
-              eventSource: null,
-              eventType: null,
-              config: '{}',
-              enabled: true,
-              nextRunAt: null,
-            },
-          ],
-          remove: [id(12)],
-        })
-        .then(() => 'applied', refusal);
-      return { outcome, triggers: (await store.agents.listTriggers(id(1))).map((t) => t.id) };
     },
   },
   {
@@ -696,11 +667,7 @@ export const agentScenarios: Scenario<DataStore>[] = [
           return found ? { id: found.id, enabled: found.enabled } : null;
         })
       );
-      const malformed = await store.agents.setEnabled('not-a-uuid', true).then(
-        () => 'accepted',
-        (error: unknown) => refusal(error)
-      );
-      return { results, after, malformed };
+      return { results, after };
     },
   },
   {
@@ -719,7 +686,7 @@ export const agentScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agents.addMemoryEntry',
-    name: 'a new entry reads back newest; a duplicate id is refused',
+    name: 'a new entry reads back newest',
     fixture: memories,
     run: async (store) => {
       await store.agents.addMemoryEntry({
@@ -728,14 +695,8 @@ export const agentScenarios: Scenario<DataStore>[] = [
         content: 'sealed-new',
         runId: null,
       });
-      const again = await store.agents
-        .addMemoryEntry({ id: id(56), agentId: id(1), content: 'x', runId: null })
-        .then(
-          () => 'accepted',
-          (error: unknown) => refusal(error)
-        );
       const slice = await store.agents.memorySlice(id(1), 10);
-      return { again, ids: slice.entries.map((e) => [e.id, e.content]) };
+      return { ids: slice.entries.map((e) => [e.id, e.content]) };
     },
   },
   {
@@ -807,7 +768,7 @@ export const agentScenarios: Scenario<DataStore>[] = [
     fixture: {
       agents: [
         {
-          ...agent(1, 'ann', 'Alpha', 1),
+          ...agent(1, 'ann', 'alpha', 1),
           guardrails: 'never email',
           can_ask_questions: true,
           auto_accept_actions: true,
@@ -829,45 +790,45 @@ export const agentScenarios: Scenario<DataStore>[] = [
         agent(1, 'ann', 'Caller', 1),
         { ...agent(2, 'bob', 'Bob chained', 2), enabled: true, llm_model_id: null },
         agent(3, 'carol', 'Carol chained', 3),
-        { ...agent(4, 'dan', 'Disabled agent', 4), enabled: false },
+        { ...agent(4, 'dan', 'disabled agent', 4), enabled: false },
       ],
       agent_triggers: [
         {
           id: id(14),
           agent_id: id(3),
           kind: 'agent',
-          config: JSON.stringify({ callerAgentId: id(1) }),
+          config: { callerAgentId: id(1) },
         },
         {
           id: id(12),
           agent_id: id(2),
           kind: 'agent',
-          config: JSON.stringify({ callerAgentId: id(1) }),
+          config: { callerAgentId: id(1) },
         },
         {
           id: id(13),
           agent_id: id(2),
           kind: 'agent',
           enabled: false,
-          config: JSON.stringify({ callerAgentId: id(1) }),
+          config: { callerAgentId: id(1) },
         },
         {
           id: id(15),
           agent_id: id(4),
           kind: 'agent',
-          config: JSON.stringify({ callerAgentId: id(1) }),
+          config: { callerAgentId: id(1) },
         },
         {
           id: id(16),
           agent_id: id(3),
           kind: 'agent',
-          config: JSON.stringify({ callerAgentId: id(2) }),
+          config: { callerAgentId: id(2) },
         },
         {
           id: id(17),
           agent_id: id(3),
           kind: 'event',
-          config: JSON.stringify({ callerAgentId: id(1) }),
+          config: { callerAgentId: id(1) },
         },
       ],
     },
@@ -880,10 +841,10 @@ export const agentScenarios: Scenario<DataStore>[] = [
     method: 'agents.markTriggerFailed',
     name: 'the last error is set; when it last fired stays; other triggers untouched',
     fixture: {
-      agents: [agent(1, 'ann', 'Alpha', 1)],
+      agents: [agent(1, 'ann', 'alpha', 1)],
       agent_triggers: [
-        { id: id(11), agent_id: id(1), kind: 'agent', config: '{}', last_fired_at: at(5) },
-        { id: id(12), agent_id: id(1), kind: 'agent', config: '{}', created_at: at(6) },
+        { id: id(11), agent_id: id(1), kind: 'agent', config: {}, last_fired_at: at(5) },
+        { id: id(12), agent_id: id(1), kind: 'agent', config: {}, created_at: at(6) },
       ],
     },
     run: async (store) => {

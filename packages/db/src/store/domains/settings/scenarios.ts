@@ -3,9 +3,9 @@ import type { DataStore } from '../../types';
 
 const fixture = {
   settings: [
-    { key: 'read_only', value: JSON.stringify(true) },
-    { key: 'disabled_connectors', value: JSON.stringify(['zoom']) },
-    { key: 'Organization_name', value: JSON.stringify('Acme') },
+    { key: 'read_only', value: true },
+    { key: 'disabled_connectors', value: ['zoom'] },
+    { key: 'organization_name', value: 'Acme' },
   ],
 };
 

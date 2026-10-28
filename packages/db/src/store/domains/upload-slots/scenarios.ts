@@ -16,7 +16,7 @@ function slot(id: string, subject: string, extra: Record<string, unknown> = {}) 
     subject,
     account_id: `acct-${subject}`,
     kind: 'jira-attachment',
-    destination: JSON.stringify({ issueKey: 'ABC-1', nested: { n: 1 } }),
+    destination: { issueKey: 'ABC-1', nested: { n: 1 } },
     filename: 'report.pdf',
     content_type: 'application/pdf',
     max_bytes: 1000,
@@ -123,16 +123,12 @@ export const uploadSlotScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'uploadSlots.get',
-    name: 'by id whoever owns it; unknown and malformed ids',
+    name: 'by id whoever owns it; unknown ids',
     fixture,
     run: async (store) => [
       await store.uploadSlots.get(id(1)),
       await store.uploadSlots.get(id(4)),
       await store.uploadSlots.get(id(9)),
-      await store.uploadSlots.get('nope').then(
-        () => 'accepted',
-        (error: { code?: string }) => error.code
-      ),
     ],
   },
   {

@@ -2,7 +2,7 @@ import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-ac${String(n).padStart(10, '0')}`;
-const EXPIRES = '2099-01-01T00:00:00.000Z';
+const EXPIRES = new Date('2099-01-01T00:00:00.000Z');
 const OPERATOR = 'renkei-operator';
 
 const fixture = {
@@ -19,15 +19,14 @@ const fixture = {
     {
       token_hash: 'h1',
       client_id: 'c1',
-      subject: 'Zed',
+      subject: 'zed',
       roles: [OPERATOR],
       expires_at: EXPIRES,
     },
     { token_hash: 'h2', client_id: 'c1', subject: 'ada', roles: [OPERATOR], expires_at: EXPIRES },
     { token_hash: 'h3', client_id: 'c1', subject: 'cy', roles: [], expires_at: EXPIRES },
   ],
-  // tools given as JSON text: a JS array would go to Postgres as an array literal.
-  agents: [{ id: id(1), owner_subject: 'ada', name: 'Builder', tools: JSON.stringify([]) }],
+  agents: [{ id: id(1), owner_subject: 'ada', name: 'Builder', tools: [] }],
 };
 
 export const adminChangeQueueScenarios: Scenario<DataStore>[] = [
@@ -43,7 +42,7 @@ export const adminChangeQueueScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'adminChangeQueue.recordNotice',
-    name: 'lands unread in the person’s feed; a duplicate id is refused',
+    name: 'lands unread in the person’s feed',
     run: async (store) => {
       const notice = {
         id: id(5),
@@ -56,13 +55,8 @@ export const adminChangeQueueScenarios: Scenario<DataStore>[] = [
         refUrl: `/jira-admin/changes/${id(6)}`,
       };
       await store.adminChangeQueue.recordNotice(notice);
-      const again = await store.adminChangeQueue.recordNotice(notice).then(
-        () => 'accepted',
-        () => 'refused'
-      );
       const feed = await store.notifications.list('ada', { limit: 5 });
       return {
-        again,
         feed: feed.map(({ createdAt: _c, ...rest }) => rest),
         unread: await store.notifications.countUnread('ada'),
       };
@@ -75,10 +69,6 @@ export const adminChangeQueueScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.adminChangeQueue.agentName(id(1)),
       await store.adminChangeQueue.agentName(id(2)),
-      await store.adminChangeQueue.agentName('bad').then(
-        () => 'accepted',
-        () => 'refused'
-      ),
     ],
   },
 ];

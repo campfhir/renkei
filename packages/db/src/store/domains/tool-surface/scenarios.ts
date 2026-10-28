@@ -29,7 +29,7 @@ export const toolSurfaceScenarios: Scenario<DataStore>[] = [
     name: 'the newest of own and org-wide rows; another person’s rows are ignored',
     fixture: {
       provider_grants: [grant('a1', 'ann', at(3, 250)), grant('b1', 'bob', at(40))],
-      settings: [{ key: 'k', value: JSON.stringify(1), updated_at: at(2) }],
+      settings: [{ key: 'k', value: 1, updated_at: at(2) }],
       identities: [
         { subject: 'ann', email: 'ann@x.test', updated_at: at(4, 7) },
         { subject: 'bob', email: 'bob@x.test', updated_at: at(50) },

@@ -10,8 +10,8 @@ function row(n: number, subject: string, name: string) {
     subject,
     name,
     sealed: `env1.${n}`,
-    created_at: at(n).toISOString(),
-    updated_at: at(n).toISOString(),
+    created_at: at(n),
+    updated_at: at(n),
     last_used_at: null,
   };
 }
@@ -19,7 +19,7 @@ function row(n: number, subject: string, name: string) {
 const fixture = {
   sandbox_env_secrets: [
     row(1, 'ann', 'TOKEN'),
-    row(2, 'ann', 'api_key'),
+    row(2, 'ann', 'API_KEY'),
     row(3, 'ann', 'DB_URL'),
     row(4, 'bob', 'TOKEN'),
   ],

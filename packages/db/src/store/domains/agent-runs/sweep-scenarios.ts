@@ -3,7 +3,6 @@ import type { DataStore } from '../../types';
 
 const id = (n: number) => `00000000-0000-4000-8000-bc${String(n).padStart(10, '0')}`;
 const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
-const iso = (minute: number) => at(minute).toISOString();
 
 const agents = [
   { id: id(1), owner_subject: 'ann', name: 'Ann agent' },
@@ -17,8 +16,9 @@ function run(n: number, agent: number, status: string, extra: Record<string, unk
     owner_subject: agent === 1 ? 'ann' : 'bob',
     trigger_kind: 'manual',
     status,
-    created_at: iso(n),
-    updated_at: iso(n),
+    waiting_until: null,
+    created_at: at(n),
+    updated_at: at(n),
     ...extra,
   };
 }
@@ -30,12 +30,12 @@ function card(n: number, runN: number | null, status: string, extra: Record<stri
     kind: 'approval',
     title: `card ${n}`,
     summary: `card ${n}`,
-    evidence: JSON.stringify({}),
+    evidence: {},
     owner_subject: 'ann',
     run_id: runN === null ? null : id(runN),
     status,
-    created_at: iso(1),
-    updated_at: iso(1),
+    created_at: at(1),
+    updated_at: at(1),
     ...extra,
   };
 }
@@ -43,24 +43,24 @@ function card(n: number, runN: number | null, status: string, extra: Record<stri
 const waitingFixture = {
   agents,
   agent_runs: [
-    run(11, 1, 'waiting', { waiting_until: iso(20) }),
-    run(12, 2, 'waiting', { waiting_until: iso(10) }),
-    run(13, 1, 'waiting', { waiting_until: iso(10) }),
-    run(14, 1, 'waiting', { waiting_until: iso(90) }),
+    run(11, 1, 'waiting', { waiting_until: at(20) }),
+    run(12, 2, 'waiting', { waiting_until: at(10) }),
+    run(13, 1, 'waiting', { waiting_until: at(10) }),
+    run(14, 1, 'waiting', { waiting_until: at(90) }),
     run(15, 1, 'waiting', { waiting_until: null }),
-    run(16, 1, 'running', { waiting_until: iso(1) }),
+    run(16, 1, 'running', { waiting_until: at(1) }),
     run(17, 1, 'waiting'),
     run(18, 1, 'failed'),
-    run(19, 2, 'waiting', { updated_at: iso(80) }),
+    run(19, 2, 'waiting', { updated_at: at(80) }),
   ],
   actionable_items: [
     card(1, 11, 'suggested'),
-    card(2, 12, 'approved', { decided_at: iso(5) }),
-    card(3, 12, 'answered', { decided_at: iso(6) }),
-    card(4, 13, 'declined', { decided_at: iso(40) }),
-    card(5, 14, 'expired', { decided_at: iso(2) }),
-    card(6, 16, 'approved', { decided_at: iso(2) }),
-    card(7, 15, 'dismissed', { decided_at: iso(2) }),
+    card(2, 12, 'approved', { decided_at: at(5) }),
+    card(3, 12, 'answered', { decided_at: at(6) }),
+    card(4, 13, 'declined', { decided_at: at(40) }),
+    card(5, 14, 'expired', { decided_at: at(2) }),
+    card(6, 16, 'approved', { decided_at: at(2) }),
+    card(7, 15, 'dismissed', { decided_at: at(2) }),
     card(8, 18, 'suggested'),
     card(9, null, 'suggested'),
   ],
@@ -137,12 +137,12 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     fixture: {
       agents,
       agent_runs: [
-        run(21, 1, 'succeeded', { created_at: iso(5) }),
-        run(22, 2, 'failed', { created_at: iso(3) }),
-        run(23, 1, 'canceled', { created_at: iso(3) }),
-        run(24, 1, 'stopped', { created_at: iso(4) }),
-        run(25, 1, 'running', { created_at: iso(1) }),
-        run(26, 1, 'succeeded', { created_at: iso(60) }),
+        run(21, 1, 'succeeded', { created_at: at(5) }),
+        run(22, 2, 'failed', { created_at: at(3) }),
+        run(23, 1, 'canceled', { created_at: at(3) }),
+        run(24, 1, 'stopped', { created_at: at(4) }),
+        run(25, 1, 'running', { created_at: at(1) }),
+        run(26, 1, 'succeeded', { created_at: at(60) }),
       ],
     },
     run: async (store) => {
@@ -169,11 +169,11 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     fixture: {
       agents,
       agent_runs: [
-        run(31, 1, 'running', { created_at: iso(5), started_at: iso(6) }),
-        run(32, 2, 'queued', { created_at: iso(3) }),
-        run(33, 1, 'queued', { created_at: iso(3) }),
-        run(34, 1, 'waiting', { created_at: iso(1) }),
-        run(35, 1, 'running', { created_at: iso(70) }),
+        run(31, 1, 'running', { created_at: at(5), started_at: at(6) }),
+        run(32, 2, 'queued', { created_at: at(3) }),
+        run(33, 1, 'queued', { created_at: at(3) }),
+        run(34, 1, 'waiting', { created_at: at(1) }),
+        run(35, 1, 'running', { created_at: at(70) }),
       ],
     },
     run: async (store) => [

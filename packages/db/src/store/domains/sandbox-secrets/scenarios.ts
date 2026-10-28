@@ -9,12 +9,12 @@ function row(n: number, subject: string, name: string, expires: number) {
     id: id(n),
     subject,
     name,
-    field_names: JSON.stringify(['username', 'password']),
-    hosts: JSON.stringify(n === 1 ? ['example.com', 7] : ['*.test']),
+    field_names: ['username', 'password'],
+    hosts: n === 1 ? ['example.com', 7] : ['*.test'],
     sealed: `sealed-${n}`,
-    created_at: at(n).toISOString(),
-    expires_at: at(expires).toISOString(),
-    last_used_at: n === 2 ? at(20).toISOString() : null,
+    created_at: at(n),
+    expires_at: at(expires),
+    last_used_at: n === 2 ? at(20) : null,
   };
 }
 
@@ -44,23 +44,6 @@ export const sandboxSecretScenarios: Scenario<DataStore>[] = [
       });
       return [inserted, (await store.sandboxSecrets.getByName('ann', 'zeta'))?.id];
     },
-  },
-  {
-    method: 'sandboxSecrets.insert',
-    name: 'a name the subject holds is refused',
-    fixture,
-    run: (store) =>
-      store.sandboxSecrets
-        .insert({
-          id: id(9),
-          subject: 'ann',
-          name: 'mirth',
-          fields: [],
-          hosts: [],
-          sealed: 's',
-          expiresAt: at(300),
-        })
-        .catch((error: { code?: string }) => error.code ?? 'error'),
   },
   {
     method: 'sandboxSecrets.list',

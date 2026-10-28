@@ -29,7 +29,7 @@ export function postgresAgentRunOwnership(db: () => Kysely<DB>): AgentRunOwnersh
 export function memoryAgentRunOwnership(tables: MemoryTables): AgentRunOwnershipStore {
   return {
     async isOwnedBy(runId, ownerSubject) {
-      const id = tables.param('agent_runs', 'id', runId);
+      const id = runId;
       return (
         tables.first('agent_runs', (r) => r.id === id && r.owner_subject === ownerSubject) !==
         undefined

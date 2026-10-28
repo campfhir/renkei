@@ -1,7 +1,7 @@
 import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
 
-const EXPIRES = '2099-01-01T00:00:00.000Z';
+const EXPIRES = new Date('2099-01-01T00:00:00.000Z');
 
 function grant(provider: string, account: string, subject: string | null, extra = {}) {
   return {
@@ -20,7 +20,7 @@ function grant(provider: string, account: string, subject: string | null, extra 
 const fixture = {
   provider_grants: [
     grant('salesforce', '00D2/005b', 'ann', {
-      metadata: JSON.stringify({ connector: 'uat', instanceUrl: 'https://uat.example', n: [1] }),
+      metadata: { connector: 'uat', instanceUrl: 'https://uat.example', n: [1] },
       requested_scopes: ['api', 'refresh_token'],
     }),
     grant('salesforce', '00D1/005a', 'ann'),

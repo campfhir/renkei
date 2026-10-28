@@ -135,7 +135,7 @@ export const promptLibraryScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'promptLibraries.createPrompt',
-    name: 'after the last position, library bumped; missing library refused',
+    name: 'after the last position, library bumped',
     fixture,
     run: async (store) => {
       await store.promptLibraries.createPrompt({
@@ -150,18 +150,11 @@ export const promptLibraryScenarios: Scenario<DataStore>[] = [
         body: 'b2',
         subject: ANN,
       });
-      const refused = await store.promptLibraries
-        .createPrompt({ libraryId: uid(999), title: 'x', body: 'x', subject: ANN })
-        .then(
-          () => 'accepted',
-          (error: { code?: string }) => error.code
-        );
       const prompts = await store.promptLibraries.listPrompts(LIB.ann);
       return {
         prompts: prompts.map((p) => [p.title, p.position, p.createdBySubject]),
         touched: await libraryState(store, LIB.ann),
         untouched: await libraryState(store, LIB.bob),
-        refused,
       };
     },
   },

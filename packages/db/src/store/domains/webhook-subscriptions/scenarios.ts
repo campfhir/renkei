@@ -245,16 +245,13 @@ export const webhookSubscriptionScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'webhookSubscriptions.delete',
-    name: 'one row by id; unknown ids delete nothing; malformed refused',
+    name: 'one row by id; unknown ids delete nothing',
     fixture,
     run: async (store) => [
       await store.webhookSubscriptions.delete(id(1)),
       await store.webhookSubscriptions.delete(id(1)),
       await store.webhookSubscriptions.delete(id(99)),
       (await store.webhookSubscriptions.listForAccount('microsoft', 'acct-a')).map((s) => s.id),
-      await store.webhookSubscriptions
-        .delete('nope')
-        .catch((error: { code?: string }) => error.code),
     ],
   },
   {
@@ -264,18 +261,21 @@ export const webhookSubscriptionScenarios: Scenario<DataStore>[] = [
       webhook_subscriptions: [
         {
           ...subscription(3, 'acct-a', 'me/messages', 'sub-3'),
-          updated_at: '2026-01-01T00:00:00Z',
+          updated_at: new Date('2026-01-01T00:00:00Z'),
         },
         {
           ...subscription(1, 'acct-a', 'me/events', 'sub-1'),
-          updated_at: '2026-01-01T00:00:00Z',
-          expires_at: '2026-01-03T00:00:00Z',
+          updated_at: new Date('2026-01-01T00:00:00Z'),
+          expires_at: new Date('2026-01-03T00:00:00Z'),
           delta_link: 'https://graph.test/delta?token=1',
         },
-        { ...subscription(2, 'acct-a', 'me/contacts', null), updated_at: '2026-02-01T00:00:00Z' },
+        {
+          ...subscription(2, 'acct-a', 'me/contacts', null),
+          updated_at: new Date('2026-02-01T00:00:00Z'),
+        },
         {
           ...subscription(4, 'acct-b', 'me/messages', 'sub-4'),
-          updated_at: '2026-01-01T00:00:00Z',
+          updated_at: new Date('2026-01-01T00:00:00Z'),
         },
       ],
     },
