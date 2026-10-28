@@ -84,10 +84,18 @@ playwright test`. On a box whose Chromium doesn't match Playwright's,
 `@renkei/db` exposes a data store (`packages/db/src/store/`): domain-shaped
 repositories under `store/domains/<name>/` (types, `postgres.ts`,
 `memory.ts`, `scenarios.ts`), each with a Postgres implementation and an
-in-memory JavaScript one. The memory store keeps rows shaped exactly as
-Postgres returns them, in tables built from a schema generated off the
-migrations (`store/schema.generated.ts`): defaults, keys, foreign keys and
-cascades behave as they do in the database.
+in-memory JavaScript one. The memory store is a mock, not a database:
+per-table arrays of rows shaped as Postgres returns them
+(`store/memory/tables.ts`), stored, then returned filtered and in each
+method's documented order. It knows no columns, keys or references, and
+it does not replicate foreign keys, cascades, constraint error codes or
+collation (strings sort by plain code-unit order). A domain's `memory.ts`
+fills the fields its records show (ids, timestamps, status defaults)
+where it inserts, refuses a duplicate only where a caller turns that into
+behaviour (agent names "name taken", the running-turn and run-executor
+tripwires, a taken connector or template name), and removes or unlinks
+the dependent rows a delete visibly takes with it, in a few explicit
+lines.
 
 - **Nothing outside `packages/db` touches the database.** The connection
   never leaves the package: `@renkei/db` exports no `getDatabase()`,
@@ -115,15 +123,21 @@ cascades behave as they do in the database.
 - **A new or changed repository method** changes `types.ts`, `postgres.ts`
   and `memory.ts` together and gets at least one differential scenario in
   `scenarios.ts`: fixture rows plus a call, run against a freshly
-  truncated Postgres and a fresh memory store, answers required equal.
+  truncated Postgres and a fresh memory store seeded with the same rows
+  (the fixture as Postgres stored it), answers required equal.
   `coverage.test.ts` fails any method without one. Lists have a defined
-  order (ties broken explicitly); business rules (access, decryption,
-  defaults) stay with the caller. See `packages/db/CLAUDE.md` for running it.
+  order (ties broken explicitly); scenario values sort alike under a
+  plain compare and the database's collation (no case or accent ties).
+  Business rules (access, decryption, defaults) stay with the caller. See
+  `packages/db/CLAUDE.md` for running it.
 - **Unit tests** register a memory store (`registerDataStore(createMemoryDataStore())`,
   `resetDataStore()` after) instead of hand-building Kysely chains — see
   `apps/web/lib/session.test.ts`. Seeding it with table rows
   (`store.seed({ table: [rows] })`) is for state the application cannot
-  write any more, such as a legacy row from before a migration.
+  write any more, such as a legacy row from before a migration. A seed is
+  a plain insert: rows go in as given (Dates for timestamps, parsed JSON,
+  strings for int8), with no defaults filled, so a seeded row carries
+  every field the test reads back.
 - **The browser suite** ("UI changes", above) runs the web app on the
   memory store alone. Everything that has to share that store runs inside
   the one server, started by `instrumentation.ts`: the real delegate

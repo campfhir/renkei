@@ -57,11 +57,10 @@ jobs:
   # holds the memory store to itself (every repository method has a
   # differential scenario, answered deterministically); this job runs each
   # scenario against a freshly truncated contract database AND the memory
-  # store and requires equal answers, runs the older contract cases, and
-  # fails if the schema the memory tables are built from
-  # (packages/db/src/store/schema.generated.ts) no longer matches the
-  # migrations. The contract database collates with ICU en-US, the
-  # ordering the memory store reproduces.
+  # store (seeded with the same rows, as Postgres stored them) and requires
+  # equal answers, and runs the older contract cases. Scenarios use values
+  # that sort alike under the database's collation and the memory store's
+  # plain string compare.
   db-contract:
     name: data store (postgres vs memory)
     runs-on: ubuntu-latest
@@ -104,12 +103,6 @@ jobs:
         run: |
           pnpm --filter @renkei/db migrate
           DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm --filter @renkei/db migrate
-
-      - name: Generated store schema is current
-        run: |
-          DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm --filter @renkei/db db:store-schema
-          pnpm exec prettier --write packages/db/src/store/schema.generated.ts
-          git diff --exit-code packages/db/src/store/schema.generated.ts
 
       - name: Differential and contract
         run: pnpm --filter @renkei/db test:contract
