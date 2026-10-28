@@ -19,7 +19,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
-import { bindConnectFlow } from '@/lib/connect-flow-binding';
+import { redirectToConsent } from '@/lib/consent-redirect';
 import { getZoomApp, ZOOM_CONNECTOR } from '@/lib/zoom-app';
 import { ZOOM_REQUIRED_SCOPES } from '@/lib/zoom-scopes';
 import { getOrigin } from '@/lib/get-origin';
@@ -91,5 +91,5 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   authUrl.searchParams.append('state', state);
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
+  return await redirectToConsent(authUrl, state);
 }

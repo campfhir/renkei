@@ -411,20 +411,14 @@ export async function providerConfig(
 /**
  * Microsoft's token endpoint is per directory, Salesforce's per org;
  * everyone else's is fixed. `which` is the directory tenant id, or the
- * Salesforce org's key. A provider with a stand-in (STAND_IN_ENV, never
- * in production) exchanges its codes at the same path on the stand-in's
- * origin, so the e2e stub can complete a connect flow end to end.
+ * Salesforce org's key.
  */
 export function tokenEndpointFor(
   spec: ProviderSpec,
   config: ConnectorConfig | null,
-  which?: string,
-  provider: string = spec.connector
+  which?: string
 ): string | null {
-  if (spec.tokenEndpoint) {
-    const standIn = standInOrigin(provider);
-    return standIn ? `${standIn}${new URL(spec.tokenEndpoint).pathname}` : spec.tokenEndpoint;
-  }
+  if (spec.tokenEndpoint) return spec.tokenEndpoint;
   if (spec.tokenEndpointFrom) return spec.tokenEndpointFrom(config, which);
   const directoryTenantId = which;
   if (spec.hosts.some((host) => host === 'graph.microsoft.com')) {

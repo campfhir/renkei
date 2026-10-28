@@ -142,6 +142,11 @@ cascades behave as they do in the database.
   `page.request`, the admin routes, …). There is no store RPC: what only a vendor
   produces is answered at the browser edge with `page.route`, and a page
   whose data only a background process writes shows its empty state.
+  Connector grants are fake there (`packages/provider-grants/src/fake-oauth.ts`,
+  on only for the memory store): a card's Connect consents at once, the
+  delegate mints a fake token set and identity, and the callback stores
+  the grant as production does — so a spec connects by following the
+  authorize route (`e2e/support/connectors.ts`'s `connectThrough`).
   It runs in CI. `E2E_MEMORY_PORT` moves its server; on a box whose
   preinstalled Chromium doesn't match Playwright's, set
   `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.

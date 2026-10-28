@@ -57,8 +57,6 @@ import { getServer, serverIdOfProvider } from '@renkei/connector-mcp';
 import { refreshToolList } from '@/lib/mcp-servers/remote';
 import { ensureWatching } from '@/lib/mcp-servers/watch';
 import { getGitHubApp } from '@/lib/github-app';
-import { BITBUCKET_API_BASE } from '@/lib/mcp-tools/bitbucket/client';
-import { GITHUB_API_BASE } from '@/lib/mcp-tools/github/client';
 import { getOnBaseApp } from '@/lib/onbase-app';
 import { getOrigin } from '@/lib/get-origin';
 import { getSessionFromRequest } from '@/lib/session';
@@ -967,7 +965,7 @@ async function handleAtlassianBitbucketCallback(
   // Identity: Bitbucket tokens are opaque (no JWT claims to decode), so the
   // /2.0/user read is the only source. Its uuid is the durable account key;
   // the username is display material and rides in metadata.
-  const userResponse = await pendingGet(pending, `${BITBUCKET_API_BASE}/user`);
+  const userResponse = await pendingGet(pending, 'https://api.bitbucket.org/2.0/user');
   const user = (await jsonRecord(userResponse)) ?? {};
   const accountId = typeof user.uuid === 'string' ? user.uuid : '';
   if (!userResponse.ok || !accountId) {
@@ -1158,7 +1156,7 @@ async function handleGitHubCallback(
   // Who granted this. The account id (a stable numeric id, not the login,
   // which can be renamed) is the durable key; login is what API paths and
   // the connect card display.
-  const meResponse = await pendingGet(pending, `${GITHUB_API_BASE}/user`, {
+  const meResponse = await pendingGet(pending, 'https://api.github.com/user', {
     Accept: 'application/vnd.github+json',
   });
   const me = await jsonRecord(meResponse);

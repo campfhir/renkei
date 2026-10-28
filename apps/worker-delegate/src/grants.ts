@@ -21,6 +21,10 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   deleteGrant,
+  fakeIdentityAnswer,
+  fakeOAuthFor,
+  fakeTokenAnswer,
+  FakeOAuthAdapter,
   getGrant,
   refreshGrantTokens,
   scopesFromAccessToken,
@@ -32,6 +36,8 @@ import {
   ZOOM,
   salesforceRevokeEndpoint,
   silentLogger,
+  readFakeAuthorizationCode,
+  type FakeConsent,
   type GrantLogger,
   type ProviderGrant,
 } from '@renkei/provider-grants';
@@ -164,6 +170,8 @@ interface Pending {
   idToken: string | null;
   scope: string | null;
   createdAt: number;
+  /** The consent behind a fake code (the in-memory app's fake OAuth); null for a real one. */
+  fake: FakeConsent | null;
 }
 
 /** What a caller may know about a grant: everything but the tokens. */
@@ -227,7 +235,11 @@ export class Grants {
     const due = new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS;
     if ((due || force) && grant.refreshToken) {
       const config = await providerConfig(spec, this.encryptionKey);
-      const adapter = spec.adapter(config, grant);
+      // The in-memory app's fake grants refresh without a vendor.
+      const adapter =
+        fakeOAuthFor(provider) && grant.subject
+          ? new FakeOAuthAdapter(provider, grant.subject)
+          : spec.adapter(config, grant);
       if (!adapter) return { ok: false, error: 'NOT_CONFIGURED' };
       const refreshed = await refreshGrantTokens(adapter, grant.accountId, this.logger);
       if (!refreshed.ok) {
@@ -317,12 +329,15 @@ export class Grants {
     let extraHosts: string[] = [];
     // For a typed-in credential (spec.credential): the Basic user name.
     let credentialUser = '';
+    // A fake pending token (the in-memory app's fake OAuth): its identity reads are answered here.
+    let fakeConsent: FakeConsent | null = null;
     if (spec.anonymous) {
       token = '';
     } else if (pendingHandle) {
       const pending = this.takePending(pendingHandle, provider, false);
       if (!pending) return fail('NO_PENDING');
       token = pending.accessToken;
+      fakeConsent = pending.fake;
       if (spec.hostsFor) {
         extraHosts = spec.hostsFor(
           await providerConfig(spec, this.encryptionKey),
@@ -348,6 +363,11 @@ export class Grants {
     }
     if (spec.hostsFor && !hostAllowed(spec, url, provider, extraHosts))
       return fail('host_not_allowed', `${url.hostname} is not this ${provider} grant's org`);
+
+    if (fakeConsent) {
+      const answer = fakeIdentityAnswer(provider, url, fakeConsent);
+      return sendJson(response, answer.status, answer.body);
+    }
 
     const send = async (
       bearer: string,
@@ -461,8 +481,17 @@ export class Grants {
       if (typeof value === 'string') form.set(key, value);
     }
 
+    // The in-memory app's fake OAuth: the code came from its own fake
+    // consent, and the token set is made up here instead of at a vendor.
+    const fake = fakeOAuthFor(provider) ? readFakeAuthorizationCode(form.get('code') ?? '') : null;
+    if (fakeOAuthFor(provider) && fake?.provider !== provider) {
+      return fail('EXCHANGE_FAILED', "that code is not one the in-memory app's consent issued");
+    }
+
     let tokens: Record<string, unknown>;
-    if (provider === ONBASE || provider === ONBASE_ADMIN) {
+    if (fake && (provider === ONBASE || provider === ONBASE_ADMIN)) {
+      tokens = fakeTokenAnswer(provider, fake);
+    } else if (provider === ONBASE || provider === ONBASE_ADMIN) {
       const answer = await onbaseWorkerCall('token', {
         connector: provider,
         grant: {
@@ -491,8 +520,7 @@ export class Grants {
       const endpoint = tokenEndpointFor(
         spec,
         config,
-        str(body.directoryTenantId) || org || undefined,
-        provider
+        str(body.directoryTenantId) || org || undefined
       );
       if (!clientId || !endpoint || (!clientSecret && spec.clientAuth !== 'none'))
         return fail('NOT_CONFIGURED');
@@ -507,25 +535,34 @@ export class Grants {
         if (spec.clientAuth !== 'none') form.set('client_secret', clientSecret);
       }
       if (!form.has('grant_type')) form.set('grant_type', 'authorization_code');
-      let upstream: Response;
-      try {
-        upstream = await this.fetchImpl(endpoint, {
-          method: 'POST',
-          headers,
-          body: form.toString(),
-          signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+      if (fake) {
+        tokens = fakeTokenAnswer(provider, fake, {
+          directoryTenantId: str(body.directoryTenantId) || str(config?.settings.directoryTenantId),
+          // Salesforce's answer names the org it was minted in: the one whose endpoint this is.
+          instanceUrl: spec.tokenEndpointFrom ? new URL(endpoint).origin : undefined,
+          scope: form.get('scope'),
         });
-      } catch (error) {
-        return fail(isTimeout(error) ? 'timeout' : 'unreachable');
+      } else {
+        let upstream: Response;
+        try {
+          upstream = await this.fetchImpl(endpoint, {
+            method: 'POST',
+            headers,
+            body: form.toString(),
+            signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
+          });
+        } catch (error) {
+          return fail(isTimeout(error) ? 'timeout' : 'unreachable');
+        }
+        const json: unknown = await upstream.json().catch(() => null);
+        if (!upstream.ok || !isRecord(json)) {
+          const detail = isRecord(json)
+            ? str(json.error_description) || str(json.error)
+            : String(upstream.status);
+          return fail('EXCHANGE_FAILED', detail);
+        }
+        tokens = json;
       }
-      const json: unknown = await upstream.json().catch(() => null);
-      if (!upstream.ok || !isRecord(json)) {
-        const detail = isRecord(json)
-          ? str(json.error_description) || str(json.error)
-          : String(upstream.status);
-        return fail('EXCHANGE_FAILED', detail);
-      }
-      tokens = json;
     }
 
     if (typeof tokens.access_token !== 'string')
@@ -543,6 +580,7 @@ export class Grants {
       idToken: typeof tokens.id_token === 'string' ? tokens.id_token : null,
       scope: typeof tokens.scope === 'string' ? tokens.scope : null,
       createdAt: Date.now(),
+      fake,
     });
     // Bitbucket echoes `scopes`, everyone else `scope`; relayed as given so the
     // caller can record what was actually granted for an opaque token.
@@ -674,7 +712,10 @@ export class Grants {
     // our copy is what matters.
     let revokedAtProvider = false;
     const read = await getGrant(provider, accountId);
-    if (read.ok && read.val) {
+    // A fake grant (the in-memory app's fake OAuth) has no vendor to revoke at.
+    if (fakeOAuthFor(provider)) {
+      revokedAtProvider = true;
+    } else if (read.ok && read.val) {
       const grant = read.val;
       try {
         if (provider === ZOOM) {

@@ -80,9 +80,10 @@ export default defineConfig({
   webServer: [
     {
       // A stand-in sandbox worker (e2e/sandbox-stub.mjs): Code pages, the
-      // chat's sandbox tools, Bitbucket and GitHub (their OAuth token
-      // exchanges and identity reads too) and
-      // Jira administration's APIs. SANDBOX_STUB_PORT moves it.
+      // chat's sandbox tools, Bitbucket's and Jira administration's APIs.
+      // No vendor's OAuth: connect flows are the in-memory app's own fake
+      // grants (packages/provider-grants/src/fake-oauth.ts).
+      // SANDBOX_STUB_PORT moves it.
       command: `SANDBOX_STUB_PORT=${SANDBOX_STUB_PORT} node e2e/sandbox-stub.mjs`,
       url: `${SANDBOX_STUB_URL}/health`,
       reuseExistingServer: !process.env.CI,

@@ -12,8 +12,8 @@
  * richer Pipelines is already covered by code.spec.ts's fixtures).
  *
  * The project is the test's own person's, who connects GitHub through the
- * real connect flow (e2e/support/code-host.ts: the sandbox stub stands in
- * for GitHub's token endpoint and identity read). The no-access case is
+ * real connect flow (e2e/support/code-host.ts: the in-memory app's fake
+ * OAuth answers the consent, the exchange and the identity read). The no-access case is
  * the same kind of project shared with a second person who never
  * connected GitHub.
  */

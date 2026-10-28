@@ -6,11 +6,12 @@
  *     configured (PUT /api/admin/connectors/atlassian-bitbucket) — both
  *     organization-wide, so they are switched on and left on, never off;
  *   - the person's own Bitbucket connection, through the real connect
- *     flow: GET /api/atlassian-bitbucket/authorize, Bitbucket's consent
- *     answered with the redirect back to /api/oauth/callback, and the
- *     code exchanged by the delegate at the sandbox stub
- *     (e2e/sandbox-stub.mjs stands in for Bitbucket's token endpoint and
- *     API: BITBUCKET_API_BASE_URL);
+ *     flow: GET /api/atlassian-bitbucket/authorize, which on the
+ *     in-memory app consents at once (fake OAuth,
+ *     @renkei/provider-grants' fake-oauth.ts) and lands on
+ *     /api/oauth/callback, where the grant is stored as production stores
+ *     it; the repository APIs the token is then used on are the sandbox
+ *     stub's (BITBUCKET_API_BASE_URL, GITHUB_API_BASE_URL);
  *   - a code project (POST /api/code/projects), chats in it
  *     (POST /api/chat/chats), and turns asked in them
  *     (POST …/turns) — a code chat's first turn clones the repository
@@ -21,7 +22,6 @@
  * `removeModel` afterwards.
  */
 
-import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { MEMORY_BASE_URL } from '../memory/constants';
 import { createPerson } from './person';
@@ -57,13 +57,11 @@ const HOSTS = {
         'project:admin repository:admin pipeline pipeline:write pipeline:variable',
     },
     authorize: '/api/atlassian-bitbucket/authorize',
-    consent: 'https://bitbucket.org/site/oauth2/authorize',
   },
   github: {
     admin: '/api/admin/connectors/github',
     registration: { clientId: 'e2e-github-client', clientSecret: 'e2e-github-secret' },
     authorize: '/api/github/authorize',
-    consent: 'https://github.com/login/oauth/authorize',
   },
 } as const;
 
@@ -110,25 +108,13 @@ export async function prepareCodeHost(request: APIRequestContext): Promise<void>
 }
 
 /**
- * Connect the page's person to a code host through its connect flow;
- * ends on /connectors. The authorize route's redirect is taken by hand
- * (Playwright does not route a redirect's target), and the host's consent
- * is answered with what the host sends back: the callback, with a code
- * and the state.
+ * Connect the page's person to a code host through its connect flow, as
+ * the card's Connect link does; ends on /connectors. The in-memory app's
+ * fake consent sends the browser straight back to the callback, and every
+ * person is their own fake account.
  */
 export async function connectCodeHost(page: Page, which: CodeHost): Promise<void> {
-  const host = HOSTS[which];
-  // The page's request context shares the browser's cookies, so the
-  // connect-flow binding cookie the authorize route sets lands there.
-  const authorize = await page.request.get(host.authorize, { maxRedirects: 0 });
-  const location = authorize.headers()['location'] ?? '';
-  if (!location.startsWith(host.consent)) {
-    throw new Error(`${host.authorize} answered ${authorize.status()} to ${location}`);
-  }
-  const state = new URL(location).searchParams.get('state') ?? '';
-  // A code of its own: the stub issues a token per code, so every person is their own account.
-  const code = `e2e-code-${randomUUID()}`;
-  await page.goto(`/api/oauth/callback?code=${code}&state=${encodeURIComponent(state)}`);
+  await page.goto(HOSTS[which].authorize);
   await page.waitForURL(/\/connectors(\?|$)/, { timeout: 30_000 });
 }
 

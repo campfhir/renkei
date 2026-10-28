@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
-import { bindConnectFlow } from '@/lib/connect-flow-binding';
+import { redirectToConsent } from '@/lib/consent-redirect';
 import { getSalesforceConnector } from '@/lib/salesforce-app';
 import { SALESFORCE_OAUTH_SCOPES } from '@/lib/salesforce-scopes';
 import type { SalesforceKind } from '@/lib/salesforce-kinds';
@@ -94,5 +94,5 @@ export async function authorizeSalesforce(
   authUrl.searchParams.append('code_challenge_method', 'S256');
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
+  return await redirectToConsent(authUrl, state);
 }

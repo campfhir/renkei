@@ -17,7 +17,7 @@ import { getDataStore } from '@renkei/db';
 import { delegateGrants } from '@renkei/delegate-client';
 import { getServer, mcpProvider } from '@renkei/connector-mcp';
 import { getSessionFromRequest } from '@/lib/session';
-import { bindConnectFlow } from '@/lib/connect-flow-binding';
+import { redirectToConsent } from '@/lib/consent-redirect';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
 
@@ -94,5 +94,5 @@ export async function GET(
   authUrl.searchParams.set('resource', resource);
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
+  return await redirectToConsent(authUrl, state);
 }
