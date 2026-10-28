@@ -35,7 +35,7 @@ test('chat rename: the tool call shows as an ordinary call, the new title sticks
 
     await page.goto(`/chat/${chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
-    await expect(page.getByText(PROMPT)).toBeVisible();
+    await expect(page.getByText(PROMPT).filter({ visible: true }).first()).toBeVisible();
     await expect(
       page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: title })
     ).toBeVisible();

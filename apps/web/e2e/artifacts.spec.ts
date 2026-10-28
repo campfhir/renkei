@@ -397,7 +397,7 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await share.getByRole('button', { name: f.friendEmail }).click();
   await share.getByRole('button', { name: 'Share', exact: true }).click();
   await expect(share.getByText('Priya Friend')).toBeVisible();
-  await expect(share.getByText('use')).toBeVisible();
+  await expect(share.getByText('use', { exact: true })).toBeVisible();
   await shot(page, testInfo, 'artifacts-03-share');
   await share.getByRole('button', { name: 'Close' }).click();
 

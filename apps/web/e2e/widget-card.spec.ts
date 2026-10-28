@@ -86,7 +86,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
  * small `<p>` carrying the whole text as its title.
  */
 function noteLine(page: Page, text: string) {
-  return page.locator('p[title]', { hasText: text });
+  return page.locator('p[title]', { hasText: text }).filter({ visible: true });
 }
 
 /** The card's frame, in the main column (a streamed render can hold a hidden copy). */
@@ -214,8 +214,11 @@ test('cancelling the card is a decision too: the model replies to it', async ({
   const cancelButton = frame.getByRole('button', { name: 'Cancel' });
   await expect(cancelButton).toBeVisible(COLD);
 
-  await cancelButton.click();
-  await expect(frame.locator('.done-headline')).toHaveText('Cancelled');
+  // The thread can re-render around the card as it settles: pressed again until it takes.
+  await expect(async () => {
+    await cancelButton.click({ timeout: 2_000 });
+    await expect(frame.locator('.done-headline')).toHaveText('Cancelled', { timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
   expect(confirmCalls).toEqual([]);
 
   const note = noteLine(page, 'The user cancelled "Create Jira issue" from the preview card');
@@ -315,15 +318,19 @@ test('two cards from one reply: deciding both opens exactly one turn, informed b
 
   // Card A alone: its note appears, but no turn opens yet — the model must
   // not answer having seen only one of the two cards.
-  await frameA.getByRole('button', { name: 'Create' }).click();
-  await expect(frameA.locator('.done-headline')).toHaveText('Created issue OPS-99.');
+  // The thread can re-render around a card as it settles: pressed again until it takes.
+  await expect(async () => {
+    await frameA.getByRole('button', { name: 'Create' }).click({ timeout: 2_000 });
+    await expect(frameA.locator('.done-headline')).toHaveText('Created issue OPS-99.', {
+      timeout: 2_000,
+    });
+  }).toPass({ timeout: 20_000 });
   const notes = noteLine(page, 'The user confirmed "Create Jira issue" on the preview card');
   await expect(notes).toHaveCount(1, COLD);
   await expect(page.getByText(ANSWER)).toHaveCount(0);
   expect((await turnsOf(page, chatId)).turns).toBe(1);
 
   // Card B decided too: now one turn opens, and the answer lands once.
-  // Card A's note re-renders the thread around card B: pressed again until it takes.
   await expect(async () => {
     await frameB.getByRole('button', { name: 'Create' }).click({ timeout: 2_000 });
     await expect(frameB.locator('.done-headline')).toHaveText('Created issue OPS-99.', {

@@ -245,7 +245,7 @@ test('admin — cleaner script reach', async ({ page, sweep: _sweep }, testInfo)
 test('agents list', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-  await expect(page.getByText(sweep.richName)).toBeVisible();
+  await expect(page.getByText(sweep.richName).filter({ visible: true }).first()).toBeVisible();
   await shot(page, testInfo, 'agents-list');
 });
 
@@ -258,7 +258,10 @@ test('agent overview', async ({ page, sweep }, testInfo) => {
 test('agent overview — memory section open', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents/${sweep.richId}`);
   await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
-  await page.locator('summary', { hasText: /^Memory$/ }).click();
+  await page
+    .locator('summary', { hasText: /^Memory$/ })
+    .filter({ visible: true })
+    .click();
   // What the run remembered.
   await expect(page.getByText('Filed OPS-7 for the VPN outage on 10/19.').first()).toBeVisible();
   await shot(page, testInfo, 'agent-overview-memory-open');
@@ -277,7 +280,7 @@ test('agent overview — usage open', async ({ page, sweep }, testInfo) => {
 test('agent overview — invocations open', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents/${sweep.richId}`);
   await expect(page.getByRole('heading', { name: sweep.richName })).toBeVisible();
-  await page.getByText('Invocations', { exact: true }).click();
+  await page.getByText('Invocations', { exact: true }).filter({ visible: true }).click();
   await expect(page.getByRole('term').filter({ hasText: 'All time' })).toBeVisible();
   await expect(page.getByText('per-day cap', { exact: false })).toBeVisible();
   await shot(page, testInfo, 'agent-overview-invocations-open');
@@ -315,7 +318,7 @@ test('builder — edit rich agent', async ({ page, sweep }, testInfo) => {
 test('builder — tool picker filtered', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents/${sweep.richId}/edit`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-  await page.getByLabel('Search tools').fill('card');
+  await page.getByLabel('Search tools').filter({ visible: true }).fill('card');
   await expect(page.getByText('card_create', { exact: true }).first()).toBeVisible();
   await shot(page, testInfo, 'builder-tool-picker');
 });
