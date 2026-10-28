@@ -4,47 +4,44 @@
  * that opened downward past that edge only grew the sidebar's scroll area
  * instead of showing. The window is made just tall enough for the row's
  * button, so the menu has to flip.
+ *
+ * The chats are the person's own, each asked one question through the
+ * chat routes (the sidebar lists only chats with a message in them),
+ * answered by the stand-in model.
  */
 
 import { randomUUID } from 'node:crypto';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel } from '../support/stub-model';
+import { createChat, send } from '../support/chat';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 // Enough rows that the column scrolls, so one can be brought into view at its end.
 const ROWS = 14;
 
-test('a row menu opens above its row when there is no room below', async ({ page }, testInfo) => {
+test('a row menu opens above its row when there is no room below', async ({
+  page,
+  person: _person,
+}, testInfo) => {
   test.skip(
     testInfo.project.name !== 'desktop-light',
-    'The pinned sidebar column is a desktop layout; the phone drawer is covered elsewhere.'
+    'The pinned sidebar column is a desktop layout; one project is enough.'
   );
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  // Titles carry the project name: the projects run in parallel against one database.
-  const prefix = `Menu flip e2e ${testInfo.project.name}`;
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const prefix = `Menu flip e2e ${tag}`;
   const titles = Array.from(
     { length: ROWS },
     (_, index) => `${prefix} ${String(index + 1).padStart(2, '0')}`
   );
-  const target = titles[ROWS - 1];
+  // The first asked: the oldest, at the bottom of the list.
+  const target = titles[0];
+  const modelId = await addStubModel(page.request, tag);
   try {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
     for (const title of titles) {
-      await client.query(
-        'INSERT INTO chats (id, owner_subject, title, last_message_at) VALUES ($1, $2, $3, NOW())',
-        [randomUUID(), E2E_SUBJECT, title]
-      );
+      const chatId = await createChat(page.request, { llmModelId: modelId, title });
+      await send(page.request, chatId, 'Hello.', modelId);
     }
 
     await page.setViewportSize({ width: 1280, height: 480 });
@@ -59,10 +56,10 @@ test('a row menu opens above its row when there is no room below', async ({ page
     // Shrink the window to a few pixels below the row's button: the menu
     // needs far more room than that, so it has to open above the row.
     const button = await actions.boundingBox();
-    expect(button).toBeTruthy();
+    if (!button) throw new Error('The row has no actions button on screen.');
     await page.setViewportSize({
       width: 1280,
-      height: Math.ceil(button!.y + button!.height) + 40,
+      height: Math.ceil(button.y + button.height) + 40,
     });
 
     // The click can land before the page has hydrated and attached its
@@ -77,11 +74,11 @@ test('a row menu opens above its row when there is no room below', async ({ page
     const viewport = page.viewportSize();
     const menu = await panel.boundingBox();
     const trigger = await actions.boundingBox();
-    expect(menu && trigger && viewport).toBeTruthy();
+    if (!menu || !trigger || !viewport) throw new Error('The menu is not on screen.');
     // Inside the window, and wholly above the button that opened it.
-    expect(menu!.y).toBeGreaterThanOrEqual(0);
-    expect(menu!.y + menu!.height).toBeLessThanOrEqual(viewport!.height);
-    expect(menu!.y + menu!.height).toBeLessThanOrEqual(trigger!.y);
+    expect(menu.y).toBeGreaterThanOrEqual(0);
+    expect(menu.y + menu.height).toBeLessThanOrEqual(viewport.height);
+    expect(menu.y + menu.height).toBeLessThanOrEqual(trigger.y);
 
     await testInfo.attach('menu-flipped-above-row', {
       body: await page.screenshot(),
@@ -92,10 +89,6 @@ test('a row menu opens above its row when there is no room below', async ({ page
     await rename.click();
     await expect(page.getByRole('dialog', { name: 'Rename chat' })).toBeVisible();
   } finally {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });

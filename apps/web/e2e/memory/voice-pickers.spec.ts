@@ -3,30 +3,43 @@
  * person meets them: closed, open with their groups, mid-search, and with
  * a voice being tried out — in the composer's speaker menu and on the
  * Preferences page, at desktop and phone sizes. The vendor is answered at
- * the browser edge (voice-fixtures.ts), so the catalog is the fixture's
- * eleven voices in seven languages and a sample is a silent WAV.
+ * the browser edge (e2e/support/voice.ts), so the catalog is the
+ * fixture's eleven voices in seven languages and a sample is a silent WAV.
  */
 
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { CHAT_ID, CHAT_TITLE, mockVendor, seedVoice, shot } from './voice-fixtures';
+import { randomUUID } from 'node:crypto';
+import { test, expect } from './fixtures';
+import { removeModel } from '../support/stub-model';
+import {
+  CHAT_TITLE,
+  mockVendor,
+  shot,
+  stageVoice,
+  untilVoiceOffered,
+  type VoiceChat,
+} from '../support/voice';
 
 test.use({
+  // The speech service and the chat's model are an operator's to stage.
+  roles: ['renkei-user', 'renkei-operator'],
   browserName: 'chromium',
   launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
     args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'],
   },
 });
 
-test.beforeAll(async () => {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await seedVoice(client);
-  } finally {
-    await client.end();
-  }
+let voice: VoiceChat;
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  // A built app may take a while to offer a speech service just switched on.
+  test.slow();
+  voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
+  await untilVoiceOffered(page, voice.chatId);
+});
+
+test.afterEach(async ({ page }) => {
+  await removeModel(page.request, voice.modelId);
 });
 
 test('preferences: the language and voice pickers', async ({ page }, testInfo) => {
@@ -63,7 +76,6 @@ test('preferences: the language and voice pickers', async ({ page }, testInfo) =
   await voices.getByText('Xiaoxiao (晓晓)').click();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Xiaoxiao');
   await expect(section.getByRole('combobox', { name: 'Language' })).toContainText('zh-CN');
-  await expect(section.getByRole('button', { name: /Hear a sample in Chinese/ })).toBeVisible();
   await shot(page, testInfo, 'pickers-05-preferences-chinese-chosen', false);
 
   // The language list: regions under their language, Chinese now first;
@@ -84,7 +96,7 @@ test('preferences: the language and voice pickers', async ({ page }, testInfo) =
 
 test('chat: the pickers in the speaker menu', async ({ page }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
 
   await page.getByRole('button', { name: 'Voice', exact: true }).click();

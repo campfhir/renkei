@@ -23,20 +23,21 @@
  * calls) and is reset at the start of each test, so the tests run one at a
  * time, in desktop-light only.
  *
- * The chat's model is the sandbox stub's Anthropic stand-in (it answers
- * `[[call tool {args}]]` by calling the tool), staged on the roster through
- * the admin route; the chat is created through the chat's own route.
+ * The chat's model is the stand-in model (e2e/llm-stub.mjs), each prompt
+ * scripting the one tool it calls; the chat is created through the chat's
+ * own route.
  */
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { addStubModel, toolStep, scripted } from '../support/stub-model';
+import { LLM_STUB_REPLY } from './constants';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const STUB = 'http://127.0.0.1:8093';
-const STUB_MODEL_BASE_URL = 'http://127.0.0.1:8092/anthropic';
 /** First hits compile routes in `next dev`. */
 const COLD = { timeout: 30_000 };
 
@@ -72,24 +73,6 @@ async function serverIdOf(page: Page, slug: string): Promise<string> {
   const id = listed.servers.find((row) => row.slug === slug)?.id;
   if (!id) throw new Error(`no server ${slug}`);
   return id;
-}
-
-/** The chat's model on the roster, the way an operator adds one. */
-async function addChatModel(page: Page, tag: string): Promise<string> {
-  const response = await page.request.post('/api/admin/llm-models', {
-    data: {
-      label: `MCP e2e model ${tag}`,
-      provider: 'anthropic',
-      model: 'e2e-model',
-      baseUrl: STUB_MODEL_BASE_URL,
-      apiKey: 'e2e',
-      enabled: true,
-      isDefault: false,
-    },
-  });
-  expect(response.status(), await response.text()).toBe(201);
-  const body: { id: string } = await response.json();
-  return body.id;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -136,7 +119,7 @@ test('an admin lists a server, a person connects it through the server’s own s
   person: _person,
 }, testInfo) => {
   test.setTimeout(240_000);
-  const modelId = await addChatModel(page, randomUUID().slice(0, 6));
+  const modelId = await addStubModel(page.request, `mcp-${randomUUID().slice(0, 6)}`);
   try {
     // ── 1. The admin lists the server and checks it ─────────────────────
     const row = await adminAddsTheServer(page, testInfo);
@@ -227,9 +210,13 @@ test('an admin lists a server, a person connects it through the server’s own s
       COLD
     );
     const box = page.getByRole('textbox', { name: 'Message' });
-    await box.fill('[[call find_tools {"query":"insurance claims"}]]');
+    await box.fill(
+      scripted('Which tools handle claims?', [
+        toolStep('find_tools', { query: 'insurance claims' }),
+      ])
+    );
     await box.press('Enter');
-    await expect(page.getByText('Stub model: I saw').first()).toBeVisible(COLD);
+    await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
     // The tool result is folded in the thread; it is in the page all the same.
     const found = page.locator('pre.chat-pre').filter({ hasText: `About ${SERVER_NAME}` });
     await expect(found.first()).toBeAttached(COLD);
@@ -239,15 +226,21 @@ test('an admin lists a server, a person connects it through the server’s own s
     await shot(page, testInfo, 'mcp-05-chat-found');
 
     // A read runs straight through, as the person, at the server.
-    await box.fill(`[[call ${SLUG}__lookup_policy {"policyNumber":"P-1001"}]]`);
+    await box.fill(
+      scripted('Look up P-1001.', [toolStep(`${SLUG}__lookup_policy`, { policyNumber: 'P-1001' })])
+    );
     await box.press('Enter');
     await expect.poll(async () => (await stubState()).calls.length, { timeout: 30_000 }).toBe(1);
-    const call = (await stubState()).calls[0];
-    expect(call).toMatchObject({ name: 'lookup_policy', args: { policyNumber: 'P-1001' } });
-    expect(call.who).toMatch(/^stub-client-/);
+    const made = (await stubState()).calls[0];
+    expect(made).toMatchObject({ name: 'lookup_policy', args: { policyNumber: 'P-1001' } });
+    expect(made.who).toMatch(/^stub-client-/);
 
     // An act asks first, like any other write in chat.
-    await box.fill(`[[call ${SLUG}__file_claim {"policyNumber":"P-1001","summary":"Hail"}]]`);
+    await box.fill(
+      scripted('File a hail claim.', [
+        toolStep(`${SLUG}__file_claim`, { policyNumber: 'P-1001', summary: 'Hail' }),
+      ])
+    );
     await box.press('Enter');
     const ask = page.getByRole('group', { name: 'Permission needed' });
     await expect(ask).toBeVisible(COLD);

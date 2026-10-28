@@ -10,8 +10,7 @@
  * Started by playwright.config.ts as a second webServer, on the port the
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
  * The same process also stands in for Bitbucket, Jira administration's
- * option endpoints and — for a spec whose chat turn has to actually run
- * — an Anthropic Messages endpoint (handleAnthropic below).
+ * option endpoints and Mistral OCR (handleMistralOcr below).
  */
 
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
@@ -2611,18 +2610,6 @@ function handleJiraAdmin(request, url, response) {
 }
 
 /**
- * An Anthropic Messages endpoint, stood in for: a spec that needs a chat
- * turn to actually run (a preview card's decision opening the model's
- * reply, widget-card.spec.ts) seeds its model config with
- * `base_url = http://127.0.0.1:8092/anthropic`, and the app's adapter
- * (packages/agent-llm/src/anthropic.ts) streams from here instead of the
- * network. The reply is one text block that quotes the last user
- * message's first line, so a spec can assert the model was handed what
- * it expects. The frames are the ones the adapter parses — message_start,
- * content_block_start/delta/stop, message_delta, message_stop — and
- * nothing more.
- */
-/**
  * Mistral OCR, one call per file. The file's own bytes decide how long it
  * takes: one that says SLOW is held for a few seconds, so a spec can see a
  * read in flight; any other file answers at once.
@@ -2647,137 +2634,6 @@ async function handleMistralOcr(request, response) {
   });
 }
 
-function handleAnthropic(request, url, response) {
-  if (request.method !== 'POST' || url.pathname !== '/anthropic/v1/messages') {
-    return json(response, 404, { type: 'error', error: { type: 'not_found_error' } });
-  }
-  void readBody(request).then((body) => {
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const lastUser = [...messages].reverse().find((message) => message?.role === 'user');
-    const content = lastUser?.content;
-    const text =
-      typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content
-              .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-              .map((block) => block.text)
-              .join('\n')
-          : '';
-    const firstLine = text.split('\n').find((line) => line.trim()) ?? '';
-    const reply = `Stub model: I saw “${firstLine.trim()}”`;
-    // A scripted tool call: a user message of the form
-    // `[[call <tool> <json arguments>]]` is answered with that one
-    // tool_use, streamed the way the real API streams it (an empty input
-    // on the start frame, the arguments as one input_json_delta), so a
-    // spec can have the model reach for a tool without a real model. The
-    // round after — the tool's result comes back as a tool_result block,
-    // never as text — gets the plain text reply below.
-    const scripted = /^\[\[call\s+([A-Za-z0-9_.-]+)\s*(\{[\s\S]*\})?\s*\]\]$/.exec(
-      firstLine.trim()
-    );
-    // The artifact digest (apps/web/lib/chat/artifact-digest.ts) forces its
-    // one tool; it is answered from the text itself — a summary naming the
-    // first line, the longer words as keywords — so a spec can see a
-    // file's digest land and search by it.
-    const digested = text.replace(/^<file[^>]*>\n?/, '').replace(/\n?<\/file>$/, '');
-    const digestLine = digested.split('\n').find((line) => line.trim()) ?? '';
-    // A picture comes with its bytes as an image block, and is described
-    // rather than read: a fixed description, so a spec can see a photo
-    // with no text come back as what it shows.
-    const pictured = JSON.stringify(body.messages ?? []).includes('"type":"image"');
-    const forced =
-      body.tool_choice?.type === 'tool' && body.tool_choice.name === 'artifact_digest'
-        ? [
-            'artifact_digest',
-            JSON.stringify(
-              pictured
-                ? {
-                    summary:
-                      'A red car on a street beside a beach, with modern buildings along the shoreline.',
-                    keywords: ['car', 'red', 'street', 'beach', 'buildings', 'shoreline', 'modern'],
-                  }
-                : {
-                    summary: `Stub summary: ${digestLine.trim()}`,
-                    keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(
-                      0,
-                      8
-                    ),
-                  }
-            ),
-          ]
-        : null;
-    const call = scripted ? [scripted[1], scripted[2] ?? '{}'] : forced;
-    const frames = call
-      ? [
-          { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
-          {
-            type: 'content_block_start',
-            index: 0,
-            content_block: {
-              type: 'tool_use',
-              id: `toolu_stub_${Date.now()}`,
-              name: call[0],
-              input: {},
-            },
-          },
-          {
-            type: 'content_block_delta',
-            index: 0,
-            delta: { type: 'input_json_delta', partial_json: call[1] },
-          },
-          { type: 'content_block_stop', index: 0 },
-          {
-            type: 'message_delta',
-            delta: { stop_reason: 'tool_use' },
-            usage: { output_tokens: 8 },
-          },
-          { type: 'message_stop' },
-        ]
-      : [
-          { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
-          { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
-          { type: 'content_block_stop', index: 0 },
-          {
-            type: 'message_delta',
-            delta: { stop_reason: 'end_turn' },
-            usage: { output_tokens: 8 },
-          },
-          { type: 'message_stop' },
-        ];
-    // A one-shot call (`complete`, no `stream`) reads one JSON message, as
-    // the real API answers it — the chat's title and an artifact's digest
-    // are asked for this way.
-    if (body.stream !== true) {
-      return json(response, 200, {
-        type: 'message',
-        role: 'assistant',
-        content: call
-          ? [
-              {
-                type: 'tool_use',
-                id: `toolu_stub_${Date.now()}`,
-                name: call[0],
-                input: JSON.parse(call[1]),
-              },
-            ]
-          : [{ type: 'text', text: reply }],
-        stop_reason: call ? 'tool_use' : 'end_turn',
-        usage: { input_tokens: 12, output_tokens: 8 },
-      });
-    }
-    response.writeHead(200, {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-    });
-    for (const frame of frames) {
-      response.write(`event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`);
-    }
-    response.end();
-  });
-}
-
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   // The worker's /health names what it can do (apps/worker-sandbox
@@ -2794,9 +2650,8 @@ const server = createServer((request, response) => {
         scripts: 'isolated',
       },
     });
-  // The model, stood in for: a seeded model config points its base_url here.
+  // Mistral OCR, stood in for: the org's OCR connector points its base URL here.
   if (url.pathname === '/mistral/v1/ocr') return handleMistralOcr(request, response);
-  if (url.pathname.startsWith('/anthropic/')) return handleAnthropic(request, url, response);
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.

@@ -1,256 +1,365 @@
 /**
- * A stand-in model for the memory UI suite (port 8094): an
- * OpenAI-compatible endpoint (packages/agent-llm/src/openai.ts) that
- * answers every request with the same fixed reply, so an agent run or a
- * chat turn can finish without a real provider. Stateless.
+ * A stand-in model for the Playwright suite (port 8094). Stateless: what it
+ * answers is read off each request.
  *
- *   POST /v1/chat/completions   JSON, or SSE when `stream: true`. When the
- *                               request offers `finish_run` (an agent run),
- *                               the reply is that tool call, so the run
- *                               ends `done` with the fixed summary. A
- *                               prompt whose lines read
- *                               `stub:call <tool> <json input>` gets those
- *                               tool calls, one per round in order, and
- *                               then the fixed text (so a chat turn can
- *                               run real tools). Any other request gets
- *                               the fixed text.
- *   POST /v1/embeddings         an OpenAI-compatible embedding of each
- *                               input: 1536 numbers, the same for every
- *                               text (an organization's embedding
- *                               provider, for knowledge notes)
- *   GET  /v1/models             one model, `stub-model`
- *   GET  /health
+ *   POST /v1/chat/completions    OpenAI dialect (packages/agent-llm/src/openai.ts)
+ *   POST /anthropic/v1/messages  Anthropic dialect (…/anthropic.ts), for signed
+ *                                thinking and the composer's thinking switch
+ *        both JSON, or SSE when `stream: true`
+ *   POST /v1/embeddings          1536 numbers per input, the same for every text
+ *   POST /v1/images/generations  one picture of the size asked for (handleImages);
+ *        /v1/images/edits        the same, multipart
+ *   GET  /v1/models, /health
  *
- * A scripted reply, for a spec that needs the model to do something in
- * particular (stage actions, ask a question, call a read tool): put
+ * A spec puts a model on the roster through the admin LLM-models route
+ * (e2e/support/stub-model.ts): provider `openai` and base URL
+ * `http://127.0.0.1:8094/v1`, or provider `anthropic` and
+ * `http://127.0.0.1:8094/anthropic`.
  *
- *   [[stub-script]][{"tool":"ask_person","args":{…}},{"text":"…"}][[/stub-script]]
+ * Unscripted, a request that offers `finish_run` (an agent run) gets that
+ * call — outcome `done`, the fixed summary below — and any other the fixed
+ * text.
  *
- * anywhere in what the model is sent — an agent's instructions, a chat
- * message. Reply n (n = the assistant messages already in the request)
- * is step n: a `tool` step is that one tool call with its `args` (and
- * `text` beside it, if given), a `text` step that text alone. Past the last
- * step, or with no script at all, the `stub:call` lines and then the
- * default above apply.
+ * Scripted: anywhere in what the model is sent — an agent's instructions, a
+ * chat message, a delegated task, a file's text — a block
  *
- * A spec points a model at it through the admin LLM-models route
- * (provider `openai`, base URL `http://127.0.0.1:8094/v1`).
+ *   [[stub-script]] <base64 of a JSON array of steps> [[/stub-script]]
+ *
+ * (stubScript in e2e/support/stub-model.ts writes it; whitespace in the
+ * base64 is ignored, so it wraps in a chat bubble, and encoded, the
+ * replies it scripts never read as page text of their own). The last block
+ * in the last system or user message carrying one is the script, and a
+ * request is answered by step n, n being the assistant messages after that
+ * message (bar calls the app made itself, such as a code chat's clone):
+ * each tool round trip moves one step on. Past the last step, the
+ * unscripted answer. A step is
+ *
+ *   { "text"?: string,                         said (beside the calls, or alone)
+ *     "reasoning"?: string,                    streamed as reasoning / signed thinking
+ *     "tools"?: [{ "name": string, "input"?: object }],   called, in one round
+ *     "usage"?: { "input": n, "output": n, "cached"?: n },
+ *     "delayMs"?: n,                           held this long before answering
+ *     "oneShot"?: true }
+ *
+ * A step answers a turn — a request offering tools without forcing one. With
+ * `oneShot` it answers instead a one-shot call (no tools, or one forced: a
+ * chat title, an artifact digest, a compaction summary), which a turn's
+ * steps never touch.
  */
 
-/* global console, process, URL */
+/* global Buffer, console, process, setTimeout, URL */
 
 import { createServer } from 'node:http';
+import { deflateSync } from 'node:zlib';
 
 const PORT = Number(process.env.E2E_LLM_STUB_PORT ?? 8094);
 // Mirrored by LLM_STUB_REPLY in e2e/memory/constants.ts.
 const STUB_REPLY = 'The stub model finished the work.';
+const BLOCK = /\[\[stub-script\]\]([A-Za-z0-9+/=\s]*)\[\[\/stub-script\]\]/g;
 
-function readJson(request) {
+function readRaw(request) {
   return new Promise((resolve) => {
-    let raw = '';
-    request.on('data', (chunk) => (raw += chunk));
-    request.on('end', () => {
-      try {
-        resolve(JSON.parse(raw || '{}'));
-      } catch {
-        resolve({});
-      }
-    });
+    const chunks = [];
+    request.on('data', (chunk) => chunks.push(chunk));
+    request.on('end', () => resolve(Buffer.concat(chunks)));
   });
 }
 
-function offersFinishRun(body) {
-  return (
-    Array.isArray(body.tools) && body.tools.some((tool) => tool?.function?.name === 'finish_run')
-  );
+async function readJson(request) {
+  try {
+    return JSON.parse((await readRaw(request)).toString('utf8') || '{}');
+  } catch {
+    return {};
+  }
 }
-
-const SCRIPT = /\[\[stub-script\]\]([\s\S]*?)\[\[\/stub-script\]\]/;
 
 function textOf(content) {
   if (typeof content === 'string') return content;
-  if (Array.isArray(content)) {
-    return content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('\n');
-  }
-  return '';
+  if (!Array.isArray(content)) return '';
+  return content.map((part) => (typeof part?.text === 'string' ? part.text : '')).join('\n');
 }
 
-/** The scripted step for this request, or null for the default reply. */
-function scriptedStep(body) {
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  for (const entry of messages) {
-    const match = SCRIPT.exec(textOf(entry?.content));
-    if (!match) continue;
-    let steps;
-    try {
-      steps = JSON.parse(match[1]);
-    } catch {
-      return null;
-    }
-    if (!Array.isArray(steps)) return null;
-    const replied = messages.filter((m) => m?.role === 'assistant').length;
-    return steps[replied] ?? null;
+function scriptIn(text) {
+  const body = [...text.matchAll(BLOCK)].at(-1)?.[1];
+  if (body === undefined) return null;
+  try {
+    const steps = JSON.parse(Buffer.from(body.replace(/\s+/g, ''), 'base64').toString('utf8'));
+    return Array.isArray(steps) ? steps : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
-let nextCall = 0;
-
-const USAGE = { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 };
+/** An assistant message holding only calls the app made itself (a code chat's clone). */
+const foreign = (ids) => ids.length > 0 && ids.every((id) => !String(id).startsWith('call_stub_'));
 
 /**
- * The next scripted call of the last prompt (`stub:call <tool> <json>`
- * lines), or null when it scripts none or all of them have been answered.
- * Stateless: the calls already made are counted from the conversation.
+ * The step answering this request. `messages` are `{ role, text, foreign? }`,
+ * the system prompt first; `turn` says whether tools are offered and none forced.
  */
-function scriptedCall(body) {
-  const messages = Array.isArray(body.messages) ? body.messages : [];
-  let last = -1;
-  messages.forEach((entry, index) => {
-    if (entry?.role === 'user' && /^stub:call /m.test(textOf(entry.content))) last = index;
-  });
-  if (last === -1) return null;
-  const script = textOf(messages[last].content)
-    .split('\n')
-    .map((line) => /^stub:call (\S+) (.*)$/.exec(line.trim()))
-    .filter(Boolean);
-  const answered = messages
-    .slice(last + 1)
-    .filter(
-      (entry) => entry?.role === 'tool' && String(entry.tool_call_id).startsWith('call_stub_')
-    ).length;
-  const next = script[answered];
-  if (!next) return null;
-  return {
-    role: 'assistant',
-    content: null,
-    tool_calls: [
-      {
-        id: `call_stub_${answered + 1}`,
-        type: 'function',
-        function: { name: next[1], arguments: next[2] },
-      },
-    ],
-  };
-}
-
-function message(body) {
-  const step = scriptedStep(body);
-  if (step && typeof step.tool === 'string') {
-    nextCall += 1;
-    return {
-      role: 'assistant',
-      content: typeof step.text === 'string' ? step.text : null,
-      tool_calls: [
-        {
-          id: `call_stub_${nextCall}`,
-          type: 'function',
-          function: { name: step.tool, arguments: JSON.stringify(step.args ?? {}) },
-        },
-      ],
-    };
+function stepFor(messages, turn, tools) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const { role, text } = messages[index];
+    if (role === 'assistant' || role === 'tool') continue;
+    const steps = scriptIn(text);
+    if (!steps) continue;
+    const n = messages.slice(index + 1).filter((m) => m.role === 'assistant' && !m.foreign).length;
+    const step = steps[n];
+    if (step && Boolean(step.oneShot) !== turn) return step;
+    break;
   }
-  if (step && typeof step.text === 'string') return { role: 'assistant', content: step.text };
-  const scripted = scriptedCall(body);
-  if (scripted) return scripted;
-  if (!offersFinishRun(body)) return { role: 'assistant', content: STUB_REPLY };
-  return {
-    role: 'assistant',
-    content: null,
-    tool_calls: [
-      {
-        id: 'call_stub_finish',
-        type: 'function',
-        function: {
-          name: 'finish_run',
-          arguments: JSON.stringify({ outcome: 'done', summary: STUB_REPLY }),
-        },
-      },
-    ],
-  };
+  if (tools.includes('finish_run')) {
+    return { tools: [{ name: 'finish_run', input: { outcome: 'done', summary: STUB_REPLY } }] };
+  }
+  return { text: STUB_REPLY };
 }
 
-function sendStream(response, body) {
-  response.writeHead(200, {
-    'content-type': 'text/event-stream',
-    'cache-control': 'no-cache',
-    connection: 'keep-alive',
-  });
-  const chunk = (delta, finishReason = null, usage) =>
+let calls = 0;
+const callsOf = (step) =>
+  (step.tools ?? []).map((call) => ({
+    id: `call_stub_${(calls += 1)}`,
+    name: call.name,
+    input: call.input ?? {},
+  }));
+const usageOf = (step) => ({ input: 12, output: 8, cached: 0, ...step.usage });
+const words = (text) => text.split(/(?<= )/);
+const hold = (step) => new Promise((resolve) => setTimeout(resolve, step.delayMs ?? 0));
+
+async function openai(response, body) {
+  const messages = (body.messages ?? []).map((m) => ({
+    role: m?.role,
+    text: textOf(m?.content),
+    foreign: foreign((m?.tool_calls ?? []).map((call) => call?.id)),
+  }));
+  const tools = (body.tools ?? []).map((tool) => tool?.function?.name);
+  const step = stepFor(messages, tools.length > 0 && typeof body.tool_choice !== 'object', tools);
+  await hold(step);
+  const toolCalls = callsOf(step).map((call) => ({
+    id: call.id,
+    type: 'function',
+    function: { name: call.name, arguments: JSON.stringify(call.input) },
+  }));
+  const u = usageOf(step);
+  const usage = {
+    prompt_tokens: u.input,
+    completion_tokens: u.output,
+    total_tokens: u.input + u.output,
+    ...(u.cached ? { prompt_tokens_details: { cached_tokens: u.cached } } : {}),
+  };
+  const finish = toolCalls.length > 0 ? 'tool_calls' : 'stop';
+  const base = { id: 'chatcmpl-stub', model: body.model ?? 'stub-model' };
+  if (!body.stream) {
+    const message = {
+      role: 'assistant',
+      content: step.text ?? null,
+      ...(step.reasoning ? { reasoning_content: step.reasoning } : {}),
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    };
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(
+      JSON.stringify({
+        ...base,
+        object: 'chat.completion',
+        choices: [{ index: 0, message, finish_reason: finish }],
+        usage,
+      })
+    );
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+  const chunk = (delta, finishReason = null, extra = {}) =>
     response.write(
       `data: ${JSON.stringify({
-        id: 'chatcmpl-stub',
+        ...base,
         object: 'chat.completion.chunk',
-        model: body.model ?? 'stub-model',
         choices: [{ index: 0, delta, finish_reason: finishReason }],
-        ...(usage ? { usage } : {}),
+        ...extra,
       })}\n\n`
     );
-  const reply = message(body);
-  if (reply.tool_calls) {
-    if (reply.content) chunk({ role: 'assistant', content: reply.content });
-    chunk({
-      role: 'assistant',
-      tool_calls: reply.tool_calls.map((call, index) => ({ index, ...call })),
-    });
-    chunk({}, 'tool_calls', USAGE);
-  } else {
-    chunk({ role: 'assistant', content: '' });
-    for (const word of reply.content.split(/(?<= )/)) chunk({ content: word });
-    chunk({}, 'stop', USAGE);
+  chunk({ role: 'assistant', content: '' });
+  if (step.reasoning) chunk({ reasoning_content: step.reasoning });
+  for (const word of words(step.text ?? '')) chunk({ content: word });
+  if (toolCalls.length > 0) {
+    chunk({ tool_calls: toolCalls.map((call, index) => ({ index, ...call })) });
   }
-  response.write('data: [DONE]\n\n');
+  chunk({}, finish, { usage });
+  response.end('data: [DONE]\n\n');
+}
+
+async function anthropic(response, body) {
+  const system = { role: 'system', text: textOf(body.system) };
+  const messages = [system, ...(body.messages ?? [])].map((m) => {
+    const results = Array.isArray(m.content) && m.content.some((b) => b?.type === 'tool_result');
+    const ids = Array.isArray(m.content)
+      ? m.content.filter((b) => b?.type === 'tool_use').map((b) => b.id)
+      : [];
+    return { role: results ? 'tool' : m.role, text: textOf(m.content), foreign: foreign(ids) };
+  });
+  const tools = (body.tools ?? []).map((tool) => tool?.name);
+  const step = stepFor(messages, tools.length > 0 && body.tool_choice?.type !== 'tool', tools);
+  await hold(step);
+  const blocks = [
+    ...(step.reasoning
+      ? [{ type: 'thinking', thinking: step.reasoning, signature: 'stub-signature' }]
+      : []),
+    ...(step.text ? [{ type: 'text', text: step.text }] : []),
+    ...callsOf(step).map((call) => ({ type: 'tool_use', ...call })),
+  ];
+  const stop = blocks.some((block) => block.type === 'tool_use') ? 'tool_use' : 'end_turn';
+  const u = usageOf(step);
+  const usage = {
+    input_tokens: u.input,
+    output_tokens: u.output,
+    ...(u.cached ? { cache_read_input_tokens: u.cached } : {}),
+  };
+  if (body.stream !== true) {
+    response.writeHead(200, { 'content-type': 'application/json' });
+    const message = { type: 'message', role: 'assistant', content: blocks, stop_reason: stop };
+    response.end(JSON.stringify({ ...message, usage }));
+    return;
+  }
+  response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+  const frame = (event) =>
+    response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+  const delta = (index, d) => frame({ type: 'content_block_delta', index, delta: d });
+  frame({ type: 'message_start', message: { usage: { ...usage, output_tokens: 1 } } });
+  blocks.forEach((block, index) => {
+    const start = (content_block) => frame({ type: 'content_block_start', index, content_block });
+    if (block.type === 'thinking') {
+      start({ type: 'thinking', thinking: '' });
+      delta(index, { type: 'thinking_delta', thinking: block.thinking });
+      delta(index, { type: 'signature_delta', signature: block.signature });
+    } else if (block.type === 'text') {
+      start({ type: 'text', text: '' });
+      for (const word of words(block.text)) delta(index, { type: 'text_delta', text: word });
+    } else {
+      start({ ...block, input: {} });
+      delta(index, { type: 'input_json_delta', partial_json: JSON.stringify(block.input) });
+    }
+    frame({ type: 'content_block_stop', index });
+  });
+  frame({
+    type: 'message_delta',
+    delta: { stop_reason: stop },
+    usage: { output_tokens: u.output },
+  });
+  frame({ type: 'message_stop' });
   response.end();
 }
 
+/** A real w×h PNG of one colour. */
+function solidPng(width, height, [r, g, b]) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buffer) => {
+    let c = 0xffffffff;
+    for (const byte of buffer) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, 'latin1');
+    const tail = Buffer.alloc(4);
+    tail.writeUInt32BE(crc(Buffer.concat([head.subarray(4), data])), 0);
+    return Buffer.concat([head, data, tail]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const row = Buffer.alloc(1 + width * 3);
+  for (let x = 0; x < width; x += 1) row.set([r, g, b], 1 + x * 3);
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', deflateSync(Buffer.concat(Array(height).fill(row)))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+/** An edit (a frame built on the one before) is multipart: its prompt and size. */
+async function readForm(request) {
+  const raw = (await readRaw(request)).toString('latin1');
+  const field = (name) =>
+    new RegExp(`name="${name}"\\r\\n(?:[^\\r\\n]*\\r\\n)*\\r\\n([\\s\\S]*?)\\r\\n--`).exec(
+      raw
+    )?.[1];
+  const prompt = field('prompt');
+  return {
+    prompt: prompt === undefined ? '' : Buffer.from(prompt, 'latin1').toString('utf8'),
+    size: field('size'),
+  };
+}
+
+/**
+ * The OpenAI Images API (packages/agent-llm/src/images.ts), for a model on
+ * the `images` surface: one picture of the size asked for, a colour of its
+ * own per prompt (so an animation's frames differ), with gpt-image's usage.
+ * The person's message rides in the prompt: `[refuse 1024x1024]` has the
+ * safety system refuse that size, `[slow]` holds the answer half a minute.
+ */
+async function handleImages(request, response, edit) {
+  const body = edit ? await readForm(request) : await readJson(request);
+  const prompt = typeof body.prompt === 'string' ? body.prompt : '';
+  const size = /^(\d+)x(\d+)$/.exec(body.size ?? '') ?? [null, '1024', '1024'];
+  const [width, height] = [Number(size[1]), Number(size[2])];
+  if (prompt.includes(`[refuse ${width}x${height}]`)) {
+    response.writeHead(400, { 'content-type': 'application/json' });
+    const message = 'Your request was rejected by the safety system.';
+    response.end(JSON.stringify({ error: { code: 'moderation_blocked', message } }));
+    return;
+  }
+  if (prompt.includes('[slow]')) await new Promise((resolve) => setTimeout(resolve, 30_000));
+  let hash = 0;
+  for (const char of prompt) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  const png = solidPng(width, height, [hash & 0xff, (hash >> 8) & 0xff, (hash >> 16) & 0xff]);
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(
+    JSON.stringify({
+      created: Math.floor(Date.now() / 1000),
+      data: [{ b64_json: png.toString('base64') }],
+      usage: { input_tokens: 61, output_tokens: 4160, total_tokens: 4221 },
+    })
+  );
+}
+
+async function handleEmbeddings(request, response) {
+  const body = await readJson(request);
+  const inputs = Array.isArray(body.input) ? body.input : [body.input];
+  const embedding = Array.from({ length: 1536 }, (_, index) => (index === 0 ? 1 : 0));
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end(
+    JSON.stringify({
+      object: 'list',
+      data: inputs.map((_, index) => ({ object: 'embedding', index, embedding })),
+      model: body.model ?? 'stub-embedding',
+      usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
+    })
+  );
+}
+
+const ROUTES = {
+  'GET /health': (_, response) => response.end('{"ok":true}'),
+  'GET /v1/models': (_, response) =>
+    response.end(JSON.stringify({ object: 'list', data: [{ id: 'stub-model', object: 'model' }] })),
+  'POST /v1/chat/completions': async (request, response) =>
+    openai(response, await readJson(request)),
+  'POST /anthropic/v1/messages': async (request, response) =>
+    anthropic(response, await readJson(request)),
+  'POST /v1/embeddings': handleEmbeddings,
+  'POST /v1/images/generations': (request, response) => handleImages(request, response, false),
+  'POST /v1/images/edits': (request, response) => handleImages(request, response, true),
+};
+
 const server = createServer(async (request, response) => {
-  const url = new URL(request.url ?? '/', `http://127.0.0.1:${PORT}`);
-  if (request.method === 'GET' && url.pathname === '/health') {
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end('{"ok":true}');
-    return;
-  }
-  if (request.method === 'GET' && url.pathname === '/v1/models') {
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ object: 'list', data: [{ id: 'stub-model', object: 'model' }] }));
-    return;
-  }
-  if (request.method === 'POST' && url.pathname === '/v1/embeddings') {
-    const body = await readJson(request);
-    const inputs = Array.isArray(body.input) ? body.input : [body.input];
-    const embedding = Array.from({ length: 1536 }, (_, index) => (index === 0 ? 1 : 0));
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(
-      JSON.stringify({
-        object: 'list',
-        data: inputs.map((_, index) => ({ object: 'embedding', index, embedding })),
-        model: body.model ?? 'stub-embedding',
-        usage: { prompt_tokens: inputs.length, total_tokens: inputs.length },
-      })
-    );
-    return;
-  }
-  if (request.method === 'POST' && url.pathname === '/v1/chat/completions') {
-    const body = await readJson(request);
-    if (body.stream) {
-      sendStream(response, body);
-      return;
-    }
-    const reply = message(body);
-    response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(
-      JSON.stringify({
-        id: 'chatcmpl-stub',
-        object: 'chat.completion',
-        model: body.model ?? 'stub-model',
-        choices: [
-          { index: 0, message: reply, finish_reason: reply.tool_calls ? 'tool_calls' : 'stop' },
-        ],
-        usage: USAGE,
-      })
-    );
-    return;
-  }
+  const { pathname } = new URL(request.url ?? '/', `http://127.0.0.1:${PORT}`);
+  const route = ROUTES[`${request.method} ${pathname}`];
+  if (route) return route(request, response);
   response.writeHead(404, { 'content-type': 'application/json' });
   response.end('{"error":"not found"}');
 });

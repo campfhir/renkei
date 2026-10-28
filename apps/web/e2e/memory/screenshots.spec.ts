@@ -30,8 +30,8 @@ import type { Page, TestInfo } from '@playwright/test';
 import { test as base, expect } from '@playwright/test';
 import { MEMORY_BASE_URL } from './constants';
 import { createPerson, signIn, type Person } from '../support/person';
-import { addStubModel, removeModel } from '../support/stub-model';
-import { createAgent, feedItems, runAgent, stubScript } from '../support/agents';
+import { addStubModel, toolStep, removeModel, stubScript } from '../support/stub-model';
+import { createAgent, feedItems, runAgent } from '../support/agents';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 
@@ -100,11 +100,10 @@ base.beforeAll(async ({}, testInfo) => {
       'Turn yesterday’s unanswered requests into tickets.',
       '',
       stubScript([
-        { tool: 'remember', args: { note: 'Filed OPS-7 for the VPN outage on 10/19.' } },
-        {
-          text: 'One request needs a ticket.',
-          tool: 'stage_actions',
-          args: {
+        toolStep('remember', { note: 'Filed OPS-7 for the VPN outage on 10/19.' }),
+        toolStep(
+          'stage_actions',
+          {
             summary: 'File a ticket for the VPN outage.',
             actions: [
               {
@@ -114,7 +113,8 @@ base.beforeAll(async ({}, testInfo) => {
               },
             ],
           },
-        },
+          'One request needs a ticket.'
+        ),
       ]),
     ].join('\n'),
   });
@@ -150,10 +150,10 @@ base.beforeAll(async ({}, testInfo) => {
       'Summarise yesterday’s activity.',
       '',
       stubScript([
-        {
-          tool: 'finish_run',
-          args: { outcome: 'failed', summary: 'The activity feed could not be read.' },
-        },
+        toolStep('finish_run', {
+          outcome: 'failed',
+          summary: 'The activity feed could not be read.',
+        }),
       ]),
     ].join('\n'),
   });

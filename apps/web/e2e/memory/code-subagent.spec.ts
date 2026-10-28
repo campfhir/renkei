@@ -18,7 +18,7 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { LLM_STUB_REPLY } from './constants';
-import { addStubModel, removeModel } from '../support/stub-model';
+import { addStubModel, toolStep, removeModel, scripted } from '../support/stub-model';
 import { askAndWait, setUpCode, stageCodeProject } from '../support/code-host';
 
 // The stand-in models are staged by an operator.
@@ -71,15 +71,15 @@ test('the card names the model the orchestrator picked; the transcript names wha
     const chatId = chatIds[0];
     // The sub-agent's task scripts its own one grep; the orchestrator's
     // prompt scripts the delegation.
-    const delegate = JSON.stringify({
-      task: `${TASK}\nstub:call code_grep {"pattern":"retryCount"}`,
+    const delegate = {
+      task: scripted(TASK, [toolStep('code_grep', { pattern: 'retryCount' })]),
       readOnly: true,
       model: fastModelLabel,
-    });
+    };
     await askAndWait(
       page.request,
       chatId,
-      { text: `${PROMPT}\nstub:call code_delegate ${delegate}`, llmModelId: modelId },
+      { text: scripted(PROMPT, [toolStep('code_delegate', delegate)]), llmModelId: modelId },
       120_000
     );
 

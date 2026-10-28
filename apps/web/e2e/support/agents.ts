@@ -4,28 +4,15 @@
  * The run itself is carried out by the agents worker the memory server
  * runs in-process, against the stand-in model (e2e/llm-stub.mjs).
  *
- * `stubScript` writes the marker the stand-in model reads (see the
- * stub's header): put it in an agent's instructions and the run's model
- * calls go the way the steps say — a read tool, stage_actions,
- * ask_person — before the stub's default finish_run.
+ * `stubScript` (./stub-model.ts) in an agent's instructions has the
+ * run's model calls go the way its steps say — a read tool,
+ * stage_actions, ask_person — before the stub's default finish_run.
  *
  * Agent names are unique across the organization: pass one carrying the
  * spec's own tag.
  */
 
 import { expect, type APIRequestContext } from '@playwright/test';
-
-export interface StubStep {
-  /** A tool call the model makes, with these args. */
-  tool?: string;
-  args?: Record<string, unknown>;
-  /** Text the model says (beside the tool call, or alone). */
-  text?: string;
-}
-
-export function stubScript(steps: readonly StubStep[]): string {
-  return `[[stub-script]]${JSON.stringify(steps)}[[/stub-script]]`;
-}
 
 export interface AgentDraft {
   name: string;

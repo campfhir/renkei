@@ -29,8 +29,8 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { addStubModel, removeModel } from '../support/stub-model';
-import { createAgent, runAgent, stubScript } from '../support/agents';
+import { addStubModel, toolStep, removeModel, stubScript } from '../support/stub-model';
+import { createAgent, runAgent } from '../support/agents';
 import { addConnectors, connectThrough, registerConnector } from '../support/connectors';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
@@ -65,23 +65,20 @@ test('a call outside the dedicated cards falls back to a JSON-safe arg list', as
         'Flag the channel deployment.',
         '',
         stubScript([
-          {
-            tool: 'stage_actions',
-            args: {
-              summary: 'Wants to make a change.',
-              actions: [
-                {
-                  tool: 'card_create',
-                  args: {
-                    title: 'Deploy the channel',
-                    summary: 'Both channels are ready.',
-                    evidence: { channelIds: ['channel-a', 'channel-b'], options: { force: true } },
-                  },
-                  reason: 'The agent judged this change necessary.',
+          toolStep('stage_actions', {
+            summary: 'Wants to make a change.',
+            actions: [
+              {
+                tool: 'card_create',
+                args: {
+                  title: 'Deploy the channel',
+                  summary: 'Both channels are ready.',
+                  evidence: { channelIds: ['channel-a', 'channel-b'], options: { force: true } },
                 },
-              ],
-            },
-          },
+                reason: 'The agent judged this change necessary.',
+              },
+            ],
+          }),
         ]),
       ].join('\n'),
     });
@@ -143,19 +140,16 @@ async function stageOne(
       'Do the approved change.',
       '',
       stubScript([
-        {
-          tool: 'stage_actions',
-          args: {
-            summary: 'Wants to make a change.',
-            actions: [
-              {
-                tool: input.tool,
-                args: input.args,
-                reason: 'The agent judged this change necessary.',
-              },
-            ],
-          },
-        },
+        toolStep('stage_actions', {
+          summary: 'Wants to make a change.',
+          actions: [
+            {
+              tool: input.tool,
+              args: input.args,
+              reason: 'The agent judged this change necessary.',
+            },
+          ],
+        }),
       ]),
     ].join('\n'),
   });

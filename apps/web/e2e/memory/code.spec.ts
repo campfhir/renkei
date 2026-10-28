@@ -24,7 +24,7 @@ import { devices, type Browser, type Page, type TestInfo } from '@playwright/tes
 import { test, expect } from './fixtures';
 import { MEMORY_BASE_URL } from './constants';
 import { signIn, type Person } from '../support/person';
-import { removeModel } from '../support/stub-model';
+import { toolStep, removeModel, scripted } from '../support/stub-model';
 import { askAndWait, setUpCode, stageCodeProject } from '../support/code-host';
 
 // The stand-in model is staged by an operator.
@@ -35,14 +35,13 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The question the chat is asked, and what its (scripted) model does about it. */
 const QUESTION = 'Why does the invoice job retry forever?';
 const DELETED = 'src/index.ts';
-const TURN = [
-  QUESTION,
-  `stub:call code_delete_file ${JSON.stringify({ path: DELETED })}`,
-  `stub:call code_git_commit ${JSON.stringify({
+const TURN = scripted(QUESTION, [
+  toolStep('code_delete_file', { path: DELETED }),
+  toolStep('code_git_commit', {
     message: 'Cap invoice retries at MAX_ATTEMPTS',
     newBranch: 'fix/retry-cap',
-  })}`,
-].join('\n');
+  }),
+]);
 
 interface Ids {
   seededProjectId: string;

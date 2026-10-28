@@ -20,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { SANDBOX_STUB_URL } from './constants';
-import { removeModel } from '../support/stub-model';
+import { toolStep, removeModel, scripted } from '../support/stub-model';
 import { setUpCode, stageCodeProject } from '../support/code-host';
 
 // The stand-in model is staged by an operator.
@@ -73,7 +73,9 @@ async function startRunningTurn(page: Page, chatId: string, llmModelId: string):
   expect(manual.ok()).toBe(true);
   const asked = await page.request.post(`/api/chat/chats/${chatId}/turns`, {
     data: {
-      text: 'Note where refunds go.\nstub:call code_write_file {"path":"NOTES.md","content":"2410\\n"}',
+      text: scripted('Note where refunds go.', [
+        toolStep('code_write_file', { path: 'NOTES.md', content: '2410\n' }),
+      ]),
       llmModelId,
     },
   });

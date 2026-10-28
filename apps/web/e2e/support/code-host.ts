@@ -174,8 +174,8 @@ export async function createChat(
  * A turn asked in a chat (the composer's send) and waited out: in a code
  * project the first one clones the repository and gives the chat its
  * worktree (lib/code/turn.ts) before the model answers. The stand-in
- * model calls tools when the prompt scripts them (`stub:call <tool>
- * <json>` lines, e2e/llm-stub.mjs); a call the turn parks behind a
+ * model calls tools when the prompt scripts them (`scripted`,
+ * ./stub-model.ts); a call the turn parks behind a
  * permission ask is allowed once, as the person's "Allow" does.
  */
 export async function askAndWait(

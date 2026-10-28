@@ -47,7 +47,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import { askAndWait, createChat } from '../support/code-host';
 import { addConnectors, connectThrough, fakeConsentRequest } from '../support/connectors';
 import { createPerson, signIn } from '../support/person';
-import { addStubModel, removeModel } from '../support/stub-model';
+import { addStubModel, toolStep, removeModel, scripted } from '../support/stub-model';
 import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
@@ -257,7 +257,7 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
       reason: 'The program tracks outcomes now',
     };
     await askAndWait(askerPage.request, chatId, {
-      text: `Please ask for this.\nstub:call salesforce_admin_request_change ${JSON.stringify(input)}`,
+      text: scripted('Please ask for this.', [toolStep('salesforce_admin_request_change', input)]),
       llmModelId: modelId,
     });
 

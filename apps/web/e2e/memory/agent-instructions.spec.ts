@@ -25,8 +25,8 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { addStubModel, removeModel } from '../support/stub-model';
-import { createAgent, feedItems, runAgent, stubScript } from '../support/agents';
+import { addStubModel, toolStep, removeModel, stubScript } from '../support/stub-model';
+import { createAgent, feedItems, runAgent } from '../support/agents';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -204,12 +204,12 @@ test('a staged batch: the run page and the card, accepted', async ({
         'Reply on new OPS tickets.',
         '',
         stubScript([
-          { tool: 'agent_get', args: { agentId: notesId } },
-          {
-            text: 'Two new tickets need a reply; proposing both comments.',
-            tool: 'stage_actions',
-            args: { summary: 'Reply on two new OPS tickets.', actions },
-          },
+          toolStep('agent_get', { agentId: notesId }),
+          toolStep(
+            'stage_actions',
+            { summary: 'Reply on two new OPS tickets.', actions },
+            'Two new tickets need a reply; proposing both comments.'
+          ),
         ]),
       ].join('\n'),
     });
@@ -289,24 +289,21 @@ test('a question card asks a batch: each question with its evidence, answered or
   const modelId = await addStubModel(page.request, tag);
   try {
     const agentName = `Portfolio Updater ${tag}`;
-    const ask = {
-      tool: 'ask_person',
-      args: {
-        intro: 'ATLAS Lab Harvest went live on Azure 10/17–10/19; two things need a home.',
-        questions: [
-          {
-            question: 'Should the ATLAS go-live status go on CIO-5, CIO-25 or CIO-26?',
-            context: 'John Vo: "a great first day post go-live"; 837 lab orders on 10/19.',
-            answer: { type: 'choice', options: ['CIO-5', 'CIO-25', 'CIO-26'] },
-          },
-          {
-            question: 'Does the xCures SFTP / IP-allowlist work need a CIO-39 update?',
-            context: 'SYS-2597, Kelvin, 10/19.',
-            answer: { type: 'choice', options: ['Yes', 'No'] },
-          },
-        ],
-      },
-    };
+    const ask = toolStep('ask_person', {
+      intro: 'ATLAS Lab Harvest went live on Azure 10/17–10/19; two things need a home.',
+      questions: [
+        {
+          question: 'Should the ATLAS go-live status go on CIO-5, CIO-25 or CIO-26?',
+          context: 'John Vo: "a great first day post go-live"; 837 lab orders on 10/19.',
+          answer: { type: 'choice', options: ['CIO-5', 'CIO-25', 'CIO-26'] },
+        },
+        {
+          question: 'Does the xCures SFTP / IP-allowlist work need a CIO-39 update?',
+          context: 'SYS-2597, Kelvin, 10/19.',
+          answer: { type: 'choice', options: ['Yes', 'No'] },
+        },
+      ],
+    });
     const agentId = await createAgent(page.request, {
       name: agentName,
       llmModelId: modelId,

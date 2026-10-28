@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
-import { addStubModel, removeModel } from '../support/stub-model';
+import { addStubModel, toolStep, removeModel, scripted } from '../support/stub-model';
 import { askAndWait, createChat } from '../support/code-host';
 
 // Organization settings are found by an operator; the stub model is staged by one.
@@ -88,15 +88,15 @@ test('an artifact is found by a keyword in its summary, and the row shows the su
   const modelId = await addStubModel(page.request, `deep-search-${tag}`);
   try {
     // The keyword is only in the digest, not in the file name.
-    const write = JSON.stringify({
+    const write = {
       filename: `deep-search-close-workbook-${tag}.csv`,
       content: 'account,amount\n4000,120.50\n',
       summary,
       keywords: ['reconciliation', 'general ledger'],
-    });
+    };
     const chatId = await createChat(page.request, { llmModelId: modelId });
     await askAndWait(page.request, chatId, {
-      text: `Write up the close workbook.\nstub:call chat_write_file ${write}`,
+      text: scripted('Write up the close workbook.', [toolStep('chat_write_file', write)]),
       llmModelId: modelId,
     });
     await page.goto('/agents');

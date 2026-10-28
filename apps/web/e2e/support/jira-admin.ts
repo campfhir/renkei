@@ -32,6 +32,7 @@ import { MEMORY_BASE_URL, SANDBOX_STUB_URL } from '../memory/constants';
 import { askAndWait, createChat } from './code-host';
 import { addConnectors, connectThrough } from './connectors';
 import { createPerson } from './person';
+import { toolStep, scripted } from './stub-model';
 
 /** The stand-in Jira's base: `${JIRA_STUB}/<cloud id>/rest/api/3/…`. */
 export const JIRA_STUB = `${SANDBOX_STUB_URL}/jira`;
@@ -120,8 +121,8 @@ export async function jiraStub(
 
 /**
  * A tool call made the way a person's assistant makes it: a chat turn on
- * the stand-in model, whose prompt scripts the call
- * (`stub:call <tool> <json>`, e2e/llm-stub.mjs), waited out. Answers what
+ * the stand-in model, whose prompt scripts the call (`scripted`,
+ * ./stub-model.ts), waited out. Answers what
  * the tool answered, as text.
  */
 export async function callInChat(
@@ -132,7 +133,7 @@ export async function callInChat(
 ): Promise<string> {
   const chatId = await createChat(page.request, { llmModelId });
   await askAndWait(page.request, chatId, {
-    text: `Please do this.\nstub:call ${tool} ${JSON.stringify(input)}`,
+    text: scripted('Please do this.', [toolStep(tool, input)]),
     llmModelId,
   });
   const response = await page.request.get(`/api/chat/chats/${chatId}`);
