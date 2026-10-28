@@ -28,10 +28,9 @@ import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import {
   addConnectors,
-  connectThrough,
   connectorConfig,
+  connectJira,
   fakeConsentRequest,
-  registerConnector,
   saveConnectorConfig,
 } from '../support/connectors';
 import { test, expect } from './fixtures';
@@ -59,12 +58,7 @@ test('jira administration: register the app, connect with narrowed classic scope
   const before = await connectorConfig(page.request, 'atlassian-admin');
   try {
     // Everyday Jira, the first Atlassian app, registered and connected first.
-    await registerConnector(page.request, 'atlassian', {
-      clientId: 'e2e-jira-client',
-      clientSecret: 'e2e-jira-secret',
-    });
-    await addConnectors(page.request, ['jira']);
-    await connectThrough(page, '/api/mcp/authorize');
+    await connectJira(page);
 
     // --- The operator registers the fifth Atlassian app. ---
     await page.goto(`/admin/connectors/atlassian-admin`);

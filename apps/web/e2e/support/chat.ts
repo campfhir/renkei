@@ -35,7 +35,7 @@ export interface ChatReadBack {
     artifacts: { id: string; filename: string }[];
     contextTokens: number | null;
   };
-  messages: { id: string; role: string; kind: string; content: unknown }[];
+  messages: { id: string; turnId: string | null; role: string; kind: string; blocks: unknown[] }[];
 }
 
 export async function createChat(

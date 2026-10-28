@@ -13,6 +13,7 @@
  */
 
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
+import { DEFAULT_ATLASSIAN_SCOPES } from '../../lib/atlassian-scopes';
 
 /** Put each connector on the signed-in person's Connectors page, as its "Add" button does. */
 export async function addConnectors(
@@ -103,4 +104,20 @@ export async function registerConnector(
       .map((key) => [key, before[key]])
   );
   await saveConnectorConfig(request, connector, { ...data, ...kept, enabled: true });
+}
+
+/**
+ * Everyday Jira registered for the org and connected for the page's
+ * person, through the card's Connect link. Every spec registers it with
+ * the same scopes — the defaults and the board writes a sprint card acts
+ * with — since the registration is organization-wide and left on.
+ */
+export async function connectJira(page: Page): Promise<void> {
+  await registerConnector(page.request, 'atlassian', {
+    clientId: 'e2e-jira-client',
+    clientSecret: 'e2e-jira-secret',
+    scopes: `${DEFAULT_ATLASSIAN_SCOPES} write:board-scope:jira-software write:sprint:jira-software`,
+  });
+  await addConnectors(page.request, ['jira']);
+  await connectThrough(page, '/api/mcp/authorize');
 }

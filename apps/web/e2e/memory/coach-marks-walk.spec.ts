@@ -31,7 +31,19 @@ import { COACH_MARK_TOURS } from '../../lib/coach-marks/tours';
 import { createAgent, runAgent } from '../support/agents';
 import { addStubModel, removeModel } from '../support/stub-model';
 import { holdShared, type Release } from '../support/org-lock';
-import { setUpCode, stageCodeProject } from '../support/code-host';
+import {
+  connectCodeHost,
+  prepareCodeHost,
+  setUpCode,
+  stageCodeProject,
+  type CodeHost,
+} from '../support/code-host';
+import {
+  addConnectors,
+  connectJira,
+  connectThrough,
+  registerConnector,
+} from '../support/connectors';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 
@@ -103,6 +115,41 @@ interface Walk {
   unreachable?: string;
 }
 const THREAD = /\/chat\/[0-9a-f-]{36}$/;
+
+/** Connect something for the person, then walk on their Connectors page. */
+function onConnectors(
+  connect: (page: Page, request: APIRequestContext) => Promise<void>
+): (page: Page, request: APIRequestContext) => Promise<string> {
+  return async (page, request) => {
+    await connect(page, request);
+    return '/connectors';
+  };
+}
+const atlassianApp = (connector: string) => async (page: Page) => {
+  await registerConnector(page.request, connector, {
+    clientId: `e2e-${connector}-client`,
+    clientSecret: `e2e-${connector}-secret`,
+  });
+  await connectThrough(page, `/api/${connector}/authorize`);
+};
+const codeHost = (which: CodeHost) => async (page: Page, request: APIRequestContext) => {
+  await prepareCodeHost(request);
+  await connectCodeHost(page, which);
+};
+async function microsoft(page: Page): Promise<void> {
+  await registerConnector(
+    page.request,
+    'microsoft',
+    {
+      clientId: 'e2e-microsoft-client',
+      clientSecret: 'e2e-microsoft-secret',
+      directoryTenantId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+    },
+    ['directoryTenantId']
+  );
+  await addConnectors(page.request, ['microsoft']);
+  await connectThrough(page, '/api/microsoft/authorize');
+}
 const WALKS: Record<string, Walk> = {
   'agent-detail': {
     path: async (page) => `/agents/${await stageAgent(page)}`,
@@ -177,16 +224,21 @@ const WALKS: Record<string, Walk> = {
     spotlight: true,
     open: (page) => page.getByRole('button', { name: 'Add connector' }).click(),
   },
-  // No product is connected for the person (each needs the vendor's
-  // OAuth sign-in), so every card tour is walked with its steps centred.
-  'connect-jira': { path: `/connectors`, spotlight: false },
-  'connect-jsm': { path: `/connectors`, spotlight: false },
+  // The card tours of the products a person connects with a sign-in of
+  // their own: connected first (the in-memory app's fake OAuth), so the
+  // card is on the page for the tour to light up.
+  'connect-jira': { path: onConnectors((page) => connectJira(page)), spotlight: true },
+  'connect-jsm': { path: onConnectors(atlassianApp('atlassian-jsm')), spotlight: true },
+  'connect-confluence': {
+    path: onConnectors(atlassianApp('atlassian-confluence')),
+    spotlight: true,
+  },
+  'connect-bitbucket': { path: onConnectors(codeHost('bitbucket')), spotlight: true },
+  'connect-github': { path: onConnectors(codeHost('github')), spotlight: true },
+  'connect-microsoft': { path: onConnectors(microsoft), spotlight: true },
+  // The rest are walked on a page without their card, every step centred.
   'connect-salesforce-admin': { path: `/connectors`, spotlight: false },
-  'connect-confluence': { path: `/connectors`, spotlight: false },
   'connect-jira-admin': { path: `/connectors`, spotlight: false },
-  'connect-bitbucket': { path: `/connectors`, spotlight: false },
-  'connect-github': { path: `/connectors`, spotlight: false },
-  'connect-microsoft': { path: `/connectors`, spotlight: false },
   'connect-entra-developer': { path: `/connectors`, spotlight: false },
   'connect-salesforce': { path: `/connectors`, spotlight: false },
   'connect-webex': { path: `/connectors`, spotlight: false },

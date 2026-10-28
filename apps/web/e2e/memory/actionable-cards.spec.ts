@@ -31,7 +31,12 @@ import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { addStubModel, toolStep, removeModel, stubScript } from '../support/stub-model';
 import { createAgent, runAgent } from '../support/agents';
-import { addConnectors, connectThrough, registerConnector } from '../support/connectors';
+import {
+  addConnectors,
+  connectJira,
+  connectThrough,
+  registerConnector,
+} from '../support/connectors';
 
 const RESULTS = path.join(import.meta.dirname, '..', '..', 'test-results', 'memory');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -170,12 +175,7 @@ test('a Jira issue call renders as a structured issue card', async ({
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   // Jira set up for the org (left on: other specs connect through it) and
   // connected for this person.
-  await registerConnector(page.request, 'atlassian', {
-    clientId: 'e2e-jira-client',
-    clientSecret: 'e2e-jira-secret',
-  });
-  await addConnectors(page.request, ['jira']);
-  await connectThrough(page, '/api/mcp/authorize');
+  await connectJira(page);
   const modelId = await addStubModel(page.request, tag);
   try {
     const card = await stageOne(page, {

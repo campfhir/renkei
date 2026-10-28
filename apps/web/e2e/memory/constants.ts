@@ -37,3 +37,5 @@ export const SANDBOX_STUB_URL = `http://127.0.0.1:${SANDBOX_STUB_PORT}`;
 export const LLM_STUB_PORT = Number(process.env.E2E_LLM_STUB_PORT ?? 8094);
 export const LLM_STUB_BASE_URL = `http://127.0.0.1:${LLM_STUB_PORT}/v1`;
 export const LLM_STUB_REPLY = 'The stub model finished the work.';
+/** What it says of a picture it is asked to digest. */
+export const LLM_STUB_PICTURE = 'A picture the stub model looked at.';

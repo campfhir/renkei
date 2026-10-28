@@ -17,8 +17,10 @@
  * `http://127.0.0.1:8094/anthropic`.
  *
  * Unscripted, a request that offers `finish_run` (an agent run) gets that
- * call — outcome `done`, the fixed summary below — and any other the fixed
- * text.
+ * call — outcome `done`, the fixed summary below; one that forces
+ * `artifact_digest` (lib/chat/artifact-digest.ts) gets a digest — of a
+ * picture a fixed description, of text `Stub summary: <its first line>`
+ * with its longer words as keywords; any other the fixed text.
  *
  * Scripted: anywhere in what the model is sent — an agent's instructions, a
  * chat message, a delegated task, a file's text — a block
@@ -55,6 +57,8 @@ import { deflateSync } from 'node:zlib';
 const PORT = Number(process.env.E2E_LLM_STUB_PORT ?? 8094);
 // Mirrored by LLM_STUB_REPLY in e2e/memory/constants.ts.
 const STUB_REPLY = 'The stub model finished the work.';
+// Mirrored by LLM_STUB_PICTURE.
+const STUB_PICTURE = 'A picture the stub model looked at.';
 const BLOCK = /\[\[stub-script\]\]([A-Za-z0-9+/=\s]*)\[\[\/stub-script\]\]/g;
 
 function readRaw(request) {
@@ -97,7 +101,7 @@ const foreign = (ids) => ids.length > 0 && ids.every((id) => !String(id).startsW
  * The step answering this request. `messages` are `{ role, text, foreign? }`,
  * the system prompt first; `turn` says whether tools are offered and none forced.
  */
-function stepFor(messages, turn, tools) {
+function stepFor(messages, turn, tools, pictured) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const { role, text } = messages[index];
     if (role === 'assistant' || role === 'tool') continue;
@@ -107,6 +111,17 @@ function stepFor(messages, turn, tools) {
     const step = steps[n];
     if (step && Boolean(step.oneShot) !== turn) return step;
     break;
+  }
+  if (!turn && tools.includes('artifact_digest')) {
+    const said = messages.findLast((m) => m.role === 'user')?.text ?? '';
+    const text = said.replace(/^<file[^>]*>\n?/, '').replace(/\n?<\/file>$/, '');
+    const input = pictured
+      ? { summary: STUB_PICTURE, keywords: ['picture', 'stub'] }
+      : {
+          summary: `Stub summary: ${(text.split('\n').find((line) => line.trim()) ?? '').trim()}`,
+          keywords: [...new Set(text.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(0, 8),
+        };
+    return { tools: [{ name: 'artifact_digest', input }] };
   }
   if (tools.includes('finish_run')) {
     return { tools: [{ name: 'finish_run', input: { outcome: 'done', summary: STUB_REPLY } }] };
@@ -132,7 +147,13 @@ async function openai(response, body) {
     foreign: foreign((m?.tool_calls ?? []).map((call) => call?.id)),
   }));
   const tools = (body.tools ?? []).map((tool) => tool?.function?.name);
-  const step = stepFor(messages, tools.length > 0 && typeof body.tool_choice !== 'object', tools);
+  const turn = tools.length > 0 && typeof body.tool_choice !== 'object';
+  const step = stepFor(
+    messages,
+    turn,
+    tools,
+    JSON.stringify(body.messages).includes('"type":"image')
+  );
   await hold(step);
   const toolCalls = callsOf(step).map((call) => ({
     id: call.id,
@@ -196,7 +217,13 @@ async function anthropic(response, body) {
     return { role: results ? 'tool' : m.role, text: textOf(m.content), foreign: foreign(ids) };
   });
   const tools = (body.tools ?? []).map((tool) => tool?.name);
-  const step = stepFor(messages, tools.length > 0 && body.tool_choice?.type !== 'tool', tools);
+  const turn = tools.length > 0 && body.tool_choice?.type !== 'tool';
+  const step = stepFor(
+    messages,
+    turn,
+    tools,
+    JSON.stringify(body.messages).includes('"type":"image')
+  );
   await hold(step);
   const blocks = [
     ...(step.reasoning

@@ -2658,9 +2658,23 @@ const server = createServer((request, response) => {
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
   // GitHub, stood in for (the app is pointed at /github with
   // GITHUB_API_BASE_URL); the connect flow's token and identity are the
-  // in-memory app's own fake OAuth, and nothing else of GitHub's API is
-  // stood in for.
-  if (url.pathname.startsWith('/github/')) return error(response, 404, 'not_found');
+  // in-memory app's own fake OAuth. Only opening a pull request is stood
+  // in for — #12, on any repository — so a code chat's milestone card has
+  // a host's answer to show.
+  if (url.pathname.startsWith('/github/')) {
+    if (request.method === 'POST' && /^\/github\/repos\/[^/]+\/[^/]+\/pulls$/.test(url.pathname)) {
+      void readBody(request).then((body) =>
+        json(response, 201, {
+          number: 12,
+          title: body.title ?? '',
+          head: { ref: body.head ?? '' },
+          base: { ref: body.base ?? '' },
+        })
+      );
+      return;
+    }
+    return error(response, 404, 'not_found');
+  }
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);

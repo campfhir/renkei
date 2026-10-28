@@ -2,9 +2,9 @@
  * The stand-in model (e2e/llm-stub.mjs) on the org's roster, staged the
  * way an operator adds one: POST /api/admin/llm-models, and DELETE
  * /api/admin/llm-models/:id afterwards. The roster is organization-wide,
- * so the label carries the caller's own tag, the model is never the
- * default, and a spec names it on what it runs (an agent's or a chat's
- * `llmModelId`) instead of relying on the org default.
+ * so the label carries the caller's own tag, the model is not the
+ * default unless asked (`isDefault`), and a spec names it on what it runs
+ * (an agent's or a chat's `llmModelId`) instead of relying on the default.
  *
  * What the model answers is scripted where it is sent, not here:
  * `stubScript(steps)` is the block llm-stub.mjs reads (its header has the
@@ -55,6 +55,8 @@ export interface StubModelOptions {
   /** Default `Stub model <tag>`. */
   label?: string;
   contextWindow?: number;
+  /** The org's default model (the one artifact digests ask). Default false. */
+  isDefault?: boolean;
   /**
    * An image model instead of a chat one: `images` is answered by
    * llm-stub.mjs's Images endpoint; `flux` is a roster entry only.
@@ -77,7 +79,7 @@ export async function addStubModel(
       baseUrl: anthropic ? LLM_STUB_BASE_URL.replace(/\/v1$/, '/anthropic') : LLM_STUB_BASE_URL,
       apiKey: 'stub-key',
       enabled: true,
-      isDefault: false,
+      isDefault: options.isDefault === true,
       ...(options.contextWindow ? { contextWindow: options.contextWindow } : {}),
       ...(options.image
         ? {
