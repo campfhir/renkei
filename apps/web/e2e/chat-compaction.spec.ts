@@ -20,7 +20,14 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { addStubModel, toolStep, removeModel, scripted, type StubStep } from './support/stub-model';
+import {
+  addStubModel,
+  toolStep,
+  releaseStub,
+  removeModel,
+  scripted,
+  type StubStep,
+} from './support/stub-model';
 import { createChat, readChat, send, settled, startTurn } from './support/chat';
 
 // Adding a model to the roster is an operator's.
@@ -60,7 +67,10 @@ async function longHistory(
 ) {
   for (let index = 1; index <= 13; index += 1) {
     const text = `Earlier question ${index}.`;
-    await send(request, chatId, index === 1 && summary ? scripted(text, [summary]) : text, modelId);
+    // The summary's script rides the second prompt: the first is titled by
+    // a one-shot call of its own, which the script's one-shot step would
+    // answer (and hold) too.
+    await send(request, chatId, index === 2 && summary ? scripted(text, [summary]) : text, modelId);
   }
 }
 
@@ -113,10 +123,11 @@ test.describe('chat compaction', () => {
     const modelId = await addStubModel(page.request, tag);
     try {
       const chatId = await createChat(page.request, { llmModelId: modelId, title });
-      // The pass's summary is held for a while.
+      // The pass's summary is held until the running card has been seen.
       await longHistory(page.request, chatId, modelId, {
         oneShot: true,
-        delayMs: 6_000,
+        until: tag,
+        delayMs: 30_000,
         text: 'A summary of the start.',
       });
       // The pass starts before the page is open: it reaches the browser on load.
@@ -128,6 +139,7 @@ test.describe('chat compaction', () => {
       await expect(page.getByText(/Compacting the conversation…/)).toBeVisible({ timeout: 15_000 });
       await shot(page, testInfo, 'chat-compaction-running');
       // The summary lands; the card settles without a page reload.
+      await releaseStub(page.request, tag);
       await expect(page.getByText(/Compacted \d+ earlier messages? into a summary\./)).toBeVisible({
         timeout: 20_000,
       });
@@ -194,11 +206,12 @@ test.describe('chat compaction', () => {
     const modelId = await addStubModel(page.request, tag);
     try {
       const chatId = await createChat(page.request, { llmModelId: modelId, title });
-      // A reply in flight from the first paint: the model takes its time.
+      // A reply in flight from the first paint: the model holds it until
+      // the queue has been looked at (released below), or 45s at most.
       await startTurn(
         page.request,
         chatId,
-        scripted(busy, [{ delayMs: 45_000, text: 'Finally done.' }]),
+        scripted(busy, [{ until: tag, delayMs: 45_000, text: 'Finally done.' }]),
         modelId
       );
 
@@ -283,6 +296,7 @@ test.describe('chat compaction', () => {
 
       // The model finishes its reply — nobody clicks anything, the queued
       // compaction pass sends itself the moment the model is free.
+      await releaseStub(page.request, tag);
       await expect(page.getByText('Finally done.')).toBeVisible({ timeout: 60_000 });
       await expect(page.getByText(/queued/)).toBeHidden({ timeout: 10_000 });
       await expect(page.getByText(NOTHING)).toBeVisible({ timeout: 10_000 });

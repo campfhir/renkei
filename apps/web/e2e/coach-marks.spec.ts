@@ -21,6 +21,7 @@ import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { MEMORY_BASE_URL } from './constants';
 import { createPerson, signIn, type Person } from './support/person';
 import { holdShared, type Release } from './support/org-lock';
+import { settled } from './support/settle';
 
 base.describe.configure({ mode: 'serial', timeout: 120_000 });
 
@@ -29,7 +30,7 @@ const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   // The spotlight slides between steps (a 200ms transition): let it land.
-  await page.waitForTimeout(350);
+  await settled(page);
   await page.screenshot({
     path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
     // The overlay is fixed to the viewport; a full-page resize would move it.

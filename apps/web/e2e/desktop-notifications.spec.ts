@@ -18,6 +18,7 @@
 
 import type { Page, Request } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { painted } from './support/settle';
 
 const FAKE_ENDPOINT = 'https://fake-push-service.example.test/subscription-abc';
 
@@ -114,8 +115,10 @@ test('with the switch left off, nothing gets subscribed', async ({
   await context.grantPermissions(['notifications']);
   await mockPushManager(page);
   const subscribes: string[] = [];
+  const keys: string[] = [];
   page.on('request', (request) => {
     if (isPush(request, 'subscribe')) subscribes.push(request.url());
+    if (new URL(request.url()).pathname === '/api/push/public-key') keys.push(request.url());
   });
 
   await page.goto(`/preferences`);
@@ -123,9 +126,12 @@ test('with the switch left off, nothing gets subscribed', async ({
   await expect(checkbox).toBeVisible();
   await expect(checkbox).not.toBeChecked();
 
-  // Give DesktopNotifications' mount-time self-heal effect (see
-  // components/desktop-notifications.tsx) the same window the positive
-  // case gets, then confirm it found nothing to heal.
-  await page.waitForTimeout(3_000);
+  // DesktopNotifications' mount-time self-heal (components/desktop-notifications.tsx)
+  // waits on the service worker before it would fetch the push key and
+  // subscribe: once the worker is ready and the page has painted since, it
+  // has had its chance, and found nothing to heal.
+  await page.evaluate(() => navigator.serviceWorker.ready.then(() => undefined));
+  await painted(page);
+  expect(keys).toEqual([]);
   expect(subscribes).toEqual([]);
 });

@@ -28,9 +28,10 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 }
 
 /**
- * Flip the switch, then wait until the pages say so: they read org
- * settings through a cache of their own (up to a minute), so the change
- * reaches them a little after the save does.
+ * Flip the switch, then check the pages say so. Each server bundle reads
+ * org settings through a cache of its own, a minute long in production;
+ * the suite runs with it at zero (playwright.config.ts), so the next
+ * render already does.
  */
 async function setTours(page: Page, on: boolean): Promise<void> {
   // A busy server can drop a connection now and then: say it again until it lands.
@@ -46,7 +47,7 @@ async function setTours(page: Page, on: boolean): Promise<void> {
         const tutorials = await page.request.get('/tutorials');
         return (await tutorials.text()).includes('data-testid="tutorials-off"');
       },
-      { timeout: 90_000, intervals: [2_000] }
+      { timeout: 10_000 }
     )
     .toBe(!on);
 }

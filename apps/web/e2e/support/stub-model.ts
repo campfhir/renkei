@@ -23,8 +23,10 @@ export interface StubStep {
   reasoning?: string;
   tools?: { name: string; input?: Record<string, unknown> }[];
   usage?: { input: number; output: number; cached?: number };
-  /** Held this long before answering. */
+  /** Held this long before answering (with `until`, at most this long). */
   delayMs?: number;
+  /** Held until `releaseStub(key)` lets it go: a reply that waits on the test. */
+  until?: string;
   /** Answers a one-shot call (a title, a digest, a summary) instead of a turn. */
   oneShot?: boolean;
 }
@@ -38,6 +40,14 @@ export function stubScript(steps: readonly StubStep[]): string {
 /** A prompt with its script after it. */
 export function scripted(text: string, steps: readonly StubStep[]): string {
   return `${text}\n\n${stubScript(steps)}`;
+}
+
+/** Lets go of every step held `until` this key (one not yet asked for answers at once). */
+export async function releaseStub(request: APIRequestContext, key: string): Promise<void> {
+  const response = await request.post(LLM_STUB_BASE_URL.replace(/\/v1$/, '/release'), {
+    data: { key },
+  });
+  if (!response.ok()) throw new Error(`stub release failed: ${response.status()}`);
 }
 
 /** A step calling one tool. */

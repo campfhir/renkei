@@ -44,8 +44,6 @@ let chatId = '';
 let modelId = '';
 
 test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
-  // A built app may take a while to offer a speech service just switched on.
-  test.slow();
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   await enableVoiceService(page.request);
   const prefs = await page.request.put('/api/preferences', { data: { voice: VOICE_PREFS } });
@@ -62,21 +60,21 @@ test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
     title: `Which endpoint posts refunds? (${tag})`,
     llmModelId: modelId,
   });
-  // Each server bundle caches the org's connector settings for a minute:
-  // wait until the chat offers voice — with the code pane put away, which
-  // opens beside a code chat on a wide screen and narrows its composer.
-  await expect(async () => {
-    await page.goto(`/chat/${chatId}`);
-    await hideCode(page);
-    await expect(page.getByRole('button', { name: 'Voice', exact: true })).toBeVisible({
-      timeout: 5_000,
-    });
-  }).toPass({ timeout: 90_000, intervals: [2_000, 5_000] });
+  // The chat offers voice — with the code pane put away, which opens
+  // beside a code chat on a wide screen and narrows its composer.
+  await page.goto(`/chat/${chatId}`);
+  await hideCode(page);
+  await expect(page.getByRole('button', { name: 'Voice', exact: true })).toBeVisible();
 });
+
+/** The message box (a built app can hold a hidden copy of it in a streamed render). */
+function composer(page: Page) {
+  return page.getByLabel('Message').filter({ visible: true });
+}
 
 async function hideCode(page: Page): Promise<void> {
   const hide = page.getByRole('button', { name: 'Hide the code' });
-  await expect(page.getByLabel('Message')).toBeVisible({ timeout: 30_000 });
+  await expect(composer(page)).toBeVisible({ timeout: 30_000 });
   if (await hide.isVisible()) await hide.click();
 }
 
@@ -87,7 +85,7 @@ test.afterEach(async ({ page }) => {
 async function openChat(page: Page): Promise<void> {
   await mockVendor(page);
   await page.goto(`/chat/${chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible();
+  await expect(composer(page)).toBeVisible();
   // The dev server's floating "N" badge sits over the composer's left edge
   // at phone width, swallowing clicks and hiding the very buttons under test.
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
@@ -96,7 +94,7 @@ async function openChat(page: Page): Promise<void> {
 /** Every control in the composer's bottom row sits inside the screen. */
 async function expectRowFits(page: Page): Promise<void> {
   const viewport = page.viewportSize() ?? MOBILE_VIEWPORT;
-  const box = await page.getByLabel('Message').boundingBox();
+  const box = await composer(page).boundingBox();
   const send = await page.getByRole('button', { name: 'Send' }).boundingBox();
   expect(box).not.toBeNull();
   expect((send?.x ?? 0) + (send?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
@@ -154,13 +152,13 @@ test('phone: prompts, dictation and voice fold into one two-level menu', async (
   // Dictate: the button becomes the microphone, and one tap stops it.
   await tools.click();
   await menu.getByRole('menuitem', { name: 'Dictate' }).click();
-  await expect(page.getByLabel('Message')).toHaveAttribute('placeholder', /Speak, then pause/);
+  await expect(composer(page)).toHaveAttribute('placeholder', /Speak, then pause/);
   const stop = page.getByRole('button', { name: 'Stop dictating' });
   await expect(stop).toBeVisible();
   await shot(page, testInfo, 'tools-menu-05-dictating', false);
   await stop.click();
   await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible();
-  await expect(page.getByLabel('Message')).not.toHaveAttribute('placeholder', /Speak, then pause/);
+  await expect(composer(page)).not.toHaveAttribute('placeholder', /Speak, then pause/);
 });
 
 test('phone: the voice conversation is reachable and Escape closes the menu', async ({ page }) => {

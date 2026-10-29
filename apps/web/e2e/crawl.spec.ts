@@ -14,9 +14,9 @@ import { test, expect } from './fixtures';
 
 // An operator sees every page, the console included.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
-// The pages take turns, in one worker, and a failing page doesn't stop
-// the rest (every offender is reported).
-test.describe.configure({ mode: 'default' });
+// The pages spread over the workers (and CI's shards) like any other
+// test, and a failing page doesn't stop the rest (every offender is
+// reported): each stages its own rows under a tag of its own.
 // Whether a page renders from the store doesn't depend on the colour scheme.
 // eslint-disable-next-line no-empty-pattern
 test.beforeEach(({}, testInfo) => {

@@ -106,11 +106,12 @@ async function upload(
  * Summaries on, OCR configured, and the stand-in the org's default model,
  * written the same each time and left on (other tests rely on them side by
  * side; one that makes a default of its own and deletes it leaves the org
- * without one, so this checks on every call). The org's settings and
- * models are read through a minute-long cache per server bundle, so this
- * waits until an upload really is summarized and a scan read — by a person
- * of its own, so no test's library or usage counts the probe. Answers the
- * model's id.
+ * without one, so this checks on every call). It then proves an upload
+ * really is summarized and a scan read — by a person of its own, so no
+ * test's library or usage counts the probe — and goes round again if
+ * another worker was swapping the default model at that moment (the
+ * suite reads settings and the roster afresh: RENKEI_CONFIG_CACHE_TTL_MS).
+ * Answers the model's id.
  */
 async function digestsReady(request: APIRequestContext): Promise<string> {
   const operator = await createPerson(request, {
@@ -174,7 +175,7 @@ async function digestsReady(request: APIRequestContext): Promise<string> {
     );
     const read = await request.post(`/api/chat/artifacts/${scan}/ocr`, { headers, data: {} });
     expect(read.status()).not.toBe(503);
-  }).toPass({ timeout: 120_000, intervals: [5_000] });
+  }).toPass({ timeout: 60_000, intervals: [500] });
   return modelId;
 }
 
@@ -508,9 +509,9 @@ test('the library: a real upload lands, reads back, and is attached from the car
 
   // Digests are off by default — a file's text goes to a model only when
   // the organization says so. The switch, as an operator sees it: staging
-  // turned it on, but this page reads the settings through its own
-  // minute-long cache, so it may still show it off; then it is turned on
-  // here, as an operator would.
+  // turned it on, and the page reads the settings afresh in the suite
+  // (RENKEI_CONFIG_CACHE_TTL_MS=0); were it off, it is turned on here, as
+  // an operator would.
   await page.goto('/admin/settings');
   const digestSwitch = page.getByRole('switch', {
     name: 'Summarize artifacts with the default model',
@@ -1028,14 +1029,14 @@ test('the library: a photo with no text is described from the picture, OCR finds
   await expect(list.getByText('car-street.png')).toBeVisible(COLD);
   await list.getByText('car-street.png').click();
 
-  // Described from the picture itself: no text, and not waiting for OCR. A
-  // digest the default model could not be asked for yet (its roster is read
-  // through a minute-long cache) is asked again as the library is viewed.
+  // Described from the picture itself: no text, and not waiting for OCR.
+  // The digest is written in the background after the upload; the page
+  // shows it once reloaded after that.
   await expect(async () => {
     await page.reload();
     await list.getByText('car-street.png').click();
     await expect(details.getByText(LLM_STUB_PICTURE)).toBeVisible({ timeout: 5_000 });
-  }).toPass({ timeout: 90_000, intervals: [5_000] });
+  }).toPass({ timeout: 30_000, intervals: [500] });
   await expect(details.getByText('Waiting for OCR')).toHaveCount(0);
   await shot(page, testInfo, 'documents-01-photo-described');
 

@@ -23,6 +23,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { createPerson } from './support/person';
 import { shareAgentsWith } from './support/share-agents';
+import { painted } from './support/settle';
 
 async function shot(page: Page, testInfo: TestInfo, name: string, fullPage = true): Promise<void> {
   await page.screenshot({
@@ -237,11 +238,15 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({
   person,
 }) => {
   test.setTimeout(90_000);
-  await page.goto(`/agents`);
-  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
   // The centre seeds its cursor from the FIRST poll, so a row written
   // before that one lands is backlog and deliberately never toasts.
-  await page.waitForTimeout(2_000);
+  const firstPoll = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === '/api/notifications'
+  );
+  await page.goto(`/agents`);
+  await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+  await firstPoll;
+  await painted(page);
 
   // A toast is a link when its row carries one: a colleague sharing a
   // chat does (the chat's own page), through the chat's grants route.
@@ -261,6 +266,9 @@ test('toast — the card opens its link, the dismiss still dismisses', async ({
   });
   expect(granted.ok(), await granted.text()).toBe(true);
 
+  // The next poll is 20 seconds out; coming back to the tab polls at once,
+  // which is what a person who switched away to share it would do.
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
   const toast = page.getByRole('link', { name: `Sam Sharer shared "${title}" with you` });
   await expect(toast).toBeVisible({ timeout: 40_000 });
   await expect(toast).toHaveAttribute('href', `/chat/${chatId}`);

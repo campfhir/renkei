@@ -125,7 +125,7 @@ async function resolveFromTheComposer(
   await expect(frame.getByRole('button', { name: 'Create' })).toHaveCount(0);
   await expect(frame.locator('.card-title')).toHaveCount(0);
   // And the model's turn carried on to its reply.
-  await expect(page.getByText(ANSWER)).toBeVisible(COLD);
+  await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible(COLD);
   await shot(page, testInfo, screens.after);
 
   // The receipt is what every later load shows.

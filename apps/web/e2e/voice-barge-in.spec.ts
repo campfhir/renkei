@@ -25,7 +25,6 @@ import {
   mockVendor,
   shot,
   stageVoice,
-  untilVoiceOffered,
   wav,
   type VoiceChat,
 } from './support/voice';
@@ -74,10 +73,7 @@ test.use({
 let voice: VoiceChat;
 
 test.beforeEach(async ({ page, person: _person }, testInfo) => {
-  // A built app may take a while to offer a speech service just switched on.
-  test.slow();
   voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
-  await untilVoiceOffered(page, voice.chatId);
 });
 
 test.afterEach(async ({ page }) => {
@@ -87,8 +83,12 @@ test.afterEach(async ({ page }) => {
 test('talking while the reply is worked out queues the next message instead of stopping it', async ({
   page,
 }, testInfo) => {
-  // The reply takes a while: the second utterance lands while "Thinking…".
-  await mockVendor(page, { replyDelayMs: 14_000 });
+  // The reply waits for the test: the second utterance lands while "Thinking…".
+  let queuedOverThinking = (): void => {};
+  const replyWhen = new Promise<void>((resolve) => {
+    queuedOverThinking = resolve;
+  });
+  await mockVendor(page, { replyWhen });
   let cancels = 0;
   page.on('request', (request) => {
     if (/\/turns\/[^/]+\/cancel$/.test(request.url())) cancels += 1;
@@ -113,6 +113,7 @@ test('talking while the reply is worked out queues the next message instead of s
   await expect(dialog.getByText('Thinking…')).toBeVisible();
   expect(cancels).toBe(0);
   await shot(page, testInfo, 'voice-14-queued-while-thinking', false);
+  queuedOverThinking();
 
   // The reply arrives and is read; the queued message still waits, since
   // sending it would silence the reading mid-sentence.

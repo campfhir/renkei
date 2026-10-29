@@ -36,6 +36,7 @@ import {
 } from './support/connectors';
 import { connectCodeHost, prepareCodeHost } from './support/code-host';
 import { send } from './support/chat';
+import { steady } from './support/settle';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const COLD = { timeout: 30_000 };
@@ -412,7 +413,9 @@ test('every kind of card draws, and none overflows a phone', async ({
       await expect(frame.locator('.status.error')).toHaveCount(0);
     }
     // Let every iframe grow to its content before the shots.
-    await page.waitForTimeout(800);
+    const heights = () =>
+      frames.evaluateAll((all) => all.map((frame) => frame.getBoundingClientRect().height));
+    await steady(page, heights);
     for (const [index, seeded] of cards.entries()) {
       await frames.nth(index).scrollIntoViewIfNeeded();
       await frames.nth(index).screenshot({
@@ -426,7 +429,7 @@ test('every kind of card draws, and none overflows a phone', async ({
     }
 
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await page.waitForTimeout(800);
+    await steady(page, heights);
     const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     expect(bodyWidth).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
     for (let index = 0; index < cards.length; index += 1) {

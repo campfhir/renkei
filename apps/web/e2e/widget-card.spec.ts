@@ -160,7 +160,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
   // the user row of a new turn, so the model answers the decision at once.
   const note = noteLine(page, 'The user confirmed "Create Jira issue" on the preview card');
   await expect(note).toBeVisible(COLD);
-  await expect(page.getByText(ANSWER)).toBeVisible(COLD);
+  await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible(COLD);
   await shot(page, testInfo, 'widget-card-replied.png');
   await decided(page, chatId);
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
@@ -178,7 +178,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
   await expect(
     noteLine(page, 'The user confirmed "Create Jira issue" on the preview card')
   ).toBeVisible();
-  await expect(page.getByText(ANSWER)).toBeVisible();
+  await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible();
 
   // A second device (no localStorage, and no tools/call answer wired up):
   // the same durable decision resolves it there too.
@@ -223,7 +223,7 @@ test('cancelling the card is a decision too: the model replies to it', async ({
 
   const note = noteLine(page, 'The user cancelled "Create Jira issue" from the preview card');
   await expect(note).toBeVisible(COLD);
-  await expect(page.getByText(ANSWER)).toBeVisible(COLD);
+  await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible(COLD);
   await decided(page, chatId);
   await shot(page, testInfo, 'widget-card-cancelled.png');
 

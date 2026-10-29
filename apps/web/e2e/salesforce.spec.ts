@@ -223,13 +223,10 @@ test('salesforce: one connector per org — register, narrow a sandbox’s conne
   // --- The person sees one card per org, and connects the sandbox. ---
   await addConnectors(page.request, ['salesforce']);
   const cards = page.locator('[data-coach="card-salesforce"]').filter({ visible: true });
-  // The connectors page reads the config through a 60-second cache
-  // (@renkei/connector-config) that a save in another module instance does
-  // not clear: a run soon after the last one may first see its leftovers.
-  await expect(async () => {
-    await page.goto('/connectors');
-    await expect(cards).toHaveCount(2, { timeout: 2_000 });
-  }).toPass({ timeout: 90_000, intervals: [5_000] });
+  // The connectors page reads the config through a cache of its own (a
+  // minute in production; zero in the suite, playwright.config.ts).
+  await page.goto('/connectors');
+  await expect(cards).toHaveCount(2);
   const production = cards.filter({
     has: page.getByRole('heading', { name: /Salesforce · Production/ }),
   });
@@ -322,12 +319,7 @@ test('salesforce: one connector per org — register, narrow a sandbox’s conne
   );
   expect(overflowAdmin).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'salesforce-05-admin-mobile');
-  // The connectors page reads the config through a 60-second cache
-  // (@renkei/connector-config), which a save in another module instance
-  // does not clear, so the card goes within that TTL rather than at once.
-  await expect(async () => {
-    await page.goto('/connectors');
-    await expect(cards).toHaveCount(1, { timeout: 2_000 });
-  }).toPass({ timeout: 90_000, intervals: [5_000] });
+  await page.goto('/connectors');
+  await expect(cards).toHaveCount(1);
   await expect(cards.getByRole('heading', { name: /Salesforce · Production/ })).toBeVisible();
 });

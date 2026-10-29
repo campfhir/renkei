@@ -9,6 +9,7 @@
  *   POST /v1/embeddings          1536 numbers per input, the same for every text
  *   POST /v1/images/generations  one picture of the size asked for (handleImages);
  *        /v1/images/edits        the same, multipart
+ *   POST /release                {"key"}: lets go of the steps held on that key
  *   GET  /v1/models, /health
  *
  * A spec puts a model on the roster through the admin LLM-models route
@@ -41,6 +42,9 @@
  *     "tools"?: [{ "name": string, "input"?: object }],   called, in one round
  *     "usage"?: { "input": n, "output": n, "cached"?: n },
  *     "delayMs"?: n,                           held this long before answering
+ *     "until"?: string,                        held until POST /release names
+ *                                              this key (delayMs, else a
+ *                                              minute, still caps it)
  *     "oneShot"?: true }
  *
  * A step answers a turn — a request offering tools without forcing one. With
@@ -49,7 +53,7 @@
  * steps never touch.
  */
 
-/* global Buffer, console, process, setTimeout, URL */
+/* global Buffer, clearTimeout, console, process, setTimeout, URL */
 
 import { createServer } from 'node:http';
 import { deflateSync } from 'node:zlib';
@@ -138,7 +142,39 @@ const callsOf = (step) =>
   }));
 const usageOf = (step) => ({ input: 12, output: 8, cached: 0, ...step.usage });
 const words = (text) => text.split(/(?<= )/);
-const hold = (step) => new Promise((resolve) => setTimeout(resolve, step.delayMs ?? 0));
+/**
+ * The steps waiting on a key, and the keys already let go (a release can
+ * reach the stub before the request it is meant for). The only state the
+ * stub keeps: keys are a spec's own, so they never collide.
+ */
+const waiting = new Map();
+const released = new Set();
+
+function hold(step) {
+  return new Promise((resolve) => {
+    const key = typeof step.until === 'string' ? step.until : null;
+    const done = () => {
+      clearTimeout(timer);
+      waiting.get(key)?.delete(done);
+      resolve();
+    };
+    const timer = setTimeout(done, step.delayMs ?? (key ? 60_000 : 0));
+    if (!key) return;
+    if (released.has(key)) return done();
+    waiting.set(key, (waiting.get(key) ?? new Set()).add(done));
+  });
+}
+
+async function release(request, response) {
+  const { key } = await readJson(request);
+  if (typeof key === 'string' && key) {
+    released.add(key);
+    for (const done of [...(waiting.get(key) ?? [])]) done();
+    waiting.delete(key);
+  }
+  response.writeHead(200, { 'content-type': 'application/json' });
+  response.end('{"ok":true}');
+}
 
 async function openai(response, body) {
   const messages = (body.messages ?? []).map((m) => ({
@@ -379,6 +415,7 @@ const ROUTES = {
   'POST /anthropic/v1/messages': async (request, response) =>
     anthropic(response, await readJson(request)),
   'POST /v1/embeddings': handleEmbeddings,
+  'POST /release': release,
   'POST /v1/images/generations': (request, response) => handleImages(request, response, false),
   'POST /v1/images/edits': (request, response) => handleImages(request, response, true),
 };

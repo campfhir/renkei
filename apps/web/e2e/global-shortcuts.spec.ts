@@ -26,6 +26,7 @@ import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel } from './support/stub-model';
 import { createPerson, signIn } from './support/person';
 import { holdShared } from './support/org-lock';
+import { painted, settled } from './support/settle';
 import { createChat } from './support/tool-cards';
 
 // Control+Alt+Shift+, goes to the operator console.
@@ -239,7 +240,7 @@ test('chords use the Command key on a Mac, and quick chat works at phone width',
     await expect(switcher).toHaveCount(0);
     // Control+J is not the Mac chord.
     await page.keyboard.press('Control+j');
-    await page.waitForTimeout(300);
+    await painted(page);
     await expect(switcher).toHaveCount(0);
 
     // Option is the Mac's Alt: ⌥ H is Home.
@@ -276,7 +277,7 @@ test('the `c` key stands down in a field and over a dialog', async ({ page, pers
   // Over a dialog the bare key does nothing.
   await pressUntilOpen(page, 'Control+j', switcher);
   await page.keyboard.press('c');
-  await page.waitForTimeout(300);
+  await painted(page);
   await expect(quick).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(switcher).toHaveCount(0);
@@ -285,7 +286,7 @@ test('the `c` key stands down in a field and over a dialog', async ({ page, pers
   const search = page.getByRole('searchbox', { name: 'Search Renkei' });
   await search.click();
   await page.keyboard.type('chat c');
-  await page.waitForTimeout(800);
+  await painted(page);
   await expect(search).toHaveValue('chat c');
   await expect(page.getByRole('dialog')).toHaveCount(0);
 
@@ -293,7 +294,7 @@ test('the `c` key stands down in a field and over a dialog', async ({ page, pers
   await page.keyboard.press('Escape');
   await search.blur();
   await page.keyboard.press('Alt+c');
-  await page.waitForTimeout(300);
+  await painted(page);
   await expect(quick).toHaveCount(0);
 });
 
@@ -403,7 +404,7 @@ test('the shortcuts coach marks follow the welcome tour on the home page', async
     await expect(card).toHaveAttribute('data-coach-step', 'search');
     await expect(card).toContainText('⌘ K');
     await expect(page.getByTestId('coach-mark-spotlight')).toBeVisible();
-    await page.waitForTimeout(350);
+    await settled(page);
     await shot(page, testInfo, 'shortcuts-coach-1-search');
 
     await card.getByRole('button', { name: 'Next' }).click();
@@ -413,14 +414,14 @@ test('the shortcuts coach marks follow the welcome tour on the home page', async
     await card.getByRole('button', { name: 'Next' }).click();
     await expect(card).toHaveAttribute('data-coach-step', 'switch-chat');
     await expect(card).toContainText('⌘ J');
-    await page.waitForTimeout(350);
+    await settled(page);
     await shot(page, testInfo, 'shortcuts-coach-3-switch');
 
     await card.getByRole('button', { name: 'Next' }).click();
     await expect(card).toHaveAttribute('data-coach-step', 'go-to');
     await expect(card).toContainText('⌥ H');
     await expect(card).toContainText('⌥ ,');
-    await page.waitForTimeout(350);
+    await settled(page);
     await shot(page, testInfo, 'shortcuts-coach-4-go-to');
 
     await card.getByRole('button', { name: 'Finish' }).click();

@@ -116,7 +116,8 @@ export async function settled(
     if (Date.now() > deadline) {
       throw new Error(`The chat's turn never settled: ${JSON.stringify(view.chat.activeTurn)}`);
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // The memory store answers in a millisecond: ask again soon.
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 

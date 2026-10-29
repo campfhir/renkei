@@ -209,7 +209,8 @@ export async function askAndWait(
       );
       continue;
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    // The memory store answers in a millisecond: ask again soon.
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`the turn in chat ${chatId} did not finish in ${timeoutMs}ms`);
 }

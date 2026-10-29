@@ -260,11 +260,15 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
   await expect(pan).toBeVisible();
   const stage = pan.locator('xpath=ancestor::div[contains(@class,"overflow-auto")][1]');
   const start = await stage.evaluate((el) => el.scrollLeft);
-  await page.mouse.move(400, 500);
-  await page.mouse.down();
-  await page.mouse.move(700, 500, { steps: 6 });
-  await page.mouse.up();
-  expect(await stage.evaluate((el) => el.scrollLeft)).toBeLessThan(start - 100);
+  // Dragged again if the first drag lands before the hand tool has taken
+  // hold (a busy runner sees it now and then): the stage must end up moved.
+  await expect(async () => {
+    await page.mouse.move(400, 500);
+    await page.mouse.down();
+    await page.mouse.move(700, 500, { steps: 6 });
+    await page.mouse.up();
+    expect(await stage.evaluate((el) => el.scrollLeft)).toBeLessThan(start - 100);
+  }).toPass({ timeout: 10_000 });
   await dialog.getByRole('button', { name: 'Drag to pan' }).click();
   await expect(pan).toHaveCount(0);
 

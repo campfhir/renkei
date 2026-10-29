@@ -22,10 +22,20 @@ shape: empty state, filling a form, a vendor call answered with
   APIs (`e2e/sandbox-stub.mjs`), an MCP server (`e2e/mcp-stub.mjs`) and a
   model (`e2e/llm-stub.mjs`). From `apps/web`:
   `npx playwright test <spec> [--project=desktop-light]` starts them all
-  (a dev server, reused while it is up; `E2E_MEMORY_PORT` moves it). It
-  runs in CI as a production build: `env -u DATABASE_URL CI=1 npx
-playwright test`. On a box whose Chromium doesn't match Playwright's,
-  set `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+  (a dev server, reused while it is up; `E2E_MEMORY_PORT` moves it), on
+  four workers. It runs in CI as a production build, as
+  `env -u DATABASE_URL CI=1 npx playwright test` does locally: CI builds
+  once (`pnpm e2e:build`, with the server's environment from
+  `e2e/server-env.ts`) and runs three `--shard=i/3` jobs on that build
+  (`E2E_PREBUILT=1` starts `.next` as it is); `e2e (memory store)`
+  passes when every shard does. On a box
+  whose Chromium doesn't match Playwright's, set
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+- **Every spec runs in `desktop-light`; `desktop-dark` runs only
+  `DARK_SPECS`** in `playwright.config.ts`: specs that look at the theme
+  (the screenshot gallery, a colour asserted on dark) or take their
+  phone-width path in one of the two projects. Add a spec there only for
+  one of those reasons.
 - **A spec is a person in a browser.** Take the `person` fixture
   (`e2e/fixtures.ts`): a fresh subject signed in through the one
   test-only route (`app/api/test/session`) with its keys enrolled, roles
@@ -65,10 +75,15 @@ playwright test`. On a box whose Chromium doesn't match Playwright's,
   afterwards, and never assert an org-wide list is empty from real data
   (answer it with `page.route`). A registration other specs connect
   through is switched on and left on, written the same by everyone.
-- **Pitfalls.** The org's settings and connector configs are read through
-  a minute-long cache in each server bundle: after switching one on, wait
-  until the page or route really shows it (`untilVoiceOffered`, the
-  artifacts spec's probe). A built app can hold hidden copies of a page's
+- **Wait on the page, not the clock.** The org's settings, connector
+  configs and model roster are cached for a minute in each server bundle
+  in production; the suite sets `RENKEI_CONFIG_CACHE_TTL_MS=0`, so a
+  switch a spec flips shows on the next request — assert it, don't poll
+  for it. No `waitForTimeout`: wait for a response, a locator state, or
+  `settled`/`painted`/`steady` (`e2e/support/settle.ts`). A model reply
+  that must stay in flight while the test looks holds `until` a key the
+  test lets go with `releaseStub`, rather than a long `delayMs`.
+- **Pitfalls.** A built app can hold hidden copies of a page's
   pieces (a streamed render, a responsive twin): scope to
   `getByRole('main')` or add `.filter({ visible: true })`. A dev server
   whose pages reload in a loop (`page.goto` waiting on navigation after

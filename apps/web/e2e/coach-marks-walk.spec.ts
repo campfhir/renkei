@@ -31,6 +31,7 @@ import { COACH_MARK_TOURS } from '../lib/coach-marks/tours';
 import { createAgent, runAgent } from './support/agents';
 import { addStubModel, removeModel } from './support/stub-model';
 import { holdShared, type Release } from './support/org-lock';
+import { settled } from './support/settle';
 import {
   connectCodeHost,
   prepareCodeHost,
@@ -265,7 +266,8 @@ test.afterEach(async ({ page }) => {
 });
 
 async function shot(page: Page, project: string, name: string): Promise<void> {
-  await page.waitForTimeout(350);
+  // The spotlight slides between steps: let it land.
+  await settled(page);
   await page.screenshot({
     path: path.join(RESULTS, 'screens', project, `${name}.png`),
     fullPage: false,
@@ -309,15 +311,23 @@ for (const tour of COACH_MARK_TOURS) {
       await shot(page, testInfo.project.name, `tour-${tour.id}-${index + 1}-${step.id}`);
       if (step.target && (await page.getByTestId('coach-mark-spotlight').count()) > 0) lit += 1;
       const last = index === tour.steps.length - 1;
+      // Finish sends its completion report as a keepalive fetch, which
+      // survives a navigation but not the browser context this test tears
+      // down the instant the card is gone; waiting for its answer lets it
+      // land, so the tutorials report the last walk screenshots shows what
+      // a person stepping through would have produced.
+      const reported = last
+        ? page.waitForResponse(
+            (response) =>
+              response.request().method() === 'POST' &&
+              new URL(response.url()).pathname === '/api/coach-marks' &&
+              response.request().postDataJSON()?.event === 'completed'
+          )
+        : null;
       await card.getByRole('button', { name: last ? 'Finish' : 'Next' }).click();
+      await reported;
     }
     await expect(card).toHaveCount(0);
-    // Finish sends its completion report as a keepalive fetch, which
-    // survives a navigation but not the browser context this test tears
-    // down the instant the card is gone; a beat lets it land, so the
-    // tutorials report the last walk screenshots shows what a person
-    // stepping through would have produced.
-    await page.waitForTimeout(400);
     if (walk.spotlight) expect(lit, `${tour.id}: no step found its target`).toBeGreaterThan(0);
   });
 }

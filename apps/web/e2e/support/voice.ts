@@ -150,24 +150,6 @@ export async function stageVoice(request: APIRequestContext, tag: string): Promi
   return { chatId, modelId };
 }
 
-/**
- * Wait until the chat and Preferences pages offer voice. Each server
- * bundle keeps its own minute-long cache of the org's connector settings
- * (@renkei/connector-config), so a page rendered just before the service
- * was switched on can go on leaving voice out for up to that minute.
- */
-export async function untilVoiceOffered(page: Page, chatId: string): Promise<void> {
-  for (const [url, offered] of [
-    [`/chat/${chatId}`, () => page.getByRole('button', { name: 'Voice', exact: true })],
-    ['/preferences', () => page.getByRole('region', { name: 'Voice' })],
-  ] as const) {
-    await expect(async () => {
-      await page.goto(url);
-      await expect(offered()).toBeVisible({ timeout: 5_000 });
-    }).toPass({ timeout: 90_000, intervals: [2_000, 5_000] });
-  }
-}
-
 export const VOICES = [
   {
     id: 'en-US-AvaMultilingualNeural',
@@ -418,6 +400,11 @@ export async function mockVendor(
     /** How long the model "takes" before the plain reply streams; the default is long enough for "Thinking…" to be seen. */
     replyDelayMs?: number;
     /**
+     * Held back until this settles too: a reply that waits on the test (the
+     * barge-in spec's, until the next utterance has been queued over it).
+     */
+    replyWhen?: Promise<void>;
+    /**
      * What the recognizer says the utterance was when asked which
      * language it was in (`?detect=1`), a moment after the quick answer
      * in the set language has already gone out as a message.
@@ -484,6 +471,7 @@ export async function mockVendor(
   );
   if (!options.asks) {
     await page.route(/\/turns\/[^/]+\/stream$/, async (route) => {
+      await options.replyWhen;
       // A model takes a moment: long enough for "Thinking…" to be seen.
       await new Promise((resolve) => setTimeout(resolve, options.replyDelayMs ?? 4_000));
       await route.fulfill({
