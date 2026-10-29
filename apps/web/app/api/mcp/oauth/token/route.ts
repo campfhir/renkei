@@ -80,7 +80,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const grantType = params.grant_type;
     if (grantType === 'authorization_code') {
-      return exchangeAuthorizationCode(params, clientId, settings);
+      return redeemCode(params, clientId, settings);
     } else if (grantType === 'refresh_token') {
       return exchangeRefreshToken(params, clientId, settings);
     } else {
@@ -149,7 +149,7 @@ async function authenticateClient(
   return { clientId: client_id };
 }
 
-async function exchangeAuthorizationCode(
+async function redeemCode(
   params: Record<string, string>,
   client_id: string,
   settings: OrgSettings
