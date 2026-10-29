@@ -104,7 +104,7 @@ test('builder: draft, pick tools, save, and read it back', async ({
   // A new agent starts from the section skeleton, and Save waits for content.
   await expect(page.getByRole('textbox', { name: 'Instructions' })).toHaveValue(/## Goal/);
   await expect(page.getByRole('button', { name: 'Save' }).first()).toBeDisabled();
-  await expect(page.getByLabel('Run limits')).toContainText('tool calls');
+  await expect(page.getByLabel('Run limits').filter({ visible: true })).toContainText('tool calls');
   await shot(page, testInfo, '01-new');
 
   await page
