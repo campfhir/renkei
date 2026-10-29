@@ -92,6 +92,12 @@ shape: empty state, filling a form, a vendor call answered with
   under it: stop it, delete `apps/web/.next/dev`, start again. `next dev`
   also reloads every page when its environment changes, so a value the
   server needs is named in `playwright.config.ts`, never set at boot.
+- **The tour walk is standalone.** `coach-marks-walk.spec.ts` walks every
+  tour step by step with a screenshot each, for reviewing tour copy and
+  placement; it is not in the suite or CI (`playwright.config.ts` ignores
+  it unless `E2E_TOURS` is set). Run it when tours change:
+  `pnpm --filter renkei e2e:tours`. `coach-marks.spec.ts` and
+  `coach-marks-off.spec.ts` stay in the suite.
 - **A new page** either gets a spec that opens and drives it, or a
   `CrawlPage` entry in `e2e/crawl/<area>.ts` (the crawl is the floor for
   pages no spec opens: it renders, no error page, its data shows).

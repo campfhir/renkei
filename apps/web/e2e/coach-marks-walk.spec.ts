@@ -1,4 +1,8 @@
 /**
+ * Standalone, not part of the suite or CI (playwright.config.ts ignores it
+ * unless E2E_TOURS is set): run it with `pnpm --filter renkei e2e:tours`
+ * when tours change, to review their copy and placement.
+ *
  * Every tour in the registry, walked: started by id on the page it
  * belongs on, stepped through to Finish, each step captured under
  * test-results/screens/<project>/tour-<id>-<n>-<step>.png. The pictures

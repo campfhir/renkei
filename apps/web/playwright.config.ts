@@ -54,8 +54,13 @@ const DARK_SPECS = [
   'project-pulls-commits.spec.ts',
 ];
 
+// The tour walk (every tour, every step, a screenshot each) is a standalone
+// review run, not part of the suite or CI: `pnpm --filter renkei e2e:tours`.
+const TOURS = Boolean(process.env.E2E_TOURS);
+
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: TOURS ? [] : ['coach-marks-walk.spec.ts'],
   outputDir: 'test-results',
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
   timeout: 60_000,
