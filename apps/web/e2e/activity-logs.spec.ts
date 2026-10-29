@@ -32,7 +32,10 @@ test('an upload the server refuses is reported to the log with its reason', asyn
       : route.fallback()
   );
   const reported = page.waitForRequest(
-    (request) => request.url().endsWith('/api/logs/client') && request.method() === 'POST'
+    (request) =>
+      request.url().endsWith('/api/logs/client') &&
+      request.method() === 'POST' &&
+      (request.postData() ?? '').includes('"component":"fetch"')
   );
 
   await page
