@@ -276,7 +276,9 @@ test.describe('chat compaction', () => {
       await dialog
         .getByRole('button', { name: 'Remove "Left this for when it is free." from the queue' })
         .click();
-      await expect(dialog).toBeHidden();
+      // By role and prefix: the dialog renames itself to "Queued (1)" before
+      // it closes, which would hide the "Queued (2)" locator early.
+      await expect(page.getByRole('dialog', { name: /^Queued/ })).toBeHidden();
       await expect(
         page.getByText('Compact this conversation').filter({ visible: true })
       ).toBeVisible();
