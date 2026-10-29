@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-29',
     entries: [
       {
+        kind: 'changed',
+        title: 'Activity no longer needs Jira',
+        detail:
+          'People without a Jira connection now see their own activity instead of being asked to connect Jira first.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Activity shows why something failed',
+        detail:
+          'When something says it failed, such as an OCR read, an upload, a connector or a background job, the reason is now logged and appears in your own Activity view, including failures your browser saw.',
+      },
+      {
         kind: 'fixed',
         title: 'Panning a mockup with the hand tool always moves it',
         detail:
