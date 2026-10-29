@@ -85,12 +85,15 @@ test('fails closed without a subject', async () => {
   expect(mockQuery).not.toHaveBeenCalled();
 });
 
-test('fails closed without a Jira-linked account, never widening to the organization', async () => {
+test('without a Jira-linked account stays scoped to the caller’s own subject, never the organization', async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
   const handlers = registerAll({ accountId: '' });
-  const result = await handlers.get('log_search')!({});
-  expect(result.isError).toBe(true);
-  expect(result.content[0]?.text).toContain('Connect Jira first');
-  expect(mockQuery).not.toHaveBeenCalled();
+  await handlers.get('log_search')!({});
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    null,
+    { accountId: '', subject: 'auth0|alice' },
+    expect.anything()
+  );
 });
 
 test('scopes the query to the caller’s own account, never a client-supplied one', async () => {
@@ -101,7 +104,7 @@ test('scopes the query to the caller’s own account, never a client-supplied on
 
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'account-1',
+    { accountId: 'account-1', subject: 'auth0|alice' },
     expect.objectContaining({ levels: ['warn', 'error', 'critical'], sort: 'desc' })
   );
 });
@@ -112,7 +115,11 @@ test('a renkei-user role (no operator) stays self-scoped, same as no roles at al
 
   await handlers.get('log_search')!({});
 
-  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(null, 'account-1', expect.anything());
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
+    null,
+    { accountId: 'account-1', subject: 'auth0|alice' },
+    expect.anything()
+  );
 });
 
 test('renkei-operator searches the whole organization, with no Jira account required', async () => {
@@ -211,7 +218,7 @@ test('an explicit limit is clamped into range and passed through', async () => {
 
   expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
     null,
-    'account-1',
+    { accountId: 'account-1', subject: 'auth0|alice' },
     expect.objectContaining({ limit: 100 })
   );
 });
@@ -237,7 +244,7 @@ test('a structured filter compiles to the FilterExpr tree the query engine reads
         { type: 'filter', filter: { key: 'component', operator: '=', value: 'jira/fetch' } },
       ],
     },
-    'account-1',
+    { accountId: 'account-1', subject: 'auth0|alice' },
     expect.anything()
   );
 });
@@ -253,7 +260,7 @@ test('isNull/isNotNull leaves carry no value', async () => {
       type: 'filter',
       filter: { key: 'errorCode', operator: '=', value: 'null', nullValue: true, negated: true },
     },
-    'account-1',
+    { accountId: 'account-1', subject: 'auth0|alice' },
     expect.anything()
   );
 });

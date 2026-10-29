@@ -68,6 +68,31 @@ describe('parseLogQueryExpr', () => {
   });
 });
 
+describe('buildEnforcedLogQuery with an owner', () => {
+  it('scopes to the account OR the subject', () => {
+    const result = buildEnforcedLogQuery('level:error', { accountId: 'acct-1', subject: 'sub-1' }) as any;
+    const scope = result.nodes[result.nodes.length - 1];
+    expect(scope.type).toBe('or');
+    expect(scope.nodes.map((n: any) => [n.filter.key, n.filter.operator, n.filter.value])).toEqual([
+      ['accountId', 'contains', 'acct-1'],
+      ['subject', '=', 'sub-1'],
+    ]);
+  });
+
+  it('scopes to the subject alone without a Jira account', () => {
+    const result = buildEnforcedLogQuery(null, { accountId: null, subject: 'sub-1' }) as any;
+    expect(result.nodes).toHaveLength(1);
+    expect(result.nodes[0].nodes).toEqual([
+      { type: 'filter', filter: { key: 'subject', operator: '=', value: 'sub-1' } },
+    ]);
+  });
+
+  it('cannot be widened by the caller naming another account', () => {
+    const result = buildEnforcedLogQuery('accountId:someone-else', { subject: 'sub-1' }) as any;
+    expect(JSON.stringify(result)).not.toContain('someone-else');
+  });
+});
+
 describe('buildEnforcedLogQuery', () => {
   const accountId = 'user-456';
 
