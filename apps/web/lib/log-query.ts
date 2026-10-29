@@ -5,13 +5,14 @@ import {
   type LogLevel,
   type LogQueryOptions,
 } from '@campfhir/bored-logs';
+import { createHash } from 'node:crypto';
 
 /**
  * Keys that define a query's scope rather than narrowing it. A caller typing
  * `accountId:someone-else` is asking to read someone else's logs, so these are
  * stripped from whatever they typed and re-applied from the session.
  */
-const RESTRICTED_KEYS = ['accountId', 'userId'];
+const RESTRICTED_KEYS = ['accountId', 'userId', 'subjectHash'];
 
 /** Level names are the keys of the level-rank map, so membership is the check. */
 const isKnownLevel = (level: string): level is LogLevel => level in LOG_LEVELS;
@@ -32,12 +33,23 @@ export function parseLogQueryExpr(query: string): FilterExpr | null {
 
 /**
  * Whose lines a scoped caller may read: those tagged with their Jira account
- * (connector traffic) or with their own subject (everything the app does on
- * their behalf: uploads, OCR, chats). A bare string is an account id.
+ * (connector traffic), with their own subject (everything the app does on
+ * their behalf: uploads, OCR, chats), or with their subject's hash (the
+ * delegate, which never logs a subject in the clear). A bare string is an
+ * account id.
  */
 export interface LogOwner {
   accountId?: string | null;
   subject?: string | null;
+}
+
+/**
+ * The delegate's stand-in for a subject: the first sixteen hex characters of
+ * its SHA-256 (apps/worker-delegate/src/access-log.ts). Worked out here,
+ * from the session, so the caller's own delegate lines are theirs too.
+ */
+export function subjectHash(subject: string): string {
+  return createHash('sha256').update(subject).digest('hex').slice(0, 16);
 }
 
 function ownerOf(owner: string | LogOwner | undefined): LogOwner {
@@ -46,7 +58,7 @@ function ownerOf(owner: string | LogOwner | undefined): LogOwner {
 
 /**
  * Build a filter tree with the caller's scope, when given, enforced:
- * `(whatever the caller asked for) && (accountId || subject)`.
+ * `(whatever the caller asked for) && (accountId || subject || subjectHash)`.
  *
  * Accepts either a raw query string or an already-parsed tree, since the
  * `LogSearchBar` component hands back a tree directly.
@@ -64,10 +76,24 @@ export function buildEnforcedLogQuery(
   const { accountId, subject } = ownerOf(owner);
   const leaves: FilterExpr[] = [
     ...(accountId
-      ? [{ type: 'filter' as const, filter: { key: 'accountId', operator: 'contains' as const, value: accountId } }]
+      ? [
+          {
+            type: 'filter' as const,
+            filter: { key: 'accountId', operator: 'contains' as const, value: accountId },
+          },
+        ]
       : []),
     ...(subject
-      ? [{ type: 'filter' as const, filter: { key: 'subject', operator: '=' as const, value: subject } }]
+      ? [
+          {
+            type: 'filter' as const,
+            filter: { key: 'subject', operator: '=' as const, value: subject },
+          },
+          {
+            type: 'filter' as const,
+            filter: { key: 'subjectHash', operator: '=' as const, value: subjectHash(subject) },
+          },
+        ]
       : []),
   ];
   const scope: FilterExpr[] = leaves.length ? [{ type: 'or', nodes: leaves }] : [];

@@ -81,6 +81,7 @@ import { McpPreparer } from './mcp';
 import { Grants, type DelegateLogger, silentDelegateLogger } from './grants';
 import { Forwarder } from './forward';
 import { GitTickets, type GitDialer } from './git';
+import { scopedLogger, withLogSubject } from './log-scope';
 import type { InstanceSigner } from './signing';
 
 export interface DelegateServerDeps {
@@ -190,7 +191,7 @@ function targetOf(body: Record<string, unknown>): string | undefined {
 }
 
 export function createDelegateServer(deps: DelegateServerDeps): Server {
-  const logger = deps.logger ?? silentDelegateLogger;
+  const logger = scopedLogger(deps.logger ?? silentDelegateLogger);
   const grants = new Grants(deps.encryptionKey, logger, deps.fetchImpl);
   const mcp = new McpPreparer(deps.encryptionKey, deps.fetchImpl, undefined, logger);
   const forwarder = new Forwarder(grants, deps.fetchImpl, logger);
@@ -213,53 +214,55 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
    * is known from its key; a request naming a session is bound to it after
    * the session is checked against the tenant and subject; the agents
    * worker names the run it acts for; a worker never opens a session ring;
-   * and every op leaves an access line, the sensitive ones a row.
+   * and every op leaves an access line, the sensitive ones a row. Every
+   * line logged while it runs carries the person's subjectHash (log-scope.ts).
    */
   function guarded(op: string, handler: Handler): JsonRpcHandler {
-    return async (body, response, context) => {
-      const subject = subjectOf(body);
-      const sessionId = str(body.sessionId);
-      const scope: KeyRequestScope = {
-        caller: context.caller,
-        allowSession: context.caller === 'web',
-        sessionId: null,
-      };
-      const finish = async (): Promise<void> => {
-        const status = response.headersSent ? response.statusCode : 500;
-        await access.record({
+    return (body, response, context) =>
+      withLogSubject(subjectOf(body), async () => {
+        const subject = subjectOf(body);
+        const sessionId = str(body.sessionId);
+        const scope: KeyRequestScope = {
           caller: context.caller,
-          op,
-          subject,
-          target: targetOf(body),
-          outcome: outcomeOf(status),
-          status,
-          persist:
-            PERSISTED_OPS.has(op) ||
-            (op === 'keys/delegate' &&
-              Array.isArray(body.automation) &&
-              body.automation.length > 0),
-        });
-      };
-      if (context.caller === 'agents' && subject) {
-        const runId = str(body.runId);
-        if (!runId || !(await runBelongsTo(runId, subject))) {
-          sendError(response, 'RUN_MISMATCH', "the run named is not this person's");
-          return finish();
+          allowSession: context.caller === 'web',
+          sessionId: null,
+        };
+        const finish = async (): Promise<void> => {
+          const status = response.headersSent ? response.statusCode : 500;
+          await access.record({
+            caller: context.caller,
+            op,
+            subject,
+            target: targetOf(body),
+            outcome: outcomeOf(status),
+            status,
+            persist:
+              PERSISTED_OPS.has(op) ||
+              (op === 'keys/delegate' &&
+                Array.isArray(body.automation) &&
+                body.automation.length > 0),
+          });
+        };
+        if (context.caller === 'agents' && subject) {
+          const runId = str(body.runId);
+          if (!runId || !(await runBelongsTo(runId, subject))) {
+            sendError(response, 'RUN_MISMATCH', "the run named is not this person's");
+            return finish();
+          }
         }
-      }
-      if (sessionId) {
-        if (!subject || !(await verifySession(subject, sessionId))) {
-          sendError(response, 'SESSION_MISMATCH', "the session named is not this person's");
-          return finish();
+        if (sessionId) {
+          if (!subject || !(await verifySession(subject, sessionId))) {
+            sendError(response, 'SESSION_MISMATCH', "the session named is not this person's");
+            return finish();
+          }
+          scope.sessionId = sessionId;
         }
-        scope.sessionId = sessionId;
-      }
-      try {
-        await withKeyRequestScope(scope, () => handler(body, response));
-      } finally {
-        await finish();
-      }
-    };
+        try {
+          await withKeyRequestScope(scope, () => handler(body, response));
+        } finally {
+          await finish();
+        }
+      });
   }
 
   const handlers: Record<string, Handler> = {
