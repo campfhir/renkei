@@ -100,6 +100,6 @@
     "tailwindcss": "^4.3.3",
     "ts-jest": "^29.4.15",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   }
 }
