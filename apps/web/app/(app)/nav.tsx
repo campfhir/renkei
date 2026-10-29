@@ -155,6 +155,29 @@ export default function AppNav({
     });
   };
 
+  // The chat list is the layout's server data, and only a router.refresh()
+  // moves it. A phone freezes a backgrounded tab, so a reply that finished
+  // while the person was in another app never reached the turn_end refresh
+  // in the chat thread; coming back to the tab (or restoring it from the
+  // back-forward cache) re-reads the list here, once for both copies of it.
+  useEffect(() => {
+    if (chats === null) return;
+    const refresh = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (navigator.onLine === false) return;
+      router.refresh();
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) refresh();
+    };
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      document.removeEventListener('visibilitychange', refresh);
+      window.removeEventListener('pageshow', onPageShow);
+    };
+  }, [chats, router]);
+
   // The drawer closes on navigation, on Escape, and traps initial focus so a
   // keyboard user is not left tabbing through content hidden behind it.
   useEffect(() => setOpen(false), [pathname]);
