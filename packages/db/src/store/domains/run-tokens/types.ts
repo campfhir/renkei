@@ -14,14 +14,24 @@ export interface RunTokenRecord {
   scope: string | null;
   roles: string[];
   toolNames: string[] | null;
+  /** The sandbox scratch space a chat turn's token stages in (migration 169); null otherwise. */
+  sandboxScope: string | null;
   expiresAt: Date;
 }
+
+export type NewRunToken = Omit<RunTokenRecord, 'roles' | 'sandboxScope'> & {
+  roles?: string[];
+  sandboxScope?: string | null;
+};
 
 export interface RunTokenStore {
   /** Create the synthetic client unless it exists (an existing one is left as it is). */
   ensureClient(client: { clientId: string; clientName: string; secretHash: string }): Promise<void>;
-  /** Store one token's digest; `roles` omitted stores the column default (none). */
-  insert(token: Omit<RunTokenRecord, 'roles'> & { roles?: string[] }): Promise<void>;
+  /**
+   * Store one token's digest; `roles` omitted stores the column default
+   * (none), `sandboxScope` omitted stores null.
+   */
+  insert(token: NewRunToken): Promise<void>;
   /** Drop a token by its digest; returns how many went. */
   delete(tokenHash: string): Promise<number>;
   /** One token by its digest. */

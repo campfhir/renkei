@@ -218,6 +218,29 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
     expect(listMock).not.toHaveBeenCalled();
   });
 
+  it('stages into the chat’s own scratch space when the turn names one', async () => {
+    findMock.mockResolvedValue({
+      id: 'a1',
+      filename: 'cover.png',
+      contentType: 'image/png',
+      blobKey: 'blob/cover.png',
+      extractedText: null,
+      extractStatus: 'unsupported',
+      cipher: testCipher,
+    });
+    const result = await tools.run(
+      ATTACH_TO_SANDBOX_TOOL,
+      { attachmentId: 'a1' },
+      context({ sandboxScope: 'chat:chat-1' })
+    );
+    expect(result.isError).toBe(false);
+    expect(writeMock).toHaveBeenCalledWith(
+      { subject: 'auth0|alice', scope: 'chat:chat-1' },
+      { filename: 'cover.png', contentType: 'image/png', source: 'chat' },
+      Buffer.from('bytes of blob/cover.png')
+    );
+  });
+
   it('stages a file found by name among the chat’s and its project’s files', async () => {
     listMock.mockResolvedValue([
       row('cover.png', { at: 2, origin: 'model', contentType: 'image/png' }),

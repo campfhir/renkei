@@ -61,6 +61,7 @@ import {
 } from '@renkei/connector-sandbox';
 import * as disk from './disk';
 import * as store from './store';
+import { scopeOf } from './scope';
 import * as secretsStore from './secrets-store';
 import { BrowserOpError, type BrowserErrorType, type BrowserTarget } from './browser';
 import { ChartRenderError, type ChartErrorType, type ChartVerbs } from './charts';
@@ -253,8 +254,9 @@ function summaryWire(summary: SandboxFileSummary) {
 
 function targetOf(body: Record<string, unknown>): store.SandboxTarget | null {
   const subject = str(body.subject);
-  if (!subject) return null;
-  return { subject };
+  const scope = scopeOf(body.scope);
+  if (!subject || scope === null) return null;
+  return scope ? { subject, scope } : { subject };
 }
 
 const CHART_ERROR_STATUS: Record<ChartErrorType, number> = {
@@ -449,11 +451,12 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     response: ServerResponse
   ): Promise<void> {
     const subject = url.searchParams.get('subject') ?? '';
+    const scope = scopeOf(url.searchParams.get('scope'));
     const named = validateFilename(url.searchParams.get('filename') ?? '');
-    if (!subject || !named.ok) {
+    if (!subject || scope === null || !named.ok) {
       return sendError(response, 400, 'bad_request');
     }
-    const target = { subject };
+    const target = scope ? { subject, scope } : { subject };
     const rawSource = url.searchParams.get('source') ?? '';
     const source = SOURCE_PATTERN.test(rawSource) ? rawSource : 'write';
     const batchId = batchIdOf(url.searchParams.get('batchId'));

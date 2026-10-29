@@ -25,7 +25,11 @@ import {
   resolveMistralOcrConfig,
   describeMistralOcrError,
 } from '@renkei/connector-mistral-ocr';
-import { sbReadFile, clientFailure as sandboxClientFailure } from '@renkei/sandbox-client';
+import {
+  sbReadFile,
+  clientFailure as sandboxClientFailure,
+  type SandboxTarget,
+} from '@renkei/sandbox-client';
 import {
   startDocumentOcrPipeline,
   type AfterProcessing,
@@ -53,9 +57,11 @@ function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function targetOf(context: MCPToolContext): { subject: string } | string {
+function targetOf(context: MCPToolContext): SandboxTarget | string {
   if (!context.subject) return 'No signed-in identity on this request.';
-  return { subject: context.subject };
+  return context.sandboxScope
+    ? { subject: context.subject, scope: context.sandboxScope }
+    : { subject: context.subject };
 }
 
 const groupingSchema = z.union([

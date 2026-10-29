@@ -40,7 +40,7 @@ import { clientFailure, sandboxConfig, sbWriteFile } from '@/lib/sandbox/service
 import { recordSentWebexMessage } from './sent-ledger';
 import { withScopeGate } from '../capability-gate';
 import { withPresentationHint, type MCPToolContext } from '../common';
-import { fileLine } from '../sandbox/shared';
+import { fileLine, targetOf } from '../sandbox/shared';
 import { createUploadSlot } from '../upload-slots';
 import {
   APP_ONLY_META,
@@ -953,8 +953,8 @@ export async function registerWebexUserTools(
       async (args: Record<string, any>) => {
         const messageId = str(args.messageId);
         if (!messageId) return errText('messageId is required');
-        if (!context.subject) return errText('No signed-in identity on this request.');
-        const target = { subject: context.subject };
+        const target = targetOf(context);
+        if (typeof target === 'string') return errText(target);
         const scopes = webexScopeFor('webex_download_attachments');
 
         const message = await webexGet(auth, scopes, `/messages/${encodeURIComponent(messageId)}`);

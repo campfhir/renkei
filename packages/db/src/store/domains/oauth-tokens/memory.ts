@@ -17,6 +17,7 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         expires_at: token.expiresAt,
         agent_id: null,
         tool_names: null,
+        sandbox_scope: null,
         created_at: new Date(),
       });
     },
@@ -95,6 +96,7 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
         expires_at: access.expiresAt,
         agent_id: null,
         tool_names: null,
+        sandbox_scope: null,
         created_at: now,
       });
       tables.update('oauth_refresh_tokens', (r) => r.token_id === token.token_id, {

@@ -11,6 +11,8 @@ export interface OAuthAccessTokenRecord {
   agentId: string | null;
   roles: string[];
   toolNames: string[] | null;
+  /** The sandbox scratch space a chat turn's run token stages in (migration 169); null otherwise. */
+  sandboxScope: string | null;
   expiresAt: Date;
 }
 

@@ -75,9 +75,15 @@ export const runTokenScenarios: Scenario<DataStore>[] = [
         tokenHash: 'hash-roles',
         roles: ['renkei-operator'],
       });
+      await store.runTokens.insert({
+        ...token,
+        tokenHash: 'hash-scope',
+        sandboxScope: 'chat:00000000-0000-4000-8000-0000000000c1',
+      });
       return {
         plain: await store.runTokens.find('hash-new'),
         roles: await store.runTokens.find('hash-roles'),
+        scoped: await store.runTokens.find('hash-scope'),
       };
     },
   },

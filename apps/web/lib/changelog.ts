@@ -50,6 +50,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: "A project's artifacts are listed a page at a time",
+        detail:
+          'A project holding many files shows ten at a time on its page, with a pager to move through the rest.',
+      },
+      {
+        kind: 'fixed',
+        title: "A chat's sandbox files stay in that chat",
+        detail:
+          "Files staged or made in the sandbox from one chat no longer show up for the assistant in your other chats. A code project's chats share one scratch space, kept apart from every other project's.",
+      },
+      {
+        kind: 'changed',
         title: 'Activity no longer needs Jira',
         detail:
           'People without a Jira connection now see their own activity instead of being asked to connect Jira first.',

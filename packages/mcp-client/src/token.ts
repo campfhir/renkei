@@ -69,6 +69,12 @@ export async function mintRunToken(params: {
    * must also name its one tool in `tools`.
    */
   application?: RunTokenApplication;
+  /**
+   * The sandbox scratch space the token's sandbox tools stage in and read
+   * from (migration 169): `chat:<id>` for a chat turn, `project:<id>` for
+   * a code project's. Omitted = the person's own scratch space.
+   */
+  sandboxScope?: string;
 }): Promise<string> {
   const clientId = await ensureAgentRunnerClient();
   const token = generateSecret(32);
@@ -84,6 +90,7 @@ export async function mintRunToken(params: {
     scope: null,
     ...(params.roles ? { roles: params.roles } : {}),
     toolNames: params.tools ? [...new Set(params.tools)].sort() : null,
+    sandboxScope: params.sandboxScope ?? null,
     expiresAt: new Date(Date.now() + params.ttlSeconds * 1000),
   });
   return token;

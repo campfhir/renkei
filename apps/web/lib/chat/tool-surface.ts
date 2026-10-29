@@ -304,6 +304,11 @@ export async function resolveChatToolSurface(input: {
    */
   excluded?: ReadonlySet<string>;
   /**
+   * The sandbox scratch space the turn's token stages in (sandbox-scope.ts),
+   * so the sandbox tools list and read this chat's files and no other's.
+   */
+  sandboxScope?: string;
+  /**
    * Connectors whose plain act tools are offered instead of their
    * previews — see PreviewRouting. Empty unless the chat is a code
    * project's in auto mode.
@@ -343,6 +348,7 @@ export async function resolveChatToolSurface(input: {
     agentId: null,
     ttlSeconds: input.ttlSeconds,
     roles: input.roles,
+    ...(input.sandboxScope ? { sandboxScope: input.sandboxScope } : {}),
   });
   let released = false;
   const release = async () => {

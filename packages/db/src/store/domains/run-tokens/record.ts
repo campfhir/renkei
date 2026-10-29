@@ -1,6 +1,6 @@
 import type { Selectable } from 'kysely';
 import type { OauthAccessTokens } from '../../../db.types';
-import type { RunTokenRecord } from './types';
+import type { NewRunToken, RunTokenRecord } from './types';
 
 export function runTokenFromRow(row: Selectable<OauthAccessTokens>): RunTokenRecord {
   return {
@@ -12,11 +12,12 @@ export function runTokenFromRow(row: Selectable<OauthAccessTokens>): RunTokenRec
     scope: row.scope,
     roles: row.roles,
     toolNames: row.tool_names,
+    sandboxScope: row.sandbox_scope ?? null,
     expiresAt: new Date(row.expires_at),
   };
 }
 
-export function runTokenValues(token: Omit<RunTokenRecord, 'roles'> & { roles?: string[] }) {
+export function runTokenValues(token: NewRunToken) {
   return {
     token_hash: token.tokenHash,
     client_id: token.clientId,
@@ -26,6 +27,7 @@ export function runTokenValues(token: Omit<RunTokenRecord, 'roles'> & { roles?: 
     scope: token.scope,
     ...(token.roles ? { roles: token.roles } : {}),
     tool_names: token.toolNames,
+    sandbox_scope: token.sandboxScope ?? null,
     expires_at: token.expiresAt,
   };
 }

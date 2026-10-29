@@ -192,6 +192,7 @@ export const EXPECTED_MIGRATIONS = [
   '166-admin-change-queue',
   '167-artifact-ocr',
   '168-document-usage',
+  '169-sandbox-scope',
 ];
 
 export interface MigrationStatus {

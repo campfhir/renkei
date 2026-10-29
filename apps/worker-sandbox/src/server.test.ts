@@ -353,3 +353,46 @@ describe('draining', () => {
     await expect(fetch(`${url}/health`)).rejects.toThrow();
   });
 });
+
+describe('scratch-space scope', () => {
+  const CHAT = 'chat:00000000-0000-4000-8000-0000000000c1';
+
+  it('passes a chat’s scope through to the store', async () => {
+    store.listFiles.mockResolvedValue([]);
+    store.getFile.mockResolvedValue(undefined);
+    expect((await post('/v1/list', { ...TARGET, scope: CHAT })).status).toBe(200);
+    expect(store.listFiles).toHaveBeenCalledWith({ ...TARGET, scope: CHAT }, undefined);
+    await post('/v1/stat', { ...TARGET, scope: CHAT, fileId: 'file-1' });
+    expect(store.getFile).toHaveBeenCalledWith({ ...TARGET, scope: CHAT }, 'file-1');
+  });
+
+  it('stages a written file under the scope the query names', async () => {
+    disk.writeStream.mockResolvedValue({ ok: true, sizeBytes: 3 });
+    store.insertFile.mockImplementation(async (input: Record<string, unknown>) => ({
+      id: 'file-1',
+      filename: input.filename,
+      contentType: null,
+      sizeBytes: 3,
+      source: 'write',
+      batchId: null,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      expiresAt: new Date('2026-01-02T00:00:00Z'),
+    }));
+    const query = new URLSearchParams({ ...TARGET, scope: CHAT, filename: 'a.txt' });
+    const response = await fetch(`${base}/v1/write?${query.toString()}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/octet-stream' },
+      body: 'abc',
+    });
+    expect(response.status).toBe(200);
+    expect(store.insertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ subject: TARGET.subject, scope: CHAT, filename: 'a.txt' })
+    );
+  });
+
+  it('refuses a scope that is not a chat or a project', async () => {
+    const response = await post('/v1/list', { ...TARGET, scope: 'chat:../../other' });
+    expect(response.status).toBe(400);
+    expect(store.listFiles).not.toHaveBeenCalled();
+  });
+});

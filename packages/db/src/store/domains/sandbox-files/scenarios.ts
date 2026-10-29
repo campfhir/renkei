@@ -4,17 +4,21 @@ import type { DataStore } from '../../types';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const at = (minute: number) => new Date(Date.UTC(2026, 0, 1, 0, minute));
 const BATCH = '00000000-0000-4000-8000-0000000000b1';
+const CHAT = 'chat:00000000-0000-4000-8000-0000000000c1';
+const PROJECT = 'project:00000000-0000-4000-8000-0000000000d1';
 
 function row(
   n: number,
   subject: string,
   minute: number,
   size: number,
-  batch: string | null = null
+  batch: string | null = null,
+  scope = ''
 ) {
   return {
     id: id(n),
     subject,
+    scope,
     filename: `file-${n}.txt`,
     content_type: n % 2 ? 'text/plain' : null,
     size_bytes: size,
@@ -33,6 +37,9 @@ const fixture = {
     row(3, 'ann', 3, 30),
     row(4, 'ann', 2, 40, BATCH),
     row(5, 'bob', 5, 50, BATCH),
+    row(6, 'ann', 4, 60, null, CHAT),
+    row(7, 'ann', 6, 70, BATCH, PROJECT),
+    row(8, 'ann', 7, 80, null, PROJECT),
   ],
 };
 
@@ -45,6 +52,7 @@ export const sandboxFileScenarios: Scenario<DataStore>[] = [
       const inserted = await store.sandboxFiles.insert({
         id: id(9),
         subject: 'ann',
+        scope: CHAT,
         filename: 'new.csv',
         contentType: 'text/csv',
         sizeBytes: 7,
@@ -54,23 +62,27 @@ export const sandboxFileScenarios: Scenario<DataStore>[] = [
         expiresAt: at(500),
       });
       const { createdAt: _createdAt, ...rest } = inserted;
-      const listed = await store.sandboxFiles.list('ann');
       return [
         rest,
-        listed.map((file) => file.id),
-        await store.sandboxFiles.get('bob', id(9)),
-        (await store.sandboxFiles.get('ann', id(9)))?.filename,
+        (await store.sandboxFiles.list('ann', CHAT)).map((file) => file.id),
+        (await store.sandboxFiles.list('ann', '')).map((file) => file.id),
+        await store.sandboxFiles.get('bob', CHAT, id(9)),
+        await store.sandboxFiles.get('ann', '', id(9)),
+        (await store.sandboxFiles.get('ann', CHAT, id(9)))?.filename,
       ];
     },
   },
   {
     method: 'sandboxFiles.list',
-    name: 'newest first, ties by id, optionally one batch',
+    name: 'one scope, newest first, ties by id; a batch across scopes',
     fixture,
     run: async (store) => [
-      await store.sandboxFiles.list('ann'),
-      await store.sandboxFiles.list('ann', BATCH),
-      await store.sandboxFiles.list('nobody'),
+      await store.sandboxFiles.list('ann', ''),
+      (await store.sandboxFiles.list('ann', CHAT)).map((file) => file.id),
+      (await store.sandboxFiles.list('ann', PROJECT)).map((file) => file.id),
+      await store.sandboxFiles.list('ann', CHAT, BATCH),
+      await store.sandboxFiles.list('bob', PROJECT),
+      await store.sandboxFiles.list('nobody', ''),
     ],
   },
   {
@@ -113,23 +125,31 @@ export const sandboxFileScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'sandboxFiles.get',
-    name: 'the subject’s own file only',
+    name: 'the subject’s own file, in its scope or a batch',
     fixture,
     run: async (store) => [
-      await store.sandboxFiles.get('ann', id(1)),
-      await store.sandboxFiles.get('bob', id(1)),
-      await store.sandboxFiles.get('ann', id(99)),
+      await store.sandboxFiles.get('ann', '', id(1)),
+      await store.sandboxFiles.get('ann', CHAT, id(1)),
+      await store.sandboxFiles.get('bob', '', id(1)),
+      (await store.sandboxFiles.get('ann', CHAT, id(6)))?.id,
+      await store.sandboxFiles.get('ann', PROJECT, id(6)),
+      (await store.sandboxFiles.get('ann', CHAT, id(7)))?.id,
+      await store.sandboxFiles.get('ann', '', id(99)),
     ],
   },
   {
     method: 'sandboxFiles.delete',
-    name: 'returns the row, leaves other subjects’ alone',
+    name: 'returns the row, leaves other subjects’ and scopes’ alone',
     fixture,
     run: async (store) => [
-      await store.sandboxFiles.delete('bob', id(1)),
-      await store.sandboxFiles.delete('ann', id(1)),
-      await store.sandboxFiles.delete('ann', id(1)),
-      (await store.sandboxFiles.list('ann')).map((file) => file.id),
+      await store.sandboxFiles.delete('bob', '', id(1)),
+      await store.sandboxFiles.delete('ann', CHAT, id(1)),
+      await store.sandboxFiles.delete('ann', '', id(1)),
+      await store.sandboxFiles.delete('ann', '', id(1)),
+      await store.sandboxFiles.delete('ann', PROJECT, id(6)),
+      (await store.sandboxFiles.delete('ann', CHAT, id(7)))?.id,
+      (await store.sandboxFiles.list('ann', '')).map((file) => file.id),
+      (await store.sandboxFiles.list('ann', CHAT)).map((file) => file.id),
     ],
   },
   {
@@ -150,7 +170,7 @@ export const sandboxFileScenarios: Scenario<DataStore>[] = [
       await store.sandboxFiles.deleteById(id(5));
       await store.sandboxFiles.deleteById(id(99));
       return [
-        await store.sandboxFiles.list('bob'),
+        await store.sandboxFiles.list('bob', ''),
         await store.sandboxFiles.countForSubject('ann'),
       ];
     },
