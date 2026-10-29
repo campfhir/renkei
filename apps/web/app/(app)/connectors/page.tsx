@@ -329,7 +329,9 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
           }))
       : [];
 
-  const microsoftKeys = ['microsoft', 'sharepoint', 'onedrive'].filter((key) => shown.has(key));
+  const microsoftKeys = ['microsoft', 'sharepoint', 'onedrive', 'teams', 'onenote'].filter((key) =>
+    shown.has(key)
+  );
   const atlassianShown =
     jiraShown ||
     shown.has('jira-admin') ||

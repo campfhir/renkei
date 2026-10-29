@@ -145,6 +145,22 @@ export default function MicrosoftConnectBody({
         knowledge search — that is available for SharePoint libraries only.
       </p>
     ) : null,
+
+    // Same sentence for the two conversational products: nothing of theirs
+    // is indexed, and saying so heads off the "why can't search find my
+    // chat" ticket.
+    teams: connected ? (
+      <p className="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-500">
+        Chats and channels are read live as you, on request. Nothing from Teams is indexed into
+        knowledge search, and messages are only ever sent from a preview card you approve.
+      </p>
+    ) : null,
+    onenote: connected ? (
+      <p className="mt-3 border-t border-gray-100 pt-3 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-500">
+        Pages are read live as you, on request, and written only from a preview card you approve.
+        Nothing from OneNote is indexed into knowledge search.
+      </p>
+    ) : null,
   };
 
   const productsAnchor = useCoachAnchor('microsoft-products');

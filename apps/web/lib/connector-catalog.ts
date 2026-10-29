@@ -7,7 +7,8 @@
  *
  *   configKey     the `connector_configs` row an admin fills in (credentials,
  *                 scope ceiling). Several products share one — SharePoint,
- *                 OneDrive and Outlook all ride the single 'microsoft' app.
+ *                 OneDrive, Teams, OneNote and Outlook all ride the single
+ *                 'microsoft' app.
  *   capabilityKey what the capability registry gates tools on, and what
  *                 `disabledConnectors`, a person's catalog selections and an
  *                 admin's audience rules all name. Finer-grained than
@@ -234,6 +235,32 @@ export const CONNECTOR_CATALOG: ConnectorEntry[] = [
     toolPrefix: 'onedrive_*',
     category: 'microsoft',
     keywords: ['files', 'drive', 'documents', 'sharing', 'my files'],
+    suite: 'microsoft',
+    grantProviders: ['microsoft'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
+    capabilityKey: 'teams',
+    configKey: 'microsoft',
+    label: 'Teams',
+    summary: 'Chats, teams and channels, messages sent as you, and who is available.',
+    toolPrefix: 'teams_*',
+    category: 'microsoft',
+    keywords: ['chat', 'channels', 'messages', 'presence', 'availability', 'ms teams'],
+    suite: 'microsoft',
+    grantProviders: ['microsoft'],
+    userConnectable: true,
+    togglable: true,
+  },
+  {
+    capabilityKey: 'onenote',
+    configKey: 'microsoft',
+    label: 'OneNote',
+    summary: 'Notebooks, sections and pages — your own and the ones shared on sites and in teams.',
+    toolPrefix: 'onenote_*',
+    category: 'microsoft',
+    keywords: ['notes', 'notebook', 'pages', 'sections', 'note taking'],
     suite: 'microsoft',
     grantProviders: ['microsoft'],
     userConnectable: true,

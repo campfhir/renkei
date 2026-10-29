@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-29',
     entries: [
       {
+        kind: 'added',
+        title: 'Microsoft Teams, on your Microsoft 365 connection',
+        detail:
+          'Two new panels on the Microsoft 365 card. Teams lets the assistant read and search your chats, teams and channels as you, see who is available, and send a chat message or post in a channel — only from a preview card you approve. Nothing from Teams is indexed.',
+      },
+      {
+        kind: 'added',
+        title: 'OneNote, on your Microsoft 365 connection',
+        detail:
+          'OneNote lets the assistant list your notebooks, sections and pages, read a page to summarize or quote it, and — from a preview card — create sections and pages, add to a page, or delete one. Shared notebooks on SharePoint sites and in your teams are reachable with the shared-notebook permission. An administrator adds the Teams and OneNote permissions to the Entra app registration and allows them on the Microsoft connector page first; anyone already connected re-authorizes to pick them up.',
+      },
+      {
         kind: 'changed',
         title: "A project's artifacts are listed a page at a time",
         detail:

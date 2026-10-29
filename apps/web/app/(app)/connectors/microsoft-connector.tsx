@@ -5,7 +5,8 @@ import MicrosoftConnectBody from './microsoft-connect-body';
 
 /**
  * The user's own Microsoft 365 connection: one card, containing a panel per
- * product — Outlook, OneDrive, SharePoint, the directory — and one set of
+ * product — Outlook, OneDrive, SharePoint, Teams, OneNote, the directory — and
+ * one set of
  * connect / disconnect / re-authorize controls at its foot.
  *
  * The shape follows the grant. Microsoft issues a SINGLE consent covering

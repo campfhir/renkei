@@ -225,7 +225,7 @@ export const COACH_ANCHORS = [
   'github-connect',
   /** The Microsoft 365 card. */
   'card-microsoft',
-  /** The product panels inside it (Outlook, SharePoint, OneDrive…), each with its capabilities. */
+  /** The product panels inside it (Outlook, SharePoint, OneDrive, Teams, OneNote…), each with its capabilities. */
   'microsoft-products',
   /** Connect Microsoft 365 (or Re-authorize, once connected). */
   'microsoft-connect',

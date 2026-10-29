@@ -125,7 +125,8 @@ const CONNECTOR_CARDS: { title: string; card: string; keywords: string }[] = [
   {
     title: 'Microsoft 365',
     card: 'microsoft',
-    keywords: 'sharepoint onedrive outlook teams calendar mail excel word office files sites',
+    keywords:
+      'sharepoint onedrive outlook teams onenote notebook chat channels calendar mail excel word office files sites',
   },
   { title: 'Webex', card: 'webex', keywords: 'webex meetings cisco' },
   { title: 'Zoom', card: 'zoom', keywords: 'zoom meetings recordings' },

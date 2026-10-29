@@ -45,6 +45,8 @@ export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   'outlook_start_bulk_mail_job',
   // Messages to other people.
   'webex_send_message',
+  'teams_send_chat_message',
+  'teams_send_channel_message',
   // Code that ships.
   'bitbucket_merge_pull_request',
   'github_merge_pull_request',
@@ -59,6 +61,8 @@ export const ALWAYS_APPROVAL_TOOLS: readonly string[] = [
   'sharepoint_delete_page',
   'sharepoint_share_document',
   'sharepoint_add_user_to_document',
+  // Notes destroyed.
+  'onenote_delete_page',
   // Work items destroyed.
   'jira_delete_issue',
   // CRM records destroyed, changed in bulk, or handed to someone else.

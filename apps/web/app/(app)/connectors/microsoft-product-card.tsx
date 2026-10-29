@@ -7,9 +7,9 @@ import { optionWithin, type ScopeGroup, type ScopeOption } from '@/lib/scope-cat
 
 /**
  * One Microsoft product, as a panel NESTED inside the Microsoft 365 card —
- * Outlook, OneDrive, SharePoint or the directory.
+ * Outlook, OneDrive, SharePoint, Teams, OneNote or the directory.
  *
- * The nesting is the design. These are four products over ONE consent, and
+ * The nesting is the design. These are several products over ONE consent, and
  * an earlier pass had them as four sibling cards, each with its own Approve
  * button. That version worked but had to keep apologising for itself: every
  * card needed a sentence explaining that approving there would submit the

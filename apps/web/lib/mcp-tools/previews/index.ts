@@ -15,9 +15,11 @@ import { JIRA_PREVIEWS } from './jira';
 import { JSM_PREVIEWS } from './jsm';
 import { MEETING_PREVIEWS } from './meetings';
 import { MIRTH_ADMIN_PREVIEWS } from './mirth-admin';
+import { ONENOTE_PREVIEWS } from './onenote';
 import { OUTLOOK_PREVIEWS } from './outlook';
 import { SALESFORCE_PREVIEWS } from './salesforce';
 import { SOURCE_CONTROL_PREVIEWS } from './source-control';
+import { TEAMS_PREVIEWS } from './teams';
 
 const SETS: Record<string, PreviewBuilder>[] = [
   JIRA_PREVIEWS,
@@ -27,6 +29,8 @@ const SETS: Record<string, PreviewBuilder>[] = [
   OUTLOOK_PREVIEWS,
   MEETING_PREVIEWS,
   DOCUMENT_PREVIEWS,
+  TEAMS_PREVIEWS,
+  ONENOTE_PREVIEWS,
   INTEGRATION_PREVIEWS,
   MIRTH_ADMIN_PREVIEWS,
   SALESFORCE_PREVIEWS,

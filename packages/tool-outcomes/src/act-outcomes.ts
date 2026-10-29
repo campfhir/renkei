@@ -1101,6 +1101,46 @@ export const ACT_OUTCOMES: Record<string, ActOutcomeDescriptor> = {
   // ---- OneDrive ---------------------------------------------------------
   ...documentActs('onedrive', 'OneDrive'),
 
+  // ---- Teams ------------------------------------------------------------
+  teams_send_chat_message: {
+    category: 'sent',
+    entity: 'message',
+    label: 'Sent a Teams chat message',
+    short: 'Sent a chat message',
+  },
+  teams_send_channel_message: {
+    category: 'sent',
+    entity: 'message',
+    label: 'Posted in a Teams channel',
+    short: 'Posted in a channel',
+  },
+
+  // ---- OneNote ----------------------------------------------------------
+  onenote_create_section: {
+    category: 'created',
+    entity: 'section',
+    label: 'Created a OneNote section',
+    short: 'Created a section',
+  },
+  onenote_create_page: {
+    category: 'created',
+    entity: 'page',
+    label: 'Created a OneNote page',
+    short: 'Created a page',
+  },
+  onenote_append_to_page: {
+    category: 'updated',
+    entity: 'page',
+    label: 'Added to a OneNote page',
+    short: 'Added to a page',
+  },
+  onenote_delete_page: {
+    category: 'deleted',
+    entity: 'page',
+    label: 'Deleted a OneNote page',
+    short: 'Deleted a page',
+  },
+
   // ---- Renkei’s own -----------------------------------------------------
   knowledge_create_note: {
     category: 'created',

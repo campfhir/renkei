@@ -50,6 +50,8 @@ const PREFIXES: [string, string][] = [
   ['outlook_', 'microsoft'],
   ['sharepoint_', 'sharepoint'],
   ['onedrive_', 'onedrive'],
+  ['teams_', 'teams'],
+  ['onenote_', 'onenote'],
   // Entra application provisioning: its own connector and grant, not Outlook's.
   ['entra_', 'entra-developer'],
   ['webex_', 'webex'],

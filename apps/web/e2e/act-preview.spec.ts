@@ -170,6 +170,18 @@ const GALLERY: GalleryCard[] = [
     verb: 'Delete',
     title: 'Delete the branch old-feature',
   },
+  {
+    tool: 'teams_send_chat_message_preview',
+    input: { toEmail: 'bob@example.com', markdown: 'Standup moved to **10:00** tomorrow.' },
+    verb: 'Send',
+    title: 'Send a Teams message to bob@example.com',
+  },
+  {
+    tool: 'onenote_create_page_preview',
+    input: { sectionId: 'sec-1', title: 'Retro 29 Oct', markdown: '# Went well\n\n- Shipped' },
+    verb: 'Create',
+    title: 'Create the page “Retro 29 Oct”',
+  },
 ];
 
 /**
@@ -250,6 +262,8 @@ async function openGalleryChat(
           'jira',
           'microsoft',
           'onedrive',
+          'teams',
+          'onenote',
         ],
       },
     },

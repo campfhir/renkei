@@ -52,6 +52,9 @@ import { oauthWebexAuth } from '@/lib/mcp-tools/webex/webex-auth';
 import { registerOutlookTools, OUTLOOK_MCP_CONNECTOR } from '@/lib/mcp-tools/outlook';
 import { registerSharePointTools, SHAREPOINT_MCP_CONNECTOR } from '@/lib/mcp-tools/sharepoint';
 import { registerOneDriveTools, ONEDRIVE_MCP_CONNECTOR } from '@/lib/mcp-tools/onedrive';
+import { registerTeamsTools, TEAMS_MCP_CONNECTOR } from '@/lib/mcp-tools/teams';
+import { grantsTeams } from '@/lib/mcp-tools/teams/scopes';
+import { registerOneNoteTools, ONENOTE_MCP_CONNECTOR } from '@/lib/mcp-tools/onenote';
 import { oauthGraphAuth } from '@/lib/mcp-tools/graph/graph-auth';
 import { registerZoomTools, ZOOM_MCP_CONNECTOR } from '@/lib/mcp-tools/zoom';
 import { oauthZoomAuth } from '@/lib/mcp-tools/zoom/zoom-auth';
@@ -132,6 +135,8 @@ export interface ConnectorAvailability {
   graphScopes: string[];
   sharepointAvailable: boolean;
   onedriveAvailable: boolean;
+  teamsAvailable: boolean;
+  onenoteAvailable: boolean;
   /** A SEPARATE connector/grant from microsoftAvailable — the second Entra app registration. */
   entraDeveloperAvailable: boolean;
   entraDeveloperScopes: string[];
@@ -258,6 +263,11 @@ export async function resolveConnectorAvailability(
     microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Sites.'));
   const onedriveAvailable =
     microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Files.'));
+  // Teams and OneNote are the fourth and fifth namespaces on that grant,
+  // separated the same way: by the scope families that back them.
+  const teamsAvailable = microsoftAvailable && grantsTeams(graphScopes);
+  const onenoteAvailable =
+    microsoftAvailable && graphScopes.some((scope) => scope.startsWith('Notes.'));
 
   // Entra Developer: the second Entra app registration, its own grant —
   // connecting Microsoft 365 does not connect it, and it does not need
@@ -424,6 +434,8 @@ export async function resolveConnectorAvailability(
     graphScopes,
     sharepointAvailable,
     onedriveAvailable,
+    teamsAvailable,
+    onenoteAvailable,
     entraDeveloperAvailable,
     entraDeveloperScopes,
     zoomAvailable,
@@ -484,6 +496,8 @@ export function provisionedConnectorsFor(availability: ConnectorAvailability): s
     ...(availability.microsoftAvailable ? [OUTLOOK_MCP_CONNECTOR] : []),
     ...(availability.sharepointAvailable ? [SHAREPOINT_MCP_CONNECTOR] : []),
     ...(availability.onedriveAvailable ? [ONEDRIVE_MCP_CONNECTOR] : []),
+    ...(availability.teamsAvailable ? [TEAMS_MCP_CONNECTOR] : []),
+    ...(availability.onenoteAvailable ? [ONENOTE_MCP_CONNECTOR] : []),
     ...(availability.zoomAvailable ? [ZOOM_MCP_CONNECTOR] : []),
     ...(availability.confluenceAvailable ? [CONFLUENCE_MCP_CONNECTOR] : []),
     ...(availability.jiraAdminAvailable ? [JIRA_ADMIN_MCP_CONNECTOR] : []),
@@ -524,6 +538,8 @@ export const REGISTERED_CONNECTOR_KEYS: readonly string[] = [
   OUTLOOK_MCP_CONNECTOR,
   SHAREPOINT_MCP_CONNECTOR,
   ONEDRIVE_MCP_CONNECTOR,
+  TEAMS_MCP_CONNECTOR,
+  ONENOTE_MCP_CONNECTOR,
   ZOOM_MCP_CONNECTOR,
   CONFLUENCE_MCP_CONNECTOR,
   JIRA_ADMIN_MCP_CONNECTOR,
@@ -578,6 +594,8 @@ export async function registerRenkeiTools(
     microsoftAvailable,
     sharepointAvailable,
     onedriveAvailable,
+    teamsAvailable,
+    onenoteAvailable,
     zoomAvailable,
     confluenceAvailable,
     jiraAdminAvailable,
@@ -745,8 +763,8 @@ export async function registerRenkeiTools(
     summaryProviders
   );
 
-  // graphAuth (declared above, shared with Outlook) covers SharePoint and
-  // OneDrive too — all three close over the same context.
+  // graphAuth (declared above, shared with Outlook) covers SharePoint,
+  // OneDrive, Teams and OneNote too — all five close over the same context.
   if (sharepointAvailable) {
     await registerSharePointTools(
       withCapabilityGate(server, projection, SHAREPOINT_MCP_CONNECTOR),
@@ -757,6 +775,20 @@ export async function registerRenkeiTools(
   if (onedriveAvailable) {
     await registerOneDriveTools(
       withCapabilityGate(server, projection, ONEDRIVE_MCP_CONNECTOR),
+      context,
+      graphAuth
+    );
+  }
+  if (teamsAvailable) {
+    await registerTeamsTools(
+      withCapabilityGate(server, projection, TEAMS_MCP_CONNECTOR),
+      context,
+      graphAuth
+    );
+  }
+  if (onenoteAvailable) {
+    await registerOneNoteTools(
+      withCapabilityGate(server, projection, ONENOTE_MCP_CONNECTOR),
       context,
       graphAuth
     );

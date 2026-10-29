@@ -48,6 +48,9 @@ const BRAND: Record<string, string> = {
   directory: '#475569',
   sharepoint: '#038387',
   onedrive: '#0364B8',
+  // The indigo and the purple of the shipped 2025 marks.
+  teams: '#5B5FC7',
+  onenote: '#7719AA',
   webex: '#00CF64',
   zoom: '#0B5CFF',
   // Hyland's green; we ship no vendor mark (GLYPH_ONLY), so the glyph
@@ -171,6 +174,44 @@ function glyphFor(logo: string, label: string) {
             d="M8.5 16.5h8.2a2.8 2.8 0 0 0 .2-5.6 4.2 4.2 0 0 0-7.8-1.5A3.3 3.3 0 0 0 8.5 16.5z"
             fill="#fff"
             opacity="0.95"
+          />
+        </>
+      );
+    // Teams: two speech bubbles, one over the other — a conversation.
+    case 'teams':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <path
+            d="M5 7.5h9a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H9l-3 2.5V15.5H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2z"
+            fill="#fff"
+            opacity="0.95"
+          />
+          <path
+            d="M17.5 10.5H19a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-.5v2l-2.4-2H15a2 2 0 0 1-1.6-.8"
+            fill="#fff"
+            opacity="0.6"
+          />
+        </>
+      );
+    // OneNote: a notebook page with a tab and ruled lines.
+    case 'onenote':
+      return (
+        <>
+          <rect width="24" height="24" rx="5" fill={color} />
+          <path d="M7 5h10v14H7z" fill="#fff" opacity="0.95" />
+          <path
+            d="M5 7h3M5 11h3M5 15h3"
+            stroke="#fff"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            opacity="0.7"
+          />
+          <path
+            d="M10 9h4M10 12h4M10 15h4"
+            stroke={color}
+            strokeWidth="1.4"
+            strokeLinecap="round"
           />
         </>
       );

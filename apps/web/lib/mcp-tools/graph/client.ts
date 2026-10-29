@@ -1,5 +1,6 @@
 /**
- * Microsoft Graph access for the SharePoint and OneDrive tool namespaces.
+ * Microsoft Graph access for the SharePoint, OneDrive, Teams and OneNote tool
+ * namespaces.
  *
  * The shape follows outlook/index.ts's private helpers rather than
  * @renkei/connector-microsoft's graphRequest: MCP tools return human-readable
@@ -274,6 +275,102 @@ export async function graphPutContent(
     }
   } catch {
     // An empty or non-JSON 200 is still a successful upload.
+  }
+  return { ok: true, body: {} };
+}
+
+/**
+ * A Graph resource whose body is not JSON — a OneNote page's HTML, say.
+ * Same error handling as the JSON verbs; the body comes back as text.
+ */
+export async function graphGetText(
+  context: GraphCallContext,
+  auth: AuthedFetch,
+  pathAndQuery: string
+): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+  const url = pathAndQuery.startsWith('https://')
+    ? pathAndQuery
+    : `${GRAPH_BASE_URL}${pathAndQuery}`;
+  let response: Response;
+  try {
+    response = await graphFetch(auth, url, { lane: 'interactive', timeoutMs: REQUEST_TIMEOUT_MS });
+  } catch (error) {
+    return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
+  }
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused };
+  const text = await response.text().catch(() => '');
+  if (!response.ok) {
+    logger.warn('Graph API non-OK response', {
+      component: 'graph/fetch',
+      subject: context.subject,
+      path: pathAndQuery,
+      method: 'GET',
+      status: response.status,
+      responseHeaders: headersForLog(response.headers),
+      responseBody: text ? secure(truncateForLog(text)) : undefined,
+    });
+    return {
+      ok: false,
+      error: describeStatus(response.status, retryAfterSeconds(response.headers)),
+    };
+  }
+  return { ok: true, text };
+}
+
+/**
+ * POST a body that is not JSON — a OneNote page is created from HTML — and
+ * read the JSON Graph answers with. The JSON verbs above always serialize
+ * their body, which is right for everything else.
+ */
+export async function graphPostText(
+  context: GraphCallContext,
+  auth: AuthedFetch,
+  pathAndQuery: string,
+  body: string,
+  contentType: string
+): Promise<GraphResult> {
+  const url = pathAndQuery.startsWith('https://')
+    ? pathAndQuery
+    : `${GRAPH_BASE_URL}${pathAndQuery}`;
+  let response: Response;
+  try {
+    response = await graphFetch(auth, url, {
+      method: 'POST',
+      headers: { 'Content-Type': contentType },
+      body,
+      lane: 'interactive',
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
+  } catch (error) {
+    return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
+  }
+  const refused = refusalTextOf(response, LABEL);
+  if (refused) return { ok: false, error: refused };
+  const responseBody = await response.text().catch(() => '');
+  if (!response.ok) {
+    logger.warn('Graph API non-OK response', {
+      component: 'graph/fetch',
+      subject: context.subject,
+      path: pathAndQuery,
+      method: 'POST',
+      status: response.status,
+      responseHeaders: headersForLog(response.headers),
+      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
+    });
+    return {
+      ok: false,
+      error: describeStatus(response.status, retryAfterSeconds(response.headers)),
+    };
+  }
+  if (!responseBody) return { ok: true, body: {} };
+  try {
+    const parsed: unknown = JSON.parse(responseBody);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return { ok: true, body: { ...parsed } };
+    }
+  } catch {
+    // A non-JSON 2xx is still a success; the caller sees an empty body.
   }
   return { ok: true, body: {} };
 }
