@@ -823,10 +823,6 @@ test.describe('code projects', () => {
   });
 
   test('new project via a freshly created Bitbucket repository', async ({ page }, testInfo) => {
-    // Known failure: a repository created on the form is chosen with a main
-    // branch of `main`, so the Branch field's placeholder reads `main`, not
-    // the "main branch" this spec expects. App-side; reported, not hidden.
-    test.fail(true, 'The Branch placeholder of a created repository reads "main".');
     const shot = (name: string) =>
       page.screenshot({
         path: path.join(
@@ -867,13 +863,11 @@ test.describe('code projects', () => {
 
     // ── The created repo drops into the same "chosen" slot a browsed one
     //    would; the rest of the form (branch placeholder, instructions,
-    //    Create project) behaves identically to an existing repository ──
+    //    Create project) behaves identically to an existing repository. Its
+    //    initial commit lands on `main`, so that is its main branch ──
     await expect(page.getByText(`acme/${ids.createdRepoSlug}`)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Choose another' })).toBeVisible();
-    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute(
-      'placeholder',
-      'main branch'
-    );
+    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute('placeholder', 'main');
     const create = page.getByRole('button', { name: 'Create project' });
     await expect(create).toBeEnabled();
     await create.click();
