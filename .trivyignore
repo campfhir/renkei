@@ -7,13 +7,3 @@
 # GHSA otherwise). Each line expires: past its date Trivy counts the
 # finding again and the push fails, so fix the dependency and delete the
 # line, or renew the date with a reason. Keep the two lists in step.
-
-
-# jsoup 1.19.1 under the Eclipse JDT language server in the sandbox image
-# (usr/local/jdtls/plugins/org.jsoup_1.19.1.jar; CVE-2026-75140, denial of
-# service via deeply nested XML). jdtls 1.61.0 is the latest milestone and
-# bundles it; the 1.62.0 snapshots already carry jsoup 1.23.2, so the next
-# milestone lifts this line (bump JDTLS_VERSION in docker/Dockerfile and
-# delete it). Snapshots are pruned from download.eclipse.org, so one is not
-# pinned. Not a pnpm dependency, so no auditConfig counterpart.
-CVE-2026-75140 exp:2026-11-30

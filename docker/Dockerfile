@@ -633,7 +633,7 @@ ARG GO_X_TEXT_VERSION=v0.43.0
 ARG RUSTUP_VERSION=1.29.1
 ARG RUST_TOOLCHAIN=1.99.0
 ARG TEMURIN_RELEASE=jdk-21.0.12.1+1
-ARG JDTLS_VERSION=1.61.0
+ARG JDTLS_VERSION=1.63.0
 
 # TypeScript/JavaScript, Python and shell: Node-based, beside the
 # worker's own Node. The shell server lints through shellcheck when it
