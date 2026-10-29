@@ -388,7 +388,8 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
     area: 'Connectors',
     version: 1,
     title: 'Connecting Microsoft 365',
-    description: 'Outlook, SharePoint and OneDrive on one consent, and what Outlook indexes.',
+    description:
+      'Outlook, SharePoint, OneDrive, Teams and OneNote on one consent, and what Outlook indexes.',
     startPath: '/connectors',
     autoStart: false,
     requires: ['card-microsoft'],
@@ -399,7 +400,7 @@ export const CONNECTOR_TOURS: CoachMarkTour[] = [
         title: 'One consent for every product',
         target: 'card-microsoft',
         placement: 'auto',
-        body: 'Unlike Atlassian, Microsoft asks once for all of it: mail, calendar and tasks in Outlook, documents in SharePoint and OneDrive, and the directory.',
+        body: 'Unlike Atlassian, Microsoft asks once for all of it: mail, calendar and tasks in Outlook, documents in SharePoint and OneDrive, chats and channels in Teams, notebooks in OneNote, and the directory.',
       },
       {
         id: 'products',

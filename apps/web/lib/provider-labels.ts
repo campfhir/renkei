@@ -3,7 +3,7 @@
  *
  * The connector catalog maps UI entries to config/capability keys; this is
  * the third identifier (grantProvider) rendered for humans. 'microsoft' is
- * one grant that powers Outlook, SharePoint and OneDrive, so its label says
+ * one grant that powers Outlook, SharePoint, OneDrive, Teams and OneNote, so its label says
  * the platform rather than picking one product. Pure data, client-safe.
  */
 

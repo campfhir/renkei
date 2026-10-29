@@ -485,8 +485,30 @@ describe('listAvailableTools', () => {
     };
     const tools = namesOf(await listAvailableTools('subject-1'));
     expect(tools.some((name) => name.startsWith('outlook_'))).toBe(true);
-    // Mail scopes alone are not SharePoint or OneDrive — one grant, three
-    // namespaces, separated by scope.
+    // Mail scopes alone are not SharePoint, OneDrive, Teams or OneNote — one
+    // grant, five namespaces, separated by scope.
+    expect(tools.some((name) => name.startsWith('sharepoint_'))).toBe(false);
+    expect(tools.some((name) => name.startsWith('onedrive_'))).toBe(false);
+    expect(tools.some((name) => name.startsWith('teams_'))).toBe(false);
+    expect(tools.some((name) => name.startsWith('onenote_'))).toBe(false);
+  });
+
+  it('adds Teams and OneNote on the scopes that back them, each gated per tool', async () => {
+    grants = {
+      atlassian: ATLASSIAN_GRANT,
+      microsoft: {
+        requested_scopes: ['Mail.Read', 'Chat.Read', 'Notes.Read'],
+        granted_scopes: null,
+      },
+    };
+    const tools = namesOf(await listAvailableTools('subject-1'));
+    expect(tools).toContain('teams_list_chats');
+    expect(tools).toContain('onenote_read_page');
+    // Read-only grants register no send and no write.
+    expect(tools).not.toContain('teams_send_chat_message');
+    expect(tools).not.toContain('teams_list_channels');
+    expect(tools).not.toContain('onenote_create_page');
+    // Not SharePoint or OneDrive either.
     expect(tools.some((name) => name.startsWith('sharepoint_'))).toBe(false);
     expect(tools.some((name) => name.startsWith('onedrive_'))).toBe(false);
   });

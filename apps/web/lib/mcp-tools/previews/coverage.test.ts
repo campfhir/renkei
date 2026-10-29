@@ -30,7 +30,14 @@ jest.mock('@/lib/logger', () => ({
 // the scope gates are bypassed below so the whole surface registers.
 const GRANT = {
   provider_account_id: 'acct-1',
-  requested_scopes: ['x', 'Mail.ReadWrite', 'Sites.ReadWrite.All', 'Files.ReadWrite.All'],
+  requested_scopes: [
+    'x',
+    'Mail.ReadWrite',
+    'Sites.ReadWrite.All',
+    'Files.ReadWrite.All',
+    'Chat.Read',
+    'Notes.ReadWrite',
+  ],
   granted_scopes: null,
 };
 
@@ -221,6 +228,8 @@ describe('act tool preview coverage', () => {
       'outlook_',
       'onedrive_',
       'sharepoint_',
+      'teams_',
+      'onenote_',
       'zoom_',
       'webex_',
       'onbase_',

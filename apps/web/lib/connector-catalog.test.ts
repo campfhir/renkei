@@ -11,13 +11,16 @@ import { createProjection } from '@renkei/capability-registry';
 
 describe('connector catalog', () => {
   it('lets several products share one config row', () => {
-    // SharePoint, OneDrive and Outlook all ride the single Entra app, and
-    // flattening that would imply three registrations that do not exist.
+    // SharePoint, OneDrive, Teams, OneNote and Outlook all ride the single
+    // Entra app, and flattening that would imply five registrations that do
+    // not exist.
     const microsoftBacked = CONNECTOR_CATALOG.filter((entry) => entry.configKey === 'microsoft');
     expect(microsoftBacked.map((entry) => entry.capabilityKey).sort()).toEqual([
       'microsoft',
       'onedrive',
+      'onenote',
       'sharepoint',
+      'teams',
     ]);
   });
 
@@ -70,7 +73,7 @@ describe('disabling a connector', () => {
         restrictedConnectors: [],
       },
       {
-        provisionedConnectors: ['microsoft', 'sharepoint', 'onedrive'],
+        provisionedConnectors: ['microsoft', 'sharepoint', 'onedrive', 'teams', 'onenote'],
         hiddenCapabilities: [],
       }
     );

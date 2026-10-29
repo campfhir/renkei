@@ -15,7 +15,14 @@ describe('availableEntries', () => {
       anyShares: false,
       disabledConnectors: [],
     });
-    expect(labels(available)).toEqual(['Jira', 'Outlook', 'SharePoint', 'OneDrive']);
+    expect(labels(available)).toEqual([
+      'Jira',
+      'Outlook',
+      'SharePoint',
+      'OneDrive',
+      'Teams',
+      'OneNote',
+    ]);
   });
 
   it('never offers a Renkei surface as something to add', () => {
@@ -33,7 +40,7 @@ describe('availableEntries', () => {
       anyShares: false,
       disabledConnectors: ['sharepoint'],
     });
-    expect(labels(available)).toEqual(['Outlook', 'OneDrive']);
+    expect(labels(available)).toEqual(['Outlook', 'OneDrive', 'Teams', 'OneNote']);
   });
 
   it('offers file shares when any share is registered, with no config row', () => {
@@ -58,11 +65,13 @@ describe('availableEntries', () => {
 
 describe('connectedKeys', () => {
   it('maps a grant provider to every product it backs', () => {
-    // One Microsoft consent is Outlook, SharePoint and OneDrive.
+    // One Microsoft consent is Outlook, SharePoint, OneDrive, Teams and OneNote.
     expect([...connectedKeys(new Set(['microsoft']), false)].sort()).toEqual([
       'microsoft',
       'onedrive',
+      'onenote',
       'sharepoint',
+      'teams',
     ]);
   });
 

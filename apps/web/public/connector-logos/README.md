@@ -37,6 +37,8 @@ Ratios below are measured from each file's `viewBox`, not estimated.
 | `microsoft.svg`  | _record source_                                                                                                        | 1.00  |
 | `outlook.svg`    | `Microsoft Outlook Icon (2025–present).svg`                                                                            | 1.06  |
 | `onedrive.svg`   | `Microsoft OneDrive Icon (2025 - present).svg`                                                                         | 1.50  |
+| `teams.svg`      | `Microsoft Office Teams (2025–present).svg`                                                                            | 0.95  |
+| `onenote.svg`    | `Microsoft OneNote Icon (2025 - present).svg`                                                                          | 0.97  |
 | `confluence.svg` | _record source_                                                                                                        | 1.00  |
 | `atlassian.svg`  | _record source_                                                                                                        | 1.00  |
 | `jira.svg`       | _record source_                                                                                                        | 1.00  |

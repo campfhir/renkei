@@ -16,6 +16,8 @@ export const MICROSOFT_SCOPE_GROUPS: ScopeGroup[] = [
   { id: 'tasks', label: 'Tasks (Microsoft To Do)' },
   { id: 'files', label: 'Files (OneDrive)' },
   { id: 'sharepoint', label: 'SharePoint' },
+  { id: 'teams', label: 'Teams' },
+  { id: 'onenote', label: 'OneNote' },
   { id: 'directory', label: 'Directory (organization-wide)' },
 ];
 
@@ -212,6 +214,132 @@ export const MICROSOFT_SCOPE_OPTIONS: ScopeOption[] = [
       'Requires admin consent on the Entra app.',
     userHint: 'Create and change SharePoint pages and documents you already have access to.',
     group: 'sharepoint',
+    defaultChecked: false,
+  },
+
+  // Teams. Chats and channels are read live as the user and never indexed
+  // (the Outlook rule: personal conversations stay out of knowledge). Every
+  // option is off by default and needs the matching delegated permission on
+  // the Entra app registration first, like the Files and Sites options.
+  {
+    id: 'Chat.Read',
+    scopes: ['Chat.Read'],
+    label: 'Read chats',
+    hint:
+      'teams_list_chats, teams_list_chat_messages, teams_search_messages — the caller’s own 1:1 ' +
+      'and group chats, read live, never indexed. Off by default: add Chat.Read as a delegated ' +
+      'Microsoft Graph permission on the Entra app registration before checking this, or ' +
+      'Microsoft will reject the consent. Anyone already connected needs to reconnect afterward.',
+    userHint: 'Read your Teams chats — 1:1 and group conversations and what was said in them.',
+    group: 'teams',
+    defaultChecked: false,
+  },
+  {
+    id: 'ChatMessage.Send',
+    scopes: ['ChatMessage.Send', 'Chat.Create'],
+    label: 'Send chat messages',
+    hint:
+      'teams_send_chat_message — posts in one of the user’s chats as the user, or starts a 1:1 ' +
+      'chat with a colleague when none exists yet (Chat.Create). Only ever on explicit request, ' +
+      'behind a preview card; org read-only mode disables it. Off by default: add ChatMessage.Send ' +
+      'and Chat.Create on the Entra app registration first, then reconnect.',
+    userHint: 'Send Teams chat messages as you. Only ever on your explicit instruction.',
+    group: 'teams',
+    defaultChecked: false,
+  },
+  {
+    id: 'ChannelMessage.Read.All',
+    scopes: ['Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Read.All'],
+    label: 'Read teams and channels',
+    hint:
+      'teams_list_teams, teams_list_channels, teams_list_channel_messages, teams_list_replies — ' +
+      'every team the user belongs to and the channel conversations they can already open. ' +
+      'ChannelMessage.Read.All requires admin consent on the Entra app.',
+    userHint: 'Read the teams you belong to, their channels, and the conversations in them.',
+    group: 'teams',
+    defaultChecked: false,
+  },
+  {
+    id: 'ChannelMessage.Send',
+    scopes: ['Team.ReadBasic.All', 'Channel.ReadBasic.All', 'ChannelMessage.Send'],
+    label: 'Post in channels',
+    hint:
+      'teams_send_channel_message — a new post or a reply in a channel, as the user, behind a ' +
+      'preview card. Carries the team and channel listing scopes so the channel can be found ' +
+      'without reading its messages. Off by default: add ChannelMessage.Send on the Entra app ' +
+      'registration first, then reconnect.',
+    userHint: 'Post in Teams channels as you. Only ever on your explicit instruction.',
+    group: 'teams',
+    defaultChecked: false,
+  },
+  {
+    id: 'Presence.Read.All',
+    scopes: ['Presence.Read', 'Presence.Read.All'],
+    label: 'See availability',
+    hint:
+      'teams_get_presence — whether colleagues are available, busy, away or offline right now, ' +
+      'and their status message. Off by default: add Presence.Read and Presence.Read.All on the ' +
+      'Entra app registration first, then reconnect.',
+    userHint: 'See whether you and your colleagues are available, busy or away in Teams.',
+    group: 'teams',
+    defaultChecked: false,
+  },
+  // OneNote. The Notes scopes split on WHOSE notebook the way the Files
+  // scopes split on whose drive: Notes.Read / Notes.ReadWrite reach the
+  // user’s own notebooks, the .All pair also reaches notebooks on SharePoint
+  // sites and Microsoft 365 groups (a team’s notebook). Same bundling as
+  // Files, for the same reason.
+  {
+    id: 'Notes.Read',
+    scopes: ['Notes.Read'],
+    label: 'Read my notebooks',
+    hint:
+      'onenote_list_notebooks, onenote_list_sections, onenote_list_pages, onenote_read_page — ' +
+      'the caller’s own OneNote notebooks, read live, never indexed. Off by default: add ' +
+      'Notes.Read as a delegated Microsoft Graph permission on the Entra app registration before ' +
+      'checking this, or Microsoft will reject the consent. Anyone already connected needs to ' +
+      'reconnect afterward.',
+    userHint: 'Read your own OneNote notebooks, sections and pages.',
+    group: 'onenote',
+    defaultChecked: false,
+  },
+  {
+    id: 'Notes.ReadWrite',
+    scopes: ['Notes.Read', 'Notes.ReadWrite'],
+    label: 'Write in my notebooks',
+    hint:
+      'onenote_create_section, onenote_create_page, onenote_append_to_page, onenote_delete_page ' +
+      '— creates pages and sections, adds to a page, and DELETES pages in the user’s own ' +
+      'notebooks, each behind a preview card. Carries Notes.Read, so the read tools come with it. ' +
+      'Off by default: add Notes.ReadWrite on the Entra app registration first, then reconnect.',
+    userHint: 'Create pages and add notes in your own OneNote notebooks, and delete pages there.',
+    group: 'onenote',
+    defaultChecked: false,
+  },
+  {
+    id: 'Notes.Read.All',
+    scopes: ['Notes.Read.All'],
+    label: 'Read shared notebooks',
+    hint:
+      'The same OneNote read tools, pointed at a SharePoint site’s or a Microsoft 365 group’s ' +
+      'notebooks (a team’s shared notebook) — every notebook the user can already open. Off by ' +
+      'default: add Notes.Read.All on the Entra app registration first, then reconnect.',
+    userHint: 'Read notebooks shared with you on SharePoint sites and in your teams.',
+    group: 'onenote',
+    defaultChecked: false,
+  },
+  {
+    id: 'Notes.ReadWrite.All',
+    scopes: ['Notes.Read', 'Notes.ReadWrite', 'Notes.Read.All', 'Notes.ReadWrite.All'],
+    label: 'Write in shared notebooks',
+    hint:
+      'The same OneNote write tools, reaching notebooks on SharePoint sites and in Microsoft 365 ' +
+      'groups. Notes.ReadWrite alone cannot do this: a shared notebook lives on its site or group, ' +
+      'and that scope only covers the user’s own. This bundle carries all four Notes scopes, so ' +
+      'it is the single box to check for full OneNote use. Off by default: add Notes.ReadWrite.All ' +
+      'on the Entra app registration first, then reconnect.',
+    userHint: 'Create and add to pages in notebooks shared with you on sites and in your teams.',
+    group: 'onenote',
     defaultChecked: false,
   },
 ];

@@ -99,6 +99,8 @@ import { granularJiraScopes } from './jira/jira-auth';
 import { outlookScopeFor } from './outlook';
 import { webexScopeFor } from './webex';
 import { onedriveScopeFor } from './onedrive/scopes';
+import { teamsScopeFor } from './teams/scopes';
+import { onenoteScopeFor } from './onenote/scopes';
 import { sharepointScopeFor } from './sharepoint/scopes';
 import { githubScopeFor } from './github/scopes';
 import { bitbucketScopeFor } from './bitbucket/scopes';
@@ -200,12 +202,16 @@ function admanagerToolNames(): string[] {
 beforeEach(() => {
   grants = {
     atlassian: grantFor(['jira_'], (tool) => granularJiraScopes(tool, false)),
-    microsoft: grantFor(['outlook_', 'onedrive_', 'sharepoint_'], (tool) =>
+    microsoft: grantFor(['outlook_', 'onedrive_', 'sharepoint_', 'teams_', 'onenote_'], (tool) =>
       tool.startsWith('outlook_')
         ? outlookScopeFor(tool)
         : tool.startsWith('onedrive_')
           ? onedriveScopeFor(tool)
-          : sharepointScopeFor(tool)
+          : tool.startsWith('teams_')
+            ? teamsScopeFor(tool)
+            : tool.startsWith('onenote_')
+              ? onenoteScopeFor(tool)
+              : sharepointScopeFor(tool)
     ),
     webex: grantFor(['webex_'], webexScopeFor),
     'atlassian-bitbucket': grantFor(['bitbucket_'], bitbucketScopeFor),

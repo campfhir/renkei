@@ -67,6 +67,26 @@ export const MICROSOFT_PRODUCTS: MicrosoftProduct[] = [
     groupIds: ['sharepoint'],
   },
   {
+    id: 'teams',
+    capabilityKey: 'teams',
+    logo: 'teams',
+    title: 'Teams',
+    summary:
+      'Chats, teams and channels — read and searched live as you, messages sent only on your ' +
+      'say-so, and who is available right now. Nothing is indexed.',
+    groupIds: ['teams'],
+  },
+  {
+    id: 'onenote',
+    capabilityKey: 'onenote',
+    logo: 'onenote',
+    title: 'OneNote',
+    summary:
+      'Your notebooks, and the shared ones on SharePoint sites and in your teams — pages read ' +
+      'live, new pages and notes written on request.',
+    groupIds: ['onenote'],
+  },
+  {
     id: 'enterprise',
     capabilityKey: 'microsoft',
     // Not 'microsoft': the card containing this panel already shows that
