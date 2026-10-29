@@ -8,17 +8,14 @@
  * index is never authorization; the gate is.
  */
 
-import { compileMetadataFilter, type MetadataFilterExpr } from './metadata-filter';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import type { MetadataFilterExpr } from './metadata-filter';
+import { getDataStore, type ChunkCandidate, type ChunkFilters } from '@renkei/db';
 import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import { verifyCandidates } from '@renkei/gates';
 import type { AccessVerifier, SourceRef } from '@renkei/gates';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { vectorLiteral } from './embeddings';
 import type { EmbeddingProvider } from './embeddings';
-import { escapeLike } from './chunking';
 import { LEXICAL_CONFIG } from './ingest';
 
 export {
@@ -51,7 +48,7 @@ export {
 export {
   ingestChunk,
   upsertChunkRow,
-  searchTextFragment,
+  searchTextParts,
   postgresText,
   LEXICAL_CONFIG,
   type KnowledgeChunkInput,
@@ -205,20 +202,6 @@ export interface SearchOptions {
   perDocument?: boolean;
 }
 
-interface CandidateRow {
-  provider: string;
-  ref_id: string;
-  content: string;
-  metadata: unknown;
-  distance: number;
-  source_at: Date | string | null;
-  keywords?: unknown;
-  /** Present on search rows; absent on browse rows. */
-  score?: number | string | null;
-  semantic_hit?: boolean | null;
-  lexical_hit?: boolean | null;
-}
-
 /** A parseable date, or null — a malformed filter is ignored rather than matching nothing. */
 function boundary(value: string | undefined): Date | null {
   if (!value) return null;
@@ -250,51 +233,33 @@ interface CandidateFilters {
 }
 
 /**
- * The WHERE fragments for the filters, each a no-op `TRUE` when absent so
- * the unfiltered plan stays identical. Built once and shared so browse and
- * search can never disagree about what a filter means.
+ * The filters as the store takes them: dates parsed (a malformed one is
+ * ignored rather than matching nothing), and the providers whose verifiers
+ * are ownerScoped — the proposal-side half of those verifiers (see
+ * AccessVerifier). Providers whose whole ACL is the ref's owner prefix
+ * admit only the requester's own rows into the candidate set: foreign-owned
+ * rows would be withheld by the gate anyway, but fetching them still counts
+ * them — and a withheld tally of a coworker's mailbox is itself a
+ * disclosure, besides eating overfetch slots that owned rows could have
+ * filled. Providers without the flag — including providers with no verifier
+ * at all — pass through untouched, so live-verified content and deployment
+ * bugs are still counted honestly.
  */
-function filterFragments(filters: CandidateFilters) {
-  const sources = (filters.sources ?? []).filter((source) => source.provider.trim());
-  const after = boundary(filters.after);
-  const before = boundary(filters.before);
-  // Each source contributes one AND-ed pair; the pairs are OR-ed together,
-  // so a mixed selection means what it says rather than intersecting.
-  const clauses = sources.map((source) =>
-    source.kind
-      ? sql`(provider = ${source.provider.trim()} AND metadata ->> 'kind' = ${source.kind})`
-      : sql`(provider = ${source.provider.trim()})`
-  );
-  const metadata = compileMetadataFilter(filters.metadata);
+function chunkFilters(
+  filters: CandidateFilters,
+  verifiers: ReadonlyMap<string, AccessVerifier>,
+  userEmail: string
+): ChunkFilters {
   return {
-    source: clauses.length > 0 ? sql`(${sql.join(clauses, sql` OR `)})` : sql`TRUE`,
-    // A dated filter excludes undated rows rather than treating NULL as epoch.
-    after: after ? sql`source_at IS NOT NULL AND source_at >= ${after}` : sql`TRUE`,
-    before: before ? sql`source_at IS NOT NULL AND source_at < ${before}` : sql`TRUE`,
-    metadata: metadata ?? sql`TRUE`,
+    sources: filters.sources ?? [],
+    after: boundary(filters.after),
+    before: boundary(filters.before),
+    metadata: filters.metadata ?? null,
+    ownerScopedProviders: [...verifiers.values()]
+      .filter((verifier) => verifier.ownerScoped)
+      .map((verifier) => verifier.provider),
+    ownerEmail: userEmail,
   };
-}
-
-/**
- * The proposal-side half of ownerScoped verifiers (see AccessVerifier):
- * providers whose whole ACL is the ref's owner prefix admit only the
- * requester's own rows into the candidate set. Foreign-owned rows would be
- * withheld by the gate anyway, but fetching them still counts them — and a
- * withheld tally of a coworker's mailbox is itself a disclosure, besides
- * eating overfetch slots that owned rows could have filled.
- *
- * The predicate mirrors the verifiers' parse exactly: owner is everything
- * before the first `/`, compared lowercased. Providers without the flag —
- * including providers with no verifier at all — pass through untouched, so
- * live-verified content and deployment bugs are still counted honestly.
- */
-function ownerScopeFragment(verifiers: ReadonlyMap<string, AccessVerifier>, userEmail: string) {
-  const scoped = [...verifiers.values()]
-    .filter((verifier) => verifier.ownerScoped)
-    .map((verifier) => sql`${verifier.provider}`);
-  if (scoped.length === 0) return sql`TRUE`;
-  const ownPrefix = `${escapeLike(userEmail.trim().toLowerCase())}/%`;
-  return sql`(provider NOT IN (${sql.join(scoped, sql`, `)}) OR ref_id LIKE ${ownPrefix})`;
 }
 
 /** The content key once per query; null renders every hit as unavailable. */
@@ -303,20 +268,20 @@ function contentKeyOrNull(): Buffer | null {
   return keyResult.ok ? keyResult.val : null;
 }
 
-function matchKindOf(row: CandidateRow): MatchKind {
-  const semantic = row.semantic_hit === true;
-  const lexical = row.lexical_hit === true;
+function matchKindOf(row: ChunkCandidate): MatchKind {
+  const semantic = row.semanticHit === true;
+  const lexical = row.lexicalHit === true;
   if (semantic && lexical) return 'both';
   if (lexical) return 'lexical';
   if (semantic) return 'semantic';
   return 'none';
 }
 
-function toHit(row: CandidateRow, contentKey: Buffer | null): KnowledgeHit {
+function toHit(row: ChunkCandidate, contentKey: Buffer | null): KnowledgeHit {
   const score = Number(row.score ?? 0);
   return {
     provider: row.provider,
-    refId: row.ref_id,
+    refId: row.refId,
     // Stored ciphertext → plaintext for the caller; the row was already
     // ACL-verified before reaching here.
     content: revealContent(row.content, contentKey),
@@ -330,7 +295,7 @@ function toHit(row: CandidateRow, contentKey: Buffer | null): KnowledgeHit {
     keywords: Array.isArray(row.keywords)
       ? row.keywords.filter((keyword): keyword is string => typeof keyword === 'string')
       : [],
-    sourceAt: sourceAtIso(row.source_at),
+    sourceAt: sourceAtIso(row.sourceAt),
   };
 }
 
@@ -343,7 +308,7 @@ export interface RecentOptions extends CandidateFilters {
 }
 
 /** The source a row belongs to, for per-source quotas. */
-function sourceKeyOf(row: CandidateRow): string {
+function sourceKeyOf(row: ChunkCandidate): string {
   const metadata =
     typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
       ? row.metadata
@@ -375,50 +340,20 @@ function sourceKeyOf(row: CandidateRow): string {
 export async function listRecentKnowledge(
   options: RecentOptions
 ): Promise<Result<KnowledgeSearchResult, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const sources = (options.sources ?? []).filter((source) => source.provider.trim());
-  const filters = filterFragments(options);
-  const owner = ownerScopeFragment(options.verifiers, options.userEmail);
   const overfetch = Math.max(options.k * 2, options.k + 4);
 
-  // One UNION ALL branch per source, each with its own LIMIT, so a quiet
-  // source still contributes its newest rows. A single ORDER BY … LIMIT
-  // over the union would hand the whole budget to whichever source happens
-  // to be most recent.
-  const branch = (where: unknown) => sql`
-    (SELECT provider, ref_id, content, metadata, keywords, source_at, 0 AS distance
-     FROM knowledge_chunks
-     WHERE source_at IS NOT NULL
-       AND ${where}
-       AND ${owner}
-       AND ${filters.after}
-       AND ${filters.before}
-       AND ${filters.metadata}
-     ORDER BY source_at DESC
-     LIMIT ${overfetch})
-  `;
-  // The trailing ORDER BY re-sorts the merged union. It must NOT appear in
-  // the single-branch case: without a set operation, Postgres flattens the
-  // parenthesized SELECT and rejects the second sort with "multiple ORDER
-  // BY clauses not allowed" — and the branch already orders itself anyway.
-  const query =
-    sources.length > 1
-      ? sql<CandidateRow>`${sql.join(
-          sources.map((source) =>
-            branch(
-              source.kind
-                ? sql`(provider = ${source.provider.trim()} AND metadata ->> 'kind' = ${source.kind})`
-                : sql`(provider = ${source.provider.trim()})`
-            )
-          ),
-          sql` UNION ALL `
-        )} ORDER BY source_at DESC`
-      : sql<CandidateRow>`${branch(filters.source)}`;
-
+  // One branch per source, each with its own limit, so a quiet source still
+  // contributes its newest rows (the store's listRecent).
   const queryStarted = Date.now();
-  const rowsResult = await wrapAsync(() => query.execute(dbResult.val), 'DB_ERROR' as const);
+  const rowsResult = await wrapAsync(
+    () =>
+      getDataStore().knowledgeChunks.listRecent(
+        chunkFilters(options, options.verifiers, options.userEmail),
+        overfetch
+      ),
+    'DB_ERROR' as const
+  );
   if (!rowsResult.ok) return rowsResult;
   const queryMs = Date.now() - queryStarted;
 
@@ -426,8 +361,8 @@ export async function listRecentKnowledge(
   const outcome = await verifyCandidates(
     options.verifiers,
     options.userEmail,
-    rowsResult.val.rows,
-    (row) => ({ provider: row.provider, refId: row.ref_id }),
+    rowsResult.val,
+    (row) => ({ provider: row.provider, refId: row.refId }),
     { budgetMs: options.budgetMs ?? 3_000 }
   );
   const verifyMs = Date.now() - verifyStarted;
@@ -494,9 +429,9 @@ const MAX_OVERFETCH = 60;
 const HNSW_EF_SEARCH = 200;
 
 /** The logical document a chunk row belongs to — its refId before the `#0001` suffix. */
-function documentKeyOf(row: CandidateRow): string {
-  const hash = row.ref_id.indexOf('#');
-  return `${row.provider}:${hash > 0 ? row.ref_id.slice(0, hash) : row.ref_id}`;
+function documentKeyOf(row: ChunkCandidate): string {
+  const hash = row.refId.indexOf('#');
+  return `${row.provider}:${hash > 0 ? row.refId.slice(0, hash) : row.refId}`;
 }
 
 export async function searchKnowledge(
@@ -506,77 +441,28 @@ export async function searchKnowledge(
   const embedded = await options.embedder.embed([options.query], 'query');
   if (!embedded.ok) return embedded;
   const embedMs = Date.now() - embedStarted;
-  const vector = vectorLiteral(embedded.val[0] ?? []);
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const overfetch = Math.min(MAX_OVERFETCH, Math.max(options.k * 4, options.k + 16));
 
-  // Every narrowing predicate belongs HERE, not in a post-fetch filter: the
-  // query returns only `overfetch` rows per arm, so filtering afterwards
-  // would discard most of an already-small candidate set and starve the
-  // result list. The one post-fetch step below (the distance cutoff)
-  // truncates the tail rather than narrowing the set, which is different.
-  const filters = filterFragments(options);
-  const owner = ownerScopeFragment(options.verifiers, options.userEmail);
-  const where = sql`
-        ${filters.source}
-          AND ${owner}
-          AND ${filters.after}
-          AND ${filters.before}
-          AND ${filters.metadata}`;
-
-  // Two arms, one query. The semantic arm ranks by cosine distance; the
-  // lexical arm ranks by ts_rank_cd over the weighted tsvector (title
-  // first) for a websearch-style parse of the raw query — quoted phrases,
-  // -exclusions and OR all mean what a person expects. Rows a lexical
-  // backfill has not reached (search_text NULL) simply never match that
-  // arm. The fused score is RRF over the two rank positions; a row only one
-  // arm proposed scores as if the other ranked it nowhere.
+  // Every narrowing predicate is applied by the store's query, not in a
+  // post-fetch filter: it returns only `overfetch` rows per arm, so
+  // filtering afterwards would discard most of an already-small candidate
+  // set and starve the result list. The one post-fetch step below (the
+  // distance cutoff) truncates the tail rather than narrowing the set,
+  // which is different.
   const queryStarted = Date.now();
   const rowsResult = await wrapAsync(
     () =>
-      dbResult.val.transaction().execute(async (trx) => {
-        // SET LOCAL: scoped to this transaction only, so it can never leak
-        // onto a later query that reuses the same pooled connection.
-        await sql`SET LOCAL hnsw.ef_search = ${sql.raw(String(HNSW_EF_SEARCH))}`.execute(trx);
-        return sql<CandidateRow>`
-          WITH semantic AS (
-            SELECT id,
-                   (embedding <=> ${vector}::vector) AS distance,
-                   row_number() OVER (ORDER BY embedding <=> ${vector}::vector) AS rank
-            FROM knowledge_chunks
-            WHERE ${where}
-            ORDER BY distance
-            LIMIT ${overfetch}
-          ),
-          lexical AS (
-            SELECT id,
-                   row_number() OVER (ORDER BY ts_rank_cd(search_text, query) DESC) AS rank
-            FROM knowledge_chunks, websearch_to_tsquery(${LEXICAL_CONFIG}::regconfig, ${options.query}) AS query
-            WHERE ${where}
-              AND search_text @@ query
-            ORDER BY ts_rank_cd(search_text, query) DESC
-            LIMIT ${overfetch}
-          ),
-          fused AS (
-            SELECT COALESCE(semantic.id, lexical.id) AS id,
-                   COALESCE(1.0 / (${RRF_K} + semantic.rank), 0)
-                     + COALESCE(1.0 / (${RRF_K} + lexical.rank), 0) AS score,
-                   semantic.distance AS distance,
-                   (semantic.id IS NOT NULL) AS semantic_hit,
-                   (lexical.id IS NOT NULL) AS lexical_hit
-            FROM semantic FULL OUTER JOIN lexical ON semantic.id = lexical.id
-          )
-          SELECT c.provider, c.ref_id, c.content, c.metadata, c.keywords, c.source_at,
-                 COALESCE(fused.distance, c.embedding <=> ${vector}::vector) AS distance,
-                 fused.score, fused.semantic_hit, fused.lexical_hit
-          FROM fused JOIN knowledge_chunks c ON c.id = fused.id
-          ORDER BY fused.score DESC, distance ASC
-          LIMIT ${overfetch}
-        `.execute(trx);
-      }),
+      getDataStore().knowledgeChunks.searchHybrid(
+        chunkFilters(options, options.verifiers, options.userEmail),
+        {
+          vector: embedded.val[0] ?? [],
+          text: options.query,
+          overfetch,
+          rrfK: RRF_K,
+          lexicalConfig: LEXICAL_CONFIG,
+          efSearch: HNSW_EF_SEARCH,
+        }
+      ),
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
@@ -591,18 +477,18 @@ export async function searchKnowledge(
 
   let weak = 0;
   const seenDocuments = new Set<string>();
-  const candidates = rowsResult.val.rows.filter((row) => {
+  const candidates = rowsResult.val.filter((row) => {
     if (
       options.excludeRef &&
       row.provider === options.excludeRef.provider &&
-      row.ref_id === options.excludeRef.refId
+      row.refId === options.excludeRef.refId
     ) {
       return false;
     }
     // The cutoff applies to what the vector alone proposed. A lexical
     // match vouches for a row whatever its distance — that IS the case
     // the lexical arm exists for.
-    if (maxDistance !== null && row.lexical_hit !== true && Number(row.distance) > maxDistance) {
+    if (maxDistance !== null && row.lexicalHit !== true && row.distance > maxDistance) {
       weak += 1;
       return false;
     }
@@ -619,7 +505,7 @@ export async function searchKnowledge(
     options.verifiers,
     options.userEmail,
     candidates,
-    (row) => ({ provider: row.provider, refId: row.ref_id }),
+    (row) => ({ provider: row.provider, refId: row.refId }),
     { budgetMs: options.budgetMs ?? 3_000 }
   );
   const verifyMs = Date.now() - verifyStarted;

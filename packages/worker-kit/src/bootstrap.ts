@@ -1,8 +1,6 @@
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import { loadKeyring } from '@renkei/crypto';
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore } from '@renkei/db';
 import { watchLogLevel } from '@renkei/settings';
 import type { WorkerLogger } from './logger';
 import { parseNamedApiKeys, type NamedApiKey } from './http';
@@ -24,7 +22,6 @@ import { parseNamedApiKeys, type NamedApiKey } from './http';
  * silent test-support mock, unchanged.
  */
 export interface WorkerServerDeps {
-  db: Kysely<DB>;
   encryptionKey: Buffer;
   /** Every accepted bearer key, flat — for a worker that does not tell its callers apart. */
   apiKeys: string[];
@@ -82,8 +79,8 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
     fatal('TOKEN_ENCRYPTION_KEY must be 32 bytes base64 (openssl rand -base64 32)');
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) fatal(`database unavailable: ${String(dbResult.err)}`);
+  const ready = checkDataStore();
+  if (!ready.ok) fatal(`database unavailable: ${String(ready.err)}`);
 
   const portEnv = process.env[`${envPrefix}_PORT`];
   const port = Number(portEnv ?? String(options.defaultPort));
@@ -92,7 +89,6 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
   }
 
   const server = options.createServer({
-    db: dbResult.val,
     encryptionKey: key.val,
     apiKeys,
     namedApiKeys,
@@ -109,7 +105,7 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
     server.close(() => {
       void (async () => {
         await logger.flush();
-        await closeDatabase();
+        await closeDataStore();
         process.exit(0);
       })();
     });

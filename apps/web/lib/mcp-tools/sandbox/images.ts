@@ -30,7 +30,6 @@ import {
 } from '@renkei/agent-llm';
 import { sanitizeBytes } from '@renkei/document-render';
 import { validateFilename } from '@renkei/connector-sandbox';
-import { getDatabase } from '@renkei/db';
 import { getImagePrefs } from '@renkei/user-prefs';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
@@ -60,10 +59,8 @@ const DEFAULT_FILENAME = 'image.png';
  * than offered to fail.
  */
 export async function sandboxImageModels(): Promise<ImageModelChoice[]> {
-  const db = getDatabase();
-  if (!db.ok) return [];
   try {
-    return await listImageModels(db.val);
+    return await listImageModels();
   } catch {
     return [];
   }
@@ -106,8 +103,7 @@ export function registerSandboxImageTools(
   const recordUsage =
     deps.recordUsage ??
     (async (subject: string, report: ImageUsageReport) => {
-      const db = getDatabase();
-      if (db.ok) await recordImageUsageRow(db.val, { ...report, subject });
+      await recordImageUsageRow({ ...report, subject });
     });
 
   server.registerTool(
@@ -209,9 +205,7 @@ export function registerSandboxImageTools(
 
       const choice = pickImageModel(deps.models, await preferredModelId(target.subject));
       if (!choice) return errText('No image model is available.');
-      const db = getDatabase();
-      if (!db.ok) return errText('Database unavailable.');
-      const resolved = await resolve(db.val, choice.id);
+      const resolved = await resolve(choice.id);
       if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {
         return errText(
           `The image model "${choice.label}" cannot be used right now (it is disabled or its configuration is incomplete). An administrator needs to check it.`

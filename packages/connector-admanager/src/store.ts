@@ -1,7 +1,8 @@
 /**
- * Kysely accessors for ADManager Plus instances and per-user connections —
- * the only file that knows the table shapes. Everything returns Result and
- * every uncertain outcome denies: a DB error is an error (not "no
+ * ADManager Plus instances and per-user connections, through the data store
+ * (`getDataStore().adManagerInstances`): the store keeps and returns rows, this file
+ * validates them into the connector's types. Everything returns Result and
+ * every uncertain outcome denies: a storage error is an error (not "no
  * instances"), and a row that fails validation poisons the read rather
  * than being skipped.
  *
@@ -15,8 +16,7 @@
  * does not.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type AdManagerInstanceRecord } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { normalizePermissions, type AdManagerPermission } from './permissions';
@@ -34,59 +34,50 @@ export interface InstanceRow {
   updatedAt: Date;
 }
 
-interface RawInstance {
-  id: string;
-  name: string;
-  environment: string;
-  base_url: string;
-  tls_verify: boolean;
-  ca_pem: string | null;
-  allow_insecure_http: boolean;
-  settings: unknown;
-  enabled: boolean;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function summaryFromRow(row: RawInstance): AdManagerInstanceSummary {
+function summaryFromRecord(row: AdManagerInstanceRecord): AdManagerInstanceSummary {
   return {
     id: row.id,
     name: row.name,
     environment: row.environment,
-    baseUrl: row.base_url,
-    tlsVerify: row.tls_verify,
-    hasCustomCa: typeof row.ca_pem === 'string' && row.ca_pem.trim().length > 0,
-    allowInsecureHttp: row.allow_insecure_http,
+    baseUrl: row.baseUrl,
+    tlsVerify: row.tlsVerify,
+    hasCustomCa: typeof row.caPem === 'string' && row.caPem.trim().length > 0,
+    allowInsecureHttp: row.allowInsecureHttp,
     resetPasswordTemplateName: readInstanceSettings(row.settings).resetPasswordTemplateName,
     enabled: row.enabled,
   };
 }
 
-const INSTANCE_COLUMNS = [
-  'admanager_instances.id',
-  'admanager_instances.name',
-  'admanager_instances.environment',
-  'admanager_instances.base_url',
-  'admanager_instances.tls_verify',
-  'admanager_instances.ca_pem',
-  'admanager_instances.allow_insecure_http',
-  'admanager_instances.settings',
-  'admanager_instances.enabled',
-] as const;
-
-function connectionFromRow(row: {
-  technician_name: string;
+function connectionFromRecord(row: {
+  technicianName: string;
   permissions: unknown;
 }): Result<InstanceConnection, StoreError> {
   if (!Array.isArray(row.permissions)) return err('MALFORMED_ROW' as const);
   // Unknown ids (a permission removed from the catalog) are dropped rather
   // than poisoning the row: less access, never more.
   return ok({
-    technicianName: row.technician_name,
+    technicianName: row.technicianName,
     permissions: normalizePermissions(row.permissions),
   });
+}
+
+function rowFromRecord(row: AdManagerInstanceRecord): InstanceRow {
+  return {
+    summary: summaryFromRecord(row),
+    caPem: typeof row.caPem === 'string' && row.caPem.trim() ? row.caPem : null,
+    settings: isRecord(row.settings) ? { ...row.settings } : {},
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** The data store's name-uniqueness refusal (the only unique key a write here can hit). */
+function isDuplicateName(cause: unknown): boolean {
+  return isRecord(cause) && cause.code === '23505';
 }
 
 // ---------------------------------------------------------------------------
@@ -111,42 +102,22 @@ export interface InstanceWithConnection {
  * is not a secret in this model, credentials are the gate.
  */
 export async function listInstancesWithConnection(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<InstanceWithConnection[], StoreError>> {
   const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('admanager_instances')
-        .leftJoin('admanager_instance_connections', (join) =>
-          join
-            
-            .onRef('admanager_instance_connections.instance_id', '=', 'admanager_instances.id')
-            .on('admanager_instance_connections.subject', '=', subject)
-        )
-        .select([
-          ...INSTANCE_COLUMNS,
-          'admanager_instance_connections.technician_name',
-          'admanager_instance_connections.permissions',
-        ])
-        .where('admanager_instances.enabled', '=', true)
-        .orderBy('admanager_instances.name')
-        .execute(),
+    () => getDataStore().adManagerInstances.listWithConnection(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return rows;
 
   const instances: InstanceWithConnection[] = [];
   for (const row of rows.val) {
-    const summary = summaryFromRow(row);
-    if (row.technician_name === null || row.permissions === null) {
+    const summary = summaryFromRecord(row.instance);
+    if (!row.connection) {
       instances.push({ instance: summary, connection: null });
       continue;
     }
-    const connection = connectionFromRow({
-      technician_name: row.technician_name,
-      permissions: row.permissions,
-    });
+    const connection = connectionFromRecord(row.connection);
     if (!connection.ok) return connection;
     instances.push({ instance: summary, connection: connection.val });
   }
@@ -155,10 +126,9 @@ export async function listInstancesWithConnection(
 
 /** The instances this subject has connected — what the tools list. */
 export async function listConnectedInstances(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ConnectedInstance[], StoreError>> {
-  const all = await listInstancesWithConnection(db, subject);
+  const all = await listInstancesWithConnection(subject);
   if (!all.ok) return all;
   return ok(
     all.val.flatMap((entry) =>
@@ -169,43 +139,29 @@ export async function listConnectedInstances(
 
 /** One connection's exposure row (no credential), or null if not connected. */
 export async function getConnection(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string
 ): Promise<Result<InstanceConnection | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('admanager_instance_connections')
-        .select(['technician_name', 'permissions'])
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().adManagerInstances.getConnection(instanceId, subject),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
   if (!row.val) return ok(null);
-  return connectionFromRow(row.val);
+  return connectionFromRecord(row.val);
 }
 
 /** The sealed credential for one connection — only the worker decrypts it. */
 export async function readConnectionCiphertext(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string
 ): Promise<Result<string | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('admanager_instance_connections')
-        .select('encrypted_credentials')
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().adManagerInstances.getConnection(instanceId, subject),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
-  return ok(row.val?.encrypted_credentials ?? null);
+  return ok(row.val?.encryptedCredentials ?? null);
 }
 
 export interface ConnectionInput {
@@ -218,31 +174,17 @@ export interface ConnectionInput {
 
 /** Store or replace this subject's connection to an instance. */
 export async function upsertConnection(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string,
   input: ConnectionInput
 ): Promise<Result<void, StoreError>> {
   const written = await wrapAsync(
     () =>
-      db
-        .insertInto('admanager_instance_connections')
-        .values({
-          instance_id: instanceId,
-          subject,
-          encrypted_credentials: input.encryptedCredentials,
-          technician_name: input.technicianName,
-          permissions: [...input.permissions],
-        })
-        .onConflict((oc) =>
-          oc.constraint('admanager_instance_connections_pk').doUpdateSet({
-            encrypted_credentials: input.encryptedCredentials,
-            technician_name: input.technicianName,
-            permissions: [...input.permissions],
-            updated_at: new Date(),
-          })
-        )
-        .execute(),
+      getDataStore().adManagerInstances.upsertConnection(instanceId, subject, {
+        encryptedCredentials: input.encryptedCredentials,
+        technicianName: input.technicianName,
+        permissions: [...input.permissions],
+      }),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -251,42 +193,32 @@ export async function upsertConnection(
 
 /** Change only the permissions, keeping the stored credential. */
 export async function updateConnectionPermissions(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string,
   permissions: readonly AdManagerPermission[]
 ): Promise<Result<boolean, StoreError>> {
   const updated = await wrapAsync(
     () =>
-      db
-        .updateTable('admanager_instance_connections')
-        .set({ permissions: [...permissions], updated_at: new Date() })
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+      getDataStore().adManagerInstances.updateConnectionPermissions(instanceId, subject, [
+        ...permissions,
+      ]),
     'DB_ERROR' as const
   );
   if (!updated.ok) return updated;
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
 /** Remove this subject's connection (credential included). */
 export async function deleteConnection(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string
 ): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
-    () =>
-      db
-        .deleteFrom('admanager_instance_connections')
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().adManagerInstances.deleteConnection(instanceId, subject),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
-  return ok(deleted.val.numDeletedRows > BigInt(0));
+  return ok(deleted.val > 0);
 }
 
 /** The permissions this subject holds across every enabled instance — see registry. */
@@ -304,30 +236,18 @@ export interface ToolExposure {
  * per-instance check happens again on every call.
  */
 export async function resolveToolExposure(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ToolExposure, StoreError>> {
   const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('admanager_instance_connections')
-        .innerJoin(
-          'admanager_instances',
-          'admanager_instances.id',
-          'admanager_instance_connections.instance_id'
-        )
-        .select(['admanager_instance_connections.permissions'])
-        .where('admanager_instance_connections.subject', '=', subject)
-        .where('admanager_instances.enabled', '=', true)
-        .execute(),
+    () => getDataStore().adManagerInstances.connectionPermissions(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return rows;
 
   const granted: unknown[] = [];
-  for (const row of rows.val) {
-    if (!Array.isArray(row.permissions)) return err('MALFORMED_ROW' as const);
-    granted.push(...row.permissions);
+  for (const permissions of rows.val) {
+    if (!Array.isArray(permissions)) return err('MALFORMED_ROW' as const);
+    granted.push(...permissions);
   }
   return ok({ connected: rows.val.length > 0, permissions: normalizePermissions(granted) });
 }
@@ -336,48 +256,21 @@ export async function resolveToolExposure(
 // Admin accessors — used only behind ROLE_OPERATOR routes.
 // ---------------------------------------------------------------------------
 
-function rowFromRaw(row: RawInstance & { created_at: Date; updated_at: Date }): InstanceRow {
-  return {
-    summary: summaryFromRow(row),
-    caPem: typeof row.ca_pem === 'string' && row.ca_pem.trim() ? row.ca_pem : null,
-    settings: isRecord(row.settings) ? { ...row.settings } : {},
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
-  };
-}
-
-export async function listInstances(
-  db: Kysely<DB>
-): Promise<Result<InstanceRow[], StoreError>> {
-  const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('admanager_instances')
-        .selectAll()
-        .orderBy('name')
-        .execute(),
-    'DB_ERROR' as const
-  );
+export async function listInstances(): Promise<Result<InstanceRow[], StoreError>> {
+  const rows = await wrapAsync(() => getDataStore().adManagerInstances.list(), 'DB_ERROR' as const);
   if (!rows.ok) return rows;
-  return ok(rows.val.map((row) => rowFromRaw(row)));
+  return ok(rows.val.map(rowFromRecord));
 }
 
 export async function getInstance(
-  db: Kysely<DB>,
   instanceId: string
 ): Promise<Result<InstanceRow | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('admanager_instances')
-        .selectAll()
-        .where('id', '=', instanceId)
-        .executeTakeFirst(),
+    () => getDataStore().adManagerInstances.get(instanceId),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
-  if (!row.val) return ok(null);
-  return ok(rowFromRaw(row.val));
+  return ok(row.val ? rowFromRecord(row.val) : null);
 }
 
 export interface InstanceInput {
@@ -407,87 +300,47 @@ function settingsFromInput(input: InstanceInput): Record<string, string> {
     : { resetPasswordTemplateName: input.resetPasswordTemplateName };
 }
 
+/** What the store writes under `settings`: these keys, owned by this form. */
+function settingsOf(input: InstanceInput) {
+  return { ownedKeys: [...SETTINGS_KEYS], values: settingsFromInput(input) };
+}
+
 export async function createInstance(
-  db: Kysely<DB>,
   input: InstanceInput
 ): Promise<Result<string, StoreError | 'DUPLICATE_NAME'>> {
   const inserted = await wrapAsync(
-    () =>
-      db
-        .insertInto('admanager_instances')
-        .values({
-          name: input.name,
-          environment: input.environment,
-          base_url: input.baseUrl,
-          tls_verify: input.tlsVerify,
-          ca_pem: input.caPem ?? null,
-          allow_insecure_http: input.allowInsecureHttp,
-          enabled: input.enabled,
-          settings: JSON.stringify(settingsFromInput(input)),
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow(),
+    () => getDataStore().adManagerInstances.create({ ...input, settings: settingsOf(input) }),
     'DB_ERROR' as const
   );
   if (!inserted.ok) {
     return isDuplicateName(inserted.err.cause) ? err('DUPLICATE_NAME' as const) : inserted;
   }
-  return ok(inserted.val.id);
+  return ok(inserted.val);
 }
 
 export async function updateInstance(
-  db: Kysely<DB>,
   instanceId: string,
   input: InstanceInput
 ): Promise<Result<boolean, StoreError | 'DUPLICATE_NAME'>> {
   const updated = await wrapAsync(
     () =>
-      db
-        .updateTable('admanager_instances')
-        .set({
-          name: input.name,
-          environment: input.environment,
-          base_url: input.baseUrl,
-          tls_verify: input.tlsVerify,
-          ...(input.caPem === undefined ? {} : { ca_pem: input.caPem }),
-          allow_insecure_http: input.allowInsecureHttp,
-          // jsonb - text[] drops the keys this form owns, then || lays the
-          // new values over what remains.
-          settings: sql`(settings - ARRAY[${sql.join(SETTINGS_KEYS.map((key) => sql.lit(key)))}]::text[]) || ${JSON.stringify(settingsFromInput(input))}::jsonb`,
-          enabled: input.enabled,
-          updated_at: new Date().toISOString(),
-        })
-        .where('id', '=', instanceId)
-        .executeTakeFirst(),
+      getDataStore().adManagerInstances.update(instanceId, {
+        ...input,
+        settings: settingsOf(input),
+      }),
     'DB_ERROR' as const
   );
   if (!updated.ok) {
     return isDuplicateName(updated.err.cause) ? err('DUPLICATE_NAME' as const) : updated;
   }
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
-export async function deleteInstance(
-  db: Kysely<DB>,
-  instanceId: string
-): Promise<Result<boolean, StoreError>> {
+export async function deleteInstance(instanceId: string): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
-    () =>
-      db
-        .deleteFrom('admanager_instances')
-        .where('id', '=', instanceId)
-        .executeTakeFirst(),
+    () => getDataStore().adManagerInstances.delete(instanceId),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
-  return ok(deleted.val.numDeletedRows > BigInt(0));
-}
-
-function isDuplicateName(cause: unknown): boolean {
-  return (
-    isRecord(cause) &&
-    cause.code === '23505' &&
-    typeof cause.constraint === 'string' &&
-    cause.constraint === 'idx_admanager_instances_name'
-  );
+  return ok(deleted.val > 0);
 }

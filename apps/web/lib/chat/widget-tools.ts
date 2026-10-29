@@ -31,8 +31,7 @@
  * issue) must never re-run it, only show the receipt.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   HttpMcpClient,
   mintRunToken,
@@ -40,10 +39,9 @@ import {
   type McpToolResult,
 } from '@renkei/mcp-client';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
-import { insertMessage, listMessages } from './messages';
+import { insertMessageWhenIdle, listMessages } from './messages';
 import { chatCipherById } from './chat-keys';
 import { startChatTurn, type StartedTurn } from './start-turn';
-import { getActiveTurn } from './turns';
 import { internalMcpEndpoint } from './internal-origin';
 import { toChatBlocks, widgetStateKeyOf } from './views';
 import type { ChatMessageView, WidgetDecisionState } from './views';
@@ -63,23 +61,20 @@ export type ConfirmWidgetToolResult =
  * its connector, or was never app-only, answers `not-a-card-tool` rather
  * than running.
  */
-export async function confirmWidgetTool(
-  db: Kysely<DB>,
-  input: {
-    subject: string;
-    roles: string[];
-    name: string;
-    arguments: Record<string, unknown>;
-    /**
-     * The card's own persistence key (ui.ts's rememberDone key), when the
-     * card sends one along with its `tools/call` (bridge.ts's `callTool`).
-     * A decision already recorded under it refuses the call rather than
-     * running the tool again — the one guard against a second device
-     * double-acting on a confirm tool that is not idempotent.
-     */
-    stateKey?: string;
-  }
-): Promise<ConfirmWidgetToolResult> {
+export async function confirmWidgetTool(input: {
+  subject: string;
+  roles: string[];
+  name: string;
+  arguments: Record<string, unknown>;
+  /**
+   * The card's own persistence key (ui.ts's rememberDone key), when the
+   * card sends one along with its `tools/call` (bridge.ts's `callTool`).
+   * A decision already recorded under it refuses the call rather than
+   * running the tool again — the one guard against a second device
+   * double-acting on a confirm tool that is not idempotent.
+   */
+  stateKey?: string;
+}): Promise<ConfirmWidgetToolResult> {
   // Checked first, and on its own: whether this exact card was already
   // decided is a plain fact about `chat_widget_decisions`, independent of
   // whatever the tool catalog says right now — a connector that dropped
@@ -87,7 +82,7 @@ export async function confirmWidgetTool(
   // tool" (or, worse, into `not-a-card-tool` masking a stale catalog read
   // that would otherwise have let a second run through).
   if (input.stateKey) {
-    const existing = await getWidgetDecision(db, input.stateKey);
+    const existing = await getWidgetDecision(input.stateKey);
     if (existing) return { ok: false, reason: 'already-decided', decision: existing };
   }
 
@@ -95,7 +90,7 @@ export async function confirmWidgetTool(
   const descriptor = catalog.find((entry) => entry.name === input.name);
   if (!descriptor?.appOnly) return { ok: false, reason: 'not-a-card-tool' };
 
-  const token = await mintRunToken(db, {
+  const token = await mintRunToken({
     subject: input.subject,
     agentId: null,
     ttlSeconds: CALL_TTL_SECONDS,
@@ -113,7 +108,7 @@ export async function confirmWidgetTool(
   } catch {
     return { ok: false, reason: 'call-failed' };
   } finally {
-    await revokeRunToken(db, token);
+    await revokeRunToken(token);
   }
 }
 
@@ -144,46 +139,43 @@ export type WidgetModelContextOutcome = { message: ChatMessageView; turn: Starte
  * note is still appended on its own so the decision is not lost, and
  * `turn` is null.
  */
-export async function recordWidgetModelContext(
-  db: Kysely<DB>,
-  input: {
-    session: { subject: string; roles: string[] };
-    chatId: string;
-    text: string;
-    /**
-     * The card's own persistence key, when the card sends one along with
-     * its `ui/update-model-context` (bridge.ts). One reply can present
-     * several cards at once (a batch of assignments to review, say), and
-     * without this, deciding the first one opened a turn immediately —
-     * the model answered having seen only that one, and the SECOND
-     * decision then either opened a turn of its own (the model commenting
-     * a second time on what is, to the person, one batch of decisions) or,
-     * if the first reply was still streaming, was dropped outright by the
-     * ALREADY_RUNNING branch this replaced. With it, a decision whose
-     * sibling in the same reply is still undecided is appended but never
-     * opens a turn; only the LAST sibling to be decided does, and by then
-     * the model's own context already has every one of them as prior note
-     * rows to read — one reply, informed by all of them, instead of one
-     * reply per card.
-     */
-    stateKey?: string;
-    defer?: (task: () => Promise<void>) => void;
-  }
-): Promise<
+export async function recordWidgetModelContext(input: {
+  session: { subject: string; roles: string[] };
+  chatId: string;
+  text: string;
+  /**
+   * The card's own persistence key, when the card sends one along with
+   * its `ui/update-model-context` (bridge.ts). One reply can present
+   * several cards at once (a batch of assignments to review, say), and
+   * without this, deciding the first one opened a turn immediately —
+   * the model answered having seen only that one, and the SECOND
+   * decision then either opened a turn of its own (the model commenting
+   * a second time on what is, to the person, one batch of decisions) or,
+   * if the first reply was still streaming, was dropped outright by the
+   * ALREADY_RUNNING branch this replaced. With it, a decision whose
+   * sibling in the same reply is still undecided is appended but never
+   * opens a turn; only the LAST sibling to be decided does, and by then
+   * the model's own context already has every one of them as prior note
+   * rows to read — one reply, informed by all of them, instead of one
+   * reply per card.
+   */
+  stateKey?: string;
+  defer?: (task: () => Promise<void>) => void;
+}): Promise<
   ({ ok: true } & WidgetModelContextOutcome) | { ok: false; reason: 'turn-running' | 'failed' }
 > {
   const text = input.text.trim().slice(0, MODEL_CONTEXT_MAX_CHARS);
   if (!text) return { ok: false, reason: 'failed' };
 
-  if (input.stateKey && (await waitingOnSiblings(db, input.chatId, input.stateKey))) {
-    const appended = await appendWidgetModelContext(db, {
+  if (input.stateKey && (await waitingOnSiblings(input.chatId, input.stateKey))) {
+    const appended = await appendWidgetModelContext({
       chatId: input.chatId,
       text,
     });
     return appended.ok ? { ok: true, message: appended.message, turn: null } : appended;
   }
 
-  const started = await startChatTurn(db, {
+  const started = await startChatTurn({
     session: input.session,
     chatId: input.chatId,
     text,
@@ -212,7 +204,7 @@ export async function recordWidgetModelContext(
     case 'ALREADY_RUNNING':
     case 'NO_MODEL':
     case 'MODEL_ERROR': {
-      const appended = await appendWidgetModelContext(db, {
+      const appended = await appendWidgetModelContext({
         chatId: input.chatId,
         text,
       });
@@ -233,14 +225,10 @@ export async function recordWidgetModelContext(
  * server sees first, and by definition the fact that this call is
  * happening at all means the card is decided.
  */
-async function waitingOnSiblings(
-  db: Kysely<DB>,
-  chatId: string,
-  stateKey: string
-): Promise<boolean> {
-  const siblings = await turnWidgetStateKeys(db, chatId, stateKey);
+async function waitingOnSiblings(chatId: string, stateKey: string): Promise<boolean> {
+  const siblings = await turnWidgetStateKeys(chatId, stateKey);
   if (!siblings || siblings.length <= 1) return false;
-  const decisions = await listWidgetDecisions(db, chatId);
+  const decisions = await listWidgetDecisions(chatId);
   return siblings.some((key) => key !== stateKey && !decisions.has(key));
 }
 
@@ -252,12 +240,8 @@ async function waitingOnSiblings(
  * row). Null when no row carries this exact key at all — an unknown or
  * already-compacted card — which callers read as "nothing to wait on".
  */
-async function turnWidgetStateKeys(
-  db: Kysely<DB>,
-  chatId: string,
-  stateKey: string
-): Promise<string[] | null> {
-  const rows = await listMessages(db, chatId, await chatCipherById(db, chatId));
+async function turnWidgetStateKeys(chatId: string, stateKey: string): Promise<string[] | null> {
+  const rows = await listMessages(chatId, await chatCipherById(chatId));
   let turnId: string | null | undefined;
   for (const row of rows) {
     if (row.kind !== 'tool_results') continue;
@@ -288,43 +272,35 @@ async function turnWidgetStateKeys(
  * cannot start. Refused while a turn is running, same reason: the runner
  * is the only writer of a turn's own rows then.
  */
-export async function appendWidgetModelContext(
-  db: Kysely<DB>,
-  input: { chatId: string; text: string }
-): Promise<
+export async function appendWidgetModelContext(input: {
+  chatId: string;
+  text: string;
+}): Promise<
   { ok: true; message: ChatMessageView } | { ok: false; reason: 'turn-running' | 'failed' }
 > {
   const text = input.text.trim().slice(0, MODEL_CONTEXT_MAX_CHARS);
   if (!text) return { ok: false, reason: 'failed' };
-  return db.transaction().execute(async (trx) => {
-    await trx
-      .selectFrom('chats')
-      .select('id')
-      .where('id', '=', input.chatId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (await getActiveTurn(trx, input.chatId)) return { ok: false, reason: 'turn-running' };
-    const inserted = await insertMessage(trx, {
-      chatId: input.chatId,
-      turnId: null,
-      role: 'user',
-      kind: 'note',
-      status: 'complete',
-      blocks: [{ type: 'text', text }],
-      cipher: await chatCipherById(trx, input.chatId),
-    });
-    if (!inserted) return { ok: false, reason: 'failed' };
-    return {
-      ok: true,
-      message: noteView({
-        id: inserted.id,
-        turnId: null,
-        seq: inserted.seq,
-        createdAt: inserted.createdAt.toISOString(),
-        text,
-      }),
-    };
+  const appended = await insertMessageWhenIdle({
+    chatId: input.chatId,
+    turnId: null,
+    role: 'user',
+    kind: 'note',
+    status: 'complete',
+    blocks: [{ type: 'text', text }],
+    cipher: await chatCipherById(input.chatId),
   });
+  if (!appended.ok) return appended;
+  const inserted = appended.inserted;
+  return {
+    ok: true,
+    message: noteView({
+      id: inserted.id,
+      turnId: null,
+      seq: inserted.seq,
+      createdAt: inserted.createdAt.toISOString(),
+      text,
+    }),
+  };
 }
 
 /** The thread's view of a note row, as the page would read it back. */
@@ -366,43 +342,29 @@ function noteView(row: {
  * happened once; overwriting the row would rewrite a receipt the model and
  * the chat may already have reacted to.
  */
-export async function recordWidgetDecision(
-  db: Kysely<DB>,
-  input: {
-    chatId: string;
-    subject: string;
-    stateKey: string;
-    decision: 'confirmed' | 'cancelled';
-    state: WidgetDecisionState;
-  }
-): Promise<{ ok: true } | { ok: false; reason: 'invalid' }> {
+export async function recordWidgetDecision(input: {
+  chatId: string;
+  subject: string;
+  stateKey: string;
+  decision: 'confirmed' | 'cancelled';
+  state: WidgetDecisionState;
+}): Promise<{ ok: true } | { ok: false; reason: 'invalid' }> {
   const stateKey = input.stateKey.trim().slice(0, MAX_STATE_KEY_CHARS);
   if (!stateKey) return { ok: false, reason: 'invalid' };
-  await db
-    .insertInto('chat_widget_decisions')
-    .values({
-      chat_id: input.chatId,
-      state_key: stateKey,
-      decision: input.decision,
-      state: JSON.stringify(input.state),
-      decided_by: input.subject,
-    })
-    .onConflict((oc) => oc.columns(['state_key']).doNothing())
-    .execute();
+  await getDataStore().chatThreads.recordWidgetDecision({
+    chatId: input.chatId,
+    stateKey,
+    decision: input.decision,
+    state: input.state,
+    decidedBy: input.subject,
+  });
   return { ok: true };
 }
 
 /** One card's decision, by its own persistence key — `confirmWidgetTool`'s guard. */
-export async function getWidgetDecision(
-  db: Kysely<DB>,
-  stateKey: string
-): Promise<WidgetDecisionState | null> {
-  const row = await db
-    .selectFrom('chat_widget_decisions')
-    .select(['state'])
-    .where('state_key', '=', stateKey)
-    .executeTakeFirst();
-  return row ? widgetDecisionStateOf(row.state) : null;
+export async function getWidgetDecision(stateKey: string): Promise<WidgetDecisionState | null> {
+  const state = await getDataStore().chatThreads.getWidgetDecision(stateKey);
+  return state === null ? null : widgetDecisionStateOf(state);
 }
 
 /**
@@ -412,18 +374,13 @@ export async function getWidgetDecision(
  * once rather than one lookup per card.
  */
 export async function listWidgetDecisions(
-  db: Kysely<DB>,
   chatId: string
 ): Promise<Map<string, WidgetDecisionState>> {
-  const rows = await db
-    .selectFrom('chat_widget_decisions')
-    .select(['state_key', 'state'])
-    .where('chat_id', '=', chatId)
-    .execute();
+  const rows = await getDataStore().chatThreads.listWidgetDecisions(chatId);
   const out = new Map<string, WidgetDecisionState>();
   for (const row of rows) {
     const state = widgetDecisionStateOf(row.state);
-    if (state) out.set(row.state_key, state);
+    if (state) out.set(row.stateKey, state);
   }
   return out;
 }

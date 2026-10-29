@@ -9,8 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { insertMessage } from './messages';
 import { resourceCipher } from './content-crypto';
@@ -28,12 +27,10 @@ const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
 
 maybe('chat_widget_resolve', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const me = `me-${suiteId.slice(0, 8)}`;
-  const chatId = randomUUID();
-  const otherChatId = randomUUID();
-  const turnId = randomUUID();
+  let chatId = '';
+  let otherChatId = '';
   const draftId = randomUUID();
   const previewId = randomUUID();
   const otherPreviewId = randomUUID();
@@ -44,12 +41,30 @@ maybe('chat_widget_resolve', () => {
   const text = (result: { content: Array<{ type: string; text?: string }> }) =>
     result.content.map((block) => block.text ?? '').join('\n');
 
+  /** How the decision under `stateKey` went and who made it, as chat-view.ts's batch read sees it. */
+  const decisionRow = async (stateKey: string) => {
+    const rows = await getDataStore().chatThreads.listWidgetDecisions(chatId);
+    const row = rows.find((candidate) => candidate.stateKey === stateKey);
+    return row ? { decision: row.decision, decidedBy: row.decidedBy } : undefined;
+  };
+
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
+    const store = getDataStore();
+    const newChat = async (title: string) => {
+      const id = await store.chats.create({
+        ownerSubject: me,
+        projectId: null,
+        llmModelId: null,
+        toolConfig: null,
+        thinkingEnabled: false,
+        autoMode: false,
+      });
+      await store.chats.update(me, id, { title });
+      return id;
+    };
+    chatId = await newChat('Vesta troubleshooting');
+    otherChatId = await newChat('Another chat');
     context = {
-      db,
       subject: me,
       chatId,
       projectId: null,
@@ -59,25 +74,15 @@ maybe('chat_widget_resolve', () => {
         emitted.push(decision);
       },
     };
-    await db
-      .insertInto('chats')
-      .values([
-        { id: chatId, owner_subject: me, title: 'Vesta troubleshooting' },
-        { id: otherChatId, owner_subject: me, title: 'Another chat' },
-      ])
-      .execute();
-    await db
-      .insertInto('chat_turns')
-      .values({
-        id: turnId,
-        chat_id: chatId,
-        status: 'completed',
-        llm_model_id: null,
-        iterations: 1,
-        finished_at: new Date(),
-      })
-      .execute();
-    await insertMessage(db, {
+    // The reply that presented both cards, finished.
+    const turnId = await store.chatThreads.createTurn({
+      chatId,
+      kind: 'reply',
+      llmModelId: null,
+      thinkingBudget: null,
+      runner: null,
+    });
+    await insertMessage({
       chatId,
       turnId,
       role: 'assistant',
@@ -90,7 +95,7 @@ maybe('chat_widget_resolve', () => {
         { type: 'tool_use', id: 'tu_issue', name: 'jira_create_issue_preview', input: {} },
       ],
     });
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId,
       role: 'user',
@@ -124,8 +129,15 @@ maybe('chat_widget_resolve', () => {
         },
       ],
     });
+    await store.chatThreads.finishTurn(turnId, {
+      status: 'completed',
+      error: null,
+      iterations: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
     // A card in a different chat of the same tenant: never reachable from here.
-    await insertMessage(db, {
+    await insertMessage({
       chatId: otherChatId,
       turnId: null,
       role: 'user',
@@ -145,11 +157,11 @@ maybe('chat_widget_resolve', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
-    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
-    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${otherChatId})`.execute(db);
-    await closeDatabase();
+    // A chat's messages, turns and decisions go with it.
+    const store = getDataStore();
+    await store.chats.delete(me, chatId);
+    await store.chats.delete(me, otherChatId);
+    await closeDataStore();
   });
 
   it('lists the chat’s cards, both awaiting a decision', async () => {
@@ -185,17 +197,16 @@ maybe('chat_widget_resolve', () => {
 
     // Keyed exactly as the email card keys itself (ui.ts's rememberDone),
     // so chat-view.ts joins it back onto the card as `resolved`.
-    expect(await getWidgetDecision(db, `renkei-email:${draftId}`)).toEqual({
+    expect(await getWidgetDecision(`renkei-email:${draftId}`)).toEqual({
       icon: 'sent',
       headline: 'Sent manually from Outlook',
       detail: 'To michael@example.org',
     });
-    const row = await db
-      .selectFrom('chat_widget_decisions')
-      .select(['chat_id', 'decision', 'decided_by'])
-      .where('state_key', '=', `renkei-email:${draftId}`)
-      .executeTakeFirst();
-    expect(row).toEqual({ chat_id: chatId, decision: 'confirmed', decided_by: me });
+    // Recorded on this chat, as a confirm, by the person.
+    expect(await decisionRow(`renkei-email:${draftId}`)).toEqual({
+      decision: 'confirmed',
+      decidedBy: me,
+    });
     expect(emitted).toEqual([
       {
         stateKey: `renkei-email:${draftId}`,
@@ -220,7 +231,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(again.isError).toBe(true);
     expect(text(again)).toContain('already decided: Sent manually from Outlook');
-    expect(await getWidgetDecision(db, `renkei-email:${draftId}`)).toMatchObject({
+    expect(await getWidgetDecision(`renkei-email:${draftId}`)).toMatchObject({
       icon: 'sent',
       headline: 'Sent manually from Outlook',
     });
@@ -233,7 +244,7 @@ maybe('chat_widget_resolve', () => {
       expect(missing.isError).toBe(true);
       expect(text(missing)).toContain(`No preview card "${widget}" in this chat`);
     }
-    expect(await getWidgetDecision(db, `renkei-preview:${otherPreviewId}`)).toBeNull();
+    expect(await getWidgetDecision(`renkei-preview:${otherPreviewId}`)).toBeNull();
   });
 
   it('loses to a button click that lands first, and says so', async () => {
@@ -241,7 +252,7 @@ maybe('chat_widget_resolve', () => {
     // ui/report-decision) between the tool's read and its write: the tool
     // wrote nothing, and reports the receipt the card actually shows.
     const raced = createLocalToolSet(widgetStateTools());
-    const clicked = await recordWidgetDecision(db, {
+    const clicked = await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey: `renkei-preview:${previewId}`,
@@ -257,7 +268,7 @@ maybe('chat_widget_resolve', () => {
     );
     expect(late.isError).toBe(true);
     expect(text(late)).toContain('already decided: Created issue OPS-7.');
-    expect(await getWidgetDecision(db, `renkei-preview:${previewId}`)).toEqual({
+    expect(await getWidgetDecision(`renkei-preview:${previewId}`)).toEqual({
       icon: 'sent',
       headline: 'Created issue OPS-7.',
     });
@@ -266,7 +277,7 @@ maybe('chat_widget_resolve', () => {
 
   it('defaults the receipt’s wording by outcome', async () => {
     const freshPreviewId = randomUUID();
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId: null,
       role: 'user',
@@ -290,15 +301,13 @@ maybe('chat_widget_resolve', () => {
     );
     expect(cancelled.isError).toBe(false);
     expect(text(cancelled)).toContain('Marked "Vesta sync" as cancelled: Cancelled.');
-    expect(await getWidgetDecision(db, `renkei-preview:${freshPreviewId}`)).toEqual({
+    expect(await getWidgetDecision(`renkei-preview:${freshPreviewId}`)).toEqual({
       icon: 'cancelled',
       headline: 'Cancelled',
     });
-    const row = await db
-      .selectFrom('chat_widget_decisions')
-      .select(['decision'])
-      .where('state_key', '=', `renkei-preview:${freshPreviewId}`)
-      .executeTakeFirst();
-    expect(row).toEqual({ decision: 'cancelled' });
+    expect(await decisionRow(`renkei-preview:${freshPreviewId}`)).toEqual({
+      decision: 'cancelled',
+      decidedBy: me,
+    });
   });
 });

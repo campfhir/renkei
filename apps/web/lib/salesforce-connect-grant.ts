@@ -8,7 +8,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
@@ -28,13 +27,7 @@ export async function disconnectSalesforce(
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-
   const connections = await listSalesforceConnections(
-    dbResult.val,
     session.subject,
     await listSalesforceConnectors(kind),
     kind.provider

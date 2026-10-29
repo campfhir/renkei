@@ -7,13 +7,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { deleteSubscription } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -26,10 +23,7 @@ export async function POST(
     return NextResponse.json({ error: 'Expected a string endpoint' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  await deleteSubscription(dbResult.val, session.subject, payload.endpoint);
+  await deleteSubscription(session.subject, payload.endpoint);
 
   return NextResponse.json({ ok: true });
 }

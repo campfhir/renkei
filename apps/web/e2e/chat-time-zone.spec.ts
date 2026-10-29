@@ -7,86 +7,23 @@
  * handled the reply.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
+import { randomUUID } from 'node:crypto';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel } from './support/stub-model';
+import { createChat } from './support/chat';
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-  timezoneId: 'America/Los_Angeles',
-});
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'], timezoneId: 'America/Los_Angeles' });
 
-/** Per-project ids: the Playwright projects share one database. */
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    chatId: `66666666-6666-4666-8666-6666666666${digit}1`,
-    modelId: `66666666-6666-4666-8666-6666666666${digit}2`,
-    title: `What day is it there? (${digit})`,
-    modelLabel: `Timezone model ${digit}`,
-  };
-}
-
-/** Sealed the way the app seals a model's secrets (chat-permission.spec.ts does the same). */
-function sealSecret(plaintext: string): string {
-  const key = Buffer.from(process.env.TOKEN_ENCRYPTION_KEY ?? '', 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return ['v1', iv, cipher.getAuthTag(), ciphertext]
-    .map((part) => (typeof part === 'string' ? part : part.toString('base64')))
-    .join('.');
-}
-
-async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
+test("a send carries the browser's timezone", async ({ page, person: _person }, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const title = `What day is it there? ${tag}`;
+  // A model, so the composer is enabled; it is never called.
+  const modelId = await addStubModel(page.request, tag);
   try {
-    return await work(client);
-  } finally {
-    await client.end();
-  }
-}
-
-test.describe('chat timezone', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await withDb(async (client) => {
-      await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-      await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-      // A model, so the composer is enabled; it is never called.
-      await client.query(
-        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)
-         VALUES ($1, $2, 'anthropic', 'e2e-model', $3, true, false)`,
-        [ids.modelId, ids.modelLabel, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
-      );
-      await client.query(
-        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)
-         VALUES ($1, $2, $3, $4, NOW())`,
-        [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
-      );
-    });
-  });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await withDb(async (client) => {
-      await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-      await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-    });
-  });
-
-  test("a send carries the browser's timezone", async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
+    const chatId = await createChat(page.request, { llmModelId: modelId, title });
     const sent: unknown[] = [];
-    await page.route(`**/api/chat/chats/${ids.chatId}/turns`, async (route) => {
+    await page.route(`**/api/chat/chats/${chatId}/turns`, async (route) => {
       if (route.request().method() !== 'POST') return route.fallback();
       sent.push(route.request().postDataJSON());
       await route.fulfill({
@@ -96,8 +33,8 @@ test.describe('chat timezone', () => {
       });
     });
 
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { name: ids.title })).toBeVisible({ timeout: 30_000 });
+    await page.goto(`/chat/${chatId}`);
+    await expect(page.getByRole('heading', { name: title })).toBeVisible({ timeout: 30_000 });
     const composer = page.getByRole('main').getByPlaceholder('Message Renkei');
     await composer.fill('What is my timezone?');
     await composer.press('Enter');
@@ -108,5 +45,7 @@ test.describe('chat timezone', () => {
       text: 'What is my timezone?',
       timeZone: 'America/Los_Angeles',
     });
-  });
+  } finally {
+    await removeModel(page.request, modelId);
+  }
 });

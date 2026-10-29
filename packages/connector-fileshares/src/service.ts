@@ -22,8 +22,6 @@
  * here, once, so the MCP tools and REST routes answer identically.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { EntryKind, ShareEntry, ShareSummary } from './types';
@@ -47,9 +45,13 @@ export type ServiceError =
   /** The supplied path or name is unusable; the message says how. */
   | 'bad_path';
 
-export interface ServiceDeps {
-  db: Kysely<DB>;
-}
+/**
+ * What the service needs from its caller. Nothing today: the store is
+ * reached through `getDataStore()` and credentials through the caller's
+ * key; kept as a parameter so a dependency can return without touching
+ * every operation's signature.
+ */
+export type ServiceDeps = Record<never, never>;
 
 /** The share fields responses echo so callers can name it without a DB read. */
 export interface ShareRef {
@@ -93,7 +95,7 @@ export async function resolveConnection(
   deps: ServiceDeps,
   target: SubjectTarget
 ): Promise<Result<ResolvedConnection, ServiceError>> {
-  const share = await getShare(deps.db, target.shareId);
+  const share = await getShare(target.shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   if (target.credentials) {
@@ -104,18 +106,10 @@ export async function resolveConnection(
   }
   if (target.credentials === null) return err('not_connected' as const);
 
-  const ciphertext = await readConnectionCiphertext(
-    deps.db,
-    target.shareId,
-    target.subject
-  );
+  const ciphertext = await readConnectionCiphertext(target.shareId, target.subject);
   if (!ciphertext.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (ciphertext.val === null) return err('not_connected' as const);
-  const credentials = await openCredentialsForSubject(
-    deps.db,
-    target.subject,
-    ciphertext.val
-  );
+  const credentials = await openCredentialsForSubject(target.subject, ciphertext.val);
   if (!credentials.ok) return err('bad_credentials' as const);
   return ok({ share: share.val.summary, credentials: credentials.val });
 }
@@ -130,13 +124,13 @@ export async function resolveConnection(
  * already succeeded against the key the admin will be shown.
  */
 function hostKeyRecorder(
-  deps: ServiceDeps,
+  _deps: ServiceDeps,
   share: ShareSummary,
   onRecorded?: (fingerprint: string, recorded: boolean) => void
 ): ((fingerprint: string) => Promise<void>) | undefined {
   if (share.protocol !== 'sftp' || share.hostKeyFingerprint !== null) return undefined;
   return async (fingerprint) => {
-    const recorded = await recordHostKeyFingerprint(deps.db, share.id, fingerprint);
+    const recorded = await recordHostKeyFingerprint(share.id, fingerprint);
     onRecorded?.(fingerprint, recorded.ok && recorded.val);
   };
 }
@@ -458,7 +452,7 @@ export async function serviceTestConnection(
   shareId: string,
   credentials: ShareCredentials
 ): Promise<Result<TestConnectionOutcome, ServiceError>> {
-  const share = await getShare(deps.db, shareId);
+  const share = await getShare(shareId);
   if (!share.ok) return err('store' as const, { message: 'Could not read the share.' });
   if (!share.val || !share.val.summary.enabled) return err('no_share' as const);
   const summary = share.val.summary;

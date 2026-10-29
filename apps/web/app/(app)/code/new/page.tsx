@@ -1,5 +1,4 @@
-import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { codeProjectProviderAccess } from '@/lib/code/access';
@@ -19,16 +18,11 @@ export default async function NewCodeProjectPage() {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/code/new`));
   if (!(await sandboxWorkspacesEnabled())) redirect(`/code`);
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const access = await codeProjectProviderAccess(dbResult.val, session.subject);
+  const access = await codeProjectProviderAccess(session.subject);
   const bitbucketConnected = access[ATLASSIAN_BITBUCKET]!.ok;
   const githubConnected = access[GITHUB]!.ok;
   if (!bitbucketConnected && !githubConnected) redirect(`/code`);
   return (
-    <NewCodeProject
-      bitbucketConnected={bitbucketConnected}
-      githubConnected={githubConnected}
-    />
+    <NewCodeProject bitbucketConnected={bitbucketConnected} githubConnected={githubConnected} />
   );
 }

@@ -38,7 +38,9 @@ export default function ScriptEditor({
   const dark = useMonacoDark();
 
   function handleBeforeMount(monaco: Monaco): void {
-    const ts = monaco.languages.typescript;
+    // monaco-editor 0.57 moved the TypeScript API from languages.typescript
+    // (now a deprecated stub) to the top-level typescript namespace.
+    const ts = monaco.typescript;
     ts.typescriptDefaults.setCompilerOptions({
       target: ts.ScriptTarget.ES2020,
       lib: ['es2020'],

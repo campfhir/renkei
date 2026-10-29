@@ -55,7 +55,6 @@ const testCipher = resourceCipher({
 
 function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'auth0|alice',
     chatId: 'chat-1',
     cipher: testCipher,
@@ -237,8 +236,8 @@ describe(ATTACH_TO_SANDBOX_TOOL, () => {
       context({ projectId: 'p1' })
     );
     expect(result.isError).toBe(false);
-    expect(listMock).toHaveBeenCalledWith(null, { chatId: 'chat-1' });
-    expect(listProjectMock).toHaveBeenCalledWith(null, 'p1');
+    expect(listMock).toHaveBeenCalledWith({ chatId: 'chat-1' });
+    expect(listProjectMock).toHaveBeenCalledWith('p1');
     expect(writeMock).toHaveBeenCalledWith(
       { subject: 'auth0|alice' },
       expect.objectContaining({ filename: 'template.docx' }),

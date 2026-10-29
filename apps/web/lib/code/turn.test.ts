@@ -52,8 +52,6 @@ jest.mock('@/lib/chat/models', () => ({
   ]),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { sbWorkspaceGet } from '@renkei/sandbox-client';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import { startChatWorktree, startProjectClone } from './projects';
@@ -67,7 +65,6 @@ const worktree = startChatWorktree as jest.MockedFunction<typeof startChatWorktr
 const chatRow = getChatRow as jest.MockedFunction<typeof getChatRow>;
 const row = getProjectRow as jest.MockedFunction<typeof getProjectRow>;
 const bound = () => (codeTools as jest.Mock).mock.calls[0]![0] as CodeToolBinding;
-const db = {} as Kysely<DB>;
 
 function project(workspaceId: string | null): ProjectRow {
   return {
@@ -117,7 +114,7 @@ describe('codeProjectContext', () => {
   it('binds a ready chat worktree at once, with no step', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     get.mockResolvedValueOnce({ ok: true, val: treeOf() });
-    const context = await codeProjectContext(db, project('ws-1'), actor('wt-1'));
+    const context = await codeProjectContext(project('ws-1'), actor('wt-1'));
     expect(context?.prelude).toBeNull();
     expect(context?.prompt).toMatchObject({
       ready: true,
@@ -136,12 +133,12 @@ describe('codeProjectContext', () => {
   it('makes the chat its own worktree of the ready clone on its first turn', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     worktree.mockResolvedValue({ ok: true, val: treeOf() });
-    const context = await codeProjectContext(db, project('ws-1'), actor());
+    const context = await codeProjectContext(project('ws-1'), actor());
     expect(worktree).toHaveBeenCalledTimes(1);
-    expect(worktree.mock.calls[0]![2]).toBe('c1234567-0000');
-    expect(worktree.mock.calls[0]![3]).toMatchObject({ id: 'ws-1' });
+    expect(worktree.mock.calls[0]![1]).toBe('c1234567-0000');
+    expect(worktree.mock.calls[0]![2]).toMatchObject({ id: 'ws-1' });
     // The remote is fetched first, with the person's own grant.
-    expect(worktree.mock.calls[0]![4]).toMatchObject({ insteadOf: 'https://bitbucket.org/' });
+    expect(worktree.mock.calls[0]![3]).toMatchObject({ insteadOf: 'https://bitbucket.org/' });
     expect(context?.prelude).toBeNull();
     expect(bound().workspaceId).toBe('wt-1');
   });
@@ -151,7 +148,7 @@ describe('codeProjectContext', () => {
     // The chat names a worktree of an older clone: not its own any more.
     get.mockResolvedValueOnce({ ok: true, val: treeOf({ parentId: 'ws-old' }) });
     worktree.mockResolvedValue({ ok: true, val: treeOf({ id: 'wt-2' }) });
-    await codeProjectContext(db, project('ws-1'), actor('wt-1'));
+    await codeProjectContext(project('ws-1'), actor('wt-1'));
     expect(worktree).toHaveBeenCalledTimes(1);
     expect(bound().workspaceId).toBe('wt-2');
   });
@@ -161,7 +158,7 @@ describe('codeProjectContext', () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('cloning') });
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { worker: 'sbx-7f3a' }) });
     worktree.mockResolvedValue({ ok: true, val: treeOf() });
-    const context = await codeProjectContext(db, project(null), actor());
+    const context = await codeProjectContext(project(null), actor());
     expect(clone).toHaveBeenCalledTimes(1);
     expect(worktree).not.toHaveBeenCalled();
     expect(context?.prompt).toMatchObject({ ready: true, clonedNow: true });
@@ -190,7 +187,7 @@ describe('codeProjectContext', () => {
       ok: true,
       val: workspace('failed', { error: 'repository not found' }),
     });
-    const context = await codeProjectContext(db, project('ws-old'), actor());
+    const context = await codeProjectContext(project('ws-old'), actor());
     const result = await context!.prelude!.run();
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('The clone failed: repository not found');
@@ -201,7 +198,7 @@ describe('codeProjectContext', () => {
     clone.mockResolvedValue({ ok: true, val: workspace('cloning') });
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     worktree.mockResolvedValue({ ok: false, status: 409, message: 'the branch is taken' });
-    const context = await codeProjectContext(db, project(null), actor());
+    const context = await codeProjectContext(project(null), actor());
     const result = await context!.prelude!.run();
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toContain('worktree could not be made: the branch is taken');
@@ -210,7 +207,7 @@ describe('codeProjectContext', () => {
   it('says so, with no tools, when the worktree cannot be made for a ready clone', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     worktree.mockResolvedValue({ ok: false, status: 409, message: 'the branch is taken' });
-    const context = await codeProjectContext(db, project('ws-1'), actor());
+    const context = await codeProjectContext(project('ws-1'), actor());
     expect(context?.tools).toEqual([]);
     expect(context?.prompt).toMatchObject({ ready: false });
   });
@@ -218,7 +215,7 @@ describe('codeProjectContext', () => {
   it('hands the tools a way back: a lost checkout is cloned again and the chat gets a worktree in it', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     get.mockResolvedValueOnce({ ok: true, val: treeOf() });
-    const context = await codeProjectContext(db, project('ws-1'), actor('wt-1'));
+    const context = await codeProjectContext(project('ws-1'), actor('wt-1'));
     expect(context?.tools).toHaveLength(1);
     // The row still names the lost clone: nothing newer to adopt.
     row.mockResolvedValue(project('ws-1'));
@@ -236,14 +233,14 @@ describe('codeProjectContext', () => {
     worktree.mockResolvedValue({ ok: true, val: treeOf({ id: 'wt-2', parentId: 'ws-2' }) });
     const recovered = await bound().recover!('wt-1');
     expect(clone).toHaveBeenCalledTimes(1);
-    expect(worktree.mock.calls[0]![3]).toMatchObject({ id: 'ws-2' });
+    expect(worktree.mock.calls[0]![2]).toMatchObject({ id: 'ws-2' });
     expect(recovered).toMatchObject({ ok: true, workspaceId: 'wt-2', how: 'cloned' });
   }, 10_000);
 
   it('adopts a newer clone another chat already made instead of cloning again', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     get.mockResolvedValueOnce({ ok: true, val: treeOf() });
-    await codeProjectContext(db, project('ws-1'), actor('wt-1'));
+    await codeProjectContext(project('ws-1'), actor('wt-1'));
     row.mockResolvedValue(project('ws-9'));
     chatRow.mockResolvedValue({ id: 'c1234567-0000', workspaceId: 'wt-1' } as never);
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready', { id: 'ws-9' }) });
@@ -258,7 +255,7 @@ describe('codeProjectContext', () => {
   it('says why when the checkout cannot come back', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     get.mockResolvedValueOnce({ ok: true, val: treeOf() });
-    await codeProjectContext(db, project('ws-1'), actor('wt-1'));
+    await codeProjectContext(project('ws-1'), actor('wt-1'));
     row.mockResolvedValue(project('ws-1'));
     chatRow.mockResolvedValue({ id: 'c1234567-0000', workspaceId: 'wt-1' } as never);
     get.mockResolvedValueOnce({
@@ -281,7 +278,7 @@ describe('codeProjectContext', () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('cloning') });
     get.mockResolvedValueOnce({ ok: true, val: workspace('ready') });
     worktree.mockResolvedValue({ ok: true, val: treeOf() });
-    const context = await codeProjectContext(db, project('ws-1'), actor());
+    const context = await codeProjectContext(project('ws-1'), actor());
     expect(clone).not.toHaveBeenCalled();
     expect(context?.prelude?.input).toMatchObject({ resumed: true });
     expect(context?.prompt.clonedNow).toBe(false);

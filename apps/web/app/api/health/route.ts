@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getMigrationStatus, MIGRATION_COMMAND } from '@renkei/db';
+import { getMigrationStatus, memoryDataStoreRequested, MIGRATION_COMMAND } from '@renkei/db';
 
 /**
  * Liveness, and whether the schema matches this build.
@@ -10,9 +10,16 @@ import { getMigrationStatus, MIGRATION_COMMAND } from '@renkei/db';
  * deployment gate or container healthcheck is the right place to notice. It
  * previously answered ok unconditionally, so a build shipped ahead of its schema
  * looked healthy right up until an MCP client failed to register.
+ *
+ * On the in-memory data store (RENKEI_DATA_STORE=memory, the UI suite's
+ * server) there is no schema to be behind: it is healthy once it answers.
  */
 export async function GET(): Promise<NextResponse> {
   logger.debug('Ping', { component: 'web/health' });
+
+  if (memoryDataStoreRequested()) {
+    return NextResponse.json({ status: 'ok', dataStore: 'memory' });
+  }
 
   const status = await getMigrationStatus();
 

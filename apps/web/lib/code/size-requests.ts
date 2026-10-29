@@ -10,8 +10,7 @@
  * rather than queued.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type SizeRequestRecord } from '@renkei/db';
 import {
   SIZE_REQUEST_REASON_MAX_CHARS,
   WORKSPACE_LIMIT_MAX_BYTES,
@@ -41,33 +40,21 @@ function statusOf(value: string): SizeRequestStatus {
   return value === 'approved' || value === 'denied' ? value : 'pending';
 }
 
-function toView(row: {
-  id: string;
-  subject: string;
-  requested_by: string;
-  requested_bytes: string | number | bigint;
-  reason: string;
-  status: string;
-  decided_by: string | null;
-  decided_at: Date | null;
-  decision_note: string | null;
-  created_at: Date;
-  project_name?: string | null;
-}): SizeRequestView {
+function toView(row: SizeRequestRecord, projectName: string | null): SizeRequestView {
   return {
     id: row.id,
     projectId: row.subject.startsWith(PROJECT_PREFIX)
       ? row.subject.slice(PROJECT_PREFIX.length)
       : row.subject,
-    projectName: row.project_name ?? 'Deleted project',
-    requestedBy: row.requested_by,
-    requestedBytes: Number(row.requested_bytes),
+    projectName: projectName ?? 'Deleted project',
+    requestedBy: row.requestedBy,
+    requestedBytes: row.requestedBytes,
     reason: row.reason,
     status: statusOf(row.status),
-    decidedBy: row.decided_by,
-    decidedAt: row.decided_at ? new Date(row.decided_at).toISOString() : null,
-    decisionNote: row.decision_note,
-    createdAt: new Date(row.created_at).toISOString(),
+    decidedBy: row.decidedBy,
+    decidedAt: row.decidedAt ? row.decidedAt.toISOString() : null,
+    decisionNote: row.decisionNote,
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -91,94 +78,52 @@ export function validReason(value: unknown): string | null {
 }
 
 /** This project's newest request, whatever its state, for its page. */
-export async function latestSizeRequest(
-  db: Kysely<DB>,
-  projectId: string
-): Promise<SizeRequestView | null> {
-  const row = await db
-    .selectFrom('sandbox_size_requests')
-    .selectAll()
-    .where('subject', '=', codeProjectTarget(projectId).subject)
-    .orderBy('created_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return row ? toView(row) : null;
+export async function latestSizeRequest(projectId: string): Promise<SizeRequestView | null> {
+  const row = await getDataStore().codeProjects.latestSizeRequest(
+    codeProjectTarget(projectId).subject
+  );
+  return row ? toView(row, null) : null;
 }
 
 /** File a request; null when one is already waiting for this project. */
-export async function createSizeRequest(
-  db: Kysely<DB>,
-  input: {
-    projectId: string;
-    projectName: string;
-    requestedBy: string;
-    requestedBytes: number;
-    reason: string;
-  }
-): Promise<SizeRequestView | null> {
-  const row = await db
-    .insertInto('sandbox_size_requests')
-    .values({
-      subject: codeProjectTarget(input.projectId).subject,
-      requested_by: input.requestedBy,
-      requested_bytes: input.requestedBytes,
-      reason: input.reason,
-    })
-    .onConflict((oc) =>
-      oc.columns(['subject']).where('status', '=', 'pending').doNothing()
-    )
-    .returningAll()
-    .executeTakeFirst();
-  return row ? toView({ ...row, project_name: input.projectName }) : null;
+export async function createSizeRequest(input: {
+  projectId: string;
+  projectName: string;
+  requestedBy: string;
+  requestedBytes: number;
+  reason: string;
+}): Promise<SizeRequestView | null> {
+  const row = await getDataStore().codeProjects.createSizeRequest({
+    subject: codeProjectTarget(input.projectId).subject,
+    requestedBy: input.requestedBy,
+    requestedBytes: input.requestedBytes,
+    reason: input.reason,
+  });
+  return row ? toView(row, input.projectName) : null;
 }
 
 /** The org's requests, pending first then newest, for the admin page. */
-export async function listSizeRequests(
-  db: Kysely<DB>,
-  limit = 100
-): Promise<SizeRequestView[]> {
-  const rows = await db
-    .selectFrom('sandbox_size_requests as r')
-    .leftJoin('chat_projects as p', (join) =>
-      join
-        .on(sql<boolean>`r.subject = ${PROJECT_PREFIX} || p.id::text`)
-    )
-    .selectAll('r')
-    .select('p.name as project_name')
-    .orderBy((eb) => eb.case().when('r.status', '=', 'pending').then(0).else(1).end())
-    .orderBy('r.created_at', 'desc')
-    .limit(limit)
-    .execute();
-  return rows.map(toView);
+export async function listSizeRequests(limit = 100): Promise<SizeRequestView[]> {
+  const rows = await getDataStore().codeProjects.listSizeRequests(PROJECT_PREFIX, limit);
+  return rows.map((row) => toView(row, row.projectName));
 }
 
 export type DecideOutcome = { ok: true; request: SizeRequestView } | { ok: false; reason: 'gone' };
 
 /** Decide a pending request; `approvedBytes` may differ from what was asked. */
-export async function decideSizeRequest(
-  db: Kysely<DB>,
-  input: {
-    id: string;
-    decision: 'approved' | 'denied';
-    decidedBy: string;
-    note: string | null;
-    approvedBytes?: number;
-  }
-): Promise<DecideOutcome> {
-  const row = await db
-    .updateTable('sandbox_size_requests')
-    .set({
-      status: input.decision,
-      decided_by: input.decidedBy,
-      decided_at: new Date().toISOString(),
-      decision_note: input.note,
-      ...(input.decision === 'approved' && input.approvedBytes !== undefined
-        ? { requested_bytes: input.approvedBytes }
-        : {}),
-    })
-    .where('id', '=', input.id)
-    .where('status', '=', 'pending')
-    .returningAll()
-    .executeTakeFirst();
-  return row ? { ok: true, request: toView(row) } : { ok: false, reason: 'gone' };
+export async function decideSizeRequest(input: {
+  id: string;
+  decision: 'approved' | 'denied';
+  decidedBy: string;
+  note: string | null;
+  approvedBytes?: number;
+}): Promise<DecideOutcome> {
+  const row = await getDataStore().codeProjects.decideSizeRequest({
+    id: input.id,
+    status: input.decision,
+    decidedBy: input.decidedBy,
+    note: input.note,
+    ...(input.approvedBytes !== undefined ? { approvedBytes: input.approvedBytes } : {}),
+  });
+  return row ? { ok: true, request: toView(row, null) } : { ok: false, reason: 'gone' };
 }

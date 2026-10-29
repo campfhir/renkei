@@ -12,8 +12,7 @@
  * fifty lines about the same person.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from './db.types';
+import { getDataStore } from './store/registry';
 
 export interface Actor {
   /** The internal id — always present, always logged, always joinable. */
@@ -37,10 +36,7 @@ const cache = new Map<string, CacheEntry>();
  * disappears because a name lookup failed is worse than one with an ugly
  * name.
  */
-export async function describeActor(
-  db: Kysely<DB>,
-  subject: string | null | undefined
-): Promise<Actor> {
+export async function describeActor(subject: string | null | undefined): Promise<Actor> {
   if (!subject) return { subject: '(none)', displayName: '(none)' };
   const key = subject;
   const now = Date.now();
@@ -49,12 +45,8 @@ export async function describeActor(
 
   let displayName = subject;
   try {
-    const row = await db
-      .selectFrom('identities')
-      .select(['display_name', 'email'])
-      .where('subject', '=', subject)
-      .executeTakeFirst();
-    displayName = row?.display_name || row?.email || subject;
+    const identity = await getDataStore().identities.get(subject);
+    displayName = identity?.displayName || identity?.email || subject;
   } catch {
     // Logging is never worth failing the work it describes.
   }
@@ -69,10 +61,7 @@ export async function describeActor(
  * The actor behind a PROVIDER account id (a Graph or Atlassian account),
  * which is what connector-side rows carry instead of a subject.
  */
-export async function describeAccountActor(
-  db: Kysely<DB>,
-  accountId: string | null | undefined
-): Promise<Actor> {
+export async function describeAccountActor(accountId: string | null | undefined): Promise<Actor> {
   if (!accountId) return { subject: '(none)', displayName: '(none)' };
   const key = `account:${accountId}`;
   const now = Date.now();
@@ -82,17 +71,13 @@ export async function describeAccountActor(
   let subject = accountId;
   let displayName = accountId;
   try {
-    const grant = await db
-      .selectFrom('provider_grants')
-      .select(['subject', 'display_name'])
-      .where('provider_account_id', '=', accountId)
-      .executeTakeFirst();
+    const grant = await getDataStore().providerGrants.findByAccount(accountId);
     if (grant?.subject) {
       subject = grant.subject;
-      const resolved = await describeActor(db, grant.subject);
+      const resolved = await describeActor(grant.subject);
       displayName = resolved.displayName;
-    } else if (grant?.display_name) {
-      displayName = grant.display_name;
+    } else if (grant?.displayName) {
+      displayName = grant.displayName;
     }
   } catch {
     // As above: never fail the work for the sake of its log line.

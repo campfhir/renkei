@@ -8,191 +8,37 @@
  * tab. A field of the same name made between proposal and apply stops it
  * before a second one is created.
  *
- * The proposal is seeded as the row jira_admin_propose_space_field writes
- * (its behavior is covered by field-tools.test.ts), the way
- * jira-admin-spaces.spec.ts seeds its proposals.
+ * The person connects Jira Administration through its real connect flow
+ * (the in-memory app's fake OAuth, e2e/support/jira-admin.ts), and the
+ * proposal is made the way their assistant makes it: a chat turn on the
+ * stand-in model calling jira_admin_propose_space_field, which reads the
+ * space, the field and the screens from the stand-in Jira.
  *
- * Own tenant per project, and a fresh Jira site id per run: the stub keeps
- * each site's fields and screens in memory.
+ * Each person works in a Jira site of their own, so the stub's fields and
+ * screens start fresh for every test.
  *
- * Runs on the pinned Chromium only (no WebKit installed in this sandbox —
- * see voice.spec.ts's note); "mobile" is a resized viewport, per AGENTS.md.
+ * Pinned Chromium; "mobile" is a resized viewport, per AGENTS.md.
  */
 
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { sealForSubject } from './keys';
+import type { Page, TestInfo } from '@playwright/test';
+import {
+  connectJiraAdministration,
+  fakeJiraSite,
+  JIRA_STUB,
+  jiraStub,
+  prepareJiraAdministration,
+  proposeInChat,
+} from './support/jira-admin';
+import { addStubModel, removeModel } from './support/stub-model';
+import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-const STUB = 'http://127.0.0.1:8092/jira';
+const TITLE = 'New field “Vendor” for OPS';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-function fixtureFor(projectName: string) {
-  return {
-    sessionId: uuidFrom(`jira-admin-fields-e2e-session:${projectName}`),
-    slug: `e2e-jira-fields-${projectName}`,
-    subject: `e2e-jira-fields-${projectName}@example.com`,
-    cloudId: `e2e-fields-${projectName}-${Date.now()}`,
-  };
-}
-
-type Fixture = ReturnType<typeof fixtureFor>;
-
-async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return await work(client);
-  } finally {
-    await client.end();
-  }
-}
-
-async function seedTenant(fixture: Fixture): Promise<void> {
-  await withDb(async (client) => {
-    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = $1', [
-      fixture.subject,
-    ]);
-    await client.query('DELETE FROM audit_events WHERE actor_subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM provider_grants WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM connector_configs');
-    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
-      [fixture.subject, fixture.subject, 'E2E Jira Admin']
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.subject]
-    );
-    await client.query(
-      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)\n       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
-    );
-    // Another spec's person may hold this account id: it is one row per account.
-    await client.query(
-      `DELETE FROM provider_grants WHERE provider = 'atlassian-admin' AND provider_account_id = 'e2e-jira-admin-account'`
-    );
-    await client.query(
-      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes,\n          metadata)\n       VALUES ('atlassian-admin', 'e2e-jira-admin-account', $1, 'e2e-admin-client',\n               'E2E Jira Admin', $2, $3, $4, $5, $6)`,
-      [
-        fixture.subject,
-        await sealForSubject(client, fixture.subject, 'e2e-admin-access-token'),
-        await sealForSubject(client, fixture.subject, 'e2e-admin-refresh-token'),
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        [
-          'read:jira-user',
-          'read:jira-work',
-          'manage:jira-configuration',
-          'manage:jira-project',
-          'offline_access',
-        ],
-        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
-      ]
-    );
-  });
-}
-
-/** The row jira_admin_propose_space_field writes for a new Vendor select list in OPS. */
-async function proposeVendor(fixture: Fixture): Promise<string> {
-  const payload = {
-    space: { id: '10000', key: 'OPS' },
-    field: { id: null, name: 'Vendor', typeLabel: 'select list (single choice)' },
-    operations: [
-      { op: 'create_field', name: 'Vendor', description: 'Who supplies it', type: 'select' },
-      { op: 'add_context', name: 'Vendor for OPS', issueTypes: [], options: ['Acme', 'Globex'] },
-      {
-        op: 'add_to_screen',
-        screenId: '41',
-        screenName: 'OPS: Create',
-        tabId: '410',
-        tabName: 'Field Tab',
-        tabNote: null,
-        uses: ['create'],
-        sharedWith: [],
-        moreShared: false,
-      },
-      {
-        op: 'add_to_screen',
-        screenId: '42',
-        screenName: 'Shared bug screen',
-        tabId: '420',
-        tabName: 'Details',
-        tabNote: null,
-        uses: ['create', 'edit', 'view'],
-        sharedWith: ['HR'],
-        moreShared: false,
-      },
-    ],
-  };
-  const result = await withDb((client) =>
-    client.query<{ id: string }>(
-      `INSERT INTO jira_admin_change_requests\n         (subject, cloud_id, site_url, kind, title, reason, payload, expires_at)\n       VALUES ($1, $2, 'https://e2e.atlassian.net', 'space_field',\n               'New field “Vendor” for OPS', 'Procurement asked', $3, $4)\n       RETURNING id`,
-      [
-        fixture.subject,
-        fixture.cloudId,
-        JSON.stringify(payload),
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
-    )
-  );
-  const id = result.rows[0]?.id;
-  if (!id) throw new Error('no change request inserted');
-  return id;
-}
-
-/** GET from the stand-in Jira, as a record list. */
-async function stub(fixture: Fixture, pathAndQuery: string): Promise<Record<string, unknown>[]> {
-  const response = await fetch(`${STUB}/${fixture.cloudId}${pathAndQuery}`);
-  const body: unknown = await response.json();
-  const list = Array.isArray(body)
-    ? body
-    : typeof body === 'object' && body !== null && 'values' in body && Array.isArray(body.values)
-      ? body.values
-      : [];
-  return list.map((item: unknown) =>
-    typeof item === 'object' && item !== null ? Object.fromEntries(Object.entries(item)) : {}
-  );
-}
-
-async function signIn(page: Page, fixture: Fixture): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
@@ -213,20 +59,45 @@ function main(page: Page) {
   return page.getByRole('main');
 }
 
-test.describe.configure({ mode: 'serial' });
+let modelId = '';
+
+test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+  await prepareJiraAdministration(request);
+  await connectJiraAdministration(page);
+  modelId = await addStubModel(
+    page.request,
+    `jira-fields-${testInfo.project.name}-${randomUUID().slice(0, 6)}`
+  );
+});
+
+test.afterEach(async ({ page }) => {
+  if (modelId) await removeModel(page.request, modelId);
+  modelId = '';
+});
+
+/** What the assistant proposes: the Vendor select list for OPS, on HR's shared screen too. */
+async function proposeVendor(page: Page): Promise<string> {
+  return proposeInChat(page, modelId, 'jira_admin_propose_space_field', {
+    space: 'OPS',
+    name: 'Vendor',
+    type: 'select',
+    description: 'Who supplies it',
+    options: ['Acme', 'Globex'],
+    sharedScreens: true,
+    reason: 'Procurement asked',
+  });
+}
 
 test('a new field is reviewed with the screen another space shows, then created, scoped and placed', async ({
   page,
+  person,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seedTenant(fixture);
-  const id = await proposeVendor(fixture);
-  await signIn(page, fixture);
+  const id = await proposeVendor(page);
 
   // --- Reviewed: each step, and the screen HR shows too, in the warning colour. ---
   await page.goto(`/jira-admin/changes/${id}`);
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible();
-  await expect(main(page).getByTestId('change-title')).toHaveText('New field “Vendor” for OPS');
+  await expect(main(page).getByTestId('change-title')).toHaveText(TITLE);
   const reach = main(page).getByTestId('change-reach');
   await expect(reach).toContainText(
     'Some of the screens it goes on are shown by other spaces too (HR), and the field ' +
@@ -247,7 +118,7 @@ test('a new field is reviewed with the screen another space shows, then created,
   await expect(operations.nth(3).getByTestId('operation-details')).toContainText(
     'Also shown by HR — the field appears there too'
   );
-  expect(await stub(fixture, '/rest/api/3/field/search?query=Vendor')).toEqual([]);
+  expect(await jiraStub(person.subject, '/rest/api/3/field/search?query=Vendor')).toEqual([]);
   await shot(page, testInfo, 'jira-admin-fields-01-review');
 
   // --- Applied: the field, OPS's own context with its options, and each screen tab. ---
@@ -258,7 +129,7 @@ test('a new field is reviewed with the screen another space shows, then created,
     await expect(operations.nth(index)).toContainText('Done');
   }
 
-  const fields = await stub(fixture, '/rest/api/3/field/search?query=Vendor');
+  const fields = await jiraStub(person.subject, '/rest/api/3/field/search?query=Vendor');
   expect(fields).toHaveLength(1);
   const fieldId = String(fields[0]?.id);
   expect(fields[0]).toMatchObject({
@@ -267,32 +138,23 @@ test('a new field is reviewed with the screen another space shows, then created,
     schema: { custom: 'com.atlassian.jira.plugin.system.customfieldtypes:select' },
     searcherKey: 'com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher',
   });
-  const mappings = await stub(fixture, `/rest/api/3/field/${fieldId}/context/projectmapping`);
+  const mappings = await jiraStub(
+    person.subject,
+    `/rest/api/3/field/${fieldId}/context/projectmapping`
+  );
   const own = mappings.find((mapping) => mapping.projectId === '10000');
   expect(own).toBeDefined();
-  const options = await stub(
-    fixture,
+  const options = await jiraStub(
+    person.subject,
     `/rest/api/3/field/${fieldId}/context/${String(own?.contextId)}/option`
   );
   expect(options.map((option) => option.value)).toEqual(['Acme', 'Globex']);
-  expect(await stub(fixture, '/rest/api/3/screens/41/tabs/410/fields')).toEqual([
-    { id: fieldId, name: fieldId },
+  expect(await jiraStub(person.subject, '/rest/api/3/screens/41/tabs/410/fields')).toEqual([
+    { id: fieldId, name: 'Vendor' },
   ]);
-  expect(await stub(fixture, '/rest/api/3/screens/42/tabs/420/fields')).toEqual([
-    { id: fieldId, name: fieldId },
+  expect(await jiraStub(person.subject, '/rest/api/3/screens/42/tabs/420/fields')).toEqual([
+    { id: fieldId, name: 'Vendor' },
   ]);
-  await expect
-    .poll(async () =>
-      withDb(async (client) => {
-        // This person's only: the dev database is shared by every spec in a run.
-        const rows = await client.query(
-          `SELECT 1 FROM audit_events WHERE action = 'jira_admin.change_applied' AND actor_subject = $1`,
-          [fixture.subject]
-        );
-        return rows.rowCount;
-      })
-    )
-    .toBe(1);
   await shot(page, testInfo, 'jira-admin-fields-02-applied');
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
@@ -303,12 +165,11 @@ test('a new field is reviewed with the screen another space shows, then created,
 
 test('a field of the same name made since stops it before a second is created', async ({
   page,
+  person,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seedTenant(fixture);
-  const id = await proposeVendor(fixture);
-  // Someone made a Vendor field by hand after the proposal.
-  await fetch(`${STUB}/${fixture.cloudId}/rest/api/3/field`, {
+  const id = await proposeVendor(page);
+  // Someone made a Vendor field by hand in Jira after the proposal.
+  await fetch(`${JIRA_STUB}/${fakeJiraSite(person.subject).cloudId}/rest/api/3/field`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -316,7 +177,6 @@ test('a field of the same name made since stops it before a second is created', 
       type: 'com.atlassian.jira.plugin.system.customfieldtypes:textfield',
     }),
   });
-  await signIn(page, fixture);
 
   await page.goto(`/jira-admin/changes/${id}`);
   await page.getByRole('button', { name: 'Apply these 4 changes to Jira' }).click();
@@ -329,7 +189,7 @@ test('a field of the same name made since stops it before a second is created', 
     await expect(operations.nth(index)).toContainText('Not run');
   }
   // Still the one made by hand, and on no screen.
-  expect(await stub(fixture, '/rest/api/3/field/search?query=Vendor')).toHaveLength(1);
-  expect(await stub(fixture, '/rest/api/3/screens/41/tabs/410/fields')).toEqual([]);
+  expect(await jiraStub(person.subject, '/rest/api/3/field/search?query=Vendor')).toHaveLength(1);
+  expect(await jiraStub(person.subject, '/rest/api/3/screens/41/tabs/410/fields')).toEqual([]);
   await shot(page, testInfo, 'jira-admin-fields-04-name-taken');
 });

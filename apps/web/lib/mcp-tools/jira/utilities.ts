@@ -14,6 +14,7 @@ import {
   MEETING_TYPES,
   isMeetingType,
 } from './transcript';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 export async function registerUtilityTools(
@@ -126,24 +127,13 @@ export async function registerUtilityTools(
         displayName,
       });
       try {
-        const { db } = context;
-
-        if (!db) {
-          return {
-            content: [{ type: 'text' as const, text: 'Database not available' }],
-            isError: true,
-          };
-        }
-
         // The caller's own grant only. A tenant-wide query here reported
         // "already connected as <someone else>" — one user's connection state
         // disclosed to another, and a dead end for the asker.
-        const existingGrant = await db
-          .selectFrom('provider_grants')
-          .select(['display_name', 'metadata'])
-          .where('provider', '=', 'atlassian')
-          .where('provider_account_id', '=', context.accountId)
-          .executeTakeFirst();
+        const existingGrant = await getDataStore().providerGrants.find(
+          'atlassian',
+          context.accountId
+        );
 
         if (existingGrant) {
           const metadata: Record<string, unknown> =
@@ -156,7 +146,7 @@ export async function registerUtilityTools(
             content: [
               {
                 type: 'text' as const,
-                text: `Jira is already connected as ${existingGrant.display_name} at ${siteUrl}`,
+                text: `Jira is already connected as ${existingGrant.displayName} at ${siteUrl}`,
               },
             ],
           };

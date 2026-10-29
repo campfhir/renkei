@@ -9,8 +9,7 @@
  *    batches (the agent-runs retention shape).
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '../logger';
 
 export const MAIL_JOBS_SWEEP_INTERVAL_MS = 60 * 60_000;
@@ -21,20 +20,13 @@ const STALL_MINUTES = 60;
 const RETENTION_DAYS = 30;
 const RETENTION_BATCH = 500;
 
-export function createMailJobsSweep(db: Kysely<DB>) {
+export function createMailJobsSweep() {
   return async function sweep(): Promise<void> {
-    const stalled = await db
-      .updateTable('mail_bulk_jobs')
-      .set({
-        status: 'failed',
-        last_error: 'job stalled; the worker likely restarted mid-run',
-        finished_at: sql`NOW()`,
-        updated_at: sql`NOW()`,
-      })
-      .where('status', '=', 'running')
-      .where('updated_at', '<', sql<Date>`NOW() - make_interval(mins => ${STALL_MINUTES})`)
-      .executeTakeFirst();
-    const stalledCount = Number(stalled.numUpdatedRows ?? 0);
+    const store = getDataStore();
+    const stalledCount = await store.mailBulkJobs.failStalled(
+      STALL_MINUTES,
+      'job stalled; the worker likely restarted mid-run'
+    );
     if (stalledCount > 0) {
       logger.warn('failed {count} stalled mail bulk job(s)', {
         component: 'mailjobs/sweep',
@@ -42,19 +34,11 @@ export function createMailJobsSweep(db: Kysely<DB>) {
       });
     }
 
-    const deleted = await sql<{ id: string }>`
-      DELETE FROM mail_bulk_jobs WHERE id IN (
-        SELECT id FROM mail_bulk_jobs
-        WHERE status IN ('succeeded', 'partial', 'failed')
-          AND created_at < NOW() - make_interval(days => ${RETENTION_DAYS})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    if (deleted.rows.length > 0) {
+    const deleted = await store.mailBulkJobs.pruneFinished(RETENTION_DAYS, RETENTION_BATCH);
+    if (deleted > 0) {
       logger.info('retention pruned {count} mail bulk job(s)', {
         component: 'mailjobs/sweep',
-        count: deleted.rows.length,
+        count: deleted,
       });
     }
   };

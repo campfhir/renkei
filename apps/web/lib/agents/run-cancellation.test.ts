@@ -6,114 +6,137 @@
  * one already has its own executor watching for the flag (engine.ts).
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { requestRunCancellation } from './run-cancellation';
 
-function stubDb(options: {
-  row?: unknown;
-  updated?: number;
-  wheres?: [string, unknown][];
-  sets?: Record<string, unknown>[];
-}): Kysely<DB> {
-  const chain = {
-    selectFrom: () => chain,
-    updateTable: () => chain,
-    select: () => chain,
-    set: (values: Record<string, unknown>) => {
-      options.sets?.push(values);
-      return chain;
-    },
-    where: (column: string, _op?: unknown, value?: unknown) => {
-      options.wheres?.push([column, value]);
-      return chain;
-    },
-    executeTakeFirst: async () =>
-      options.updated === undefined
-        ? options.row
-        : { numUpdatedRows: BigInt(options.updated), ...(options.row ?? {}) },
-  };
-  return chain as unknown as Kysely<DB>;
-}
+const AGENT = '00000000-0000-4000-8000-000000000a01';
+const RUN = '00000000-0000-4000-8000-000000000b01';
+const store = createMemoryDataStore();
 
 const input = {
-  agentId: 'agent-1',
-  runId: 'run-1',
+  agentId: AGENT,
+  runId: RUN,
   ownerSubject: 'alice',
   canceledBySubject: 'alice',
 };
 
+async function seedRun(status: string, extra: Record<string, unknown> = {}) {
+  await store.seed({
+    agents: [{ id: AGENT, owner_subject: 'alice', name: 'Sweep' }],
+    agent_runs: [
+      {
+        id: RUN,
+        agent_id: AGENT,
+        owner_subject: 'alice',
+        trigger_kind: 'manual',
+        status,
+        trigger_id: null,
+        triggered_by_subject: null,
+        parent_run_id: null,
+        lineage: [],
+        depth: 0,
+        definition_snapshot: null,
+        legacy_steps_snapshot: null,
+        initial_state: null,
+        llm_model_id: null,
+        current_step_id: null,
+        error: null,
+        error_kind: null,
+        active_ms: '0',
+        started_at: null,
+        finished_at: null,
+        waiting_until: null,
+        cancel_requested_at: null,
+        cancel_requested_by: null,
+        resume_count: 0,
+        resume_failure: null,
+        resume_guidance: null,
+        resume_step_id: null,
+        resumed_at: null,
+        resumed_by: null,
+        created_at: new Date(),
+        updated_at: new Date(),
+        ...extra,
+      },
+    ],
+  });
+}
+
+function storedRun() {
+  return store.tables.first('agent_runs', (row) => row.id === RUN);
+}
+
+beforeEach(() => {
+  store.reset();
+  registerDataStore(store);
+});
+
+afterAll(() => {
+  resetDataStore();
+});
+
 describe('requestRunCancellation', () => {
   it('reports not-found for a run that is not this owner’s', async () => {
+    await seedRun('queued');
     const result = await requestRunCancellation(
-      stubDb({ row: undefined }),
       { enqueue: async () => ({ ok: true }) } as unknown as QueueProducer,
-      input
+      { ...input, ownerSubject: 'mallory' }
     );
     expect(result).toEqual({ outcome: 'not-found' });
   });
 
   it('refuses a run that already reached a terminal status', async () => {
+    await seedRun('succeeded');
     const enqueue = jest.fn();
-    const result = await requestRunCancellation(
-      stubDb({ row: { id: 'run-1', status: 'succeeded' } }),
-      { enqueue } as unknown as QueueProducer,
-      input
-    );
+    const result = await requestRunCancellation({ enqueue } as unknown as QueueProducer, input);
     expect(result).toEqual({ outcome: 'already-final', status: 'succeeded' });
     expect(enqueue).not.toHaveBeenCalled();
+    expect(storedRun()?.cancel_requested_at).toBeNull();
   });
 
   it('claims a queued run and wakes a worker for it', async () => {
+    await seedRun('queued');
     const enqueue = jest.fn(async () => ({ ok: true }));
-    const sets: Record<string, unknown>[] = [];
-    const result = await requestRunCancellation(
-      stubDb({ row: { id: 'run-1', status: 'queued' }, updated: 1, sets }),
-      { enqueue } as unknown as QueueProducer,
-      input
-    );
+    const result = await requestRunCancellation({ enqueue } as unknown as QueueProducer, input);
     expect(result).toEqual({ outcome: 'canceling' });
-    expect(sets[0]).toMatchObject({ cancel_requested_by: 'alice' });
+    expect(storedRun()).toMatchObject({ cancel_requested_by: 'alice' });
+    expect(storedRun()?.cancel_requested_at).toBeInstanceOf(Date);
     expect(enqueue).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'run',
-        payload: { runId: 'run-1' },
-        orderingKey: 'agent:agent-1',
+        payload: { runId: RUN },
+        orderingKey: `agent:${AGENT}`,
       })
     );
   });
 
   it('claims a waiting run and wakes a worker for it too', async () => {
+    await seedRun('waiting');
     const enqueue = jest.fn(async () => ({ ok: true }));
-    const result = await requestRunCancellation(
-      stubDb({ row: { id: 'run-1', status: 'waiting' }, updated: 1 }),
-      { enqueue } as unknown as QueueProducer,
-      input
-    );
+    const result = await requestRunCancellation({ enqueue } as unknown as QueueProducer, input);
     expect(result).toEqual({ outcome: 'canceling' });
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
   it('claims a running run WITHOUT enqueuing — its own executor is already watching', async () => {
+    await seedRun('running');
     const enqueue = jest.fn();
-    const result = await requestRunCancellation(
-      stubDb({ row: { id: 'run-1', status: 'running' }, updated: 1 }),
-      { enqueue } as unknown as QueueProducer,
-      input
-    );
+    const result = await requestRunCancellation({ enqueue } as unknown as QueueProducer, input);
     expect(result).toEqual({ outcome: 'canceling' });
     expect(enqueue).not.toHaveBeenCalled();
+    expect(storedRun()?.cancel_requested_at).toBeInstanceOf(Date);
   });
 
-  it('a lost claim (already requested, or finished in the gap) is still "canceling", not an error', async () => {
+  it('a lost claim (already requested) is still "canceling", not an error', async () => {
+    await seedRun('waiting', {
+      cancel_requested_at: '2026-01-01T00:00:00.000Z',
+      cancel_requested_by: 'bob',
+    });
     const enqueue = jest.fn();
-    const result = await requestRunCancellation(
-      stubDb({ row: { id: 'run-1', status: 'running' }, updated: 0 }),
-      { enqueue } as unknown as QueueProducer,
-      input
-    );
+    const result = await requestRunCancellation({ enqueue } as unknown as QueueProducer, input);
     expect(result).toEqual({ outcome: 'canceling' });
     expect(enqueue).not.toHaveBeenCalled();
+    expect(storedRun()?.cancel_requested_by).toBe('bob');
   });
 });

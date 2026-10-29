@@ -8,7 +8,7 @@
 
 import type { ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import { decrypt, parseEncryptionKey } from '@renkei/crypto';
 import {
   createServer,
@@ -108,9 +108,7 @@ describeDb('mcp/prepare', () => {
   }
 
   async function makeServer(slug: string, authMode: 'oauth' | 'none' = 'oauth') {
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
-    const made = await createServer(db.val, {
+    const made = await createServer({
       slug,
       name: slug,
       url: `${ORIGIN}/mcp`,
@@ -128,10 +126,8 @@ describeDb('mcp/prepare', () => {
   }
 
   async function prepare(serverId: string, assertPublic = async () => undefined) {
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
     const out = capture();
-    await new McpPreparer(db.val, key, fetchImpl, assertPublic).prepare(
+    await new McpPreparer(key, fetchImpl, assertPublic).prepare(
       { serverId, redirectUri: REDIRECT },
       out.response
     );
@@ -147,9 +143,8 @@ describeDb('mcp/prepare', () => {
   });
 
   afterAll(async () => {
-    const db = getDatabase();
-    if (db.ok) for (const id of created) await deleteServer(db.val, id);
-    await closeDatabase();
+    for (const id of created) await deleteServer(id);
+    await closeDataStore();
   });
 
   it('discovers the authorization server, registers Renkei, and seals the issued secret', async () => {
@@ -172,13 +167,11 @@ describeDb('mcp/prepare', () => {
       grant_types: ['authorization_code', 'refresh_token'],
     });
 
-    const db = getDatabase();
-    if (!db.ok) throw new Error('database unavailable');
-    const stored = await getServer(db.val, server.id);
+    const stored = await getServer(server.id);
     expect(stored.ok && stored.val?.clientId).toBe('registered-client');
     expect(stored.ok && stored.val?.oauth?.tokenEndpoint).toBe(`${AUTH}/token`);
     // The secret is sealed, and only the delegate's key opens it.
-    const sealed = await getSealedClientSecret(db.val, server.id);
+    const sealed = await getSealedClientSecret(server.id);
     expect(sealed.ok && sealed.val).toBeTruthy();
     expect(sealed.ok && sealed.val && decrypt(sealed.val, key)).toMatchObject({
       ok: true,

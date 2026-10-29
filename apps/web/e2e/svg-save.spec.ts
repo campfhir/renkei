@@ -2,61 +2,29 @@
  * Saving an SVG the model wrote as an image: a fenced ```svg block gets
  * "Save as PNG / SVG" under it (a non-SVG block and a truncated SVG do not
  * save), and an svg mockup carries the same on its card and in the
- * fullscreen viewer. Nothing is mocked — the browser rasterises the real
- * markup, and the download's bytes are checked.
- *
- * Read-only, so ids per Playwright project are enough (see mockups.spec.ts).
+ * fullscreen viewer. Nothing is mocked — the reply is the scripted
+ * stand-in model's (e2e/support/stub-model.ts), the mockup is the app's
+ * own chat_show_mockup, the browser rasterises the real markup, and the
+ * download's bytes are checked.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
-import { test, expect, type Download, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { keyFor } from './keys';
+import type { Download, Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel, scripted, type StubStep } from './support/stub-model';
+import { createChat, send } from './support/chat';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 /** The first hit on a route compiles it (`next dev` builds lazily): the 5s default is not enough. */
 const COLD = { timeout: 30_000 };
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    chatId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee${digit}`,
-    turnId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeeee${digit}2`,
-    modelId: `eeeeeeee-eeee-4eee-8eee-eeeeeeeeee${digit}3`,
-    title: `Draw me a badge (${digit})`,
-    modelLabel: `SVG save model ${digit}`,
-    logoCall: `toolu_svgsave_logo_${digit}`,
-  };
-}
-type Ids = ReturnType<typeof idsFor>;
-
-/** `@renkei/crypto`'s content envelope, reproduced (see chat.spec.ts's note). */
-function secretbox(plaintext: string, encoded: string): string {
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
-const sealSecret = (plaintext: string) =>
-  secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
+const PROMPT = 'Draw me a badge, and a logo mockup.';
 
 const BADGE_SVG = `<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
   <circle cx="60" cy="60" r="54" fill="#4f46e5"/>
@@ -77,69 +45,6 @@ const REPLY = [
   '```js\nconsole.log("hi");\n```',
 ].join('\n\n');
 
-async function seedChat(client: Client, ids: Ids): Promise<void> {
-  await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-  await client.query(
-    `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, $4, true, false)`,
-    [ids.modelId, ids.modelLabel, 'http://127.0.0.1:8092/anthropic', sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
-  );
-  await client.query(
-    `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n     VALUES ($1, $2, $3, $4, NOW())`,
-    [ids.chatId, E2E_SUBJECT, ids.title, ids.modelId]
-  );
-  const chatKey = await keyFor(client, {
-    kind: 'chat',
-    resourceId: ids.chatId,
-    ownerSubject: E2E_SUBJECT,
-  });
-  await client.query(
-    `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n     VALUES ($1, $2, 'completed', $3, 2, NOW())`,
-    [ids.turnId, ids.chatId, ids.modelId]
-  );
-  const rows: { seq: number; role: string; kind: string; blocks: unknown[] }[] = [
-    {
-      seq: 1,
-      role: 'user',
-      kind: 'prompt',
-      blocks: [{ type: 'text', text: 'Draw me a badge, and a logo mockup.' }],
-    },
-    {
-      seq: 2,
-      role: 'assistant',
-      kind: 'assistant',
-      blocks: [
-        { type: 'text', text: REPLY },
-        {
-          type: 'tool_use',
-          id: ids.logoCall,
-          name: 'chat_show_mockup',
-          input: { title: 'Renkei logo', format: 'svg', source: LOGO_SOURCE, width: 320 },
-        },
-      ],
-    },
-    {
-      seq: 3,
-      role: 'user',
-      kind: 'tool_results',
-      blocks: [
-        {
-          type: 'tool_result',
-          toolUseId: ids.logoCall,
-          content: 'Showed “Renkei logo” inline in the chat.',
-        },
-      ],
-    },
-  ];
-  for (const row of rows) {
-    const assistant = row.role === 'assistant';
-    await client.query(
-      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
-      [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), assistant ? ids.modelId : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
-    );
-  }
-}
-
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
     path: path.join(
@@ -154,20 +59,37 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-let client: Client;
-let ids: Ids;
+let ids: { chatId: string };
+let modelId = '';
 
-// eslint-disable-next-line no-empty-pattern -- Playwright reads fixtures off the first parameter's destructuring; this one needs none
-test.beforeEach(async ({}, testInfo) => {
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  ids = idsFor(testInfo.project.name);
-  await seedChat(client, ids);
+  // Each test stages a real turn first, and the documents compile on first sight.
+  test.slow();
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  modelId = await addStubModel(page.request, tag);
+  const steps: StubStep[] = [
+    {
+      text: REPLY,
+      tools: [
+        {
+          name: 'chat_show_mockup',
+          input: { title: 'Renkei logo', format: 'svg', source: LOGO_SOURCE, width: 320 },
+        },
+      ],
+    },
+    { text: 'That is the badge and the logo.' },
+  ];
+  const chatId = await createChat(page.request, {
+    llmModelId: modelId,
+    title: `Draw me a badge ${tag}`,
+  });
+  await send(page.request, chatId, scripted(PROMPT, steps), modelId);
+  ids = { chatId };
 });
 
-test.afterEach(async () => {
-  await client?.end();
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.project.name === 'desktop-light') await removeModel(page.request, modelId);
 });
 
 async function readDownload(download: Download): Promise<Buffer> {
@@ -225,7 +147,7 @@ test('an svg mockup saves from its card and from the fullscreen viewer', async (
   page,
 }, testInfo) => {
   await page.goto(`/chat/${ids.chatId}`);
-  const card = page.locator('figure', { hasText: 'Renkei logo' });
+  const card = page.locator('figure:visible', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
 
   const fromCard = page.waitForEvent('download');
@@ -249,7 +171,7 @@ test('an svg mockup saves from its card and from the fullscreen viewer', async (
 test('the save buttons fit at phone width', async ({ page }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(`/chat/${ids.chatId}`);
-  const card = page.locator('figure', { hasText: 'Renkei logo' });
+  const card = page.locator('figure:visible', { hasText: 'Renkei logo' });
   await expect(card).toBeVisible(COLD);
   await expect(
     page.locator('.chat-code').first().getByRole('button', { name: 'Save as PNG' })

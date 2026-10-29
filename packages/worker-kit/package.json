@@ -17,8 +17,7 @@
     "@campfhir/bored-logs": "^0.7.1",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
-    "@renkei/settings": "workspace:*",
-    "kysely": "^0.29.7"
+    "@renkei/settings": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

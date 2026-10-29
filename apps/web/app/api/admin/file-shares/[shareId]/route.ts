@@ -5,7 +5,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { deleteShare, getShare, updateShare } from '@renkei/connector-fileshares';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -20,10 +19,7 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const share = await getShare(dbResult.val, shareId);
+  const share = await getShare(shareId);
   if (!share.ok) return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
   if (!share.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
@@ -44,10 +40,7 @@ export async function PATCH(
   const parsed = parseSharePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const updated = await updateShare(dbResult.val, shareId, parsed.input);
+  const updated = await updateShare(shareId, parsed.input);
   if (!updated.ok) {
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'A share with that name exists' }, { status: 409 });
@@ -75,14 +68,11 @@ export async function DELETE(
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // Read the name before the row goes, so the audit line names the thing.
-  const share = await getShare(dbResult.val, shareId);
+  const share = await getShare(shareId);
   const name = share.ok && share.val ? share.val.summary.name : shareId;
 
-  const deleted = await deleteShare(dbResult.val, shareId);
+  const deleted = await deleteShare(shareId);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not delete the share' }, { status: 500 });
   }

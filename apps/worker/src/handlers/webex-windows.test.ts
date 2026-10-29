@@ -5,13 +5,10 @@
  * index alone when the watcher cannot read the room any more.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: jest.fn(() => 'sql-fragment') }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
   ingestObjectChunks: jest.fn(),
   deleteObjectChunks: jest.fn(),
-  escapeLike: (value: string) => value,
 }));
 jest.mock('./webex-linked-user', () => ({ resolveWebexUserAccessBySubject: jest.fn() }));
 jest.mock('../logger', () => ({
@@ -19,6 +16,7 @@ jest.mock('../logger', () => ({
 }));
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import type { WebexMessage, WebexRoom } from '@renkei/connector-webex';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -27,6 +25,8 @@ import {
   renderWebexWindow,
   fetchWindowMessages,
   createKnowledgeIngestWebexWindowHandler,
+  markWebexWindowDirty,
+  deleteLegacyMessageRows,
   type WindowClient,
 } from './webex-windows';
 import type { ClaimedEvent } from '../queue';
@@ -226,7 +226,8 @@ describe('ingest.webex-window handler', () => {
     });
     await handler(event(payload));
 
-    expect(mockIngest).toHaveBeenCalledWith(expect.anything(),
+    expect(mockIngest).toHaveBeenCalledWith(
+      expect.anything(),
       expect.objectContaining({
         provider: 'webex',
         refId: 'room-1/day/2026-09-02',
@@ -307,5 +308,53 @@ describe('ingest.webex-window handler', () => {
         event({ provider: 'webex', roomId: 'room-1', day: 'yesterday', subject: 'x' })
       )
     ).rejects.toThrow('roomId/day/subject');
+  });
+});
+
+describe('markWebexWindowDirty / deleteLegacyMessageRows', () => {
+  afterEach(() => resetDataStore());
+
+  it('marks a window once, keeping the watcher a later anonymous mark does not name', async () => {
+    const store = createMemoryDataStore();
+    registerDataStore(store);
+
+    await markWebexWindowDirty('room-1', '2026-09-02', 'alice');
+    const first = await store.webexDirtyWindows.find('room-1', '2026-09-02');
+    await markWebexWindowDirty('room-1', '2026-09-02', null);
+    const second = await store.webexDirtyWindows.find('room-1', '2026-09-02');
+
+    expect(first?.subject).toBe('alice');
+    expect(second?.subject).toBe('alice');
+    expect(second?.markedAt.getTime()).toBeGreaterThanOrEqual(first?.markedAt.getTime() ?? 0);
+  });
+
+  it("drops only that day's per-message rows of the room, never its windows", async () => {
+    const store = createMemoryDataStore();
+    registerDataStore(store);
+    const row = (n: number, refId: string, sourceAt: string) => ({
+      id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
+      provider: 'webex',
+      ref_id: refId,
+      content: 'enc',
+      embedding: '[1,0,0]',
+      source_at: new Date(sourceAt),
+    });
+    await store.seed({
+      knowledge_chunks: [
+        row(1, 'room-1/msg-a', '2026-09-02T10:00:00Z'),
+        row(2, 'room-1/day/2026-09-02', '2026-09-02T23:00:00Z'),
+        row(3, 'room-1/msg-b', '2026-09-03T00:00:00Z'),
+        row(4, 'room-10/msg-c', '2026-09-02T10:00:00Z'),
+      ],
+    });
+
+    await deleteLegacyMessageRows('room-1', '2026-09-02');
+
+    const left = await store.knowledgeChunks.listByRefPrefix('webex', 'room-1');
+    expect(left.map((chunk) => chunk.refId).sort()).toEqual([
+      'room-1/day/2026-09-02',
+      'room-1/msg-b',
+      'room-10/msg-c',
+    ]);
   });
 });

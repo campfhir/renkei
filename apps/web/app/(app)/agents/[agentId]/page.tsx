@@ -2,8 +2,6 @@ import BackLink from '@/components/back-link';
 import React from 'react';
 import Link from 'next/link';
 import { redirect, notFound } from 'next/navigation';
-import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -18,6 +16,7 @@ import CollapsibleSection from '@/components/collapsible-section';
 import AgentEnabledToggle from '@/components/agent-enabled-toggle';
 import AgentUsagePanel from '@/components/agent-usage-panel';
 import {
+  getAgentInvocationCounts,
   getAgentTokenUsage,
   getAgentToolUsage,
   getTokenUsageByModel,
@@ -35,63 +34,6 @@ import { latestOptimization } from '@/lib/agents/optimization-store';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 const TOOL_USAGE_WINDOW_DAYS = 30;
-
-interface InvocationCounts {
-  today: number;
-  week: number;
-  month: number;
-  quarter: number;
-  year: number;
-  allTime: number;
-  /** Runs started org-wide today, for reading against the daily cap. */
-  orgToday: number;
-}
-
-/**
- * Run tallies from the durable run log (migration 083), which survives the
- * run-retention prune — that survival is what makes the quarterly/yearly/
- * all-time numbers real rather than "since retention began". Calendar
- * buckets, not trailing windows, because the numbers exist to be read
- * against the org's per-day cap, which is calendar-shaped in spirit.
- */
-async function invocationCountsOf(
-  db: Kysely<DB>,
-  agentId: string
-): Promise<InvocationCounts> {
-  const result = await sql<{
-    today: string;
-    week: string;
-    month: string;
-    quarter: string;
-    year: string;
-    all_time: string;
-  }>`
-    SELECT
-      COUNT(*) FILTER (WHERE created_at::date = CURRENT_DATE) AS today,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)) AS week,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)) AS month,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)) AS quarter,
-      COUNT(*) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)) AS year,
-      COUNT(*) AS all_time
-    FROM agent_run_log
-    WHERE agent_id = ${agentId}
-  `.execute(db);
-  const row = result.rows[0];
-  const orgResult = await sql<{ total: string }>`
-    SELECT COUNT(*) AS total
-    FROM agent_run_log
-    WHERE created_at::date = CURRENT_DATE
-  `.execute(db);
-  return {
-    today: Number(row?.today ?? 0),
-    week: Number(row?.week ?? 0),
-    month: Number(row?.month ?? 0),
-    quarter: Number(row?.quarter ?? 0),
-    year: Number(row?.year ?? 0),
-    allTime: Number(row?.all_time ?? 0),
-    orgToday: Number(orgResult.rows[0]?.total ?? 0),
-  };
-}
 
 /**
  * The readable overview of one agent. Its instructions and tools are the
@@ -113,12 +55,10 @@ export default async function AgentOverviewPage({
     redirect(signInUrl(`/agents/${agentId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
   // Owner or grantee — a grantee sees the page exactly as the owner does
   // (that is what the grant is for); only the sharing controls stay the
   // owner's own.
-  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
 
@@ -132,20 +72,18 @@ export default async function AgentOverviewPage({
     toolUsage,
     optimization,
   ] = await Promise.all([
-    listRunsForOwner(dbResult.val, access.ownerSubject, agentId, { limit: 5 }),
-    invocationCountsOf(dbResult.val, agentId),
+    listRunsForOwner(access.ownerSubject, agentId, { limit: 5 }),
+    // Run tallies from the durable run log, which survives the retention
+    // prune; calendar buckets, read against the org's per-day cap.
+    getAgentInvocationCounts(agentId),
     getOrgSettings(),
-    access.viewerIsOwner
-      ? Promise.resolve(null)
-      : getIdentityDisplay(access.ownerSubject),
-    getAgentTokenUsage(dbResult.val, agentId),
-    getTokenUsageByModel(dbResult.val, agentId),
-    getAgentToolUsage(dbResult.val, agentId, TOOL_USAGE_WINDOW_DAYS),
+    access.viewerIsOwner ? Promise.resolve(null) : getIdentityDisplay(access.ownerSubject),
+    getAgentTokenUsage(agentId),
+    getTokenUsageByModel(agentId),
+    getAgentToolUsage(agentId, TOOL_USAGE_WINDOW_DAYS),
     // The optimizer's latest report — the owner's only; a grantee gets
     // null from the read itself and no panel below.
-    access.viewerIsOwner
-      ? latestOptimization(dbResult.val, access.ownerSubject, agentId)
-      : Promise.resolve(null),
+    access.viewerIsOwner ? latestOptimization(access.ownerSubject, agentId) : Promise.resolve(null),
   ]);
   const reviewNotes = parseReviewNotes(agent.reviewNotes);
   // Same rule the agents list applies: a manual run of an event-only agent
@@ -204,12 +142,12 @@ export default async function AgentOverviewPage({
     </>
   );
   const invocationRows: { label: string; count: number }[] = [
-    { label: 'Today', count: invocations.today },
-    { label: 'This week', count: invocations.week },
-    { label: 'This month', count: invocations.month },
-    { label: 'This quarter', count: invocations.quarter },
-    { label: 'This year', count: invocations.year },
-    { label: 'All time', count: invocations.allTime },
+    { label: 'Today', count: invocations.agent.runs.today },
+    { label: 'This week', count: invocations.agent.runs.week },
+    { label: 'This month', count: invocations.agent.runs.month },
+    { label: 'This quarter', count: invocations.agent.runs.quarter },
+    { label: 'This year', count: invocations.agent.runs.year },
+    { label: 'All time', count: invocations.agent.runs.allTime },
   ];
 
   return (
@@ -274,12 +212,7 @@ export default async function AgentOverviewPage({
               </p>
               {/* Beside the schedule, because "every weekday at 8am" is
                   exactly what makes someone want to fire it once by hand. */}
-              {eventOnly ? null : (
-                <RunNowButton
-                  agentId={agentId}
-                  agentName={agent.name}
-                />
-              )}
+              {eventOnly ? null : <RunNowButton agentId={agentId} agentName={agent.name} />}
             </div>
             {agent.triggers.length > 0 ? (
               <ul className="mt-1 space-y-2">
@@ -336,10 +269,7 @@ export default async function AgentOverviewPage({
                owner followed a link to see it, not to find it. */
             <div id="improve" className="scroll-mt-16">
               <CollapsibleSection title="Improve" defaultOpen={optimization !== null}>
-                <ImprovePanel
-                  agentId={agentId}
-                  initial={optimization}
-                />
+                <ImprovePanel agentId={agentId} initial={optimization} />
               </CollapsibleSection>
             </div>
           ) : null}

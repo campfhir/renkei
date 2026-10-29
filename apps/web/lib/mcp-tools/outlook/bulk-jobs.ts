@@ -17,7 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { BATCH_CHUNK_SIZE } from '@renkei/connector-microsoft';
 import { actMeta } from '@renkei/tool-outcomes';
@@ -225,9 +225,7 @@ export function registerBulkJobTools(
         params.markRead = args.markRead !== false;
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
+      const jobs = getDataStore().mailBulkJobs;
 
       const jobId = randomUUID();
       const selection = hasIds
@@ -239,17 +237,14 @@ export function registerBulkJobTools(
               MAX_JOB_MESSAGES
             ),
           };
-      await db
-        .insertInto('mail_bulk_jobs')
-        .values({
-          id: jobId,
-          subject: context.subject,
-          account_id: access.accountId,
-          action,
-          params: JSON.stringify(params),
-          selection: JSON.stringify(selection),
-        })
-        .execute();
+      await jobs.create({
+        id: jobId,
+        subject: context.subject,
+        accountId: access.accountId,
+        action,
+        params,
+        selection,
+      });
 
       const enqueued = await webhookEventsQueue().producer.enqueue({
         source: 'mailjobs',
@@ -260,11 +255,7 @@ export function registerBulkJobTools(
       });
       if (!enqueued.ok) {
         // Don't leave a zombie 'queued' row nothing will ever pick up.
-        await db
-          .updateTable('mail_bulk_jobs')
-          .set({ status: 'failed', last_error: 'could not enqueue the job' })
-          .where('id', '=', jobId)
-          .execute();
+        await jobs.markFailed(jobId, 'could not enqueue the job');
         return errText('The job could not be queued — try again.');
       }
 
@@ -314,21 +305,14 @@ export function registerBulkJobTools(
       const jobId = str(args.jobId);
       if (!jobId) return errText('jobId is required');
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      // tenant AND subject are the security boundary: a job id alone must
-      // never read someone else's mailbox activity. A foreign id is
+      // The subject is the security boundary: a job id alone must never
+      // read someone else's mailbox activity. A foreign id is
       // indistinguishable from a nonexistent one.
-      const job = await dbResult.val
-        .selectFrom('mail_bulk_jobs')
-        .selectAll()
-        .where('id', '=', jobId)
-        .where('subject', '=', context.subject)
-        .executeTakeFirst();
+      const job = await getDataStore().mailBulkJobs.getOwned(jobId, context.subject);
       if (!job) return errText('No such job.');
 
-      const startedAt = job.started_at ? new Date(job.started_at).getTime() : null;
-      const endedAt = job.finished_at ? new Date(job.finished_at).getTime() : null;
+      const startedAt = job.startedAt ? job.startedAt.getTime() : null;
+      const endedAt = job.finishedAt ? job.finishedAt.getTime() : null;
       const elapsedS =
         startedAt !== null ? Math.round(((endedAt ?? Date.now()) - startedAt) / 1000) : null;
       const lines = [
@@ -339,7 +323,7 @@ export function registerBulkJobTools(
         ...(elapsedS !== null
           ? [`${job.status === 'running' ? 'Running' : 'Ran'} ${elapsedS}s.`]
           : []),
-        ...(job.last_error ? [`Error: ${job.last_error}`] : []),
+        ...(job.lastError ? [`Error: ${job.lastError}`] : []),
       ];
       const failures = Array.isArray(job.failures) ? job.failures : [];
       if (failures.length > 0) {

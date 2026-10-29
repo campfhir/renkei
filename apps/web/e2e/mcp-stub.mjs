@@ -19,12 +19,13 @@
  * calls) for assertions; `POST /__reset` clears it.
  */
 
-/* global Buffer, URL, URLSearchParams, console */
+/* global Buffer, URL, URLSearchParams, console, process */
 
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 
-const PORT = 8093;
+// E2E_MCP_STUB_PORT moves it, for a checkout that runs its own copy.
+const PORT = Number(process.env.E2E_MCP_STUB_PORT ?? 8093);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 
 const clients = new Map();

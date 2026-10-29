@@ -12,7 +12,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { actMeta } from '@renkei/tool-outcomes';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
@@ -481,12 +480,9 @@ export async function registerScreenTools(
         );
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
-      const db = dbResult.val;
       const payload: ScreenChangesPayload = { screen, spaces, moreSpaces, operations };
       const reason = text(args.reason);
-      const change = await createChangeRequest(db, {
+      const change = await createChangeRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -499,7 +495,7 @@ export async function registerScreenTools(
 
       const replaces = text(args.replaces);
       if (replaces) {
-        notes.push(await replaceRequest(db, context.subject, replaces, change.id));
+        notes.push(await replaceRequest(context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;

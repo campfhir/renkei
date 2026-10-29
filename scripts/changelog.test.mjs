@@ -16,9 +16,11 @@ const release = (date, entries = [{ kind: 'added', title: 'A thing', detail: 'It
 const file = (...releases) =>
   `export const CHANGELOG: ChangelogRelease[] = [\n${releases.join('\n')}\n];\n`;
 
+// Against the real clock: the fixed NOW below keeps the synthetic cases
+// deterministic, but a real entry dated after it would read as "future".
 test('the repository changelog is well-formed', () => {
   const source = readFileSync(path.join(ROOT, 'apps/web/lib/changelog.ts'), 'utf8');
-  assert.deepEqual(validate(source, NOW), []);
+  assert.deepEqual(validate(source), []);
 });
 
 test('a release with a real date and entries is accepted', () => {

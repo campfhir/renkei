@@ -26,8 +26,6 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
@@ -48,7 +46,6 @@ import type { ServiceDeps, ServiceError, SubjectTarget } from '@renkei/connector
 import { logger } from './logger';
 
 export interface FileshareServerDeps {
-  db: Kysely<DB>;
   /** Accepted bearer keys; empty means every request is refused. */
   apiKeys: string[];
   /**
@@ -138,9 +135,7 @@ type JsonHandler = (
   response: ServerResponse
 ) => Promise<void>;
 
-function makeJsonHandlers(
-  transferLimit: () => Promise<number>
-): Record<string, JsonHandler> {
+function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, JsonHandler> {
   return {
     async list(deps, body, response) {
       const target = targetOf(body);
@@ -273,7 +268,7 @@ function makeJsonHandlers(
 }
 
 export function createFileshareServer(deps: FileshareServerDeps): Server {
-  const serviceDeps: ServiceDeps = { db: deps.db };
+  const serviceDeps: ServiceDeps = {};
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const jsonHandlers = makeJsonHandlers(transferLimit);
 

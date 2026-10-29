@@ -6,7 +6,6 @@
  * message attachment) — base64's implicit cap is gone.
  */
 
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/crypto', () => ({
   parseEncryptionKey: jest.fn(() => ({ ok: true, val: 'key' })),
   loadKeyring: jest.fn(() => ({ ok: true, val: 'key' })),
@@ -69,8 +68,7 @@ jest.mock('@/lib/file-shares/service-client', () => {
   };
 });
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { authedFetch, type AuthedFetch } from '@renkei/delegate-client';
 import {
   executeUpload,
@@ -125,9 +123,6 @@ function fakeAuth(
   return Object.assign(authedFetch(calls, grantKey), { calls });
 }
 
-/** No executor under test reads the db, except OnBase's slot update (not exercised here). */
-const db = {} as unknown as Kysely<DB>;
-
 const graphAuth = fakeAuth('microsoft:ms-1');
 
 beforeEach(() => {
@@ -161,7 +156,6 @@ describe('jira-attachment', () => {
     jiraFetch.mockResolvedValue({ text: async () => '[]' });
 
     const outcome = await executeUpload(
-      db,
       slotOf('jira-attachment', { issueKey: 'PROJ-1' }),
       Buffer.from('bytes')
     );
@@ -190,7 +184,6 @@ describe('jira-attachment', () => {
     mockDescribe.mockResolvedValue({ ok: false, err: { type: 'NO_GRANT' } });
 
     const outcome = await executeUpload(
-      db,
       slotOf('jira-attachment', { issueKey: 'PROJ-1' }),
       Buffer.from('bytes')
     );
@@ -211,7 +204,6 @@ describe('jsm-attachment', () => {
       .mockResolvedValueOnce({ text: async () => '' });
 
     const outcome = await executeUpload(
-      db,
       slotOf('jsm-attachment', { requestKey: 'HELP-9' }),
       Buffer.from('bytes')
     );
@@ -223,9 +215,7 @@ describe('jsm-attachment', () => {
       provider: 'atlassian-jsm',
       subject: 'subject-1',
     });
-    expect((jiraFetch.mock.calls[0]![1] as AuthedFetch).grantKey).toBe(
-      'atlassian-jsm:jsm-acct'
-    );
+    expect((jiraFetch.mock.calls[0]![1] as AuthedFetch).grantKey).toBe('atlassian-jsm:jsm-acct');
     expect(String(jiraFetch.mock.calls[1]![0])).toContain(
       '/rest/servicedeskapi/servicedesk/7/attachTemporaryFile'
     );
@@ -248,7 +238,6 @@ describe('confluence-attachment', () => {
     confluenceUpload.mockResolvedValue({ ok: true, body: {} });
 
     const outcome = await executeUpload(
-      db,
       slotOf('confluence-attachment', { contentId: '12345' }),
       Buffer.from('bytes')
     );
@@ -269,7 +258,6 @@ describe('onedrive/sharepoint documents', () => {
     graphPutContent.mockResolvedValue({ ok: true, body: { id: 'item-1', name: 'report.pdf' } });
 
     const outcome = await executeUpload(
-      db,
       slotOf('onedrive-document', destination),
       Buffer.from('bytes')
     );
@@ -288,7 +276,6 @@ describe('onedrive/sharepoint documents', () => {
     graphUploadViaSession.mockResolvedValue({ ok: true, val: { id: 'item-1', name: 'big.bin' } });
 
     const outcome = await executeUpload(
-      db,
       slotOf('sharepoint-document', destination),
       Buffer.alloc(4 * 1024 * 1024 + 1)
     );
@@ -305,7 +292,6 @@ describe('outlook-draft-attachment', () => {
     graphPost.mockResolvedValue({ ok: true, body: {} });
 
     const outcome = await executeUpload(
-      db,
       slotOf('outlook-draft-attachment', { draftId: 'draft-1' }),
       Buffer.from('bytes')
     );
@@ -320,7 +306,6 @@ describe('outlook-draft-attachment', () => {
     graphUploadViaSession.mockResolvedValue({ ok: true, val: {} });
 
     const outcome = await executeUpload(
-      db,
       slotOf('outlook-draft-attachment', { draftId: 'draft-1' }),
       Buffer.alloc(3 * 1024 * 1024 + 1)
     );
@@ -334,7 +319,7 @@ describe('outlook-draft-attachment', () => {
 });
 
 it('refuses an unknown kind', async () => {
-  const outcome = await executeUpload(db, slotOf('mystery', {}), Buffer.from('bytes'));
+  const outcome = await executeUpload(slotOf('mystery', {}), Buffer.from('bytes'));
   expect(outcome.ok).toBe(false);
   expect(outcome.detail).toContain('mystery');
 });
@@ -361,7 +346,6 @@ describe('webex-attachment', () => {
     resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: 'a@x.com' });
 
     const outcome = await executeUpload(
-      db,
       slotOf('webex-attachment', { roomId: 'room-1', markdown: 'see attached' }),
       Buffer.from('bytes')
     );
@@ -389,7 +373,6 @@ describe('webex-attachment', () => {
     resolveWebexAccess.mockResolvedValue({ auth: webexAuth, personEmail: null });
 
     await executeUpload(
-      db,
       slotOf('webex-attachment', { toPersonEmail: 'bob@example.com', parentId: 'msg-root' }),
       Buffer.from('bytes')
     );
@@ -402,7 +385,7 @@ describe('webex-attachment', () => {
   });
 
   it('fails cleanly when the slot carries no room or recipient', async () => {
-    const outcome = await executeUpload(db, slotOf('webex-attachment', {}), Buffer.from('bytes'));
+    const outcome = await executeUpload(slotOf('webex-attachment', {}), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toContain('no room or recipient');
@@ -413,7 +396,6 @@ describe('webex-attachment', () => {
     resolveWebexAccess.mockResolvedValue('WebEx is not connected.');
 
     const outcome = await executeUpload(
-      db,
       slotOf('webex-attachment', { roomId: 'room-1' }),
       Buffer.from('bytes')
     );
@@ -432,7 +414,6 @@ describe('webex-attachment', () => {
     });
 
     const outcome = await executeUpload(
-      db,
       slotOf('webex-attachment', { roomId: 'room-1' }),
       Buffer.from('bytes')
     );
@@ -458,7 +439,6 @@ describe('webex-attachment', () => {
     });
 
     const outcome = await executeUpload(
-      db,
       slotOf('webex-attachment', { roomId: 'room-1' }),
       Buffer.from('bytes')
     );
@@ -501,7 +481,7 @@ describe('webex-attachment to self', () => {
       .mockResolvedValue({ ok: true, val: { id: 'msg-bot', roomId: 'dm-1' } });
     webexBotClient.mockResolvedValue({ postMessage });
 
-    const outcome = await executeUpload(db, selfSlot('for later'), Buffer.from('bytes'));
+    const outcome = await executeUpload(selfSlot('for later'), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('bot');
@@ -522,7 +502,7 @@ describe('webex-attachment to self', () => {
       .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
-    const outcome = await executeUpload(db, selfSlot('for later'), Buffer.from('bytes'));
+    const outcome = await executeUpload(selfSlot('for later'), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(true);
     expect(outcome.detail).toContain('Note to Self');
@@ -542,7 +522,7 @@ describe('webex-attachment to self', () => {
       .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
-    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+    const outcome = await executeUpload(selfSlot(), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(true);
     expect(postMessage).toHaveBeenCalledTimes(1);
@@ -559,7 +539,7 @@ describe('webex-attachment to self', () => {
       .mockResolvedValue({ ok: true, val: { id: 'msg-self', roomId: 'room-solo' } });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
-    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+    const outcome = await executeUpload(selfSlot(), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(true);
     expect(postMessage).not.toHaveBeenCalled();
@@ -574,7 +554,7 @@ describe('webex-attachment to self', () => {
     });
     MockWebexClient.mockImplementation(() => ({ sendNoteToSelf }));
 
-    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+    const outcome = await executeUpload(selfSlot(), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toContain('403');
@@ -584,7 +564,7 @@ describe('webex-attachment to self', () => {
   it('fails before consulting the bot when there is no usable grant', async () => {
     resolveWebexAccess.mockResolvedValue('WebEx is not connected.');
 
-    const outcome = await executeUpload(db, selfSlot(), Buffer.from('bytes'));
+    const outcome = await executeUpload(selfSlot(), Buffer.from('bytes'));
 
     expect(outcome.ok).toBe(false);
     expect(outcome.detail).toBe('WebEx is not connected.');
@@ -606,7 +586,6 @@ describe('fileshare-file', () => {
     });
 
     const outcome = await executeUpload(
-      db,
       slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
       Buffer.from('bytes')
     );
@@ -622,7 +601,6 @@ describe('fileshare-file', () => {
     });
 
     const outcome = await executeUpload(
-      db,
       slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
       Buffer.from('bytes')
     );
@@ -635,7 +613,6 @@ describe('fileshare-file', () => {
     fsWriteFile.mockResolvedValue({ ok: true, val: { path: '/reports/report.pdf' } });
 
     const outcome = await executeUpload(
-      db,
       slotOf('fileshare-file', { shareId: 'share-1', path: '/reports' }),
       Buffer.from('bytes')
     );
@@ -649,66 +626,75 @@ describe('fileshare-file', () => {
   });
 });
 
-/** A minimal updateTable() stand-in that records what finalizeUploadSlot sets. */
-function dbRecordingUpdates(): { db: Kysely<DB>; updates: Array<Record<string, unknown>> } {
-  const updates: Array<Record<string, unknown>> = [];
-  const chain = {
-    set(values: Record<string, unknown>) {
-      updates.push(values);
-      return chain;
-    },
-    where: () => chain,
-    execute: async () => undefined,
-  };
-  return { db: { updateTable: () => chain } as unknown as Kysely<DB>, updates };
+const SLOT_ID = '00000000-0000-4000-8000-000000000001';
+
+/** A memory data store holding one claimed slot, as the route leaves it before finishing. */
+async function storeWithClaimedSlot() {
+  const store = createMemoryDataStore();
+  await store.seed({
+    upload_slots: [
+      {
+        id: SLOT_ID,
+        token_hash: 'hash',
+        subject: 'subject-1',
+        account_id: 'acct-1',
+        kind: 'jira-attachment',
+        destination: { issueKey: 'PROJ-1' },
+        filename: 'report.pdf',
+        content_type: 'application/pdf',
+        max_bytes: 1024,
+        status: 'completed',
+        expires_at: new Date(Date.now() + 60_000),
+      },
+    ],
+  });
+  registerDataStore(store);
+  return store;
 }
+
+afterAll(() => {
+  resetDataStore();
+});
 
 describe('finalizeUploadSlot', () => {
   it('marks a successful outcome completed with its detail as the result', async () => {
-    const { db: recordingDb, updates } = dbRecordingUpdates();
+    const store = await storeWithClaimedSlot();
 
-    const outcome = await finalizeUploadSlot(
-      recordingDb,
-      { id: 'slot-1' },
-      { ok: true, detail: 'done' }
-    );
+    const outcome = await finalizeUploadSlot({ id: SLOT_ID }, { ok: true, detail: 'done' });
 
     expect(outcome).toEqual({ ok: true, detail: 'done' });
-    expect(updates).toEqual([
-      { status: 'completed', result: 'done', completed_at: 'sql-fragment' },
-    ]);
+    const slot = await store.uploadSlots.get(SLOT_ID);
+    expect(slot).toMatchObject({ status: 'completed', result: 'done' });
+    expect(slot?.completedAt).toBeInstanceOf(Date);
   });
 
   it('marks a failed outcome failed with its detail as the result', async () => {
-    const { db: recordingDb, updates } = dbRecordingUpdates();
+    const store = await storeWithClaimedSlot();
 
-    const outcome = await finalizeUploadSlot(
-      recordingDb,
-      { id: 'slot-1' },
-      { ok: false, detail: 'no good' }
-    );
+    const outcome = await finalizeUploadSlot({ id: SLOT_ID }, { ok: false, detail: 'no good' });
 
     expect(outcome).toEqual({ ok: false, detail: 'no good' });
-    expect(updates).toEqual([
-      { status: 'failed', result: 'no good', completed_at: 'sql-fragment' },
-    ]);
+    expect(await store.uploadSlots.get(SLOT_ID)).toMatchObject({
+      status: 'failed',
+      result: 'no good',
+    });
   });
 });
 
 describe('completeUploadSlot', () => {
   it('runs executeUpload then finalizes the slot with its outcome', async () => {
-    const { db: recordingDb, updates } = dbRecordingUpdates();
+    const store = await storeWithClaimedSlot();
     jiraFetch.mockResolvedValue({ text: async () => '[]' });
 
     const outcome = await completeUploadSlot(
-      recordingDb,
-      slotOf('jira-attachment', { issueKey: 'PROJ-1' }),
+      { ...slotOf('jira-attachment', { issueKey: 'PROJ-1' }), id: SLOT_ID },
       Buffer.from('bytes')
     );
 
     expect(outcome.ok).toBe(true);
-    expect(updates).toEqual([
-      { status: 'completed', result: outcome.detail, completed_at: 'sql-fragment' },
-    ]);
+    expect(await store.uploadSlots.get(SLOT_ID)).toMatchObject({
+      status: 'completed',
+      result: outcome.detail,
+    });
   });
 });

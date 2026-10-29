@@ -4,8 +4,6 @@
  * worker sees it right now and the names of the project's variables.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { ProjectAccess } from '@/lib/chat/access';
 import { loadProjectView, type ProjectView } from '@/lib/chat/project-view';
 import { getProjectRow } from '@/lib/chat/projects';
@@ -49,12 +47,11 @@ export interface CodeProjectView extends ProjectView {
 }
 
 export async function loadCodeProjectView(
-  db: Kysely<DB>,
   viewerSubject: string,
   projectId: string,
   access: ProjectAccess
 ): Promise<CodeProjectView | null> {
-  const project = await getProjectRow(db, projectId);
+  const project = await getProjectRow(projectId);
   if (!project || project.kind !== 'code' || !project.repo) return null;
   const origin = getPublicBaseUrl() ?? '';
   const readme =
@@ -70,13 +67,13 @@ export async function loadCodeProjectView(
           project.repo.branch
         );
   const [view, workspace, env, readmeResult, usage, limit, sizeRequest] = await Promise.all([
-    loadProjectView(db, viewerSubject, projectId, access),
+    loadProjectView(viewerSubject, projectId, access),
     projectWorkspace(project),
     projectEnv(project),
     readme,
-    loadCodeProjectUsage(db, projectId),
+    loadCodeProjectUsage(projectId),
     getWorkspaceLimitBytes(codeProjectTarget(projectId).subject),
-    latestSizeRequest(db, projectId),
+    latestSizeRequest(projectId),
   ]);
   if (!view) return null;
   return {

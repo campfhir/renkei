@@ -23,8 +23,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   parseMirthCredentials,
   readConnectionCiphertext as readMirthCiphertext,
@@ -139,7 +137,6 @@ async function relay(upstream: Response, response: ServerResponse): Promise<void
 
 export class Forwarder {
   constructor(
-    private readonly db: Kysely<DB>,
     private readonly grants: Grants,
     /** Injected in tests; production dials the worker. */
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)
@@ -247,10 +244,10 @@ export class Forwarder {
     }
     const ciphertext =
       connector === 'mirth'
-        ? await readMirthCiphertext(this.db, id, subject)
+        ? await readMirthCiphertext(id, subject)
         : connector === 'admanager'
-          ? await readAdManagerCiphertext(this.db, id, subject)
-          : await readShareCiphertext(this.db, id, subject);
+          ? await readAdManagerCiphertext(id, subject)
+          : await readShareCiphertext(id, subject);
     if (!ciphertext.ok) return { ok: false, status: 500, type: 'store' };
     if (ciphertext.val === null) return { ok: false, status: 403, type: 'not_connected' };
     const opened = await this.open(subject, ciphertext.val);
@@ -273,7 +270,7 @@ export class Forwarder {
   ): Promise<
     { ok: true; value: unknown } | { ok: false; status: number; type: string; message?: string }
   > {
-    const opened = await openForSubject(this.db, subject, ciphertext);
+    const opened = await openForSubject(subject, ciphertext);
     if (!opened.ok) {
       if (
         opened.err.type === 'NEEDS_DELEGATION' ||
@@ -305,7 +302,7 @@ export class Forwarder {
     const shareId = url.searchParams.get('shareId') ?? '';
     const subject = url.searchParams.get('subject') ?? '';
     if (!shareId || !subject) return fail(response, 400, 'bad_request');
-    const ciphertext = await readShareCiphertext(this.db, shareId, subject);
+    const ciphertext = await readShareCiphertext(shareId, subject);
     if (!ciphertext.ok) return fail(response, 500, 'store');
     if (ciphertext.val === null) return fail(response, 403, 'not_connected');
     const opened = await this.open(subject, ciphertext.val);

@@ -9,8 +9,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { encrypt, parseEncryptionKey } from '@renkei/crypto';
 import {
   getWidgetDecision,
@@ -26,17 +25,77 @@ import { chatCipherById } from './chat-keys';
 // describe block (each block opens and closes its own database pool).
 import { useTestDelegate } from '@/lib/test-support/delegate';
 
+/** A chat row with no key yet (its owner's first access mints one), titled by its owner; its id. */
+async function newChat(ownerSubject: string, title: string): Promise<string> {
+  const store = getDataStore();
+  const id = await store.chats.create({
+    ownerSubject,
+    projectId: null,
+    llmModelId: null,
+    toolConfig: null,
+    thinkingEnabled: false,
+    autoMode: false,
+  });
+  await store.chats.update(ownerSubject, id, { title });
+  return id;
+}
+
+/** An enabled default chat model, the way the admin page adds one; its id. */
+async function addDefaultModel(label: string): Promise<string> {
+  const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
+  if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
+  const id = randomUUID();
+  const created = await getDataStore().llmModels.create(id, {
+    label,
+    provider: 'anthropic',
+    model: 'e2e-model',
+    baseUrl: null,
+    settings: {},
+    encryptedSecrets: encrypt(JSON.stringify({ apiKey: 'test' }), key.val),
+    enabled: true,
+    isDefault: true,
+  });
+  if (created !== 'created') throw new Error(`model not created: ${created}`);
+  return id;
+}
+
+/** Switch one model on or off, the admin page's edit with everything else kept. */
+async function setModelEnabled(id: string, enabled: boolean): Promise<void> {
+  const store = getDataStore();
+  const model = await store.llmModels.get(id);
+  if (!model) throw new Error('no such model');
+  const settings =
+    typeof model.settings === 'object' && model.settings !== null
+      ? Object.fromEntries(Object.entries(model.settings))
+      : {};
+  await store.llmModels.update(id, {
+    label: model.label,
+    provider: model.provider,
+    model: model.model,
+    baseUrl: model.baseUrl,
+    settings,
+    encryptedSecrets: model.encryptedSecrets,
+    enabled,
+    isDefault: model.isDefault,
+  });
+}
+
+/** The ids of the turns the chat's messages belong to, sorted. */
+async function turnIdsOf(chatId: string): Promise<string[]> {
+  const messages = await getDataStore().chatThreads.listMessages(chatId);
+  return [...new Set(messages.flatMap((m) => (m.turnId ? [m.turnId] : [])))].sort();
+}
+
 const maybe =
   process.env.DATABASE_URL && process.env.TOKEN_ENCRYPTION_KEY ? describe : describe.skip;
 
 maybe('recordWidgetModelContext', () => {
   const delegate = useTestDelegate();
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const me = `me-${suiteId.slice(0, 8)}`;
-  const chatId = randomUUID();
-  const modellessChatId = randomUUID();
-  const modelId = randomUUID();
+  let chatId = '';
+  let modellessChatId = '';
+  let modelId = '';
   const session: { subject: string; roles: string[] } = { subject: me, roles: [] };
   const deferred: Array<() => Promise<void>> = [];
   const defer = (task: () => Promise<void>) => {
@@ -46,46 +105,26 @@ maybe('recordWidgetModelContext', () => {
     'The user confirmed "Create Jira issue" on the preview card. Result: Created issue OPS-1.';
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
     // The default model is the organization's, cached: the block before
     // this one configured (and then removed) its own.
     invalidateLlmCache();
-    const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
-    if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
     await delegate.enroll(me);
-    await db
-      .insertInto('llm_model_configs')
-      .values({
-        id: modelId,
-        label: 'Card model',
-        provider: 'anthropic',
-        model: 'e2e-model',
-        encrypted_secrets: encrypt(JSON.stringify({ apiKey: 'test' }), key.val),
-        enabled: true,
-        is_default: true,
-      })
-      .execute();
-    await db
-      .insertInto('chats')
-      .values([
-        { id: chatId, owner_subject: me, title: 'Rotate the secret' },
-        { id: modellessChatId, owner_subject: me, title: 'No model here' },
-      ])
-      .execute();
+    modelId = await addDefaultModel(`Card model ${suiteId}`);
+    chatId = await newChat(me, 'Rotate the secret');
+    modellessChatId = await newChat(me, 'No model here');
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_messages WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE chat_id IN (${chatId}, ${modellessChatId})`.execute(db);
-    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${modellessChatId})`.execute(db);
-    await sql`DELETE FROM llm_model_configs WHERE id = ${modelId}`.execute(db);
-    await closeDatabase();
+    const store = getDataStore();
+    // A chat's messages, turns and decisions go with it.
+    await store.chats.delete(me, chatId);
+    await store.chats.delete(me, modellessChatId);
+    await store.llmModels.delete(modelId);
+    await closeDataStore();
   });
 
   it('records the decision as a note row that opens a turn of its own', async () => {
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: DECISION,
@@ -100,57 +139,51 @@ maybe('recordWidgetModelContext', () => {
     // The model work was handed off, not run here.
     expect(deferred).toHaveLength(1);
 
-    const turn = await db
-      .selectFrom('chat_turns')
-      .select(['status', 'kind'])
-      .where('id', '=', recorded.turn?.turnId ?? '')
-      .executeTakeFirst();
-    expect(turn).toEqual({ status: 'running', kind: 'reply' });
-    const rows = await db
-      .selectFrom('chat_messages')
-      .select(['role', 'kind', 'status', 'turn_id'])
-      .where('chat_id', '=', chatId)
-      .orderBy('seq')
-      .execute();
+    const store = getDataStore();
+    const turn = await store.chatThreads.getTurn(chatId, recorded.turn?.turnId ?? '');
+    expect(turn).toMatchObject({ status: 'running', kind: 'reply' });
+    const rows = (await store.chatThreads.listMessages(chatId)).map((row) => ({
+      role: row.role,
+      kind: row.kind,
+      status: row.status,
+      turnId: row.turnId,
+    }));
     expect(rows).toEqual([
-      { role: 'user', kind: 'note', status: 'complete', turn_id: recorded.turn?.turnId },
-      { role: 'assistant', kind: 'assistant', status: 'streaming', turn_id: recorded.turn?.turnId },
+      { role: 'user', kind: 'note', status: 'complete', turnId: recorded.turn?.turnId },
+      { role: 'assistant', kind: 'assistant', status: 'streaming', turnId: recorded.turn?.turnId },
     ]);
   });
 
   it('refuses while that turn is still running, writing nothing', async () => {
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: 'The user cancelled "Create Jira issue" from the preview card. Nothing was written.',
       defer,
     });
     expect(recorded).toEqual({ ok: false, reason: 'turn-running' });
-    const notes = await db
-      .selectFrom('chat_messages')
-      .select(({ fn }) => fn.countAll<string>().as('n'))
-      .where('chat_id', '=', chatId)
-      .where('kind', '=', 'note')
-      .executeTakeFirstOrThrow();
-    expect(Number(notes.n)).toBe(1);
+    const notes = (await getDataStore().chatThreads.listMessages(chatId)).filter(
+      (row) => row.kind === 'note'
+    );
+    expect(notes).toHaveLength(1);
     expect(deferred).toHaveLength(1);
   });
 
   it('keeps the note without a turn when the organization has no usable model', async () => {
     // The one model switched off for the length of this test: the chat
     // (any chat) has nothing to answer with.
-    await db.updateTable('llm_model_configs').set({ enabled: false }).where('id', '=', modelId).execute();
+    await setModelEnabled(modelId, false);
     invalidateLlmCache();
     let recorded: Awaited<ReturnType<typeof recordWidgetModelContext>>;
     try {
-      recorded = await recordWidgetModelContext(db, {
+      recorded = await recordWidgetModelContext({
         session,
         chatId: modellessChatId,
         text: DECISION,
         defer,
       });
     } finally {
-      await db.updateTable('llm_model_configs').set({ enabled: true }).where('id', '=', modelId).execute();
+      await setModelEnabled(modelId, true);
       invalidateLlmCache();
     }
     expect(recorded.ok).toBe(true);
@@ -158,18 +191,16 @@ maybe('recordWidgetModelContext', () => {
     expect(recorded.turn).toBeNull();
     expect(recorded.message.kind).toBe('note');
     expect(recorded.message.turnId).toBeNull();
-    const rows = await db
-      .selectFrom('chat_messages')
-      .select(['role', 'kind', 'turn_id'])
-      .where('chat_id', '=', modellessChatId)
-      .execute();
-    expect(rows).toEqual([{ role: 'user', kind: 'note', turn_id: null }]);
-    const turns = await db
-      .selectFrom('chat_turns')
-      .select('id')
-      .where('chat_id', '=', modellessChatId)
-      .execute();
-    expect(turns).toEqual([]);
+    const store = getDataStore();
+    const rows = (await store.chatThreads.listMessages(modellessChatId)).map((row) => ({
+      role: row.role,
+      kind: row.kind,
+      turnId: row.turnId,
+    }));
+    expect(rows).toEqual([{ role: 'user', kind: 'note', turnId: null }]);
+    // No turn was opened: none is running, and no message belongs to one.
+    expect(await store.chatThreads.getActiveTurn(modellessChatId)).toBeNull();
+    expect(await turnIdsOf(modellessChatId)).toEqual([]);
     expect(deferred).toHaveLength(1);
   });
 });
@@ -184,43 +215,35 @@ maybe('recordWidgetModelContext', () => {
  */
 maybe('chat widget decisions', () => {
   const delegate = useTestDelegate();
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const me = `me-${suiteId.slice(0, 8)}`;
-  const chatId = randomUUID();
-  const otherChatId = randomUUID();
+  let chatId = '';
+  let otherChatId = '';
   const stateKey = `renkei-preview:${randomUUID()}`;
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
     // The default model is the organization's, cached: the block before
     // this one configured (and then removed) its own.
     invalidateLlmCache();
     await delegate.enroll(me);
-    await db
-      .insertInto('chats')
-      .values([
-        { id: chatId, owner_subject: me, title: 'Rotate the secret' },
-        { id: otherChatId, owner_subject: me, title: 'A different chat' },
-      ])
-      .execute();
+    chatId = await newChat(me, 'Rotate the secret');
+    otherChatId = await newChat(me, 'A different chat');
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions WHERE chat_id IN (${chatId}, ${otherChatId})`.execute(db);
-    await sql`DELETE FROM chats WHERE id IN (${chatId}, ${otherChatId})`.execute(db);
-    await closeDatabase();
+    const store = getDataStore();
+    await store.chats.delete(me, chatId);
+    await store.chats.delete(me, otherChatId);
+    await closeDataStore();
   });
 
   it('is absent until recorded', async () => {
-    expect(await getWidgetDecision(db, stateKey)).toBeNull();
-    expect(await listWidgetDecisions(db, chatId)).toEqual(new Map());
+    expect(await getWidgetDecision(stateKey)).toBeNull();
+    expect(await listWidgetDecisions(chatId)).toEqual(new Map());
   });
 
   it('records a decision, readable by its own key and by its chat', async () => {
-    const recorded = await recordWidgetDecision(db, {
+    const recorded = await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey,
@@ -234,13 +257,13 @@ maybe('chat widget decisions', () => {
     });
     expect(recorded).toEqual({ ok: true });
 
-    expect(await getWidgetDecision(db, stateKey)).toEqual({
+    expect(await getWidgetDecision(stateKey)).toEqual({
       icon: 'sent',
       headline: 'Created issue OPS-1.',
       detail: 'OPS · Task',
       links: [{ label: 'Open in Jira', href: 'https://example.atlassian.net/browse/OPS-1' }],
     });
-    expect(await listWidgetDecisions(db, chatId)).toEqual(
+    expect(await listWidgetDecisions(chatId)).toEqual(
       new Map([
         [
           stateKey,
@@ -254,7 +277,7 @@ maybe('chat widget decisions', () => {
       ])
     );
     // A different chat in the same tenant never sees another chat's card.
-    expect(await listWidgetDecisions(db, otherChatId)).toEqual(new Map());
+    expect(await listWidgetDecisions(otherChatId)).toEqual(new Map());
   });
 
   it('keeps the first decision when a second is reported for the same key', async () => {
@@ -262,7 +285,7 @@ maybe('chat widget decisions', () => {
     // for one state_key could arrive, whatever it reported already
     // happened once (a tool call, or nothing, for Cancel); recording a
     // later, different report over it would rewrite that history.
-    const recorded = await recordWidgetDecision(db, {
+    const recorded = await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey,
@@ -270,7 +293,7 @@ maybe('chat widget decisions', () => {
       state: { icon: 'cancelled', headline: 'Cancelled' },
     });
     expect(recorded).toEqual({ ok: true });
-    expect(await getWidgetDecision(db, stateKey)).toMatchObject({
+    expect(await getWidgetDecision(stateKey)).toMatchObject({
       icon: 'sent',
       headline: 'Created issue OPS-1.',
     });
@@ -285,12 +308,11 @@ maybe('chat widget decisions', () => {
  */
 maybe('recordWidgetModelContext: batches decisions from one reply', () => {
   const delegate = useTestDelegate();
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const me = `me-${suiteId.slice(0, 8)}`;
-  const chatId = randomUUID();
-  const modelId = randomUUID();
-  const replyTurnId = randomUUID();
+  let chatId = '';
+  let modelId = '';
+  let replyTurnId = '';
   const toolUseIdA = `toolu_${randomUUID()}`;
   const toolUseIdB = `toolu_${randomUUID()}`;
   const stateKeyA = `renkei-preview:${randomUUID()}`;
@@ -302,64 +324,42 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
   };
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
     // The default model is the organization's, cached: the block before
     // this one configured (and then removed) its own.
     invalidateLlmCache();
-    const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY ?? '');
-    if (!key.ok) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
     await delegate.enroll(me);
-    await db
-      .insertInto('llm_model_configs')
-      .values({
-        id: modelId,
-        label: 'Card model',
-        provider: 'anthropic',
-        model: 'e2e-model',
-        encrypted_secrets: encrypt(JSON.stringify({ apiKey: 'test' }), key.val),
-        enabled: true,
-        is_default: true,
-      })
-      .execute();
-    await db
-      .insertInto('chats')
-      .values({ id: chatId, owner_subject: me, title: 'Two cards at once' })
-      .execute();
+    modelId = await addDefaultModel(`Card model ${suiteId}`);
+    chatId = await newChat(me, 'Two cards at once');
+    const store = getDataStore();
     // The reply that presented both cards — already finished, so a new
     // turn is free to start once both are decided.
-    await db
-      .insertInto('chat_turns')
-      .values({
-        id: replyTurnId,
-        chat_id: chatId,
-        status: 'completed',
-        llm_model_id: modelId,
-        iterations: 1,
-        finished_at: new Date(),
-      })
-      .execute();
-    await insertMessage(db, {
+    replyTurnId = await store.chatThreads.createTurn({
+      chatId,
+      kind: 'reply',
+      llmModelId: modelId,
+      thinkingBudget: null,
+      runner: null,
+    });
+    await insertMessage({
       chatId,
       turnId: replyTurnId,
       role: 'assistant',
       kind: 'assistant',
       status: 'complete',
-      cipher: await chatCipherById(db, chatId),
+      cipher: await chatCipherById(chatId),
       blocks: [
         { type: 'text', text: 'Two role assignments to review.' },
         { type: 'tool_use', id: toolUseIdA, name: 'entra_assign_app_role_preview', input: {} },
         { type: 'tool_use', id: toolUseIdB, name: 'entra_assign_app_role_preview', input: {} },
       ],
     });
-    await insertMessage(db, {
+    await insertMessage({
       chatId,
       turnId: replyTurnId,
       role: 'user',
       kind: 'tool_results',
       status: 'complete',
-      cipher: await chatCipherById(db, chatId),
+      cipher: await chatCipherById(chatId),
       blocks: [
         {
           type: 'tool_result',
@@ -377,26 +377,31 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
         },
       ],
     });
+    await store.chatThreads.finishTurn(replyTurnId, {
+      status: 'completed',
+      error: null,
+      iterations: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+    });
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_widget_decisions WHERE chat_id = ${chatId}`.execute(db);
-    await sql`DELETE FROM chat_messages WHERE chat_id = ${chatId}`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE chat_id = ${chatId}`.execute(db);
-    await sql`DELETE FROM chats WHERE id = ${chatId}`.execute(db);
-    await sql`DELETE FROM llm_model_configs WHERE id = ${modelId}`.execute(db);
-    await closeDatabase();
+    const store = getDataStore();
+    await store.chats.delete(me, chatId);
+    await store.llmModels.delete(modelId);
+    await closeDataStore();
   });
 
   it('appends the first decision as a note, opening no turn, while its sibling is undecided', async () => {
-    await recordWidgetDecision(db, {
+    await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey: stateKeyA,
       decision: 'confirmed',
       state: { icon: 'sent', headline: 'Assigned Tony Liang.' },
     });
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: 'The user confirmed "Assign app role" (Tony Liang) on the preview card.',
@@ -409,24 +414,20 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     expect(recorded.message.turnId).toBeNull();
     expect(deferred).toHaveLength(0);
 
-    const turns = await db
-      .selectFrom('chat_turns')
-      .select('id')
-      .where('chat_id', '=', chatId)
-      .execute();
     // Still just the one (already-finished) reply turn — none opened yet.
-    expect(turns).toEqual([{ id: replyTurnId }]);
+    expect(await getDataStore().chatThreads.getActiveTurn(chatId)).toBeNull();
+    expect(await turnIdsOf(chatId)).toEqual([replyTurnId]);
   });
 
   it('opens exactly one turn once the second decision lands, informed by both', async () => {
-    await recordWidgetDecision(db, {
+    await recordWidgetDecision({
       chatId,
       subject: me,
       stateKey: stateKeyB,
       decision: 'confirmed',
       state: { icon: 'sent', headline: 'Assigned Rachel Cheng.' },
     });
-    const recorded = await recordWidgetModelContext(db, {
+    const recorded = await recordWidgetModelContext({
       session,
       chatId,
       text: 'The user confirmed "Assign app role" (Rachel Cheng) on the preview card.',
@@ -440,27 +441,18 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     // The model work for THIS turn was handed off, not run.
     expect(deferred).toHaveLength(1);
 
-    const turns = await db
-      .selectFrom('chat_turns')
-      .select('id')
-      .where('chat_id', '=', chatId)
-      .execute();
+    const store = getDataStore();
+    const newTurnId = recorded.turn?.turnId ?? '';
     // Exactly one NEW turn opened across both decisions, not one each.
-    expect(turns).toEqual(
-      expect.arrayContaining([{ id: replyTurnId }, { id: recorded.turn?.turnId }])
-    );
-    expect(turns).toHaveLength(2);
+    expect((await store.chatThreads.getActiveTurn(chatId))?.id).toBe(newTurnId);
+    expect(await turnIdsOf(chatId)).toEqual([replyTurnId, newTurnId].sort());
 
-    const noteRows = await db
-      .selectFrom('chat_messages')
-      .select(['kind', 'turn_id'])
-      .where('chat_id', '=', chatId)
-      .where('kind', '=', 'note')
-      .orderBy('seq')
-      .execute();
+    const noteRows = (await store.chatThreads.listMessages(chatId))
+      .filter((row) => row.kind === 'note')
+      .map((row) => ({ kind: row.kind, turnId: row.turnId }));
     expect(noteRows).toEqual([
-      { kind: 'note', turn_id: null },
-      { kind: 'note', turn_id: recorded.turn?.turnId },
+      { kind: 'note', turnId: null },
+      { kind: 'note', turnId: newTurnId },
     ]);
   });
 });

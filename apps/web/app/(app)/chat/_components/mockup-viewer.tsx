@@ -325,6 +325,12 @@ export default function MockupViewer({
               transform: `scale(${zoom})`,
               transformOrigin: 'top left',
               boxShadow: '0 1px 3px rgb(0 0 0 / 0.2), 0 8px 24px rgb(0 0 0 / 0.12)',
+              // With the hand tool on, the frame takes no pointer at all.
+              // The pan layer above it paints nothing, and Chrome routes a
+              // press by what was drawn: over a sandboxed frame (a process
+              // of its own) it could keep sending the drag to the frame,
+              // and the stage would not move.
+              pointerEvents: pan ? 'none' : undefined,
             }}
           />
           {pan ? (

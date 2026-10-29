@@ -35,12 +35,12 @@ export async function GET(
   const { projectId, chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveResourceAccess(db, session.subject, 'chat_project', projectId);
+  const { session } = ready.context;
+  const access = await resolveResourceAccess(session.subject, 'chat_project', projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const project = await getProjectRow(db, projectId);
+  const project = await getProjectRow(projectId);
   if (!project || project.kind !== 'code') return jsonError(404, 'not-found', 'No such project');
-  const scope = await resolveChatScope(db, session.subject, project, chatId, { write: false });
+  const scope = await resolveChatScope(session.subject, project, chatId, { write: false });
   if (!scope.ok) return scope.response;
   const workspaceId = scope.workspaceId;
   if (!(await sandboxWorkspacesEnabled()) || !workspaceId) {

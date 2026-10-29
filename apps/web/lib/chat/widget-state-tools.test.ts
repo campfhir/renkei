@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for calls that never reach it */
 /**
  * chat_widget_list / chat_widget_resolve without a database: which
  * tool_result blocks count as a decidable card and how one is addressed
@@ -26,7 +25,6 @@ const testCipher = resourceCipher({
 });
 
 const context: LocalToolContext = {
-  db: null as unknown as LocalToolContext['db'],
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

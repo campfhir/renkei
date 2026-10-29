@@ -1,6 +1,4 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- stand-ins for the db and server rows */
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+/* eslint-disable @typescript-eslint/consistent-type-assertions -- a stand-in for the server row */
 import type { McpServer } from '@renkei/connector-mcp';
 
 const watchToolListChanges = jest.fn();
@@ -20,7 +18,6 @@ jest.mock('@/lib/logger', () => ({ logger: { warn: jest.fn(), debug: jest.fn() }
 
 import { ensureWatching, resetWatches, stopWatching } from './watch';
 
-const db = {} as Kysely<DB>;
 const server = {
   id: 's1',
   slug: 'acme',
@@ -43,9 +40,9 @@ afterAll(() => resetWatches());
 describe('ensureWatching', () => {
   it('opens one watch per person and server, however often it is asked', async () => {
     watchToolListChanges.mockReturnValue(new Promise(() => undefined));
-    ensureWatching(db, server, 'u1');
-    ensureWatching(db, server, 'u1');
-    ensureWatching(db, server, 'u2');
+    ensureWatching(server, 'u1');
+    ensureWatching(server, 'u1');
+    ensureWatching(server, 'u2');
     await settle();
     expect(watchToolListChanges).toHaveBeenCalledTimes(2);
   });
@@ -55,23 +52,23 @@ describe('ensureWatching', () => {
       options.onChange();
       return new Promise(() => undefined);
     });
-    ensureWatching(db, server, 'u1');
+    ensureWatching(server, 'u1');
     await settle();
-    expect(refreshToolList).toHaveBeenCalledWith(db, server, 'u1');
+    expect(refreshToolList).toHaveBeenCalledWith(server, 'u1');
   });
 
   it('does not watch a server that does not announce changes, and does not ask again', async () => {
     watchToolListChanges.mockResolvedValue('unsupported');
-    ensureWatching(db, server, 'u1');
+    ensureWatching(server, 'u1');
     await settle();
-    ensureWatching(db, server, 'u2');
+    ensureWatching(server, 'u2');
     await settle();
     expect(watchToolListChanges).toHaveBeenCalledTimes(1);
   });
 
   it('lets go when the server was disabled, and when the person disconnects', async () => {
     getServer.mockResolvedValue({ ok: true, val: { ...server, enabled: false } });
-    ensureWatching(db, server, 'u1');
+    ensureWatching(server, 'u1');
     await settle();
     expect(watchToolListChanges).not.toHaveBeenCalled();
 
@@ -81,7 +78,7 @@ describe('ensureWatching', () => {
       signal = options.signal;
       return new Promise(() => undefined);
     });
-    ensureWatching(db, server, 'u1');
+    ensureWatching(server, 'u1');
     await settle();
     stopWatching('s1', 'u1');
     expect(signal?.aborted).toBe(true);

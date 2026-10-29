@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { DB } from './db.types';
+import { memoryDataStoreRequested } from './store/selection';
 
 /**
  * Connection state anchored on globalThis, not the module cache. Next
@@ -21,8 +22,14 @@ interface DbState {
 const globalForDb = globalThis as unknown as { __renkeiDbState?: DbState };
 const state: DbState = (globalForDb.__renkeiDbState ??= { db: null, pool: null });
 
-export function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
+function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   if (state.pool) return ok(state.pool);
+
+  // A process on the in-memory data store (store/registry.ts) has no
+  // database by design, never a real database the env happens to name.
+  if (memoryDataStoreRequested()) {
+    return err('DB_INIT_ERROR' as const);
+  }
 
   // Deliberately raw process.env, not a package-level config module: this
   // package is shared by web, worker and the migrate CLI, and DATABASE_URL is
@@ -70,13 +77,6 @@ export function getDatabase(): Result<Kysely<DB>, 'DB_INIT_ERROR'> {
   } catch {
     return err('DB_INIT_ERROR' as const);
   }
-}
-
-export function getPool(): Result<Pool, 'DB_INIT_ERROR'> {
-  if (!state.pool) {
-    return initDatabase();
-  }
-  return ok(state.pool);
 }
 
 export async function closeDatabase(): Promise<void> {

@@ -20,10 +20,8 @@
  * gate discloses nothing it cannot verify, and verification needs the email.
  */
 
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
 export interface IdentityClaims {
@@ -110,15 +108,8 @@ export function identityClaimsFromIdToken(
  * A subject with no row has nothing to forget.
  */
 export async function clearIdpGroups(subject: string): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
   const result = await wrapAsync(
-    () =>
-      dbResult.val
-        .updateTable('identities')
-        .set({ idp_groups: [], updated_at: new Date().toISOString() })
-        .where('subject', '=', subject)
-        .execute(),
+    () => getDataStore().identities.clearGroups(subject),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
@@ -130,28 +121,14 @@ export async function upsertIdentity(
   subject: string,
   claims: IdentityClaims
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .insertInto('identities')
-        .values({
-          subject,
-          email: claims.email,
-          display_name: claims.displayName,
-          idp_groups: claims.idpGroups,
-        })
-        .onConflict((oc) =>
-          oc.columns(['subject']).doUpdateSet({
-            email: claims.email,
-            display_name: claims.displayName,
-            idp_groups: claims.idpGroups,
-            updated_at: new Date().toISOString(),
-          })
-        )
-        .execute(),
+      getDataStore().identities.upsert({
+        subject,
+        email: claims.email,
+        displayName: claims.displayName,
+        idpGroups: claims.idpGroups,
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
@@ -162,16 +139,8 @@ export async function upsertIdentity(
 export async function getIdentityEmail(
   subject: string
 ): Promise<Result<string | null, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('identities')
-        .select('email')
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().identities.get(subject),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return rowResult;
@@ -184,21 +153,10 @@ export async function getIdentityEmail(
  * able to tell "no groups" from "could not read", because the two fail
  * differently.
  */
-export async function idpGroupsFor(
-  db: Kysely<DB>,
-  subject: string
-): Promise<Result<string[], 'DB_ERROR'>> {
-  const rowResult = await wrapAsync(
-    () =>
-      db
-        .selectFrom('identities')
-        .select('idp_groups')
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
-    'DB_ERROR' as const
-  );
-  if (!rowResult.ok) return rowResult;
-  return ok(rowResult.val?.idp_groups ?? []);
+export async function idpGroupsFor(subject: string): Promise<Result<string[], 'DB_ERROR'>> {
+  const row = await wrapAsync(() => getDataStore().identities.get(subject), 'DB_ERROR' as const);
+  if (!row.ok) return row;
+  return ok(row.val?.idpGroups ?? []);
 }
 
 /**
@@ -206,25 +164,14 @@ export async function idpGroupsFor(
  * audience picker's suggestions. Optional substring filter, bounded — a
  * suggestion list, not an export.
  */
-export async function observedIdpGroups(
-  db: Kysely<DB>,
-  query = '',
-  limit = 50
-): Promise<string[]> {
-  const needle = `%${query.replace(/[%_]/g, '')}%`;
+export async function observedIdpGroups(query = '', limit = 50): Promise<string[]> {
   const rows = await wrapAsync(
-    () =>
-      sql<{ value: string }>`
-        SELECT DISTINCT unnest(idp_groups) AS value
-        FROM identities
-        ORDER BY value
-      `.execute(db),
+    () => getDataStore().identities.distinctGroups(),
     'DB_ERROR' as const
   );
   if (!rows.ok) return [];
-  const lowered = needle.slice(1, -1).toLowerCase();
-  return rows.val.rows
-    .map((row) => row.value)
+  const lowered = query.replace(/[%_]/g, '').toLowerCase();
+  return rows.val
     .filter((value) => lowered.length === 0 || value.toLowerCase().includes(lowered))
     .slice(0, limit);
 }
@@ -242,24 +189,12 @@ export interface TenantPerson {
  * grant is addressed to a subject.
  */
 export async function listIdentities(): Promise<TenantPerson[]> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return [];
-
-  const rows = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('identities')
-        .select(['subject', 'email', 'display_name'])
-        .orderBy('display_name', 'asc')
-        .orderBy('email', 'asc')
-        .execute(),
-    'DB_ERROR' as const
-  );
+  const rows = await wrapAsync(() => getDataStore().identities.list(), 'DB_ERROR' as const);
   if (!rows.ok) return [];
   return rows.val.map((row) => ({
     subject: row.subject,
     email: row.email,
-    displayName: row.display_name,
+    displayName: row.displayName,
   }));
 }
 
@@ -267,25 +202,12 @@ export async function listIdentities(): Promise<TenantPerson[]> {
  * The recorded identity for a subject, for display: who to show in the nav.
  * Null when the subject has never signed in with claims we could record.
  */
-export async function getIdentityDisplay(
-  subject: string
-): Promise<IdentityClaims | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-
-  const row = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('identities')
-        .select(['email', 'display_name', 'idp_groups'])
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
-    'DB_ERROR' as const
-  );
+export async function getIdentityDisplay(subject: string): Promise<IdentityClaims | null> {
+  const row = await wrapAsync(() => getDataStore().identities.get(subject), 'DB_ERROR' as const);
   if (!row.ok || !row.val) return null;
   return {
     email: row.val.email,
-    displayName: row.val.display_name,
-    idpGroups: row.val.idp_groups ?? [],
+    displayName: row.val.displayName,
+    idpGroups: row.val.idpGroups,
   };
 }

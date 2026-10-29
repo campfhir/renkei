@@ -19,22 +19,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
-import { bindConnectFlow } from '@/lib/connect-flow-binding';
+import { redirectToConsent } from '@/lib/consent-redirect';
 import { getOnBaseApp, onbaseAuthorizeScopes, ONBASE_CONNECTOR } from '@/lib/onbase-app';
 import { obDiscover, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getOrigin } from '@/lib/get-origin';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
+export async function GET(request: NextRequest): Promise<NextResponse> {
   // The resulting grant is bound to whoever completes this flow, so the
   // caller must already be signed in.
   const session = await getSessionFromRequest(request);
@@ -60,7 +53,7 @@ export async function GET(
   // Live discovery through the worker — no cached endpoint in settings, so
   // a stale URL cannot outlive the IdP that issued it. The worker holds its
   // own short cache.
-  const discovered = await obDiscover({ });
+  const discovered = await obDiscover({});
   if (!discovered.ok) {
     const failure = onbaseClientFailure(discovered.err);
     return NextResponse.json(
@@ -76,20 +69,16 @@ export async function GET(
   const scopes = onbaseAuthorizeScopes(app);
 
   const state = randomUUID();
-  await db
-    .insertInto('pending_oidc_signin')
-    .values({
-      id: randomUUID(),
-      state,
-      nonce: randomUUID(),
-      subject: session.subject,
-      provider: ONBASE_CONNECTOR,
-      scopes,
-      code_verifier: codeVerifier,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      created_at: new Date().toISOString(),
-    })
-    .execute();
+  await getDataStore().pendingSignins.create({
+    id: randomUUID(),
+    state,
+    nonce: randomUUID(),
+    subject: session.subject,
+    provider: ONBASE_CONNECTOR,
+    scopes,
+    codeVerifier,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
 
   const authUrl = new URL(discovered.val.authorizationEndpoint);
   authUrl.searchParams.append('client_id', app.clientId);
@@ -101,5 +90,5 @@ export async function GET(
   authUrl.searchParams.append('code_challenge_method', 'S256');
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
+  return await redirectToConsent(authUrl, state);
 }

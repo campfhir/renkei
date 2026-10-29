@@ -26,8 +26,6 @@
  * call that hit the wall run again.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import {
   sandboxServicesEnabled,
@@ -88,7 +86,6 @@ type Target = ReturnType<typeof codeProjectTarget>;
  * gone or failed — cloned again with the chatting person's grant.
  */
 async function resolveBase(
-  db: Kysely<DB>,
   project: ProjectRow,
   actor: Actor,
   target: Target,
@@ -111,7 +108,7 @@ async function resolveBase(
     { write: false }
   );
   if (typeof credential === 'string') return { ok: false, status: 0, message: credential };
-  const cloned = await startProjectClone(db, project, credential);
+  const cloned = await startProjectClone(project, credential);
   return cloned.ok ? { ok: true, val: cloned.val, cloned: true } : cloned;
 }
 
@@ -123,7 +120,6 @@ async function resolveBase(
  * person's grant — and the chat's worktree is then made in it.
  */
 async function recoverCheckout(
-  db: Kysely<DB>,
   project: ProjectRow,
   chat: Chat,
   actor: Actor,
@@ -133,11 +129,11 @@ async function recoverCheckout(
   if (!project.repo) return { ok: false, message: 'the project names no repository.' };
   const started = Date.now();
   const seconds = () => Math.round((Date.now() - started) / 1000);
-  const fresh = (await getProjectRow(db, project.id)) ?? project;
-  const freshChat = (await getChatRow(db, chat.id)) ?? chat;
+  const fresh = (await getProjectRow(project.id)) ?? project;
+  const freshChat = (await getChatRow(chat.id)) ?? chat;
   // The lost id is the chat's worktree or the base under it; the base is
   // only cloned again when the worker no longer has it.
-  const base = await resolveBase(db, fresh, actor, target, { notId: lostId });
+  const base = await resolveBase(fresh, actor, target, { notId: lostId });
   if (!base.ok) return { ok: false, message: base.message };
   const settled = await awaitClone(target, base.val, started + CLONE_WAIT_MS);
   if (!settled) return { ok: false, message: 'the checkout disappeared while cloning.' };
@@ -147,7 +143,7 @@ async function recoverCheckout(
   if (settled.status !== 'ready') {
     return { ok: false, message: `the clone is still running after ${seconds()}s.` };
   }
-  const worktree = await ensureChatWorktree(db, fresh, freshChat, settled, actor);
+  const worktree = await ensureChatWorktree(fresh, freshChat, settled, actor);
   if (!worktree.ok) return { ok: false, message: worktree.message };
   return {
     ok: true,
@@ -192,7 +188,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 export async function codeProjectContext(
-  db: Kysely<DB>,
   project: ProjectRow,
   actor: { subject: string; origin?: string; auto?: boolean; chat: Chat }
 ): Promise<CodeTurnContext | null> {
@@ -218,7 +213,7 @@ export async function codeProjectContext(
 
   // The project's clone as it is: present and usable, still cloning, or
   // gone (never cloned, failed, or retired by the worker's sweep).
-  const resolvedBase = await resolveBase(db, project, actor, target);
+  const resolvedBase = await resolveBase(project, actor, target);
   if (!resolvedBase.ok) {
     return unavailable(`the repository could not be cloned: ${resolvedBase.message}`);
   }
@@ -229,7 +224,7 @@ export async function codeProjectContext(
   // ready, or by the first step below once it is.
   let workspace = baseWorkspace;
   if (baseWorkspace.status === 'ready') {
-    const worktree = await ensureChatWorktree(db, project, actor.chat, baseWorkspace, actor);
+    const worktree = await ensureChatWorktree(project, actor.chat, baseWorkspace, actor);
     if (!worktree.ok) {
       return unavailable(`the chat's worktree could not be made: ${worktree.message}`);
     }
@@ -240,7 +235,7 @@ export async function codeProjectContext(
   // The org's roster, read once per turn: the orchestrator picks a
   // sub-agent's model from it per task (delegate.ts) — the same enabled
   // rows the composer's own picker offers.
-  const [env, subagentModels] = await Promise.all([sbEnvList(target), listChatModels(db)]);
+  const [env, subagentModels] = await Promise.all([sbEnvList(target), listChatModels()]);
   const envNames = env.ok ? env.val.map((variable) => variable.name) : [];
   const tools = codeTools({
     target,
@@ -249,7 +244,7 @@ export async function codeProjectContext(
     repoFullName: project.repo.fullName,
     repoProvider: project.repo.provider,
     origin: actor.origin ?? getPublicBaseUrl() ?? '',
-    recover: (lostId) => recoverCheckout(db, project, actor.chat, actor, target, lostId),
+    recover: (lostId) => recoverCheckout(project, actor.chat, actor, target, lostId),
     servicesEnabled,
     ...(actor.auto ? { auto: true } : {}),
     subagentModels: subagentModels.map(({ id, label, provider, model, isDefault }) => ({
@@ -279,7 +274,7 @@ export async function codeProjectContext(
         if (!current) return errorResult('The checkout disappeared while cloning.');
         const seconds = Math.round((Date.now() - started) / 1000);
         if (current.status === 'ready') {
-          const worktree = await ensureChatWorktree(db, project, actor.chat, current, actor);
+          const worktree = await ensureChatWorktree(project, actor.chat, current, actor);
           if (!worktree.ok) {
             return errorResult(
               `The repository was cloned, but this chat's worktree could not be made: ${worktree.message}. The code_* tools cannot work until it is; the next turn tries again.`

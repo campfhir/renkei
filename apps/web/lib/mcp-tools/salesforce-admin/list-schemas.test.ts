@@ -23,7 +23,24 @@ jest.mock('@/lib/logger', () => ({
   },
   secure: (value: unknown) => value,
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
+// No reachable database: every data-store method rejects.
+jest.mock('@renkei/db', () => ({
+  getDataStore: () =>
+    new Proxy(
+      {},
+      {
+        get: () =>
+          new Proxy(
+            {},
+            {
+              get: () => async () => {
+                throw new Error('no data store in this suite');
+              },
+            }
+          ),
+      }
+    ),
+}));
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';

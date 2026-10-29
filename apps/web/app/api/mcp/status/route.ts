@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 
 /**
@@ -14,10 +14,7 @@ import { getSessionFromRequest } from '@/lib/session';
  * per-user it told the second user of a tenant they were connected as the
  * first, so the page hid the connect button from someone who had no grant.
  */
-export const GET = async (
-  request: NextRequest
-): Promise<NextResponse> => {
-
+export const GET = async (request: NextRequest): Promise<NextResponse> => {
   // Before any lookup: a session proves both who is asking and that the tenant
   // exists, since a session row cannot reference a tenant that does not.
   const session = await getSessionFromRequest(request);
@@ -25,21 +22,12 @@ export const GET = async (
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   try {
     // Keyed on subject, so this is the caller's grant or nothing. A grant with
     // a NULL subject predates per-user ownership and never matches.
-    const grant = await db
-      .selectFrom('provider_grants')
-      .select(['provider_account_id', 'display_name', 'metadata'])
-      .where('provider', '=', 'atlassian')
-      .where('subject', '=', session.subject)
-      .executeTakeFirst();
+    const [grant] = await getDataStore().providerGrants.listForSubject(session.subject, {
+      provider: 'atlassian',
+    });
 
     if (!grant) {
       return NextResponse.json({
@@ -56,8 +44,8 @@ export const GET = async (
 
     return NextResponse.json({
       connected: true,
-      accountId: grant.provider_account_id,
-      displayName: grant.display_name,
+      accountId: grant.accountId,
+      displayName: grant.displayName,
       siteUrl: typeof metadata.siteUrl === 'string' ? metadata.siteUrl : null,
     });
   } catch (error) {

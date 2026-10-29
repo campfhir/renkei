@@ -18,8 +18,7 @@
  * intact.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '../logger';
 
 const COMPONENT = 'grants/expiry-sweep';
@@ -39,21 +38,11 @@ export const GRANT_STALE_DAYS = 90;
 const MAX_DELETES_PER_PASS = 100;
 
 export async function sweepExpiredGrants(): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    logger.error('database unavailable', { component: COMPONENT });
-    return;
-  }
-  const db = dbResult.val;
+  const store = getDataStore();
 
-  let stale: { provider: string; provider_account_id: string }[];
+  let stale: { provider: string; accountId: string }[];
   try {
-    stale = await db
-      .selectFrom('provider_grants')
-      .select(['provider', 'provider_account_id'])
-      .where('expires_at', '<', sql<Date>`NOW() - make_interval(days => ${GRANT_STALE_DAYS})`)
-      .limit(MAX_DELETES_PER_PASS)
-      .execute();
+    stale = await store.providerGrants.listStaleExpired(GRANT_STALE_DAYS, MAX_DELETES_PER_PASS);
   } catch (error) {
     logger.error('could not list stale grants: {error}', {
       component: COMPONENT,
@@ -65,21 +54,16 @@ export async function sweepExpiredGrants(): Promise<void> {
 
   for (const grant of stale) {
     try {
-      await db
-        .deleteFrom('provider_grants')
-        .where('provider', '=', grant.provider)
-        .where('provider_account_id', '=', grant.provider_account_id)
-        // Re-checked in the delete itself: a refresh that landed between the
-        // listing and now has moved expires_at forward, and that grant is
-        // alive again — the race must lose to the refresh, not to the sweep.
-        .where('expires_at', '<', sql<Date>`NOW() - make_interval(days => ${GRANT_STALE_DAYS})`)
-        .execute();
+      // Re-checked in the delete itself: a refresh that landed between the
+      // listing and now has moved expires_at forward, and that grant is
+      // alive again — the race must lose to the refresh, not to the sweep.
+      await store.providerGrants.deleteIfStale(grant.provider, grant.accountId, GRANT_STALE_DAYS);
       // One line per deletion, with everything needed to answer "where did
       // my connection go" from the logs alone.
       logger.info('deleted expired {provider} grant for account {accountId}', {
         component: COMPONENT,
         provider: grant.provider,
-        accountId: grant.provider_account_id,
+        accountId: grant.accountId,
         staleDays: GRANT_STALE_DAYS,
       });
     } catch (error) {

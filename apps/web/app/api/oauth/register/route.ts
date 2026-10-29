@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { generateSecret, hashToken } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
@@ -72,29 +72,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
   const { client_name, redirect_uris, response_types, grant_types } = registration;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
-
   try {
     const clientId = `client_${randomUUID()}`;
     const clientSecret = generateSecret(32);
 
-    await db
-      .insertInto('oauth_clients')
-      .values({
-        client_id: clientId,
-        // Only the digest is stored; the secret itself exists solely in the
-        // registration response below and in the client that receives it.
-        client_secret_hash: hashToken(clientSecret),
-        client_name,
-        redirect_uris,
-        response_types,
-        grant_types,
-      })
-      .execute();
+    await getDataStore().oauthConsents.registerClient({
+      clientId,
+      // Only the digest is stored; the secret itself exists solely in the
+      // registration response below and in the client that receives it.
+      clientSecretHash: hashToken(clientSecret),
+      clientName: client_name,
+      redirectUris: redirect_uris,
+      responseTypes: response_types,
+      grantTypes: grant_types,
+    });
 
     recordAuditEvent({
       actorSubject: null,

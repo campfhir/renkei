@@ -5,7 +5,10 @@
  * before settings or the database are read.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+const mockRegisterClient = jest.fn();
+jest.mock('@renkei/db', () => ({
+  getDataStore: () => ({ oauthConsents: { registerClient: mockRegisterClient } }),
+}));
 jest.mock('@renkei/settings', () => ({
   getOrgSettings: jest.fn(),
   DEFAULT_ORG_SETTINGS: { enableDcr: false },
@@ -16,7 +19,6 @@ import { NextRequest } from 'next/server';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getOrgSettings: mockGetOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>(
   '@renkei/settings'
 );
@@ -33,7 +35,7 @@ describe('POST /api/mcp/oauth/register policy', () => {
   beforeEach(() => {
     resetInboundLimits();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: true, val: { enableDcr: true } });
-    mockGetDatabase.mockReset().mockReturnValue({ ok: false, err: 'DB_ERROR' });
+    mockRegisterClient.mockReset().mockRejectedValue(new Error('connection refused'));
   });
 
   it('is closed when the org has not turned registration on', async () => {
@@ -41,7 +43,7 @@ describe('POST /api/mcp/oauth/register policy', () => {
     const response = await POST(registration());
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: 'unsupported_operation' });
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockRegisterClient).not.toHaveBeenCalled();
   });
 
   it('refuses plain http off the loopback before reading the database', async () => {
@@ -51,14 +53,14 @@ describe('POST /api/mcp/oauth/register policy', () => {
       error: 'invalid_redirect_uri',
       error_description: expect.stringMatching(/redirect_uris\[0\] must use https/),
     });
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockRegisterClient).not.toHaveBeenCalled();
   });
 
   it('lets a local app register a loopback callback', async () => {
     const response = await POST(registration(['http://127.0.0.1:52341/callback']));
-    // The body passed; only the (deliberately failing) database stopped it.
+    // The body passed; only the (deliberately failing) store stopped it.
     expect(response.status).toBe(500);
-    expect(mockGetDatabase).toHaveBeenCalled();
+    expect(mockRegisterClient).toHaveBeenCalled();
   });
 });
 
@@ -66,7 +68,7 @@ describe('POST /api/mcp/oauth/register throttle', () => {
   beforeEach(() => {
     resetInboundLimits();
     mockGetOrgSettings.mockReset().mockResolvedValue({ ok: true, val: { enableDcr: true } });
-    mockGetDatabase.mockReset().mockReturnValue({ ok: false, err: 'DB_ERROR' });
+    mockRegisterClient.mockReset().mockRejectedValue(new Error('connection refused'));
   });
 
   it('refuses the eleventh registration from one address before reading anything', async () => {
@@ -75,12 +77,12 @@ describe('POST /api/mcp/oauth/register throttle', () => {
       expect(response.status).not.toBe(429);
     }
     mockGetOrgSettings.mockClear();
-    mockGetDatabase.mockClear();
+    mockRegisterClient.mockClear();
 
     const throttled = await POST(registration());
     expect(throttled.status).toBe(429);
     expect(throttled.headers.get('retry-after')).toMatch(/^\d+$/);
     expect(mockGetOrgSettings).not.toHaveBeenCalled();
-    expect(mockGetDatabase).not.toHaveBeenCalled();
+    expect(mockRegisterClient).not.toHaveBeenCalled();
   });
 });

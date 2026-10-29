@@ -29,8 +29,8 @@ export async function POST(
   const { attachmentId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveArtifactAccess(db, session.subject, attachmentId);
+  const { session } = ready.context;
+  const access = await resolveArtifactAccess(session.subject, attachmentId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
   const { row } = access;
 
@@ -46,7 +46,6 @@ export async function POST(
   if (!object.ok) return readBytesError(object.err.type);
 
   const outcome = await executeUpload(
-    db,
     {
       id: randomUUID(),
       subject: session.subject,

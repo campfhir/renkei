@@ -8,8 +8,7 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   generateX25519KeyPair,
   sealToPublicKey,
@@ -26,13 +25,10 @@ export interface TestInstance {
 }
 
 /** A delegate instance row plus the vault for it, registered as the process's. */
-export async function registerTestInstance(db: Kysely<DB>): Promise<TestInstance> {
+export async function registerTestInstance(): Promise<TestInstance> {
   const id = randomUUID();
   const pair = generateX25519KeyPair();
-  await db
-    .insertInto('delegate_instances')
-    .values({ id, public_key: pair.publicKey.toString('base64') })
-    .execute();
+  await getDataStore().userKeys.registerInstance(id, pair.publicKey.toString('base64'));
   const vault = createKeyVault(id, pair);
   setKeyVault(vault);
   return { id, pair, vault };
@@ -85,31 +81,26 @@ export interface EnrollTestInput {
   withoutAutomation?: boolean;
 }
 
-export async function ensureSession(
-  db: Kysely<DB>,
-  subject: string,
-  wanted?: string
-): Promise<string> {
+export async function ensureSession(subject: string, wanted?: string): Promise<string> {
   const sessionId = wanted ?? randomUUID();
-  await db
-    .insertInto('sessions')
-    .values({
+  const sessions = getDataStore().sessions;
+  if (!(await sessions.find(sessionId))) {
+    await sessions.create({
       id: sessionId,
       subject,
-      expires_at: new Date(Date.now() + 24 * 60 * 60_000),
-    })
-    .onConflict((oc) => oc.column('id').doNothing())
-    .execute();
+      roles: [],
+      expiresAt: new Date(Date.now() + 24 * 60 * 60_000),
+    });
+  }
   return sessionId;
 }
 
 /** Enroll a person the way their browser would, returning what the browser keeps. */
 export async function enrollTestPerson(
-  db: Kysely<DB>,
   input: EnrollTestInput
 ): Promise<{ keys: BrowserKeys; sessionId: string }> {
   const keys = generateBrowserKeys();
-  const sessionId = await ensureSession(db, input.subject, input.sessionId);
+  const sessionId = await ensureSession(input.subject, input.sessionId);
   const sealed = sealDelegations(keys, { instances: input.instances });
   const request: EnrollInput = {
     subject: input.subject,
@@ -122,26 +113,23 @@ export async function enrollTestPerson(
     automationUntil: input.automationUntil ?? null,
     passphrase: input.passphrase,
   };
-  const enrolled = await enroll(db, request);
+  const enrolled = await enroll(request);
   if (!enrolled.ok) throw new Error(`enrollment failed: ${enrolled.err.type}`);
   return { keys, sessionId };
 }
 
 /** A later sign-in: fresh delegations for a new browser session. */
-export async function delegateTestSession(
-  db: Kysely<DB>,
-  input: {
-    subject: string;
-    keys: BrowserKeys;
-    instances: { id: string; publicKey: Buffer }[];
-    sessionId?: string;
-    automation?: boolean;
-    automationUntil?: Date | null;
-  }
-): Promise<string> {
-  const sessionId = await ensureSession(db, input.subject, input.sessionId);
+export async function delegateTestSession(input: {
+  subject: string;
+  keys: BrowserKeys;
+  instances: { id: string; publicKey: Buffer }[];
+  sessionId?: string;
+  automation?: boolean;
+  automationUntil?: Date | null;
+}): Promise<string> {
+  const sessionId = await ensureSession(input.subject, input.sessionId);
   const sealed = sealDelegations(input.keys, { instances: input.instances });
-  const stored = await storeDelegations(db, {
+  const stored = await storeDelegations({
     subject: input.subject,
     sessionId,
     session: sealed.session,

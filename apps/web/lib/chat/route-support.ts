@@ -1,17 +1,15 @@
 /**
- * The three lines every chat route starts with, once: the session, the
- * database, and a JSON error shape the client helpers understand.
+ * The lines every chat route starts with, once: the session and a JSON
+ * error shape the client helpers understand. Routes read through the data
+ * store (`getDataStore()`).
  */
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
 import { getSessionFromRequest, type Session } from '@/lib/session';
 import type { ReadBytesError } from './attachments';
 
 export interface ChatRequestContext {
-  db: Kysely<DB>;
   session: Session;
 }
 
@@ -24,11 +22,10 @@ export async function chatRequestContext(
 ): Promise<{ ok: true; context: ChatRequestContext } | { ok: false; response: NextResponse }> {
   const session = await getSessionFromRequest(request);
   if (!session) return { ok: false, response: jsonError(401, 'unauthenticated', 'Not signed in') };
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return { ok: false, response: jsonError(500, 'database', 'Database unavailable') };
-  }
-  return { ok: true, context: { db: dbResult.val, session } };
+  return {
+    ok: true,
+    context: { session },
+  };
 }
 
 export async function readJsonBody(request: NextRequest): Promise<Record<string, unknown>> {

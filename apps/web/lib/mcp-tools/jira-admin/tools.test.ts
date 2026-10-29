@@ -15,7 +15,6 @@ jest.mock('../common', () => ({
 }));
 // client.ts imports these for resolveJiraAdminAccess, which the stub auth
 // below replaces — kept inert so the module loads without a database.
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: false }) }));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));

@@ -19,8 +19,6 @@
  * the worse mistake.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
@@ -90,25 +88,25 @@ function finishedWith(change: ChangeRequest, status: ChangeRequestStatus, result
  * Run (or resume) one approved request. Safe to call from anywhere, any
  * number of times: only the call that wins the row's claim does anything.
  */
-export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<void> {
-  let change = await getChangeRequestById(db, changeId);
+export async function runApplyJob(changeId: string): Promise<void> {
+  let change = await getChangeRequestById(changeId);
   if (!change) return;
 
   const resuming = change.status === 'applying';
   if (change.status === 'queued') {
-    if (!(await startQueuedChange(db, change.id))) return;
+    if (!(await startQueuedChange(change.id))) return;
   } else if (resuming) {
     // Only a job that stopped reporting is taken over.
-    if (!(await reclaimStaleChange(db, change.id))) return;
+    if (!(await reclaimStaleChange(change.id))) return;
   } else {
     return;
   }
-  change = (await getChangeRequestById(db, changeId)) ?? change;
+  change = (await getChangeRequestById(changeId)) ?? change;
 
   const approver = change.approvedBy;
   const fail = async (label: string, detail: string): Promise<void> => {
     const results = failure(label, detail);
-    await finishChangeRequest(db, change.id, {
+    await finishChangeRequest(change.id, {
       status: 'failed',
       results,
       appliedBy: approver ?? change.subject,
@@ -131,13 +129,13 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
       await fail('Start the change', 'No operator is recorded as having approved this change.');
       return;
     }
-    const context = { subject: approver, db };
+    const context = { subject: approver };
     const onStep: StepReporter = async (step) => {
       if (isShuttingDown()) throw new JobSuspended();
-      await setStep(db, change.id, step);
+      await setStep(change.id, step);
     };
 
-    const gate = await applyGate(db, approver, [ROLE_OPERATOR], change);
+    const gate = await applyGate(approver, [ROLE_OPERATOR], change);
     if (!gate.ok) {
       await fail('Check this can still be applied', gate.reason);
       return;
@@ -151,10 +149,9 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
     if (resuming) {
       // A deploy Salesforce already has: carry on from it, never start another.
       await onStep('Picking up the deploy where it was');
-      await refreshApplying(db, context, access, change, JOB_DEPLOY_WAIT_MS, onStep);
+      await refreshApplying(context, access, change, JOB_DEPLOY_WAIT_MS, onStep);
     } else {
       const outcome = await applyChangeRequest(
-        db,
         context,
         access,
         change,
@@ -166,7 +163,7 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
       finishedWith(change, outcome.status, outcome.results);
       return;
     }
-    const finished = await getChangeRequestById(db, change.id);
+    const finished = await getChangeRequestById(change.id);
     if (finished && finished.status !== 'applying' && finished.status !== 'queued') {
       finishedWith(finished, finished.status, finished.results ?? { operations: [] });
     }
@@ -181,7 +178,7 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
       changeId: change.id,
       message: error instanceof Error ? error.message : String(error),
     });
-    const fresh = await getChangeRequestById(db, change.id);
+    const fresh = await getChangeRequestById(change.id);
     // A deploy that already started is followed up by the sweep; one that
     // never did is a failure to say plainly.
     if (fresh?.status === 'applying' && !fresh.results?.deployId) {
@@ -196,10 +193,10 @@ export async function runApplyJob(db: Kysely<DB>, changeId: string): Promise<voi
 class JobSuspended extends Error {}
 
 /** One pass: start or take over whatever is waiting. */
-export async function recoverApplyJobs(db: Kysely<DB>): Promise<void> {
-  for (const job of await listRunnableChanges(db)) {
+export async function recoverApplyJobs(): Promise<void> {
+  for (const job of await listRunnableChanges()) {
     if (isShuttingDown()) return;
-    await runApplyJob(db, job.id);
+    await runApplyJob(job.id);
   }
 }
 
@@ -211,17 +208,17 @@ export async function recoverApplyJobs(db: Kysely<DB>): Promise<void> {
  * What is already running here is remembered so a tick does not offer it
  * again (the row's claim would refuse the duplicate anyway).
  */
-export function startApplyJobRecovery(db: Kysely<DB>, intervalMs = APPLY_SWEEP_MS): () => void {
+export function startApplyJobRecovery(intervalMs = APPLY_SWEEP_MS): () => void {
   const inFlight = new Set<string>();
   let listing = false;
   const tick = async () => {
     if (listing || isShuttingDown()) return;
     listing = true;
     try {
-      for (const job of await listRunnableChanges(db)) {
+      for (const job of await listRunnableChanges()) {
         if (inFlight.has(job.id) || isShuttingDown()) continue;
         inFlight.add(job.id);
-        void runApplyJob(db, job.id)
+        void runApplyJob(job.id)
           .catch((error: unknown) => {
             logger.error('salesforce admin change job failed: {message}', {
               component: COMPONENT,

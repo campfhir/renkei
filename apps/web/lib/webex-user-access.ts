@@ -12,7 +12,7 @@
 
 import { WEBEX_USER } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 export interface WebexUserAccess {
   accountId: string;
@@ -21,9 +21,7 @@ export interface WebexUserAccess {
   metadata: Record<string, unknown>;
 }
 
-export async function resolveWebexUserAccess(
-  subject: string
-): Promise<WebexUserAccess | null> {
+export async function resolveWebexUserAccess(subject: string): Promise<WebexUserAccess | null> {
   const described = await delegateGrants().describe({ provider: WEBEX_USER, subject });
   if (!described.ok) return null;
   const accountId = described.val.accountId;
@@ -41,13 +39,10 @@ export async function resolveWebexUserAccess(
 export async function resolveWebexUserAccessByEmail(
   email: string
 ): Promise<WebexUserAccess | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const row = await dbResult.val
-    .selectFrom('identities')
-    .select('subject')
-    .where('email', '=', email.toLowerCase())
-    .executeTakeFirst();
-  if (!row) return null;
-  return resolveWebexUserAccess(row.subject);
+  const identity = await getDataStore()
+    .identities.findByEmail(email.toLowerCase())
+    .catch(() => null);
+  const subject = identity?.subject ?? null;
+  if (!subject) return null;
+  return resolveWebexUserAccess(subject);
 }

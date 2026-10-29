@@ -16,8 +16,7 @@
  *   pnpm --filter @renkei/worker-agents rekey-agent-memories --dry-run
  */
 
-import { sql } from 'kysely';
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { USER_ENVELOPE_PREFIX } from '@renkei/crypto';
 
@@ -30,40 +29,31 @@ function fail(message: string): never {
 
 async function main(): Promise<void> {
   const dryRun = process.argv.includes('--dry-run');
-  const dbResult = getDatabase();
-  if (!dbResult.ok) fail('DATABASE_URL is not set or the database is unreachable.');
-  const db = dbResult.val;
+  if (!process.env.DATABASE_URL) fail('DATABASE_URL is not set.');
+  const agents = getDataStore().agents;
   const delegate = delegateClient();
 
   let sealed = 0;
   const skippedOwners = new Map<string, string>();
-  let lastId = '';
+  let lastId: string | null = null;
   for (;;) {
-    const rows = await db
-      .selectFrom('agent_memories as m')
-      .innerJoin('agents as a', 'a.id', 'm.agent_id')
-      .select([
-        'm.id as id',
-        'm.content as content',
-        'a.owner_subject as owner',
-      ])
-      .where('m.id', '>', lastId)
-      .where(sql<boolean>`m.content NOT LIKE ${`${USER_ENVELOPE_PREFIX}%`}`)
-      .orderBy('m.id')
-      .limit(BATCH)
-      .execute();
+    const rows = await agents.listPlaintextMemory({
+      afterId: lastId,
+      sealedPrefix: USER_ENVELOPE_PREFIX,
+      limit: BATCH,
+    });
     if (rows.length === 0) break;
     lastId = rows[rows.length - 1].id;
 
     // One delegate call per owner in the batch.
     const byOwner = new Map<string, typeof rows>();
     for (const row of rows) {
-      const key = row.owner;
+      const key = row.ownerSubject;
       byOwner.set(key, [...(byOwner.get(key) ?? []), row]);
     }
     for (const [key, owned] of byOwner) {
       if (skippedOwners.has(key)) continue;
-      const { owner } = owned[0];
+      const owner = owned[0].ownerSubject;
       if (dryRun) {
         sealed += owned.length;
         continue;
@@ -78,13 +68,8 @@ async function main(): Promise<void> {
         continue;
       }
       for (const [index, row] of owned.entries()) {
-        await db
-          .updateTable('agent_memories')
-          .set({ content: envelopes.val[index] })
-          .where('id', '=', row.id)
-          // Only if nothing re-sealed it meanwhile (a compaction, say).
-          .where('content', '=', row.content)
-          .execute();
+        // Only if nothing re-sealed it meanwhile (a compaction, say).
+        await agents.replaceMemoryContent(row.id, row.content, envelopes.val[index]);
         sealed += 1;
       }
     }
@@ -97,7 +82,7 @@ async function main(): Promise<void> {
           `(${[...new Set(skippedOwners.values())].join(', ')}) — run again after they sign in.`
         : '.')
   );
-  await closeDatabase();
+  await closeDataStore();
 }
 
 main().catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));

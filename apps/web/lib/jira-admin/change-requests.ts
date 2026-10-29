@@ -17,8 +17,7 @@
  * nobody can tell from here which of its operations reached Jira.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type JiraChangeRecord } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { notifyOperatorsOfRequest } from '@/lib/admin-changes/notify';
 
@@ -120,79 +119,19 @@ function resultsOf(value: unknown): OperationResult[] | null {
   });
 }
 
-type Row = {
-  id: string;
-  subject: string;
-  agent_id: string | null;
-  cloud_id: string;
-  site_url: string | null;
-  kind: string;
-  title: string;
-  reason: string | null;
-  payload: unknown;
-  status: string;
-  results: unknown;
-  expires_at: Date;
-  created_at: Date;
-  updated_at: Date;
-  applied_by: string | null;
-  applied_at: Date | null;
-  cancelled_at: Date | null;
-  approved_by: string | null;
-  approved_at: Date | null;
-  step: string | null;
-  resolution: string | null;
-};
-
-function fromRow(row: Row): ChangeRequest {
+function fromRecord(row: JiraChangeRecord): ChangeRequest {
   return {
-    id: row.id,
-    subject: row.subject,
-    agentId: row.agent_id,
-    cloudId: row.cloud_id,
-    siteUrl: row.site_url,
-    kind: row.kind,
-    title: row.title,
-    reason: row.reason,
-    payload: row.payload,
+    ...row,
     status: statusOf(row.status),
     results: resultsOf(row.results),
-    expiresAt: new Date(row.expires_at),
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
-    appliedBy: row.applied_by,
-    appliedAt: row.applied_at ? new Date(row.applied_at) : null,
-    cancelledAt: row.cancelled_at ? new Date(row.cancelled_at) : null,
-    approvedBy: row.approved_by,
-    approvedAt: row.approved_at ? new Date(row.approved_at) : null,
-    step: row.step,
-    resolution: row.resolution,
   };
 }
 
-const COLUMNS = [
-  'id',
-  'subject',
-  'agent_id',
-  'cloud_id',
-  'site_url',
-  'kind',
-  'title',
-  'reason',
-  'payload',
-  'status',
-  'results',
-  'expires_at',
-  'created_at',
-  'updated_at',
-  'applied_by',
-  'applied_at',
-  'cancelled_at',
-  'approved_by',
-  'approved_at',
-  'step',
-  'resolution',
-] as const;
+const changes = () => getDataStore().jiraChanges;
+
+/** Shown while a job has the change but has not started on it. */
+const QUEUED_STEP = 'Waiting to start';
+const STARTING_STEP = 'Starting';
 
 export function stateOf(
   change: Pick<ChangeRequest, 'status' | 'expiresAt' | 'updatedAt'>,
@@ -205,39 +144,31 @@ export function stateOf(
   return change.status;
 }
 
-export async function createChangeRequest(
-  db: Kysely<DB>,
-  input: {
-    subject: string;
-    agentId?: string;
-    cloudId: string;
-    siteUrl?: string;
-    kind: string;
-    title: string;
-    reason?: string;
-    payload: unknown;
-  }
-): Promise<ChangeRequest> {
-  const row = await db
-    .insertInto('jira_admin_change_requests')
-    .values({
-      subject: input.subject,
-      agent_id: input.agentId && isUuid(input.agentId) ? input.agentId : null,
-      cloud_id: input.cloudId,
-      site_url: input.siteUrl || null,
-      kind: input.kind,
-      title: input.title.slice(0, 300),
-      reason: input.reason?.trim() ? input.reason.trim() : null,
-      payload: JSON.stringify(input.payload),
-      expires_at: sql<Date>`NOW() + (${CHANGE_REQUEST_TTL_HOURS} * INTERVAL '1 hour')`,
-    })
-    .returning(COLUMNS)
-    .executeTakeFirstOrThrow();
-  const change = fromRow(row);
+export async function createChangeRequest(input: {
+  subject: string;
+  agentId?: string;
+  cloudId: string;
+  siteUrl?: string;
+  kind: string;
+  title: string;
+  reason?: string;
+  payload: unknown;
+}): Promise<ChangeRequest> {
+  const row = await changes().create({
+    subject: input.subject,
+    agentId: input.agentId && isUuid(input.agentId) ? input.agentId : null,
+    cloudId: input.cloudId,
+    siteUrl: input.siteUrl || null,
+    kind: input.kind,
+    title: input.title.slice(0, 300),
+    reason: input.reason?.trim() ? input.reason.trim() : null,
+    payload: input.payload,
+    ttlHours: CHANGE_REQUEST_TTL_HOURS,
+  });
+  const change = fromRecord(row);
   // Every proposal tool files through here, so this is the one place that
   // tells the people who approve that something is waiting.
   notifyOperatorsOfRequest({
-    db,
     connector: 'jira-admin',
     changeId: change.id,
     title: change.title,
@@ -248,78 +179,41 @@ export async function createChangeRequest(
 }
 
 /** One of this person's requests, or null — someone else's reads the same as none. */
-export async function getChangeRequest(
-  db: Kysely<DB>,
-  subject: string,
-  id: string
-): Promise<ChangeRequest | null> {
+export async function getChangeRequest(subject: string, id: string): Promise<ChangeRequest | null> {
   if (!isUuid(id)) return null;
-  const row = await db
-    .selectFrom('jira_admin_change_requests')
-    .select(COLUMNS)
-    .where('id', '=', id)
-    .where('subject', '=', subject)
-    .executeTakeFirst();
-  return row ? fromRow(row) : null;
+  const row = await changes().get(id, { subject });
+  return row ? fromRecord(row) : null;
 }
 
 /** This person's requests, newest first; `pendingOnly` leaves out expired ones too. */
 export async function listChangeRequests(
-  db: Kysely<DB>,
   subject: string,
   options: { limit?: number; pendingOnly?: boolean } = {}
 ): Promise<ChangeRequest[]> {
-  let query = db
-    .selectFrom('jira_admin_change_requests')
-    .select(COLUMNS)
-    .where('subject', '=', subject);
-  if (options.pendingOnly) {
-    query = query.where('status', '=', 'pending').where('expires_at', '>', sql<Date>`NOW()`);
-  }
-  const rows = await query
-    .orderBy('created_at', 'desc')
-    .limit(options.limit ?? 50)
-    .execute();
-  return rows.map(fromRow);
+  const rows = await changes().list({
+    subject,
+    limit: options.limit ?? 50,
+    pendingOnly: options.pendingOnly,
+  });
+  return rows.map(fromRecord);
 }
 
 /** How many of this person's requests are waiting for them, for the connector card. */
-export async function countPendingChangeRequests(db: Kysely<DB>, subject: string): Promise<number> {
-  const row = await db
-    .selectFrom('jira_admin_change_requests')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('subject', '=', subject)
-    .where('status', '=', 'pending')
-    .where('expires_at', '>', sql<Date>`NOW()`)
-    .executeTakeFirst();
-  return Number(row?.count ?? 0);
+export async function countPendingChangeRequests(subject: string): Promise<number> {
+  return changes().countPending({ subject });
 }
 
 /**
  * Take the request for applying. A conditional update, so of two clicks
- * (two tabs, a double submit) exactly one wins; the loser, like an expired
- * or already-decided request, gets false.
+ * exactly one wins; the loser, like an expired or decided request, gets false.
  */
-export async function claimChangeRequest(
-  db: Kysely<DB>,
-  subject: string,
-  id: string
-): Promise<boolean> {
+export async function claimChangeRequest(subject: string, id: string): Promise<boolean> {
   if (!isUuid(id)) return false;
-  const result = await db
-    .updateTable('jira_admin_change_requests')
-    .set({ status: 'applying', updated_at: sql<Date>`NOW()` })
-    .where('id', '=', id)
-    .where('subject', '=', subject)
-    .where('status', '=', 'pending')
-    .where('expires_at', '>', sql<Date>`NOW()`)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return changes().claim(subject, id);
 }
 
 /** Record how an apply ended. Only the claim's holder gets here. */
 export async function finishChangeRequest(
-  db: Kysely<DB>,
   id: string,
   outcome: {
     status: 'applied' | 'partial' | 'failed';
@@ -327,22 +221,8 @@ export async function finishChangeRequest(
     appliedBy: string;
   }
 ): Promise<void> {
-  await db
-    .updateTable('jira_admin_change_requests')
-    .set({
-      status: outcome.status,
-      results: JSON.stringify(outcome.results),
-      applied_by: outcome.appliedBy,
-      applied_at: sql<Date>`NOW()`,
-      updated_at: sql<Date>`NOW()`,
-      step: null,
-    })
-    .where('id', '=', id)
-    .where('status', '=', 'applying')
-    .execute();
+  await changes().finish(id, outcome);
 }
-
-const TABLE = 'jira_admin_change_requests';
 
 /**
  * Withdraw a pending request. The requester may withdraw their own; an
@@ -350,35 +230,22 @@ const TABLE = 'jira_admin_change_requests';
  * requester reads. False when it is not theirs to cancel, or no longer pending.
  */
 export async function cancelChangeRequest(
-  db: Kysely<DB>,
   subject: string,
   id: string,
   options: { operator?: boolean; note?: string } = {}
 ): Promise<boolean> {
   if (!isUuid(id)) return false;
-  let query = db
-    .updateTable(TABLE)
-    .set({
-      status: 'cancelled',
-      cancelled_at: sql<Date>`NOW()`,
-      updated_at: sql<Date>`NOW()`,
-      ...(options.note?.trim() ? { resolution: options.note.trim().slice(0, 2000) } : {}),
-    })
-    .where('id', '=', id)
-    .where('status', '=', 'pending');
-  if (!options.operator) query = query.where('subject', '=', subject);
-  const result = await query.executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return changes().cancel(id, {
+    ...(options.operator ? {} : { subject }),
+    ...(options.note?.trim() ? { resolution: options.note.trim().slice(0, 2000) } : {}),
+  });
 }
 
 /** One request by id, whoever owns it. The caller decides who may see it (`mayView`). */
-export async function getChangeRequestById(
-  db: Kysely<DB>,
-  id: string
-): Promise<ChangeRequest | null> {
+export async function getChangeRequestById(id: string): Promise<ChangeRequest | null> {
   if (!isUuid(id)) return null;
-  const row = await db.selectFrom(TABLE).select(COLUMNS).where('id', '=', id).executeTakeFirst();
-  return row ? fromRow(row) : null;
+  const row = await changes().get(id);
+  return row ? fromRecord(row) : null;
 }
 
 /** The requester sees their own; an operator sees everyone's. Anyone else sees nothing. */
@@ -391,66 +258,34 @@ export function mayView(
 
 /** Everyone's requests, newest first — an operator's queue. */
 export async function listAllChangeRequests(
-  db: Kysely<DB>,
   options: { limit?: number } = {}
 ): Promise<ChangeRequest[]> {
-  const rows = await db
-    .selectFrom(TABLE)
-    .select(COLUMNS)
-    .orderBy('created_at', 'desc')
-    .limit(options.limit ?? 100)
-    .execute();
-  return rows.map(fromRow);
+  const rows = await changes().list({ limit: options.limit ?? 100 });
+  return rows.map(fromRecord);
 }
 
 /** How many requests wait for an operator, for the connector card. */
-export async function countAwaitingReview(db: Kysely<DB>): Promise<number> {
-  const row = await db
-    .selectFrom(TABLE)
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('status', '=', 'pending')
-    .where('expires_at', '>', sql<Date>`NOW()`)
-    .executeTakeFirst();
-  return Number(row?.count ?? 0);
+export async function countAwaitingReview(): Promise<number> {
+  return changes().countPending();
 }
 
 /**
  * Approve: hand a pending request to the job queue, on this operator's
  * connection. A conditional update, so two approvals cannot both queue it.
  */
-export async function queueChangeRequest(
-  db: Kysely<DB>,
-  id: string,
-  approver: string
-): Promise<boolean> {
+export async function queueChangeRequest(id: string, approver: string): Promise<boolean> {
   if (!isUuid(id)) return false;
-  const result = await db
-    .updateTable(TABLE)
-    .set({
-      status: 'queued',
-      approved_by: approver,
-      approved_at: sql<Date>`NOW()`,
-      updated_at: sql<Date>`NOW()`,
-      step: 'Waiting to start',
-    })
-    .where('id', '=', id)
-    .where('kind', '<>', REQUEST_KIND)
-    .where('status', '=', 'pending')
-    .where('expires_at', '>', sql<Date>`NOW()`)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return changes().queue(id, {
+    approvedBy: approver,
+    step: QUEUED_STEP,
+    exceptKind: REQUEST_KIND,
+  });
 }
 
 /** The job takes a queued request. Of two processes, exactly one wins. */
-export async function startQueuedChange(db: Kysely<DB>, id: string): Promise<boolean> {
+export async function startQueuedChange(id: string): Promise<boolean> {
   if (!isUuid(id)) return false;
-  const result = await db
-    .updateTable(TABLE)
-    .set({ status: 'applying', updated_at: sql<Date>`NOW()`, step: 'Starting' })
-    .where('id', '=', id)
-    .where('status', '=', 'queued')
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return changes().startQueued(id, STARTING_STEP);
 }
 
 /**
@@ -459,98 +294,52 @@ export async function startQueuedChange(db: Kysely<DB>, id: string): Promise<boo
  * exactly one takes it.
  */
 export async function reclaimStaleChange(
-  db: Kysely<DB>,
   id: string,
   staleMs: number = JOB_STALE_MS
 ): Promise<boolean> {
   if (!isUuid(id)) return false;
-  const result = await db
-    .updateTable(TABLE)
-    .set({ updated_at: sql<Date>`NOW()` })
-    .where('id', '=', id)
-    .where('status', '=', 'applying')
-    .where('updated_at', '<', sql<Date>`NOW() - (${staleMs} * INTERVAL '1 millisecond')`)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return changes().reclaimStale(id, staleMs);
 }
 
 /**
  * Say what the job is doing, which is also its heartbeat. False once the
  * request is no longer queued or applying.
  */
-export async function setStep(db: Kysely<DB>, id: string, step: string): Promise<boolean> {
-  const result = await db
-    .updateTable(TABLE)
-    .set({ step: step.slice(0, 500), updated_at: sql<Date>`NOW()` })
-    .where('id', '=', id)
-    .where('status', 'in', ['queued', 'applying'])
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+export async function setStep(id: string, step: string): Promise<boolean> {
+  return changes().setStep(id, step.slice(0, 500));
 }
 
 /** Ids the job sweep should look at: queued, or applying with a dead job. */
 export async function listRunnableChanges(
-  db: Kysely<DB>,
   staleMs: number = JOB_STALE_MS,
   limit = 5
 ): Promise<{ id: string; status: 'queued' | 'applying' }[]> {
-  const rows = await db
-    .selectFrom(TABLE)
-    .select(['id', 'status'])
-    .where((eb) =>
-      eb.or([
-        eb('status', '=', 'queued'),
-        eb.and([
-          eb('status', '=', 'applying'),
-          eb('updated_at', '<', sql<Date>`NOW() - (${staleMs} * INTERVAL '1 millisecond')`),
-        ]),
-      ])
-    )
-    .orderBy('updated_at', 'asc')
-    .limit(limit)
-    .execute();
-  return rows.map((row) => ({
-    id: row.id,
-    status: row.status === 'queued' ? 'queued' : 'applying',
-  }));
+  return changes().listRunnable(staleMs, limit);
 }
 
 /** An operator built a free-text request into a proposal: close it, saying so. */
 export async function closeRequestAsProposed(
-  db: Kysely<DB>,
   requestId: string,
   proposalId: string
 ): Promise<boolean> {
   if (!isUuid(requestId)) return false;
-  const result = await db
-    .updateTable(TABLE)
-    .set({
-      status: 'cancelled',
-      cancelled_at: sql<Date>`NOW()`,
-      updated_at: sql<Date>`NOW()`,
-      resolution: `An operator turned this into a proposal (${proposalId}).`,
-    })
-    .where('id', '=', requestId)
-    .where('kind', '=', REQUEST_KIND)
-    .where('status', '=', 'pending')
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows ?? 0) > 0;
+  return changes().closeAsProposed(requestId, {
+    kind: REQUEST_KIND,
+    resolution: `An operator turned this into a proposal (${proposalId}).`,
+  });
 }
 
 /** File a free-text request: no operations, just words for an operator. */
-export async function createRequest(
-  db: Kysely<DB>,
-  input: {
-    subject: string;
-    agentId?: string;
-    cloudId: string;
-    siteUrl?: string;
-    title: string;
-    reason?: string;
-    description: string;
-  }
-): Promise<ChangeRequest> {
-  return createChangeRequest(db, {
+export async function createRequest(input: {
+  subject: string;
+  agentId?: string;
+  cloudId: string;
+  siteUrl?: string;
+  title: string;
+  reason?: string;
+  description: string;
+}): Promise<ChangeRequest> {
+  return createChangeRequest({
     subject: input.subject,
     agentId: input.agentId,
     cloudId: input.cloudId,

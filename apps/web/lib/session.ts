@@ -11,9 +11,9 @@ import { randomUUID } from 'crypto';
 import { cache } from 'react';
 import type { NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
-import { ok, err } from '@campfhir/safe-functions/helpers';
+import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { logger } from '@/lib/logger';
 
@@ -73,15 +73,11 @@ export async function createSession(
   roles: string[],
   ttlSeconds: number
 ): Promise<Result<Session, 'SESSION_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('SESSION_ERROR' as const);
-  const db = dbResult.val;
-
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
   try {
-    await db.insertInto('sessions').values({ id, subject, roles, expires_at: expiresAt }).execute();
+    await getDataStore().sessions.create({ id, subject, roles, expiresAt });
   } catch (error) {
     logger.error('Failed to create session', {
       component: 'auth/session',
@@ -106,21 +102,14 @@ export async function createSession(
  * than left to accumulate.
  */
 export async function getSessionById(sessionId: string): Promise<Session | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const db = dbResult.val;
-
-  const row = await db
-    .selectFrom('sessions')
-    .select(['id', 'subject', 'roles', 'expires_at', 'last_used_at'])
-    .where('id', '=', sessionId)
-    .executeTakeFirst();
-
-  if (!row) return null;
+  const sessions = getDataStore().sessions;
+  const found = await wrapAsync(() => sessions.find(sessionId), 'DB_ERROR' as const);
+  if (!found.ok || !found.val) return null;
+  const row = found.val;
 
   const now = new Date();
-  if (new Date(row.expires_at) < now) {
-    await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
+  if (row.expiresAt < now) {
+    await sessions.delete(sessionId);
     logger.debug('Expired session discarded', { component: 'auth/session', sessionId });
     return null;
   }
@@ -129,9 +118,9 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
   // session this far behind has had no request at all for that long. Ended
   // the same way as an expired one — the row goes, the next request has no
   // session, and sign-in is the only way back.
-  const idleFor = now.getTime() - new Date(row.last_used_at).getTime();
+  const idleFor = now.getTime() - row.lastUsedAt.getTime();
   if (idleFor > (await idleTimeoutMs())) {
-    await db.deleteFrom('sessions').where('id', '=', sessionId).execute();
+    await sessions.delete(sessionId);
     logger.info('Idle session ended', {
       component: 'auth/session',
       sessionId,
@@ -140,13 +129,13 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
     return null;
   }
 
-  await db.updateTable('sessions').set({ last_used_at: now }).where('id', '=', sessionId).execute();
+  await sessions.touch(sessionId, now);
 
   return {
     id: row.id,
     subject: row.subject,
     roles: row.roles,
-    expiresAt: new Date(row.expires_at),
+    expiresAt: row.expiresAt,
   };
 }
 
@@ -173,9 +162,7 @@ export const getSessionFromCookies = cache(async (): Promise<Session | null> => 
 });
 
 export async function destroySession(sessionId: string): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
-  await dbResult.val.deleteFrom('sessions').where('id', '=', sessionId).execute();
+  await getDataStore().sessions.delete(sessionId);
 }
 
 export function hasRole(session: Session | null, role: string): boolean {

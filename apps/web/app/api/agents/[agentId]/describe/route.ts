@@ -13,11 +13,10 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { generateAgentDescription } from '@/lib/agents/describe';
+import { markDescriptionStale } from '@/lib/agents/store';
 
 /**
  * NextJS serverless function timeout.
@@ -35,24 +34,16 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   const agent = access.agent;
 
   // 'stale' is what the polling clients watch; set it before the response
   // so their spinner starts on the very next poll.
-  await db
-    .updateTable('agents')
-    .set({ description_status: 'stale', updated_at: sql`NOW()` })
-    .where('id', '=', agentId)
-    .execute();
+  await markDescriptionStale(agentId);
 
   after(() =>
-    generateAgentDescription(db, {
+    generateAgentDescription({
       id: agent.id,
       name: agent.name,
       instructions: agent.instructions,

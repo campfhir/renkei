@@ -4,7 +4,6 @@
  * requester is told), and only while it waits for review.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 jest.mock('@/lib/admin-changes/notify', () => ({ notifyChangeOutcome: jest.fn() }));
 jest.mock('@/lib/jira-admin/change-requests', () => ({
@@ -95,7 +94,7 @@ it('withdraws the caller’s own pending request without telling anyone', async 
   const response = await cancel();
   expect(response.status).toBe(200);
   expect(await response.json()).toEqual({ status: 'cancelled' });
-  expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(1)).toEqual([
+  expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(0)).toEqual([
     'owner',
     CHANGE,
     { operator: false, note: '' },
@@ -112,7 +111,7 @@ it('lets an operator decline anyone’s request with a note, and tells the reque
   });
   const response = await cancel({ note: 'Use the existing Source field' });
   expect(response.status).toBe(200);
-  expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(1)).toEqual([
+  expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(0)).toEqual([
     'operator',
     CHANGE,
     { operator: true, note: 'Use the existing Source field' },

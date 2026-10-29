@@ -15,7 +15,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
@@ -171,16 +170,14 @@ async function spacesOf(
  * requester is told). The line to tell the model what happened.
  */
 export async function replaceRequest(
-  db: Parameters<typeof cancelChangeRequest>[0],
   subject: string,
   replaces: string,
   proposalId: string
 ): Promise<string> {
-  const earlier = await getChangeRequestById(db, replaces);
+  const earlier = await getChangeRequestById(replaces);
   if (earlier?.kind === REQUEST_KIND) {
-    if (await closeRequestAsProposed(db, earlier.id, proposalId)) {
+    if (await closeRequestAsProposed(earlier.id, proposalId)) {
       notifyChangeOutcome({
-        db,
         connector: 'jira-admin',
         changeId: earlier.id,
         title: earlier.title,
@@ -191,7 +188,7 @@ export async function replaceRequest(
       return `Closed the request this builds (${replaces}); its requester has been told.`;
     }
   }
-  const cancelled = await cancelChangeRequest(db, subject, replaces);
+  const cancelled = await cancelChangeRequest(subject, replaces);
   return cancelled
     ? `Cancelled the request it replaces (${replaces}).`
     : `Did not cancel ${replaces}: it is not a pending request of this user’s.`;
@@ -404,10 +401,8 @@ export async function registerChangeTools(
         operations: plan.operations,
       };
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
       const reason = text(args.reason);
-      const change = await createChangeRequest(dbResult.val, {
+      const change = await createChangeRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -422,7 +417,7 @@ export async function registerChangeTools(
       if (picked.note) notes.push(picked.note);
       const replaces = text(args.replaces);
       if (replaces) {
-        notes.push(await replaceRequest(dbResult.val, context.subject, replaces, change.id));
+        notes.push(await replaceRequest(context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;
@@ -470,14 +465,11 @@ export async function registerChangeTools(
     },
     async (args: Record<string, unknown>) => {
       if (!context.subject) return errText('No signed-in subject on this MCP session.');
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-      const db = dbResult.val;
 
       const id = typeof args.change === 'string' ? args.change.trim() : '';
       if (id) {
         const operator = context.roles?.includes(ROLE_OPERATOR) === true;
-        const found = await getChangeRequestById(db, id);
+        const found = await getChangeRequestById(id);
         const change =
           found && mayView(found, { subject: context.subject, operator }) ? found : null;
         if (!change) return errText(`No change request ${id} of this user’s.`);
@@ -522,8 +514,8 @@ export async function registerChangeTools(
 
       const everyone = args.everyone === true && context.roles?.includes(ROLE_OPERATOR) === true;
       const found = everyone
-        ? await listAllChangeRequests(db, { limit: 20 })
-        : await listChangeRequests(db, context.subject, {
+        ? await listAllChangeRequests({ limit: 20 })
+        : await listChangeRequests(context.subject, {
             limit: 20,
             pendingOnly: args.pending === true,
           });

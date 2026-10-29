@@ -4,241 +4,52 @@
  * answers, so a change really applies). Salesforce's pages share the same
  * model and are driven in salesforce-admin.spec.ts.
  *
- * Two people: an operator, and an ordinary person who may ask for a change
- * but not approve one. The ordinary person's proposal and a request in
- * words wait for the operator. The ordinary person sees them, can withdraw
- * their own, and has no approve button; the operator sees everyone's, with
- * who asked. Approving queues the change: the click answers at once, the
- * server applies it, and the operator can leave the page and find it done
- * on the list. A running change shows what it is doing. A declined request
- * shows its reason to the person who asked. The notification rows the
- * server writes open the right page.
+ * Three people of one organization (their email addresses share a domain,
+ * so they work in one Jira site): an operator, Olive; an ordinary person,
+ * Arlo, who may ask for a change in words but not approve one; and a
+ * second operator, Pat, whose proposal Olive approves. Each connects Jira
+ * Administration through the real connect flow (the in-memory app's fake
+ * OAuth, e2e/support/jira-admin.ts), and every request is made the way
+ * their assistant makes it: a chat turn on the stand-in model calling
+ * jira_admin_request_change or jira_admin_propose_option_changes.
  *
- * Own people per project (projects run concurrently against one dev
- * Postgres); the change-request tables are shared by every spec, so
- * assertions here look at this spec's own titles only.
+ * Arlo's requests wait for an operator: he sees them, can withdraw his own,
+ * and has no approve button; Olive sees everyone's, with who asked, and
+ * declines one with a reason Arlo reads. Approving Pat's proposal queues
+ * it: the click answers at once, the server applies it, and Olive can
+ * leave the page and find it done on the list; both are told, and the
+ * notification rows open the right page.
  *
- * Runs on the pinned Chromium only; "mobile" is a resized viewport, per AGENTS.md.
+ * Not reachable here: a change caught mid-apply ("Running now"). The
+ * in-process job finishes against the stub in milliseconds, and nothing
+ * holds a change half-applied. The audit trail's row is not read back: no
+ * page lists it.
+ *
+ * Every test's people are of an organization of their own (a tagged email
+ * domain), so their Jira site starts fresh; an operator's views count
+ * everyone's, so assertions look at this test's own titles only.
+ *
+ * Pinned Chromium; "mobile" is a resized viewport, per AGENTS.md.
  */
 
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E, sealForSubject } from './keys';
+import type { APIRequestContext, Browser, Page, TestInfo } from '@playwright/test';
+import {
+  connectJiraAdministration,
+  fakeJiraSite,
+  JIRA_STUB,
+  prepareJiraAdministration,
+  proposeInChat,
+} from './support/jira-admin';
+import { createPerson, signIn, type Person } from './support/person';
+import { addStubModel, removeModel } from './support/stub-model';
+import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-const STUB = 'http://127.0.0.1:8092/jira';
 const FIELD_ID = 'customfield_10100';
 const CONTEXT_ID = '10200';
-const FULL_SCOPES = ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-function fixtureFor(projectName: string) {
-  return {
-    operator: {
-      sessionId: uuidFrom(`admin-change-queue-e2e-operator:${projectName}`),
-      subject: `e2e-queue-operator-${projectName}@example.com`,
-      name: 'Olive Operator',
-    },
-    asker: {
-      sessionId: uuidFrom(`admin-change-queue-e2e-asker:${projectName}`),
-      subject: `e2e-queue-asker-${projectName}@example.com`,
-      name: 'Arlo Asker',
-    },
-    // Fresh per run: the stub keeps each site's options in memory.
-    cloudId: `e2e-queue-cloud-${projectName}-${Date.now()}`,
-  };
-}
-
-type Fixture = ReturnType<typeof fixtureFor>;
-type Person = Fixture['operator'];
-
-async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return await work(client);
-  } finally {
-    await client.end();
-  }
-}
-
-async function seed(fixture: Fixture): Promise<void> {
-  await withDb(async (client) => {
-    const people = [fixture.operator, fixture.asker];
-    const subjects = people.map((person) => person.subject);
-    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = ANY($1)', [
-      subjects,
-    ]);
-    await client.query('DELETE FROM agent_notifications WHERE subject = ANY($1)', [subjects]);
-    await client.query('DELETE FROM audit_events WHERE actor_subject = ANY($1)', [subjects]);
-    await client.query('DELETE FROM provider_grants WHERE subject = ANY($1)', [subjects]);
-    await client.query('DELETE FROM user_preferences WHERE subject = ANY($1)', [subjects]);
-    await client.query('DELETE FROM sessions WHERE subject = ANY($1)', [subjects]);
-    await client.query('DELETE FROM identities WHERE subject = ANY($1)', [subjects]);
-    await client.query('DELETE FROM connector_configs');
-    for (const person of people) {
-      await client.query(
-        `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-        [
-          person.sessionId,
-          person.subject,
-          person === fixture.operator ? ['renkei-user', 'renkei-operator'] : ['renkei-user'],
-          new Date(Date.now() + 24 * 3_600_000),
-        ]
-      );
-      await client.query(
-        `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
-        [person.subject, person.subject, person.name]
-      );
-      // Enrolled, so the write-down dialog does not cover the page.
-      await enrollForE2E(client, person.subject);
-      // No coach marks tour stealing focus mid-screenshot.
-      await client.query(
-        `INSERT INTO user_preferences (subject, key, value)
-         VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-        [person.subject]
-      );
-      await client.query(
-        `INSERT INTO user_preferences (subject, key, value)
-         VALUES ($1, 'connectors', '{"added": ["jira-admin"]}'::jsonb)`,
-        [person.subject]
-      );
-    }
-    await client.query(
-      `INSERT INTO connector_configs (connector, enabled, encrypted_secrets, settings)
-       VALUES ('atlassian-admin', true, 'not-a-real-secret', '{}'::jsonb)`
-    );
-    // Only the operator holds a Jira Administration connection: the deploy runs on theirs.
-    await client.query(
-      `INSERT INTO provider_grants
-         (provider, provider_account_id, subject, client_id, display_name,
-          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)
-       VALUES ('atlassian-admin', $7, $1, 'e2e-admin-client', 'Olive Operator', $2, $3, $4, $5, $6)`,
-      [
-        fixture.operator.subject,
-        await sealForSubject(client, fixture.operator.subject, 'e2e-admin-access-token'),
-        await sealForSubject(client, fixture.operator.subject, 'e2e-admin-refresh-token'),
-        new Date(Date.now() + 365 * 24 * 3_600_000),
-        [...FULL_SCOPES, 'offline_access'],
-        { cloudId: fixture.cloudId, siteUrl: 'https://e2e.atlassian.net' },
-        `e2e-queue-account-${fixture.operator.subject}`,
-      ]
-    );
-  });
-}
-
-/** The row jira_admin_propose_option_changes writes (or jira_admin_request_change, for kind 'request'). */
-async function file(
-  fixture: Fixture,
-  by: Person,
-  input: {
-    title: string;
-    kind?: 'field_options' | 'request';
-    status?: string;
-    step?: string;
-    approvedBy?: Person;
-    description?: string;
-  }
-): Promise<string> {
-  const kind = input.kind ?? 'field_options';
-  const payload =
-    kind === 'request'
-      ? { description: input.description ?? '' }
-      : {
-          field: { id: FIELD_ID, name: 'Source', type: 'select list (single choice)' },
-          context: { id: CONTEXT_ID, name: 'Ops context', global: false, spaces: ['OPS'] },
-          parent: null,
-          operations: [{ op: 'add', values: ['Vendor'] }],
-        };
-  const result = await withDb((client) =>
-    client.query<{ id: string }>(
-      `INSERT INTO jira_admin_change_requests
-         (subject, cloud_id, site_url, kind, title, reason, payload, status, step,
-          approved_by, approved_at, expires_at)
-       VALUES ($1, $2, 'https://e2e.atlassian.net', $3, $4, 'Procurement tags vendor tickets',
-               $5, $6, $7, $8, $9, $10)
-       RETURNING id`,
-      [
-        by.subject,
-        fixture.cloudId,
-        kind,
-        input.title,
-        JSON.stringify(payload),
-        input.status ?? 'pending',
-        input.step ?? null,
-        input.approvedBy?.subject ?? null,
-        input.approvedBy ? new Date() : null,
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
-    )
-  );
-  const id = result.rows[0]?.id;
-  if (!id) throw new Error('no change request inserted');
-  return id;
-}
-
-async function rowOf(id: string) {
-  const result = await withDb((client) =>
-    client.query<{ status: string; approved_by: string | null; resolution: string | null }>(
-      'SELECT status, approved_by, resolution FROM jira_admin_change_requests WHERE id = $1',
-      [id]
-    )
-  );
-  return result.rows[0];
-}
-
-async function liveOptions(fixture: Fixture): Promise<string[]> {
-  const response = await fetch(
-    `${STUB}/${fixture.cloudId}/rest/api/3/field/${FIELD_ID}/context/${CONTEXT_ID}/option`
-  );
-  const body: unknown = await response.json();
-  const values: unknown[] =
-    typeof body === 'object' && body !== null && 'values' in body && Array.isArray(body.values)
-      ? body.values
-      : [];
-  return values.map((option) => {
-    const record: Record<string, unknown> =
-      typeof option === 'object' && option !== null
-        ? Object.fromEntries(Object.entries(option))
-        : {};
-    return String(record.value);
-  });
-}
-
-async function signInAs(page: Page, person: Person): Promise<void> {
-  await page.context().clearCookies();
-  await page.context().addCookies([
-    {
-      name: 'renkei_session',
-      value: person.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
@@ -256,61 +67,125 @@ async function noHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-// Each test visits several pages that `next dev` compiles on first sight.
-test.describe.configure({ mode: 'serial', timeout: 180_000 });
+/** What the stand-in Jira holds for Source's OPS context in the organization's site. */
+async function liveOptions(organization: string): Promise<string[]> {
+  const response = await fetch(
+    `${JIRA_STUB}/${fakeJiraSite(organization).cloudId}/rest/api/3/field/${FIELD_ID}/context/${CONTEXT_ID}/option`
+  );
+  const body: unknown = await response.json();
+  const values: unknown[] =
+    typeof body === 'object' && body !== null && 'values' in body && Array.isArray(body.values)
+      ? body.values
+      : [];
+  return values.map((option) =>
+    String(typeof option === 'object' && option !== null ? Reflect.get(option, 'value') : '')
+  );
+}
 
-// The tables are shared and an operator's views count everyone's: leave nothing pending behind.
-// eslint-disable-next-line no-empty-pattern -- Playwright needs the fixtures object first
-test.afterEach(async ({}, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  const subjects = [fixture.operator.subject, fixture.asker.subject];
-  await withDb(async (client) => {
-    await client.query('DELETE FROM jira_admin_change_requests WHERE subject = ANY($1)', [
-      subjects,
-    ]);
-    await client.query('DELETE FROM agent_notifications WHERE subject = ANY($1)', [subjects]);
+interface Member {
+  person: Person;
+  page: Page;
+}
+
+interface Organization {
+  domain: string;
+  tag: string;
+  members: Member[];
+  modelId: string;
+}
+
+/** A person of the organization, signed in in a browser of their own, connected to Jira Administration. */
+async function join(
+  browser: Browser,
+  request: APIRequestContext,
+  org: Pick<Organization, 'domain' | 'members'>,
+  who: { name: string; operator: boolean }
+): Promise<Member> {
+  const person = await createPerson(request, {
+    displayName: who.name,
+    email: `${who.name.split(' ')[0]?.toLowerCase()}@${org.domain}`,
+    roles: who.operator ? ['renkei-user', 'renkei-operator'] : ['renkei-user'],
   });
+  const context = await browser.newContext();
+  await signIn(context, person);
+  const page = await context.newPage();
+  await connectJiraAdministration(page);
+  const member = { person, page };
+  org.members.push(member);
+  return member;
+}
+
+let org: Organization | null = null;
+
+test.beforeEach(async ({ request, person: _person }, testInfo) => {
+  test.setTimeout(180_000);
+  await prepareJiraAdministration(request);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  org = { domain: `queue-${tag}.example`, tag, members: [], modelId: '' };
 });
 
+test.afterEach(async () => {
+  if (!org) return;
+  const operator = org.members.find((member) => member.person.roles.includes('renkei-operator'));
+  if (operator && org.modelId) await removeModel(operator.page.request, org.modelId);
+  for (const member of org.members) await member.page.context().close();
+  org = null;
+});
+
+function current(): Organization {
+  if (!org) throw new Error('no organization staged');
+  return org;
+}
+
 test('an ordinary person asks and follows; an operator sees who asked and declines with a reason', async ({
-  page,
+  browser,
+  request,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  const proposal = await file(fixture, fixture.asker, {
-    title: 'Queue: add the option “Vendor” to Source',
+  const team = current();
+  const olive = await join(browser, request, team, { name: 'Olive Operator', operator: true });
+  const arlo = await join(browser, request, team, { name: 'Arlo Asker', operator: false });
+  team.modelId = await addStubModel(olive.page.request, `queue-${team.tag}`);
+
+  const vendor = `Queue ${team.tag}: please add a Vendor option`;
+  const reseller = `Queue ${team.tag}: please add a Reseller option`;
+  const asked = await proposeInChat(arlo.page, team.modelId, 'jira_admin_request_change', {
+    title: vendor,
+    description: 'The Source field in OPS needs a Vendor option for procurement tickets.',
+    reason: 'Procurement tags vendor tickets',
   });
-  const words = await file(fixture, fixture.asker, {
-    title: 'Queue: please add a Reseller option',
-    kind: 'request',
+  const words = await proposeInChat(arlo.page, team.modelId, 'jira_admin_request_change', {
+    title: reseller,
     description: 'The Source field in OPS needs a Reseller option for partner tickets.',
   });
 
   // --- The person who asked: their own, waiting for an operator, nothing to approve. ---
-  await signInAs(page, fixture.asker);
+  const page = arlo.page;
   await page.goto('/jira-admin/changes');
   await expect(page.getByRole('heading', { name: 'Waiting for an operator' })).toBeVisible();
   const waiting = main(page).getByTestId('changes-waiting');
-  await expect(waiting.getByRole('link', { name: /add the option “Vendor”/ })).toBeVisible();
-  await expect(waiting.getByRole('link', { name: /add a Reseller option/ })).toBeVisible();
+  await expect(waiting.getByRole('link', { name: new RegExp(vendor) })).toBeVisible();
+  await expect(waiting.getByRole('link', { name: new RegExp(reseller) })).toBeVisible();
   await shot(page, testInfo, 'admin-change-queue-01-asker-list');
 
-  await waiting.getByRole('link', { name: /add the option “Vendor”/ }).click();
+  await waiting.getByRole('link', { name: new RegExp(vendor) }).click();
   await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible({
     timeout: 30_000,
   });
   await expect(main(page).getByTestId('change-requester')).toContainText('by you');
-  await expect(main(page).getByText(/An operator reviews and approves changes to Jira/)).toBeVisible();
+  await expect(
+    main(page).getByText(/An operator reviews and approves changes to Jira/)
+  ).toBeVisible();
   await expect(page.getByRole('button', { name: /Approve/ })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Decline it' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Withdraw it' })).toBeVisible();
   await shot(page, testInfo, 'admin-change-queue-02-asker-review');
 
   // The route holds the line, whatever the page shows.
-  const refused = await page.request.post(`/api/jira-admin/changes/${proposal}/apply`);
+  const refused = await page.request.post(`/api/jira-admin/changes/${asked}/apply`);
   expect(refused.status()).toBe(403);
   expect((await refused.json()).error).toMatch(/operator/);
-  expect((await rowOf(proposal))?.status).toBe('pending');
+  await page.reload();
+  await expect(main(page).getByTestId('change-state')).toHaveText('Waiting for review');
 
   // A request in words says what was asked, and offers nothing to approve.
   await page.goto(`/jira-admin/changes/${words}`);
@@ -325,60 +200,67 @@ test('an ordinary person asks and follows; an operator sees who asked and declin
   await page.setViewportSize({ width: 1280, height: 900 });
 
   // --- The operator: everyone's, with who asked; a request in words cannot be approved. ---
-  await signInAs(page, fixture.operator);
-  await page.goto('/jira-admin/changes');
-  await expect(page.getByRole('heading', { name: 'Waiting for approval' })).toBeVisible();
-  const operatorWaiting = main(page).getByTestId('changes-waiting');
-  const row = operatorWaiting.getByRole('link', { name: /add a Reseller option/ });
+  const operator = olive.page;
+  await operator.goto('/jira-admin/changes');
+  await expect(operator.getByRole('heading', { name: 'Waiting for approval' })).toBeVisible();
+  const row = main(operator)
+    .getByTestId('changes-waiting')
+    .getByRole('link', { name: new RegExp(reseller) });
   await expect(row).toContainText('Requested');
   await expect(row).toContainText('by Arlo Asker');
-  await shot(page, testInfo, 'admin-change-queue-04-operator-list');
+  await shot(operator, testInfo, 'admin-change-queue-04-operator-list');
 
   await row.click();
-  await expect(main(page).getByTestId('change-request-text')).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByRole('button', { name: /Approve/ })).toHaveCount(0);
-  const notApprovable = await page.request.post(`/api/jira-admin/changes/${words}/apply`);
+  await expect(main(operator).getByTestId('change-request-text')).toBeVisible({ timeout: 30_000 });
+  await expect(operator.getByRole('button', { name: /Approve/ })).toHaveCount(0);
+  const notApprovable = await operator.request.post(`/api/jira-admin/changes/${words}/apply`);
   expect(notApprovable.status()).toBe(409);
   expect((await notApprovable.json()).error).toMatch(/request in words/);
 
   // --- Declining asks for a reason, and the person who asked reads it. ---
-  await page.getByRole('button', { name: 'Decline it' }).click();
-  await page.getByLabel('Why (the requester reads this)').fill('Use the existing Partner option');
-  await page.getByRole('button', { name: 'Send the decline' }).click();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Cancelled', {
+  await operator.getByRole('button', { name: 'Decline it' }).click();
+  await operator
+    .getByLabel('Why (the requester reads this)')
+    .fill('Use the existing Partner option');
+  await operator.getByRole('button', { name: 'Send the decline' }).click();
+  await expect(main(operator).getByTestId('change-state')).toHaveText('Cancelled', {
     timeout: 30_000,
   });
-  expect((await rowOf(words))?.resolution).toBe('Use the existing Partner option');
 
-  await signInAs(page, fixture.asker);
   await page.goto(`/jira-admin/changes/${words}`);
   await expect(main(page).getByTestId('change-resolution')).toContainText(
     'Use the existing Partner option'
   );
   await shot(page, testInfo, 'admin-change-queue-05-asker-declined');
 
-  // The ordinary person withdraws their own proposal.
-  await page.goto(`/jira-admin/changes/${proposal}`);
+  // The ordinary person withdraws their other request.
+  await page.goto(`/jira-admin/changes/${asked}`);
   await page.getByRole('button', { name: 'Withdraw it' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Cancelled', {
     timeout: 30_000,
   });
-  expect((await rowOf(proposal))?.status).toBe('cancelled');
 });
 
 test('approving queues the change, the server applies it, and the operator need not stay', async ({
-  page,
+  browser,
+  request,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  const id = await file(fixture, fixture.asker, {
-    title: 'Queue: add the option “Vendor” to Source (approved)',
-  });
-  const before = await liveOptions(fixture);
+  const team = current();
+  const olive = await join(browser, request, team, { name: 'Olive Operator', operator: true });
+  const pat = await join(browser, request, team, { name: 'Pat Proposer', operator: true });
+  team.modelId = await addStubModel(olive.page.request, `queue-${team.tag}`);
+  const before = await liveOptions(team.domain);
 
-  await signInAs(page, fixture.operator);
+  const id = await proposeInChat(pat.page, team.modelId, 'jira_admin_propose_option_changes', {
+    field: 'Source',
+    space: 'OPS',
+    add: [`Vendor ${team.tag}`],
+    reason: 'Procurement tags vendor tickets',
+  });
+
+  const page = olive.page;
   await page.goto(`/jira-admin/changes/${id}`);
-  await expect(main(page).getByTestId('change-requester')).toContainText('by Arlo Asker');
+  await expect(main(page).getByTestId('change-requester')).toContainText('by Pat Proposer');
   await shot(page, testInfo, 'admin-change-queue-06-operator-review');
 
   // The click answers at once with 202: nothing runs inside the request.
@@ -389,138 +271,71 @@ test('approving queues the change, the server applies it, and the operator need 
   );
   await page.getByRole('button', { name: 'Approve and apply this change to Jira' }).click();
   expect((await approve).status()).toBe(202);
-  await expect(page.getByTestId('change-queued')).toContainText('you can leave this page');
-  await expect(page.getByRole('link', { name: 'See all change requests' }).first()).toBeVisible();
+  // Queued, so the operator may leave. Against the stub the apply can finish
+  // before the page's refresh lands, and then the page already shows who
+  // approved it instead of the queued notice.
+  await expect(
+    page.getByTestId('change-queued').or(main(page).getByTestId('change-approver'))
+  ).toBeVisible();
 
   // Leave without waiting: the list follows it to the end by itself.
   await page.goto('/jira-admin/changes');
-  const ours = main(page).getByRole('link', { name: /add the option “Vendor” to Source \(approved\)/ });
+  const ours = main(page).locator(`a[href$="/jira-admin/changes/${id}"]`);
   await expect(ours.getByTestId('change-state')).toHaveText('Applied', { timeout: 60_000 });
-  const row = await rowOf(id);
-  expect(row?.status).toBe('applied');
-  // It ran on the operator's connection, and Jira really has the option.
-  expect(row?.approved_by).toBe(fixture.operator.subject);
-  expect(await liveOptions(fixture)).toEqual(expect.arrayContaining([...before, 'Vendor']));
+  // It ran on the organization's site, and Jira really has the option.
+  expect(await liveOptions(team.domain)).toEqual([...before, `Vendor ${team.tag}`]);
 
   // The page says who asked, who approved, and what ran.
   await ours.click();
   await expect(main(page).getByTestId('change-approver')).toContainText('by you');
-  await expect(main(page).getByTestId('change-requester')).toContainText('by Arlo Asker');
+  await expect(main(page).getByTestId('change-requester')).toContainText('by Pat Proposer');
   await expect(main(page).getByTestId('change-operations').getByText('Done')).toHaveCount(1);
   await shot(page, testInfo, 'admin-change-queue-07-applied');
 
-  // The audit trail names the operator and the person who asked.
-  await expect
-    .poll(async () =>
-      withDb(async (client) => {
-        const rows = await client.query<{ actor_subject: string; details: { requestedBy: string } }>(
-          `SELECT actor_subject, details FROM audit_events
-            WHERE action = 'jira_admin.change_applied' AND actor_subject = $1`,
-          [fixture.operator.subject]
-        );
-        return rows.rows.map((r) => `${r.actor_subject} for ${r.details.requestedBy}`);
-      })
-    )
-    .toEqual([`${fixture.operator.subject} for ${fixture.asker.subject}`]);
-
-  // Both people were told how it ended; the rows open the review page.
-  await expect
-    .poll(async () =>
-      withDb(async (client) => {
-        const rows = await client.query<{ subject: string; headline: string }>(
-          `SELECT subject, headline FROM agent_notifications
-            WHERE ref_id = $1 AND kind = 'change_result' ORDER BY subject`,
-          [id]
-        );
-        return rows.rows.map((r) => `${r.subject}: ${r.headline}`);
-      })
-    )
-    .toEqual([
-      `${fixture.asker.subject}: Your Jira change was applied: Queue: add the option “Vendor” to Source (approved)`,
-      `${fixture.operator.subject}: The Jira change was applied: Queue: add the option “Vendor” to Source (approved)`,
-    ]);
-  await signInAs(page, fixture.asker);
-  await page.goto('/notifications');
-  const note = main(page).getByText(/Your Jira change was applied/);
-  await expect(note).toBeVisible();
+  // Both were told how it ended; the row opens the review page.
+  await pat.page.goto('/notifications');
+  const note = main(pat.page).getByText(/Your Jira change was applied/);
+  await expect(note).toBeVisible({ timeout: 30_000 });
   // Its own icon, not Jira's logo: it must not read as another Jira event.
-  await expect(main(page).getByTestId('change-notification-icon').first()).toBeVisible();
-  await shot(page, testInfo, 'admin-change-queue-08-asker-notified');
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await noHorizontalOverflow(page);
+  await expect(main(pat.page).getByTestId('change-notification-icon').first()).toBeVisible();
+  await shot(pat.page, testInfo, 'admin-change-queue-08-asker-notified');
+  await page.goto('/notifications');
+  await expect(
+    main(page)
+      .getByText(/The Jira change was applied/)
+      .first()
+  ).toBeVisible({
+    timeout: 30_000,
+  });
+  await pat.page.setViewportSize(MOBILE_VIEWPORT);
+  await noHorizontalOverflow(pat.page);
 });
 
-test('a running change shows what it is doing, and survives a visit to another page', async ({
-  page,
+test('the notification row for a waiting proposal opens the right page', async ({
+  browser,
+  request,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  // As the job leaves it: approved, applying, with its latest step.
-  const id = await file(fixture, fixture.asker, {
-    title: 'Queue: a change still running',
-    status: 'applying',
-    step: 'Applying the change in Jira',
-    approvedBy: fixture.operator,
+  const team = current();
+  const olive = await join(browser, request, team, { name: 'Olive Operator', operator: true });
+  const pat = await join(browser, request, team, { name: 'Pat Proposer', operator: true });
+  team.modelId = await addStubModel(olive.page.request, `queue-${team.tag}`);
+  const id = await proposeInChat(pat.page, team.modelId, 'jira_admin_propose_option_changes', {
+    field: 'Source',
+    space: 'OPS',
+    add: [`Vendor ${team.tag}`],
   });
 
-  await signInAs(page, fixture.operator);
-  await page.goto(`/jira-admin/changes/${id}`);
-  const progress = main(page).getByTestId('change-progress');
-  await expect(progress).toContainText('Applying');
-  await expect(main(page).getByTestId('change-step')).toHaveText('Applying the change in Jira');
-  await expect(progress).toContainText('You can leave this page and come back');
-  await expect(page.getByRole('button', { name: /Approve|Decline/ })).toHaveCount(0);
-  await shot(page, testInfo, 'admin-change-queue-09-running');
-
-  // The list shows it under "Running now", with the same step.
-  await page.goto('/jira-admin/changes');
-  const running = main(page).getByTestId('changes-running');
-  await expect(running.getByRole('link', { name: /a change still running/ })).toContainText(
-    'Applying the change in Jira'
-  );
-  await shot(page, testInfo, 'admin-change-queue-10-running-list');
-
-  // The person who asked can follow it too.
-  await signInAs(page, fixture.asker);
-  await page.goto(`/jira-admin/changes/${id}`);
-  await expect(main(page).getByTestId('change-progress')).toBeVisible();
-
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await noHorizontalOverflow(page);
-  await shot(page, testInfo, 'admin-change-queue-11-running-mobile');
-});
-
-test('the notification rows for a waiting request and a finished change open the right page', async ({
-  page,
-}, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  const id = await file(fixture, fixture.asker, { title: 'Queue: add “Vendor” (waiting)' });
-  // As notifyOperatorsOfRequest writes it, for the operator.
-  await withDb((client) =>
-    client.query(
-      `INSERT INTO agent_notifications (id, subject, kind, connector, entity, headline, ref_id, ref_url)
-       VALUES ($1, $2, 'change_request', 'jira-admin', 'change request', $3, $4, $5)`,
-      [
-        uuidFrom(`admin-change-queue-note:${testInfo.project.name}`),
-        fixture.operator.subject,
-        'A Jira change is waiting for your approval: Queue: add “Vendor” (waiting)',
-        id,
-        `/jira-admin/changes/${id}`,
-      ]
-    )
-  );
-
-  await signInAs(page, fixture.operator);
+  // Every operator but the one who proposed is told it waits; Olive's row is asserted.
+  const page = olive.page;
   await page.goto('/notifications');
-  const note = main(page).getByText('A Jira change is waiting for your approval');
-  await expect(note).toBeVisible();
-  await expect(main(page).getByTestId('change-notification-icon')).toBeVisible();
+  const link = main(page).getByRole('link', {
+    name: new RegExp(`A Jira change is waiting for your approval: .*Vendor ${team.tag}`),
+  });
+  await expect(link).toBeVisible({ timeout: 30_000 });
+  await expect(main(page).getByTestId('change-notification-icon').first()).toBeVisible();
   await shot(page, testInfo, 'admin-change-queue-12-notification');
   // The headline is the row's link, stretched over the whole card.
-  await main(page).getByRole('link', { name: /A Jira change is waiting for your approval/ }).click();
+  await link.click();
   await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`), { timeout: 30_000 });
-  await expect(main(page).getByTestId('change-title')).toHaveText(
-    'Queue: add “Vendor” (waiting)'
-  );
+  await expect(main(page).getByTestId('change-title')).toContainText(`Vendor ${team.tag}`);
 });

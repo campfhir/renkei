@@ -14,8 +14,8 @@
  * The shape and the rules live in `prefs.ts`, which touches no database.
  */
 
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
   CONNECTORS_KEY,
@@ -84,22 +84,13 @@ export async function getNotificationPrefs(
   const cached = cache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_NOTIFICATION_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', NOTIFICATIONS_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, NOTIFICATIONS_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_NOTIFICATION_PREFS;
 
-  const value = parseNotificationPrefs(rowResult.val?.value);
+  const value = parseNotificationPrefs(rowResult.val);
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -109,20 +100,8 @@ export async function setNotificationPrefs(
   subject: string,
   prefs: NotificationPrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: NOTIFICATIONS_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, NOTIFICATIONS_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -151,22 +130,13 @@ export async function getConnectorPrefs(
   const cached = connectorCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_CONNECTOR_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', CONNECTORS_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, CONNECTORS_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_CONNECTOR_PREFS;
 
-  const value = parseConnectorPrefs(rowResult.val?.value);
+  const value = parseConnectorPrefs(rowResult.val);
   connectorCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -176,20 +146,8 @@ export async function setConnectorPrefs(
   subject: string,
   prefs: ConnectorPrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: CONNECTORS_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, CONNECTORS_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -217,22 +175,13 @@ export async function getThemePrefs(
   const cached = themeCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_THEME_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', THEME_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, THEME_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_THEME_PREFS;
 
-  const value = parseThemePrefs(rowResult.val?.value);
+  const value = parseThemePrefs(rowResult.val);
   themeCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -242,20 +191,8 @@ export async function setThemePrefs(
   subject: string,
   prefs: ThemePrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: THEME_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, THEME_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -281,22 +218,13 @@ export async function getVoicePrefs(
   const cached = voiceCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_VOICE_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', VOICE_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, VOICE_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_VOICE_PREFS;
 
-  const value = parseVoicePrefs(rowResult.val?.value);
+  const value = parseVoicePrefs(rowResult.val);
   voiceCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -306,20 +234,8 @@ export async function setVoicePrefs(
   subject: string,
   prefs: VoicePrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: VOICE_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, VOICE_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -345,22 +261,13 @@ export async function getImagePrefs(
   const cached = imageCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_IMAGE_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', IMAGE_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, IMAGE_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_IMAGE_PREFS;
 
-  const value = parseImagePrefs(rowResult.val?.value);
+  const value = parseImagePrefs(rowResult.val);
   imageCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -370,20 +277,8 @@ export async function setImagePrefs(
   subject: string,
   prefs: ImagePrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: IMAGE_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, IMAGE_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -409,22 +304,13 @@ export async function getCoachMarkPrefs(
   const cached = coachMarkCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_COACH_MARK_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', COACH_MARKS_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, COACH_MARKS_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_COACH_MARK_PREFS;
 
-  const value = parseCoachMarkPrefs(rowResult.val?.value);
+  const value = parseCoachMarkPrefs(rowResult.val);
   coachMarkCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -434,20 +320,8 @@ export async function setCoachMarkPrefs(
   subject: string,
   prefs: CoachMarkPrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: COACH_MARKS_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, COACH_MARKS_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -472,22 +346,13 @@ export async function getChatArchivePrefs(
   const cached = chatArchiveCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return DEFAULT_CHAT_ARCHIVE_PREFS;
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('user_preferences')
-        .select('value')
-        .where('subject', '=', subject)
-        .where('key', '=', CHAT_ARCHIVE_KEY)
-        .executeTakeFirst(),
+    () => getDataStore().userPreferences.get(subject, CHAT_ARCHIVE_KEY),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return DEFAULT_CHAT_ARCHIVE_PREFS;
 
-  const value = parseChatArchivePrefs(rowResult.val?.value);
+  const value = parseChatArchivePrefs(rowResult.val);
   chatArchiveCache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
 }
@@ -497,20 +362,8 @@ export async function setChatArchivePrefs(
   subject: string,
   prefs: ChatArchivePrefs
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const now = new Date().toISOString();
-  const value = JSON.stringify(prefs);
   const written = await wrapAsync(
-    () =>
-      dbResult.val
-        .insertInto('user_preferences')
-        .values({ subject, key: CHAT_ARCHIVE_KEY, value, updated_at: now })
-        .onConflict((oc) =>
-          oc.columns(['subject', 'key']).doUpdateSet({ value, updated_at: now })
-        )
-        .execute(),
+    () => getDataStore().userPreferences.set(subject, CHAT_ARCHIVE_KEY, prefs),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;

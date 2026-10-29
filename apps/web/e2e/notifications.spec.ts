@@ -1,333 +1,80 @@
 /**
- * The notification surfaces, and the canvas mark.
+ * The notifications page on the in-memory data store: the feed in order,
+ * the unread total, "Mark all as read" and a per-card "Mark as unread"
+ * going through the real route to the store and surviving a reload, and
+ * the empty state for somebody with nothing yet.
  *
- * Unlike screenshots.spec.ts these carry real assertions, because the thing
- * they cover fails SILENTLY: both the feed row and the toast are made
- * clickable by a stretched `after:inset-0` pseudo-element, and a later
- * change to either card's positioning (dropping a `relative`, wrapping the
- * body in a new div) stops the click landing without changing how the page
- * looks at all. `elementFromPoint` at a corner of the card is the only
- * check that actually notices.
- *
- * Seeds its own notification rows: global-setup wipes tenant data before
- * every run, so there is nothing in the table by the time a test starts.
+ * The notifications are the app's own: a colleague shares agents with the
+ * person through each agent's access route (e2e/support/share-agents.ts),
+ * and one is marked read through the feed's route, as its menu does.
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import pg from 'pg';
-import {
-  E2E_SUBJECT,
-  AGENT_DEEP_ID,
-  RUN_ITERATIONS_ID,
-} from './seed';
+import { test, expect } from './fixtures';
+import { createPerson } from './support/person';
+import { shareAgentsWith } from './support/share-agents';
 
-// This sandbox ships a Chromium that Playwright's own resolver does not
-// find; the pinned path plus --no-sandbox is what makes it launch here.
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
-async function shot(page: Page, testInfo: TestInfo, name: string, fullPage = true): Promise<void> {
-  await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      `${name}.png`
-    ),
-    fullPage,
-  });
-}
-
-const ROWS = [
-  {
-    kind: 'act',
-    category: 'sent',
-    connector: 'microsoft',
-    tool: 'outlook_send_mail',
-    entity: 'email',
-    // Deliberately linkless: /me/sendMail returns no id, so a plain send
-    // genuinely has nothing to open. The row still has to render.
-    headline: 'Sent an email “Q3 invoice follow-up”',
-    ref_url: null,
-  },
-  {
-    kind: 'act',
-    category: 'created',
-    connector: 'jira',
-    tool: 'jira_create_issue',
-    entity: 'issue',
-    headline: 'Created a Jira issue PROJ-1042',
-    ref_url: 'https://example.atlassian.net/browse/PROJ-1042',
-    run_id: RUN_ITERATIONS_ID,
-  },
-  {
-    kind: 'act',
-    category: 'sent',
-    connector: 'microsoft',
-    tool: 'outlook_respond_event',
-    entity: 'invitation',
-    headline: 'Declined a meeting invitation to “Sprint review”',
-    ref_url: null,
-  },
-  {
-    kind: 'act',
-    category: 'scheduled',
-    connector: 'zoom',
-    tool: 'zoom_create_meeting',
-    entity: 'meeting',
-    headline: 'Scheduled a Zoom meeting “Vendor sync”',
-    ref_url: 'https://example.zoom.us/j/1234567890',
-  },
-];
-
-async function seedNotifications(): Promise<void> {
-  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query('DELETE FROM agent_notifications');
-    for (const [index, row] of ROWS.entries()) {
-      await client.query(
-        `INSERT INTO agent_notifications\n           (id, subject, kind, category, connector, tool, entity, headline,\n            ref_url, run_id, agent_id, agent_name, created_at)\n         VALUES (gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,\n                 now() - ($12 || ' minutes')::interval)`,
-        [E2E_SUBJECT, row.kind, row.category, row.connector, row.tool, row.entity, row.headline, row.ref_url, 'run_id' in row ? row.run_id : null, AGENT_DEEP_ID, 'Triage yesterday into tickets', String(index * 7)]
-      );
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-/**
- * More than PAGE_SIZE (100) unread rows — the case the render cap used to
- * make unreachable. 105 rows, all unread, newest first: index 0 is "now",
- * index 104 is 104 minutes ago, so indices 100-104 fall past the page and
- * only appear after "Show more".
- */
-async function seedManyNotifications(count: number): Promise<void> {
-  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query('DELETE FROM agent_notifications');
-    for (let index = 0; index < count; index += 1) {
-      await client.query(
-        `INSERT INTO agent_notifications\n           (id, subject, kind, category, connector, tool, entity, headline,\n            ref_url, agent_id, agent_name, created_at)\n         VALUES (gen_random_uuid(),$1,'act','created','jira','jira_create_issue','issue',\n                 $2,null,$3,'Triage yesterday into tickets', now() - ($4 || ' minutes')::interval)`,
-        [E2E_SUBJECT, `Notification ${String(index).padStart(3, '0')}`, AGENT_DEEP_ID, String(index)]
-      );
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-test('notifications — mark all as read reaches rows past the page, show more loads them', async ({
+test('the feed, newest first, marked read and unread again', async ({
   page,
+  request,
+  person,
 }, testInfo) => {
-  await seedManyNotifications(105);
-  await page.goto(`/notifications`);
-  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+  const [oldest, middle, newest] = await shareAgentsWith(request, person, [
+    'Oldest: triage',
+    'Middle: reply drafts',
+    'Newest: duplicates',
+  ]);
+  const markedRead = await page.request.post('/api/notifications', {
+    data: { ids: [oldest.notificationId] },
+  });
+  expect(markedRead.ok()).toBe(true);
 
-  // The banner reports the TRUE total, not just what rendered.
-  await expect(page.getByText('105 unread (some not shown below)')).toBeVisible();
-  const markAllRead = page.getByRole('button', { name: 'Mark all as read' });
-  await expect(markAllRead).toBeVisible();
+  await page.goto('/notifications');
+  const headlines = page.getByText(/shared the agent "(Oldest|Middle|Newest):/);
+  await expect(headlines).toHaveText([newest.headline, middle.headline, oldest.headline]);
+  await expect(page.getByText('2 unread', { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: path.join(RESULTS, 'screens', testInfo.project.name, 'notifications-01-feed.png'),
+    fullPage: true,
+  });
 
-  // Only the newest 100 are on the page; the oldest 5 need "Show more".
-  await expect(page.getByText('Notification 099', { exact: true })).toBeVisible();
-  await expect(page.getByText('Notification 100', { exact: true })).toHaveCount(0);
-
-  // The pill stays out of the way until the person actually scrolls to the
-  // end of the loaded list — it must not be sitting over content unscrolled.
-  const showMore = page.getByRole('button', { name: 'Show more' });
-  await expect(showMore).toHaveCount(0);
-  await page.getByText('Notification 099', { exact: true }).scrollIntoViewIfNeeded();
-  await page.mouse.wheel(0, 400);
-  await expect(showMore).toBeVisible();
-  await shot(page, testInfo, 'review-notifications-show-more-and-mark-all', false);
-
-  await showMore.click();
-  await expect(page.getByText('Notification 104', { exact: true })).toBeVisible();
-  // Exactly 105 rows: one "Show more" click exhausts the remaining 5, so
-  // the button retires rather than offering another empty page.
-  await expect(showMore).toHaveCount(0);
-
-  // "Mark all as read" reaches every row, including the 5 that only just
-  // loaded and the ones that never did — a single `{ all: true }` call,
-  // not one per visible row.
-  await markAllRead.click();
-  await expect(markAllRead).toHaveCount(0);
-  await expect(page.getByText(/\d+ unread/)).toHaveCount(0);
-
-  // Reload to prove the server actually persisted it beyond the optimistic
-  // client state — this is the bug report's exact complaint: rows past the
-  // render cap that could never be marked read before.
+  // On a cold dev server the first click can land before hydration; retry
+  // until the request has gone through — and the route, compiling on its
+  // first hit, answered it (the button hides on any answer).
+  await expect(async () => {
+    const button = page.getByRole('button', { name: 'Mark all as read' });
+    if ((await button.count()) === 0) await page.reload();
+    const marked = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/notifications') && response.request().method() === 'POST',
+      { timeout: 5_000 }
+    );
+    await button.click({ timeout: 2_000 });
+    expect((await marked).ok()).toBe(true);
+  }).toPass({ timeout: 30_000 });
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
-  await expect(page.getByText(/\d+ unread/)).toHaveCount(0);
+  await expect(page.getByText('2 unread', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel(/unread notification/)).toHaveCount(0);
+
+  await page.getByRole('button', { name: `Actions for "${middle.headline}"` }).click();
+  await page.getByRole('menuitem', { name: 'Mark as unread' }).click();
+  await expect(page.getByText('1 unread', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('1 unread', { exact: true })).toBeVisible();
+});
+
+test('somebody with no notifications sees none, and no one else’s', async ({
+  page,
+  request,
+  person: _person,
+}) => {
+  // Somebody else gets a notification; this person gets nothing.
+  const somebodyElse = await createPerson(request);
+  const [{ headline }] = await shareAgentsWith(request, somebodyElse, ['Somebody else’s news']);
+  await page.goto('/notifications');
+  await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
+  await expect(page.getByText(headline)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
-});
-
-test('notifications — the whole row opens the link', async ({ page }, testInfo) => {
-  await seedNotifications();
-  await page.goto(`/notifications`);
-  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
-
-  const linked = page.getByRole('link', { name: 'Created a Jira issue PROJ-1042' });
-  await expect(linked).toHaveAttribute('href', 'https://example.atlassian.net/browse/PROJ-1042');
-  await expect(linked).toHaveAttribute('target', '_blank');
-
-  // The stretched pseudo-element must actually cover the row: a click near
-  // the row's left edge, far from the text, has to land on the anchor.
-  const row = page.locator('li', { hasText: 'Created a Jira issue PROJ-1042' }).last();
-  const box = await row.boundingBox();
-  expect(box).not.toBeNull();
-  const hit = await page.evaluate(
-    ([x, y]) => {
-      const element = document.elementFromPoint(x, y);
-      const anchor = element?.closest('a');
-      return anchor instanceof HTMLAnchorElement ? anchor.href : (element?.tagName ?? 'none');
-    },
-    [box!.x + box!.width - 90, box!.y + box!.height - 8]
-  );
-  expect(hit).toBe('https://example.atlassian.net/browse/PROJ-1042');
-
-  // A declined invitation carries no link, and must not pretend to.
-  await expect(page.getByRole('link', { name: /Declined a meeting invitation/ })).toHaveCount(0);
-  // In the page's own content: a toast for the same row can be on screen too.
-  await expect(page.getByRole('main').getByText(/Declined a meeting invitation/)).toBeVisible();
-
-  // Every per-card action lives in the ⋯ menu now — no standalone Run
-  // link, no external-link arrow outside the menu.
-  await expect(row.getByRole('link', { name: 'Run' })).toHaveCount(0);
-  const menuButton = row.getByRole('button', { name: /Actions for/ });
-  await expect(menuButton).toBeVisible();
-  // ...and it has to be reachable through the stretched anchor.
-  const menuBox = await menuButton.boundingBox();
-  const menuHit = await page.evaluate(
-    ([x, y]) => document.elementFromPoint(x, y)?.closest('button') !== null,
-    [menuBox!.x + menuBox!.width / 2, menuBox!.y + menuBox!.height / 2]
-  );
-  expect(menuHit).toBe(true);
-
-  await menuButton.click();
-  await expect(page.getByRole('menuitem', { name: 'Open issue' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Show run' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Select' })).toBeVisible();
-  await expect(page.getByRole('menuitem', { name: 'Delete' })).toBeVisible();
-  await shot(page, testInfo, 'review-notifications-menu', false);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('menuitem', { name: 'Delete' })).toHaveCount(0);
-
-  await shot(page, testInfo, 'review-notifications');
-});
-
-test('notifications — select and delete through the menu', async ({ page }, testInfo) => {
-  await seedNotifications();
-  await page.goto(`/notifications`);
-  await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
-
-  // "Select" in a card's menu enters selection mode: checkboxes replace
-  // the connector icons and the sticky footer appears.
-  const row = page.locator('li', { hasText: 'Created a Jira issue PROJ-1042' }).last();
-  await row.getByRole('button', { name: /Actions for/ }).click();
-  await page.getByRole('menuitem', { name: 'Select' }).click();
-  await expect(
-    page.getByRole('checkbox', { name: 'Select "Created a Jira issue PROJ-1042"' })
-  ).toBeChecked();
-  await expect(page.getByText('1 selected')).toBeVisible();
-
-  await page.getByRole('checkbox', { name: /Select "Scheduled a Zoom meeting/ }).check();
-  await expect(page.getByText('2 selected')).toBeVisible();
-  await shot(page, testInfo, 'review-notifications-selection', false);
-
-  // The footer's Delete opens the confirmation — nothing is deleted yet.
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Confirm delete' });
-  await expect(dialog.getByText('Delete 2 notifications?')).toBeVisible();
-  await shot(page, testInfo, 'review-notifications-confirm', false);
-
-  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
-  await expect(page.getByRole('main').getByText('Created a Jira issue PROJ-1042')).toHaveCount(0);
-  await expect(page.getByRole('main').getByText(/Scheduled a Zoom meeting/)).toHaveCount(0);
-  // Selection mode ended with its rows.
-  await expect(page.getByText('2 selected')).toHaveCount(0);
-});
-
-test('preferences — acts enumerated per connector', async ({ page }, testInfo) => {
-  await page.goto(`/preferences`);
-  await expect(page.getByRole('heading', { name: 'Preferences' })).toBeVisible();
-
-  // Each connector's acts are listed under it (its catch-all reads "Anything else in …").
-
-  await shot(page, testInfo, 'review-preferences-collapsed');
-
-  // Everyday Jira, not Jira Administration (which has its own group and sorts alongside).
-  const notifications = page.getByRole('region', { name: 'Notifications' });
-  const jira = notifications
-    .locator('details')
-    .filter({ hasText: 'Jira' })
-    .filter({ hasNotText: 'Jira Administration' })
-    .filter({ hasNotText: 'Jira Service Management' })
-    .first();
-  await jira.locator('summary').click();
-  // A connector's acts are grouped by what they do, each with its own switches.
-  await expect(jira.getByText('Creates something')).toBeVisible();
-  await expect(jira.getByText('Updates something')).toBeVisible();
-  await expect(jira.getByText('Anything else')).toBeVisible();
-  await expect(jira.getByRole('checkbox', { name: /Creates something — App$/ })).toBeVisible();
-  await shot(page, testInfo, 'review-preferences-jira', false);
-
-  // Outlook is where the user's own list came from — check it reads back.
-  // By its summary: an open group's table mentions "Outlook" as a column too.
-  const outlook = notifications
-    .locator('details')
-    .filter({ has: page.locator('summary', { hasText: /^\s*Outlook/ }) })
-    .first();
-  await outlook.locator('summary').click();
-  await expect(outlook.getByText('Sends something')).toBeVisible();
-  await expect(outlook.getByRole('checkbox', { name: /Sends something — App$/ })).toBeVisible();
-  await shot(page, testInfo, 'review-preferences-outlook', false);
-});
-
-test('toast — the card opens its link, the dismiss still dismisses', async ({ page }) => {
-  test.setTimeout(90_000);
-  const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query('DELETE FROM agent_notifications');
-    await page.goto(`/agents`);
-    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-    // The centre seeds its cursor from the FIRST poll, so a row written
-    // before that one lands is backlog and deliberately never toasts.
-    await page.waitForTimeout(2_000);
-
-    await client.query(
-      `INSERT INTO agent_notifications\n         (id, subject, kind, category, connector, tool, entity, headline,\n          ref_url, agent_id, agent_name, created_at)\n       VALUES (gen_random_uuid(),$1,'act','created','jira','jira_create_issue','issue',\n               $2,$3,$4,'Triage yesterday into tickets', now())`,
-      [E2E_SUBJECT, 'Created a Jira issue PROJ-2001', 'https://example.atlassian.net/browse/PROJ-2001', AGENT_DEEP_ID]
-    );
-
-    const toast = page.getByRole('link', { name: 'Created a Jira issue PROJ-2001' });
-    await expect(toast).toBeVisible({ timeout: 40_000 });
-    await expect(toast).toHaveAttribute('href', 'https://example.atlassian.net/browse/PROJ-2001');
-
-    // The stretched link has to cover the card without swallowing dismiss.
-    const card = page.locator('article', { hasText: 'PROJ-2001' });
-    const box = await card.boundingBox();
-    const hit = await page.evaluate(
-      ([x, y]) => document.elementFromPoint(x, y)?.closest('a')?.getAttribute('href') ?? 'none',
-      [box!.x + 20, box!.y + box!.height - 10]
-    );
-    expect(hit).toBe('https://example.atlassian.net/browse/PROJ-2001');
-
-    await card.getByRole('button', { name: 'Dismiss' }).click();
-    await expect(toast).toHaveCount(0);
-    expect(page.url()).toContain('/agents');
-  } finally {
-    await client.end();
-  }
 });

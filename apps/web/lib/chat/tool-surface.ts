@@ -25,8 +25,6 @@
  * connectors are on.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { LlmToolDef } from '@renkei/agent-llm';
 import { listServers, slugOfCapabilityKey } from '@renkei/connector-mcp';
 import { HttpMcpClient, mintRunToken, revokeRunToken, type McpClient } from '@renkei/mcp-client';
@@ -282,12 +280,9 @@ export interface ChatToolSurface {
  * Read once per turn that has any; a failed read leaves the tools
  * discoverable by their own words, which is the honest fallback.
  */
-async function attachServerContext(
-  db: Kysely<DB>,
-  discoverable: DiscoverableTool[]
-): Promise<void> {
+async function attachServerContext(discoverable: DiscoverableTool[]): Promise<void> {
   if (!discoverable.some((entry) => isMcpServerConnector(entry.connector))) return;
-  const servers = await listServers(db);
+  const servers = await listServers();
   if (!servers.ok) return;
   const bySlug = new Map(servers.val.map((server) => [server.slug, server]));
   for (const entry of discoverable) {
@@ -297,29 +292,26 @@ async function attachServerContext(
   }
 }
 
-export async function resolveChatToolSurface(
-  db: Kysely<DB>,
-  input: {
-    subject: string;
-    roles: string[];
-    config: ChatToolConfig;
-    ttlSeconds: number;
-    /**
-     * Tool names the person blocked (permission-prefs.ts): neither offered
-     * up front nor discoverable, so the model never sees a verb it may not
-     * use. The runner still refuses a call to one made from memory.
-     */
-    excluded?: ReadonlySet<string>;
-    /**
-     * Connectors whose plain act tools are offered instead of their
-     * previews — see PreviewRouting. Empty unless the chat is a code
-     * project's in auto mode.
-     */
-    directConnectors?: ReadonlySet<string>;
-    /** Offered up front beyond the core connectors — see partitionChatTools. */
-    eager?: EagerExtras;
-  }
-): Promise<ChatToolSurface> {
+export async function resolveChatToolSurface(input: {
+  subject: string;
+  roles: string[];
+  config: ChatToolConfig;
+  ttlSeconds: number;
+  /**
+   * Tool names the person blocked (permission-prefs.ts): neither offered
+   * up front nor discoverable, so the model never sees a verb it may not
+   * use. The runner still refuses a call to one made from memory.
+   */
+  excluded?: ReadonlySet<string>;
+  /**
+   * Connectors whose plain act tools are offered instead of their
+   * previews — see PreviewRouting. Empty unless the chat is a code
+   * project's in auto mode.
+   */
+  directConnectors?: ReadonlySet<string>;
+  /** Offered up front beyond the core connectors — see partitionChatTools. */
+  eager?: EagerExtras;
+}): Promise<ChatToolSurface> {
   const catalog = await listAvailableTools(input.subject, { roles: input.roles });
   const excluded = input.excluded ?? new Set<string>();
   const routing = previewRouting(catalog, input.directConnectors, excluded);
@@ -346,7 +338,7 @@ export async function resolveChatToolSurface(
     };
   }
 
-  const token = await mintRunToken(db, {
+  const token = await mintRunToken({
     subject: input.subject,
     agentId: null,
     ttlSeconds: input.ttlSeconds,
@@ -356,7 +348,7 @@ export async function resolveChatToolSurface(
   const release = async () => {
     if (released) return;
     released = true;
-    await revokeRunToken(db, token);
+    await revokeRunToken(token);
   };
   const mcp = new HttpMcpClient(internalMcpEndpoint(), token, {
     clientName: 'renkei-chat',
@@ -377,7 +369,7 @@ export async function resolveChatToolSurface(
       input.config,
       input.eager ?? {}
     );
-    await attachServerContext(db, discoverable);
+    await attachServerContext(discoverable);
     const allOffered = [...eager, ...discoverable.map((entry) => entry.def)];
     const offeredNames = new Set(allOffered.map((tool) => tool.name));
     const widgetResourceUris = new Map(

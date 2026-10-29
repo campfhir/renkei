@@ -12,7 +12,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
@@ -175,9 +174,6 @@ export async function registerProposeRequestTypeTools(
         );
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
-      const db = dbResult.val;
       const payload: RequestTypePayload = {
         serviceDesk,
         operations: [
@@ -191,7 +187,7 @@ export async function registerProposeRequestTypeTools(
         ],
       };
       const reason = text(args.reason);
-      const change = await createChangeRequest(db, {
+      const change = await createChangeRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -204,7 +200,7 @@ export async function registerProposeRequestTypeTools(
 
       const replaces = text(args.replaces);
       if (replaces) {
-        notes.push(await replaceRequest(db, context.subject, replaces, change.id));
+        notes.push(await replaceRequest(context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;

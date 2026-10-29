@@ -8,66 +8,36 @@
  * and the page at phone width. The sandbox worker is the stub in
  * sandbox-stub.mjs (no engine: a start reads running at a made-up
  * address at once), which seeds the same allowed images migration 121
- * does. Each Playwright project seeds a project of its own, so the
- * three never share a service.
+ * does. The project is the test's own person's, connected to Bitbucket
+ * and made through the Code routes (e2e/support/code-host.ts), so no two
+ * tests share a service.
  */
 
 import path from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { sealForSubject } from './keys';
-
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    digit,
-    projectId: `66666666-6666-4666-8666-6666666666${digit}1`,
-    name: `Services demo (${digit})`,
-    repo: `acme/services-demo-${digit}`,
-  };
+interface Ids {
+  projectId: string;
+  name: string;
+  repo: string;
 }
 
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query(
-      `INSERT INTO provider_grants\n         (provider, provider_account_id, subject, client_id, display_name,\n          encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n       VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n               $2, $3, $4, $5, $6)\n       ON CONFLICT (provider, provider_account_id) DO UPDATE\n         SET subject = EXCLUDED.subject,\n             encrypted_access_token = EXCLUDED.encrypted_access_token,\n             encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n             expires_at = EXCLUDED.expires_at`,
-      [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
-    );
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Where a database runs beside the checkout.', 'code', 'atlassian-bitbucket', $4, 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.name, ids.repo]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+async function stage(page: Page, testInfo: TestInfo): Promise<Ids> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const name = `Services demo (${tag})`;
+  const repo = `acme/services-demo-${tag}`;
+  const projectId = await createCodeProject(page.request, {
+    name,
+    description: 'Where a database runs beside the checkout.',
+    repository: repo,
+    branch: 'main',
+  });
+  return { projectId, name, repo };
 }
 
 /** Nothing scrolls sideways — the document, and the frame's own scroll container inside it. */
@@ -83,17 +53,14 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 test.describe('Code project services', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    await seedFixtures(idsFor(testInfo.project.name));
-  });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  let ids: Ids;
+  test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+    await prepareCodeHost(request);
+    await connectBitbucket(page);
+    ids = await stage(page, testInfo);
   });
 
   test('card, page, start, tail, stop, phone width', async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
     const shot = (name: string) =>
       page.screenshot({
         path: path.join(

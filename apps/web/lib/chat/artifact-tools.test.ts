@@ -14,6 +14,7 @@ jest.mock('./attachments', () => ({
   findChatAttachment: jest.fn(),
 }));
 jest.mock('./artifact-access', () => ({ resolveArtifactAccess: jest.fn() }));
+// The library calls below still take a database handle; the mocks never touch it.
 jest.mock('./artifact-library', () => ({
   artifactImpact: jest.fn(),
   attachToProject: jest.fn(),
@@ -56,7 +57,6 @@ const cipher = resourceCipher({
 
 function context(extra: Partial<LocalToolContext> = {}): LocalToolContext {
   return {
-    db: null as unknown as LocalToolContext['db'],
     subject: 'auth0|alice',
     chatId: 'chat-1',
     cipher,
@@ -135,7 +135,7 @@ describe('artifact_search', () => {
       row('a1', 'guide.pdf'),
       row('a2', 'always.md', { mode: 'always' }),
     ]);
-    textMock.mockImplementation(async (_db, id) =>
+    textMock.mockImplementation(async (id) =>
       id === 'a1' ? 'Intro. Monetary columns are numeric(12,4); round half to even.' : 'never read'
     );
     const tools = createLocalToolSet(artifactTools({ inProject: true }));
@@ -183,7 +183,7 @@ describe('artifact_attach', () => {
     const tools = createLocalToolSet(artifactTools({ inProject: true }));
     const done = await tools.run('artifact_attach', { attachmentId: 'a1' }, context());
     expect(done.isError).toBeFalsy();
-    expect(attachMock).toHaveBeenCalledWith(null, {
+    expect(attachMock).toHaveBeenCalledWith({
       actorSubject: 'auth0|alice',
       artifactId: 'a1',
       projectId: 'proj-1',
@@ -218,13 +218,13 @@ describe('artifact_describe', () => {
       context()
     );
     expect(result.isError).toBeFalsy();
-    expect(findMock).toHaveBeenCalledWith(null, {
+    expect(findMock).toHaveBeenCalledWith({
       chatId: 'chat-1',
       ownerSubject: 'auth0|alice',
       id: null,
       filename: 'plan.pptx',
     });
-    expect(storeDigestMock).toHaveBeenCalledWith(null, 'a7', {
+    expect(storeDigestMock).toHaveBeenCalledWith('a7', {
       summary: 'The Q3 rollout plan, by region.',
       keywords: ['rollout', 'Q3'],
     });
@@ -278,7 +278,6 @@ describe('artifact_rename and artifact_delete', () => {
     );
     expect(done.isError).toBeFalsy();
     expect(renameMock).toHaveBeenCalledWith(
-      null,
       expect.objectContaining({
         ownerSubject: 'auth0|alice',
         artifactId: 'a1',

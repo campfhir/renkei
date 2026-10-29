@@ -1,5 +1,6 @@
 /**
- * DB accessors for `email_classification_log` — the ONE table in this
+ * `email_classification_log`, through the data store
+ * (`getDataStore().mailReview`) — the ONE table in this
  * package that carries message content (a bounded excerpt), and therefore
  * the one with a hard rule: every read here is scoped by `owner_upn`. There
  * is no function in this file that lists or searches across owners — that
@@ -9,9 +10,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore, type OwnClassificationRecord } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { EmailCategory, MessageOverrideAction, SanitizeResult } from '../types';
 
@@ -30,42 +30,25 @@ export interface ClassificationLogEntry {
 export async function recordClassification(
   entry: ClassificationLogEntry
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
   const r = entry.result;
-  const ownerUpn = entry.ownerUpn.toLowerCase();
-
-  const shared = {
-    category: r.category,
-    matched_rule_id: r.matchedRuleId,
-    sender_key: r.senderKey,
-    template_id: r.action === 'index' ? r.templateId : null,
-    template_version: r.action === 'index' ? r.templateVersion : null,
-    match_score: r.action === 'index' ? r.matchScore : null,
-    content_hash: entry.contentHash,
-    needs_review: r.needsReview,
-    excerpt: entry.excerpt,
-  };
-
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .insertInto('email_classification_log')
-        .values({
-          id: randomUUID(),
-          provider: entry.provider,
-          ref_id: entry.refId,
-          owner_upn: ownerUpn,
-          account_id: entry.accountId,
-          // created_at/updated_at are left to their column defaults on insert.
-          ...shared,
-        })
-        .onConflict((oc) =>
-          oc
-            .columns(['provider', 'ref_id'])
-            .doUpdateSet({ ...shared, updated_at: sql<Date>`NOW()` })
-        )
-        .execute(),
+      getDataStore().mailReview.record({
+        id: randomUUID(),
+        provider: entry.provider,
+        refId: entry.refId,
+        ownerUpn: entry.ownerUpn.toLowerCase(),
+        accountId: entry.accountId,
+        category: r.category,
+        matchedRuleId: r.matchedRuleId,
+        senderKey: r.senderKey,
+        templateId: r.action === 'index' ? r.templateId : null,
+        templateVersion: r.action === 'index' ? r.templateVersion : null,
+        matchScore: r.action === 'index' ? r.matchScore : null,
+        contentHash: entry.contentHash,
+        needsReview: r.needsReview,
+        excerpt: entry.excerpt,
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
@@ -93,31 +76,16 @@ export async function hasRecentDuplicate(
   lookbackDays: number,
   scope: { ownerUpn: string; refId: string }
 ): Promise<Result<boolean, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
-  const rowResult = await wrapAsync(
+  return wrapAsync(
     () =>
-      dbResult.val
-        .selectFrom('email_classification_log')
-        .select('id')
-        .where('content_hash', '=', contentHash)
-        .where('owner_upn', '=', scope.ownerUpn.toLowerCase())
-        .where('ref_id', '<>', scope.refId)
-        .where('created_at', '>=', sql<Date>`NOW() - ${lookbackDays} * INTERVAL '1 day'`)
-        .where(
-          sql<boolean>`EXISTS (
-            SELECT 1 FROM knowledge_chunks kc
-            WHERE kc.provider = email_classification_log.provider
-              AND (kc.ref_id = email_classification_log.ref_id
-                   OR kc.ref_id LIKE email_classification_log.ref_id || '#%')
-          )`
-        )
-        .executeTakeFirst(),
+      getDataStore().mailReview.hasIndexedDuplicate({
+        contentHash,
+        ownerUpn: scope.ownerUpn.toLowerCase(),
+        refId: scope.refId,
+        lookbackDays,
+      }),
     'DB_ERROR' as const
   );
-  if (!rowResult.ok) return rowResult;
-  return ok(Boolean(rowResult.val));
 }
 
 export interface OwnClassificationRow {
@@ -134,44 +102,18 @@ export interface OwnClassificationRow {
   createdAt: string;
 }
 
-const OWN_ROW_COLUMNS = [
-  'ref_id',
-  'provider',
-  'account_id',
-  'category',
-  'sender_key',
-  'needs_review',
-  'match_score',
-  'excerpt',
-  'override_action',
-  'created_at',
-] as const;
-
-interface OwnRowSelection {
-  ref_id: string;
-  provider: string;
-  account_id: string | null;
-  category: string;
-  sender_key: string | null;
-  needs_review: boolean;
-  match_score: number | null;
-  excerpt: string;
-  override_action: string | null;
-  created_at: unknown;
-}
-
-function toOwnRow(row: OwnRowSelection): OwnClassificationRow {
+function toOwnRow(row: OwnClassificationRecord): OwnClassificationRow {
   return {
-    refId: row.ref_id,
+    refId: row.refId,
     provider: row.provider,
-    accountId: row.account_id,
+    accountId: row.accountId,
     category: row.category,
-    senderKey: row.sender_key,
-    needsReview: row.needs_review,
-    matchScore: row.match_score,
+    senderKey: row.senderKey,
+    needsReview: row.needsReview,
+    matchScore: row.matchScore,
     excerpt: row.excerpt,
-    overrideAction: row.override_action,
-    createdAt: String(row.created_at),
+    overrideAction: row.overrideAction,
+    createdAt: String(row.createdAt),
   };
 }
 
@@ -203,38 +145,19 @@ export async function listForOwner(
   ownerUpn: string,
   options: ListForOwnerOptions
 ): Promise<Result<OwnClassificationPage, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
   const limit = Math.min(Math.max(options.limit ?? 20, 1), 100);
   const offset = Math.max(options.offset ?? 0, 0);
   const owner = ownerUpn.toLowerCase();
 
-  const result = await wrapAsync(async () => {
-    const rows = await db
-      .selectFrom('email_classification_log')
-      .select(OWN_ROW_COLUMNS)
-      .where('owner_upn', '=', owner)
-      .where('category', '=', options.category)
-      // Needs-review rows first — a spot check should surface the rare thing
-      // that actually needs attention before the common case that doesn't.
-      .orderBy('needs_review', 'desc')
-      .orderBy('created_at', 'desc')
-      .limit(limit)
-      .offset(offset)
-      .execute();
-
-    const countRow = await db
-      .selectFrom('email_classification_log')
-      .select(({ fn }) => fn.countAll<number>().as('count'))
-      .where('owner_upn', '=', owner)
-      .where('category', '=', options.category)
-      .executeTakeFirst();
-
-    return { items: rows.map(toOwnRow), totalCount: Number(countRow?.count ?? 0) };
+  return wrapAsync(async () => {
+    const store = getDataStore();
+    // Needs-review rows first — a spot check should surface the rare thing
+    // that actually needs attention before the common case that doesn't.
+    const rows = await store.mailReview.listForOwner(owner, options.category, { limit, offset });
+    const counts = await store.mailReview.countByCategory(owner);
+    const totalCount = counts.find((row) => row.category === options.category)?.count ?? 0;
+    return { items: rows.map(toOwnRow), totalCount };
   }, 'DB_ERROR' as const);
-
-  return result;
 }
 
 export type CategoryCounts = Record<EmailCategory, number>;
@@ -243,18 +166,8 @@ export type CategoryCounts = Record<EmailCategory, number>;
 export async function countByCategoryForOwner(
   ownerUpn: string
 ): Promise<Result<CategoryCounts, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const rowsResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('email_classification_log')
-        .select('category')
-        .select(({ fn }) => fn.countAll<number>().as('count'))
-        .where('owner_upn', '=', ownerUpn.toLowerCase())
-        .groupBy('category')
-        .execute(),
+    () => getDataStore().mailReview.countByCategory(ownerUpn.toLowerCase()),
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
@@ -266,7 +179,7 @@ export async function countByCategoryForOwner(
       row.category === 'system_notification' ||
       row.category === 'marketing'
     ) {
-      counts[row.category] = Number(row.count);
+      counts[row.category] = row.count;
     }
   }
   return ok(counts);
@@ -284,22 +197,12 @@ export async function getOwnRow(
   ownerUpn: string,
   refId: string
 ): Promise<Result<OwnClassificationRow | null, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const rowResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('email_classification_log')
-        .select(OWN_ROW_COLUMNS)
-        .where('owner_upn', '=', ownerUpn.toLowerCase())
-        .where('ref_id', '=', refId)
-        .executeTakeFirst(),
+    () => getDataStore().mailReview.getOwnRow(ownerUpn.toLowerCase(), refId),
     'DB_ERROR' as const
   );
   if (!rowResult.ok) return rowResult;
-  const row = rowResult.val;
-  return ok(row ? toOwnRow(row) : null);
+  return ok(rowResult.val ? toOwnRow(rowResult.val) : null);
 }
 
 export interface SetOverrideInput {
@@ -314,23 +217,13 @@ export async function setOverride(
   refId: string,
   override: SetOverrideInput
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .updateTable('email_classification_log')
-        .set({
-          override_action: override.action,
-          override_category: override.category ?? null,
-          override_sender_key: override.senderKey ?? null,
-          overridden_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('owner_upn', '=', ownerUpn.toLowerCase())
-        .where('ref_id', '=', refId)
-        .execute(),
+      getDataStore().mailReview.setOverride(ownerUpn.toLowerCase(), refId, {
+        action: override.action,
+        category: override.category ?? null,
+        senderKey: override.senderKey ?? null,
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;

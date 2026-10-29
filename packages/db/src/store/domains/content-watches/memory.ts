@@ -1,0 +1,202 @@
+import { orderBy } from '../../memory/order';
+import { REBUILD_RESET, contentWatchFromRow, contentWatchSyncStateFromRow } from './record';
+import type { ContentWatchStore, ContentWatchScopeCount } from './types';
+import type { MemoryTables } from '../../memory/tables';
+import { metadataText } from '../knowledge-chunks/metadata-filter';
+
+function sortedCounts(counts: Map<string | null, number>): ContentWatchScopeCount[] {
+  return orderBy(
+    [...counts.entries()].map(([scope, objects]) => ({ scope, objects })),
+    [(row) => row.scope]
+  );
+}
+
+export function memoryContentWatches(tables: MemoryTables): ContentWatchStore {
+  return {
+    async listForSubject(subject) {
+      const rows = tables.select('content_watches', (r) => r.subject === subject);
+      return orderBy(rows, [(r) => r.scope_key], [(r) => r.provider], [(r) => r.id]).map(
+        contentWatchFromRow
+      );
+    },
+    async findForSubject(subject, provider, scopeKey) {
+      const rows = tables.select(
+        'content_watches',
+        (r) => r.subject === subject && r.provider === provider && r.scope_key === scopeKey
+      );
+      const row = orderBy(rows, [(r) => r.created_at], [(r) => r.id])[0];
+      return row ? contentWatchFromRow(row) : null;
+    },
+    async resetForRebuild(id) {
+      const wanted = id;
+      return tables.update('content_watches', (r) => r.id === wanted, {
+        ...REBUILD_RESET,
+        updated_at: new Date(),
+      }).length;
+    },
+    async watch(owner, { provider, scopeType, scopeKey, scopeLabel }) {
+      const onScope = (r: { provider: string; scope_type: string; scope_key: string }) =>
+        r.provider === provider && r.scope_type === scopeType && r.scope_key === scopeKey;
+      const existing = tables.first(
+        'content_watches',
+        (r) => onScope(r) && r.subject === owner.subject
+      );
+      if (existing) {
+        tables.update('content_watches', (r) => r.id === existing.id, {
+          enabled: true,
+          scope_label: scopeLabel,
+          last_error: null,
+          sync_status: 'idle',
+          account_id: owner.accountId,
+          updated_at: new Date(),
+        });
+        return { created: !existing.enabled };
+      }
+      const [sibling] = orderBy(
+        tables.select('content_watches', (r) => onScope(r) && r.cursor !== null),
+        [(r) => r.updated_at, 'desc'],
+        [(r) => r.id, 'desc']
+      );
+      tables.insert('content_watches', {
+        id: globalThis.crypto.randomUUID(),
+        provider,
+        account_id: owner.accountId,
+        subject: owner.subject,
+        scope_type: scopeType,
+        scope_key: scopeKey,
+        scope_label: scopeLabel,
+        cursor: sibling?.cursor ?? null,
+        enabled: true,
+        sync_status: 'idle',
+        last_error: null,
+        last_synced_at: null,
+        last_run_items: 0,
+        total_items: 0,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      return { created: true };
+    },
+    async repair(owner, { provider, scopeType, scopeKey }) {
+      const onScope = (r: { provider: string; scope_type: string; scope_key: string }) =>
+        r.provider === provider && r.scope_type === scopeType && r.scope_key === scopeKey;
+      return tables.update('content_watches', onScope, {
+        subject: owner.subject,
+        account_id: owner.accountId,
+        enabled: true,
+        last_error: null,
+        sync_status: 'idle',
+        last_synced_at: null,
+        updated_at: new Date(),
+      }).length;
+    },
+    async disable(subject, { provider, scopeType, scopeKey }) {
+      return tables.update(
+        'content_watches',
+        (r) =>
+          r.provider === provider &&
+          r.subject === subject &&
+          r.scope_type === scopeType &&
+          r.scope_key === scopeKey &&
+          r.enabled,
+        { enabled: false, sync_status: 'idle', updated_at: new Date() }
+      ).length;
+    },
+    async list(subject, provider) {
+      return orderBy(
+        tables.select('content_watches', (r) => r.provider === provider && r.subject === subject),
+        [(r) => r.scope_key],
+        [(r) => r.scope_type],
+        [(r) => r.id]
+      ).map(contentWatchFromRow);
+    },
+    async objectCounts(provider, metadataKey) {
+      const objects = new Map<string | null, Set<string>>();
+      for (const row of tables.select('knowledge_chunks', (r) => r.provider === provider)) {
+        const scope = metadataText(row.metadata, metadataKey);
+        const set = objects.get(scope) ?? new Set<string>();
+        set.add(row.ref_id.split('#')[0]);
+        objects.set(scope, set);
+      }
+      const indexed = new Map<string | null, number>();
+      for (const [scope, set] of objects) indexed.set(scope, set.size);
+
+      const queued = new Map<string | null, number>();
+      for (const job of tables.select('embedding_jobs', (r) => r.status === 'pending')) {
+        if (metadataText(job.payload, 'provider') !== provider) continue;
+        const metadata =
+          typeof job.payload === 'object' && job.payload !== null && !Array.isArray(job.payload)
+            ? Reflect.get(job.payload, 'metadata')
+            : null;
+        const scope = metadataText(metadata, metadataKey);
+        queued.set(scope, (queued.get(scope) ?? 0) + 1);
+      }
+      return { indexed: sortedCounts(indexed), queued: sortedCounts(queued) };
+    },
+    async getSyncState(id) {
+      const key = id;
+      const row = tables.first('content_watches', (r) => r.id === key);
+      return row ? contentWatchSyncStateFromRow(row) : null;
+    },
+    async recordRound(id, round) {
+      const key = id;
+      const now = new Date();
+      tables.update(
+        'content_watches',
+        (r) => r.id === key,
+        (r) => ({
+          cursor: round.cursor,
+          last_synced_at: now,
+          last_run_items: round.items,
+          total_items: r.total_items + round.items,
+          sync_status: round.syncStatus,
+          last_error: null,
+          updated_at: now,
+        })
+      );
+    },
+    async restartCursor(id) {
+      const key = id;
+      tables.update('content_watches', (r) => r.id === key, {
+        cursor: null,
+        sync_status: 'syncing',
+        updated_at: new Date(),
+      });
+    },
+    async listDue(dueBefore, limit) {
+      const cutoff = dueBefore.getTime();
+      const due = tables.select(
+        'content_watches',
+        (r) => r.enabled && (r.last_synced_at === null || r.last_synced_at.getTime() < cutoff)
+      );
+      return orderBy(
+        due,
+        // NULLS FIRST: a never-synced watch sorts before every synced one.
+        [(r) => (r.last_synced_at === null ? 0 : 1)],
+        [(r) => r.last_synced_at],
+        [(r) => r.id]
+      )
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          provider: row.provider,
+          accountId: row.account_id,
+          scopeType: row.scope_type,
+          scopeKey: row.scope_key,
+          scopeLabel: row.scope_label,
+          cursor: row.cursor,
+          lastSyncedAt: row.last_synced_at ? new Date(row.last_synced_at) : null,
+        }));
+    },
+    async recordSyncFailure(id, message) {
+      const key = id;
+      const now = new Date();
+      tables.update('content_watches', (r) => r.id === key, {
+        sync_status: 'error',
+        last_error: message,
+        last_synced_at: now,
+        updated_at: now,
+      });
+    },
+  };
+}

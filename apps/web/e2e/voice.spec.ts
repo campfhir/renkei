@@ -4,34 +4,36 @@
  * read aloud, and the immersive voice conversation through its states —
  * listening, the person's utterance transcribed, thinking, speaking.
  *
- * The org's configuration is seeded into connector_configs the way the
- * admin form stores it, so the server-side availability check is real.
- * Everything that would reach the vendor is answered at the browser edge
- * (`page.route`): the voice catalog, synthesis (a silent WAV the browser
- * really plays), transcription, and the turn the utterance becomes (a
- * canned SSE reply), so the thread and the voice mode behave exactly as
- * they would with a model and a vendor behind them.
+ * The org's configuration is saved through the admin Voice form's route,
+ * so the server-side availability check is real, and the chat's reply is
+ * the scripted stand-in model's (e2e/support/voice.ts). Everything that
+ * would reach the vendor is answered at the browser edge (`page.route`):
+ * the voice catalog, synthesis (a silent WAV the browser really plays),
+ * transcription, and the turn the utterance becomes (a canned SSE reply),
+ * so the thread and the voice mode behave exactly as they would with a
+ * model and a vendor behind them.
  *
  * The microphone is Chromium's fake capture device fed a WAV of silence,
  * then a tone, then silence — one utterance, which the recorder's speech
  * detection cuts out and sends.
  */
 
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
+import { test, expect } from './fixtures';
+import { removeModel } from './support/stub-model';
 import {
-  CHAT_ID,
   CHAT_TITLE,
   RESULTS,
   UTTERANCE,
   expectComposerStillWhileReading,
   mockVendor,
-  seedVoice,
   shot,
+  stageVoice,
   wav,
-} from './voice-fixtures';
+  type VoiceChat,
+} from './support/voice';
 
 const FAKE_MIC = path.join(RESULTS, 'voice-fake-mic.wav');
 
@@ -50,12 +52,12 @@ mkdirSync(RESULTS, { recursive: true });
 writeFileSync(FAKE_MIC, fakeMicrophone());
 
 test.use({
+  // The speech service and the chat's model are an operator's to stage.
+  roles: ['renkei-user', 'renkei-operator'],
   permissions: ['microphone'],
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here; the pinned Chromium runs every project.
   browserName: 'chromium',
   launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
     args: [
       '--no-sandbox',
       '--use-fake-ui-for-media-stream',
@@ -66,21 +68,21 @@ test.use({
   },
 });
 
-test.beforeAll(async () => {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await seedVoice(client);
-  } finally {
-    await client.end();
-  }
+let voice: VoiceChat;
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
+});
+
+test.afterEach(async ({ page }) => {
+  await removeModel(page.request, voice.modelId);
 });
 
 test('setup: the Voice connector in the admin catalog and its form', async ({ page }, testInfo) => {
   await mockVendor(page);
   await page.goto(`/admin/connectors`);
   await expect(page.getByRole('heading', { name: 'Connector setup' })).toBeVisible();
-  await page.getByLabel('Find a connector').fill('voice');
+  await page.getByLabel('Find a connector').filter({ visible: true }).fill('voice');
   await expect(page.getByRole('link', { name: 'Open Voice' })).toBeVisible();
   await shot(page, testInfo, 'voice-01-admin-catalog');
 
@@ -101,9 +103,11 @@ test('setup: the Voice section under Preferences', async ({ page }, testInfo) =>
   const section = page.getByRole('region', { name: 'Voice' });
   await expect(section).toBeVisible();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Sonia');
-  await expect(
-    section.getByRole('button', { name: /Hear a sample in British English/ })
-  ).toBeVisible();
+  // The person's own language and speed, as Preferences saved them. (The
+  // section's sample button is gone; a sample plays from a voice's row in
+  // the picker, voice-pickers.spec.ts, and from the chat's speaker menu.)
+  await expect(section.getByRole('combobox', { name: 'Language' })).toContainText('en-GB');
+  await expect(section.getByRole('slider', { name: 'Speed: 1.25×' })).toBeVisible();
   await section.scrollIntoViewIfNeeded();
   await shot(page, testInfo, 'voice-04-preferences', false);
 });
@@ -112,7 +116,7 @@ test('chat: the speaker menu, a reply read aloud, and a voice conversation', asy
   page,
 }, testInfo) => {
   await mockVendor(page);
-  await page.goto(`/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
 
   // The speaker menu: read-aloud, language, voice, speed, and the way in.
@@ -190,7 +194,7 @@ test('chat: an utterance heard in another language is resent in its words', asyn
   page.on('request', (request) => {
     if (/\/resend$/.test(request.url())) resends.push(request.postDataJSON());
   });
-  await page.goto(`/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
@@ -218,7 +222,7 @@ test('chat: a voice conversation says what it is doing, and asks before it acts'
   page,
 }, testInfo) => {
   await mockVendor(page, { asks: true });
-  await page.goto(`/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await page.getByRole('button', { name: 'Voice', exact: true }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();

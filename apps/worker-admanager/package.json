@@ -17,7 +17,6 @@
     "@renkei/db": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/worker-kit": "workspace:*",
-    "kysely": "^0.29.7",
     "tsx": "^4.23.15"
   },
   "devDependencies": {

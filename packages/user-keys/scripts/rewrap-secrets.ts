@@ -17,7 +17,7 @@
  * dropping the old key on a clean run.
  */
 
-import { getDatabase, closeDatabase } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import { rewrapAll, rewrapRingsFromEnv } from '../src/rewrap';
 
 function fail(message: string): never {
@@ -30,11 +30,10 @@ async function main(): Promise<void> {
   const rings = rewrapRingsFromEnv();
   if (!rings.ok) fail(`Keys: ${rings.message}`);
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) fail('Database unavailable — set DATABASE_URL.');
+  if (!process.env.DATABASE_URL) fail('Database unavailable — set DATABASE_URL.');
 
   try {
-    const report = await rewrapAll(dbResult.val, rings.val, {
+    const report = await rewrapAll(rings.val, {
       dryRun,
       log: (line) => console.log(line),
     });
@@ -51,7 +50,7 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
-    await closeDatabase();
+    await closeDataStore();
   }
 }
 

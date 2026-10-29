@@ -7,7 +7,6 @@
  * item per discovered payload, in order.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('../batch-jobs/store', () => ({
   getBatch: jest.fn(),
   beginDiscovery: jest.fn(),
@@ -37,7 +36,6 @@ const { announceBatchStarted, announceBatchFinished } = jest.requireMock<{
   announceBatchFinished: jest.Mock;
 }>('../batch-jobs/lifecycle');
 
-const { getDatabase: getDatabaseMock } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const store = jest.requireMock<{
   getBatch: jest.Mock;
   beginDiscovery: jest.Mock;
@@ -52,7 +50,6 @@ const store = jest.requireMock<{
 const { getBatchJobKind } = jest.requireMock<{ getBatchJobKind: jest.Mock }>('../batch-jobs/kinds');
 const { enqueueItem } = jest.requireMock<{ enqueueItem: jest.Mock }>('../batch-jobs/enqueue');
 
-const FAKE_DB = {};
 
 function event(type: string, payload: Record<string, string>): ClaimedEvent {
   return { id: 'evt-1', source: 'batch', type, payload, attempts: 1 };
@@ -74,7 +71,6 @@ function batch(overrides: Partial<Record<string, unknown>> = {}) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  getDatabaseMock.mockReturnValue({ ok: true, val: FAKE_DB });
 });
 
 describe('discover handler', () => {
@@ -89,7 +85,7 @@ describe('discover handler', () => {
   it('finalizes as failed, without re-running, when redelivered mid-discovery', async () => {
     store.getBatch.mockResolvedValue(batch({ status: 'discovering' }));
     await handler(event('discover', { batchJobId: 'batch-1' }));
-    expect(store.failBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', expect.stringContaining('restarted'));
+    expect(store.failBatch).toHaveBeenCalledWith('batch-1', expect.stringContaining('restarted'));
     expect(store.beginDiscovery).not.toHaveBeenCalled();
   });
 
@@ -107,17 +103,22 @@ describe('discover handler', () => {
 
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
-    expect(store.failBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', expect.stringContaining('Unknown batch kind'));
+    expect(store.failBatch).toHaveBeenCalledWith(
+      'batch-1',
+      expect.stringContaining('Unknown batch kind')
+    );
   });
 
   it('completes an empty discovery immediately, with no items created', async () => {
     store.getBatch.mockResolvedValue(batch());
     store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
-    getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: true, items: [] }) });
+    getBatchJobKind.mockReturnValue({
+      discover: jest.fn().mockResolvedValue({ ok: true, items: [] }),
+    });
 
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
-    expect(store.completeEmptyBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 0);
+    expect(store.completeEmptyBatch).toHaveBeenCalledWith('batch-1', 0);
     expect(store.insertItem).not.toHaveBeenCalled();
   });
 
@@ -136,21 +137,23 @@ describe('discover handler', () => {
 
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
-    expect(store.insertItem).toHaveBeenNthCalledWith(1, FAKE_DB, 'batch-1', { sourcePaths: ['/a.tif'] });
-    expect(store.insertItem).toHaveBeenNthCalledWith(2, FAKE_DB, 'batch-1', { sourcePaths: ['/b.tif'] });
+    expect(store.insertItem).toHaveBeenNthCalledWith(1, 'batch-1', { sourcePaths: ['/a.tif'] });
+    expect(store.insertItem).toHaveBeenNthCalledWith(2, 'batch-1', { sourcePaths: ['/b.tif'] });
     expect(enqueueItem).toHaveBeenNthCalledWith(1, expect.anything(), 'batch-1', 'item-1');
     expect(enqueueItem).toHaveBeenNthCalledWith(2, expect.anything(), 'batch-1', 'item-2');
-    expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 0);
+    expect(store.activateBatch).toHaveBeenCalledWith('batch-1', 2, 0);
   });
 
   it('fails the batch when the kind handler throws', async () => {
     store.getBatch.mockResolvedValue(batch());
     store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
-    getBatchJobKind.mockReturnValue({ discover: jest.fn().mockRejectedValue(new Error('share unreachable')) });
+    getBatchJobKind.mockReturnValue({
+      discover: jest.fn().mockRejectedValue(new Error('share unreachable')),
+    });
 
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
-    expect(store.failBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 'share unreachable');
+    expect(store.failBatch).toHaveBeenCalledWith('batch-1', 'share unreachable');
   });
 
   it('records what discovery skipped as skipped items, never enqueued, and counts them in total', async () => {
@@ -171,14 +174,13 @@ describe('discover handler', () => {
 
     expect(store.insertItem).toHaveBeenNthCalledWith(
       1,
-      FAKE_DB,
       'batch-1',
       { sourcePaths: ['/old.tif'], skipReason: 'already-processed' },
       { status: 'skipped', result: { skipped: true, reason: 'already-processed' } }
     );
     expect(enqueueItem).toHaveBeenCalledTimes(1);
     expect(enqueueItem).toHaveBeenCalledWith(expect.anything(), 'batch-1', 'item-1');
-    expect(store.activateBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 2, 1);
+    expect(store.activateBatch).toHaveBeenCalledWith('batch-1', 2, 1);
   });
 
   it('completes a batch where every file was already processed without enqueueing anything', async () => {
@@ -196,7 +198,7 @@ describe('discover handler', () => {
     await handler(event('discover', { batchJobId: 'batch-1' }));
 
     expect(enqueueItem).not.toHaveBeenCalled();
-    expect(store.completeEmptyBatch).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 1);
+    expect(store.completeEmptyBatch).toHaveBeenCalledWith('batch-1', 1);
     expect(store.activateBatch).not.toHaveBeenCalled();
   });
 
@@ -205,12 +207,14 @@ describe('discover handler', () => {
       store.getBatch.mockResolvedValue(batch());
       const claimed = batch({ status: 'discovering' });
       store.beginDiscovery.mockResolvedValue(claimed);
-      getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: true, items: [] }) });
+      getBatchJobKind.mockReturnValue({
+        discover: jest.fn().mockResolvedValue({ ok: true, items: [] }),
+      });
 
       await handler(event('discover', { batchJobId: 'batch-1' }));
 
       expect(announceBatchStarted).toHaveBeenCalledTimes(1);
-      expect(announceBatchStarted).toHaveBeenCalledWith(FAKE_DB, claimed);
+      expect(announceBatchStarted).toHaveBeenCalledWith(claimed);
     });
 
     it('says nothing when the claim was lost', async () => {
@@ -223,26 +227,30 @@ describe('discover handler', () => {
     it('announces the finish with the row a terminal transition returned', async () => {
       store.getBatch.mockResolvedValue(batch());
       store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
-      getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: true, items: [] }) });
+      getBatchJobKind.mockReturnValue({
+        discover: jest.fn().mockResolvedValue({ ok: true, items: [] }),
+      });
       const finished = batch({ status: 'succeeded', total: 0 });
       store.completeEmptyBatch.mockResolvedValue(finished);
 
       await handler(event('discover', { batchJobId: 'batch-1' }));
 
       expect(announceBatchFinished).toHaveBeenCalledTimes(1);
-      expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+      expect(announceBatchFinished).toHaveBeenCalledWith(finished);
     });
 
     it('announces a discovery failure as a finish', async () => {
       store.getBatch.mockResolvedValue(batch());
       store.beginDiscovery.mockResolvedValue(batch({ status: 'discovering' }));
-      getBatchJobKind.mockReturnValue({ discover: jest.fn().mockResolvedValue({ ok: false, error: 'nope' }) });
+      getBatchJobKind.mockReturnValue({
+        discover: jest.fn().mockResolvedValue({ ok: false, error: 'nope' }),
+      });
       const failed = batch({ status: 'failed', last_error: 'nope' });
       store.failBatch.mockResolvedValue(failed);
 
       await handler(event('discover', { batchJobId: 'batch-1' }));
 
-      expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, failed);
+      expect(announceBatchFinished).toHaveBeenCalledWith(failed);
     });
 
     it('does not announce when the store says the batch was already terminal', async () => {
@@ -282,7 +290,7 @@ describe('item handler', () => {
 
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
 
-    expect(store.recordItemOutcome).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 'item-1', {
+    expect(store.recordItemOutcome).toHaveBeenCalledWith('batch-1', 'item-1', {
       ok: false,
       error: expect.stringContaining('restarted'),
     });
@@ -309,7 +317,7 @@ describe('item handler', () => {
 
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
 
-    expect(store.recordItemOutcome).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 'item-1', {
+    expect(store.recordItemOutcome).toHaveBeenCalledWith('batch-1', 'item-1', {
       ok: true,
       result: { sandboxFileId: 'file-1' },
     });
@@ -319,11 +327,13 @@ describe('item handler', () => {
     store.getBatch.mockResolvedValue(batch());
     store.getItem.mockResolvedValue(item());
     store.claimItem.mockResolvedValue(item({ status: 'processing' }));
-    getBatchJobKind.mockReturnValue({ runItem: jest.fn().mockRejectedValue(new Error('OCR timed out')) });
+    getBatchJobKind.mockReturnValue({
+      runItem: jest.fn().mockRejectedValue(new Error('OCR timed out')),
+    });
 
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
 
-    expect(store.recordItemOutcome).toHaveBeenCalledWith(FAKE_DB, 'batch-1', 'item-1', {
+    expect(store.recordItemOutcome).toHaveBeenCalledWith('batch-1', 'item-1', {
       ok: false,
       error: 'OCR timed out',
     });
@@ -345,7 +355,7 @@ describe('item handler', () => {
     store.recordItemOutcome.mockResolvedValueOnce(finished);
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
     expect(announceBatchFinished).toHaveBeenCalledTimes(1);
-    expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+    expect(announceBatchFinished).toHaveBeenCalledWith(finished);
   });
 
   it('announces a finish reached through the mid-item crash guard too', async () => {
@@ -356,6 +366,6 @@ describe('item handler', () => {
 
     await handler(event('item', { batchJobId: 'batch-1', itemId: 'item-1' }));
 
-    expect(announceBatchFinished).toHaveBeenCalledWith(FAKE_DB, finished);
+    expect(announceBatchFinished).toHaveBeenCalledWith(finished);
   });
 });

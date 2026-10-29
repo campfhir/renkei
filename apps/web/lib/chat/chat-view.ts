@@ -4,8 +4,7 @@
  * snapshot path sends, so the page and a reconnect agree.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { ChatAccess } from './access';
 import { listMessages, toMessageView } from './messages';
 import { workspaceBranches } from '@/lib/code/branches';
@@ -47,7 +46,6 @@ function withResolvedWidgets(
 }
 
 export async function loadChatView(
-  db: Kysely<DB>,
   access: ChatAccess,
   viewerSubject: string
 ): Promise<{ chat: ChatView; messages: ChatMessageView[] }> {
@@ -64,43 +62,24 @@ export async function loadChatView(
     overhead,
     draft,
   ] = await Promise.all([
-    listMessages(db, chat.id, access.cipher),
-    getActiveTurn(db, chat.id),
-    chat.projectId ? getProjectRow(db, chat.projectId) : Promise.resolve(null),
+    listMessages(chat.id, access.cipher),
+    getActiveTurn(chat.id),
+    chat.projectId ? getProjectRow(chat.projectId) : Promise.resolve(null),
     chat.ownerSubject === viewerSubject
       ? Promise.resolve(null)
-      : db
-          .selectFrom('identities')
-          .select(['display_name', 'email'])
-          .where('subject', '=', chat.ownerSubject)
-          .executeTakeFirst(),
-    db
-      .selectFrom('artifacts')
-      .select([
-        'id',
-        'filename',
-        'content_type',
-        'size_bytes',
-        'extract_status',
-        'message_id',
-        'origin',
-      ])
-      .where('chat_id', '=', chat.id)
-      .orderBy('created_at', 'asc')
-      .execute(),
-    listWidgetDecisions(db, chat.id),
+      : getDataStore().identities.get(chat.ownerSubject),
+    getDataStore().artifacts.listByChat(chat.id),
+    listWidgetDecisions(chat.id),
     // Only the owner sends, so only the owner has a queue to show.
-    chat.ownerSubject === viewerSubject ? loadQueuedSends(db, chat.id) : Promise.resolve([]),
-    latestChatSummary(db, chat.id, access.cipher),
-    getRequestOverhead(db, chat.id),
+    chat.ownerSubject === viewerSubject ? loadQueuedSends(chat.id) : Promise.resolve([]),
+    latestChatSummary(chat.id, access.cipher),
+    getRequestOverhead(chat.id),
     // Like the queue, only the owner has a box to put it back in.
-    chat.ownerSubject === viewerSubject
-      ? loadDraft(db, chat.id, access.cipher)
-      : Promise.resolve(''),
+    chat.ownerSubject === viewerSubject ? loadDraft(chat.id, access.cipher) : Promise.resolve(''),
   ]);
   const branches =
     project?.kind === 'code' && chat.workspaceId
-      ? await workspaceBranches(db, [chat.workspaceId])
+      ? await workspaceBranches([chat.workspaceId])
       : new Map<string, string>();
   const byMessage = new Map<string, AttachmentView[]>();
   const artifacts: AttachmentView[] = [];
@@ -108,17 +87,17 @@ export async function loadChatView(
     const view: AttachmentView = {
       id: row.id,
       filename: row.filename,
-      contentType: row.content_type,
-      sizeBytes: Number(row.size_bytes),
-      extractStatus: row.extract_status,
-      messageId: row.message_id,
+      contentType: row.contentType,
+      sizeBytes: row.sizeBytes,
+      extractStatus: row.extractStatus,
+      messageId: row.messageId,
     };
     if (row.origin === 'model') {
       artifacts.push(view);
       continue;
     }
-    if (!row.message_id) continue;
-    byMessage.set(row.message_id, [...(byMessage.get(row.message_id) ?? []), view]);
+    if (!row.messageId) continue;
+    byMessage.set(row.messageId, [...(byMessage.get(row.messageId) ?? []), view]);
   }
   return {
     chat: {
@@ -134,7 +113,7 @@ export async function loadChatView(
       thinkingEnabled: chat.thinkingEnabled,
       autoMode: chat.autoMode,
       ownerSubject: chat.ownerSubject,
-      ownerName: owner ? (owner.display_name ?? owner.email ?? null) : null,
+      ownerName: owner ? (owner.displayName ?? owner.email ?? null) : null,
       role: access.role,
       archived: chat.archivedAt !== null,
       keyUnavailable: access.cipher.unavailable,

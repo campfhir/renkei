@@ -54,8 +54,6 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   fsListFolder,
   fsMoveEntry,
@@ -241,7 +239,7 @@ function itemPayload(group: Group, shareId: string): Record<string, unknown> {
   };
 }
 
-async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOutcome> {
+async function discover(batch: BatchJobRow): Promise<DiscoverOutcome> {
   const config = parseConfig(batch.config);
   if ('error' in config) return { ok: false, error: config.error };
 
@@ -276,7 +274,6 @@ async function discover(db: Kysely<DB>, batch: BatchJobRow): Promise<DiscoverOut
   // per file. A file that fails it is not "new" — it is merely "read me and
   // hash me", which item time does.
   const recorded = await findProcessedByPath(
-    db,
     config.shareId,
     entries.map((entry) => entry.path)
   );
@@ -397,11 +394,7 @@ async function applyAfterProcessing(
   return { action: 'move', shareId: config.shareId, movedTo };
 }
 
-async function runItem(
-  db: Kysely<DB>,
-  batch: BatchJobRow,
-  item: BatchJobItemRow
-): Promise<RunItemOutcome> {
+async function runItem(batch: BatchJobRow, item: BatchJobItemRow): Promise<RunItemOutcome> {
   const config = parseConfig(batch.config);
   if ('error' in config) return { ok: false, error: config.error };
 
@@ -441,7 +434,7 @@ async function runItem(
   const contentHashes = files.map((file) => file.contentHash);
 
   if (config.skipProcessed) {
-    const known = await findProcessedHashes(db, shareId, contentHashes);
+    const known = await findProcessedHashes(shareId, contentHashes);
     if (files.every((file) => known.has(file.contentHash))) {
       return {
         ok: true,
@@ -489,7 +482,6 @@ async function runItem(
     // document now.
     try {
       await recordProcessedFiles(
-        db,
         shareId,
         batch.id,
         files.map((file) => ({

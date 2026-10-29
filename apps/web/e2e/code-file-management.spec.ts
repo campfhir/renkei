@@ -12,121 +12,29 @@
  * the same overlay a real checkout would, so this exercises the whole
  * path, not a page.route double of it.
  *
- * Own tenant fixtures under the shared e2e/seed.ts tenant, with
- * project/chat ids distinct from code.spec.ts's and
- * branch-switcher.spec.ts's own so the three never collide running side
- * by side (AGENTS.md: a spec that writes data through the UI needs its
- * own tenant scope, not the shared seeded one).
+ * The project and chat are the test's own person's, made through the Code
+ * routes after connecting Bitbucket (e2e/support/code-host.ts); a first
+ * turn in the chat clones the repository and gives it its worktree.
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { giveChatWorktree } from './worktree';
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { removeModel } from './support/stub-model';
+import { setUpCode, stageCodeProject } from './support/code-host';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// The stand-in model is staged by an operator.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `55555555-5555-4555-8555-5555555555${digit}1`,
-    chatId: `55555555-5555-4555-8555-5555555555${digit}2`,
-    projectName: `File management project (${digit})`,
-    chatTitle: `File management chat (${digit})`,
-  };
-}
-
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-/** Mirrors code.spec.ts's own seedCheckout: a real clone on the stub worker. */
-async function seedCheckout(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const worker = process.env.SANDBOX_WORKER_URL ?? 'http://127.0.0.1:8092';
-  const headers = {
-    authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
-    'content-type': 'application/json',
-  };
-  const target = { subject: `code-project:${ids.projectId}` };
-  const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      ...target,
-      provider: 'atlassian-bitbucket',
-      repoFullName: 'acme/billing-service',
-      branch: 'main',
-      cloneUrl: 'https://bitbucket.org/acme/billing-service.git',
-      gitProxy: {
-        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
-        insteadOf: 'https://bitbucket.org/',
-      },
-    }),
-  });
-  const { workspace }: { workspace: { id: string } } = await cloned.json();
-  for (let tries = 0; tries < 20; tries += 1) {
-    const got = await fetch(`${worker}/v1/workspaces/get`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ...target, id: workspace.id }),
-    });
-    const state: { workspace: { status: string } } = await got.json();
-    if (state.workspace.status === 'ready') break;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  const client = await db();
-  try {
-    await client.query('UPDATE chat_projects SET workspace_id = $1 WHERE id = $2', [
-      workspace.id,
-      ids.projectId,
-    ]);
-    await giveChatWorktree(client, {
-      projectId: ids.projectId,
-      baseId: workspace.id,
-      chatId: ids.chatId,
-    });
-  } finally {
-    await client.end();
-  }
-}
-
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+interface Ids {
+  projectId: string;
+  chatId: string;
+  projectName: string;
+  chatTitle: string;
+  modelId: string;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -144,22 +52,32 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 }
 
 test.describe('code pane file management', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await seedFixtures(ids);
-    await seedCheckout(ids);
+  let ids: Ids;
+  test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+    test.setTimeout(180_000);
+    const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+    const modelId = await setUpCode(page, request, tag);
+    const projectName = `File management project (${tag})`;
+    const chatTitle = `File management chat (${tag})`;
+    const { projectId, chatIds } = await stageCodeProject(page.request, {
+      name: projectName,
+      repository: 'acme/billing-service',
+      branch: 'main',
+      chats: [chatTitle],
+      clone: true,
+      llmModelId: modelId,
+    });
+    ids = { projectId, chatId: chatIds[0], projectName, chatTitle, modelId };
   });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  test.afterEach(async ({ page }) => {
+    await removeModel(page.request, ids.modelId);
   });
 
   test('new file, rename, delete — a deleted file ghosts in as D, node_modules stays dimmed', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+    // The phone width the old `mobile` project gave, as a resized viewport on one project.
+    const mobile = testInfo.project.name === 'desktop-dark';
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     const main = page.getByRole('main');
 
@@ -234,6 +152,8 @@ test.describe('code pane file management', () => {
       timeout: 10_000,
     });
     const ghost = tree.getByText('README.md', { exact: true });
+    // The two listings settle into the one ghost row.
+    await expect(ghost).toHaveCount(1, { timeout: 10_000 });
     await expect(ghost).toBeVisible();
     await expect(ghost).toHaveCSS('text-decoration-line', 'line-through');
     await expect(tree.getByText('D', { exact: true })).toBeVisible();
@@ -248,8 +168,8 @@ test.describe('code pane file management', () => {
   test('a gitignored folder dims its whole subtree, not just its own row', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+    // The phone width the old `mobile` project gave, as a resized viewport on one project.
+    const mobile = testInfo.project.name === 'desktop-dark';
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     const main = page.getByRole('main');
 
@@ -289,8 +209,8 @@ test.describe('code pane file management', () => {
   test('a trailing slash creates a folder, a nested path mkdir -ps its parents, and ".." is refused', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+    // The phone width the old `mobile` project gave, as a resized viewport on one project.
+    const mobile = testInfo.project.name === 'desktop-dark';
     if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
     const main = page.getByRole('main');
 

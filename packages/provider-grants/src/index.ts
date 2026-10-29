@@ -58,3 +58,20 @@ export {
   OUTLOOK_INDEXING_CATEGORIES,
   type OutlookIndexingPrefs,
 } from './outlook-indexing';
+export {
+  fakeOAuthActive,
+  fakeOAuthFor,
+  fakeAuthorizationCode,
+  readFakeAuthorizationCode,
+  fakeAccount,
+  fakeAtlassianSite,
+  fakeOrganization,
+  fakeTokenAnswer,
+  fakeRefreshedTokens,
+  fakeIdentityAnswer,
+  FakeOAuthAdapter,
+  type FakeAccount,
+  type FakeAnswer,
+  type FakeConsent,
+  type FakeExchangeContext,
+} from './fake-oauth';

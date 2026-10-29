@@ -21,8 +21,8 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, session.subject, chatId);
+  const { session } = ready.context;
+  const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
   const body = await readJsonBody(request);
@@ -40,7 +40,7 @@ export async function POST(
     return jsonError(400, 'invalid', 'A tool name and arguments are required.');
   }
 
-  const outcome = await confirmWidgetTool(db, {
+  const outcome = await confirmWidgetTool({
     subject: session.subject,
     roles: session.roles,
     name,

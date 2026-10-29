@@ -7,7 +7,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getBearerToken, resolveAccessToken } from '@/lib/mcp-token';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { getAgent } from '@/lib/agents/store';
@@ -30,49 +29,40 @@ export async function POST(
   const record = await resolveAccessToken(token, 'agent');
   if (!record) return NextResponse.json({ error: 'Not authorized' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const optimization = await getOptimization(db, record.subject, optimizationId);
+  const optimization = await getOptimization(record.subject, optimizationId);
   if (!optimization) return NextResponse.json({ error: 'No such optimization' }, { status: 404 });
 
-  if (!(await claimOptimization(db, optimizationId))) {
+  if (!(await claimOptimization(optimizationId))) {
     return NextResponse.json({ status: optimization.status, alreadyClaimed: true });
   }
 
   try {
-    const agent = await getAgent(db, record.subject, optimization.agentId);
+    const agent = await getAgent(record.subject, optimization.agentId);
     if (!agent) {
-      await finishOptimization(db, optimizationId, {
+      await finishOptimization(optimizationId, {
         status: 'failed',
         error: 'The agent no longer exists.',
       });
       return NextResponse.json({ status: 'failed' });
     }
 
-    const outcome = await optimizeAgent(
-      db,
-      record.subject,
-      agent,
-      optimization.request.windowDays
-    );
+    const outcome = await optimizeAgent(record.subject, agent, optimization.request.windowDays);
     if ('error' in outcome) {
-      await finishOptimization(db, optimizationId, {
+      await finishOptimization(optimizationId, {
         status: 'failed',
         error: outcome.error,
         detail: outcome.detail ?? null,
       });
       return NextResponse.json({ status: 'failed' });
     }
-    await finishOptimization(db, optimizationId, {
+    await finishOptimization(optimizationId, {
       status: 'succeeded',
       result: outcome.report,
       usage: outcome.usage,
     });
     // The pass's own spend, in the same ledger the page it serves reads —
     // attributed to the owner who asked, against the agent it was about.
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject: record.subject,
       agentId: optimization.agentId,
       purpose: 'optimize',
@@ -90,7 +80,7 @@ export async function POST(
       optimizationId,
       error: message,
     });
-    await finishOptimization(db, optimizationId, { status: 'failed', error: message });
+    await finishOptimization(optimizationId, { status: 'failed', error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

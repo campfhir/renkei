@@ -19,8 +19,6 @@ jest.mock('@/lib/agents/describe', () => ({ generateAgentDescription: jest.fn(as
 jest.mock('@/lib/agents/edit-notification', () => ({ notifyAgentEdited: jest.fn() }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { AgentDraft } from '@renkei/agents';
 import { saveAgent } from './save';
 
@@ -30,9 +28,6 @@ const storeMock = jest.requireMock<{ getAgent: jest.Mock; updateAgent: jest.Mock
 const describeMock = jest.requireMock<{ generateAgentDescription: jest.Mock }>(
   '@/lib/agents/describe'
 );
-
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-const db = {} as Kysely<DB>;
 
 const existing = {
   id: 'agent-1',
@@ -79,7 +74,7 @@ beforeEach(() => {
 
 describe('saveAgent description regeneration', () => {
   it('a toggle-shaped save never re-describes — renormalization included', async () => {
-    const result = await saveAgent(db, 'auth0|alice', parsedWith(), {
+    const result = await saveAgent('auth0|alice', parsedWith(), {
       agentId: 'agent-1',
     });
     expect(result.outcome).toBe('saved');
@@ -87,7 +82,6 @@ describe('saveAgent description regeneration', () => {
     // real edit or the builder's re-check, never to the on/off toggle.
     expect(describeMock.generateAgentDescription).not.toHaveBeenCalled();
     expect(storeMock.updateAgent).toHaveBeenCalledWith(
-      expect.anything(),
       'auth0|alice',
       'agent-1',
       expect.anything(),
@@ -96,19 +90,19 @@ describe('saveAgent description regeneration', () => {
   });
 
   it('an explicit refresh re-describes', async () => {
-    await saveAgent(db, 'auth0|alice', parsedWith({}, true), { agentId: 'agent-1' });
+    await saveAgent('auth0|alice', parsedWith({}, true), { agentId: 'agent-1' });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
   });
 
   it('a real content change re-describes', async () => {
-    await saveAgent(db, 'auth0|alice', parsedWith({ instructions: '## Goal\n\nThink harder.' }), {
+    await saveAgent('auth0|alice', parsedWith({ instructions: '## Goal\n\nThink harder.' }), {
       agentId: 'agent-1',
     });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
   });
 
   it('turning auto-accept on is a change worth re-describing', async () => {
-    await saveAgent(db, 'auth0|alice', parsedWith({ autoAcceptActions: true }), {
+    await saveAgent('auth0|alice', parsedWith({ autoAcceptActions: true }), {
       agentId: 'agent-1',
     });
     expect(describeMock.generateAgentDescription).toHaveBeenCalledTimes(1);
@@ -117,7 +111,7 @@ describe('saveAgent description regeneration', () => {
 
 describe('validation against the owner’s tools', () => {
   it('refuses a tool the owner does not have', async () => {
-    const result = await saveAgent(db, 'auth0|alice', parsedWith({ tools: ['gone_tool'] }), {
+    const result = await saveAgent('auth0|alice', parsedWith({ tools: ['gone_tool'] }), {
       agentId: 'agent-1',
     });
     expect(result).toEqual({

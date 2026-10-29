@@ -31,7 +31,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { webexNextPagePath, MESSAGE_TEXT_LIMIT_BYTES } from '@renkei/connector-webex';
 import { DEFAULT_MAX_FILE_BYTES, validateFilename } from '@renkei/connector-sandbox';
 import { logger } from '@/lib/logger';
@@ -195,8 +195,16 @@ const OVERFLOW_NOTICE =
   'as message.md instead of being sent inline.';
 
 /** The overflow itself, as the one file WebEx allows per message. */
-function overflowFile(markdown: string): { filename: string; contentType: string; bytes: Uint8Array } {
-  return { filename: 'message.md', contentType: 'text/markdown', bytes: new TextEncoder().encode(markdown) };
+function overflowFile(markdown: string): {
+  filename: string;
+  contentType: string;
+  bytes: Uint8Array;
+} {
+  return {
+    filename: 'message.md',
+    contentType: 'text/markdown',
+    bytes: new TextEncoder().encode(markdown),
+  };
 }
 
 /** A multipart body for POST /messages: the same fields JSON would carry, plus one file. */
@@ -210,7 +218,9 @@ function messageForm(
   }
   form.append(
     'files',
-    new Blob([new Uint8Array(file.bytes)], { type: file.contentType || 'application/octet-stream' }),
+    new Blob([new Uint8Array(file.bytes)], {
+      type: file.contentType || 'application/octet-stream',
+    }),
     file.filename
   );
   return form;
@@ -229,10 +239,7 @@ async function postMessage(
   target: { roomId: string } | { toPersonEmail: string },
   markdown: string,
   parentId?: string
-): Promise<
-  | { ok: true; response: Response; overflowed: boolean }
-  | { ok: false; error: string }
-> {
+): Promise<{ ok: true; response: Response; overflowed: boolean } | { ok: false; error: string }> {
   const fields = { ...target, ...(parentId ? { parentId } : {}) };
   if (!overLongMarkdown(markdown)) {
     const result = await webexCall(auth, scopes, '/messages', {
@@ -1075,9 +1082,6 @@ export async function registerWebexUserTools(
       const text = str(message.text);
       if (!text) return errText('That message has no text to capture.');
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
       // Resolved separately from the auth wrapper's own call: `capturedBy`
       // wants the WebEx account's own email, which only resolveWebexAccess
       // exposes — WebexAuth.fetch() deliberately returns a bare Response,
@@ -1088,31 +1092,32 @@ export async function registerWebexUserTools(
 
       const title = text.length > 120 ? `${text.slice(0, 117)}…` : text;
       const note = str(args.note);
-      await dbResult.val
-        .insertInto('actionable_items')
-        .values({
-          id: randomUUID(),
-          source: 'webex',
-          title,
-          summary: text,
-          evidence: JSON.stringify({
-            provider: 'webex',
-            roomId: str(message.roomId),
-            messageId: str(message.id),
-            personEmail: str(message.personEmail),
-            created: str(message.created),
-            excerpt: text.slice(0, 500),
-            capturedBy: personEmail ?? context.subject ?? 'unknown',
-            ...(note ? { note } : {}),
-          }),
-          // The same shape the ambient pipeline writes, so the card's approve
-          // flow (jira_create_issue with a human-chosen project) works unchanged.
-          suggested_action: JSON.stringify({
-            tool: 'jira_create_issue',
-            args: { summary: title, description: text, issueType: 'Task' },
-          }),
-        })
-        .execute();
+      await getDataStore().actionableItems.create({
+        id: randomUUID(),
+        source: 'webex',
+        title,
+        summary: text,
+        evidence: {
+          provider: 'webex',
+          roomId: str(message.roomId),
+          messageId: str(message.id),
+          personEmail: str(message.personEmail),
+          created: str(message.created),
+          excerpt: text.slice(0, 500),
+          capturedBy: personEmail ?? context.subject ?? 'unknown',
+          ...(note ? { note } : {}),
+        },
+        // The same shape the ambient pipeline writes, so the card's approve
+        // flow (jira_create_issue with a human-chosen project) works unchanged.
+        suggestedAction: {
+          tool: 'jira_create_issue',
+          args: { summary: title, description: text, issueType: 'Task' },
+        },
+        // Tenant-wide, as the ambient pipeline's cards are.
+        ownerSubject: null,
+        createdBy: null,
+        createdByAgentId: null,
+      });
 
       logger.info('webex_capture_message captured', {
         component: 'mcp/tool',
@@ -1369,7 +1374,7 @@ export async function registerWebexUserTools(
         'sandbox_send_to_upload instead of a manual upload. WebEx allows exactly one file per ' +
         'message. To send a file to the user themself, pass toSelf: true (their own address ' +
         'routes there too): like webex_note_to_self, it arrives as a direct message from the ' +
-        "org's WebEx bot when there is one, otherwise in the user's own \"Note to Self\" " +
+        'org\'s WebEx bot when there is one, otherwise in the user\'s own "Note to Self" ' +
         'space. Never generate file content as a tool argument.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({

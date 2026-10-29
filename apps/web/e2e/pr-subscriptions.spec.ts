@@ -4,50 +4,44 @@
  * layout, on the Pulls card's most-recent PR) and the full Pulls
  * page's per-row disclosure — both backed by the same real POST/DELETE
  * against .../pr-subscriptions (no external host call in that route, so
- * nothing to mock there), and the outcome line rendering from a seeded
- * pr_pipeline_events row. Only the project's own `pulls` route is mocked
- * (AGENTS.md: a call that would hit a real vendor — GitHub here — is
- * mocked at the browser edge).
+ * nothing to mock there), and the outcome line of an already-subscribed
+ * PR. The project's own `pulls` route is mocked (AGENTS.md: a call that
+ * would hit a real vendor is mocked at the browser edge), and so is the
+ * one thing only a background process writes: the recorded pipeline
+ * outcome (pr_pipeline_events), which the worker's webhook handler
+ * (apps/worker/src/handlers/pr-pipeline-events.ts) records after
+ * re-reading the run at the code host's own API. The subscription itself
+ * is the real one, made through the route; only its `lastEvent` is added
+ * to the route's real answer.
  *
- * Own tenant fixtures under the shared e2e/seed.ts tenant, with
- * project/chat/pr-subscription ids distinct from the other Code specs so
- * they never collide running side by side.
+ * The project is the test's own person's, on Bitbucket (connected through
+ * the real connect flow, e2e/support/code-host.ts).
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import {
+  connectBitbucket,
+  createChat,
+  createCodeProject,
+  prepareCodeHost,
+} from './support/code-host';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `77777777-7777-4777-8777-7777777777${digit}1`,
-    chatId: `77777777-7777-4777-8777-7777777777${digit}2`,
-    subscriptionId: `77777777-7777-4777-8777-7777777777${digit}3`,
-    projectName: `PR subscriptions project (${digit})`,
-    chatTitle: `Land the retry fix (${digit})`,
-    // pr_subscriptions' unique index is (tenant, provider, repo, pr, subscriber)
-    // with no project_id — a repo name shared across projects would collide
-    // when the three Playwright projects subscribe to "the same" PR concurrently.
-    repoFullName: `acme/pr-subscriptions-${digit}`,
-  };
+interface Ids {
+  projectId: string;
+  projectName: string;
+  chatTitle: string;
+  repoFullName: string;
 }
 
 const OPEN_PR = { number: 90 };
 const SEEDED_PR = { number: 91 };
 
-function pullRequests(ids: ReturnType<typeof idsFor>) {
+function pullRequests(ids: Ids) {
   return [
     {
       number: OPEN_PR.number,
@@ -58,7 +52,7 @@ function pullRequests(ids: ReturnType<typeof idsFor>) {
       destinationBranch: 'main',
       author: 'octocat',
       updatedAt: '2026-09-01T00:00:00.000Z',
-      url: `https://github.com/${ids.repoFullName}/pull/90`,
+      url: `https://bitbucket.org/${ids.repoFullName}/pull-requests/90`,
     },
     {
       number: SEEDED_PR.number,
@@ -69,69 +63,60 @@ function pullRequests(ids: ReturnType<typeof idsFor>) {
       destinationBranch: 'main',
       author: 'octocat',
       updatedAt: '2026-09-01T00:00:00.000Z',
-      url: `https://github.com/${ids.repoFullName}/pull/91`,
+      url: `https://bitbucket.org/${ids.repoFullName}/pull-requests/91`,
     },
   ];
 }
 
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
+/** A project of the person's own, with a chat, and PR #91 already subscribed (auto-merge on). */
+async function stage(page: Page, testInfo: TestInfo): Promise<Ids> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const ids = {
+    projectName: `PR subscriptions project (${tag})`,
+    chatTitle: `Land the retry fix (${tag})`,
+    repoFullName: `acme/pr-subscriptions-${tag}`,
+  };
+  const projectId = await createCodeProject(page.request, {
+    name: ids.projectName,
+    repository: ids.repoFullName,
+    branch: 'main',
+  });
+  await createChat(page.request, { projectId, title: ids.chatTitle });
+  const subscribed = await page.request.post(`/api/code/projects/${projectId}/pr-subscriptions`, {
+    data: { prNumber: SEEDED_PR.number, watchPipelines: true, autoMerge: true },
+  });
+  expect(subscribed.ok(), await subscribed.text()).toBe(true);
+  return { ...ids, projectId };
 }
 
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM pr_pipeline_events WHERE subscription_id = $1', [
-      ids.subscriptionId,
-    ]);
-    await client.query('DELETE FROM pr_subscriptions WHERE project_id = $1', [ids.projectId]);
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', $4, 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName, ids.repoFullName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
-    );
-
-    // PR #91 arrives already subscribed, with a recorded outcome — the
-    // "seeded pr_pipeline_events row via direct DB insert" the plan calls
-    // for, so the outcome line is asserted against the real GET route
-    // rather than a mocked one.
-    await client.query(
-      `INSERT INTO pr_subscriptions\n         (id, project_id, chat_id, subscriber_subject, provider,\n          repo_full_name, pr_number, watch_pipelines, auto_fix, auto_merge, status)\n       VALUES ($1, $2, $3, $4, 'github', $5, $6, true, false, true, 'active')`,
-      [ids.subscriptionId, ids.projectId, ids.chatId, E2E_SUBJECT, ids.repoFullName, SEEDED_PR.number]
-    );
-    await client.query(
-      `INSERT INTO pr_pipeline_events
-         (subscription_id, provider_run_id, conclusion, raw_payload, action_taken)
-       VALUES ($1, 'run-1', 'success', '{}'::jsonb, 'merged')`,
-      [ids.subscriptionId]
-    );
-  } finally {
-    await client.end();
-  }
+/**
+ * PR #91's recorded outcome — a success, merged automatically — added to
+ * the subscription route's real answer, as the webhook worker would have
+ * recorded it.
+ */
+async function mockOutcome(page: Page, ids: Ids): Promise<void> {
+  await page.route(`**/api/code/projects/${ids.projectId}/pr-subscriptions?*`, async (route) => {
+    const url = new URL(route.request().url());
+    if (route.request().method() !== 'GET' || url.searchParams.get('prNumber') !== '91') {
+      await route.fallback();
+      return;
+    }
+    // A kept-alive socket the server has just closed resets the first try.
+    const response = await route.fetch().catch(() => route.fetch());
+    const body: { subscription: unknown } = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        ...body,
+        lastEvent: body.subscription
+          ? { conclusion: 'success', actionTaken: 'merged', observedAt: new Date().toISOString() }
+          : null,
+      },
+    });
+  });
 }
 
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM pr_pipeline_events WHERE subscription_id = $1', [
-      ids.subscriptionId,
-    ]);
-    await client.query('DELETE FROM pr_subscriptions WHERE project_id = $1', [ids.projectId]);
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
-}
-
-async function mockPulls(page: Page, ids: ReturnType<typeof idsFor>): Promise<void> {
+async function mockPulls(page: Page, ids: Ids): Promise<void> {
   await page.route(`**/api/code/projects/${ids.projectId}/pulls**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get('view') === 'summary') {
@@ -156,7 +141,14 @@ async function mockPulls(page: Page, ids: ReturnType<typeof idsFor>): Promise<vo
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
     fullPage: false,
   });
 }
@@ -170,19 +162,17 @@ function subscribeBlock(page: Page, prNumber: number) {
 }
 
 test.describe('PR pipeline subscriptions', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    await seedFixtures(idsFor(testInfo.project.name));
-  });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  test.beforeEach(async ({ page, request, person: _person }) => {
+    await prepareCodeHost(request);
+    await connectBitbucket(page);
   });
 
-  test('subscribe, its checkboxes, and a seeded outcome line', async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+  test('subscribe, its checkboxes, and a recorded outcome line', async ({ page }, testInfo) => {
+    const ids = await stage(page, testInfo);
+    // The phone pass runs once, on a resized viewport.
+    const mobile = testInfo.project.name === 'desktop-light';
     await mockPulls(page, ids);
+    await mockOutcome(page, ids);
 
     // ── The project page's own condensed row, on the Pulls card's
     // most-recent PR (#90) — no trip to the full Pulls page needed. ──
@@ -228,7 +218,7 @@ test.describe('PR pipeline subscriptions', () => {
     await expect(row91.getByText('Pipeline succeeded — merged automatically.')).toBeVisible();
     await expect(row91.getByRole('link', { name: 'View' })).toHaveAttribute(
       'href',
-      `https://github.com/${ids.repoFullName}/pull/91`
+      `https://bitbucket.org/${ids.repoFullName}/pull-requests/91`
     );
     await shot(page, testInfo, 'pr-subscribe-outcome.png');
 

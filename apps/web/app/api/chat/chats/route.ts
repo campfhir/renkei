@@ -20,20 +20,20 @@ import { parseToolConfig } from '@/lib/chat/tool-config';
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  return NextResponse.json(await loadChatSidebar(db, session.subject));
+  const { session } = ready.context;
+  return NextResponse.json(await loadChatSidebar(session.subject));
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
 
   let projectId: string | null = null;
   if (typeof body.projectId === 'string' && body.projectId) {
     if (!isUuid(body.projectId)) return jsonError(404, 'not-found', 'No such project');
-    const access = await resolveResourceAccess(db, session.subject, 'chat_project', body.projectId);
+    const access = await resolveResourceAccess(session.subject, 'chat_project', body.projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     projectId = body.projectId;
   }
@@ -46,8 +46,8 @@ export async function POST(request: NextRequest): Promise<Response> {
     toolConfig,
     thinkingEnabled: body.thinkingEnabled === true,
   };
-  const project = projectId ? await getProjectRow(db, projectId) : null;
-  const chatId = await createChat(db, {
+  const project = projectId ? await getProjectRow(projectId) : null;
+  const chatId = await createChat({
     ...input,
     projectId,
     autoMode: project?.kind === 'code',

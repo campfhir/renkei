@@ -7,15 +7,21 @@
  * to the model in either branch.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@/lib/log-encryption', () => ({ resolveLogCipher: jest.fn() }));
 
+/** The adapter's answer, as the store's `activityLogs.search` turns it into rows or a rejection. */
 const mockQuery = jest.fn();
-jest.mock('@campfhir/bored-logs/adapters/psql', () => ({
-  PostgresAdapter: jest.fn().mockImplementation((opts: unknown) => ({
-    opts,
-    query: mockQuery,
-  })),
+jest.mock('@renkei/db', () => ({
+  getDataStore: () => ({
+    activityLogs: {
+      search: async (options: unknown) => {
+        const result: { ok: boolean; val?: unknown; err?: { message?: string } } =
+          await mockQuery(options);
+        if (!result.ok) throw new Error(result.err?.message || 'Failed to query logs');
+        return result.val;
+      },
+    },
+  }),
 }));
 
 const mockBuildLogQueryOptions = jest.fn((..._args: unknown[]) => ({ built: true }));
@@ -36,7 +42,6 @@ function firstCallFilter(): FilterExpr | null {
 import { registerLogTools } from './index';
 import type { MCPToolContext } from '../common';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { resolveLogCipher: mockResolveLogCipher } = jest.requireMock<{
   resolveLogCipher: jest.Mock;
 }>('@/lib/log-encryption');
@@ -68,7 +73,6 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockGetDatabase.mockReturnValue({ ok: true, val: { database: 'stub' } });
   mockResolveLogCipher.mockReturnValue({ state: 'off' });
   mockBuildLogQueryOptions.mockReturnValue({ built: true });
 });
@@ -108,11 +112,7 @@ test('a renkei-user role (no operator) stays self-scoped, same as no roles at al
 
   await handlers.get('log_search')!({});
 
-  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
-    null,
-    'account-1',
-    expect.anything()
-  );
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(null, 'account-1', expect.anything());
 });
 
 test('renkei-operator searches the whole organization, with no Jira account required', async () => {
@@ -122,11 +122,7 @@ test('renkei-operator searches the whole organization, with no Jira account requ
   const result = await handlers.get('log_search')!({});
 
   expect(result.isError).toBeUndefined();
-  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
-    null,
-    undefined,
-    expect.anything()
-  );
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(null, undefined, expect.anything());
   expect(result.content[0]?.text).toContain('organization-wide');
 });
 
@@ -136,11 +132,7 @@ test('an operator with their own Jira account still searches organization-wide, 
 
   await handlers.get('log_search')!({});
 
-  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(
-    null,
-    undefined,
-    expect.anything()
-  );
+  expect(mockBuildLogQueryOptions).toHaveBeenCalledWith(null, undefined, expect.anything());
 });
 
 test('operator rows are labeled with whose activity they are; self-scoped rows are not', async () => {

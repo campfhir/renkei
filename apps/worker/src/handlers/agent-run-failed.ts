@@ -13,7 +13,7 @@
  * prerequisites (db down) throw for redelivery.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { effectiveDelivery, getNotificationPrefs } from '@renkei/user-prefs';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
@@ -82,9 +82,7 @@ export function createAgentRunFailedHandler(): EventHandler {
       });
       return;
     }
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const db = dbResult.val;
+    const store = getDataStore();
 
     // Cheapest check first: nothing on either channel means no grant
     // lookups, no Graph/WebEx calls — just done. Resolved through the
@@ -94,12 +92,8 @@ export function createAgentRunFailedHandler(): EventHandler {
     if (!wanted.email && !wanted.webex) return;
 
     const [agent, run, base] = await Promise.all([
-      db.selectFrom('agents').select('name').where('id', '=', payload.agentId).executeTakeFirst(),
-      db
-        .selectFrom('agent_runs')
-        .select(['error'])
-        .where('id', '=', payload.runId)
-        .executeTakeFirst(),
+      store.agents.find(payload.agentId),
+      store.agentRuns.findRunError(payload.runId),
       registrationUrl(),
     ]);
 
@@ -110,7 +104,7 @@ export function createAgentRunFailedHandler(): EventHandler {
     const link = base ? `${base}/agents/${payload.agentId}/runs/${payload.runId}` : null;
     const bodyText = `Your agent “${agentName}” stopped on a failure: ${reason}${link ? `\n\nSee the run: ${link}` : ''}`;
 
-    await deliverToOwnerChannels(db, {
+    await deliverToOwnerChannels({
       ownerSubject: payload.ownerSubject,
       email: wanted.email,
       webex: wanted.webex,

@@ -4,13 +4,10 @@
  * ingestObjectChunks (chunking.ts), which delegates here per chunk.
  */
 
-import { randomUUID } from 'node:crypto';
-import { sql, type RawBuilder } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { contentEncryptionKey, encryptContent } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { vectorLiteral } from './embeddings';
 import type { EmbeddingProvider } from './embeddings';
 import { titleOf } from './context';
 
@@ -63,11 +60,6 @@ export function postgresText(value: string): string {
   return value.includes('\u0000') ? value.split('\u0000').join('') : value;
 }
 
-/** `to_tsvector(config, text)` — the config rides as a bound parameter cast to regconfig. */
-function tsvector(text: string): RawBuilder<string> {
-  return sql<string>`to_tsvector(${LEXICAL_CONFIG}::regconfig, ${postgresText(text)})`;
-}
-
 /**
  * The lexical index entry for one chunk, three weights deep: the
  * document's title at A, its extracted keywords at B, the chunk text at
@@ -75,17 +67,21 @@ function tsvector(text: string): RawBuilder<string> {
  * naming what a page is ABOUT ranks it next, and a chunk that merely
  * mentions the words comes last. Built from PLAINTEXT — the stored content
  * is ciphertext, so this is the one place a chunk's words reach Postgres
- * in the clear, and the tsvector that results is a bag of stemmed lexemes
- * rather than the text itself. See migration 079 for the at-rest
- * trade-off that accepts.
+ * in the clear, and the tsvector the store builds from it is a bag of
+ * stemmed lexemes rather than the text itself. See migration 079 for the
+ * at-rest trade-off that accepts.
  */
-export function searchTextFragment(
+export function searchTextParts(
   title: string,
   keywords: readonly string[] | null | undefined,
   content: string
-): RawBuilder<string> {
-  const phrases = (keywords ?? []).join(', ');
-  return sql<string>`setweight(${tsvector(title)}, 'A') || setweight(${tsvector(phrases)}, 'B') || setweight(${tsvector(content)}, 'C')`;
+): { title: string; keywords: string; content: string; config: string } {
+  return {
+    title: postgresText(title),
+    keywords: postgresText((keywords ?? []).join(', ')),
+    content: postgresText(content),
+    config: LEXICAL_CONFIG,
+  };
 }
 
 /** An unparseable date is stored as NULL (undated) rather than throwing mid-ingest. */
@@ -109,11 +105,6 @@ export async function upsertChunkRow(
   chunk: KnowledgeChunkInput,
   embedding: readonly number[]
 ): Promise<Result<void, 'DB_ERROR' | 'ENCRYPTION_FAILED'>> {
-  const vector = vectorLiteral(embedding);
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   // Content is CIPHERTEXT at rest; the embedding vector stays as computed
   // from the plaintext (that is the whole point of having it), and
   // provider/ref_id/metadata stay plaintext because the ACL gate, the
@@ -124,38 +115,21 @@ export async function upsertChunkRow(
   }
   const storedContent = encryptContent(chunk.content, keyResult.val);
   const keywords = chunk.keywords ? chunk.keywords.map(postgresText) : null;
-  const searchText = searchTextFragment(titleOf(chunk.metadata), keywords, chunk.content);
+  const searchText = searchTextParts(titleOf(chunk.metadata), keywords, chunk.content);
 
   const sourceAt = sourceAtValue(chunk.sourceAt);
   const result = await wrapAsync(
     () =>
-      dbResult.val
-        .insertInto('knowledge_chunks')
-        .values({
-          id: randomUUID(),
-          provider: chunk.provider,
-          ref_id: chunk.refId,
-          metadata: JSON.stringify(chunk.metadata),
-          content: storedContent,
-          embedding: sql`${vector}::vector`,
-          keywords,
-          search_text: searchText,
-          source_at: sourceAt,
-        })
-        .onConflict((oc) =>
-          // source_at must be in the update set too: a re-ingest of an edited
-          // page carries a newer document date, and omitting it here would
-          // pin the row to whatever date the first ingest saw.
-          oc.columns(['provider', 'ref_id']).doUpdateSet({
-            metadata: JSON.stringify(chunk.metadata),
-            content: storedContent,
-            embedding: sql`${vector}::vector`,
-            keywords,
-            search_text: searchText,
-            source_at: sourceAt,
-          })
-        )
-        .execute(),
+      getDataStore().knowledgeChunks.upsert({
+        provider: chunk.provider,
+        refId: chunk.refId,
+        metadata: chunk.metadata,
+        content: storedContent,
+        embedding,
+        keywords,
+        search: searchText,
+        sourceAt,
+      }),
     'DB_ERROR' as const
   );
   if (!result.ok) return result;

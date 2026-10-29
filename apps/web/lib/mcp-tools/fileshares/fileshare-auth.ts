@@ -15,7 +15,6 @@
  * the final word on every operation.
  */
 
-import { getDatabase } from '@renkei/db';
 import { getConnection, listConnectedShares } from '@renkei/connector-fileshares';
 import type { ConnectedShare, ShareConnection } from '@renkei/connector-fileshares';
 import type { MCPToolContext } from '../common';
@@ -48,9 +47,7 @@ export function userFileshareAuth(context: MCPToolContext): FileshareAuth {
     async listConnected() {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return 'Database unavailable.';
-      const connected = await listConnectedShares(dbResult.val, subject);
+      const connected = await listConnectedShares(subject);
       if (!connected.ok) return 'Could not read your share connections.';
       return connected.val;
     },
@@ -58,9 +55,7 @@ export function userFileshareAuth(context: MCPToolContext): FileshareAuth {
     async connection(shareId: string) {
       const subject = context.subject;
       if (!subject) return NOT_AVAILABLE;
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return 'Database unavailable.';
-      const connection = await getConnection(dbResult.val, shareId, subject);
+      const connection = await getConnection(shareId, subject);
       if (!connection.ok) return 'Could not read your share connections.';
       if (!connection.val) return NO_SUCH_SHARE;
       return connection.val;

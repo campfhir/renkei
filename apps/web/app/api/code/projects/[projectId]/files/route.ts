@@ -75,14 +75,14 @@ export async function GET(
   const { projectId, chatId } = await params;
   const ready = await codeProjectContext(request, projectId, { chatId });
   if (!ready.ok) return ready.response;
-  const { db, session, access, project, workspaceId } = ready.context;
+  const { session, access, project, workspaceId } = ready.context;
   const path = validateWorkspacePath(new URL(request.url).searchParams.get('path'));
   if (!path.ok || !path.path)
     return jsonError(400, 'invalid', path.ok ? 'Say which file.' : path.message);
   const language = languageForPath(path.path);
   // A file the pane opens without a language server is counted (never
   // shown): which language to add next is a query on that table.
-  noteLanguageGap(db, {
+  noteLanguageGap({
     target: codeProjectTarget(projectId),
     path: path.path,
     language,

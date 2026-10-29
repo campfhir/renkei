@@ -24,8 +24,7 @@
  * exactly where they are.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm, type LlmUsage } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
@@ -117,81 +116,19 @@ function clip(value: unknown, max: number): string | null {
 
 /** Everything the prompt will be built from. */
 export async function gatherOptimizationEvidence(
-  db: Kysely<DB>,
   ownerSubject: string,
   agent: StoredAgent,
   windowDays: number
 ): Promise<OptimizationEvidence> {
-  const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${windowDays})`;
-
-  const [failureRows, statRow, toolRows, failedRuns, settings] = await Promise.all([
-    db
-      .selectFrom('agent_run_log')
-      .select([
-        'created_at',
-        'trigger_kind',
-        'error_kind',
-        'outcome_code',
-        'error',
-        'input_tokens',
-        'output_tokens',
-        'tool_calls',
-      ])
-      .where('owner_subject', '=', ownerSubject)
-      .where('agent_id', '=', agent.id)
-      .where('status', '=', 'failed')
-      .where('created_at', '>=', since)
-      .orderBy('created_at', 'desc')
-      .limit(MAX_FAILURE_ROWS)
-      .execute(),
-    // Run-level numbers from the durable log, so the window is honoured
-    // even past run retention; the tool profile below reads live turn rows
-    // and is bounded by it.
-    sql<{
-      runs: string;
-      succeeded: string;
-      failed: string;
-      avg_tokens: string | null;
-      max_tokens: string | null;
-      avg_turns: string | null;
-      avg_calls: string | null;
-    }>`
-      SELECT COUNT(*) AS runs,
-             COUNT(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-             COUNT(*) FILTER (WHERE status = 'failed') AS failed,
-             AVG(input_tokens + output_tokens) AS avg_tokens,
-             MAX(input_tokens + output_tokens) AS max_tokens,
-             AVG(attempts) AS avg_turns,
-             AVG(tool_calls) AS avg_calls
-      FROM agent_run_log
-      WHERE owner_subject = ${ownerSubject}
-        AND agent_id = ${agent.id}
-        AND created_at >= ${since}
-        AND status IN ('succeeded', 'failed', 'stopped')
-    `.execute(db),
-    // The clear half of each turn's detail outlines its tool calls (name
-    // and error flag, never content — turn-detail.ts), which is all this
-    // profile needs.
-    sql<{ tool: string; calls: string; failed: string }>`
-      SELECT call->>'tool' AS tool,
-             COUNT(*) AS calls,
-             COUNT(*) FILTER (WHERE call->>'isError' = 'true') AS failed
-      FROM agent_run_steps s
-      JOIN agent_runs r ON r.id = s.run_id
-      CROSS JOIN LATERAL jsonb_array_elements(
-        CASE WHEN jsonb_typeof(s.detail->'toolCalls') = 'array'
-             THEN s.detail->'toolCalls' ELSE '[]'::jsonb END
-      ) AS call
-      WHERE r.owner_subject = ${ownerSubject}
-        AND r.agent_id = ${agent.id}
-        AND r.created_at >= ${since}
-        AND call->>'tool' IS NOT NULL
-        AND COALESCE(call->>'free', 'false') <> 'true'
-      GROUP BY 1
-      ORDER BY calls DESC
-      LIMIT ${MAX_TOOL_ROWS}
-    `.execute(db),
-    listRunsForOwner(db, ownerSubject, agent.id, {
+  const [found, failedRuns, settings] = await Promise.all([
+    getDataStore().agentRuns.optimizationEvidence({
+      ownerSubject,
+      agentId: agent.id,
+      days: windowDays,
+      maxFailures: MAX_FAILURE_ROWS,
+      maxTools: MAX_TOOL_ROWS,
+    }),
+    listRunsForOwner(ownerSubject, agent.id, {
       status: 'failed',
       limit: MAX_SAMPLE_RUNS,
     }),
@@ -199,28 +136,28 @@ export async function gatherOptimizationEvidence(
   ]);
   const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
 
-  const stat = statRow.rows[0];
+  const stat = found.stats;
   const stats: RunStats = {
-    runs: Number(stat?.runs ?? 0),
-    succeeded: Number(stat?.succeeded ?? 0),
-    failed: Number(stat?.failed ?? 0),
-    avgTokensPerRun: Math.round(Number(stat?.avg_tokens ?? 0)),
-    maxTokensPerRun: Number(stat?.max_tokens ?? 0),
-    avgTurnsPerRun: Math.round(Number(stat?.avg_turns ?? 0) * 10) / 10,
-    avgToolCallsPerRun: Math.round(Number(stat?.avg_calls ?? 0) * 10) / 10,
+    runs: stat.runs,
+    succeeded: stat.succeeded,
+    failed: stat.failed,
+    avgTokensPerRun: Math.round(stat.avgTokens ?? 0),
+    maxTokensPerRun: stat.maxTokens ?? 0,
+    avgTurnsPerRun: Math.round((stat.avgTurns ?? 0) * 10) / 10,
+    avgToolCallsPerRun: Math.round((stat.avgCalls ?? 0) * 10) / 10,
   };
 
-  const totalCalls = toolRows.rows.reduce((sum, row) => sum + Number(row.calls), 0);
-  const tools: ToolProfile[] = toolRows.rows.map((row) => ({
+  const totalCalls = found.tools.reduce((sum, row) => sum + row.calls, 0);
+  const tools: ToolProfile[] = found.tools.map((row) => ({
     tool: row.tool,
-    calls: Number(row.calls),
-    failedCalls: Number(row.failed),
-    callShare: totalCalls > 0 ? Math.round((Number(row.calls) / totalCalls) * 100) : 0,
+    calls: row.calls,
+    failedCalls: row.failed,
+    callShare: totalCalls > 0 ? Math.round((row.calls / totalCalls) * 100) : 0,
   }));
 
   const samples: FailedRunSample[] = [];
   for (const summary of failedRuns) {
-    const run = await getRunForOwner(db, ownerSubject, agent.id, summary.id);
+    const run = await getRunForOwner(ownerSubject, agent.id, summary.id);
     if (!run) continue;
     samples.push({
       runId: run.id,
@@ -259,15 +196,15 @@ export async function gatherOptimizationEvidence(
   return {
     windowDays,
     stats,
-    failures: failureRows.map((row) => ({
-      at: row.created_at.toISOString(),
-      triggerKind: row.trigger_kind,
-      errorKind: row.error_kind,
-      outcomeCode: row.outcome_code,
+    failures: found.failures.map((row) => ({
+      at: row.createdAt.toISOString(),
+      triggerKind: row.triggerKind,
+      errorKind: row.errorKind,
+      outcomeCode: row.outcomeCode,
       error: clip(row.error, CLIP_ERROR),
-      inputTokens: row.input_tokens,
-      outputTokens: row.output_tokens,
-      toolCalls: row.tool_calls,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      toolCalls: row.toolCalls,
     })),
     tools,
     samples,
@@ -384,18 +321,17 @@ export type OptimizeOutcome =
 
 /** The whole pass: evidence → prompt → the org's model → a parsed report. */
 export async function optimizeAgent(
-  db: Kysely<DB>,
   ownerSubject: string,
   agent: StoredAgent,
   windowDays: number
 ): Promise<OptimizeOutcome> {
-  const llmResult = await resolveAgentLlm(db, agent.llmModelId);
+  const llmResult = await resolveAgentLlm(agent.llmModelId);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization yet.' };
   }
   const llm = llmResult.val;
 
-  const evidence = await gatherOptimizationEvidence(db, ownerSubject, agent, windowDays);
+  const evidence = await gatherOptimizationEvidence(ownerSubject, agent, windowDays);
   if (evidence.stats.runs === 0 && evidence.failures.length === 0) {
     return {
       error: `This agent has not run in the last ${windowDays} days, so there is nothing to analyze yet.`,

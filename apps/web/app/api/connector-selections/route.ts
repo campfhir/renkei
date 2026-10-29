@@ -12,7 +12,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getConnectorPrefs, setConnectorPrefs } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveUserCatalog } from '@/lib/connectors/user-catalog';
@@ -37,11 +36,8 @@ async function change(
     return NextResponse.json({ error: 'connector is required' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
-
-  const catalog = await resolveUserCatalog(dbResult.val, session.subject, {
-    audienceAllows: await resolveAudienceAllows(dbResult.val, session.subject),
+  const catalog = await resolveUserCatalog(session.subject, {
+    audienceAllows: await resolveAudienceAllows(session.subject),
     fresh: true,
   });
   if (!catalog.available.some((entry) => entry.capabilityKey === connector)) {
@@ -55,16 +51,12 @@ async function change(
   return NextResponse.json({ added });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   return change(request, (added, connector) =>
     added.includes(connector) ? added : [...added, connector]
   );
 }
 
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   return change(request, (added, connector) => added.filter((key) => key !== connector));
 }

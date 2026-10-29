@@ -2,118 +2,101 @@
  * The composer's unsent text, kept per chat on the server
  * (lib/chat/drafts.ts): typing is saved once after a pause — not per
  * keystroke — and comes back after a reload and in a second browser
- * context (another device) with the same sign-in. The stored text is
- * sealed, and clearing the box removes the row.
+ * context (another device) with the same sign-in. Clearing the box
+ * removes it. What is stored is read back the way the page reads it, as
+ * the chat's `draft` (GET /api/chat/chats/:id); that it is sealed at rest
+ * is lib/chat/drafts.ts's own tests' to show.
  *
  * "Another device" is a fresh browser context carrying the same session
- * cookie; "phone width" is a resized Chromium viewport (see AGENTS.md's
- * "UI changes"). The chat row is this project's own, so the parallel
- * Playwright projects do not share a draft.
+ * cookie; "phone width" is a resized viewport (see AGENTS.md's "UI
+ * changes"). The chat is the test's own person's.
  */
 
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { MODEL_ID, seedVoice, shot } from './voice-fixtures';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel } from './support/stub-model';
+import { createChat, readChat } from './support/chat';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const DRAFT = 'Remind me which endpoint posts refunds, and who owns it';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
+
+let modelId = '';
+let chatId = '';
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  modelId = await addStubModel(page.request, tag);
+  chatId = await createChat(page.request, { llmModelId: modelId, title: `Draft survives ${tag}` });
 });
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    chatId: `80808080-8080-4808-8808-8080808080${digit}1`,
-    chatTitle: `Draft survives (${digit})`,
-  };
-}
+test.afterEach(async ({ page }) => {
+  await removeModel(page.request, modelId);
+});
 
-async function withClient<T>(run: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return await run(client);
-  } finally {
-    await client.end();
-  }
-}
-
-test.beforeEach(async ({ browserName: _browser }, testInfo) => {
-  const ids = idsFor(testInfo.project.name);
-  await withClient(async (client) => {
-    await seedVoice(client);
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.chatTitle, MODEL_ID]
-    );
+async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  await page.screenshot({
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      `${name}.png`
+    ),
   });
-});
+}
 
-test.afterEach(async ({ browserName: _browser }, testInfo) => {
-  await withClient((client) =>
-    client.query('DELETE FROM chats WHERE id = $1', [idsFor(testInfo.project.name).chatId])
-  );
-});
-
-async function openChat(page: Page, chatId: string): Promise<void> {
+async function openChat(page: Page): Promise<void> {
   await page.goto(`/chat/${chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible();
+  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible();
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
 }
 
-const isDraftSave = (url: string, method: string, chatId: string) =>
+const isDraftSave = (url: string, method: string) =>
   method === 'PUT' && url.endsWith(`/api/chat/chats/${chatId}/draft`);
 
 test('an unsent message is saved after a pause and comes back on reload', async ({
   page,
 }, testInfo) => {
-  const { chatId } = idsFor(testInfo.project.name);
-  await openChat(page, chatId);
-  await expect(page.getByLabel('Message')).toHaveValue('');
+  await openChat(page);
+  await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue('');
 
   const saves: string[] = [];
   page.on('request', (request) => {
-    if (isDraftSave(request.url(), request.method(), chatId)) saves.push(request.postData() ?? '');
+    if (isDraftSave(request.url(), request.method())) saves.push(request.postData() ?? '');
   });
   const saved = page.waitForResponse(
-    (response) => isDraftSave(response.url(), response.request().method(), chatId) && response.ok()
+    (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
   );
   // Keystroke by keystroke, well inside the debounce window.
-  await page.getByLabel('Message').pressSequentially(DRAFT, { delay: 15 });
+  await page
+    .getByLabel('Message')
+    .filter({ visible: true })
+    .pressSequentially(DRAFT, { delay: 15 });
   await saved;
   expect(saves).toHaveLength(1);
   expect(JSON.parse(saves[0])).toEqual({ text: DRAFT });
-
-  // Sealed at rest: the plaintext is nowhere in the row.
-  const stored = await withClient((client) =>
-    client.query('SELECT content FROM chat_drafts WHERE chat_id = $1', [chatId])
-  );
-  expect(stored.rows).toHaveLength(1);
-  expect(stored.rows[0].content).not.toContain('refunds');
+  expect((await readChat(page.request, chatId)).chat.draft).toBe(DRAFT);
 
   await page.reload();
-  await expect(page.getByLabel('Message')).toHaveValue(DRAFT);
-  await shot(page, testInfo, 'chat-draft-restored', false);
+  await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue(DRAFT);
+  await shot(page, testInfo, 'chat-draft-restored');
 });
 
 test('another device sees the draft, and clearing the box removes it', async ({
   page,
   browser,
 }, testInfo) => {
-  const { chatId } = idsFor(testInfo.project.name);
-  await openChat(page, chatId);
+  await openChat(page);
   const saved = page.waitForResponse(
-    (response) => isDraftSave(response.url(), response.request().method(), chatId) && response.ok()
+    (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
   );
-  await page.getByLabel('Message').fill(DRAFT);
+  await page.getByLabel('Message').filter({ visible: true }).fill(DRAFT);
   await saved;
 
   // A second browser context with the same sign-in, at phone width.
@@ -121,25 +104,22 @@ test('another device sees the draft, and clearing the box removes it', async ({
   const phone = await browser.newContext({ storageState: state, viewport: MOBILE_VIEWPORT });
   try {
     const other = await phone.newPage();
-    await openChat(other, chatId);
-    await expect(other.getByLabel('Message')).toHaveValue(DRAFT);
-    await shot(other, testInfo, 'chat-draft-phone', false);
+    await other.goto(`/chat/${chatId}`);
+    await expect(other.getByLabel('Message').filter({ visible: true })).toBeVisible();
+    await expect(other.getByLabel('Message').filter({ visible: true })).toHaveValue(DRAFT);
+    await shot(other, testInfo, 'chat-draft-phone');
 
-    // Clearing is saved at once and drops the row.
+    // Clearing is saved at once and drops the draft.
     const cleared = other.waitForResponse(
-      (response) =>
-        isDraftSave(response.url(), response.request().method(), chatId) && response.ok()
+      (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
     );
-    await other.getByLabel('Message').fill('');
+    await other.getByLabel('Message').filter({ visible: true }).fill('');
     await cleared;
   } finally {
     await phone.close();
   }
-  const rows = await withClient((client) =>
-    client.query('SELECT 1 FROM chat_drafts WHERE chat_id = $1', [chatId])
-  );
-  expect(rows.rows).toHaveLength(0);
+  expect((await readChat(page.request, chatId)).chat.draft).toBe('');
 
   await page.reload();
-  await expect(page.getByLabel('Message')).toHaveValue('');
+  await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue('');
 });

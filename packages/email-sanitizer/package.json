@@ -15,7 +15,6 @@
     "@renkei/db": "workspace:*",
     "@renkei/knowledge": "workspace:*",
     "esbuild": "^0.28.2",
-    "kysely": "^0.29.7",
     "quickjs-emscripten": "^0.32.0"
   },
   "devDependencies": {

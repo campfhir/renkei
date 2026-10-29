@@ -50,8 +50,7 @@
  */
 
 import { after } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import {
@@ -62,7 +61,7 @@ import {
   type ResolvedLlm,
 } from '@renkei/agent-llm';
 import { resolveChatAccess } from './access';
-import { attributeMessagesToSummary, listMessages, type StoredMessage } from './messages';
+import { listMessages, type StoredMessage } from './messages';
 import { openText, sealText, type ContentCipher } from './content-crypto';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
@@ -102,25 +101,18 @@ function creatorOf(value: string): ChatSummaryCreator {
 
 /** The newest summary — the only one a prompt ever reads (see file header). */
 export async function latestChatSummary(
-  db: Kysely<DB>,
   chatId: string,
   cipher: ContentCipher
 ): Promise<ChatSummaryRow | null> {
-  const row = await db
-    .selectFrom('chat_summaries')
-    .select(['id', 'content', 'through_seq', 'folded_count', 'created_by', 'created_at'])
-    .where('chat_id', '=', chatId)
-    .orderBy('created_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
+  const row = await getDataStore().chatThreads.latestSummary(chatId);
   if (!row) return null;
   return {
     id: row.id,
     content: openText(row.content, cipher),
-    throughSeq: row.through_seq,
-    foldedCount: row.folded_count,
-    createdBy: creatorOf(row.created_by),
-    createdAt: row.created_at,
+    throughSeq: row.throughSeq,
+    foldedCount: row.foldedCount,
+    createdBy: creatorOf(row.createdBy),
+    createdAt: row.createdAt,
   };
 }
 
@@ -228,25 +220,12 @@ export function overheadTokensOf(system: string, tools: unknown): number {
   return Math.ceil((system.length + JSON.stringify(tools).length) / CHARS_PER_TOKEN);
 }
 
-export async function getRequestOverhead(db: Kysely<DB>, chatId: string): Promise<number | null> {
-  const row = await db
-    .selectFrom('chats')
-    .select('request_overhead_tokens')
-    .where('id', '=', chatId)
-    .executeTakeFirst();
-  return row?.request_overhead_tokens ?? null;
+export async function getRequestOverhead(chatId: string): Promise<number | null> {
+  return getDataStore().chats.getRequestOverhead(chatId);
 }
 
-export async function setRequestOverhead(
-  db: Kysely<DB>,
-  chatId: string,
-  tokens: number
-): Promise<void> {
-  await db
-    .updateTable('chats')
-    .set({ request_overhead_tokens: tokens })
-    .where('id', '=', chatId)
-    .execute();
+export async function setRequestOverhead(chatId: string, tokens: number): Promise<void> {
+  await getDataStore().chats.setRequestOverhead(chatId, tokens);
 }
 
 /** What a model can hold, when the operator recorded it (llm_model_configs.settings). */
@@ -440,11 +419,8 @@ async function foldBatch(
  * another (each reads the previous batch's summary), reporting progress as
  * they go; nothing is written to the database until every batch succeeds.
  */
-export async function compactChat(
-  db: Kysely<DB>,
-  input: CompactChatInput
-): Promise<CompactChatResult | null> {
-  const messages = input.messages ?? (await listMessages(db, input.chatId, input.cipher));
+export async function compactChat(input: CompactChatInput): Promise<CompactChatResult | null> {
+  const messages = input.messages ?? (await listMessages(input.chatId, input.cipher));
   const unfolded = unfoldedOf(messages);
   const candidates = foldCandidates(unfolded);
   const calls = callsById(unfolded);
@@ -455,7 +431,7 @@ export async function compactChat(
   input.onProgress?.({ foldedSoFar: 0, totalToFold: total });
   if (candidates.length < CHAT_COMPACT_MIN_FOLD) return null;
 
-  let runningSummary = (await latestChatSummary(db, input.chatId, input.cipher))?.content ?? null;
+  let runningSummary = (await latestChatSummary(input.chatId, input.cipher))?.content ?? null;
   for (let start = 0; start < candidates.length; start += CHAT_COMPACT_BATCH_MESSAGES) {
     const batch = candidates.slice(start, start + CHAT_COMPACT_BATCH_MESSAGES);
     runningSummary = await foldBatch(input.llm, runningSummary, batch, calls);
@@ -469,27 +445,18 @@ export async function compactChat(
   const throughSeq = candidates[candidates.length - 1].seq;
   const sealed = sealText(runningSummary, input.cipher);
   if (!sealed.ok) throw new Error(sealed.err.message ?? 'the content key is not configured');
-  const inserted = await db
-    .insertInto('chat_summaries')
-    .values({
-      chat_id: input.chatId,
-      content: sealed.val,
-      through_seq: throughSeq,
-      folded_count: candidates.length,
-      created_by: input.createdBy,
-    })
-    .returning(['id'])
-    .executeTakeFirstOrThrow();
-  // Summary first, then the attribution: a crash between the two leaves the
-  // folded messages present AND summarized — sent again once, harmlessly —
-  // never dropped from the conversation.
-  await attributeMessagesToSummary(
-    db,
-    candidates.map((message) => message.id),
-    inserted.id
-  );
+  // The summary, then the folded messages attributed to it (the store
+  // writes them in that order).
+  const summaryId = await getDataStore().chatThreads.insertSummary({
+    chatId: input.chatId,
+    content: sealed.val,
+    throughSeq,
+    foldedCount: candidates.length,
+    createdBy: input.createdBy,
+    messageIds: candidates.map((message) => message.id),
+  });
 
-  return { summaryId: inserted.id, foldedCount: candidates.length, throughSeq };
+  return { summaryId, foldedCount: candidates.length, throughSeq };
 }
 
 export type StartCompactionError =
@@ -507,21 +474,18 @@ export interface StartedCompactionTurn {
  * replies, and the browser's existing turn/EventSource machinery needs no
  * special case to watch it.
  */
-export async function startCompactionTurn(
-  db: Kysely<DB>,
-  input: {
-    session: { subject: string; roles: string[] };
-    chatId: string;
-    defer?: (task: () => Promise<void>) => void;
-  }
-): Promise<Result<StartedCompactionTurn, StartCompactionError>> {
+export async function startCompactionTurn(input: {
+  session: { subject: string; roles: string[] };
+  chatId: string;
+  defer?: (task: () => Promise<void>) => void;
+}): Promise<Result<StartedCompactionTurn, StartCompactionError>> {
   const defer = input.defer ?? ((task) => after(task));
-  const access = await resolveChatAccess(db, input.session.subject, input.chatId);
+  const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
   const chat = access.chat;
 
-  const llmResult = await resolveAgentLlm(db, chat.llmModelId ?? null);
+  const llmResult = await resolveAgentLlm(chat.llmModelId ?? null);
   if (!llmResult.ok) {
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -532,7 +496,7 @@ export async function startCompactionTurn(
   }
   const llm = llmResult.val;
 
-  const turn = await createTurn(db, {
+  const turn = await createTurn({
     chatId: chat.id,
     llmModelId: llm.modelConfigId,
     thinkingBudget: null,
@@ -548,7 +512,7 @@ export async function startCompactionTurn(
   }
   const turnId = turn.val;
   defer(() =>
-    runCompactionTurn(db, {
+    runCompactionTurn({
       chatId: chat.id,
       turnId,
       llm,
@@ -558,20 +522,17 @@ export async function startCompactionTurn(
   return ok({ turnId });
 }
 
-async function runCompactionTurn(
-  db: Kysely<DB>,
-  input: {
-    chatId: string;
-    turnId: string;
-    llm: ResolvedLlm;
-    cipher: ContentCipher;
-  }
-): Promise<void> {
+async function runCompactionTurn(input: {
+  chatId: string;
+  turnId: string;
+  llm: ResolvedLlm;
+  cipher: ContentCipher;
+}): Promise<void> {
   const channel = openTurnChannel(input.turnId);
   let status: 'completed' | 'failed' = 'completed';
   let error: string | null = null;
   try {
-    await compactChat(db, {
+    await compactChat({
       chatId: input.chatId,
       llm: input.llm,
       createdBy: 'user',
@@ -589,7 +550,7 @@ async function runCompactionTurn(
       message: error,
     });
   }
-  await finishTurn(db, input.turnId, {
+  await finishTurn(input.turnId, {
     status,
     error,
     iterations: 0,

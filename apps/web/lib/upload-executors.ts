@@ -15,9 +15,7 @@
  * fetch-guard timeouts; upload-session chunks carry their own).
  */
 
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { ATLASSIAN, ATLASSIAN_JSM, readAtlassianMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { graphUploadViaSession } from '@renkei/connector-microsoft';
@@ -440,11 +438,7 @@ async function fileshareFile(slot: UploadSlotRow, bytes: Buffer): Promise<Upload
  * reuses their OnBase session rather than opening one (and taking a
  * license) per chunk of a multi-part upload.
  */
-async function onbaseDocument(
-  db: Kysely<DB>,
-  slot: UploadSlotRow,
-  bytes: Buffer
-): Promise<UploadOutcome> {
+async function onbaseDocument(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const extension = slot.filename.includes('.')
     ? slot.filename.slice(slot.filename.lastIndexOf('.') + 1)
     : 'dat';
@@ -495,11 +489,7 @@ async function onbaseDocument(
 
   // The staging reference rides the slot so the archive step can find it.
   const destination = destinationOf(slot);
-  await db
-    .updateTable('upload_slots')
-    .set({ destination: JSON.stringify({ ...destination, onbaseUploadId }) })
-    .where('id', '=', slot.id)
-    .execute();
+  await getDataStore().uploadSlots.setDestination(slot.id, { ...destination, onbaseUploadId });
 
   return {
     ok: true,
@@ -518,36 +508,22 @@ async function onbaseDocument(
  * finish path instead of two copies of the same UPDATE.
  */
 export async function finalizeUploadSlot(
-  db: Kysely<DB>,
   slot: { id: string },
   outcome: UploadOutcome
 ): Promise<UploadOutcome> {
-  await db
-    .updateTable('upload_slots')
-    .set({
-      status: outcome.ok ? 'completed' : 'failed',
-      result: outcome.detail,
-      completed_at: sql`NOW()`,
-    })
-    .where('id', '=', slot.id)
-    .execute();
+  await getDataStore().uploadSlots.finish(slot.id, outcome);
   return outcome;
 }
 
 /** executeUpload, then finalizeUploadSlot — the common case for both callers. */
 export async function completeUploadSlot(
-  db: Kysely<DB>,
   slot: UploadSlotRow,
   bytes: Buffer
 ): Promise<UploadOutcome> {
-  return finalizeUploadSlot(db, slot, await executeUpload(db, slot, bytes));
+  return finalizeUploadSlot(slot, await executeUpload(slot, bytes));
 }
 
-export async function executeUpload(
-  db: Kysely<DB>,
-  slot: UploadSlotRow,
-  bytes: Buffer
-): Promise<UploadOutcome> {
+export async function executeUpload(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   switch (slot.kind) {
     case 'jira-attachment':
       return jiraAttachment(slot, bytes);
@@ -563,7 +539,7 @@ export async function executeUpload(
     case 'fileshare-file':
       return fileshareFile(slot, bytes);
     case 'onbase-document':
-      return onbaseDocument(db, slot, bytes);
+      return onbaseDocument(slot, bytes);
     case 'webex-attachment':
       return webexAttachment(slot, bytes);
     default:

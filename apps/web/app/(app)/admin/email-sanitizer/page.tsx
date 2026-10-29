@@ -1,8 +1,8 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
-import { chatModelsOnly } from '@renkei/agent-llm';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import RuleForms from './rule-forms';
 import SuggestRulesPanel from './suggest-rules-panel';
 import CleanerScripts from './cleaner-scripts';
@@ -23,16 +23,11 @@ export default async function AdminEmailSanitizerPage(): Promise<React.ReactNode
 
   // Rule suggestions need the org model; without one the feature is simply
   // absent — no teaser for a button that could only fail.
-  const dbResult = getDatabase();
-  const hasOrgModel = dbResult.ok
-    ? (await dbResult.val
-        .selectFrom('llm_model_configs')
-        .select('id')
-        .where('enabled', '=', true)
-        .where(chatModelsOnly)
-        .limit(1)
-        .executeTakeFirst()) !== undefined
-    : false;
+  const modelRead = await wrapAsync(
+    () => getDataStore().emailSanitizer.hasEnabledChatModel(),
+    'DB_ERROR' as const
+  );
+  const hasOrgModel = modelRead.ok && modelRead.val;
 
   return (
     <div className="mx-auto max-w-3xl">

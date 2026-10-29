@@ -1,6 +1,6 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import {
   CHAT_ARCHIVE_MAX_DAYS,
@@ -40,7 +40,6 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/preferences`));
 
-  const dbResult = getDatabase();
   const [
     notifications,
     theme,
@@ -64,14 +63,9 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     // Just id + name: the overrides picker names an agent, it doesn't need
     // its steps — listAgents()'s full parse would be work spent for nothing
     // this page shows.
-    dbResult.ok
-      ? dbResult.val
-          .selectFrom('agents')
-          .select(['id', 'name'])
-          .where('owner_subject', '=', session.subject)
-          .orderBy('name')
-          .execute()
-      : [],
+    getDataStore()
+      .personalAccount.ownedAgentNames(session.subject)
+      .catch(() => []),
     listChatConnectors(session.subject),
     getDefaultChatTools(session.subject, { fresh: true }),
     getDefaultChatTools(session.subject, { fresh: true, kind: 'code' }),
@@ -81,7 +75,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     listChatActToolGroups(session.subject, session.roles),
     getImagePrefs(session.subject, { fresh: true }),
     // Empty when the org has no image generation model; the section is then left out.
-    dbResult.ok ? listImageModels(dbResult.val) : [],
+    listImageModels().catch(() => []),
     // Managed until they say otherwise; a missing row reads as managed too.
     // The delegate answers; unreachable, and the section is left out.
     keyStatusView(session),
@@ -193,10 +187,7 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         />
       </div>
       <div className="mb-6">
-        <ToolPermissionsForm
-          groups={actToolGroups}
-          initial={toolPermissions}
-        />
+        <ToolPermissionsForm groups={actToolGroups} initial={toolPermissions} />
       </div>
       <PreferencesForm
         connectors={connectors}

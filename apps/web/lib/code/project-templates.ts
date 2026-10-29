@@ -9,8 +9,7 @@
  * point to re-author, not a link the project keeps.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 
 export const TEMPLATE_NAME_MAX_CHARS = 200;
@@ -24,20 +23,13 @@ export interface CodeProjectTemplate {
   instructions: string;
 }
 
-export async function listCodeProjectTemplates(
-  db: Kysely<DB>
-): Promise<CodeProjectTemplate[]> {
-  const rows = await db
-    .selectFrom('code_project_templates')
-    .select(['id', 'name', 'description', 'instructions'])
-    .orderBy('name')
-    .execute();
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    instructions: row.instructions,
-  }));
+export async function listCodeProjectTemplates(): Promise<CodeProjectTemplate[]> {
+  return getDataStore().codeTemplates.listProjectTemplates();
+}
+
+/** A unique-name refusal (the store raises Postgres's 23505 for it). */
+export function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
 export interface TemplateInput {
@@ -69,69 +61,31 @@ export function parseTemplatePayload(body: unknown): TemplateInput | { error: st
 }
 
 export async function createCodeProjectTemplate(
-  db: Kysely<DB>,
   input: TemplateInput
 ): Promise<{ ok: true; id: string } | { ok: false; error: 'duplicate' }> {
   try {
-    const inserted = await db
-      .insertInto('code_project_templates')
-      .values({
-        name: input.name,
-        description: input.description,
-        instructions: input.instructions,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    return { ok: true, id: inserted.id };
+    return { ok: true, id: await getDataStore().codeTemplates.createProjectTemplate(input) };
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('idx_code_project_templates_name')
-    ) {
-      return { ok: false, error: 'duplicate' };
-    }
+    if (isUniqueViolation(error)) return { ok: false, error: 'duplicate' };
     throw error;
   }
 }
 
 export async function updateCodeProjectTemplate(
-  db: Kysely<DB>,
   templateId: string,
   input: TemplateInput
 ): Promise<{ ok: true } | { ok: false; error: 'not-found' | 'duplicate' }> {
   if (!isUuid(templateId)) return { ok: false, error: 'not-found' };
   try {
-    const result = await db
-      .updateTable('code_project_templates')
-      .set({
-        name: input.name,
-        description: input.description,
-        instructions: input.instructions,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', templateId)
-      .executeTakeFirst();
-    if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'not-found' };
-    return { ok: true };
+    const updated = await getDataStore().codeTemplates.updateProjectTemplate(templateId, input);
+    return updated ? { ok: true } : { ok: false, error: 'not-found' };
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('idx_code_project_templates_name')
-    ) {
-      return { ok: false, error: 'duplicate' };
-    }
+    if (isUniqueViolation(error)) return { ok: false, error: 'duplicate' };
     throw error;
   }
 }
 
-export async function deleteCodeProjectTemplate(
-  db: Kysely<DB>,
-  templateId: string
-): Promise<boolean> {
+export async function deleteCodeProjectTemplate(templateId: string): Promise<boolean> {
   if (!isUuid(templateId)) return false;
-  const result = await db
-    .deleteFrom('code_project_templates')
-    .where('id', '=', templateId)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0) > 0;
+  return getDataStore().codeTemplates.deleteProjectTemplate(templateId);
 }

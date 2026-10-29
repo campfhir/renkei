@@ -22,16 +22,11 @@ export async function GET(
   const { libraryId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'prompt_library',
-    libraryId
-  );
-  const library = access ? await getLibrary(db, libraryId) : null;
+  const { session } = ready.context;
+  const access = await resolveResourceAccess(session.subject, 'prompt_library', libraryId);
+  const library = access ? await getLibrary(libraryId) : null;
   if (!access || !library) return jsonError(404, 'not-found', 'No such library');
-  const prompts = await listPrompts(db, libraryId);
+  const prompts = await listPrompts(libraryId);
   return NextResponse.json({
     library: {
       id: library.id,
@@ -56,13 +51,8 @@ export async function PATCH(
   const { libraryId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveResourceAccess(
-    db,
-    session.subject,
-    'prompt_library',
-    libraryId
-  );
+  const { session } = ready.context;
+  const access = await resolveResourceAccess(session.subject, 'prompt_library', libraryId);
   if (!access) return jsonError(404, 'not-found', 'No such library');
   if (access.role === 'viewer')
     return jsonError(403, 'read-only', 'Only editors can change this library.');
@@ -75,7 +65,7 @@ export async function PATCH(
   }
   const description = optionalString(body.description, 2_000);
   if (description !== undefined) patch.description = description || null;
-  const updated = await updateLibrary(db, libraryId, patch);
+  const updated = await updateLibrary(libraryId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such library');
   return NextResponse.json({ ok: true });
 }
@@ -87,8 +77,8 @@ export async function DELETE(
   const { libraryId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const deleted = await deleteLibrary(db, session.subject, libraryId);
+  const { session } = ready.context;
+  const deleted = await deleteLibrary(session.subject, libraryId);
   if (!deleted) return jsonError(404, 'not-found', 'No such library');
   return NextResponse.json({ ok: true });
 }

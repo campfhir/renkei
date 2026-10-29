@@ -1,7 +1,8 @@
 /**
- * Postgres access for batch_jobs / batch_job_items — the read/write model
- * shared by whatever creates a batch (an MCP tool in apps/web) and
- * whatever runs it (the batch-jobs queue handlers in apps/worker; see
+ * batch_jobs / batch_job_items, through the data store
+ * (`getDataStore().batchJobs`) — the read/write model shared by whatever
+ * creates a batch (an MCP tool or a form in apps/web) and whatever runs it
+ * (the batch-jobs queue handlers in apps/worker; see
  * apps/worker/src/batch-jobs/kinds.ts for the per-kind discover()/runItem()
  * contract those handlers dispatch to).
  *
@@ -19,15 +20,15 @@
  *
  * Batch completion is a distributed counter: many items finish concurrently
  * across worker instances, so `recordItemOutcome` increments succeeded/failed
- * with a single atomic UPDATE...RETURNING (never read-then-write), and the
- * terminal-status flip is guarded by `WHERE status = 'running'` so only the
- * one caller that actually wins the race finalizes the batch — every other
- * concurrent finisher's same UPDATE affects zero rows.
+ * with a single atomic UPDATE...RETURNING (the store's `addCounts`, never
+ * read-then-write), and the terminal-status flip (`finishRunning`) is
+ * guarded by `WHERE status = 'running'` so only the one caller that
+ * actually wins the race finalizes the batch — every other concurrent
+ * finisher's same UPDATE affects zero rows. Which counters complete a batch,
+ * and with which outcome, is decided here, not in the store.
  */
 
-import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type BatchJobItemRecord, type BatchJobRecord } from '@renkei/db';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -66,60 +67,39 @@ export interface BatchJobItemRow {
   error: string | null;
 }
 
-const BATCH_COLUMNS = [
-  'id',
-  'subject',
-  'name',
-  'kind',
-  'config',
-  'status',
-  'total',
-  'succeeded',
-  'failed',
-  'skipped',
-  'last_error',
-  'schedule_id',
-  'started_at',
-  'finished_at',
-  'created_at',
-] as const;
-
-const ITEM_COLUMNS = ['id', 'batch_id', 'status', 'payload', 'result', 'error'] as const;
-
-function batchOf(row: {
-  id: string;
-  subject: string;
-  name: string;
-  kind: string;
-  config: unknown;
-  status: string;
-  total: number | null;
-  succeeded: number;
-  failed: number;
-  skipped: number;
-  last_error: string | null;
-  schedule_id: string | null;
-  started_at: Date | null;
-  finished_at: Date | null;
-  created_at: Date;
-}): BatchJobRow {
-  return { ...row, config: isRecord(row.config) ? row.config : {} };
-}
-
-function itemOf(row: {
-  id: string;
-  batch_id: string;
-  status: string;
-  payload: unknown;
-  result: unknown;
-  error: string | null;
-}): BatchJobItemRow {
+function batchOf(record: BatchJobRecord): BatchJobRow {
   return {
-    ...row,
-    payload: isRecord(row.payload) ? row.payload : {},
-    result: isRecord(row.result) ? row.result : null,
+    id: record.id,
+    subject: record.subject,
+    name: record.name,
+    kind: record.kind,
+    config: isRecord(record.config) ? record.config : {},
+    status: record.status,
+    total: record.total,
+    succeeded: record.succeeded,
+    failed: record.failed,
+    skipped: record.skipped,
+    last_error: record.lastError,
+    schedule_id: record.scheduleId,
+    started_at: record.startedAt,
+    finished_at: record.finishedAt,
+    created_at: record.createdAt,
   };
 }
+
+function itemOf(record: BatchJobItemRecord): BatchJobItemRow {
+  return {
+    id: record.id,
+    batch_id: record.batchId,
+    status: record.status,
+    payload: isRecord(record.payload) ? record.payload : {},
+    result: isRecord(record.result) ? record.result : null,
+    error: record.error,
+  };
+}
+
+const maybeBatch = (record: BatchJobRecord | undefined) => (record ? batchOf(record) : undefined);
+const maybeItem = (record: BatchJobItemRecord | undefined) => (record ? itemOf(record) : undefined);
 
 export interface CreateBatchInput {
   subject: string;
@@ -130,32 +110,20 @@ export interface CreateBatchInput {
   scheduleId?: string;
 }
 
-export async function createBatch(db: Kysely<DB>, input: CreateBatchInput): Promise<BatchJobRow> {
-  const row = await db
-    .insertInto('batch_jobs')
-    .values({
-      id: randomUUID(),
+export async function createBatch(input: CreateBatchInput): Promise<BatchJobRow> {
+  return batchOf(
+    await getDataStore().batchJobs.create({
       subject: input.subject,
       name: input.name,
       kind: input.kind,
-      config: JSON.stringify(input.config),
-      schedule_id: input.scheduleId ?? null,
+      config: input.config,
+      scheduleId: input.scheduleId ?? null,
     })
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirstOrThrow();
-  return batchOf(row);
+  );
 }
 
-export async function getBatch(
-  db: Kysely<DB>,
-  batchId: string
-): Promise<BatchJobRow | undefined> {
-  const row = await db
-    .selectFrom('batch_jobs')
-    .select(BATCH_COLUMNS)
-    .where('id', '=', batchId)
-    .executeTakeFirst();
-  return row ? batchOf(row) : undefined;
+export async function getBatch(batchId: string): Promise<BatchJobRow | undefined> {
+  return maybeBatch(await getDataStore().batchJobs.get(batchId));
 }
 
 export interface ListBatchesOptions {
@@ -165,36 +133,17 @@ export interface ListBatchesOptions {
   scheduleId?: string;
 }
 
+/** Newest first (ties by id). */
 export async function listBatches(
-  db: Kysely<DB>,
   subject: string,
   options: ListBatchesOptions = {}
 ): Promise<BatchJobRow[]> {
-  let query = db
-    .selectFrom('batch_jobs')
-    .select(BATCH_COLUMNS)
-    .where('subject', '=', subject)
-    .orderBy('created_at', 'desc');
-  if (options.status) query = query.where('status', '=', options.status);
-  if (options.scheduleId) query = query.where('schedule_id', '=', options.scheduleId);
-  if (options.limit) query = query.limit(options.limit);
-  const rows = await query.execute();
-  return rows.map(batchOf);
+  return (await getDataStore().batchJobs.list(subject, options)).map(batchOf);
 }
 
 /** 'queued' → 'discovering', the discovery handler's single-effective-attempt claim. */
-export async function beginDiscovery(
-  db: Kysely<DB>,
-  batchId: string
-): Promise<BatchJobRow | undefined> {
-  const row = await db
-    .updateTable('batch_jobs')
-    .set({ status: 'discovering', started_at: sql`NOW()`, updated_at: sql`NOW()` })
-    .where('id', '=', batchId)
-    .where('status', '=', 'queued')
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirst();
-  return row ? batchOf(row) : undefined;
+export async function beginDiscovery(batchId: string): Promise<BatchJobRow | undefined> {
+  return maybeBatch(await getDataStore().batchJobs.beginDiscovery(batchId));
 }
 
 /** The statuses a batch never leaves once it reaches them. */
@@ -214,18 +163,10 @@ export function isTerminalBatchStatus(status: string): boolean {
  * batch twice.
  */
 export async function failBatch(
-  db: Kysely<DB>,
   batchId: string,
   message: string
 ): Promise<BatchJobRow | undefined> {
-  const row = await db
-    .updateTable('batch_jobs')
-    .set({ status: 'failed', last_error: message, finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-    .where('id', '=', batchId)
-    .where('status', 'not in', [...TERMINAL_BATCH_STATUSES])
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirst();
-  return row ? batchOf(row) : undefined;
+  return maybeBatch(await getDataStore().batchJobs.fail(batchId, message));
 }
 
 /**
@@ -234,24 +175,10 @@ export async function failBatch(
  * Either way there is no item to land last, so the batch is done here.
  */
 export async function completeEmptyBatch(
-  db: Kysely<DB>,
   batchId: string,
   skipped = 0
 ): Promise<BatchJobRow | undefined> {
-  const row = await db
-    .updateTable('batch_jobs')
-    .set({
-      status: 'succeeded',
-      total: skipped,
-      skipped: sql`skipped + ${skipped}`,
-      finished_at: sql`NOW()`,
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', batchId)
-    .where('status', 'not in', [...TERMINAL_BATCH_STATUSES])
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirst();
-  return row ? batchOf(row) : undefined;
+  return maybeBatch(await getDataStore().batchJobs.completeEmpty(batchId, skipped));
 }
 
 /**
@@ -269,18 +196,12 @@ export async function completeEmptyBatch(
  * terminal transition.
  */
 export async function activateBatch(
-  db: Kysely<DB>,
   batchId: string,
   total: number,
   skipped = 0
 ): Promise<BatchJobRow | undefined> {
-  const row = await db
-    .updateTable('batch_jobs')
-    .set({ status: 'running', total, skipped: sql`skipped + ${skipped}`, updated_at: sql`NOW()` })
-    .where('id', '=', batchId)
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirst();
-  return row ? finalizeIfComplete(db, batchOf(row)) : undefined;
+  const row = maybeBatch(await getDataStore().batchJobs.activate(batchId, total, skipped));
+  return row ? finalizeIfComplete(row) : undefined;
 }
 
 export interface InsertItemOptions {
@@ -290,47 +211,26 @@ export interface InsertItemOptions {
 }
 
 export async function insertItem(
-  db: Kysely<DB>,
   batchId: string,
   payload: Record<string, unknown>,
   options: InsertItemOptions = {}
 ): Promise<BatchJobItemRow> {
-  const row = await db
-    .insertInto('batch_job_items')
-    .values({
-      id: randomUUID(),
-      batch_id: batchId,
-      payload: JSON.stringify(payload),
-      ...(options.status ? { status: options.status } : {}),
-      ...(options.result ? { result: JSON.stringify(options.result) } : {}),
+  return itemOf(
+    await getDataStore().batchJobs.insertItem(batchId, {
+      payload,
+      status: options.status,
+      result: options.result,
     })
-    .returning(ITEM_COLUMNS)
-    .executeTakeFirstOrThrow();
-  return itemOf(row);
+  );
 }
 
 /** 'pending' → 'processing', the per-item single-effective-attempt claim. */
-export async function claimItem(
-  db: Kysely<DB>,
-  itemId: string
-): Promise<BatchJobItemRow | undefined> {
-  const row = await db
-    .updateTable('batch_job_items')
-    .set({ status: 'processing', updated_at: sql`NOW()` })
-    .where('id', '=', itemId)
-    .where('status', '=', 'pending')
-    .returning(ITEM_COLUMNS)
-    .executeTakeFirst();
-  return row ? itemOf(row) : undefined;
+export async function claimItem(itemId: string): Promise<BatchJobItemRow | undefined> {
+  return maybeItem(await getDataStore().batchJobs.claimItem(itemId));
 }
 
-export async function getItem(db: Kysely<DB>, itemId: string): Promise<BatchJobItemRow | undefined> {
-  const row = await db
-    .selectFrom('batch_job_items')
-    .select(ITEM_COLUMNS)
-    .where('id', '=', itemId)
-    .executeTakeFirst();
-  return row ? itemOf(row) : undefined;
+export async function getItem(itemId: string): Promise<BatchJobItemRow | undefined> {
+  return maybeItem(await getDataStore().batchJobs.getItem(itemId));
 }
 
 export interface ItemOutcome {
@@ -356,21 +256,13 @@ function terminalStatusOf(batch: { succeeded: number; failed: number }): string 
  * cover `total` AND this UPDATE is the one that changed the status —
  * every other concurrent caller's identical UPDATE affects zero rows.
  */
-async function finalizeIfComplete(
-  db: Kysely<DB>,
-  batch: BatchJobRow
-): Promise<BatchJobRow | undefined> {
+async function finalizeIfComplete(batch: BatchJobRow): Promise<BatchJobRow | undefined> {
   if (batch.total === null || batch.succeeded + batch.failed + batch.skipped < batch.total) {
     return undefined;
   }
-  const finalized = await db
-    .updateTable('batch_jobs')
-    .set({ status: terminalStatusOf(batch), finished_at: sql`NOW()`, updated_at: sql`NOW()` })
-    .where('id', '=', batch.id)
-    .where('status', '=', 'running')
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirst();
-  return finalized ? batchOf(finalized) : undefined;
+  return maybeBatch(
+    await getDataStore().batchJobs.finishRunning(batch.id, terminalStatusOf(batch))
+  );
 }
 
 /**
@@ -384,35 +276,26 @@ async function finalizeIfComplete(
  * concurrent finisher that lost the race — resolves to undefined.
  */
 export async function recordItemOutcome(
-  db: Kysely<DB>,
   batchId: string,
   itemId: string,
   outcome: ItemOutcome
 ): Promise<BatchJobRow | undefined> {
   const skipped = outcome.ok && outcome.skipped === true;
-  await db
-    .updateTable('batch_job_items')
-    .set({
-      status: skipped ? 'skipped' : outcome.ok ? 'succeeded' : 'failed',
-      result: outcome.result ? JSON.stringify(outcome.result) : null,
-      error: outcome.error ?? null,
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', itemId)
-    .execute();
+  const batches = getDataStore().batchJobs;
+  await batches.setItemOutcome(itemId, {
+    status: skipped ? 'skipped' : outcome.ok ? 'succeeded' : 'failed',
+    result: outcome.result ?? null,
+    error: outcome.error ?? null,
+  });
 
-  const batch = await db
-    .updateTable('batch_jobs')
-    .set({
-      succeeded: sql`succeeded + ${outcome.ok && !skipped ? 1 : 0}`,
-      failed: sql`failed + ${outcome.ok ? 0 : 1}`,
-      skipped: sql`skipped + ${skipped ? 1 : 0}`,
-      updated_at: sql`NOW()`,
+  const batch = maybeBatch(
+    await batches.addCounts(batchId, {
+      succeeded: outcome.ok && !skipped ? 1 : 0,
+      failed: outcome.ok ? 0 : 1,
+      skipped: skipped ? 1 : 0,
     })
-    .where('id', '=', batchId)
-    .returning(BATCH_COLUMNS)
-    .executeTakeFirst();
-  return batch ? finalizeIfComplete(db, batchOf(batch)) : undefined;
+  );
+  return batch ? finalizeIfComplete(batch) : undefined;
 }
 
 export interface ListItemsOptions {
@@ -420,15 +303,10 @@ export interface ListItemsOptions {
   limit?: number;
 }
 
+/** Oldest first (ties by id). */
 export async function listItems(
-  db: Kysely<DB>,
   batchId: string,
   options: ListItemsOptions = {}
 ): Promise<BatchJobItemRow[]> {
-  let query = db.selectFrom('batch_job_items').select(ITEM_COLUMNS).where('batch_id', '=', batchId);
-  if (options.status) query = query.where('status', '=', options.status);
-  query = query.orderBy('created_at', 'asc');
-  if (options.limit) query = query.limit(options.limit);
-  const rows = await query.execute();
-  return rows.map(itemOf);
+  return (await getDataStore().batchJobs.listItems(batchId, options)).map(itemOf);
 }

@@ -22,10 +22,10 @@ export async function GET(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const { session } = ready.context;
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) return jsonError(404, 'not-found', 'No such project');
-  const view = await loadCodeProjectView(db, session.subject, projectId, access);
+  const view = await loadCodeProjectView(session.subject, projectId, access);
   if (!view) return jsonError(404, 'not-found', 'No such project');
   return NextResponse.json(view);
 }
@@ -37,11 +37,9 @@ export async function DELETE(
   const { projectId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const project = await getProjectRow(db, projectId);
-  const deleted = project
-    ? await deleteCodeProject(db, session.subject, projectId)
-    : false;
+  const { session } = ready.context;
+  const project = await getProjectRow(projectId);
+  const deleted = project ? await deleteCodeProject(session.subject, projectId) : false;
   if (!deleted || !project) return jsonError(404, 'not-found', 'No such project');
   recordAuditEvent({
     actorSubject: session.subject,

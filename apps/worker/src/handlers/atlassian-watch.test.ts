@@ -10,19 +10,67 @@
  * JQL and the v2 query string are asserted exactly as they go on the wire.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/knowledge', () => ({
   resolveEmbeddingProvider: jest.fn(),
 }));
 jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { runWatchSync } from './atlassian-watch';
 import type { AtlassianAccess } from './atlassian-access';
 import type { WatchRow } from './atlassian-watch';
 import { authedFetch } from '@renkei/delegate-client';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const JIRA_WATCH = '00000000-0000-4000-8000-000000000001';
+const CONFLUENCE_WATCH = '00000000-0000-4000-8000-000000000002';
+
+/** The memory store the round writes its cursor and counters back to. */
+let store: MemoryDataStore;
+
+/** The watch row's poller state after the round. */
+async function written(id: string) {
+  return store.contentWatches.getSyncState(id);
+}
+
+afterEach(() => {
+  resetDataStore();
+});
+
+beforeEach(async () => {
+  store = createMemoryDataStore();
+  registerDataStore(store);
+  await store.seed({
+    content_watches: [
+      {
+        id: JIRA_WATCH,
+        subject: 'alice',
+        account_id: 'acct-1',
+        provider: 'jira',
+        scope_type: 'project',
+        scope_key: 'ENG',
+        cursor: 'stored-cursor',
+        total_items: 10,
+        last_error: 'earlier failure',
+      },
+      {
+        id: CONFLUENCE_WATCH,
+        subject: 'alice',
+        account_id: 'acct-1',
+        provider: 'confluence',
+        scope_type: 'space',
+        scope_key: '55001',
+        cursor: 'stored-cursor',
+        total_items: 10,
+        last_error: 'earlier failure',
+      },
+    ],
+  });
+});
 const { resolveEmbeddingProvider: mockResolveEmbeddingProvider } = jest.requireMock<{
   resolveEmbeddingProvider: jest.Mock;
 }>('@renkei/knowledge');
@@ -37,26 +85,11 @@ interface FetchCall {
 
 let calls: FetchCall[] = [];
 let responses: (Record<string, unknown> | null)[] = [];
-/** What the sync wrote back to content_watches on its final update. */
-let written: Record<string, unknown> | null = null;
 
 beforeEach(() => {
   jest.clearAllMocks();
   calls = [];
   responses = [];
-  written = null;
-
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      updateTable: () => ({
-        set: (values: Record<string, unknown>) => {
-          written = values;
-          return { where: () => ({ execute: async () => [] }) };
-        },
-      }),
-    },
-  });
   mockResolveEmbeddingProvider.mockResolvedValue({ embed: async () => [[0.1]] });
   mockEnqueueKnowledgeEvent.mockResolvedValue(undefined);
 
@@ -85,7 +118,7 @@ function access(): AtlassianAccess {
 
 function jiraRow(cursor: string | null): WatchRow {
   return {
-    id: 'watch-1',
+    id: JIRA_WATCH,
     provider: 'jira',
     account_id: 'acct-1',
     scope_type: 'project',
@@ -97,7 +130,7 @@ function jiraRow(cursor: string | null): WatchRow {
 
 function confluenceRow(cursor: string | null): WatchRow {
   return {
-    id: 'watch-2',
+    id: CONFLUENCE_WATCH,
     provider: 'confluence',
     account_id: 'acct-1',
     scope_type: 'space',
@@ -186,21 +219,29 @@ describe('runWatchSync — jira', () => {
     const result = await runWatchSync(access(), jiraRow(null));
     expect(result.items).toBe(2);
     expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledTimes(2);
-    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith('ingest.object',
+    expect(mockEnqueueKnowledgeEvent).toHaveBeenCalledWith(
+      'ingest.object',
       expect.objectContaining({ provider: 'jira', refId: 'ENG-1' }),
       'jira/ENG-1'
     );
     expect(result.cursor).toBe('2026-08-10T10:00:00.000Z');
-    expect(written?.cursor).toBe('2026-08-10T10:00:00.000Z');
-    expect(written?.sync_status).toBe('idle');
+    expect(await written(JIRA_WATCH)).toMatchObject({
+      cursor: '2026-08-10T10:00:00.000Z',
+      syncStatus: 'idle',
+      lastRunItems: 2,
+      totalItems: 12,
+      lastError: null,
+    });
   });
 
   it('throws on a provider failure rather than writing a cursor', async () => {
     responses = [null];
-    await expect(runWatchSync(access(), jiraRow(null))).rejects.toThrow(
-      /jira search failed/
-    );
-    expect(written).toBeNull();
+    await expect(runWatchSync(access(), jiraRow(null))).rejects.toThrow(/jira search failed/);
+    expect(await written(JIRA_WATCH)).toMatchObject({
+      cursor: 'stored-cursor',
+      lastSyncedAt: null,
+      lastError: 'earlier failure',
+    });
   });
 
   it('does nothing when the org has no embedding provider configured', async () => {

@@ -16,8 +16,8 @@
  * rather than working around here.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { grantRow } from './grant-row';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { CapabilityProjection } from '@renkei/capability-registry';
 import {
@@ -188,17 +188,14 @@ export interface ConnectorAvailability {
  * server whose list is missing or stale is refreshed in the background —
  * never awaited, since this runs on every tools request.
  */
-async function resolveMcpServers(
-  db: Kysely<DB>,
-  subject: string
-): Promise<McpServerRegistration[]> {
-  const servers = await listServers(db);
+async function resolveMcpServers(subject: string): Promise<McpServerRegistration[]> {
+  const servers = await listServers();
   if (!servers.ok) return [];
   const enabled = servers.val.filter((server) => server.enabled);
   if (enabled.length === 0) return [];
   const [connected, lists] = await Promise.all([
-    connectedServerIds(db, subject),
-    getToolLists(db, subject),
+    connectedServerIds(subject),
+    getToolLists(subject),
   ]);
   if (!connected.ok || !lists.ok) return [];
   const connectedIds = new Set(connected.val);
@@ -206,10 +203,10 @@ async function resolveMcpServers(
   for (const server of enabled) {
     if (server.authMode === 'oauth' && !connectedIds.has(server.id)) continue;
     const cached = lists.val.get(server.id);
-    if (!cached || isStale(cached.fetchedAt)) refreshInBackground(db, server, subject);
+    if (!cached || isStale(cached.fetchedAt)) refreshInBackground(server, subject);
     // Where the server announces tool changes, hear them (watch.ts); where
     // it does not, the stale check above is the whole mechanism.
-    ensureWatching(db, server, subject);
+    ensureWatching(server, subject);
     if (!cached) continue;
     entries.push({
       id: server.id,
@@ -223,20 +220,6 @@ async function resolveMcpServers(
   return entries;
 }
 
-async function grantRow(
-  db: Kysely<DB>,
-  provider: string,
-  subject: string
-): Promise<{ requested_scopes: string[]; granted_scopes: string[] | null } | undefined> {
-  return db
-    .selectFrom('provider_grants')
-    .select(['requested_scopes', 'granted_scopes'])
-    .where('provider', '=', provider)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
-}
-
 // The "requested ∩ granted, or requested alone when granted is unrecognized"
 // rule for Zoom and Bitbucket lives in narrowed-scopes.ts so that the
 // code-project access check can share it without importing every tool;
@@ -244,7 +227,6 @@ async function grantRow(
 export { narrowedScopes };
 
 export async function resolveConnectorAvailability(
-  db: Kysely<DB>,
   subject: string
 ): Promise<ConnectorAvailability> {
   // The knowledge connector is provisioned org-wide when an embedding
@@ -254,7 +236,7 @@ export async function resolveConnectorAvailability(
   // The WebEx user tools register only when this caller has connected
   // their own WebEx account (the grant is per-user, unlike the org bot).
   // Its scopes gate which of those tools register.
-  const webexGrantRow = await grantRow(db, WEBEX_USER, subject);
+  const webexGrantRow = await grantRow(WEBEX_USER, subject);
   const webexAvailable = webexGrantRow !== undefined;
   // Gate on what the token actually carries when that is known; the
   // request is only the fallback for opaque tokens.
@@ -264,7 +246,7 @@ export async function resolveConnectorAvailability(
 
   // The Outlook tools register only when this caller has connected their
   // own Microsoft account. Same granted-over-requested rule as WebEx.
-  const microsoftGrantRow = await grantRow(db, MICROSOFT, subject);
+  const microsoftGrantRow = await grantRow(MICROSOFT, subject);
   const microsoftAvailable = microsoftGrantRow !== undefined;
   const graphScopes = microsoftGrantRow
     ? (microsoftGrantRow.granted_scopes ?? microsoftGrantRow.requested_scopes)
@@ -281,7 +263,7 @@ export async function resolveConnectorAvailability(
   // connecting Microsoft 365 does not connect it, and it does not need
   // Microsoft 365 connected. Same granted-over-requested rule (Graph tokens
   // carry scp); its tools resolve their access fresh per call too.
-  const entraDeveloperGrantRow = await grantRow(db, ENTRA_DEVELOPER, subject);
+  const entraDeveloperGrantRow = await grantRow(ENTRA_DEVELOPER, subject);
   const entraDeveloperAvailable = entraDeveloperGrantRow !== undefined;
   const entraDeveloperScopes = entraDeveloperGrantRow
     ? (entraDeveloperGrantRow.granted_scopes ?? entraDeveloperGrantRow.requested_scopes)
@@ -291,7 +273,7 @@ export async function resolveConnectorAvailability(
   // full scope set (Zoom cannot narrow at consent), so bare granted would
   // erase the user's narrowing. Requested ∩ granted when both are known;
   // requested alone otherwise.
-  const zoomGrantRow = await grantRow(db, ZOOM, subject);
+  const zoomGrantRow = await grantRow(ZOOM, subject);
   const zoomAvailable = zoomGrantRow !== undefined;
   const zoomScopes = zoomGrantRow
     ? narrowedScopes(zoomGrantRow.requested_scopes, zoomGrantRow.granted_scopes)
@@ -302,7 +284,7 @@ export async function resolveConnectorAvailability(
   // rule as WebEx/Microsoft — Confluence resolves its own access token
   // fresh per call (see confluence/client.ts), so only availability and
   // scopes are needed here.
-  const confluenceGrantRow = await grantRow(db, ATLASSIAN_CONFLUENCE, subject);
+  const confluenceGrantRow = await grantRow(ATLASSIAN_CONFLUENCE, subject);
   const confluenceAvailable = confluenceGrantRow !== undefined;
   const confluenceScopes = confluenceGrantRow
     ? (confluenceGrantRow.granted_scopes ?? confluenceGrantRow.requested_scopes)
@@ -312,7 +294,7 @@ export async function resolveConnectorAvailability(
   // Jira does not connect it, and it does not need Jira connected. Same
   // granted-over-requested rule as Confluence (a 3LO consent narrows the
   // token itself); its tools resolve their access fresh per call too.
-  const jiraAdminGrantRow = await grantRow(db, ATLASSIAN_ADMIN, subject);
+  const jiraAdminGrantRow = await grantRow(ATLASSIAN_ADMIN, subject);
   const jiraAdminAvailable = jiraAdminGrantRow !== undefined;
   const jiraAdminScopes = jiraAdminGrantRow
     ? (jiraAdminGrantRow.granted_scopes ?? jiraAdminGrantRow.requested_scopes)
@@ -320,7 +302,7 @@ export async function resolveConnectorAvailability(
   // The API token rides the admin connector: no grant without it means no
   // automation tools, however the token row stands.
   const jiraAdminTokenAvailable =
-    jiraAdminAvailable && (await grantRow(db, ATLASSIAN_ADMIN_TOKEN, subject)) !== undefined;
+    jiraAdminAvailable && (await grantRow(ATLASSIAN_ADMIN_TOKEN, subject)) !== undefined;
 
   // Bitbucket inverts the Atlassian rule the same way Zoom does: the token
   // ALWAYS carries the OAuth consumer's full scope set (Bitbucket cannot
@@ -328,7 +310,7 @@ export async function resolveConnectorAvailability(
   // see narrowedScopes for the shared rule, including why an unrecognized
   // granted format (observed for Bitbucket) falls back to requested alone
   // instead of intersecting to nothing.
-  const bitbucketGrantRow = await grantRow(db, ATLASSIAN_BITBUCKET, subject);
+  const bitbucketGrantRow = await grantRow(ATLASSIAN_BITBUCKET, subject);
   const bitbucketAvailable = bitbucketGrantRow !== undefined;
   const bitbucketScopes = bitbucketGrantRow
     ? narrowedScopes(bitbucketGrantRow.requested_scopes, bitbucketGrantRow.granted_scopes)
@@ -339,7 +321,7 @@ export async function resolveConnectorAvailability(
   // requested at authorize time, so the token always carries whatever
   // the App was configured with and bare granted would erase the user's
   // narrowing.
-  const githubGrantRow = await grantRow(db, GITHUB, subject);
+  const githubGrantRow = await grantRow(GITHUB, subject);
   const githubAvailable = githubGrantRow !== undefined;
   const githubScopes = githubGrantRow
     ? narrowedScopes(githubGrantRow.requested_scopes, githubGrantRow.granted_scopes)
@@ -354,12 +336,12 @@ export async function resolveConnectorAvailability(
   // each sandbox), so registration takes the union of their connections'
   // capabilities; each call is then checked against the one connection it
   // runs on (salesforce/org-choice.ts).
-  const salesforceGrantRows = await db
-    .selectFrom('provider_grants')
-    .select(['requested_scopes', 'granted_scopes'])
-    .where('provider', '=', SALESFORCE)
-    .where('subject', '=', subject)
-    .execute();
+  const salesforceGrantRows = (
+    await getDataStore().providerGrants.listForSubject(subject, { provider: SALESFORCE })
+  ).map((grant) => ({
+    requested_scopes: grant.requestedScopes,
+    granted_scopes: grant.grantedScopes,
+  }));
   const salesforceAvailable = salesforceGrantRows.length > 0;
   const salesforceScopes = [
     ...new Set(
@@ -368,12 +350,12 @@ export async function resolveConnectorAvailability(
   ];
 
   // The Salesforce admin connector: the same shape, on its own grants.
-  const salesforceAdminGrantRows = await db
-    .selectFrom('provider_grants')
-    .select(['requested_scopes', 'granted_scopes'])
-    .where('provider', '=', SALESFORCE_ADMIN)
-    .where('subject', '=', subject)
-    .execute();
+  const salesforceAdminGrantRows = (
+    await getDataStore().providerGrants.listForSubject(subject, { provider: SALESFORCE_ADMIN })
+  ).map((grant) => ({
+    requested_scopes: grant.requestedScopes,
+    granted_scopes: grant.grantedScopes,
+  }));
   const salesforceAdminAvailable = salesforceAdminGrantRows.length > 0;
   const salesforceAdminScopes = [
     ...new Set(
@@ -389,7 +371,7 @@ export async function resolveConnectorAvailability(
   // any connection mounts the read tools; write and delete each need an
   // explicit opt-in somewhere. Any error reads as "not provisioned" — the
   // fail-closed direction.
-  const fileshareExposure = await resolveToolExposure(db, subject);
+  const fileshareExposure = await resolveToolExposure(subject);
   const filesharesAvailable = fileshareExposure.ok && fileshareExposure.val.read;
   const fileshareWrite = fileshareExposure.ok && fileshareExposure.val.write;
   const fileshareDelete = fileshareExposure.ok && fileshareExposure.val.del;
@@ -399,7 +381,7 @@ export async function resolveConnectorAvailability(
   // and the exposure they chose per instance decides which families
   // register (act and destructive only on opt-in). Errors read as "not
   // provisioned".
-  const mirthExposure = await resolveMirthExposure(db, subject);
+  const mirthExposure = await resolveMirthExposure(subject);
   const mirthAvailable = mirthExposure.ok && mirthExposure.val.connected;
   const mirthPermissions = mirthExposure.ok ? mirthExposure.val.permissions : [];
 
@@ -407,19 +389,19 @@ export async function resolveConnectorAvailability(
   // row, the caller's own per-instance connections stand in for the
   // grant, and the exposure they chose per instance decides which
   // families register. Errors read as "not provisioned".
-  const admanagerExposure = await resolveAdManagerExposure(db, subject);
+  const admanagerExposure = await resolveAdManagerExposure(subject);
   const admanagerAvailable = admanagerExposure.ok && admanagerExposure.val.connected;
   const admanagerPermissions = admanagerExposure.ok ? admanagerExposure.val.permissions : [];
 
   // OnBase carries one opaque IdP scope, so availability is simply "this
   // caller connected their OnBase account"; the API server enforces the
   // rest per request under their token.
-  const onbaseGrantRow = await grantRow(db, ONBASE, subject);
+  const onbaseGrantRow = await grantRow(ONBASE, subject);
   const onbaseAvailable = onbaseGrantRow !== undefined;
 
   // onbase-admin is a separate Hyland OAuth client with its own grant —
   // connecting one does not connect the other.
-  const onbaseAdminGrantRow = await grantRow(db, ONBASE_ADMIN, subject);
+  const onbaseAdminGrantRow = await grantRow(ONBASE_ADMIN, subject);
   const onbaseAdminAvailable = onbaseAdminGrantRow !== undefined;
 
   // The sandbox has no external account to grant — it's Renkei's own
@@ -432,7 +414,7 @@ export async function resolveConnectorAvailability(
   // registers for everyone — there is no per-user account to grant.
   const webSearchAvailable = await webSearchConfigured();
 
-  const mcpServers = await resolveMcpServers(db, subject);
+  const mcpServers = await resolveMcpServers(subject);
 
   return {
     knowledgeAvailable,

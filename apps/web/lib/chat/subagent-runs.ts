@@ -11,8 +11,7 @@
  * counters. Nothing here is ever read back into a model's context.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { LlmContentBlock, LlmMessage, LlmUsage } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { isUuid } from '@/lib/uuid';
@@ -128,91 +127,51 @@ export function parseTranscript(json: string): SubagentRunView['transcript'] {
   return out;
 }
 
-export async function createSubagentRun(
-  db: Kysely<DB>,
-  input: {
-    chatId: string;
-    turnId: string;
-    toolUseId: string;
-    task: string;
-    instructions: string | null;
-    readOnly: boolean;
-    maxSteps: number;
-    model: LlmCallModel | null;
-    /** The chat's cipher: a run's rows are sealed like the chat's own. */
-    cipher: ContentCipher;
-  }
-): Promise<string | null> {
+export async function createSubagentRun(input: {
+  chatId: string;
+  turnId: string;
+  toolUseId: string;
+  task: string;
+  instructions: string | null;
+  readOnly: boolean;
+  maxSteps: number;
+  model: LlmCallModel | null;
+  /** The chat's cipher: a run's rows are sealed like the chat's own. */
+  cipher: ContentCipher;
+}): Promise<string | null> {
   const task = sealText(input.task, input.cipher);
   if (!task.ok) return null;
   const instructions = input.instructions ? sealText(input.instructions, input.cipher) : null;
   if (instructions && !instructions.ok) return null;
-  const inserted = await db
-    .insertInto('chat_subagent_runs')
-    .values({
-      chat_id: input.chatId,
-      turn_id: input.turnId,
-      tool_use_id: input.toolUseId,
-      task: task.val,
-      instructions: instructions ? instructions.val : null,
-      read_only: input.readOnly,
-      max_steps: input.maxSteps,
-      llm_model_id: input.model?.llmModelId ?? null,
-      provider: input.model?.provider ?? null,
-      model: input.model?.model ?? null,
-    })
-    // A tool_use id is unique per chat; a retry of the same call replaces its row.
-    .onConflict((oc) =>
-      oc.columns(['chat_id', 'tool_use_id']).doUpdateSet({
-        turn_id: input.turnId,
-        status: 'running',
-        task: task.val,
-        instructions: instructions ? instructions.val : null,
-        read_only: input.readOnly,
-        max_steps: input.maxSteps,
-        llm_model_id: input.model?.llmModelId ?? null,
-        provider: input.model?.provider ?? null,
-        model: input.model?.model ?? null,
-        steps: 0,
-        tool_calls: 0,
-        last_tool: null,
-        transcript: null,
-        report: null,
-        error: null,
-        input_tokens: 0,
-        output_tokens: 0,
-        started_at: sql<Date>`NOW()`,
-        updated_at: sql<Date>`NOW()`,
-        finished_at: null,
-      })
-    )
-    .returning('id')
-    .executeTakeFirst();
-  return inserted?.id ?? null;
+  // A tool_use id is unique per chat; a retry of the same call replaces its row.
+  return getDataStore().chatThreads.startSubagentRun({
+    chatId: input.chatId,
+    turnId: input.turnId,
+    toolUseId: input.toolUseId,
+    task: task.val,
+    instructions: instructions ? instructions.val : null,
+    readOnly: input.readOnly,
+    maxSteps: input.maxSteps,
+    llmModelId: input.model?.llmModelId ?? null,
+    provider: input.model?.provider ?? null,
+    model: input.model?.model ?? null,
+  });
 }
 
 export async function progressSubagentRun(
-  db: Kysely<DB>,
   runId: string,
   state: { steps: number; toolCalls: number; lastTool: string | null; usage: LlmUsage }
 ): Promise<void> {
-  await db
-    .updateTable('chat_subagent_runs')
-    .set({
-      steps: state.steps,
-      tool_calls: state.toolCalls,
-      last_tool: state.lastTool,
-      input_tokens: sql<number>`input_tokens + ${state.usage.inputTokens}`,
-      output_tokens: sql<number>`output_tokens + ${state.usage.outputTokens}`,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', runId)
-    .where('status', '=', 'running')
-    .execute();
+  await getDataStore().chatThreads.progressSubagentRun(runId, {
+    steps: state.steps,
+    toolCalls: state.toolCalls,
+    lastTool: state.lastTool,
+    inputTokens: state.usage.inputTokens,
+    outputTokens: state.usage.outputTokens,
+  });
 }
 
 export async function finishSubagentRun(
-  db: Kysely<DB>,
   runId: string,
   outcome: {
     status: Exclude<SubagentRunStatus, 'running'>;
@@ -225,85 +184,61 @@ export async function finishSubagentRun(
   cipher: ContentCipher
 ): Promise<void> {
   const report = outcome.report ? sealText(outcome.report, cipher) : null;
-  await db
-    .updateTable('chat_subagent_runs')
-    .set({
-      status: outcome.status,
-      steps: outcome.steps,
-      tool_calls: outcome.toolCalls,
-      transcript: sealTranscript(outcome.transcript, cipher),
-      report: report && report.ok ? report.val : null,
-      error: outcome.error,
-      updated_at: sql<Date>`NOW()`,
-      finished_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', runId)
-    .execute();
+  await getDataStore().chatThreads.finishSubagentRun(runId, {
+    status: outcome.status,
+    steps: outcome.steps,
+    toolCalls: outcome.toolCalls,
+    transcript: sealTranscript(outcome.transcript, cipher),
+    report: report && report.ok ? report.val : null,
+    error: outcome.error,
+  });
 }
 
 /** A turn that ends takes any run of its still marked running with it: nothing is coming back. */
-export async function interruptSubagentRunsOfTurn(db: Kysely<DB>, turnId: string): Promise<void> {
-  await db
-    .updateTable('chat_subagent_runs')
-    .set({
-      status: 'interrupted',
-      error: 'The turn ended before the sub-agent reported.',
-      updated_at: sql<Date>`NOW()`,
-      finished_at: sql<Date>`NOW()`,
-    })
-    .where('turn_id', '=', turnId)
-    .where('status', '=', 'running')
-    .execute();
+export async function interruptSubagentRunsOfTurn(turnId: string): Promise<void> {
+  await getDataStore().chatThreads.interruptSubagentRuns(
+    turnId,
+    'The turn ended before the sub-agent reported.'
+  );
 }
 
 /** One run by the call that made it, as the browser sees it; null when there is none. */
 export async function getSubagentRunByCall(
-  db: Kysely<DB>,
   chatId: string,
   toolUseId: string,
   cipher: ContentCipher
 ): Promise<SubagentRunView | null> {
   if (!isUuid(chatId) || !toolUseId) return null;
-  const row = await db
-    .selectFrom('chat_subagent_runs')
-    // The config's label as it reads today; the name columns are the
-    // record, and stand alone once the config is gone.
-    .leftJoin('llm_model_configs', 'llm_model_configs.id', 'chat_subagent_runs.llm_model_id')
-    .selectAll('chat_subagent_runs')
-    .select('llm_model_configs.label as model_label')
-    .where('chat_subagent_runs.chat_id', '=', chatId)
-    .where('chat_subagent_runs.tool_use_id', '=', toolUseId)
-    .executeTakeFirst();
+  const row = await getDataStore().chatThreads.getSubagentRunByCall(chatId, toolUseId);
   if (!row) return null;
   return {
     id: row.id,
-    toolUseId: row.tool_use_id,
-    turnId: row.turn_id,
+    toolUseId: row.toolUseId,
+    turnId: row.turnId,
     status: statusOf(row.status),
     task: openText(row.task, cipher),
     instructions: row.instructions ? openText(row.instructions, cipher) : null,
-    readOnly: row.read_only,
+    readOnly: row.readOnly,
     model:
       row.provider && row.model
-        ? { provider: row.provider, model: row.model, label: row.model_label ?? null }
+        ? { provider: row.provider, model: row.model, label: row.modelLabel }
         : null,
     steps: row.steps,
-    maxSteps: row.max_steps,
-    toolCalls: row.tool_calls,
-    lastTool: row.last_tool,
+    maxSteps: row.maxSteps,
+    toolCalls: row.toolCalls,
+    lastTool: row.lastTool,
     transcript: row.transcript ? parseTranscript(openText(row.transcript, cipher)) : [],
     report: row.report ? openText(row.report, cipher) : null,
     error: row.error,
-    usage: { inputTokens: row.input_tokens, outputTokens: row.output_tokens },
-    startedAt: row.started_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
-    finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
+    usage: { inputTokens: row.inputTokens, outputTokens: row.outputTokens },
+    startedAt: row.startedAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
   };
 }
 
 /** The recorder over the real table and the turn's stream (start-turn.ts wires it). */
 export function createSubagentRecorder(
-  db: Kysely<DB>,
   scope: { chatId: string; turnId: string; cipher: ContentCipher },
   emit: (event: {
     toolUseId: string;
@@ -332,7 +267,7 @@ export function createSubagentRecorder(
     async start(input) {
       let id: string | null = null;
       await quietly('start', async () => {
-        id = await createSubagentRun(db, { ...scope, ...input });
+        id = await createSubagentRun({ ...scope, ...input });
       });
       const startedAt = Date.now();
       if (id) known.set(id, { toolUseId: input.toolUseId, maxSteps: input.maxSteps, startedAt });
@@ -349,7 +284,7 @@ export function createSubagentRecorder(
       return id;
     },
     async progress(runId, state) {
-      await quietly('progress', () => progressSubagentRun(db, runId, state));
+      await quietly('progress', () => progressSubagentRun(runId, state));
       const run = known.get(runId);
       if (run) {
         emit({
@@ -365,7 +300,7 @@ export function createSubagentRecorder(
       }
     },
     async finish(runId, outcome) {
-      await quietly('finish', () => finishSubagentRun(db, runId, outcome, scope.cipher));
+      await quietly('finish', () => finishSubagentRun(runId, outcome, scope.cipher));
       const run = known.get(runId);
       if (run) {
         emit({

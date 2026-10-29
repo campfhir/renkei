@@ -55,6 +55,20 @@ describe('hostAllowed', () => {
       expect(hostAllowed(github, standIn, GITHUB)).toBe(false);
     });
   });
+
+  it('honors it in a production build on the in-memory store, which is never a deployment', () => {
+    const standIn = new URL('http://127.0.0.1:8092/github/api/user');
+    withEnv(
+      {
+        NODE_ENV: 'production',
+        RENKEI_DATA_STORE: 'memory',
+        GITHUB_API_BASE_URL: 'http://127.0.0.1:8092/github',
+      },
+      () => {
+        expect(hostAllowed(github, standIn, GITHUB)).toBe(true);
+      }
+    );
+  });
 });
 
 describe('Salesforce: one host per org, from the app registration', () => {

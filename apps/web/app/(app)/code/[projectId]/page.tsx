@@ -1,5 +1,4 @@
 import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveProjectAccess } from '@/lib/chat/access';
@@ -28,12 +27,9 @@ export default async function CodeProjectPage({
   const { envProblems } = await searchParams;
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/code/${projectId}`));
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
-  const access = await resolveProjectAccess(db, session.subject, projectId);
+  const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) notFound();
-  const view = await loadCodeProjectView(db, session.subject, projectId, access);
+  const view = await loadCodeProjectView(session.subject, projectId, access);
   if (!view) notFound();
   // The two elements handed to the client view carry keys: React checks
   // server-made elements it finds among siblings on the client the way it
@@ -46,9 +42,7 @@ export default async function CodeProjectPage({
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
       readme={view.code.readme}
       usage={view.code.usage}
-      strip={
-        <CodeRepoStrip key="strip" projectId={projectId} code={view.code} />
-      }
+      strip={<CodeRepoStrip key="strip" projectId={projectId} code={view.code} />}
       rail={
         <CodeRail
           key="rail"

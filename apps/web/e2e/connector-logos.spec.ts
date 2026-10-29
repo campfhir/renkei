@@ -9,86 +9,24 @@
  * the page where a missing icon was noticed. Which cards render depends on
  * the org's setup; every one that does is checked.
  *
- * Read-only, but signed in as its own operator so it does not depend on the
- * shared seed's roles; nothing organization-wide is written.
+ * Its own operator, who adds every connector the org offers them to
+ * their Connectors page through the catalog's own route
+ * (PUT /api/connector-selections — one the org does not offer is refused,
+ * and simply not added). The second test registers, under its own tag, the
+ * two org-wide rows that put cards on that page (an ADManager Plus
+ * instance and a file share) and removes them again.
  *
  * Runs on the pinned Chromium only; "mobile" is a resized viewport, per AGENTS.md.
  */
 
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-async function withDb<T>(work: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return await work(client);
-  } finally {
-    await client.end();
-  }
-}
-
-/** Its own operator, with every connector added to their Connectors page. */
-async function signIn(page: Page, projectName: string): Promise<void> {
-  const sessionId = uuidFrom(`connector-logos-e2e-session:${projectName}`);
-  const subject = `e2e-logos-${projectName}@example.com`;
-  await withDb(async (client) => {
-    for (const table of ['user_preferences', 'sessions', 'identities']) {
-      await client.query(`DELETE FROM ${table} WHERE subject = $1`, [subject]);
-    }
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [sessionId, subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 3_600_000)]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, 'E2E Tester')`,
-      [subject, subject]
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [subject]
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value) VALUES ($1, 'connectors', $2::jsonb)`,
-      [subject, JSON.stringify({ added: ADDED })]
-    );
-    await enrollForE2E(client, subject);
-  });
-  await page.context().addCookies([
-    {
-      name: 'renkei_session',
-      value: sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const ADDED = [
   'jira',
@@ -107,10 +45,19 @@ const ADDED = [
   'admanager',
 ];
 
+/** Add what the org offers; the route refuses the rest, which stay off the page. */
+async function addOffered(page: Page): Promise<void> {
+  for (const connector of ADDED) {
+    const response = await page.request.put('/api/connector-selections', { data: { connector } });
+    expect([200, 400]).toContain(response.status());
+  }
+}
+
 test('connector marks: shipped SVGs load, and GitHub inverts on dark only', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  await signIn(page, testInfo.project.name);
+  await addOffered(page);
   await page.goto('/admin/connectors');
   const dark = testInfo.project.name.includes('dark');
   for (const [name, file] of [
@@ -152,8 +99,58 @@ test('connector marks: shipped SVGs load, and GitHub inverts on dark only', asyn
 
 test('connectors page: every card heading carries a mark that loads', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  await signIn(page, testInfo.project.name);
+  // Two of the org-configured cards, offered the way an org offers them:
+  // an ADManager Plus instance and a file share, registered (under this
+  // test's tag) through the console's routes and removed again afterwards.
+  const tag = `${testInfo.project.name.replace('desktop-', '')}-${randomUUID().slice(0, 6)}`;
+  const instance = await page.request.post('/api/admin/admanager', {
+    data: {
+      name: `Logos ADManager ${tag}`,
+      environment: 'prod',
+      baseUrl: 'https://admp.example.com:8080',
+      tlsVerify: true,
+      allowInsecureHttp: false,
+      resetPasswordTemplateName: null,
+      enabled: true,
+    },
+  });
+  expect(instance.ok(), await instance.text()).toBe(true);
+  const share = await page.request.post('/api/admin/file-shares', {
+    data: {
+      name: `Logos share ${tag}`,
+      protocol: 'smb',
+      host: 'files.corp.example',
+      port: null,
+      shareName: 'reports',
+      rootPath: '/',
+      caseInsensitive: true,
+      enabled: true,
+      hostKeyFingerprint: null,
+    },
+  });
+  expect(share.ok(), await share.text()).toBe(true);
+  try {
+    await addOffered(page);
+    await checkCardMarks(page, testInfo);
+  } finally {
+    const instances: { instances: { id: string; name: string }[] } = await (
+      await page.request.get('/api/admin/admanager')
+    ).json();
+    for (const row of instances.instances.filter((row) => row.name.endsWith(tag))) {
+      await page.request.delete(`/api/admin/admanager/${row.id}`);
+    }
+    const shares: { shares: { id: string; name: string }[] } = await (
+      await page.request.get('/api/admin/file-shares')
+    ).json();
+    for (const row of shares.shares.filter((row) => row.name.endsWith(tag))) {
+      await page.request.delete(`/api/admin/file-shares/${row.id}`);
+    }
+  }
+});
+
+async function checkCardMarks(page: Page, testInfo: TestInfo): Promise<void> {
   await page.goto('/connectors');
   const headings = page.locator('[data-coach^="card-"] :is(h2, h3)');
   await expect(headings.first()).toBeVisible();
@@ -175,12 +172,15 @@ test('connectors page: every card heading carries a mark that loads', async ({
         .toBe(true);
     }
   }
-  // Browser secrets had no mark; the org-configured cards that had none
-  // (Mirth Connect, File shares, ADManager Plus) render only where the org
-  // runs those servers, and are guarded by app/(app)/connectors/card-marks.test.ts.
-  expect(seen.some((heading) => heading.includes('Browser secrets'))).toBe(true);
+  // The org-configured cards that once had no mark render where the org
+  // runs those servers — here, because the test registered them. (Browser
+  // secrets, the other one, needs the sandbox browser, an org-wide switch
+  // this read-only spec leaves alone; app/(app)/connectors/card-marks.test.ts
+  // guards it.)
+  expect(seen.some((heading) => heading.includes('ADManager Plus'))).toBe(true);
+  expect(seen.some((heading) => heading.includes('File shares'))).toBe(true);
   await page.screenshot({
     path: path.join(RESULTS, 'screens', testInfo.project.name, 'connectors-page-marks.png'),
     fullPage: true,
   });
-});
+}

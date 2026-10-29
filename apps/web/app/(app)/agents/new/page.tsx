@@ -1,6 +1,5 @@
 import React from 'react';
-import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { loadBuilderData } from '@/lib/agents/builder-data';
@@ -12,9 +11,7 @@ export default async function NewAgentPage(): Promise<React.ReactNode> {
     redirect(signInUrl(`/agents/new`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const data = await loadBuilderData(dbResult.val, session.subject);
+  const data = await loadBuilderData(session.subject);
 
   // No width cap here: the builder manages its own two-column layout.
   return (
@@ -22,8 +19,8 @@ export default async function NewAgentPage(): Promise<React.ReactNode> {
       <div className="mx-auto mb-6 lg:max-w-3xl">
         <h1 className="mb-1 text-xl font-bold">New agent</h1>
         <p className="text-sm text-gray-600 dark:text-gray-400">
-          Tell the agent what to achieve and give it the tools it needs — it works out the steps
-          on each run, and every change it wants to make waits for your go-ahead.
+          Tell the agent what to achieve and give it the tools it needs — it works out the steps on
+          each run, and every change it wants to make waits for your go-ahead.
         </p>
       </div>
       <AgentBuilder

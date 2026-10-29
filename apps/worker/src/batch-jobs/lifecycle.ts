@@ -36,8 +36,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { batchEventForStatus, getNotificationPrefs, type BatchEvent } from '@renkei/user-prefs';
@@ -165,7 +164,7 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   }
 }
 
-async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): Promise<void> {
+async function notifyOwner(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   const prefs = await getNotificationPrefs(batch.subject);
   const key: BatchEvent = phase === 'started' ? 'batchStarted' : batchEventForStatus(batch.status);
   const wanted = prefs[key];
@@ -180,25 +179,27 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
   if (wanted.app) {
     const id = randomUUID();
     try {
-      await db
-        .insertInto('agent_notifications')
-        .values({
-          id,
-          subject: batch.subject,
-          kind: notificationKindFor(batch, phase),
-          connector: BATCH_JOBS_CONNECTOR,
-          entity: 'batch',
-          headline,
-          ref_id: batch.name,
-          meta: JSON.stringify(batchNotificationMeta(batch)),
-        })
-        .execute();
+      await getDataStore().notifications.insert({
+        id,
+        subject: batch.subject,
+        kind: notificationKindFor(batch, phase),
+        category: null,
+        connector: BATCH_JOBS_CONNECTOR,
+        tool: null,
+        entity: 'batch',
+        headline,
+        refUrl: null,
+        refId: batch.name,
+        agentId: null,
+        agentName: null,
+        runId: null,
+        meta: batchNotificationMeta(batch),
+      });
 
       // Fire-and-forget push notification — respects app preference
       const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
       if (keyResult.ok) {
         void sendPush(
-          db,
           batch.subject,
           keyResult.val,
           {
@@ -227,7 +228,7 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
     const body =
       `${kindLabel} batch “${batch.name}” ${phase === 'started' ? 'started' : describeBatchOutcome(batch)}.` +
       (link ? `\n\nSee the batch: ${link}` : '');
-    await deliverToOwnerChannels(db, {
+    await deliverToOwnerChannels({
       ownerSubject: batch.subject,
       email: wanted.email,
       webex: wanted.webex,
@@ -238,12 +239,12 @@ async function notifyOwner(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase
   }
 }
 
-async function announce(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): Promise<void> {
+async function announce(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   // Agents first: the event is the cheaper, more consequential half — a
   // chained agent waiting on it should not queue behind a mail send.
   await publish(batch, phase);
   try {
-    await notifyOwner(db, batch, phase);
+    await notifyOwner(batch, phase);
   } catch (error) {
     logger.warn('could not notify the owner of batch {batchJobId}: {error}', {
       component: COMPONENT,
@@ -254,8 +255,8 @@ async function announce(db: Kysely<DB>, batch: BatchJobRow, phase: BatchPhase): 
 }
 
 /** Call with the row `beginDiscovery` returned — the batch has just begun work. */
-export async function announceBatchStarted(db: Kysely<DB>, batch: BatchJobRow): Promise<void> {
-  await announce(db, batch, 'started');
+export async function announceBatchStarted(batch: BatchJobRow): Promise<void> {
+  await announce(batch, 'started');
 }
 
 /**
@@ -264,6 +265,6 @@ export async function announceBatchStarted(db: Kysely<DB>, batch: BatchJobRow): 
  * with a row read back afterwards, which is how a batch would get
  * announced twice.
  */
-export async function announceBatchFinished(db: Kysely<DB>, batch: BatchJobRow): Promise<void> {
-  await announce(db, batch, 'completed');
+export async function announceBatchFinished(batch: BatchJobRow): Promise<void> {
+  await announce(batch, 'completed');
 }

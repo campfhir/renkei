@@ -10,7 +10,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
 import { errText, textResult } from './client';
@@ -118,10 +117,8 @@ export async function registerTemplateTools(
         );
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was saved.');
       const document = documentFromSpace(space);
-      const saved = await saveSpaceTemplate(dbResult.val, {
+      const saved = await saveSpaceTemplate({
         cloudId: access.cloudId,
         siteUrl: access.siteUrl,
         name,
@@ -186,16 +183,10 @@ export async function registerTemplateTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
 
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
       if (reference) {
-        const template = await findSpaceTemplate(
-          dbResult.val,
-          access.cloudId,
-          reference
-        );
+        const template = await findSpaceTemplate(access.cloudId, reference);
         if (!template) return errText(`No template is named “${reference}”.`);
         return textResult(
           [
@@ -208,7 +199,7 @@ export async function registerTemplateTools(
         );
       }
 
-      const templates = await listSpaceTemplates(dbResult.val);
+      const templates = await listSpaceTemplates();
       if (templates.length === 0) {
         return textResult(
           'No space templates yet. Save one from a space that is set up the way you want with ' +
@@ -243,16 +234,10 @@ export async function registerTemplateTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
-      const template = await findSpaceTemplate(
-        dbResult.val,
-        access.cloudId,
-        reference
-      );
+      const template = await findSpaceTemplate(access.cloudId, reference);
       if (!template) return errText(`No template is named “${reference}”.`);
-      const deleted = await deleteSpaceTemplate(dbResult.val, template.id);
+      const deleted = await deleteSpaceTemplate(template.id);
       return deleted
         ? textResult(`Deleted the template “${template.name}”. Nothing changed in Jira.`)
         : errText(`The template “${template.name}” could not be deleted.`);
@@ -276,14 +261,8 @@ export async function registerTemplateTools(
     async (args: Record<string, unknown>) => {
       const access = await auth.resolve();
       if (typeof access === 'string') return errText(access);
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const reference = typeof args.template === 'string' ? args.template.trim() : '';
-      const template = await findSpaceTemplate(
-        dbResult.val,
-        access.cloudId,
-        reference
-      );
+      const template = await findSpaceTemplate(access.cloudId, reference);
       if (!template) return errText(`No template is named “${reference}”.`);
       if (template.cloudId !== access.cloudId) return errText(otherSite(template));
 

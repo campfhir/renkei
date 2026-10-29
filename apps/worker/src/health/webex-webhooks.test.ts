@@ -7,17 +7,19 @@
  * repairs are logged loudly, health is silent.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-// The sweep only uses kysely's sql tag inside a .where()/.set(); the stub
-// chain ignores its argument, so a fragment marker suffices (kysely itself
-// is ESM this jest config does not transform).
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn(), getOrgSettings: jest.fn() }));
 jest.mock('../logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
 
 import { ok } from '@campfhir/safe-functions/helpers';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  toJson,
+  type MemoryDataStore,
+} from '@renkei/db';
 import type { WebexWebhook, WebexWebhooksClient } from '@renkei/connector-webex';
 import { sweepWebexWebhooks } from './webex-webhooks';
 import { logger } from '../logger';
@@ -26,7 +28,6 @@ import { authedFetch } from '@renkei/delegate-client';
 /** A grant fetcher stand-in: the code under test only passes it through. */
 const auth = authedFetch(async () => new Response(), 'webex:tenant-1:acct-1');
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getPublicBaseUrl: mockGetPublicBaseUrl, getOrgSettings: mockGetOrgSettings } =
   jest.requireMock<{
     getPublicBaseUrl: jest.Mock;
@@ -38,32 +39,48 @@ interface GrantRow {
   metadata: unknown;
 }
 
+let store: MemoryDataStore;
+
+/**
+ * The opted-in grants, seeded into a memory store (plus one webex grant
+ * that has not opted in, which the sweep must never touch). Returns the
+ * accounts whose check time the sweep recorded, read back afterwards.
+ */
 function dbWithGrants(rows: GrantRow[]) {
-  const updates: Array<{ provider_account_id: string }> = [];
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: () => ({
-        select: () => ({
-          where: () => ({
-            where: () => ({ execute: async () => rows }),
-          }),
-        }),
-      }),
-      updateTable: () => ({
-        set: () => ({
-          where: () => ({
-            where: (_c: string, _o: string, accountId: string) => ({
-              execute: async () => {
-                updates.push({ provider_account_id: accountId });
-              },
-            }),
-          }),
-        }),
-      }),
-    },
+  const seeded = [
+    ...rows,
+    { provider_account_id: 'acct-not-opted-in', metadata: { allSpacesSecret: 'nope' } },
+  ];
+  void store.seed({
+    provider_grants: seeded.map((row) => ({
+      provider: 'webex',
+      provider_account_id: row.provider_account_id,
+      client_id: 'client',
+      display_name: row.provider_account_id,
+      subject: null,
+      encrypted_access_token: 'sealed-a',
+      encrypted_refresh_token: 'sealed-r',
+      expires_at: new Date('2030-01-01T00:00:00Z'),
+      metadata: toJson(row.metadata),
+    })),
   });
-  return updates;
+  const before = new Map(
+    seeded.map((row) => [row.provider_account_id, checkedAtOf(row.metadata)] as const)
+  );
+  return {
+    async recorded(): Promise<Array<{ provider_account_id: string }>> {
+      const grants = await store.providerGrants.listWithMetadata('webex');
+      return grants
+        .filter((g) => checkedAtOf(g.metadata) !== before.get(g.accountId))
+        .map((g) => ({ provider_account_id: g.accountId }));
+    },
+  };
+}
+
+function checkedAtOf(metadata: unknown): unknown {
+  return typeof metadata === 'object' && metadata !== null
+    ? Reflect.get(metadata, 'webhookHealthCheckedAt')
+    : undefined;
 }
 
 function healthyHook(targetUrl: string, secret: string): WebexWebhook {
@@ -94,7 +111,13 @@ function stubClient(hooks: WebexWebhook[]) {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  store = createMemoryDataStore();
+  registerDataStore(store);
   mockGetOrgSettings.mockResolvedValue({ ok: true, val: { webexWebhookHealthMinutes: 60 } });
+});
+
+afterEach(() => {
+  resetDataStore();
 });
 
 describe('sweepWebexWebhooks', () => {
@@ -176,7 +199,7 @@ describe('sweepWebexWebhooks', () => {
 
     expect(resolveAccess).not.toHaveBeenCalled();
     expect(created).toHaveLength(0);
-    expect(updates).toHaveLength(0);
+    expect(await updates.recorded()).toHaveLength(0);
   });
 
   it('rechecks a grant once the org due-time has passed, then records the check', async () => {
@@ -200,7 +223,7 @@ describe('sweepWebexWebhooks', () => {
     });
 
     expect(created).toHaveLength(1);
-    expect(updates).toEqual([{ provider_account_id: 'acct-1' }]);
+    expect(await updates.recorded()).toEqual([{ provider_account_id: 'acct-1' }]);
   });
 
   it('records the check time even when the API call fails, so a 429 backs off instead of retrying every wake', async () => {
@@ -223,7 +246,7 @@ describe('sweepWebexWebhooks', () => {
       resolveAccess: async () => ({ auth, subject: 'subj-1', personEmail: null }),
     });
 
-    expect(updates).toEqual([{ provider_account_id: 'acct-1' }]);
+    expect(await updates.recorded()).toEqual([{ provider_account_id: 'acct-1' }]);
     expect(logger.error).toHaveBeenCalled();
   });
 });

@@ -12,33 +12,22 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { after } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { listAgents } from '@/lib/agents/store';
 import { saveAgent } from '@/lib/agents/save';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const agents = await listAgents(dbResult.val, session.subject);
+  const agents = await listAgents(session.subject);
   return NextResponse.json({ agents });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const body = await request.json().catch(() => null);
   const parsed = parseAgentPayload(body);
@@ -47,7 +36,7 @@ export async function POST(
   // The summary is written AFTER the response: authoring must never wait
   // on a model. The builder polls the agent until description_status
   // resolves and shows a writing indicator meanwhile.
-  const result = await saveAgent(dbResult.val, session.subject, parsed, {
+  const result = await saveAgent(session.subject, parsed, {
     defer: after,
   });
   if (result.outcome === 'not-found') {

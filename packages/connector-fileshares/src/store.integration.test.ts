@@ -1,6 +1,4 @@
-import { Kysely, PostgresDialect } from 'kysely';
-import { Pool } from 'pg';
-import type { DB } from '@renkei/db';
+import { closeDataStore } from '@renkei/db';
 import {
   createShare,
   deleteConnection,
@@ -18,8 +16,7 @@ import {
 } from './store';
 import type { ShareInput } from './store';
 
-const url = process.env.FILESHARE_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
-const describeLive = url ? describe : describe.skip;
+const describeLive = process.env.DATABASE_URL ? describe : describe.skip;
 
 const SUBJECT = 'itest-subject';
 
@@ -47,119 +44,105 @@ function connectionInput(username = 'alice') {
 }
 
 describeLive('file-share store (live database)', () => {
-  let db: Kysely<DB>;
-
-  beforeAll(async () => {
-    db = new Kysely<DB>({
-      dialect: new PostgresDialect({ pool: new Pool({ connectionString: url }) }),
-    });
-  });
-
   afterAll(async () => {
-    await db.destroy();
+    await closeDataStore();
   });
 
   it('round-trips a share through create, update, list and get', async () => {
-    const created = await createShare(db, shareInput('Finance'));
+    const created = await createShare(shareInput('Finance'));
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     const shareId = created.val;
 
-    const listed = await listShares(db);
+    const listed = await listShares();
     expect(listed.ok).toBe(true);
     if (listed.ok) {
       expect(listed.val.map((row) => row.summary.name)).toContain('Finance');
     }
 
-    const updated = await updateShare(db, shareId, {
+    const updated = await updateShare(shareId, {
       ...shareInput('Finance'),
       host: 'nas2.example.test',
       enabled: false,
     });
     expect(updated).toMatchObject({ ok: true, val: true });
 
-    const fetched = await getShare(db, shareId);
+    const fetched = await getShare(shareId);
     expect(fetched.ok).toBe(true);
     if (fetched.ok) {
       expect(fetched.val?.summary.host).toBe('nas2.example.test');
       expect(fetched.val?.summary.enabled).toBe(false);
     }
 
-    const removed = await deleteShare(db, shareId);
+    const removed = await deleteShare(shareId);
     expect(removed).toMatchObject({ ok: true, val: true });
   });
 
   it('rejects a duplicate share name per tenant', async () => {
-    const first = await createShare(db, shareInput('Dupe'));
+    const first = await createShare(shareInput('Dupe'));
     expect(first.ok).toBe(true);
-    const second = await createShare(db, shareInput('Dupe'));
+    const second = await createShare(shareInput('Dupe'));
     expect(second).toMatchObject({ ok: false, err: { type: 'DUPLICATE_NAME' } });
-    if (first.ok) await deleteShare(db, first.val);
+    if (first.ok) await deleteShare(first.val);
   });
 
   it('round-trips a connection and updates exposure in place', async () => {
-    const created = await createShare(db, shareInput('Engineering'));
+    const created = await createShare(shareInput('Engineering'));
     expect(created.ok).toBe(true);
     if (!created.ok) return;
     const shareId = created.val;
 
-    const stored = await upsertConnection(db, shareId, SUBJECT, connectionInput());
+    const stored = await upsertConnection(shareId, SUBJECT, connectionInput());
     expect(stored.ok).toBe(true);
 
-    const connection = await getConnection(db, shareId, SUBJECT);
+    const connection = await getConnection(shareId, SUBJECT);
     expect(connection).toMatchObject({
       ok: true,
       val: { username: 'alice', toolAccess: 'read', allowDelete: false },
     });
 
-    const ciphertext = await readConnectionCiphertext(db, shareId, SUBJECT);
+    const ciphertext = await readConnectionCiphertext(shareId, SUBJECT);
     expect(ciphertext).toMatchObject({ ok: true, val: 'sealed-alice' });
 
     // Re-upsert replaces the credential and choice in one statement.
-    const replaced = await upsertConnection(db, shareId, SUBJECT, {
+    const replaced = await upsertConnection(shareId, SUBJECT, {
       ...connectionInput('alice2'),
       toolAccess: 'read_write',
     });
     expect(replaced.ok).toBe(true);
-    const after = await getConnection(db, shareId, SUBJECT);
+    const after = await getConnection(shareId, SUBJECT);
     expect(after).toMatchObject({
       ok: true,
       val: { username: 'alice2', toolAccess: 'read_write' },
     });
 
-    const exposureOnly = await updateConnectionExposure(
-      db,
-      shareId,
-      SUBJECT,
-      'read_write',
-      true
-    );
+    const exposureOnly = await updateConnectionExposure(shareId, SUBJECT, 'read_write', true);
     expect(exposureOnly).toMatchObject({ ok: true, val: true });
-    const kept = await readConnectionCiphertext(db, shareId, SUBJECT);
+    const kept = await readConnectionCiphertext(shareId, SUBJECT);
     expect(kept).toMatchObject({ ok: true, val: 'sealed-alice2' });
 
-    const gone = await deleteConnection(db, shareId, SUBJECT);
+    const gone = await deleteConnection(shareId, SUBJECT);
     expect(gone).toMatchObject({ ok: true, val: true });
-    const missing = await getConnection(db, shareId, SUBJECT);
+    const missing = await getConnection(shareId, SUBJECT);
     expect(missing).toMatchObject({ ok: true, val: null });
 
-    await deleteShare(db, shareId);
+    await deleteShare(shareId);
   });
 
   it('lists all enabled shares with this subject connection-marked', async () => {
-    const a = await createShare(db, shareInput('Alpha'));
-    const b = await createShare(db, shareInput('Beta'));
-    const off = await createShare(db, { ...shareInput('Gamma'), enabled: false });
+    const a = await createShare(shareInput('Alpha'));
+    const b = await createShare(shareInput('Beta'));
+    const off = await createShare({ ...shareInput('Gamma'), enabled: false });
     expect(a.ok && b.ok && off.ok).toBe(true);
     if (!a.ok || !b.ok || !off.ok) return;
 
-    await upsertConnection(db, a.val, SUBJECT, {
+    await upsertConnection(a.val, SUBJECT, {
       ...connectionInput(),
       toolAccess: 'read_write',
       allowDelete: true,
     });
 
-    const withConnection = await listSharesWithConnection(db, SUBJECT);
+    const withConnection = await listSharesWithConnection(SUBJECT);
     expect(withConnection.ok).toBe(true);
     if (withConnection.ok) {
       const names = withConnection.val.map((entry) => entry.share.name);
@@ -171,38 +154,42 @@ describeLive('file-share store (live database)', () => {
       expect(beta?.connection).toBeNull();
     }
 
-    const connected = await listConnectedShares(db, SUBJECT);
+    const connected = await listConnectedShares(SUBJECT);
     expect(connected.ok).toBe(true);
     if (connected.ok) {
       expect(connected.val.map((entry) => entry.share.name)).toEqual(['Alpha']);
     }
 
-    const exposure = await resolveToolExposure(db, SUBJECT);
+    const exposure = await resolveToolExposure(SUBJECT);
     expect(exposure).toMatchObject({ ok: true, val: { read: true, write: true, del: true } });
 
     // A disabled share's connection stops counting toward exposure.
-    await updateShare(db, a.val, { ...shareInput('Alpha'), enabled: false });
-    const afterDisable = await resolveToolExposure(db, SUBJECT);
+    await updateShare(a.val, { ...shareInput('Alpha'), enabled: false });
+    const afterDisable = await resolveToolExposure(SUBJECT);
     expect(afterDisable).toMatchObject({
       ok: true,
       val: { read: false, write: false, del: false },
     });
 
-    for (const id of [a.val, b.val, off.val]) await deleteShare(db, id);
+    for (const id of [a.val, b.val, off.val]) await deleteShare(id);
   });
 
   it('share deletion cascades to its connections', async () => {
-    const created = await createShare(db, shareInput('Doomed'));
+    const created = await createShare(shareInput('Doomed'));
     expect(created.ok).toBe(true);
     if (!created.ok) return;
-    await upsertConnection(db, created.val, SUBJECT, connectionInput());
+    await upsertConnection(created.val, SUBJECT, connectionInput());
 
-    await deleteShare(db, created.val);
-    const orphan = await db
-      .selectFrom('file_share_connections')
-      .select('share_id')
-      .where('share_id', '=', created.val)
-      .executeTakeFirst();
-    expect(orphan).toBeUndefined();
+    expect(await getConnection(created.val, SUBJECT)).toMatchObject({
+      ok: true,
+      val: { username: 'alice' },
+    });
+
+    await deleteShare(created.val);
+    expect(await getConnection(created.val, SUBJECT)).toEqual({ ok: true, val: null });
+    expect(await readConnectionCiphertext(created.val, SUBJECT)).toMatchObject({
+      ok: true,
+      val: null,
+    });
   });
 });

@@ -22,7 +22,6 @@
 
 import type { McpServer, StandardSchemaWithJSON } from '@modelcontextprotocol/server';
 import { McpAuthRequired, namespacedToolName, type McpListedTool } from '@renkei/connector-mcp';
-import { getDatabase } from '@renkei/db';
 import { getServer } from '@renkei/connector-mcp';
 import type { MCPToolContext } from '../common';
 import { callRemoteTool, refreshInBackground } from '@/lib/mcp-servers/remote';
@@ -138,11 +137,8 @@ export function registerMcpServerTools(
           }
           // A tool the server no longer lists is the usual reason a call
           // fails outright; refresh so the next turn sees the real list.
-          const dbResult = getDatabase();
-          if (dbResult.ok) {
-            const read = await getServer(dbResult.val, entry.id);
-            if (read.ok && read.val) refreshInBackground(dbResult.val, read.val, subject);
-          }
+          const read = await getServer(entry.id);
+          if (read.ok && read.val) refreshInBackground(read.val, subject);
           logger.warn('MCP tool call failed: {error}', {
             component: 'mcp-servers',
             server: entry.slug,

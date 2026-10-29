@@ -1,93 +1,80 @@
 /**
  * Auto-detected issue cards beside the project screen's active chat: a
  * Jira issue and a GitHub issue guessed from that chat's most recent
- * pull request title (lib/code/issue-refs.ts) and fetched live. Mocked
- * with page.route (AGENTS.md: a call that would hit a real vendor —
- * Jira/GitHub here — is mocked at the browser edge) since the lookup
- * runs server-side against …/chats/[chatId]/issues; asserts both cards
- * render on a match, and that the component renders nothing at all
- * (not an error) when the lookup finds neither.
+ * pull request title (lib/code/issue-refs.ts) and fetched live.
  *
- * Own tenant fixtures under the shared e2e/seed.ts tenant, with a
- * project/chat id distinct from the other Code specs.
+ * The project is the test's own person's, a GitHub one: they connect
+ * GitHub through the real connect flow (the in-memory app's fake OAuth,
+ * e2e/support/code-host.ts) and create the project and its chat through
+ * the routes the UI calls.
+ *
+ * The cards' data is Jira's and GitHub's, fetched server-side by
+ * …/chats/[chatId]/issues (Jira at api.atlassian.com, which has no
+ * stand-in), so — as project-pulls-commits.spec.ts does for its
+ * GitHub-backed routes — the browser's request to that route is answered
+ * with page.route for a match and for a failed lookup. When nothing
+ * matches, the real route answers: the project's branch names no issue
+ * and the chat has no pull request yet.
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import {
+  connectCodeHost,
+  createChat,
+  createCodeProject,
+  prepareCodeHost,
+} from './support/code-host';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `55555555-5555-4555-8555-5555555555${digit}1`,
-    chatId: `55555555-5555-4555-8555-5555555555${digit}2`,
-    projectName: `Issue cards project (${digit})`,
-    chatTitle: `Fix the retry loop (${digit})`,
-  };
+interface Ids {
+  projectId: string;
+  chatId: string;
+  projectName: string;
 }
 
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', 'acme/site', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+/** A GitHub project of the person's own on main, with a chat in it. */
+async function stage(page: Page, testInfo: TestInfo): Promise<Ids> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const projectName = `Issue cards project (${tag})`;
+  const projectId = await createCodeProject(page.request, {
+    provider: 'github',
+    name: projectName,
+    repository: 'acme/site',
+    branch: 'main',
+  });
+  const chatId = await createChat(page.request, {
+    projectId,
+    title: `Fix the retry loop (${tag})`,
+  });
+  return { projectId, chatId, projectName };
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
     fullPage: false,
   });
 }
 
 test.describe('issue cards', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  test.beforeEach(async ({ page, request, person: _person }) => {
+    await prepareCodeHost(request);
+    await connectCodeHost(page, 'github');
   });
 
   test('renders a Jira card and a GitHub issue card on a match', async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
-    await seedFixtures(ids);
+    const ids = await stage(page, testInfo);
     await page.route(
       `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
       async (route) => {
@@ -120,39 +107,31 @@ test.describe('issue cards', () => {
     await expect(main.getByRole('link', { name: /#41.*open/ })).toBeVisible();
     await shot(page, testInfo, 'issue-cards-both.png');
 
-    if (mobile) {
-      await page.setViewportSize(MOBILE_VIEWPORT);
-      await expect(main.getByRole('link', { name: /PROJ-9/ })).toBeVisible();
-      await shot(page, testInfo, 'issue-cards-mobile.png');
-    }
+    // The phone pass, as a resized viewport.
+    await page.setViewportSize(MOBILE_VIEWPORT);
+    await expect(main.getByRole('link', { name: /PROJ-9/ })).toBeVisible();
+    await shot(page, testInfo, 'issue-cards-mobile.png');
   });
 
-  test('renders nothing when the lookup finds neither — no error shown', async ({ page }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await seedFixtures(ids);
-    await page.route(
-      `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
-      async (route) => {
-        await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ jira: null, github: null }),
-        });
-      }
+  test('renders nothing when the lookup finds neither — no error shown', async ({
+    page,
+  }, testInfo) => {
+    const ids = await stage(page, testInfo);
+    // The real route: main names no issue, and the chat has no pull request.
+    const lookup = page.waitForResponse((response) =>
+      response.url().endsWith(`/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`)
     );
-
     await page.goto(`/code/${ids.projectId}`);
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
+    const answer = await lookup;
+    expect(await answer.json()).toEqual({ jira: null, github: null });
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);
     await expect(main.getByText(/could not be read|error/i)).toHaveCount(0);
   });
 
-  test('renders nothing on a lookup failure (no token) — hidden, not an error', async ({
-    page,
-  }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await seedFixtures(ids);
+  test('renders nothing on a lookup failure — hidden, not an error', async ({ page }, testInfo) => {
+    const ids = await stage(page, testInfo);
     await page.route(
       `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
       async (route) => {

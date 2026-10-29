@@ -8,7 +8,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
@@ -47,24 +47,26 @@ export function notifyArtifactEvent(input: {
     const who = await getIdentityDisplay(input.actorSubject);
     const actorName = who?.displayName || who?.email || 'Someone';
     const headline = artifactHeadline(input.kind, actorName, input.filename);
-    const dbResult = getDatabase();
-    if (!dbResult.ok) return;
     const refUrl = `/chat/artifacts?artifact=${input.artifactId}`;
     const id = randomUUID();
-    await dbResult.val
-      .insertInto('agent_notifications')
-      .values({
-        id,
-        subject: input.recipientSubject,
-        kind: input.kind,
-        headline,
-        ref_url: refUrl,
-      })
-      .execute();
+    await getDataStore().notifications.insert({
+      id,
+      subject: input.recipientSubject,
+      kind: input.kind,
+      category: null,
+      connector: null,
+      tool: null,
+      entity: null,
+      headline,
+      refUrl,
+      agentId: null,
+      agentName: null,
+      runId: null,
+      meta: null,
+    });
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
       void sendPush(
-        dbResult.val,
         input.recipientSubject,
         keyResult.val,
         {

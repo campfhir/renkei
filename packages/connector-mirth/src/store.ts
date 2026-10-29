@@ -1,9 +1,10 @@
 /**
- * Kysely accessors for Mirth instances and per-user connections — the only
- * file that knows the table shapes. Everything returns Result and every
- * uncertain outcome denies: a DB error is an error (not "no instances"),
- * and a row that fails validation poisons the read rather than being
- * skipped.
+ * Mirth instances and per-user connections, through the data store
+ * (`getDataStore().mirthInstances`): the store keeps and returns rows, this file
+ * validates them into the connector's types. Everything returns Result and
+ * every uncertain outcome denies: a storage error is an error (not "no
+ * instances"), and a row that fails validation poisons the read rather
+ * than being skipped.
  *
  * There is no authorization model here. Operators register an instance's
  * connection details; each person stores their OWN Mirth credential for it
@@ -13,8 +14,7 @@
  * reads and the worker's request path deliberately does not.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type MirthInstanceRecord } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { normalizePermissions, type MirthPermission } from './permissions';
@@ -31,46 +31,24 @@ export interface InstanceRow {
   updatedAt: Date;
 }
 
-interface RawInstance {
-  id: string;
-  name: string;
-  environment: string;
-  base_url: string;
-  tls_verify: boolean;
-  ca_pem: string | null;
-  allow_insecure_http: boolean;
-  enabled: boolean;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function summaryFromRow(row: RawInstance): MirthInstanceSummary {
+function summaryFromRecord(row: MirthInstanceRecord): MirthInstanceSummary {
   return {
     id: row.id,
     name: row.name,
     environment: row.environment,
-    baseUrl: row.base_url,
-    tlsVerify: row.tls_verify,
-    hasCustomCa: typeof row.ca_pem === 'string' && row.ca_pem.trim().length > 0,
-    allowInsecureHttp: row.allow_insecure_http,
+    baseUrl: row.baseUrl,
+    tlsVerify: row.tlsVerify,
+    hasCustomCa: typeof row.caPem === 'string' && row.caPem.trim().length > 0,
+    allowInsecureHttp: row.allowInsecureHttp,
     enabled: row.enabled,
   };
 }
 
-const INSTANCE_COLUMNS = [
-  'mirth_instances.id',
-  'mirth_instances.name',
-  'mirth_instances.environment',
-  'mirth_instances.base_url',
-  'mirth_instances.tls_verify',
-  'mirth_instances.ca_pem',
-  'mirth_instances.allow_insecure_http',
-  'mirth_instances.enabled',
-] as const;
-
-function connectionFromRow(row: {
+function connectionFromRecord(row: {
   username: string;
   permissions: unknown;
 }): Result<InstanceConnection, StoreError> {
@@ -78,6 +56,21 @@ function connectionFromRow(row: {
   // Unknown ids (a permission removed from the catalog) are dropped rather
   // than poisoning the row: less access, never more.
   return ok({ username: row.username, permissions: normalizePermissions(row.permissions) });
+}
+
+function rowFromRecord(row: MirthInstanceRecord): InstanceRow {
+  return {
+    summary: summaryFromRecord(row),
+    caPem: typeof row.caPem === 'string' && row.caPem.trim() ? row.caPem : null,
+    settings: isRecord(row.settings) ? { ...row.settings } : {},
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+/** The data store's name-uniqueness refusal (the only unique key a write here can hit). */
+function isDuplicateName(cause: unknown): boolean {
+  return isRecord(cause) && cause.code === '23505';
 }
 
 // ---------------------------------------------------------------------------
@@ -102,38 +95,22 @@ export interface InstanceWithConnection {
  * secret in this model, credentials are the gate.
  */
 export async function listInstancesWithConnection(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<InstanceWithConnection[], StoreError>> {
   const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('mirth_instances')
-        .leftJoin('mirth_instance_connections', (join) =>
-          join
-            .onRef('mirth_instance_connections.instance_id', '=', 'mirth_instances.id')
-            .on('mirth_instance_connections.subject', '=', subject)
-        )
-        .select([
-          ...INSTANCE_COLUMNS,
-          'mirth_instance_connections.username',
-          'mirth_instance_connections.permissions',
-        ])
-        .where('mirth_instances.enabled', '=', true)
-        .orderBy('mirth_instances.name')
-        .execute(),
+    () => getDataStore().mirthInstances.listWithConnection(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return rows;
 
   const instances: InstanceWithConnection[] = [];
   for (const row of rows.val) {
-    const summary = summaryFromRow(row);
-    if (row.username === null || row.permissions === null) {
+    const summary = summaryFromRecord(row.instance);
+    if (!row.connection) {
       instances.push({ instance: summary, connection: null });
       continue;
     }
-    const connection = connectionFromRow({ username: row.username, permissions: row.permissions });
+    const connection = connectionFromRecord(row.connection);
     if (!connection.ok) return connection;
     instances.push({ instance: summary, connection: connection.val });
   }
@@ -142,10 +119,9 @@ export async function listInstancesWithConnection(
 
 /** The instances this subject has connected — what the tools list. */
 export async function listConnectedInstances(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ConnectedInstance[], StoreError>> {
-  const all = await listInstancesWithConnection(db, subject);
+  const all = await listInstancesWithConnection(subject);
   if (!all.ok) return all;
   return ok(
     all.val.flatMap((entry) =>
@@ -156,43 +132,29 @@ export async function listConnectedInstances(
 
 /** One connection's exposure row (no credential), or null if not connected. */
 export async function getConnection(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string
 ): Promise<Result<InstanceConnection | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('mirth_instance_connections')
-        .select(['username', 'permissions'])
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().mirthInstances.getConnection(instanceId, subject),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
   if (!row.val) return ok(null);
-  return connectionFromRow(row.val);
+  return connectionFromRecord(row.val);
 }
 
 /** The sealed credential for one connection — only the worker decrypts it. */
 export async function readConnectionCiphertext(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string
 ): Promise<Result<string | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('mirth_instance_connections')
-        .select('encrypted_credentials')
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().mirthInstances.getConnection(instanceId, subject),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
-  return ok(row.val?.encrypted_credentials ?? null);
+  return ok(row.val?.encryptedCredentials ?? null);
 }
 
 export interface ConnectionInput {
@@ -205,31 +167,17 @@ export interface ConnectionInput {
 
 /** Store or replace this subject's connection to an instance. */
 export async function upsertConnection(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string,
   input: ConnectionInput
 ): Promise<Result<void, StoreError>> {
   const written = await wrapAsync(
     () =>
-      db
-        .insertInto('mirth_instance_connections')
-        .values({
-          instance_id: instanceId,
-          subject,
-          encrypted_credentials: input.encryptedCredentials,
-          username: input.username,
-          permissions: [...input.permissions],
-        })
-        .onConflict((oc) =>
-          oc.constraint('mirth_instance_connections_pk').doUpdateSet({
-            encrypted_credentials: input.encryptedCredentials,
-            username: input.username,
-            permissions: [...input.permissions],
-            updated_at: new Date(),
-          })
-        )
-        .execute(),
+      getDataStore().mirthInstances.upsertConnection(instanceId, subject, {
+        encryptedCredentials: input.encryptedCredentials,
+        username: input.username,
+        permissions: [...input.permissions],
+      }),
     'DB_ERROR' as const
   );
   if (!written.ok) return written;
@@ -238,42 +186,32 @@ export async function upsertConnection(
 
 /** Change only the permissions, keeping the stored credential. */
 export async function updateConnectionPermissions(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string,
   permissions: readonly MirthPermission[]
 ): Promise<Result<boolean, StoreError>> {
   const updated = await wrapAsync(
     () =>
-      db
-        .updateTable('mirth_instance_connections')
-        .set({ permissions: [...permissions], updated_at: new Date() })
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+      getDataStore().mirthInstances.updateConnectionPermissions(instanceId, subject, [
+        ...permissions,
+      ]),
     'DB_ERROR' as const
   );
   if (!updated.ok) return updated;
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
 /** Remove this subject's connection (credential included). */
 export async function deleteConnection(
-  db: Kysely<DB>,
   instanceId: string,
   subject: string
 ): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
-    () =>
-      db
-        .deleteFrom('mirth_instance_connections')
-        .where('instance_id', '=', instanceId)
-        .where('subject', '=', subject)
-        .executeTakeFirst(),
+    () => getDataStore().mirthInstances.deleteConnection(instanceId, subject),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
-  return ok(deleted.val.numDeletedRows > BigInt(0));
+  return ok(deleted.val > 0);
 }
 
 /** The permissions this subject holds across every enabled instance — see registry. */
@@ -291,30 +229,18 @@ export interface ToolExposure {
  * check happens again on every call.
  */
 export async function resolveToolExposure(
-  db: Kysely<DB>,
   subject: string
 ): Promise<Result<ToolExposure, StoreError>> {
   const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('mirth_instance_connections')
-        .innerJoin(
-          'mirth_instances',
-          'mirth_instances.id',
-          'mirth_instance_connections.instance_id'
-        )
-        .select(['mirth_instance_connections.permissions'])
-        .where('mirth_instance_connections.subject', '=', subject)
-        .where('mirth_instances.enabled', '=', true)
-        .execute(),
+    () => getDataStore().mirthInstances.connectionPermissions(subject),
     'DB_ERROR' as const
   );
   if (!rows.ok) return rows;
 
   const granted: unknown[] = [];
-  for (const row of rows.val) {
-    if (!Array.isArray(row.permissions)) return err('MALFORMED_ROW' as const);
-    granted.push(...row.permissions);
+  for (const permissions of rows.val) {
+    if (!Array.isArray(permissions)) return err('MALFORMED_ROW' as const);
+    granted.push(...permissions);
   }
   return ok({ connected: rows.val.length > 0, permissions: normalizePermissions(granted) });
 }
@@ -323,50 +249,21 @@ export async function resolveToolExposure(
 // Admin accessors — used only behind ROLE_OPERATOR routes.
 // ---------------------------------------------------------------------------
 
-function rowFromRaw(
-  row: RawInstance & { settings: unknown; created_at: Date; updated_at: Date }
-): InstanceRow {
-  return {
-    summary: summaryFromRow(row),
-    caPem: typeof row.ca_pem === 'string' && row.ca_pem.trim() ? row.ca_pem : null,
-    settings: isRecord(row.settings) ? { ...row.settings } : {},
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
-  };
-}
-
-export async function listInstances(
-  db: Kysely<DB>
-): Promise<Result<InstanceRow[], StoreError>> {
-  const rows = await wrapAsync(
-    () =>
-      db
-        .selectFrom('mirth_instances')
-        .selectAll()
-        .orderBy('name')
-        .execute(),
-    'DB_ERROR' as const
-  );
+export async function listInstances(): Promise<Result<InstanceRow[], StoreError>> {
+  const rows = await wrapAsync(() => getDataStore().mirthInstances.list(), 'DB_ERROR' as const);
   if (!rows.ok) return rows;
-  return ok(rows.val.map((row) => rowFromRaw(row)));
+  return ok(rows.val.map(rowFromRecord));
 }
 
 export async function getInstance(
-  db: Kysely<DB>,
   instanceId: string
 ): Promise<Result<InstanceRow | null, StoreError>> {
   const row = await wrapAsync(
-    () =>
-      db
-        .selectFrom('mirth_instances')
-        .selectAll()
-        .where('id', '=', instanceId)
-        .executeTakeFirst(),
+    () => getDataStore().mirthInstances.get(instanceId),
     'DB_ERROR' as const
   );
   if (!row.ok) return row;
-  if (!row.val) return ok(null);
-  return ok(rowFromRaw(row.val));
+  return ok(row.val ? rowFromRecord(row.val) : null);
 }
 
 export interface InstanceInput {
@@ -381,83 +278,37 @@ export interface InstanceInput {
 }
 
 export async function createInstance(
-  db: Kysely<DB>,
   input: InstanceInput
 ): Promise<Result<string, StoreError | 'DUPLICATE_NAME'>> {
   const inserted = await wrapAsync(
-    () =>
-      db
-        .insertInto('mirth_instances')
-        .values({
-          name: input.name,
-          environment: input.environment,
-          base_url: input.baseUrl,
-          tls_verify: input.tlsVerify,
-          ca_pem: input.caPem ?? null,
-          allow_insecure_http: input.allowInsecureHttp,
-          enabled: input.enabled,
-          settings: JSON.stringify({}),
-        })
-        .returning('id')
-        .executeTakeFirstOrThrow(),
+    () => getDataStore().mirthInstances.create(input),
     'DB_ERROR' as const
   );
   if (!inserted.ok) {
     return isDuplicateName(inserted.err.cause) ? err('DUPLICATE_NAME' as const) : inserted;
   }
-  return ok(inserted.val.id);
+  return ok(inserted.val);
 }
 
 export async function updateInstance(
-  db: Kysely<DB>,
   instanceId: string,
   input: InstanceInput
 ): Promise<Result<boolean, StoreError | 'DUPLICATE_NAME'>> {
   const updated = await wrapAsync(
-    () =>
-      db
-        .updateTable('mirth_instances')
-        .set({
-          name: input.name,
-          environment: input.environment,
-          base_url: input.baseUrl,
-          tls_verify: input.tlsVerify,
-          ...(input.caPem === undefined ? {} : { ca_pem: input.caPem }),
-          allow_insecure_http: input.allowInsecureHttp,
-          enabled: input.enabled,
-          updated_at: new Date().toISOString(),
-        })
-        .where('id', '=', instanceId)
-        .executeTakeFirst(),
+    () => getDataStore().mirthInstances.update(instanceId, input),
     'DB_ERROR' as const
   );
   if (!updated.ok) {
     return isDuplicateName(updated.err.cause) ? err('DUPLICATE_NAME' as const) : updated;
   }
-  return ok(updated.val.numUpdatedRows > BigInt(0));
+  return ok(updated.val > 0);
 }
 
-export async function deleteInstance(
-  db: Kysely<DB>,
-  instanceId: string
-): Promise<Result<boolean, StoreError>> {
+export async function deleteInstance(instanceId: string): Promise<Result<boolean, StoreError>> {
   const deleted = await wrapAsync(
-    () =>
-      db
-        .deleteFrom('mirth_instances')
-        .where('id', '=', instanceId)
-        .executeTakeFirst(),
+    () => getDataStore().mirthInstances.delete(instanceId),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
-  return ok(deleted.val.numDeletedRows > BigInt(0));
-}
-
-function isDuplicateName(cause: unknown): boolean {
-  return (
-    isRecord(cause) &&
-    cause.code === '23505' &&
-    typeof cause.constraint === 'string' &&
-    cause.constraint === 'idx_mirth_instances_name'
-  );
+  return ok(deleted.val > 0);
 }

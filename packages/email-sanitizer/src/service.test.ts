@@ -6,8 +6,6 @@
  * wrapper's own decisions.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => ({ execute: async () => ({ rows: [] }) }) }));
 jest.mock('@renkei/knowledge', () => ({
   vectorLiteral: (vector: number[]) => `[${vector.join(',')}]`,
 }));
@@ -83,12 +81,11 @@ describe('sanitizeEmailForTenant — dedup', () => {
       embedder: { embed: async () => ok([[0.1, 0.2]]) },
     });
 
-    expect(mockHasRecentDuplicate).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.any(Number),
-      { ownerUpn: 'bob@example.com', refId: 'bob@example.com/msg/1' }
-    );
-    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith(expect.any(String), {
+    expect(mockHasRecentDuplicate).toHaveBeenCalledWith(expect.any(String), expect.any(Number), {
+      ownerUpn: 'bob@example.com',
+      refId: 'bob@example.com/msg/1',
+    });
+    expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith(expect.any(Array), {
       refId: 'bob@example.com/msg/1',
       // Mail compares only against this mailbox's own mail — not a
       // colleague's, and not calendar or task chunks from the same organization.
@@ -156,10 +153,7 @@ describe('sanitizeEmailForTenant — dedup', () => {
 
     expect(result.action).toBe('index');
     if (result.action === 'index') expect(result.content).toContain('Just checking in.');
-    expect(mockRecordError).toHaveBeenCalledWith(
-      'script-1',
-      expect.stringContaining('boom')
-    );
+    expect(mockRecordError).toHaveBeenCalledWith('script-1', expect.stringContaining('boom'));
   });
 
   it('indexes normally when nothing is a duplicate', async () => {
@@ -220,7 +214,7 @@ describe('sanitizeEmailForTenant — dedup', () => {
 
     expect(embed).toHaveBeenCalledWith([expect.stringContaining('Just checking in.')]);
     expect(mockHasNearDuplicateChunk).toHaveBeenCalledWith(
-      '[0.1,0.2,0.3]',
+      [0.1, 0.2, 0.3],
       expect.objectContaining({ refId: 'bob@example.com/msg/1' })
     );
     expect(result).toMatchObject({ action: 'excluded', reason: 'duplicate' });

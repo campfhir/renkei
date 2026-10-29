@@ -4,7 +4,7 @@
  * The point of the button is the second half: you read a failed run, saw
  * what the agent got wrong, fixed the instructions — and now want the same
  * triggering message put back through the corrected agent. So this reads
- * the old run's initial_state (its trigger.* variables) and starts a fresh
+ * the old run's initial state (its trigger.* variables) and starts a fresh
  * run from the agent as it stands NOW. It deliberately does not resume the
  * old run: that run's snapshot is the version you just decided was wrong,
  * and its conversation was had under instructions that no longer exist.
@@ -25,7 +25,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun, findInProgressRun } from '@renkei/agents/runs';
@@ -46,23 +46,18 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
   // Access is structural on both halves: the caller must resolve to the
   // agent (owner, or grantee through an unexpired grant), and the run must
   // be that agent's, in this tenant.
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const run = await db
-    .selectFrom('agent_runs')
-    .select(['id', 'status', 'initial_state', 'trigger_id', 'trigger_kind'])
-    .where('agent_id', '=', agentId)
-    .where('id', '=', runId)
-    .where('owner_subject', '=', access.ownerSubject)
-    .executeTakeFirst();
+  const store = getDataStore();
+  const run = await store.agentRuns.findRestartSource({
+    agentId,
+    runId,
+    ownerSubject: access.ownerSubject,
+  });
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // A run still in flight would be racing itself; let it finish or be
@@ -71,12 +66,7 @@ export async function POST(
     return NextResponse.json({ error: 'This run has not finished yet.' }, { status: 409 });
   }
 
-  const agent = await db
-    .selectFrom('agents')
-    .select(['id', 'owner_subject', 'instructions', 'tools', 'llm_model_id'])
-    .where('id', '=', agentId)
-    .where('owner_subject', '=', access.ownerSubject)
-    .executeTakeFirst();
+  const agent = await store.agents.find(agentId, { ownerSubject: access.ownerSubject });
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const raw = await request.text();
@@ -96,8 +86,8 @@ export async function POST(
   // re-running one of its finished runs asks nothing extra. A scheduled
   // (or manual, api, chained) run is the case someone reruns expecting
   // ONE thing to happen, so a second one already going is worth a beat.
-  if (run.trigger_kind !== 'event' && !confirmed) {
-    const inProgress = await findInProgressRun(db, agentId);
+  if (run.triggerKind !== 'event' && !confirmed) {
+    const inProgress = await findInProgressRun(agentId);
     if (inProgress) {
       return NextResponse.json(
         {
@@ -112,17 +102,17 @@ export async function POST(
   }
 
   const initialState =
-    typeof run.initial_state === 'object' &&
-    run.initial_state !== null &&
-    !Array.isArray(run.initial_state)
-      ? { ...run.initial_state }
+    typeof run.initialState === 'object' &&
+    run.initialState !== null &&
+    !Array.isArray(run.initialState)
+      ? { ...run.initialState }
       : undefined;
 
-  const created = await createAgentRun(db, agentJobsQueue().producer, {
+  const created = await createAgentRun(agentJobsQueue().producer, {
     agentId,
-    ownerSubject: agent.owner_subject,
+    ownerSubject: agent.ownerSubject,
     definition: agentDefinitionOf(agent),
-    llmModelId: agent.llm_model_id,
+    llmModelId: agent.llmModelId,
     // Not the original trigger row: this run was started by a person
     // pressing a button, and the history should say so. The trigger's DATA
     // rides along in initialState, which is what the run actually reads.

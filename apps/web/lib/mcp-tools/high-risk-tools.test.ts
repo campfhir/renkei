@@ -16,15 +16,6 @@
 
 const fetchSpy = jest.fn();
 
-jest.mock('kysely', () => ({
-  sql: Object.assign(() => ({ as: () => ({}) }), {
-    raw: () => ({}),
-    join: () => ({}),
-    ref: () => ({}),
-    lit: () => ({}),
-  }),
-}));
-
 jest.mock('@/lib/logger', () => ({
   logger: {
     info: jest.fn(),
@@ -44,41 +35,29 @@ interface GrantRow {
 let grants: Record<string, GrantRow | undefined> = {};
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: (table: string) => {
-        if (table === 'file_share_connections') {
-          const shareChain = {
-            innerJoin: () => shareChain,
-            select: () => shareChain,
-            where: () => shareChain,
-            execute: async () => [],
-          };
-          return shareChain;
-        }
-        let provider = '';
-        const chain = {
-          select: () => chain,
-          where: (column: string, _op: string, value: string) => {
-            if (column === 'provider') provider = value;
-            return chain;
-          },
-          limit: () => chain,
-          executeTakeFirst: async () => {
-            const row = grants[provider];
-            return row ? { provider_account_id: 'acct-1', ...row } : undefined;
-          },
-          // Every grant of a provider (Salesforce: one per connected org).
-          execute: async () => {
-            const row = grants[provider];
-            return row ? [{ provider_account_id: 'acct-1', ...row }] : [];
-          },
-        };
-        return chain;
+  // The caller's grants and share connections, as the data store answers them.
+  getDataStore: () => ({
+    providerGrants: {
+      listForSubject: async (subject: string, options: { provider?: string } = {}) => {
+        const row = grants[options.provider ?? ''];
+        return row
+          ? [
+              {
+                provider: options.provider ?? '',
+                accountId: 'acct-1',
+                subject,
+                displayName: 'acct-1',
+                requestedScopes: row.requested_scopes,
+                grantedScopes: row.granted_scopes,
+                metadata: {},
+              },
+            ]
+          : [];
       },
     },
+    fileShares: { connectionExposures: async () => [] },
   }),
+  memoryDataStoreRequested: () => false,
 }));
 
 jest.mock('@renkei/settings', () => ({

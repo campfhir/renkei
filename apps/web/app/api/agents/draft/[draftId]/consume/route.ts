@@ -8,7 +8,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { consumeDraft } from '@/lib/agents/draft-store';
 
@@ -20,11 +19,8 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // Owner-scoped inside consumeDraft, so a draft id belonging to somebody
   // else is a no-op rather than an error that confirms the id exists.
-  await consumeDraft(dbResult.val, session.subject, draftId);
+  await consumeDraft(session.subject, draftId);
   return NextResponse.json({ ok: true });
 }

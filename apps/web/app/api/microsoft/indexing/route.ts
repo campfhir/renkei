@@ -16,33 +16,26 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { webhookEventsQueue } from '@renkei/queue';
 import { MICROSOFT, outlookIndexingOf, OUTLOOK_INDEXING_CATEGORIES } from '@renkei/provider-grants';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 
 async function grantOf(subject: string) {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'metadata'])
-    .where('provider', '=', MICROSOFT)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
-  return row ?? null;
+  const grants = await wrapAsync(
+    () => getDataStore().providerGrants.listForSubject(subject, { provider: MICROSOFT }),
+    'DB_ERROR' as const
+  );
+  return grants.ok ? (grants.val[0] ?? null) : null;
 }
 
 function metadataRecord(value: unknown): Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {};
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -51,9 +44,7 @@ export async function GET(
   return NextResponse.json({ indexing: outlookIndexingOf(metadataRecord(grant.metadata)) });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -67,19 +58,13 @@ export async function PUT(
   const grant = await grantOf(session.subject);
   if (!grant) return NextResponse.json({ error: 'Microsoft is not connected' }, { status: 404 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  await dbResult.val
-    .updateTable('provider_grants')
-    .set({
-      // A jsonb merge, not a read-modify-write: concurrent metadata writers
-      // (token refresh re-deriving scopes) must not lose to this update.
-      metadata: sql`metadata || jsonb_build_object('indexing', ${JSON.stringify(indexing)}::jsonb)`,
-      updated_at: sql`NOW()`,
-    })
-    .where('provider', '=', MICROSOFT)
-    .where('provider_account_id', '=', grant.provider_account_id)
-    .execute();
+  // A jsonb merge, not a read-modify-write: concurrent metadata writers
+  // (token refresh re-deriving scopes) must not lose to this update.
+  const saved = await wrapAsync(
+    () => getDataStore().providerGrants.mergeMetadata(MICROSOFT, grant.accountId, { indexing }),
+    'DB_ERROR' as const
+  );
+  if (!saved.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   // The same bootstrap a fresh connect enqueues: it reconciles subscriptions
   // to the new preference and runs the initial backfill for anything just
@@ -87,8 +72,8 @@ export async function PUT(
   const enqueued = await webhookEventsQueue().producer.enqueue({
     source: MICROSOFT,
     type: 'grant.connected',
-    payload: { accountId: grant.provider_account_id, subject: session.subject },
-    orderingKey: `microsoft/${grant.provider_account_id}`,
+    payload: { accountId: grant.accountId, subject: session.subject },
+    orderingKey: `microsoft/${grant.accountId}`,
   });
   if (!enqueued.ok) {
     logger.warn('indexing prefs saved but bootstrap not enqueued; sweep will apply', {

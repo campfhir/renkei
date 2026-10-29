@@ -508,10 +508,7 @@ const fetchSpy = jest.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
   return fakeOrg(method, url.pathname, url.search.slice(1));
 });
 
-async function tools(
-  scopes: string[] | null = ALL_SALESFORCE_ADMIN_SCOPES,
-  roles?: string[]
-) {
+async function tools(scopes: string[] | null = ALL_SALESFORCE_ADMIN_SCOPES, roles?: string[]) {
   const handlers = new Map<string, ToolHandler>();
   const server = {
     registerTool: (name: string, _config: unknown, handler: ToolHandler) => {
@@ -628,12 +625,10 @@ beforeEach(() => {
   connector = org('uat', true);
   checkOnlyAnswer = { done: true, success: true, status: 'Succeeded', checkOnly: true };
   app.listSalesforceConnectors.mockImplementation(async () => [connector]);
-  store.createChangeRequest.mockImplementation(
-    async (_db: unknown, input: Record<string, unknown>) => ({
-      id: '11111111-2222-4333-8444-555555555555',
-      ...input,
-    })
-  );
+  store.createChangeRequest.mockImplementation(async (input: Record<string, unknown>) => ({
+    id: '11111111-2222-4333-8444-555555555555',
+    ...input,
+  }));
   resetApiUsage();
   invalidateDescribe();
   global.fetch = fetchSpy as unknown as typeof fetch;
@@ -673,7 +668,7 @@ describe('registration', () => {
 
 describe('salesforce_admin_request_change', () => {
   beforeEach(() => {
-    store.createRequest.mockImplementation(async (_db: unknown, input: Record<string, unknown>) => ({
+    store.createRequest.mockImplementation(async (input: Record<string, unknown>) => ({
       id: '99999999-2222-4333-8444-555555555555',
       ...input,
     }));
@@ -690,7 +685,7 @@ describe('salesforce_admin_request_change', () => {
       ['renkei-user']
     );
     expect(result.isError).toBeUndefined();
-    expect(store.createRequest.mock.calls[0][1]).toMatchObject({
+    expect(store.createRequest.mock.calls[0][0]).toMatchObject({
       subject: 'subject-1',
       connectorKey: 'uat',
       orgId: '00D000000000062EAA',
@@ -716,11 +711,9 @@ describe('salesforce_admin_request_change', () => {
 
   it('is refused for a production org that takes no changes, before anything is stored', async () => {
     connector = org('production', false);
-    const result = await call(
-      'salesforce_admin_request_change',
-      { title: 'x', description: 'y' },
-      ['renkei-user']
-    );
+    const result = await call('salesforce_admin_request_change', { title: 'x', description: 'y' }, [
+      'renkei-user',
+    ]);
     expect(result.isError).toBe(true);
     expect(text(result)).toContain('does not take change requests');
     expect(store.createRequest).not.toHaveBeenCalled();
@@ -747,7 +740,6 @@ describe('building a request in words', () => {
       ['renkei-operator']
     );
     expect(store.closeRequestAsProposed).toHaveBeenCalledWith(
-      expect.anything(),
       'b7c2a1d0-1111-4222-8333-944455556666',
       '11111111-2222-4333-8444-555555555555'
     );
@@ -784,18 +776,14 @@ describe('salesforce_admin_list_change_requests', () => {
   it('shows an operator everyone’s, with what each asked for, and an ordinary user only their own', async () => {
     store.listAllChangeRequests.mockResolvedValue([row({})]);
     store.listChangeRequests.mockResolvedValue([]);
-    const operator = await call(
-      'salesforce_admin_list_change_requests',
-      { everyone: true },
-      ['renkei-operator']
-    );
+    const operator = await call('salesforce_admin_list_change_requests', { everyone: true }, [
+      'renkei-operator',
+    ]);
     expect(text(operator)).toContain('asked by asker');
     expect(text(operator)).toContain('Asked for: Site_Visit__c needs Outcome__c.');
-    const ordinary = await call(
-      'salesforce_admin_list_change_requests',
-      { everyone: true },
-      ['renkei-user']
-    );
+    const ordinary = await call('salesforce_admin_list_change_requests', { everyone: true }, [
+      'renkei-user',
+    ]);
     expect(store.listAllChangeRequests).toHaveBeenCalledTimes(1);
     expect(text(ordinary)).toBe('No change requests.');
   });
@@ -840,7 +828,7 @@ describe('salesforce_admin_propose_fields', () => {
     // Nothing on the object but the new fields.
     expect(files['objects/Site_Visit__c.object']).not.toContain('Stage__c');
 
-    const stored = store.createChangeRequest.mock.calls[0][1];
+    const stored = store.createChangeRequest.mock.calls[0][0];
     expect(stored).toMatchObject({
       connectorKey: 'uat',
       orgId: '00D000000000062EAA',
@@ -863,7 +851,7 @@ describe('salesforce_admin_propose_fields', () => {
         edit: true,
       }),
     ]);
-    expect(store.setValidation.mock.calls[0][2]).toMatchObject({
+    expect(store.setValidation.mock.calls[0][1]).toMatchObject({
       deployId: DEPLOY,
       done: true,
       success: true,
@@ -947,7 +935,7 @@ describe('salesforce_admin_propose_validation_rule', () => {
       errorDisplayField: 'Visit_Date__c',
     });
     expect(result.isError).toBeUndefined();
-    const stored = store.createChangeRequest.mock.calls[0][1];
+    const stored = store.createChangeRequest.mock.calls[0][0];
     expect(stored.title).toBe('Site Visit: change the validation rule Visit_Date_Required');
     expect(stored.payload.preconditions).toEqual([
       expect.objectContaining({ kind: 'rule-unchanged', rule: 'Visit_Date_Required' }),
@@ -978,7 +966,7 @@ describe('salesforce_admin_propose_validation_rule', () => {
   });
 });
 
-const stored = () => store.createChangeRequest.mock.calls[0][1];
+const stored = () => store.createChangeRequest.mock.calls[0][0];
 
 describe('salesforce_admin_get_layout', () => {
   it('lists the layouts with who uses them, and reads one by section', async () => {

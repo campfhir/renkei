@@ -21,8 +21,6 @@ jest.mock('./change-requests', () => ({
   setValidation: jest.fn(),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { authedFetch } from '@renkei/delegate-client';
 import { EMPTY_POLICY } from '@renkei/connector-salesforce';
 import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
@@ -225,9 +223,8 @@ const change = (): ChangeRequest => ({
   resolution: null,
 });
 
-const db = {} as Kysely<DB>;
 const context = { subject: 'ada' };
-const finished = () => store.finishChangeRequest.mock.calls.at(-1)?.[2];
+const finished = () => store.finishChangeRequest.mock.calls.at(-1)?.[1];
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -244,7 +241,7 @@ beforeEach(() => {
 describe('applyChangeRequest', () => {
   it('stops before deploying when the org moved since the proposal', async () => {
     fieldExistsNow = true;
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('failed');
     expect(finished()?.results.operations[0].detail).toContain(
       'Site_Visit__c.Outcome__c exists now'
@@ -270,7 +267,7 @@ describe('applyChangeRequest', () => {
         ],
       },
     };
-    const outcome = await applyChangeRequest(db, context, access, recordTypes, 'ada');
+    const outcome = await applyChangeRequest(context, access, recordTypes, 'ada');
     expect(outcome.status).toBe('failed');
     const detail = finished()?.results.operations[0].detail ?? '';
     expect(detail).toContain(
@@ -281,10 +278,9 @@ describe('applyChangeRequest', () => {
   });
 
   it('quick-deploys the validation, records the deploy, then grants the fields', async () => {
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('applied');
     expect(store.recordDeployStarted).toHaveBeenCalledWith(
-      db,
       change().id,
       expect.objectContaining({ deployId: QUICK, quick: true })
     );
@@ -304,7 +300,7 @@ describe('applyChangeRequest', () => {
 
   it('deploys in full when the validation no longer qualifies for a quick deploy', async () => {
     quickQualifies = false;
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('applied');
     expect(outcome.results.deployId).toBe(FULL);
     const full = requests.find(
@@ -325,7 +321,7 @@ describe('applyChangeRequest', () => {
       errorCode: 'INVALID_ID_FIELD',
       message: 'Source validate did not run tests in the org',
     };
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('applied');
     expect(outcome.results.deployId).toBe(FULL);
     expect(outcome.results.quick).toBe(false);
@@ -334,7 +330,7 @@ describe('applyChangeRequest', () => {
   it('does not deploy in full after a quick deploy is refused for any other reason', async () => {
     quickQualifies = false;
     quickRefusal = { status: 400, errorCode: 'INVALID_FIELD', message: 'something else' };
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('failed');
     expect(
       requests.some((r) => r.method === 'POST' && r.path === `${V}/metadata/deployRequest`)
@@ -343,7 +339,7 @@ describe('applyChangeRequest', () => {
 
   it('fails in Salesforce’s words, and grants nothing, when the deploy fails', async () => {
     deploySucceeds = false;
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('failed');
     expect(finished()?.results.operations.at(-1).detail).toContain('Duplicate developer name');
     expect(requests.some((r) => r.path.endsWith('/sobjects/FieldPermissions'))).toBe(false);
@@ -351,13 +347,13 @@ describe('applyChangeRequest', () => {
 
   it('is partial when the deploy succeeds and a grant does not', async () => {
     grantFails = true;
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('partial');
   });
 
   it('updates the access a permission set already has instead of adding a second row', async () => {
     existingAccess = true;
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada');
+    const outcome = await applyChangeRequest(context, access, change(), 'ada');
     expect(outcome.status).toBe('applied');
     expect(
       requests.some((r) => r.method === 'POST' && r.path.endsWith('/sobjects/FieldPermissions'))
@@ -397,7 +393,7 @@ describe('applyChangeRequest', () => {
         ],
       },
     };
-    const outcome = await applyChangeRequest(db, context, access, dataOnly, 'ada');
+    const outcome = await applyChangeRequest(context, access, dataOnly, 'ada');
     expect(outcome.status).toBe('applied');
     expect(requests.some((r) => r.path.includes('/metadata/'))).toBe(false);
     const assigned = requests.find((r) => r.path.endsWith('/sobjects/PermissionSetAssignment'));
@@ -431,7 +427,7 @@ describe('applyChangeRequest', () => {
         ],
       },
     };
-    const outcome = await applyChangeRequest(db, context, access, tabs, 'ada');
+    const outcome = await applyChangeRequest(context, access, tabs, 'ada');
     expect(outcome.status).toBe('applied');
     const created = requests.filter((r) => r.path.endsWith('/sobjects/PermissionSetTabSetting'));
     expect(created.map((r) => JSON.parse(String(r.body)))).toEqual([
@@ -441,13 +437,13 @@ describe('applyChangeRequest', () => {
 
   it('leaves a deploy still running as applying, and a later look finishes it', async () => {
     deployDone = false;
-    const outcome = await applyChangeRequest(db, context, access, change(), 'ada', 0);
+    const outcome = await applyChangeRequest(context, access, change(), 'ada', 0);
     expect(outcome.status).toBe('applying');
     expect(store.finishChangeRequest).not.toHaveBeenCalled();
 
     deployDone = true;
     const later = { ...change(), results: { deployId: QUICK, quick: true, operations: [] } };
-    expect(await refreshApplying(db, context, access, later)).toBe(true);
+    expect(await refreshApplying(context, access, later)).toBe(true);
     expect(finished()).toMatchObject({ status: 'applied' });
   });
 });

@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   deleteServer,
   getServer,
@@ -28,9 +28,7 @@ export async function GET(_request: NextRequest, { params }: Params): Promise<Ne
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const server = await getServer(dbResult.val, serverId);
+  const server = await getServer(serverId);
   if (!server.ok) return NextResponse.json({ error: 'Could not read the server' }, { status: 500 });
   if (!server.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   return NextResponse.json({ server: serverSummary(server.val) });
@@ -46,10 +44,7 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
   const { input } = parsed;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-  const current = await getServer(db, serverId);
+  const current = await getServer(serverId);
   if (!current.ok)
     return NextResponse.json({ error: 'Could not read the server' }, { status: 500 });
   if (!current.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -96,13 +91,14 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
     patch.encryptedClientSecret = null;
   }
 
-  const updated = await updateServer(db, serverId, patch);
+  const updated = await updateServer(serverId, patch);
   if (!updated.ok)
     return NextResponse.json({ error: 'Could not save the server' }, { status: 500 });
 
   if (moved || modeChanged || clientChanged || scopesChanged) {
-    await db.deleteFrom('provider_grants').where('provider', '=', mcpProvider(serverId)).execute();
-    await db.deleteFrom('mcp_user_tool_lists').where('server_id', '=', serverId).execute();
+    const store = getDataStore();
+    await store.providerGrants.deleteForProvider(mcpProvider(serverId));
+    await store.mcpServers.clearToolListsForServer(serverId);
   }
   recordAuditEvent({
     actorSubject: session.subject,
@@ -119,18 +115,15 @@ export async function DELETE(_request: NextRequest, { params }: Params): Promise
   const { serverId } = await params;
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-  const current = await getServer(db, serverId);
+  const current = await getServer(serverId);
   if (!current.ok)
     return NextResponse.json({ error: 'Could not read the server' }, { status: 500 });
   if (!current.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // Grants are keyed by provider string, not a foreign key: remove them
   // with the server so no token outlives the registration it was issued for.
-  await db.deleteFrom('provider_grants').where('provider', '=', mcpProvider(serverId)).execute();
-  const deleted = await deleteServer(db, serverId);
+  await getDataStore().providerGrants.deleteForProvider(mcpProvider(serverId));
+  const deleted = await deleteServer(serverId);
   if (!deleted.ok)
     return NextResponse.json({ error: 'Could not delete the server' }, { status: 500 });
   recordAuditEvent({

@@ -22,10 +22,20 @@
  *                are unchanged, so shares and credentials need no work.
  *   shred      — the person is gone: their row, and with it (cascade)
  *                every delegation, and every wrapping made for them.
+ *
+ * The transactions are the store's (userKeys.changeKeys): it locks the
+ * person's row and what is sealed for them, this module decides and
+ * re-seals in between, and the store writes the result in the same
+ * transaction.
  */
 
-import { sql, type Kysely, type Transaction } from 'kysely';
-import type { DB } from '@renkei/db';
+import {
+  getDataStore,
+  type UserKeyChangePlan,
+  type UserKeyDelegationWrite,
+  type UserKeySealedRows,
+  type UserKeySealedTable,
+} from '@renkei/db';
 import {
   decrypt,
   encrypt,
@@ -113,60 +123,18 @@ export type RotateError =
   KeyError | 'BAD_DELEGATION' | 'KEY_MISMATCH' | 'SESSION_MISMATCH' | 'DECRYPTION_ERROR';
 
 /**
- * Everything at rest under one person's own keys, by table: the wrappings
- * of resource keys they hold, and every value sealed directly. A change of
- * key walks this list; so does enrollment's move off a pre-enrollment key.
- * Add a table here when a new column is sealed for a subject.
+ * Which of the person's keys each table sealed for them goes under once
+ * they hold their own (the tables and their columns are the store's:
+ * UserKeySealedTable). A change of key walks them all; so does
+ * enrollment's move off a pre-enrollment key.
  */
-const SEALED_FOR_SUBJECT: {
-  table: string;
-  subjectColumn: 'subject' | 'owner_subject';
-  idColumns: readonly string[];
-  columns: readonly string[];
-  /** Which of the person's keys the value goes under once they hold their own. */
-  scope: 'automation' | 'session';
-}[] = [
-  {
-    table: 'provider_grants',
-    subjectColumn: 'subject',
-    idColumns: ['provider', 'provider_account_id'],
-    columns: ['encrypted_access_token', 'encrypted_refresh_token'],
-    scope: 'automation',
-  },
-  {
-    table: 'mirth_instance_connections',
-    subjectColumn: 'subject',
-    idColumns: ['instance_id'],
-    columns: ['encrypted_credentials'],
-    scope: 'automation',
-  },
-  {
-    table: 'admanager_instance_connections',
-    subjectColumn: 'subject',
-    idColumns: ['instance_id'],
-    columns: ['encrypted_credentials'],
-    scope: 'automation',
-  },
-  {
-    table: 'file_share_connections',
-    subjectColumn: 'subject',
-    idColumns: ['share_id'],
-    columns: ['encrypted_credentials'],
-    scope: 'automation',
-  },
-  {
-    table: 'chat_user_memories',
-    subjectColumn: 'owner_subject',
-    idColumns: ['id'],
-    columns: ['content'],
-    scope: 'session',
-  },
-];
-
-/** An id column's value as a bindable scalar (uuid, text) — never an object. */
-function idValue(value: unknown): string {
-  return typeof value === 'string' ? value : String(value);
-}
+const SCOPE_OF: Readonly<Record<UserKeySealedTable, 'automation' | 'session'>> = {
+  provider_grants: 'automation',
+  mirth_instance_connections: 'automation',
+  admanager_instance_connections: 'automation',
+  file_share_connections: 'automation',
+  chat_user_memories: 'session',
+};
 
 /** The next envelope for a value, by scope: `uenc1:` under the automation key, `upriv1:` under the user key. */
 function resealed(
@@ -199,83 +167,56 @@ function openUnderOld(
   return null;
 }
 
+type SealedRewrite = Extract<UserKeyChangePlan<unknown>, { commit: true }>['rewrite'];
+
 /**
- * Move everything sealed for the person from `old` to `next`, inside the
- * caller's transaction. A row that does not open under `old` aborts the
- * whole change: a half-moved person is worse than one on the old key.
- * Wrappings: `user` ones move to the new user key; `automation` ones (held
- * rows only) to the new automation key — the same bytes when only the
- * user key rotated.
+ * Everything sealed for the person, moved from `old` to `next`: computed
+ * here, written by the store in the transaction that read (and locked)
+ * it. A row that does not open under `old` aborts the whole change before
+ * anything is written: a half-moved person is worse than one on the old
+ * key. Wrappings: `user` ones move to the new user key; `automation` ones
+ * (held rows only) to the new automation key — the same bytes when only
+ * the user key rotated.
  */
-async function moveSealedRows(
-  trx: Transaction<DB>,
-  subject: string,
+function planMove(
+  sealed: UserKeySealedRows,
   old: { userKey: Buffer; automationKey: Buffer } | { legacy: Buffer },
   next: { userKey: Buffer; automationKey: Buffer; version: number }
-): Promise<Result<{ grants: number; values: number }, 'DECRYPTION_ERROR'>> {
-  const grants = await trx
-    .selectFrom('resource_key_grants')
-    .select(['resource_key_id', 'holder_kind', 'wrapped_key'])
-    .where('holder', '=', subject)
-    .where('holder_kind', 'in', ['user', 'automation'])
-    .forUpdate()
-    .execute();
-  for (const grant of grants) {
+): Result<{ rewrite: SealedRewrite; grants: number; values: number }, 'DECRYPTION_ERROR'> {
+  const rewrite: SealedRewrite = { wrappings: [], values: [] };
+  for (const grant of sealed.wrappings) {
     const oldKey =
       'legacy' in old
         ? old.legacy
-        : grant.holder_kind === 'automation'
+        : grant.holderKind === 'automation'
           ? old.automationKey
           : old.userKey;
-    const key = unwrapKey(grant.wrapped_key, oldKey);
+    const key = unwrapKey(grant.wrappedKey, oldKey);
     if (!key.ok) return err('DECRYPTION_ERROR' as const, { message: 'a resource key wrapping' });
-    const nextKey = grant.holder_kind === 'automation' ? next.automationKey : next.userKey;
-    await trx
-      .updateTable('resource_key_grants')
-      .set({ wrapped_key: wrapKey(key.val, nextKey), kek_version: next.version })
-      .where('resource_key_id', '=', grant.resource_key_id)
-      .where('holder_kind', '=', grant.holder_kind)
-      .where('holder', '=', subject)
-      .execute();
+    const nextKey = grant.holderKind === 'automation' ? next.automationKey : next.userKey;
+    rewrite.wrappings.push({
+      resourceKeyId: grant.resourceKeyId,
+      holderKind: grant.holderKind,
+      wrappedKey: wrapKey(key.val, nextKey),
+      kekVersion: next.version,
+    });
   }
-  let values = 0;
-  for (const spec of SEALED_FOR_SUBJECT) {
-    // The schema types are per table; the walk is the same for each, so it
-    // is written once as SQL over identifiers rather than five typed copies.
-    const table = sql.table(spec.table);
-    const subjectColumn = sql.ref(spec.subjectColumn);
-    const selected = [...spec.idColumns, ...spec.columns].map((column) => sql.ref(column));
-    const rows = await sql<Record<string, unknown>>`
-      SELECT ${sql.join(selected)} FROM ${table}
-       WHERE ${subjectColumn} = ${subject}
-       FOR UPDATE
-    `.execute(trx);
-    for (const row of rows.rows) {
-      const assignments: ReturnType<typeof sql>[] = [];
-      for (const column of spec.columns) {
-        const stored = row[column];
-        if (typeof stored !== 'string') continue;
-        if (!stored.startsWith(USER_ENVELOPE_PREFIX) && !stored.startsWith(PRIVATE_ENVELOPE_PREFIX))
-          continue;
-        const opened = openUnderOld(stored, old);
-        if (opened === null) {
-          return err('DECRYPTION_ERROR' as const, { message: `${spec.table}.${column}` });
-        }
-        assignments.push(sql`${sql.ref(column)} = ${resealed(opened, spec.scope, next)}`);
+  for (const row of sealed.values) {
+    const values: Record<string, string> = {};
+    for (const [column, stored] of Object.entries(row.values)) {
+      if (typeof stored !== 'string') continue;
+      if (!stored.startsWith(USER_ENVELOPE_PREFIX) && !stored.startsWith(PRIVATE_ENVELOPE_PREFIX))
+        continue;
+      const opened = openUnderOld(stored, old);
+      if (opened === null) {
+        return err('DECRYPTION_ERROR' as const, { message: `${row.table}.${column}` });
       }
-      if (assignments.length === 0) continue;
-      const identity = spec.idColumns.map(
-        (column) => sql`${sql.ref(column)} = ${idValue(row[column])}`
-      );
-      await sql`
-        UPDATE ${table} SET ${sql.join(assignments)}
-         WHERE ${subjectColumn} = ${subject}
-           AND ${sql.join(identity, sql` AND `)}
-      `.execute(trx);
-      values += 1;
+      values[column] = resealed(opened, SCOPE_OF[row.table], next);
     }
+    if (Object.keys(values).length === 0) continue;
+    rewrite.values.push({ table: row.table, id: row.id, values });
   }
-  return ok({ grants: grants.length, values });
+  return ok({ rewrite, grants: sealed.wrappings.length, values: rewrite.values.length });
 }
 
 /** The user key this instance's session delegation carries, checked against the wrappings. */
@@ -348,71 +289,26 @@ function clampAutomationUntil(until: Date | null): Date {
  * session id that belongs to someone else, or to nobody, binds nothing.
  */
 async function boundSession(
-  trx: Kysely<DB> | Transaction<DB>,
   input: DelegationInput
 ): Promise<Result<{ expiresAt: Date }, 'SESSION_MISMATCH'>> {
-  const session = await verifySession(trx, input.subject, input.sessionId);
+  const session = await verifySession(input.subject, input.sessionId);
   return session ? ok(session) : err('SESSION_MISMATCH' as const);
 }
 
 /**
- * Write the delegations the browser sealed: session rows for this browser
- * session (replacing its earlier ones), automation rows replacing the
- * person's earlier ones. Rows for an instance that is not registered are
- * dropped — the browser sealed to a stale list.
+ * The delegations the browser sealed, as the store writes them: session
+ * rows for this browser session (replacing its earlier ones), automation
+ * rows replacing the person's earlier ones. Rows for an instance that is
+ * not registered are dropped there — the browser sealed to a stale list.
  */
-async function writeDelegations(
-  trx: Kysely<DB> | Transaction<DB>,
-  input: DelegationInput,
-  expiresAt: Date
-): Promise<void> {
-  const known = new Set(
-    (await trx.selectFrom('delegate_instances').select('id').execute()).map((row) => row.id)
-  );
-  await trx
-    .deleteFrom('key_delegations')
-    .where('subject', '=', input.subject)
-    .where('scope', '=', 'session')
-    .where('session_id', '=', input.sessionId)
-    .execute();
-  const session = input.session.filter((entry) => known.has(entry.instanceId));
-  if (session.length > 0) {
-    await trx
-      .insertInto('key_delegations')
-      .values(
-        session.map((entry) => ({
-          subject: input.subject,
-          instance_id: entry.instanceId,
-          scope: 'session',
-          session_id: input.sessionId,
-          sealed_key: entry.sealedKey,
-          expires_at: expiresAt,
-        }))
-      )
-      .execute();
-  }
-  const automation = input.automation.filter((entry) => known.has(entry.instanceId));
-  if (automation.length > 0) {
-    await trx
-      .deleteFrom('key_delegations')
-      .where('subject', '=', input.subject)
-      .where('scope', '=', 'automation')
-      .execute();
-    const until = clampAutomationUntil(input.automationUntil);
-    await trx
-      .insertInto('key_delegations')
-      .values(
-        automation.map((entry) => ({
-          subject: input.subject,
-          instance_id: entry.instanceId,
-          scope: 'automation',
-          session_id: null,
-          sealed_key: entry.sealedKey,
-          expires_at: until,
-        }))
-      )
-      .execute();
-  }
+function delegationWrite(input: DelegationInput, expiresAt: Date): UserKeyDelegationWrite {
+  return {
+    sessionId: input.sessionId,
+    session: input.session,
+    sessionExpiresAt: expiresAt,
+    automation: input.automation,
+    automationExpiresAt: clampAutomationUntil(input.automationUntil),
+  };
 }
 
 export interface EnrollmentView {
@@ -422,85 +318,83 @@ export interface EnrollmentView {
   migrated: { grants: number; values: number };
 }
 
+type EnrollResult = Result<EnrollmentView, EnrollError>;
+
 /** First sign-in on a build with held keys; see the module comment. */
-export async function enroll(
-  db: Kysely<DB>,
-  input: EnrollInput
-): Promise<Result<EnrollmentView, EnrollError>> {
-  return db.transaction().execute(async (trx): Promise<Result<EnrollmentView, EnrollError>> => {
-    const existing = await trx
-      .selectFrom('user_encryption_keys')
-      .select(['salt', 'mode', 'version', 'verifier', 'sealed_kek', 'unlocked_until'])
-      .where('subject', '=', input.subject)
-      .forUpdate()
-      .executeTakeFirst();
-    if (existing && existing.mode === 'held') return err('ALREADY_ENROLLED' as const);
-    const session = await boundSession(trx, input);
-    if (!session.ok) return session;
-    const keys = openOwnDelegation(input.session, {
-      public_key: input.publicKey,
-      wrapped_private_key: input.wrappedPrivateKey,
-      wrapped_automation_key: input.wrappedAutomationKey,
-    });
-    if (!keys.ok) return keys;
-    if (input.automation.length > 0) {
-      const automation = checkOwnAutomation(input.automation, keys.val.automationKey, null);
-      if (!automation.ok) return automation;
-    }
-    const version = (existing?.version ?? 0) + 1;
-    let migrated = { grants: 0, values: 0 };
-    if (existing) {
-      const legacy = legacyKekOf(existing, await legacyKeyDomain(trx), input.subject, input.passphrase);
-      if (!legacy.ok) return legacy;
-      const moved = await moveSealedRows(
-        trx,
-        input.subject,
-        { legacy: legacy.val },
-        {
-          ...keys.val,
-          version,
-        }
-      );
-      if (!moved.ok) return moved;
-      migrated = moved.val;
-    }
-    const enrolledAt = new Date();
-    await trx
-      .insertInto('user_encryption_keys')
-      .values({
-        subject: input.subject,
-        salt: existing?.salt ?? Buffer.alloc(32).toString('base64'),
-        mode: 'held',
-        version,
+export async function enroll(input: EnrollInput): Promise<EnrollResult> {
+  // Both read outside the store's transaction: the session row and an
+  // org setting, neither of which the transaction changes.
+  const session = await boundSession(input);
+  const domain = await legacyKeyDomain();
+  const refuse = (answer: EnrollResult): UserKeyChangePlan<EnrollResult> => ({
+    commit: false,
+    answer,
+  });
+  return getDataStore().userKeys.changeKeys<EnrollResult>(
+    input.subject,
+    async (existing, readSealed) => {
+      if (existing && existing.mode === 'held') return refuse(err('ALREADY_ENROLLED' as const));
+      if (!session.ok) return refuse(session);
+      const keys = openOwnDelegation(input.session, {
         public_key: input.publicKey,
         wrapped_private_key: input.wrappedPrivateKey,
         wrapped_automation_key: input.wrappedAutomationKey,
-        enrolled_at: enrolledAt,
-        // For a held row the verifier is of the AUTOMATION key: what a later
-        // `delegate` checks an automation blob against (checkOwnAutomation).
-        verifier: kekVerifier(keys.val.automationKey),
-        sealed_kek: null,
-        unlocked_until: null,
-        rotated_at: existing ? enrolledAt : null,
-      })
-      .onConflict((oc) =>
-        oc.columns(['subject']).doUpdateSet({
-          mode: 'held',
+      });
+      if (!keys.ok) return refuse(keys);
+      if (input.automation.length > 0) {
+        const automation = checkOwnAutomation(input.automation, keys.val.automationKey, null);
+        if (!automation.ok) return refuse(automation);
+      }
+      const version = (existing?.version ?? 0) + 1;
+      let migrated = { grants: 0, values: 0 };
+      let rewrite: SealedRewrite = { wrappings: [], values: [] };
+      if (existing) {
+        const legacy = legacyKekOf(
+          {
+            salt: existing.salt,
+            mode: existing.mode,
+            version: existing.version,
+            verifier: existing.verifier,
+            sealed_kek: existing.sealedKek,
+            unlocked_until: existing.unlockedUntil,
+          },
+          domain,
+          input.subject,
+          input.passphrase
+        );
+        if (!legacy.ok) return refuse(legacy);
+        const moved = planMove(
+          await readSealed(),
+          { legacy: legacy.val },
+          { ...keys.val, version }
+        );
+        if (!moved.ok) return refuse(moved);
+        rewrite = moved.val.rewrite;
+        migrated = { grants: moved.val.grants, values: moved.val.values };
+      }
+      const enrolledAt = new Date();
+      return {
+        commit: true,
+        answer: ok({ version, enrolledAt, migrated }),
+        rewrite,
+        keyRow: {
+          kind: 'enroll',
+          salt: existing?.salt ?? Buffer.alloc(32).toString('base64'),
           version,
-          public_key: input.publicKey,
-          wrapped_private_key: input.wrappedPrivateKey,
-          wrapped_automation_key: input.wrappedAutomationKey,
-          enrolled_at: enrolledAt,
+          publicKey: input.publicKey,
+          wrappedPrivateKey: input.wrappedPrivateKey,
+          wrappedAutomationKey: input.wrappedAutomationKey,
+          enrolledAt,
+          // For a held row the verifier is of the AUTOMATION key: what a later
+          // `delegate` checks an automation blob against (checkOwnAutomation).
           verifier: kekVerifier(keys.val.automationKey),
-          sealed_kek: null,
-          unlocked_until: null,
-          rotated_at: enrolledAt,
-        })
-      )
-      .execute();
-    await writeDelegations(trx, input, session.val.expiresAt);
-    return ok({ version, enrolledAt, migrated });
-  });
+          rotatedAt: existing ? enrolledAt : null,
+        },
+        dropDelegations: false,
+        delegations: delegationWrite(input, session.val.expiresAt),
+      };
+    }
+  );
 }
 
 /**
@@ -514,12 +408,11 @@ export async function enroll(
  * caller says dropping this session's rows is the point.
  */
 export async function storeDelegations(
-  db: Kysely<DB>,
   input: DelegationInput
 ): Promise<Result<void, DelegateError>> {
   const vault = keyVault();
   if (!vault) return err('NO_VAULT' as const);
-  const row = await readKeyRow(db, input.subject);
+  const row = await readKeyRow(input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   if (row.mode !== 'held') return err('NOT_ENROLLED' as const);
   if (input.session.length === 0 && !input.revokeSession) {
@@ -540,23 +433,18 @@ export async function storeDelegations(
     const automation = checkOwnAutomation(input.automation, ring.automationKey, row.verifier);
     if (!automation.ok) return automation;
   }
-  const session = await boundSession(db, input);
+  const session = await boundSession(input);
   if (!session.ok) return session;
-  await writeDelegations(db, input, session.val.expiresAt);
+  await getDataStore().userKeys.writeDelegations(
+    input.subject,
+    delegationWrite(input, session.val.expiresAt)
+  );
   return ok();
 }
 
 /** Revoke every automation delegation: the person's agents pause until their next sign-in. */
-export async function revokeAutomation(
-  db: Kysely<DB>,
-  subject: string
-): Promise<number> {
-  const result = await db
-    .deleteFrom('key_delegations')
-    .where('subject', '=', subject)
-    .where('scope', '=', 'automation')
-    .executeTakeFirst();
-  return Number(result.numDeletedRows);
+export async function revokeAutomation(subject: string): Promise<number> {
+  return getDataStore().userKeys.revokeAutomation(subject);
 }
 
 export interface RotateInput extends DelegationInput {
@@ -564,21 +452,21 @@ export interface RotateInput extends DelegationInput {
   wrappedAutomationKey: string;
 }
 
+type RotateResult = Result<{ version: number; moved: number }, RotateError>;
+
 /**
  * A new user key, under the old one's session delegation: the browser
  * re-wrapped the private and automation keys under the new key and sealed
  * the new key to the instances. Everything under the old user key moves;
  * the automation key is unchanged, so what is under it stays.
  */
-export async function rotateUserKey(
-  db: Kysely<DB>,
-  input: RotateInput
-): Promise<Result<{ version: number; moved: number }, RotateError>> {
-  const current = await getKeyRing(db, input.subject, 'session');
+export async function rotateUserKey(input: RotateInput): Promise<RotateResult> {
+  const current = await getKeyRing(input.subject, 'session');
   if (!current.ok) return current;
   const ring = current.val;
   if (!ring.userKey) return err('NEEDS_SESSION' as const);
-  const row = await readKeyRow(db, input.subject);
+  const oldUserKey = ring.userKey;
+  const row = await readKeyRow(input.subject);
   if (!row) return err('NO_USER_KEY' as const);
   const next = openOwnDelegation(input.session, {
     public_key: row.public_key,
@@ -591,39 +479,37 @@ export async function rotateUserKey(
     const automation = checkOwnAutomation(input.automation, ring.automationKey, row.verifier);
     if (!automation.ok) return automation;
   }
-  const session = await boundSession(db, input);
+  const session = await boundSession(input);
   if (!session.ok) return session;
-  return db
-    .transaction()
-    .execute(async (trx): Promise<Result<{ version: number; moved: number }, RotateError>> => {
-      const version = row.version + 1;
-      const moved = await moveSealedRows(
-        trx,
-        input.subject,
-        { userKey: ring.userKey ?? Buffer.alloc(0), automationKey: ring.automationKey },
+  const version = row.version + 1;
+  return getDataStore().userKeys.changeKeys<RotateResult>(
+    input.subject,
+    async (_existing, readSealed) => {
+      const moved = planMove(
+        await readSealed(),
+        { userKey: oldUserKey, automationKey: ring.automationKey },
         { userKey: next.val.userKey, automationKey: next.val.automationKey, version }
       );
-      if (!moved.ok) return moved;
-      await trx
-        .updateTable('user_encryption_keys')
-        .set({
+      if (!moved.ok) return { commit: false, answer: moved };
+      return {
+        commit: true,
+        answer: ok({ version, moved: moved.val.grants + moved.val.values }),
+        rewrite: moved.val.rewrite,
+        keyRow: {
+          kind: 'rotate',
           version,
-          wrapped_private_key: input.wrappedPrivateKey,
-          wrapped_automation_key: input.wrappedAutomationKey,
-          rotated_at: new Date(),
-        })
-        .where('subject', '=', input.subject)
-        .execute();
-      // Every other session's delegation carries the OLD key: gone, so those
-      // browsers re-seal (from their own copy of the key, which they must
-      // first replace through device approval or by typing the new key).
-      await trx
-        .deleteFrom('key_delegations')
-        .where('subject', '=', input.subject)
-        .execute();
-      await writeDelegations(trx, input, session.val.expiresAt);
-      return ok({ version, moved: moved.val.grants + moved.val.values });
-    });
+          wrappedPrivateKey: input.wrappedPrivateKey,
+          wrappedAutomationKey: input.wrappedAutomationKey,
+          rotatedAt: new Date(),
+        },
+        // Every other session's delegation carries the OLD key: gone, so those
+        // browsers re-seal (from their own copy of the key, which they must
+        // first replace through device approval or by typing the new key).
+        dropDelegations: true,
+        delegations: delegationWrite(input, session.val.expiresAt),
+      };
+    }
+  );
 }
 
 /**
@@ -631,38 +517,18 @@ export async function rotateUserKey(
  * made for them — including boxes sealed to their public key — is deleted,
  * so nothing stored for them can be opened by anyone, Renkei included.
  */
-export async function shredUserKey(
-  db: Kysely<DB>,
-  subject: string
-): Promise<boolean> {
-  return db.transaction().execute(async (trx) => {
-    await trx
-      .deleteFrom('resource_key_grants')
-      .where('holder', '=', subject)
-      .where('holder_kind', 'in', ['user', 'automation', 'public'])
-      .execute();
-    const result = await trx
-      .deleteFrom('user_encryption_keys')
-      .where('subject', '=', subject)
-      .executeTakeFirst();
-    return Number(result.numDeletedRows) > 0;
-  });
+export async function shredUserKey(subject: string): Promise<boolean> {
+  return getDataStore().userKeys.shred(subject);
 }
 
 /** How many people still carry a pre-enrollment row — the operator's signal for removing the master. */
-export async function enrollmentCensus(
-  db: Kysely<DB>
-): Promise<{ held: number; managed: number; own: number }> {
-  const rows = await db
-    .selectFrom('user_encryption_keys')
-    .select(['mode', (eb) => eb.fn.countAll<string>().as('count')])
-    .groupBy('mode')
-    .execute();
+export async function enrollmentCensus(): Promise<{ held: number; managed: number; own: number }> {
+  const rows = await getDataStore().userKeys.countByMode();
   const census = { held: 0, managed: 0, own: 0 };
   for (const row of rows) {
-    if (row.mode === 'held') census.held = Number(row.count);
-    else if (row.mode === 'own') census.own = Number(row.count);
-    else census.managed = Number(row.count);
+    if (row.mode === 'held') census.held = row.count;
+    else if (row.mode === 'own') census.own = row.count;
+    else census.managed = row.count;
   }
   return census;
 }

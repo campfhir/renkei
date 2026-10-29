@@ -1,230 +1,53 @@
 /**
- * Image generation, end to end in a browser, from seeded rows alone — no
- * image vendor and no model is called:
+ * Image generation, end to end in a browser. The pictures are really
+ * drawn: the scripted stand-in chat model (e2e/support/stub-model.ts)
+ * calls chat_generate_image, the app's own tool asks the stand-in image
+ * model (llm-stub.mjs's Images endpoint) and keeps what it answers in the
+ * blob store, and the thread shows it:
  *
- *   - a picture the model drew (chat_generate_image) is shown INLINE in the
- *     call that drew it, outside the tool-call fold, with its own icon, and a
- *     call that failed shows its reason instead;
+ *   - a picture the model drew is shown INLINE in the call that drew it,
+ *     outside the tool-call fold, with its own icon, and a call the image
+ *     model's safety system refused shows its reason instead;
  *   - a call still waiting is an outline in the SHAPE the model asked for
  *     (the aspect ratio of `size`, or of `aspectRatio`), at a phone's width
  *     too;
  *   - a .gif call is worded as an animation, waiting and done, and the GIF
- *     it made (a real one, written by the tool's own encoder) plays inline;
+ *     it made (written by the tool's own encoder) plays inline;
  *   - Preferences offers the org's image models and saves the person's pick,
  *     and leaves the section out when the org has none;
  *   - My usage and Organization usage count the pictures: how many, how much
- *     space in KB/MB/GB, the tokens billed, and who has the most.
+ *     space, the tokens billed, and who has the most.
  *
- * The image bytes are not in a blob store here, so the browser's request for
- * the stored file is answered by `page.route`. Its own tenant, derived from
- * the project name (the way llm-models.spec.ts does it): the empty-state
- * assertions need the org to genuinely have no image model.
+ * The person's message steers the stand-in image model (llm-stub.mjs):
+ * `[refuse 1024x1024]` refuses a square, `[slow]` holds a picture back so
+ * the call can be seen waiting.
  *
- * Runs on the pinned Chromium only; "mobile" is a resized viewport (see
- * AGENTS.md's "UI changes" section).
+ * The image models are the organization's roster, and the empty Preferences
+ * section needs the org to genuinely have none: the spec runs serially, on
+ * one project, and removes every model it adds. The organization's usage
+ * totals hold every picture this server has drawn, so they are asserted as
+ * at least this spec's own.
  */
 
-import { createCipheriv, createHash, randomBytes } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { deflateSync } from 'node:zlib';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E, keyFor } from './keys';
-import { encodeGif } from '@renkei/document-render';
-import { deleteRowsOf } from './seed';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel, scripted } from './support/stub-model';
+import { createChat, readChat, send, settled, startTurn } from './support/chat';
+import { createPerson, type Person } from './support/person';
+import { MEMORY_BASE_URL } from './constants';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 /** The first hit on a route compiles it (`next dev` builds lazily). */
 const COLD = { timeout: 30_000 };
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// The roster and the image tool are an operator's to stage.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
+test.describe.configure({ mode: 'serial' });
 
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-function fixtureFor(projectName: string) {
-  const id = (what: string) => uuidFrom(`image-generation-e2e:${what}:${projectName}`);
-  return {
-    sessionId: id('session'),
-    slug: `e2e-image-generation-${projectName}`,
-    subject: `e2e-image-${projectName}@example.com`,
-    otherSubject: `e2e-image-other-${projectName}@example.com`,
-    chatModelId: id('chat-model'),
-    painterId: id('painter'),
-    foxId: id('fox'),
-    doneChatId: id('done-chat'),
-    doneTurnId: id('done-turn'),
-    waitingChatId: id('waiting-chat'),
-    waitingTurnId: id('waiting-turn'),
-    attachmentId: id('attachment'),
-    gifChatId: id('gif-chat'),
-    gifTurnId: id('gif-turn'),
-    gifAttachmentId: id('gif-attachment'),
-    gifCall: `toolu_gif_${projectName}`,
-    drawCall: `toolu_draw_${projectName}`,
-    refusedCall: `toolu_refused_${projectName}`,
-    waitingCall: `toolu_waiting_${projectName}`,
-  };
-}
-type Fixture = ReturnType<typeof fixtureFor>;
-
-function secretbox(plaintext: string, encoded: string): string {
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) throw new Error('TOKEN_ENCRYPTION_KEY must decode to 32 bytes.');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
-const sealSecret = (plaintext: string) =>
-  secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '');
-
-/** A real w×h PNG of one colour — what the browser is handed in place of the stored file. */
-function solidPng(width: number, height: number, [r, g, b]: [number, number, number]): Buffer {
-  const crcTable = Array.from({ length: 256 }, (_, n) => {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    return c >>> 0;
-  });
-  const crc = (buffer: Buffer) => {
-    let c = 0xffffffff;
-    for (const byte of buffer) c = crcTable[(c ^ byte) & 0xff]! ^ (c >>> 8);
-    return (c ^ 0xffffffff) >>> 0;
-  };
-  const chunk = (type: string, data: Buffer) => {
-    const head = Buffer.alloc(8);
-    head.writeUInt32BE(data.length, 0);
-    head.write(type, 4, 'latin1');
-    const tail = Buffer.alloc(4);
-    tail.writeUInt32BE(crc(Buffer.concat([head.subarray(4), data])), 0);
-    return Buffer.concat([head, data, tail]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  const row = Buffer.concat([Buffer.from([0]), Buffer.from(Array(width).fill([r, g, b]).flat())]);
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', deflateSync(Buffer.concat(Array(height).fill(row)))),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
-const PROMPT = 'generate a picture of a cute polarbear';
-
-async function seedTenant(f: Fixture): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await deleteRowsOf(
-      client,
-      [f.subject, f.otherSubject],
-      [
-        'image_usage',
-        'artifacts',
-        'chats',
-        'llm_model_configs',
-        'user_preferences',
-        'sessions',
-        'identities',
-      ]
-    );
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [
-        f.sessionId,
-        f.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
-    );
-    for (const [subject, name] of [
-      [f.subject, 'E2E Tester'],
-      [f.otherSubject, 'Another Person'],
-    ]) {
-      await client.query(
-        `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
-        [subject, subject, name]
-      );
-    }
-    // No coach marks tour stealing focus mid-screenshot.
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [f.subject]
-    );
-    // Enrolled with a delegation for this spec's session, as e2e/seed.ts
-    // enrolls the shared person. The chat cases get this through keyFor;
-    // the Preferences and usage cases seed no chat, and without it the
-    // KeyGuard's "this device does not have your encryption key" dialog
-    // sits over the page and swallows every click.
-    await enrollForE2E(client, f.subject);
-  } finally {
-    await client.end();
-  }
-}
-
-async function addModels(f: Fixture, which: ('chat' | 'painter' | 'fox')[]): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    const secret = sealSecret(JSON.stringify({ apiKey: 'e2e' }));
-    if (which.includes('chat')) {
-      await client.query(
-        `INSERT INTO llm_model_configs (id, label, provider, model, base_url, encrypted_secrets, enabled, is_default)\n         VALUES ($1, 'Chatty', 'anthropic', 'e2e-model', 'http://127.0.0.1:8092/anthropic', $2, true, false)`,
-        [f.chatModelId, secret]
-      );
-    }
-    if (which.includes('painter')) {
-      await client.query(
-        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Painter', 'openai', 'gpt-image-1', $2, '{"apiSurface":"images"}'::jsonb, true, false)`,
-        [f.painterId, secret]
-      );
-    }
-    if (which.includes('fox')) {
-      await client.query(
-        `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, settings, enabled, is_default)\n         VALUES ($1, 'Fox', 'openai', 'FLUX.2-flex', $2, '{"apiSurface":"flux","apiVersion":"preview"}'::jsonb, true, false)`,
-        [f.foxId, secret]
-      );
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-async function signIn(page: Page, f: Fixture): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: f.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
+const PROMPT = 'generate a picture of a cute polarbear [refuse 1024x1024]';
+const GIF_PROMPT = 'make a gif of a red ball rolling across the sky';
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
@@ -240,307 +63,108 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-interface Row {
-  seq: number;
-  role: 'user' | 'assistant';
-  kind: 'prompt' | 'assistant' | 'tool_results';
-  blocks: unknown[];
+/** Models this test added, removed after it. */
+let added: string[] = [];
+let tag = '';
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== 'desktop-light',
+    'One project: the image roster is the org’s.'
+  );
+  // Each test has the model draw for real, and the pages compile on first sight.
+  test.slow();
+  added = [];
+  tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  // The roster's image models are this spec's alone: one a run cut short
+  // left behind is taken off first, through the same route.
+  const roster = await page.request.get('/api/admin/llm-models');
+  const { models: listed }: { models: { id: string; label: string }[] } = await roster.json();
+  for (const left of listed.filter((entry) => ['Painter', 'Fox'].includes(entry.label))) {
+    await removeModel(page.request, left.id);
+  }
+});
+
+test.afterEach(async ({ page }, testInfo) => {
+  if (testInfo.project.name !== 'desktop-light') return;
+  for (const id of added) await removeModel(page.request, id);
+});
+
+async function model(
+  request: APIRequestContext,
+  options: Parameters<typeof addStubModel>[2]
+): Promise<string> {
+  const id = await addStubModel(request, tag, options);
+  added.push(id);
+  return id;
 }
 
-/** Inserts the rows; returns each row's id, by seq. */
-async function seedRows(
-  client: Client,
-  f: Fixture,
-  chatId: string,
-  turnId: string,
-  rows: Row[]
-): Promise<Map<number, string>> {
-  const ids = new Map<number, string>();
-  const chatKey = await keyFor(client, {
-    kind: 'chat',
-    resourceId: chatId,
-    ownerSubject: f.subject,
-  });
-  for (const row of rows) {
-    const assistant = row.role === 'assistant';
-    const inserted = await client.query(
-      `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model, stop_reason)\n       VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9, $10) RETURNING id`,
-      [
-        chatId,
-        turnId,
-        row.seq,
-        row.role,
-        row.kind,
-        chatKey.seal(JSON.stringify(row.blocks)),
-        assistant ? f.chatModelId : null,
-        assistant ? 'anthropic' : null,
-        assistant ? 'e2e-model' : null,
-        assistant ? 'tool_use' : null,
-      ]
-    );
-    ids.set(row.seq, inserted.rows[0].id);
-  }
-  return ids;
+/** The chat model, and the one image model a chat's tool draws with. */
+async function models(request: APIRequestContext): Promise<string> {
+  await model(request, { label: 'Painter', image: { apiSurface: 'images', model: 'gpt-image-1' } });
+  return model(request, { label: `Chatty ${tag}` });
 }
+
+const draw = (input: Record<string, unknown>) => ({ name: 'chat_generate_image', input });
 
 /** A finished chat: one picture drawn, one call the image model refused. */
-async function seedDoneChat(f: Fixture): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Polar bear', $3, NOW())`,
-      [f.doneChatId, f.subject, f.chatModelId]
-    );
-    await client.query(
-      `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n       VALUES ($1, $2, 'completed', $3, 2, NOW())`,
-      [f.doneTurnId, f.doneChatId, f.chatModelId]
-    );
-    const ids = await seedRows(client, f, f.doneChatId, f.doneTurnId, [
-      { seq: 1, role: 'user', kind: 'prompt', blocks: [{ type: 'text', text: PROMPT }] },
-      {
-        seq: 2,
-        role: 'assistant',
-        kind: 'assistant',
-        blocks: [
-          { type: 'text', text: 'Here is your polar bear.' },
-          {
-            type: 'tool_use',
-            id: f.drawCall,
-            name: 'chat_generate_image',
-            input: { filename: 'cute_polar_bear.png', size: '1536x1024', quality: 'high' },
-          },
-          {
-            type: 'tool_use',
-            id: f.refusedCall,
-            name: 'chat_generate_image',
-            input: { filename: 'second.png', aspectRatio: '1:1' },
-          },
-        ],
-      },
-      {
-        seq: 3,
-        role: 'user',
-        kind: 'tool_results',
-        blocks: [
-          {
-            type: 'tool_result',
-            toolUseId: f.drawCall,
-            content:
-              'Generated cute_polar_bear.png with Painter (image/png, 1536x1024 px, 2345 bytes). It is under this chat’s Artifacts.',
-            durationMs: 41_000,
-          },
-          {
-            type: 'tool_result',
-            toolUseId: f.refusedCall,
-            content:
-              'The image model’s safety system refused this prompt or the picture it made. Tell the person, and offer to try a different description.',
-            isError: true,
-            durationMs: 3_000,
-          },
-        ],
-      },
-    ]);
-    // The file the call kept, as the runner stores it: tied to the results row.
-    await client.query(
-      `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id, key_kind, key_ref)\n       VALUES ($1, $2, $3, $4, 'cute_polar_bear.png', 'image/png', 2345, 'none', 'model', $5, 'chat', $3)`,
-      [f.attachmentId, f.subject, f.doneChatId, `chat/e2e/${f.doneTurnId}`, ids.get(3)]
-    );
-  } finally {
-    await client.end();
-  }
+async function doneChat(request: APIRequestContext): Promise<string> {
+  const chatModel = await models(request);
+  const asked = scripted(PROMPT, [
+    {
+      text: 'Here is your polar bear.',
+      tools: [
+        draw({ filename: 'cute_polar_bear.png', size: '1536x1024', quality: 'high' }),
+        draw({ filename: 'second.png', aspectRatio: '1:1' }),
+      ],
+    },
+    { text: 'The second one could not be drawn.' },
+  ]);
+  const chatId = await createChat(request, { llmModelId: chatModel, title: 'Polar bear' });
+  // Drawing acts, so the turn asks first: allowed once, as the card would.
+  await send(request, chatId, asked, chatModel, { allow: true });
+  return chatId;
 }
 
-/** A 512x288 looping GIF: a red ball crossing a pale blue sky in four frames. */
-function ballGif(): Buffer {
-  const width = 512;
-  const height = 288;
-  const frames = [0, 1, 2, 3].map((step) => {
-    const data = new Uint8Array(width * height * 4);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const ball = (x - 64 - step * 128) ** 2 + (y - 144) ** 2 < 48 ** 2;
-        data.set(ball ? [220, 40, 40, 255] : [200, 225, 245, 255], (y * width + x) * 4);
-      }
-    }
-    return { width, height, data };
-  });
-  return encodeGif(frames, { delayMs: 200 });
+/** The kept picture's id, from the chat's artifacts. */
+async function pictureOf(request: APIRequestContext, chatId: string, name: string) {
+  const artifact = (await readChat(request, chatId)).chat.artifacts.find(
+    (file) => file.filename === name
+  );
+  if (!artifact) throw new Error(`No ${name} in the chat.`);
+  const bytes = await (await request.get(`/api/chat/attachments/${artifact.id}`)).body();
+  return { id: artifact.id, size: bytes.length };
 }
-
-/** A finished chat whose one call made an animated GIF. */
-async function seedGifChat(f: Fixture, sizeBytes: number): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Bouncing ball', $3, NOW())`,
-      [f.gifChatId, f.subject, f.chatModelId]
-    );
-    await client.query(
-      `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, finished_at)\n       VALUES ($1, $2, 'completed', $3, 2, NOW())`,
-      [f.gifTurnId, f.gifChatId, f.chatModelId]
-    );
-    const ids = await seedRows(client, f, f.gifChatId, f.gifTurnId, [
-      {
-        seq: 1,
-        role: 'user',
-        kind: 'prompt',
-        blocks: [{ type: 'text', text: 'make a gif of a red ball rolling across the sky' }],
-      },
-      {
-        seq: 2,
-        role: 'assistant',
-        kind: 'assistant',
-        blocks: [
-          { type: 'text', text: 'Here is your animation.' },
-          {
-            type: 'tool_use',
-            id: f.gifCall,
-            name: 'chat_generate_image',
-            input: { filename: 'ball.gif', aspectRatio: '16:9', frames: 4 },
-          },
-        ],
-      },
-      {
-        seq: 3,
-        role: 'user',
-        kind: 'tool_results',
-        blocks: [
-          {
-            type: 'tool_result',
-            toolUseId: f.gifCall,
-            content: `Generated ball.gif with Painter (image/gif, a looping animation of 4 frames at 512x288 px, 200 ms each, ${sizeBytes} bytes). It is under this chat’s Artifacts.`,
-            durationMs: 95_000,
-          },
-        ],
-      },
-    ]);
-    await client.query(
-      `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes, extract_status, origin, message_id, key_kind, key_ref)\n       VALUES ($1, $2, $3, $4, 'ball.gif', 'image/gif', $5, 'none', 'model', $6, 'chat', $3)`,
-      [f.gifAttachmentId, f.subject, f.gifChatId, `chat/e2e/${f.gifTurnId}`, sizeBytes, ids.get(3)]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-/**
- * A running turn on the image call. `parked`: it is waiting on the person's
- * permission ask (nothing is being drawn yet); otherwise it is approved and
- * the call is in flight.
- */
-async function seedWaitingChat(
-  f: Fixture,
-  input: Record<string, unknown>,
-  { parked }: { parked: boolean }
-): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [f.waitingChatId]);
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, 'Waiting for a picture', $3, NOW())`,
-      [f.waitingChatId, f.subject, f.chatModelId]
-    );
-    const ask = {
-      toolUseId: f.waitingCall,
-      messageId: 'pending',
-      name: 'chat_generate_image',
-      requestedAt: new Date().toISOString(),
-      decision: null,
-      decidedAt: null,
-    };
-    await client.query(
-      parked
-        ? `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, stage, stage_at, tool_permission)
-           VALUES ($1, $2, 'running', $3, 1, 'permission:chat_generate_image', NOW(), $4::jsonb)`
-        : `INSERT INTO chat_turns (id, chat_id, status, llm_model_id, iterations, stage_at)
-           VALUES ($1, $2, 'running', $3, 1, NOW())`,
-      parked
-        ? [f.waitingTurnId, f.waitingChatId, f.chatModelId, JSON.stringify(ask)]
-        : [f.waitingTurnId, f.waitingChatId, f.chatModelId]
-    );
-    const ids = await seedRows(client, f, f.waitingChatId, f.waitingTurnId, [
-      { seq: 1, role: 'user', kind: 'prompt', blocks: [{ type: 'text', text: PROMPT }] },
-      {
-        seq: 2,
-        role: 'assistant',
-        kind: 'assistant',
-        blocks: [
-          { type: 'text', text: 'Drawing it now.' },
-          { type: 'tool_use', id: f.waitingCall, name: 'chat_generate_image', input },
-        ],
-      },
-    ]);
-    if (parked) {
-      await client.query(
-        `UPDATE chat_turns SET tool_permission = tool_permission || $2::jsonb WHERE id = $1`,
-        [f.waitingTurnId, JSON.stringify({ messageId: ids.get(2) })]
-      );
-    }
-  } finally {
-    await client.end();
-  }
-}
-
-async function seedUsage(f: Fixture): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    const row = `INSERT INTO image_usage (subject, surface, provider, model, images, image_bytes, width, height, input_tokens, output_tokens)
-                 VALUES ($1, $2, 'openai', $3, 1, $4, 1024, 1024, $5, $6)`;
-    await client.query(row, [f.subject, 'images', 'gpt-image-1', 3_000_000, 61, 4160]);
-    await client.query(row, [f.subject, 'images', 'gpt-image-1', 1_000_000, 40, 1000]);
-    await client.query(row, [f.otherSubject, 'flux', 'FLUX.2-flex', 500_000, 0, 0]);
-  } finally {
-    await client.end();
-  }
-}
-
-let fixture: Fixture;
-
-// eslint-disable-next-line no-empty-pattern -- Playwright reads fixtures off the first parameter's destructuring; this one needs none
-test.beforeEach(async ({}, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'Chromium-only spec; see AGENTS.md.');
-  fixture = fixtureFor(testInfo.project.name);
-  await seedTenant(fixture);
-});
 
 test('a picture the model drew is shown inline in its call, with its own icon, and a refused call says why', async ({
   page,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await seedDoneChat(fixture);
-  // 3:2, like the size asked for; the bytes stand in for the blob store.
-  const png = solidPng(3000, 2000, [120, 170, 230]);
-  await page.route(`**/api/chat/attachments/${fixture.attachmentId}`, (route) =>
-    route.fulfill({ status: 200, contentType: 'image/png', body: png })
-  );
-  await signIn(page, fixture);
+  const chatId = await doneChat(page.request);
 
-  await page.goto(`/chat/${fixture.doneChatId}`);
+  await page.goto(`/chat/${chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Polar bear' })).toBeVisible();
 
-  const cards = page.getByTestId('image-card');
+  const cards = page.getByTestId('image-card').filter({ visible: true });
   await expect(cards).toHaveCount(2, COLD);
   const drawn = cards.nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done');
   await expect(drawn).toContainText('Generated image');
-  await expect(drawn).toContainText('41s');
+  await expect(drawn).toContainText(/\d+(\.\d)?s|\d+ms/);
 
   // The picture itself, loaded — the file this call kept, not the other's.
   const picture = drawn.getByRole('img', { name: 'cute_polar_bear.png' });
   await expect(picture).toBeVisible();
-  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
+  await expect.poll(() => picture.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1536);
   await expect(drawn.getByTestId('image-card-picture')).toBeVisible();
   // Right under the picture, the same line as every file a reply made: name, size, Download.
   const caption = drawn.getByTestId('file-caption');
-  await expect(caption).toContainText('cute_polar_bear.png');
-  await expect(caption).toContainText('2 KB');
+  await expect(caption).toContainText('cute_polar_bear.png', COLD);
+  await expect(caption).toContainText(/\d+(\.\d)? KB/);
   const pictureBox = await drawn.getByTestId('image-card-picture').boundingBox();
   const captionBox = await caption.boundingBox();
-  expect(captionBox!.y).toBeGreaterThanOrEqual(pictureBox!.y + pictureBox!.height - 1);
+  expect(captionBox?.y ?? 0).toBeGreaterThanOrEqual(
+    (pictureBox?.y ?? 0) + (pictureBox?.height ?? 0) - 1
+  );
   const fromCaption = page.waitForEvent('download');
   await caption.getByRole('link', { name: 'Download cute_polar_bear.png' }).click();
   expect((await fromCaption).suggestedFilename()).toBe('cute_polar_bear.png');
@@ -549,12 +173,13 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   const preview = page.getByTestId('image-preview');
   await expect(preview).toBeVisible();
   const big = preview.getByTestId('image-preview-picture');
-  await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(3000);
+  await expect.poll(() => big.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(1536);
   // A large picture is fitted to the window, not spilled past it.
   const fitted = await big.boundingBox();
-  expect(fitted).not.toBeNull();
-  expect(fitted!.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-  expect(fitted!.y + fitted!.height).toBeLessThanOrEqual(page.viewportSize()!.height);
+  const viewport = page.viewportSize();
+  if (!fitted || !viewport) throw new Error('The preview is not on screen.');
+  expect(fitted.width).toBeLessThanOrEqual(viewport.width);
+  expect(fitted.y + fitted.height).toBeLessThanOrEqual(viewport.height);
   const download = preview.getByTestId('image-preview-download');
   await expect(download).toHaveAttribute('download', 'cute_polar_bear.png');
   await expect(download).toHaveAttribute('href', /\/chat\/attachments\/[0-9a-f-]{36}$/);
@@ -581,8 +206,7 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   // Phone width: the picture stays inside the thread.
   await page.setViewportSize(MOBILE_VIEWPORT);
   const box = await picture.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  expect(box?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'image-card-done-mobile.png');
 
   // The preview window at phone width: picture and both buttons inside the screen, no sideways scroll.
@@ -595,10 +219,10 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
     phonePreview.getByRole('button', { name: 'Close' }),
   ]) {
     const at = await target.boundingBox();
-    expect(at).not.toBeNull();
-    expect(at!.x).toBeGreaterThanOrEqual(0);
-    expect(at!.x + at!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
-    expect(at!.y + at!.height).toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
+    if (!at) throw new Error('A preview control is not on screen.');
+    expect(at.x).toBeGreaterThanOrEqual(0);
+    expect(at.x + at.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+    expect(at.y + at.height).toBeLessThanOrEqual(MOBILE_VIEWPORT.height);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true
@@ -611,22 +235,16 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
 test('installed to the iOS home screen, Download opens the file over the app instead of trapping it', async ({
   page,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await seedDoneChat(fixture);
-  const png = solidPng(300, 200, [120, 170, 230]);
-  await page.route(`**/api/chat/attachments/${fixture.attachmentId}`, (route) =>
-    route.fulfill({ status: 200, contentType: 'image/png', body: png })
-  );
+  const chatId = await doneChat(page.request);
   // iOS WebKit's marker for a home-screen (standalone) launch; nothing else sets it.
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'standalone', { value: true, configurable: true });
   });
-  await signIn(page, fixture);
   await page.setViewportSize(MOBILE_VIEWPORT);
 
-  const chatUrl = `/chat/${fixture.doneChatId}`;
+  const chatUrl = `/chat/${chatId}`;
   await page.goto(chatUrl);
-  const drawn = page.getByTestId('image-card').nth(0);
+  const drawn = page.getByTestId('image-card').filter({ visible: true }).nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
   await drawn.getByRole('button', { name: 'Preview image' }).click();
   const preview = page.getByTestId('image-preview');
@@ -651,15 +269,15 @@ test('installed to the iOS home screen, Download opens the file over the app ins
 test('installed to the iOS home screen with file sharing, Download opens the share sheet with the picture', async ({
   page,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await seedDoneChat(fixture);
-  const png = solidPng(300, 200, [120, 170, 230]);
-  let prefetched!: () => void;
-  const fetchedAhead = new Promise<void>((resolve) => (prefetched = resolve));
-  await page.route(`**/api/chat/attachments/${fixture.attachmentId}`, async (route) => {
-    await route.fulfill({ status: 200, contentType: 'image/png', body: png });
-    if (route.request().resourceType() === 'fetch') prefetched();
-  });
+  const chatId = await doneChat(page.request);
+  const picture = await pictureOf(page.request, chatId, 'cute_polar_bear.png');
+  const fetchedAhead = page
+    .waitForResponse(
+      (response) =>
+        response.url().endsWith(`/api/chat/attachments/${picture.id}`) &&
+        response.request().resourceType() === 'fetch'
+    )
+    .then((response) => response.body());
   // iOS standalone plus a stand-in share sheet that records what it was handed.
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'standalone', { value: true, configurable: true });
@@ -678,12 +296,11 @@ test('installed to the iOS home screen with file sharing, Download opens the sha
       },
     });
   });
-  await signIn(page, fixture);
   await page.setViewportSize(MOBILE_VIEWPORT);
 
-  const chatUrl = `/chat/${fixture.doneChatId}`;
+  const chatUrl = `/chat/${chatId}`;
   await page.goto(chatUrl);
-  const drawn = page.getByTestId('image-card').nth(0);
+  const drawn = page.getByTestId('image-card').filter({ visible: true }).nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done', COLD);
   await drawn.getByRole('button', { name: 'Preview image' }).click();
   const preview = page.getByTestId('image-preview');
@@ -697,101 +314,170 @@ test('installed to the iOS home screen with file sharing, Download opens the sha
   await preview.getByTestId('image-preview-download').click();
   await expect.poll(() => page.evaluate(() => Reflect.get(window, '__shared').length)).toBe(1);
   const shared = await page.evaluate(() => Reflect.get(window, '__shared'));
-  expect(shared[0]).toEqual({ name: 'cute_polar_bear.png', type: 'image/png', size: png.length });
+  expect(shared[0]).toEqual({ name: 'cute_polar_bear.png', type: 'image/png', size: picture.size });
   expect(opened).toBe(0);
   expect(new URL(page.url()).pathname).toBe(chatUrl);
   await expect(preview).toBeVisible();
   await shot(page, testInfo, 'image-preview-ios-share.png');
 });
 
+/**
+ * A chat whose one image call is waiting: parked on the permission ask
+ * (`parked`), or allowed and being drawn — slowly, `[slow]` in the prompt.
+ */
+async function waitingChat(
+  request: APIRequestContext,
+  chatModel: string,
+  input: Record<string, unknown>,
+  { parked }: { parked: boolean }
+): Promise<{ chatId: string; turnId: string }> {
+  const chatId = await createChat(request, {
+    llmModelId: chatModel,
+    title: 'Waiting for a picture',
+  });
+  const turnId = await startTurn(
+    request,
+    chatId,
+    scripted('generate a picture of a cute polarbear [slow]', [
+      { text: 'Drawing it now.', tools: [draw(input)] },
+      { text: 'There it is.' },
+    ]),
+    chatModel
+  );
+  let toolUseId = '';
+  await expect
+    .poll(
+      async () => {
+        const ask = (await readChat(request, chatId)).chat.activeTurn?.pendingPermission;
+        toolUseId = ask?.toolUseId ?? '';
+        return ask?.name ?? null;
+      },
+      { timeout: 30_000 }
+    )
+    .toBe('chat_generate_image');
+  if (!parked) {
+    const decided = await request.post(`/api/chat/chats/${chatId}/turns/${turnId}/permission`, {
+      data: { toolUseId, decision: 'once' },
+    });
+    expect(decided.ok(), await decided.text()).toBe(true);
+  }
+  return { chatId, turnId };
+}
+
+/** Stop a waiting chat's turn, so its slow picture is never drawn. */
+async function stop(request: APIRequestContext, waiting: { chatId: string; turnId: string }) {
+  // Tidying only: a dropped keep-alive connection here proves nothing either way.
+  await request
+    .post(`/api/chat/chats/${waiting.chatId}/turns/${waiting.turnId}/cancel`)
+    .catch(() => undefined);
+}
+
 test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
   page,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await signIn(page, fixture);
+  test.slow();
+  const portrait = { filename: 'bear.png', size: '1024x1536' };
+  const wide = { filename: 'bear.png', aspectRatio: '16:9' };
+  const square = { filename: 'bear.png' };
+  const landscape = { filename: 'bear.png', size: '1536x1024' };
+  const chatModel = await models(page.request);
+  const card = page.getByTestId('image-card').filter({ visible: true });
 
   // Parked on the permission ask: nothing is being drawn, so no outline — only the caption.
-  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1024x1536' }, { parked: true });
-  await page.goto(`/chat/${fixture.waitingChatId}`);
+  const parked = await waitingChat(page.request, chatModel, portrait, { parked: true });
+  await page.goto(`/chat/${parked.chatId}`);
   await expect(
     page.getByRole('heading', { level: 1, name: 'Waiting for a picture' })
   ).toBeVisible();
-  const card = page.getByTestId('image-card');
   await expect(card).toBeVisible(COLD);
   await expect(card).toHaveAttribute('data-state', 'waiting');
   await expect(card).toContainText('Waiting for permission to generate an image');
   await expect(card.getByTestId('image-card-skeleton')).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'Permission needed' })).toBeVisible();
   await shot(page, testInfo, 'image-card-waiting-no-outline.png');
+  await stop(page.request, parked);
 
   // Approved and being drawn: portrait pixels, so width over height is 2/3.
-  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1024x1536' }, { parked: false });
-  await page.reload();
+  const drawing = await waitingChat(page.request, chatModel, portrait, { parked: false });
+  await page.goto(`/chat/${drawing.chatId}`);
   await expect(card).toHaveAttribute('data-state', 'pending', COLD);
   await expect(card).toContainText('Generating image');
   const skeleton = card.getByTestId('image-card-skeleton');
   await expect(skeleton).toBeVisible();
   await expect(card).toHaveAttribute('data-ratio', '0.667');
-  const portrait = await skeleton.boundingBox();
-  expect(portrait!.width / portrait!.height).toBeCloseTo(2 / 3, 1);
+  const tall = await skeleton.boundingBox();
+  expect((tall?.width ?? 0) / (tall?.height ?? 1)).toBeCloseTo(2 / 3, 1);
   await shot(page, testInfo, 'image-card-generating-portrait.png');
+  await stop(page.request, drawing);
 
   // A ratio instead of pixels: 16:9 landscape.
-  await seedWaitingChat(fixture, { filename: 'bear.png', aspectRatio: '16:9' }, { parked: false });
-  await page.reload();
+  const ratio = await waitingChat(page.request, chatModel, wide, { parked: false });
+  await page.goto(`/chat/${ratio.chatId}`);
   await expect(card).toHaveAttribute('data-ratio', /^1\.7/, COLD);
-  const landscape = await card.getByTestId('image-card-skeleton').boundingBox();
-  expect(landscape!.width / landscape!.height).toBeCloseTo(16 / 9, 1);
+  const widescreen = await card.getByTestId('image-card-skeleton').boundingBox();
+  expect((widescreen?.width ?? 0) / (widescreen?.height ?? 1)).toBeCloseTo(16 / 9, 1);
+  await stop(page.request, ratio);
 
   // Nothing asked: a square.
-  await seedWaitingChat(fixture, { filename: 'bear.png' }, { parked: false });
-  await page.reload();
+  const plain = await waitingChat(page.request, chatModel, square, { parked: false });
+  await page.goto(`/chat/${plain.chatId}`);
   await expect(card).toHaveAttribute('data-ratio', '1.000', COLD);
+  await stop(page.request, plain);
 
   // Phone width: the outline keeps its shape and fits the screen.
-  await seedWaitingChat(fixture, { filename: 'bear.png', size: '1536x1024' }, { parked: false });
+  const phone = await waitingChat(page.request, chatModel, landscape, { parked: false });
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.reload();
+  await page.goto(`/chat/${phone.chatId}`);
+  await expect(card).toHaveAttribute('data-state', 'pending', COLD);
   const narrow = await card.getByTestId('image-card-skeleton').boundingBox();
-  expect(narrow!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
-  expect(narrow!.width / narrow!.height).toBeCloseTo(1.5, 1);
+  expect(narrow?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  expect((narrow?.width ?? 0) / (narrow?.height ?? 1)).toBeCloseTo(1.5, 1);
   await shot(page, testInfo, 'image-card-generating-mobile.png');
+  await stop(page.request, phone);
 });
 
 test('an animated GIF is worded as an animation while it is made, and plays inline once it is', async ({
   page,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await signIn(page, fixture);
+  test.slow();
+  const slowGif = { filename: 'ball.gif', aspectRatio: '16:9' };
+  const chatModel = await models(page.request);
 
   // Being made: an animation, in the 16:9 shape asked for.
-  await seedWaitingChat(fixture, { filename: 'ball.gif', aspectRatio: '16:9' }, { parked: false });
-  await page.goto(`/chat/${fixture.waitingChatId}`);
-  const waiting = page.getByTestId('image-card');
-  await expect(waiting).toHaveAttribute('data-state', 'pending', COLD);
-  await expect(waiting).toHaveAttribute('data-kind', 'animation');
-  await expect(waiting).toContainText('Generating animation');
-  await expect(waiting).toHaveAttribute('data-ratio', /^1\.7/);
+  const waiting = await waitingChat(page.request, chatModel, slowGif, { parked: false });
+  await page.goto(`/chat/${waiting.chatId}`);
+  const pending = page.getByTestId('image-card').filter({ visible: true });
+  await expect(pending).toHaveAttribute('data-state', 'pending', COLD);
+  await expect(pending).toHaveAttribute('data-kind', 'animation');
+  await expect(pending).toContainText('Generating animation');
+  await expect(pending).toHaveAttribute('data-ratio', /^1\.7/);
   await shot(page, testInfo, 'image-card-generating-animation.png');
+  await stop(page.request, waiting);
 
-  // Made: the GIF itself, served as the stored file.
-  const gif = ballGif();
-  await seedGifChat(fixture, gif.byteLength);
-  await page.route(`**/api/chat/attachments/${fixture.gifAttachmentId}`, (route) =>
-    route.fulfill({ status: 200, contentType: 'image/gif', body: gif })
-  );
-  await page.goto(`/chat/${fixture.gifChatId}`);
+  // Made: four frames, each its own picture, encoded into a looping GIF.
+  const chatId = await createChat(page.request, { llmModelId: chatModel, title: 'Bouncing ball' });
+  const gif = scripted(GIF_PROMPT, [
+    {
+      text: 'Here is your animation.',
+      tools: [draw({ filename: 'ball.gif', aspectRatio: '16:9', frames: 4 })],
+    },
+    { text: 'It loops.' },
+  ]);
+  await send(page.request, chatId, gif, chatModel, { allow: true });
+  await page.goto(`/chat/${chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Bouncing ball' })).toBeVisible(COLD);
-  const card = page.getByTestId('image-card');
+  const card = page.getByTestId('image-card').filter({ visible: true });
   await expect(card).toHaveAttribute('data-state', 'done', COLD);
   await expect(card).toHaveAttribute('data-kind', 'animation');
   await expect(card).toContainText('Generated animation');
-  await expect(card).toContainText('1m 35s');
   const picture = card.getByRole('img', { name: 'ball.gif' });
   await expect(picture).toBeVisible();
-  await expect
-    .poll(() => picture.evaluate((img: HTMLImageElement) => [img.naturalWidth, img.naturalHeight]))
-    .toEqual([512, 288]);
+  // 16:9, as asked.
+  const [width, height] = await picture.evaluate((img: HTMLImageElement) => [
+    img.naturalWidth,
+    img.naturalHeight,
+  ]);
+  expect(width / height).toBeCloseTo(16 / 9, 1);
   await expect(card.getByTestId('file-caption')).toContainText('ball.gif');
 
   // It plays: what is on screen changes from one moment to the next. (A canvas
@@ -816,7 +502,7 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
   // Phone width: the animation stays inside the thread.
   await page.setViewportSize(MOBILE_VIEWPORT);
   const box = await picture.boundingBox();
-  expect(box!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  expect(box?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true
   );
@@ -826,16 +512,18 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
 test('Preferences offers the org’s image models, saves the person’s pick, and is silent with none', async ({
   page,
 }, testInfo) => {
-  await signIn(page, fixture);
-
   // No image model in the org: the section is not there.
-  await addModels(fixture, ['chat']);
+  await model(page.request, { label: `Chatty ${tag}` });
   await page.goto(`/preferences`);
   await expect(page.getByRole('heading', { name: 'Preferences', level: 1 })).toBeVisible(COLD);
   await expect(page.getByRole('heading', { name: 'Image generation' })).toHaveCount(0);
 
   // Two image models: the picker, defaulting to the org's first by name.
-  await addModels(fixture, ['painter', 'fox']);
+  const painterId = await model(page.request, {
+    label: 'Painter',
+    image: { apiSurface: 'images', model: 'gpt-image-1' },
+  });
+  await model(page.request, { label: 'Fox', image: { apiSurface: 'flux', model: 'FLUX.2-flex' } });
   await page.reload();
   const select = page.getByLabel('Preferred image model');
   await expect(select).toBeVisible(COLD);
@@ -856,18 +544,9 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
 
   // Saved: it survives a reload, and the stored preference is the model's id.
   await page.reload();
-  await expect(page.getByLabel('Preferred image model')).toHaveValue(fixture.painterId);
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    const stored = await client.query(
-      `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'image'`,
-      [fixture.subject]
-    );
-    expect(stored.rows[0].value).toEqual({ modelId: fixture.painterId });
-  } finally {
-    await client.end();
-  }
+  await expect(page.getByLabel('Preferred image model')).toHaveValue(painterId);
+  const stored = await page.request.get('/api/preferences');
+  expect((await stored.json()).image).toEqual({ modelId: painterId });
 
   // Back to the organization default clears it.
   await page.getByLabel('Preferred image model').selectOption('');
@@ -881,54 +560,108 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   await shot(page, testInfo, 'preferences-image-model-mobile.png');
 });
 
+const TWO = scripted('two pictures, please', [
+  { tools: [draw({ filename: 'one.png' }), draw({ filename: 'two.png' })] },
+  { text: 'Both drawn.' },
+]);
+const ONE = scripted('one picture, please', [
+  { tools: [draw({ filename: 'three.png' })] },
+  { text: 'Drawn.' },
+]);
+
+/**
+ * The person draws two pictures; somebody else draws one. Each picture is
+ * billed 61 tokens in and 4,160 out (llm-stub.mjs's Images usage).
+ */
+async function usage(request: APIRequestContext, outside: APIRequestContext): Promise<Person> {
+  const chatModel = await models(request);
+  const mine = await createChat(request, { llmModelId: chatModel, title: 'Two pictures' });
+  await send(request, mine, TWO, chatModel, { allow: true });
+  const other = await createPerson(outside, { displayName: `Another Person ${tag}` });
+  const theirs = await outside.post(`${MEMORY_BASE_URL}/api/chat/chats`, {
+    headers: other.headers,
+    data: { llmModelId: chatModel },
+  });
+  expect(theirs.status(), await theirs.text()).toBe(201);
+  const { chatId } = await theirs.json();
+  const asked = await outside.post(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}/turns`, {
+    headers: other.headers,
+    data: { text: ONE, llmModelId: chatModel },
+  });
+  expect(asked.status(), await asked.text()).toBe(202);
+  // Their ask is theirs to answer: allowed once, from their side.
+  await expect
+    .poll(
+      async () => {
+        const view = await outside.get(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}`, {
+          headers: other.headers,
+        });
+        const turn = (await view.json()).chat.activeTurn;
+        if (turn?.pendingPermission) {
+          await outside.post(
+            `${MEMORY_BASE_URL}/api/chat/chats/${chatId}/turns/${turn.id}/permission`,
+            {
+              headers: other.headers,
+              data: { toolUseId: turn.pendingPermission.toolUseId, decision: 'once' },
+            }
+          );
+        }
+        return turn === null;
+      },
+      { timeout: 60_000 }
+    )
+    .toBe(true);
+  await settled(request, mine);
+  return other;
+}
+
 test('My usage and Organization usage count the pictures in KB/MB/GB with their tokens', async ({
   page,
+  person,
+  request,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await seedUsage(fixture);
-  await signIn(page, fixture);
+  await usage(page.request, request);
 
-  // Mine: two pictures, 4 million bytes, 101 tokens in and 5.2k out.
+  // Mine: two pictures, 122 tokens in and 8.3k out.
   await page.goto(`/utilization`);
   const mine = page.getByRole('main').getByTestId('image-usage-card');
   await expect(mine).toBeVisible(COLD);
   await expect(mine.getByTestId('image-usage-count')).toHaveText('2');
-  await expect(mine.getByTestId('image-usage-bytes')).toHaveText('3.8 MB');
-  await expect(mine.getByTestId('image-usage-tokens')).toContainText('101 tokens in');
-  await expect(mine.getByTestId('image-usage-tokens')).toContainText('5.2k tokens out');
+  await expect(mine.getByTestId('image-usage-bytes')).toHaveText(/^[\d.]+ (KB|MB)$/);
+  await expect(mine.getByTestId('image-usage-tokens')).toContainText('122 tokens in');
+  await expect(mine.getByTestId('image-usage-tokens')).toContainText('8.3k tokens out');
   // And the same tokens are a surface of their own in "Tokens by surface".
   const mySurfaces = page.locator('section', {
     has: page.getByRole('heading', { name: 'Tokens by surface' }),
   });
   const myImages = mySurfaces.getByRole('listitem').filter({ hasText: 'Images' });
-  await expect(myImages).toContainText('5.3k');
-  await expect(myImages).toContainText('(101 in · 5.2k out)');
+  await expect(myImages).toContainText('8.4k');
+  await expect(myImages).toContainText('(122 in · 8.3k out)');
   await shot(page, testInfo, 'usage-images-mine.png');
 
-  // The organization: three pictures, and who has the most.
+  // The organization: every picture this server drew, ours among them, and who has the most.
   await page.goto(`/admin/usage`);
   const org = page.getByRole('main').getByTestId('image-usage-card');
   await expect(org).toBeVisible(COLD);
-  await expect(org.getByTestId('image-usage-count')).toHaveText('3');
-  await expect(org.getByTestId('image-usage-bytes')).toHaveText('4.3 MB');
+  expect(Number(await org.getByTestId('image-usage-count').innerText())).toBeGreaterThanOrEqual(3);
+  await expect(org.getByTestId('image-usage-bytes')).toHaveText(/^[\d.]+ (KB|MB|GB)$/);
   // The tokens image models billed are a surface beside chat and agents, and part of the headline total.
   const surfaces = page.locator('section', {
     has: page.getByRole('heading', { name: 'Tokens by surface' }),
   });
   const surfaceImages = surfaces.getByRole('listitem').filter({ hasText: 'Images' });
-  await expect(surfaceImages).toContainText('5.3k');
-  await expect(surfaceImages).toContainText('(101 in · 5.2k out)');
-  // The row's figure is the images' own total, 101 + 5,200, not a share of
-  // anything else on the page (the shared seed's agent tokens sit beside it).
-  await expect(surfaceImages).toHaveText(/^Images\s*5\.3k/);
+  await expect(surfaceImages).toHaveText(/^Images\s*[\d.]+k/);
+  await expect(surfaceImages).toContainText(/\([\d.,k]+ in · [\d.,k]+ out\)/);
   const board = page.locator('section', {
     has: page.getByRole('heading', { name: 'Top image creators' }),
   });
   await expect(board).toBeVisible();
-  await expect(board.getByText('E2E Tester')).toBeVisible();
-  await expect(board.getByText('Another Person')).toBeVisible();
-  await expect(board.getByText('3.8 MB · 2 images')).toBeVisible();
-  await expect(board.getByText('488 KB · 1 image')).toBeVisible();
+  const myRow = board.locator('li', { hasText: person.displayName });
+  // (The fixture names every person alike: one of those rows is this one, with its two.)
+  await expect(myRow.filter({ hasText: /[\d.]+ (KB|MB) · 2 images/ }).first()).toBeVisible();
+  // Every person this server has seen draw is on the board, most first: more than one of them.
+  // (Somebody else's one picture can fall below the cut once earlier runs have drawn more.)
+  expect(await board.locator('li').count()).toBeGreaterThan(1);
   await shot(page, testInfo, 'usage-images-org.png');
 
   await page.setViewportSize(MOBILE_VIEWPORT);
@@ -939,13 +672,13 @@ test('My usage and Organization usage count the pictures in KB/MB/GB with their 
 
 test('the Tokens chart shows images by colour beside chat and agents, hour by hour and day by day', async ({
   page,
+  request,
 }, testInfo) => {
-  await addModels(fixture, ['chat', 'painter']);
-  await seedUsage(fixture);
-  await signIn(page, fixture);
+  await usage(page.request, request);
   const main = page.getByRole('main');
   // The chart's bars carry a tooltip; the ones with any tokens are the filled ones.
   const imageBars = main.locator('[role="img"] [title*="Images"]');
+  const imageTitle = /Images [\d,]+ \(\d+ images?, [\d.]+ (KB|MB|GB)\)/;
 
   await page.goto(`/admin/usage`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
@@ -963,14 +696,13 @@ test('the Tokens chart shows images by colour beside chat and agents, hour by ho
 
   // 30 days, by day: today's bar holds the image tokens, with how many pictures and how big.
   await expect(imageBars).toHaveCount(1);
-  await expect(imageBars).toHaveAttribute('title', /Images 5,261 \(3 images, 4\.3 MB\)/);
+  await expect(imageBars).toHaveAttribute('title', imageTitle);
   await expect(imageBars.locator('div.bg-pink-500')).toHaveCount(1);
   await shot(page, testInfo, 'usage-tokens-chart-images-daily.png');
 
   // Today, by hour: the same pink segment in the current hour's bar.
   await main.getByRole('button', { name: 'Today', exact: true }).click();
-  await expect(imageBars).toHaveCount(1);
-  await expect(imageBars).toHaveAttribute('title', /Images 5,261 \(3 images, 4\.3 MB\)/);
+  await expect(imageBars.first()).toHaveAttribute('title', imageTitle);
   await expect(main.locator('figure').getByText('Today, by hour')).toBeVisible();
   await shot(page, testInfo, 'usage-tokens-chart-images-hourly.png');
 

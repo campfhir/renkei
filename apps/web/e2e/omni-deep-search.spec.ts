@@ -1,19 +1,18 @@
 /**
  * The top-bar search reaches down to the setting, connector or organization
  * setting itself: a result opens its page scrolled to the element that holds
- * it, and that element is in view.
+ * it, and that element is in view. An artifact is found by its digest: the
+ * file is written by a chat turn whose (stand-in) model hands it over with
+ * a summary and keywords (chat_write_file), as a chat's own model does.
  */
 
 import { randomUUID } from 'node:crypto';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { test, expect } from './fixtures';
+import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
+import { askAndWait, createChat } from './support/code-host';
+
+// Organization settings are found by an operator; the stub model is staged by one.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 async function search(page: import('@playwright/test').Page, text: string) {
   const box = page.getByRole('searchbox', { name: 'Search Renkei' });
@@ -23,6 +22,7 @@ async function search(page: import('@playwright/test').Page, text: string) {
 
 test('dark mode lands on the appearance section, scrolled into view', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
   await page.goto('/agents');
@@ -34,6 +34,7 @@ test('dark mode lands on the appearance section, scrolled into view', async ({
 
 test('a connector is found by a product inside it and opens its card or the catalog', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
   await page.goto('/agents');
@@ -54,7 +55,7 @@ test('a connector is found by a product inside it and opens its card or the cata
   }
 });
 
-test('OnBase is found by its own name', async ({ page }, testInfo) => {
+test('OnBase is found by its own name', async ({ page, person: _person }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
   await page.goto('/agents');
   const results = await search(page, 'onbase');
@@ -62,7 +63,10 @@ test('OnBase is found by its own name', async ({ page }, testInfo) => {
   await expect(page).toHaveURL(/\/connectors\?find=onbase#connector-hyland$/);
 });
 
-test('an operator is sent straight to an organization setting', async ({ page }, testInfo) => {
+test('an operator is sent straight to an organization setting', async ({
+  page,
+  person: _person,
+}, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
   await page.goto('/agents');
   const results = await search(page, 'safety');
@@ -75,45 +79,32 @@ test('an operator is sent straight to an organization setting', async ({ page },
 
 test('an artifact is found by a keyword in its summary, and the row shows the summary', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const id = randomUUID();
+  const tag = randomUUID().slice(0, 6);
   const summary =
     'Month-end ledger reconciliation: matches bank statements to posted journal entries.';
+  const modelId = await addStubModel(page.request, `deep-search-${tag}`);
   try {
-    await client.query(
-      "DELETE FROM artifacts WHERE owner_subject = $1 AND filename LIKE 'deep-search-%'",
-      [E2E_SUBJECT]
-    );
     // The keyword is only in the digest, not in the file name.
-    await client.query(
-      `INSERT INTO artifacts (id, owner_subject, chat_id, blob_key, filename, content_type, size_bytes,
-         extract_status, origin, key_kind, summary, keywords, digest_status, search_vector)
-       VALUES ($1, $2, NULL, $3, 'deep-search-close-workbook.xlsx',
-         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 10,
-         'done', 'upload', 'artifact', $4, $5, 'done',
-         setweight(to_tsvector('english', $6), 'A') || setweight(to_tsvector('english', $4), 'B'))`,
-      [
-        id,
-        E2E_SUBJECT,
-        `chat/e2e/${id}`,
-        summary,
-        ['reconciliation', 'general ledger'],
-        'reconciliation general ledger',
-      ]
-    );
+    const write = {
+      filename: `deep-search-close-workbook-${tag}.csv`,
+      content: 'account,amount\n4000,120.50\n',
+      summary,
+      keywords: ['reconciliation', 'general ledger'],
+    };
+    const chatId = await createChat(page.request, { llmModelId: modelId });
+    await askAndWait(page.request, chatId, {
+      text: scripted('Write up the close workbook.', [toolStep('chat_write_file', write)]),
+      llmModelId: modelId,
+    });
     await page.goto('/agents');
     const results = await search(page, 'reconciliation');
     const option = results.getByRole('option', { name: /deep-search-close-workbook/ });
     await expect(option).toBeVisible();
     await expect(option).toContainText('Month-end ledger reconciliation');
   } finally {
-    await client.query(
-      "DELETE FROM artifacts WHERE owner_subject = $1 AND filename LIKE 'deep-search-%'",
-      [E2E_SUBJECT]
-    );
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });

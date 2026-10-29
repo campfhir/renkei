@@ -6,7 +6,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
 import {
   deleteCodeProjectTemplate,
   parseTemplatePayload,
@@ -26,10 +25,7 @@ export async function PUT(
   const parsed = parseTemplatePayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const updated = await updateCodeProjectTemplate(dbResult.val, templateId, parsed);
+  const updated = await updateCodeProjectTemplate(templateId, parsed);
   if (!updated.ok) {
     const status = updated.error === 'duplicate' ? 409 : 404;
     const error =
@@ -48,10 +44,7 @@ export async function DELETE(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const deleted = await deleteCodeProjectTemplate(dbResult.val, templateId);
+  const deleted = await deleteCodeProjectTemplate(templateId);
   if (!deleted) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
   return NextResponse.json({ ok: true });
 }

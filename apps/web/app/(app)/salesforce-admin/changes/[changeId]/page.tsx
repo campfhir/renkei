@@ -2,7 +2,7 @@ import React from 'react';
 import Link from 'next/link';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -57,18 +57,15 @@ const OUTCOME_TONES: Record<OperationResult['outcome'], string> = {
  * it to the end (lib/salesforce-admin/apply-job.ts), and two parties
  * finishing one deploy would each run its grants.
  */
-async function catchUp(
-  db: Parameters<typeof refreshValidation>[0],
-  subject: string,
-  change: ChangeRequest
-): Promise<ChangeRequest> {
+async function catchUp(subject: string, change: ChangeRequest): Promise<ChangeRequest> {
   const running = change.validation && 'deployId' in change.validation && !change.validation.done;
   if (!running) return change;
-  const context = { subject, db };
+  // The connection is resolved by lib/mcp-tools/salesforce/client.ts.
+  const context = { subject };
   const access = await accessForChange(context, change);
   if (typeof access === 'string') return change;
-  const moved = await refreshValidation(db, context, access, change);
-  return moved ? ((await getChangeRequestById(db, change.id)) ?? change) : change;
+  const moved = await refreshValidation(context, access, change);
+  return moved ? ((await getChangeRequestById(change.id)) ?? change) : change;
 }
 
 /**
@@ -90,15 +87,12 @@ export default async function SalesforceAdminChangePage({
     redirect(signInUrl(`/salesforce-admin/changes/${changeId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
   // The requester sees their own and an operator sees everyone's; to anyone
   // else a request reads as not found.
   const operator = session.roles.includes(ROLE_OPERATOR);
-  const stored = await getChangeRequestById(db, changeId);
+  const stored = await getChangeRequestById(changeId);
   if (!stored || !mayView(stored, { subject: session.subject, operator })) notFound();
-  const change = await catchUp(db, session.subject, stored);
+  const change = await catchUp(session.subject, stored);
   const isOwner = change.subject === session.subject;
   const [requester, approver] = await Promise.all([
     getIdentityDisplay(change.subject),
@@ -113,13 +107,9 @@ export default async function SalesforceAdminChangePage({
       : (approver?.displayName ?? approver?.email ?? change.approvedBy)
     : null;
   const isRequest = change.kind === REQUEST_KIND;
-  const agent = change.agentId
-    ? await db
-        .selectFrom('agents')
-        .select('name')
-        .where('id', '=', change.agentId)
-        .executeTakeFirst()
-    : undefined;
+  const agentName = change.agentId
+    ? await getDataStore().adminChangeQueue.agentName(change.agentId)
+    : null;
   const connector = (await listSalesforceConnectors(SALESFORCE_ADMIN_KIND)).find(
     (org) => org.key === change.connectorKey
   );
@@ -133,7 +123,7 @@ export default async function SalesforceAdminChangePage({
   // Apply is off before anyone presses it.
   const gate =
     state === 'pending' && operator && !isRequest
-      ? await applyGate(db, session.subject, session.roles, change)
+      ? await applyGate(session.subject, session.roles, change)
       : null;
   const inProgress = state === 'queued' || state === 'applying';
   const running = inProgress || validationState(validation) === 'running';
@@ -173,8 +163,8 @@ export default async function SalesforceAdminChangePage({
           {isRequest ? 'Requested' : 'Proposed'} <LocalTime at={change.createdAt} /> by{' '}
           {requesterName}
           {change.agentId
-            ? agent
-              ? `, through ${isOwner ? 'your' : 'their'} agent “${agent.name}”`
+            ? agentName
+              ? `, through ${isOwner ? 'your' : 'their'} agent “${agentName}”`
               : `, through ${isOwner ? 'one of your agents' : 'an agent'}`
             : ''}
           .

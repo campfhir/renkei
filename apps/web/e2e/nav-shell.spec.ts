@@ -6,15 +6,15 @@
  */
 
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { test, expect } from './fixtures';
 
-test('app menu column: open by default, toggles and is remembered', async ({ page }, testInfo) => {
+// The account menu's Organization door, and the Organization page, are an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
+
+test('app menu column: open by default, toggles and is remembered', async ({
+  page,
+  person: _person,
+}, testInfo) => {
   await page.goto(`/agents`);
   const column = page.getByRole('navigation', { name: 'Application' });
   const mobile = testInfo.project.name === 'mobile';

@@ -5,8 +5,13 @@
  * callers can fall back to trusted request headers.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type DataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import {
   getOrgSettings,
   setOrgSettings,
@@ -14,74 +19,41 @@ import {
   invalidateSettingsCache,
   coerceStringListRecord,
   DEFAULT_ORG_SETTINGS,
+  DEFAULT_SETTINGS_CACHE_TTL_MS,
+  settingsCacheTtlMs,
 } from './index';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
-
-interface FakeStore {
-  tenantRows: Map<string, unknown>;
-  platformRows: Map<string, unknown>;
-  selects: number;
-}
-
-function stubDb(): FakeStore {
-  const store: FakeStore = { tenantRows: new Map(), platformRows: new Map(), selects: 0 };
-
-  const makeSelect = (table: string) => {
-    const filters: Record<string, unknown> = {};
-    const chain = {
-      select: () => chain,
-      where: (column: string, _op: string, value: unknown) => {
-        filters[column] = value;
-        return chain;
-      },
-      execute: async () => {
-        store.selects += 1;
-        return [...store.tenantRows.entries()]
-          .filter(([key]) => key.startsWith(`${String()}:`))
-          .map(([key, value]) => ({ key: key.split(':')[1], value }));
-      },
-      executeTakeFirst: async () => {
-        store.selects += 1;
-        const value = store.platformRows.get(String(filters.key));
-        return value === undefined ? undefined : { value };
-      },
-    };
-    return table === 'settings' || table === 'platform_settings' ? chain : chain;
-  };
-
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      selectFrom: (table: string) => makeSelect(table),
-      insertInto: (table: string) => ({
-        values: (row: Record<string, unknown>) => ({
-          onConflict: () => ({
-            execute: async () => {
-              const value = JSON.parse(String(row.value));
-              if (table === 'settings') {
-                store.tenantRows.set(`${String()}:${String(row.key)}`, value);
-              } else {
-                store.platformRows.set(String(row.key), value);
-              }
-              return [];
-            },
-          }),
-        }),
-      }),
+/**
+ * A memory data store, registered as the process's store, that counts the
+ * reads which reach it — the cache tests need to see whether one did.
+ */
+function stubStore(): MemoryDataStore & { reads: () => number } {
+  const store = createMemoryDataStore();
+  let reads = 0;
+  const all = store.settings.all;
+  const counted: DataStore['settings'] = {
+    ...store.settings,
+    all: () => {
+      reads += 1;
+      return all();
     },
-  });
-  return store;
+  };
+  const stub = { ...store, settings: counted, reads: () => reads };
+  registerDataStore(stub);
+  return stub;
 }
 
 beforeEach(() => {
-  mockGetDatabase.mockReset();
   invalidateSettingsCache();
+});
+
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('org settings', () => {
   it('returns defaults for an organization with nothing stored', async () => {
-    stubDb();
+    stubStore();
     const result = await getOrgSettings();
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.val).toEqual(DEFAULT_ORG_SETTINGS);
@@ -97,7 +69,7 @@ describe('org settings', () => {
   });
 
   it('overrides only what was stored, per key', async () => {
-    stubDb();
+    stubStore();
     await setOrgSettings({ readOnly: true, maxAttachmentBytes: 1024 });
 
     const result = await getOrgSettings();
@@ -114,7 +86,7 @@ describe('org settings', () => {
     // SANDBOX_SERVICE_PIDS, SANDBOX_WORKSPACES_DEBUG and
     // ADMANAGER_PRODUCT_NAME: nothing stored means the defaults in code, and
     // what is stored is read per key.
-    stubDb();
+    stubStore();
     expect(DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes).toBe(2 * 1_073_741_824);
     expect(DEFAULT_ORG_SETTINGS.sandboxServiceMemoryBytes).toBe(1_073_741_824);
     expect(DEFAULT_ORG_SETTINGS.sandboxServicePids).toBe(512);
@@ -134,35 +106,37 @@ describe('org settings', () => {
       expect(result.val.sandboxServicePids).toBe(128);
       expect(result.val.sandboxWorkspacesDebug).toBe(true);
       expect(result.val.admanagerProductName).toBe('Acme Renkei');
-      expect(result.val.sandboxScriptMemoryBytes).toBe(DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes);
+      expect(result.val.sandboxScriptMemoryBytes).toBe(
+        DEFAULT_ORG_SETTINGS.sandboxScriptMemoryBytes
+      );
     }
   });
 
   it('ignores stored values of the wrong type in favor of defaults', async () => {
-    const store = stubDb();
-    store.tenantRows.set('tenant-1:max_jql_results', 'not-a-number');
+    const store = stubStore();
+    await store.settings.set('max_jql_results', 'not-a-number');
 
     const result = await getOrgSettings();
     if (result.ok) expect(result.val.maxJqlResults).toBe(DEFAULT_ORG_SETTINGS.maxJqlResults);
   });
 
   it('rejects a stored log level outside the known set in favor of the default', async () => {
-    const store = stubDb();
-    store.tenantRows.set('tenant-1:log_level', 'trace');
+    const store = stubStore();
+    await store.settings.set('log_level', 'trace');
 
     const result = await getOrgSettings();
     if (result.ok) expect(result.val.logLevel).toBe(DEFAULT_ORG_SETTINGS.logLevel);
   });
 
   it('defaults act-step approval to externally triggered runs, and refuses an unknown policy', async () => {
-    const store = stubDb();
+    const store = stubStore();
     const policyOf = async () => {
       const result = await getOrgSettings();
       return result.ok ? result.val.agentActStepsRequireApproval : null;
     };
     expect(await policyOf()).toBe('externally_triggered');
 
-    store.tenantRows.set('tenant-1:agent_act_steps_require_approval', 'sometimes');
+    await store.settings.set('agent_act_steps_require_approval', 'sometimes');
     invalidateSettingsCache();
     expect(await policyOf()).toBe('externally_triggered');
 
@@ -171,7 +145,7 @@ describe('org settings', () => {
   });
 
   it('round-trips a valid log level', async () => {
-    stubDb();
+    stubStore();
     await setOrgSettings({ logLevel: 'debug' });
 
     const result = await getOrgSettings();
@@ -179,16 +153,39 @@ describe('org settings', () => {
   });
 
   it('serves cached reads within the TTL and invalidates on write', async () => {
-    const store = stubDb();
+    const store = stubStore();
 
     await getOrgSettings();
-    const afterFirst = store.selects;
+    const afterFirst = store.reads();
     await getOrgSettings();
-    expect(store.selects).toBe(afterFirst);
+    expect(store.reads()).toBe(afterFirst);
 
     await setOrgSettings({ readOnly: true });
     const result = await getOrgSettings();
     if (result.ok) expect(result.val.readOnly).toBe(true);
+  });
+
+  it('keeps a minute-long cache unless RENKEI_CONFIG_CACHE_TTL_MS names another lifetime', () => {
+    expect(DEFAULT_SETTINGS_CACHE_TTL_MS).toBe(60_000);
+    expect(settingsCacheTtlMs({})).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '' })).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: 'soon' })).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '-5' })).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '0' })).toBe(0);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '5000' })).toBe(5_000);
+  });
+
+  it('asks the store on every read with a zero lifetime', async () => {
+    const store = stubStore();
+    process.env.RENKEI_CONFIG_CACHE_TTL_MS = '0';
+    try {
+      await getOrgSettings();
+      const afterFirst = store.reads();
+      await getOrgSettings();
+      expect(store.reads()).toBeGreaterThan(afterFirst);
+    } finally {
+      delete process.env.RENKEI_CONFIG_CACHE_TTL_MS;
+    }
   });
 });
 
@@ -214,7 +211,7 @@ describe('public base URL', () => {
 
 describe('connector audiences', () => {
   it('round-trips a map of group lists and drops anything malformed', async () => {
-    stubDb();
+    stubStore();
     await setOrgSettings({
       connectorAudiences: { zoom: ['svc-desk', 'ops'], 'atlassian-bitbucket': [] },
     });

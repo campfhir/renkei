@@ -173,7 +173,7 @@ export function normalizeAgentDraft(draft: AgentDraft): AgentDraft {
     name: draft.name.trim(),
     // Trailing whitespace only: leading indentation can be meaningful in
     // Markdown, and the editor's own blank skeleton lines are harmless.
-    instructions: draft.instructions.replace(/\s+$/, ''),
+    instructions: draft.instructions.trimEnd(),
     tools: [...new Set(draft.tools.map((tool) => tool.trim()).filter(Boolean))],
     guardrails,
     canAskQuestions: draft.canAskQuestions === true,

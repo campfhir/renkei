@@ -19,8 +19,6 @@
  * resolves: null, which routes surface as 404.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { activeGrant, resolveChatAccess, resolveResourceAccess, type ResourceRole } from './access';
 import { getAttachment, listReferencesOf, type AttachmentRow } from './attachments';
@@ -41,7 +39,6 @@ export interface ArtifactAccess {
 
 /** The cipher for a row, given how the viewer got in. */
 export async function artifactCipher(
-  db: Kysely<DB>,
   row: AttachmentRow,
   viewerSubject: string,
   via: ArtifactAccess['via'],
@@ -49,28 +46,26 @@ export async function artifactCipher(
 ): Promise<ContentCipher> {
   if (row.keyKind === 'chat') {
     if (!row.keyRef) return unavailableCipher('no-key');
-    const chat = await resolveChatAccess(db, viewerSubject, row.keyRef);
+    const chat = await resolveChatAccess(viewerSubject, row.keyRef);
     if (chat) return chat.cipher;
     // The owner of a row whose chat is gone from under them, or a reader
     // the row reached another way: as the chat's owner, if that still opens.
-    return chatCipherById(db, row.keyRef);
+    return chatCipherById(row.keyRef);
   }
   if (row.keyKind === 'chat_project') {
     if (!row.keyRef) return unavailableCipher('no-key');
-    const project = await resolveResourceAccess(db, viewerSubject, 'chat_project', row.keyRef);
+    const project = await resolveResourceAccess(viewerSubject, 'chat_project', row.keyRef);
     if (project) {
       return cipherFor(
-        db,
         'chat_project',
         { id: row.keyRef, ownerSubject: project.ownerSubject },
         viewerSubject,
         project.via
       );
     }
-    return projectCipherById(db, row.keyRef);
+    return projectCipherById(row.keyRef);
   }
   return cipherFor(
-    db,
     'artifact',
     { id: row.id, ownerSubject: row.ownerSubject },
     viewerSubject,
@@ -85,12 +80,11 @@ export async function artifactCipher(
  * through the project they are in rather than another that also holds it.
  */
 export async function resolveArtifactAccess(
-  db: Kysely<DB>,
   viewerSubject: string,
   artifact: string | AttachmentRow,
   preferProjectId: string | null = null
 ): Promise<ArtifactAccess | null> {
-  const row = typeof artifact === 'string' ? await getAttachment(db, artifact) : artifact;
+  const row = typeof artifact === 'string' ? await getAttachment(artifact) : artifact;
   if (!row) return null;
   const done = async (
     role: ArtifactRole,
@@ -105,7 +99,6 @@ export async function resolveArtifactAccess(
     projectId,
     projectRole,
     cipher: await artifactCipher(
-      db,
       row,
       viewerSubject,
       via,
@@ -113,10 +106,10 @@ export async function resolveArtifactAccess(
     ),
   });
   if (row.ownerSubject === viewerSubject) return done('owner', 'owner', null, 'owner', null);
-  if (await activeGrant(db, 'artifact', row.id, viewerSubject)) {
+  if (await activeGrant('artifact', row.id, viewerSubject)) {
     return done('use', 'grant', null, null, null);
   }
-  const references = await listReferencesOf(db, row.id);
+  const references = await listReferencesOf(row.id);
   const ordered = preferProjectId
     ? [
         ...references.filter((r) => r.projectId === preferProjectId),
@@ -124,16 +117,11 @@ export async function resolveArtifactAccess(
       ]
     : references;
   for (const reference of ordered) {
-    const project = await resolveResourceAccess(
-      db,
-      viewerSubject,
-      'chat_project',
-      reference.projectId
-    );
+    const project = await resolveResourceAccess(viewerSubject, 'chat_project', reference.projectId);
     if (project) return done('read', 'project', reference.projectId, project.role, null);
   }
   if (row.chatId && isUuid(row.chatId)) {
-    const chat = await resolveChatAccess(db, viewerSubject, row.chatId);
+    const chat = await resolveChatAccess(viewerSubject, row.chatId);
     if (chat) return done('read', 'chat', null, null, row.chatId);
   }
   return null;
@@ -141,11 +129,10 @@ export async function resolveArtifactAccess(
 
 /** The cipher this reader opens the file's text with, or null when they may not read it. */
 export async function attachmentCipherFor(
-  db: Kysely<DB>,
   subject: string,
   row: AttachmentRow
 ): Promise<ContentCipher | null> {
-  const access = await resolveArtifactAccess(db, subject, row);
+  const access = await resolveArtifactAccess(subject, row);
   return access?.cipher ?? null;
 }
 
@@ -156,7 +143,6 @@ export async function attachmentCipherFor(
  */
 export async function fileCipherFor(
   scope: {
-    db: Kysely<DB>;
     subject: string;
     chatId: string;
     cipher: ContentCipher;
@@ -165,7 +151,7 @@ export async function fileCipherFor(
   row: AttachmentRow
 ): Promise<ContentCipher | null> {
   if (row.keyKind === 'chat' && row.keyRef === scope.chatId) return scope.cipher;
-  const access = await resolveArtifactAccess(scope.db, scope.subject, row, scope.projectId ?? null);
+  const access = await resolveArtifactAccess(scope.subject, row, scope.projectId ?? null);
   return access?.cipher ?? null;
 }
 

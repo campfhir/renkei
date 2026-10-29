@@ -4,8 +4,7 @@
  * resolver's (owner / editor / viewer).
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type PromptLibraryRecord, type PromptRecord } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { listAccessibleProjectIds, listGrantedResources } from './access';
 
@@ -13,289 +12,106 @@ export const LIBRARY_NAME_MAX_CHARS = 200;
 export const PROMPT_TITLE_MAX_CHARS = 200;
 export const PROMPT_BODY_MAX_CHARS = 20_000;
 
-export interface LibraryRow {
-  id: string;
-  ownerSubject: string;
-  name: string;
-  description: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type LibraryRow = PromptLibraryRecord;
+export type PromptRow = PromptRecord;
 
-export interface PromptRow {
-  id: string;
-  libraryId: string;
-  title: string;
-  body: string;
-  position: number;
-  createdBySubject: string;
-  updatedBySubject: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-const LIBRARY_COLUMNS = [
-  'id',
-  'owner_subject',
-  'name',
-  'description',
-  'created_at',
-  'updated_at',
-] as const;
-
-function libraryOf(raw: {
-  id: string;
-  owner_subject: string;
-  name: string;
-  description: string | null;
-  created_at: Date;
-  updated_at: Date;
-}): LibraryRow {
-  return {
-    id: raw.id,
-    ownerSubject: raw.owner_subject,
-    name: raw.name,
-    description: raw.description,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
-  };
-}
-
-function promptOf(raw: {
-  id: string;
-  library_id: string;
-  title: string;
-  body: string;
-  position: number;
-  created_by_subject: string;
-  updated_by_subject: string;
-  created_at: Date;
-  updated_at: Date;
-}): PromptRow {
-  return {
-    id: raw.id,
-    libraryId: raw.library_id,
-    title: raw.title,
-    body: raw.body,
-    position: raw.position,
-    createdBySubject: raw.created_by_subject,
-    updatedBySubject: raw.updated_by_subject,
-    createdAt: raw.created_at,
-    updatedAt: raw.updated_at,
-  };
-}
-
-export async function getLibrary(
-  db: Kysely<DB>,
-  libraryId: string
-): Promise<LibraryRow | null> {
+export async function getLibrary(libraryId: string): Promise<LibraryRow | null> {
   if (!isUuid(libraryId)) return null;
-  const raw = await db
-    .selectFrom('prompt_libraries')
-    .select(LIBRARY_COLUMNS)
-    .where('id', '=', libraryId)
-    .executeTakeFirst();
-  return raw ? libraryOf(raw) : null;
+  return getDataStore().promptLibraries.get(libraryId);
 }
 
 /** Every library this person can open: theirs, and the ones shared with them. */
 export async function listAccessibleLibraries(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ library: LibraryRow; role: 'owner' | 'editor' | 'viewer' }[]> {
+  const store = getDataStore();
   const [owned, granted] = await Promise.all([
-    db
-      .selectFrom('prompt_libraries')
-      .select(LIBRARY_COLUMNS)
-      .where('owner_subject', '=', subject)
-      .orderBy('updated_at', 'desc')
-      .execute(),
-    listGrantedResources(db, subject, 'prompt_library'),
+    store.promptLibraries.listOwned(subject),
+    listGrantedResources(subject, 'prompt_library'),
   ]);
   const grantIds = granted.map((grant) => grant.resourceId).filter(isUuid);
-  const grantedRows =
-    grantIds.length > 0
-      ? await db
-          .selectFrom('prompt_libraries')
-          .select(LIBRARY_COLUMNS)
-          .where('id', 'in', grantIds)
-          .execute()
-      : [];
+  const grantedRows = grantIds.length > 0 ? await store.promptLibraries.listByIds(grantIds) : [];
   const roleByGrant = new Map(granted.map((grant) => [grant.resourceId, grant.role]));
   const seen = new Set<string>();
   const out: { library: LibraryRow; role: 'owner' | 'editor' | 'viewer' }[] = [];
-  for (const raw of owned) {
-    seen.add(raw.id);
-    out.push({ library: libraryOf(raw), role: 'owner' });
+  for (const library of owned) {
+    seen.add(library.id);
+    out.push({ library, role: 'owner' });
   }
-  for (const raw of grantedRows) {
-    if (seen.has(raw.id)) continue;
-    seen.add(raw.id);
-    out.push({ library: libraryOf(raw), role: roleByGrant.get(raw.id) ?? 'viewer' });
+  for (const library of grantedRows) {
+    if (seen.has(library.id)) continue;
+    seen.add(library.id);
+    out.push({ library, role: roleByGrant.get(library.id) ?? 'viewer' });
   }
   return out;
 }
 
-export async function createLibrary(
-  db: Kysely<DB>,
-  input: { ownerSubject: string; name: string; description: string | null }
-): Promise<string> {
-  const inserted = await db
-    .insertInto('prompt_libraries')
-    .values({
-      owner_subject: input.ownerSubject,
-      name: input.name,
-      description: input.description,
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
-  return inserted.id;
+export async function createLibrary(input: {
+  ownerSubject: string;
+  name: string;
+  description: string | null;
+}): Promise<string> {
+  return getDataStore().promptLibraries.create(input);
 }
 
 export async function updateLibrary(
-  db: Kysely<DB>,
   libraryId: string,
   patch: { name?: string; description?: string | null }
 ): Promise<boolean> {
   if (!isUuid(libraryId)) return false;
-  const result = await db
-    .updateTable('prompt_libraries')
-    .set({
-      ...(patch.name !== undefined ? { name: patch.name } : {}),
-      ...(patch.description !== undefined ? { description: patch.description } : {}),
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', libraryId)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  return getDataStore().promptLibraries.update(libraryId, patch);
 }
 
-export async function deleteLibrary(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  libraryId: string
-): Promise<boolean> {
+export async function deleteLibrary(ownerSubject: string, libraryId: string): Promise<boolean> {
   if (!isUuid(libraryId)) return false;
-  const result = await db
-    .deleteFrom('prompt_libraries')
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', libraryId)
-    .executeTakeFirst();
-  const deleted = Number(result.numDeletedRows) > 0;
-  if (deleted) {
-    await db
-      .deleteFrom('resource_access_grants')
-      .where('resource_kind', '=', 'prompt_library')
-      .where('resource_id', '=', libraryId)
-      .execute();
-  }
+  const store = getDataStore();
+  const deleted = await store.promptLibraries.delete(ownerSubject, libraryId);
+  if (deleted) await store.resourceGrants.deleteForResource('prompt_library', libraryId);
   return deleted;
 }
 
-export async function listPrompts(
-  db: Kysely<DB>,
-  libraryId: string
-): Promise<PromptRow[]> {
+export async function listPrompts(libraryId: string): Promise<PromptRow[]> {
   if (!isUuid(libraryId)) return [];
-  const rows = await db
-    .selectFrom('prompts')
-    .selectAll()
-    .where('library_id', '=', libraryId)
-    .orderBy('position', 'asc')
-    .orderBy('created_at', 'asc')
-    .execute();
-  return rows.map(promptOf);
+  return getDataStore().promptLibraries.listPrompts(libraryId);
 }
 
-export async function createPrompt(
-  db: Kysely<DB>,
-  input: { libraryId: string; title: string; body: string; subject: string }
-): Promise<string> {
-  const inserted = await db
-    .insertInto('prompts')
-    .values({
-      library_id: input.libraryId,
-      title: input.title,
-      body: input.body,
-      position: sql<number>`(SELECT COALESCE(MAX(position), 0) + 1 FROM prompts WHERE library_id = ${input.libraryId})`,
-      created_by_subject: input.subject,
-      updated_by_subject: input.subject,
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
-  await touchLibrary(db, input.libraryId);
-  return inserted.id;
+export async function createPrompt(input: {
+  libraryId: string;
+  title: string;
+  body: string;
+  subject: string;
+}): Promise<string> {
+  return getDataStore().promptLibraries.createPrompt(input);
 }
 
 export async function updatePrompt(
-  db: Kysely<DB>,
   libraryId: string,
   promptId: string,
   patch: { title?: string; body?: string; position?: number },
   subject: string
 ): Promise<boolean> {
   if (!isUuid(libraryId) || !isUuid(promptId)) return false;
-  const result = await db
-    .updateTable('prompts')
-    .set({
-      ...(patch.title !== undefined ? { title: patch.title } : {}),
-      ...(patch.body !== undefined ? { body: patch.body } : {}),
-      ...(patch.position !== undefined ? { position: patch.position } : {}),
-      updated_by_subject: subject,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('library_id', '=', libraryId)
-    .where('id', '=', promptId)
-    .executeTakeFirst();
-  const updated = Number(result.numUpdatedRows) > 0;
-  if (updated) await touchLibrary(db, libraryId);
-  return updated;
+  return getDataStore().promptLibraries.updatePrompt(libraryId, promptId, patch, subject);
 }
 
-export async function deletePrompt(
-  db: Kysely<DB>,
-  libraryId: string,
-  promptId: string
-): Promise<boolean> {
+export async function deletePrompt(libraryId: string, promptId: string): Promise<boolean> {
   if (!isUuid(libraryId) || !isUuid(promptId)) return false;
-  const result = await db
-    .deleteFrom('prompts')
-    .where('library_id', '=', libraryId)
-    .where('id', '=', promptId)
-    .executeTakeFirst();
-  const deleted = Number(result.numDeletedRows) > 0;
-  if (deleted) await touchLibrary(db, libraryId);
-  return deleted;
-}
-
-async function touchLibrary(db: Kysely<DB>, libraryId: string): Promise<void> {
-  await db
-    .updateTable('prompt_libraries')
-    .set({ updated_at: sql<Date>`NOW()` })
-    .where('id', '=', libraryId)
-    .execute();
+  return getDataStore().promptLibraries.deletePrompt(libraryId, promptId);
 }
 
 /** The composer's picker: every prompt in every library this person can open. */
 export async function listPickerPrompts(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ id: string; title: string; body: string; libraryName: string }[]> {
-  const libraries = await listAccessibleLibraries(db, subject);
+  const libraries = await listAccessibleLibraries(subject);
   if (libraries.length === 0) return [];
   const names = new Map(libraries.map((entry) => [entry.library.id, entry.library.name]));
-  const rows = await db
-    .selectFrom('prompts')
-    .select(['id', 'library_id', 'title', 'body'])
-    .where('library_id', 'in', [...names.keys()])
-    .orderBy('library_id')
-    .orderBy('position', 'asc')
-    .execute();
+  const rows = await getDataStore().promptLibraries.listPromptsIn([...names.keys()]);
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
     body: row.body,
-    libraryName: names.get(row.library_id) ?? '',
+    libraryName: names.get(row.libraryId) ?? '',
   }));
 }
 

@@ -2,7 +2,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { getDatabase } from '@renkei/db';
 import { WORKSPACE_LIMIT_MAX_BYTES, WORKSPACE_LIMIT_MIN_BYTES } from '@renkei/connector-sandbox';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { decideSizeRequest } from '@/lib/code/size-requests';
@@ -42,10 +41,7 @@ export async function POST(
     }
     approved = Math.trunc(approvedBytes);
   }
-  const db = getDatabase();
-  if (!db.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const outcome = await decideSizeRequest(db.val, {
+  const outcome = await decideSizeRequest({
     id,
     decision,
     decidedBy: access.subject,

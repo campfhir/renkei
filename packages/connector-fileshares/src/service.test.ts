@@ -28,8 +28,6 @@ jest.mock('./limits', () => {
   };
 });
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { RawEntry, ShareSummary } from './types';
 import type { ShareBackend } from './backend';
 import {
@@ -58,7 +56,7 @@ const { openCredentialsForSubject } = jest.requireMock<{ openCredentialsForSubje
 const SHARE_ID = 'share-1';
 
 function deps(): ServiceDeps {
-  return { db: {} as Kysely<DB> };
+  return {};
 }
 
 function target() {
@@ -200,7 +198,7 @@ describe('resolution failures', () => {
   it('resolves the CALLER as the credential owner', async () => {
     arm({ '/': [] });
     await serviceListFolder(deps(), target(), '/');
-    expect(readConnectionCiphertext).toHaveBeenCalledWith(expect.anything(), SHARE_ID, 'auth0|alice');
+    expect(readConnectionCiphertext).toHaveBeenCalledWith(SHARE_ID, 'auth0|alice');
   });
 });
 

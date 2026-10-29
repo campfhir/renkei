@@ -4,18 +4,14 @@
  * so no section falls back to a heading such as "Unreleased".
  */
 
-import { test, expect } from '@playwright/test';
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { test, expect } from './fixtures';
 
 const DATED_HEADING = /^\d{1,2} [A-Z][a-z]+ \d{4}$/;
 
-test('about page — every changelog release is headed by a date', async ({ page }) => {
+test('about page — every changelog release is headed by a date', async ({
+  page,
+  person: _person,
+}) => {
   await page.goto(`/about`);
   await expect(page.getByRole('heading', { name: /changed/ })).toBeVisible();
 
@@ -29,7 +25,10 @@ test('about page — every changelog release is headed by a date', async ({ page
   await expect(page.getByText('Unreleased', { exact: true })).toHaveCount(0);
 });
 
-test('about page — dated release headings fit a phone-width screen', async ({ page }) => {
+test('about page — dated release headings fit a phone-width screen', async ({
+  page,
+  person: _person,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/about`);
   await expect(page.getByRole('heading', { name: /changed/ })).toBeVisible();
@@ -38,10 +37,10 @@ test('about page — dated release headings fit a phone-width screen', async ({ 
   await expect(firstHeading).toBeVisible();
   const box = await firstHeading.boundingBox();
   expect(box).not.toBeNull();
-  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(390);
 
   const overflow = await page.evaluate(
-    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth
   );
   expect(overflow).toBe(false);
 });

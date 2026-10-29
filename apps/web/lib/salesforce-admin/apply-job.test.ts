@@ -31,8 +31,6 @@ jest.mock('./change-requests', () => ({
   listRunnableChanges: jest.fn(),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
 import type { SalesforceAccess } from '@/lib/mcp-tools/salesforce/client';
@@ -47,9 +45,6 @@ import {
 } from './change-requests';
 import { recoverApplyJobs, runApplyJob } from './apply-job';
 
-// The stores are mocked; nothing here touches the database.
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-const db = {} as Kysely<DB>;
 const CHANGE = '6f1d3c1e-8c1a-4f5e-9a55-2b7a0c9e4d11';
 
 function change(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
@@ -100,13 +95,13 @@ beforeEach(() => {
 });
 
 it('deploys on the approving operator’s connection and tells the requester and the operator', async () => {
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
 
-  expect(jest.mocked(applyGate).mock.calls[0]?.[1]).toBe('operator');
+  expect(jest.mocked(applyGate).mock.calls[0]?.[0]).toBe('operator');
   expect(jest.mocked(accessForChange).mock.calls[0]?.[0]).toMatchObject({ subject: 'operator' });
   const call = jest.mocked(applyChangeRequest).mock.calls[0];
-  expect(call?.[1]).toMatchObject({ subject: 'operator' });
-  expect(call?.[4]).toBe('operator');
+  expect(call?.[0]).toMatchObject({ subject: 'operator' });
+  expect(call?.[3]).toBe('operator');
   expect(notifyChangeOutcome).toHaveBeenCalledWith(
     expect.objectContaining({
       connector: 'salesforce-admin',
@@ -130,14 +125,13 @@ it('deploys on the approving operator’s connection and tells the requester and
 
 it('reports what it is doing through the step callback, which is also its heartbeat', async () => {
   jest.mocked(applyChangeRequest).mockImplementation(async (...args) => {
-    const onStep = args[6];
+    const onStep = args[5];
     await onStep?.('Salesforce is deploying — 1 of 4 components (InProgress)');
     return { status: 'applied', results: { operations: [] } };
   });
   const { setStep } = jest.requireMock<typeof import('./change-requests')>('./change-requests');
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(setStep).toHaveBeenCalledWith(
-    db,
     CHANGE,
     'Salesforce is deploying — 1 of 4 components (InProgress)'
   );
@@ -145,7 +139,7 @@ it('reports what it is doing through the step callback, which is also its heartb
 
 it('does nothing when it loses the claim, so a change is never deployed twice', async () => {
   jest.mocked(startQueuedChange).mockResolvedValue(false);
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(applyChangeRequest).not.toHaveBeenCalled();
   expect(notifyChangeOutcome).not.toHaveBeenCalled();
 });
@@ -155,9 +149,9 @@ it('ends a change as failed when the org closed the gate since approval, saying 
     ok: false,
     reason: 'Your organization is in read-only mode, so changes cannot be applied.',
   });
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(applyChangeRequest).not.toHaveBeenCalled();
-  expect(jest.mocked(finishChangeRequest).mock.calls[0]?.[2]).toMatchObject({
+  expect(jest.mocked(finishChangeRequest).mock.calls[0]?.[1]).toMatchObject({
     status: 'failed',
     appliedBy: 'operator',
     results: { operations: [{ outcome: 'failed', detail: expect.stringMatching(/read-only/) }] },
@@ -167,9 +161,9 @@ it('ends a change as failed when the org closed the gate since approval, saying 
 
 it('ends a change as failed, and tells people, when the operator has no usable connection', async () => {
   jest.mocked(accessForChange).mockResolvedValue('Salesforce Admin UAT is not connected.');
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(applyChangeRequest).not.toHaveBeenCalled();
-  expect(jest.mocked(finishChangeRequest).mock.calls[0]?.[2].results.operations[0]?.detail).toBe(
+  expect(jest.mocked(finishChangeRequest).mock.calls[0]?.[1].results.operations[0]?.detail).toBe(
     'Salesforce Admin UAT is not connected.'
   );
   expect(notifyChangeOutcome).toHaveBeenCalledTimes(1);
@@ -180,7 +174,7 @@ it('stays quiet while a deploy is still running at the end of the wait, for the 
     status: 'applying',
     results: { deployId: '0Af000000000009', operations: [] },
   });
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(notifyChangeOutcome).not.toHaveBeenCalled();
   expect(recordAuditEvent).not.toHaveBeenCalled();
 });
@@ -198,7 +192,7 @@ it('follows a deploy that outlived its job to its end instead of starting anothe
       change({ status: 'applied', results: { deployId: '0Af000000000009', operations: [] } })
     );
   jest.mocked(refreshApplying).mockResolvedValue(true);
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(applyChangeRequest).not.toHaveBeenCalled();
   expect(refreshApplying).toHaveBeenCalledTimes(1);
   expect(notifyChangeOutcome).toHaveBeenCalledWith(expect.objectContaining({ outcome: 'applied' }));
@@ -206,10 +200,10 @@ it('follows a deploy that outlived its job to its end instead of starting anothe
 
 it('ends a change that died before Salesforce gave it a deploy id, saying so, without guessing', async () => {
   jest.mocked(getChangeRequestById).mockResolvedValue(change({ status: 'applying' }));
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(applyChangeRequest).not.toHaveBeenCalled();
   expect(refreshApplying).not.toHaveBeenCalled();
-  expect(jest.mocked(finishChangeRequest).mock.calls[0]?.[2]).toMatchObject({
+  expect(jest.mocked(finishChangeRequest).mock.calls[0]?.[1]).toMatchObject({
     status: 'failed',
     results: { operations: [{ detail: expect.stringMatching(/Deployment Status/) }] },
   });
@@ -219,19 +213,19 @@ it('ends a change that died before Salesforce gave it a deploy id, saying so, wi
 it('leaves an applying change alone while its job is still reporting', async () => {
   jest.mocked(getChangeRequestById).mockResolvedValue(change({ status: 'applying' }));
   jest.mocked(reclaimStaleChange).mockResolvedValue(false);
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(finishChangeRequest).not.toHaveBeenCalled();
   expect(notifyChangeOutcome).not.toHaveBeenCalled();
 });
 
 it('ignores a change that is not in the queue', async () => {
   jest.mocked(getChangeRequestById).mockResolvedValue(change({ status: 'pending' }));
-  await runApplyJob(db, CHANGE);
+  await runApplyJob(CHANGE);
   expect(startQueuedChange).not.toHaveBeenCalled();
 });
 
 it('the sweep takes up whatever the queue offers', async () => {
   jest.mocked(listRunnableChanges).mockResolvedValue([{ id: CHANGE, status: 'queued' }]);
-  await recoverApplyJobs(db);
+  await recoverApplyJobs();
   expect(applyChangeRequest).toHaveBeenCalledTimes(1);
 });

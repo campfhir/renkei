@@ -10,8 +10,7 @@
  * Started by playwright.config.ts as a second webServer, on the port the
  * app's SANDBOX_WORKER_URL names (see the repo-root .env.development).
  * The same process also stands in for Bitbucket, Jira administration's
- * option endpoints and — for a spec whose chat turn has to actually run
- * — an Anthropic Messages endpoint (handleAnthropic below).
+ * option endpoints and Mistral OCR (handleMistralOcr below).
  */
 
 /* global process, Buffer, setTimeout, URL, URLSearchParams, console */
@@ -276,9 +275,10 @@ const RULE_SEED = [
   ['mcr.microsoft.com/mssql/server', 'SQL Server on Linux'],
   ['mcr.microsoft.com/azure-storage/azurite', 'Azurite, the Azure Storage emulator'],
 ];
-const rulesByTenant = new Map();
+// One organization per deployment: one set of rules, seeded on first read.
+let orgRules = null;
 function rulesOf() {
-  let rules = rulesByTenant.get();
+  let rules = orgRules;
   if (!rules) {
     rules = new Map();
     for (const [pattern, note] of RULE_SEED) {
@@ -286,16 +286,16 @@ function rulesOf() {
       const now = new Date().toISOString();
       rules.set(id, { id, pattern, note, registryUsername: null, createdAt: now, updatedAt: now });
     }
-    rulesByTenant.set(rules);
+    orgRules = rules;
   }
   return rules;
 }
 
 /** The worker's normalizeImageRule, in miniature: enough for what the page types. */
 function normalizeRule(raw) {
-  let value = String(raw ?? '')
-    .trim()
-    .replace(/\/+$/, '');
+  // A loop, not /\/+$/, which backtracks on long runs of slashes.
+  let value = String(raw ?? '').trim();
+  while (value.endsWith('/')) value = value.slice(0, -1);
   if (!value || /\s/.test(value)) return { error: 'A rule is required.' };
   if (value.includes('*') && !value.endsWith('/*')) {
     return {
@@ -1378,9 +1378,89 @@ const JIRA_SPACES = new Map();
 let nextSpaceId = 30000;
 
 function jiraSpaces(cloudId) {
-  if (!JIRA_SPACES.has(cloudId)) JIRA_SPACES.set(cloudId, new Map());
+  if (!JIRA_SPACES.has(cloudId)) {
+    JIRA_SPACES.set(cloudId, new Map(seededSpaces().map((space) => [space.key, space])));
+  }
   return JIRA_SPACES.get(cloudId);
 }
+
+/**
+ * The company-managed spaces every site starts with: OPS, with its roles,
+ * components and schemes (what a template is saved from), and HR, which
+ * shares a screen with it. Their work types are the site's, read live.
+ */
+function seededSpaces() {
+  const group = (groupId, name) => ({
+    type: 'atlassian-group-role-actor',
+    actorGroup: { name, displayName: name, groupId },
+  });
+  const base = {
+    projectTypeKey: 'software',
+    assigneeType: 'UNASSIGNED',
+    style: 'classic',
+    simplified: false,
+    versions: [],
+    seeded: true,
+  };
+  return [
+    {
+      ...base,
+      id: '10000',
+      key: 'OPS',
+      name: 'Operations',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+      components: [
+        {
+          id: '50001',
+          name: 'Backend',
+          description: 'Services and jobs',
+          assigneeType: 'PROJECT_DEFAULT',
+        },
+        { id: '50002', name: 'Reports', assigneeType: 'PROJECT_LEAD' },
+      ],
+      roles: {
+        10002: [group('g-admins', 'ops-admins')],
+        10001: [group('g-users', 'jira-software-users')],
+      },
+    },
+    {
+      ...base,
+      id: '10100',
+      key: 'HELP',
+      name: 'Help desk',
+      projectTypeKey: 'service_desk',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+      issueTypes: [
+        { id: '10011', name: 'Incident', subtask: false },
+        { id: '10012', name: 'Service request', subtask: false },
+      ],
+      components: [],
+      roles: {},
+    },
+    {
+      ...base,
+      id: '10300',
+      key: 'HR',
+      name: 'People',
+      lead: { accountId: 'acct-dana', displayName: 'Dana Admin' },
+      components: [],
+      roles: { 10002: [group('g-hr', 'hr-admins')] },
+    },
+  ];
+}
+
+/** A space as GET /project/{key} answers it: a seeded one with the site's live work types. */
+function spaceWire(cloudId, space) {
+  if (!space.seeded || space.issueTypes) return space;
+  const issueTypes = jiraWorkTypeSite(cloudId).types.map(({ id, name, subtask }) => ({
+    id,
+    name,
+    subtask,
+  }));
+  return { ...space, issueTypes };
+}
+
+const ROLE_NAMES = { 10002: 'Administrators', 10001: 'Developers' };
 
 function handleJiraSpaces(request, url, response, cloudId, path) {
   const spaces = jiraSpaces(cloudId);
@@ -1421,8 +1501,41 @@ function handleJiraSpaces(request, url, response, cloudId, path) {
   }
   const one = /^\/rest\/api\/3\/project\/([^/]+)$/.exec(path);
   if (one && request.method === 'GET') {
-    const space = spaces.get(one[1]);
-    return space ? json(response, 200, space) : jiraError(response, 404, 'No project.');
+    const space =
+      spaces.get(one[1]) ?? [...spaces.values()].find((candidate) => candidate.id === one[1]);
+    return space
+      ? json(response, 200, spaceWire(cloudId, space))
+      : jiraError(response, 404, 'No project.');
+  }
+  const roleList = /^\/rest\/api\/3\/project\/([^/]+)\/role$/.exec(path);
+  if (roleList && request.method === 'GET') {
+    const space = spaces.get(roleList[1]);
+    if (!space) return jiraError(response, 404, 'No project.');
+    return json(
+      response,
+      200,
+      Object.fromEntries(
+        Object.entries(ROLE_NAMES).map(([id, name]) => [
+          name,
+          `https://stub.atlassian.net/rest/api/3/project/${space.id}/role/${id}`,
+        ])
+      )
+    );
+  }
+  const schemeOf =
+    /^\/rest\/api\/3\/project\/([^/]+)\/(permissionscheme|notificationscheme|issuesecuritylevelscheme)$/.exec(
+      path
+    );
+  if (schemeOf && request.method === 'GET') {
+    if (!spaces.get(schemeOf[1])) return jiraError(response, 404, 'No project.');
+    const schemes = {
+      permissionscheme: { id: 15, name: 'Internal permissions' },
+      notificationscheme: { id: 16, name: 'Quiet notifications' },
+    };
+    const scheme = schemes[schemeOf[2]];
+    return scheme
+      ? json(response, 200, scheme)
+      : jiraError(response, 404, 'No issue security scheme.');
   }
   const listing = /^\/rest\/api\/3\/project\/([^/]+)\/(components|versions)$/.exec(path);
   if (listing && request.method === 'GET') {
@@ -1501,8 +1614,42 @@ let nextTabId = 430;
 function jiraFieldSite(cloudId) {
   if (!JIRA_FIELDS.has(cloudId)) {
     JIRA_FIELDS.set(cloudId, {
-      fields: [],
-      contexts: new Map(),
+      // Source, a select list with a context of OPS's own (10200, its
+      // options the three every context starts with) beside the global
+      // one, for proposing option changes (lib/mcp-tools/jira-admin/changes.ts).
+      fields: [
+        {
+          id: 'customfield_10100',
+          name: 'Source',
+          schema: {
+            type: 'option',
+            custom: 'com.atlassian.jira.plugin.system.customfieldtypes:select',
+          },
+          searcherKey: 'com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher',
+          isLocked: false,
+        },
+      ],
+      contexts: new Map([
+        [
+          'customfield_10100',
+          [
+            {
+              id: '10199',
+              name: 'Default Configuration Scheme for Source',
+              isGlobalContext: true,
+              isAnyIssueType: true,
+              projectIds: [],
+            },
+            {
+              id: '10200',
+              name: 'Ops context',
+              isGlobalContext: false,
+              isAnyIssueType: true,
+              projectIds: ['10000'],
+            },
+          ],
+        ],
+      ]),
       screens: new Map([
         [
           '40',
@@ -1520,6 +1667,13 @@ function jiraFieldSite(cloudId) {
     });
   }
   return JIRA_FIELDS.get(cloudId);
+}
+
+/** Jira's own fields a screen can show, beside the site's custom ones. */
+const SYSTEM_FIELDS = { priority: 'Priority', labels: 'Labels' };
+
+function fieldName(site, id) {
+  return SYSTEM_FIELDS[id] ?? site.fields.find((field) => field.id === id)?.name ?? id;
 }
 
 function paged(url, all) {
@@ -1640,6 +1794,19 @@ function handleJiraFields(request, url, response, cloudId, path) {
     });
     return json(response, 200, paged(url, holding));
   }
+  const available = /^\/rest\/api\/3\/screens\/([^/]+)\/availableFields$/.exec(path);
+  if (available && request.method === 'GET') {
+    const screen = site.screens.get(available[1]);
+    if (!screen) return jiraError(response, 404, 'The screen was not found.');
+    const shown = new Set(screen.tabs.flatMap((tab) => tab.fields));
+    return json(
+      response,
+      200,
+      [...Object.keys(SYSTEM_FIELDS), ...site.fields.map((field) => field.id)]
+        .filter((id) => !shown.has(id))
+        .map((id) => ({ id, name: fieldName(site, id) }))
+    );
+  }
   const tabs = /^\/rest\/api\/3\/screens\/([^/]+)\/tabs(?:\/([^/]+)\/fields)?$/.exec(path);
   if (tabs) {
     const screen = site.screens.get(tabs[1]);
@@ -1657,7 +1824,7 @@ function handleJiraFields(request, url, response, cloudId, path) {
       return json(
         response,
         200,
-        tab.fields.map((id) => ({ id, name: id }))
+        tab.fields.map((id) => ({ id, name: fieldName(site, id) }))
       );
     }
     if (request.method === 'POST') {
@@ -1728,6 +1895,19 @@ function handleJiraFields(request, url, response, cloudId, path) {
       json(response, 200, { id: Number(tab.id), name: tab.name });
     });
     return;
+  }
+  if (path === '/rest/api/3/screens' && request.method === 'GET') {
+    const ids = url.searchParams.getAll('id');
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        [...site.screens.entries()]
+          .filter(([id]) => ids.length === 0 || ids.includes(id))
+          .map(([id, screen]) => ({ id: Number(id), name: screen.name }))
+      )
+    );
   }
   const screenOne = /^\/rest\/api\/3\/screens\/([^/]+)$/.exec(path);
   if (screenOne && request.method === 'PUT') {
@@ -1924,12 +2104,73 @@ function handleJiraWorkTypes(request, url, response, cloudId, path) {
     return;
   }
   if (path === '/rest/api/3/screenscheme' && request.method === 'GET') {
-    const names = { 30: 'OPS screen scheme', 31: 'Bug screen scheme' };
+    // OPS creates on its own screen and edits and views on the shared bug
+    // screen, which HR's work type screen scheme (14) uses too.
+    const schemes = {
+      30: {
+        name: 'OPS screen scheme',
+        screens: { create: 41, default: 42 },
+        issueTypeScreenSchemes: [{ id: '12' }],
+      },
+      31: {
+        name: 'Bug screen scheme',
+        screens: { default: 42 },
+        issueTypeScreenSchemes: [{ id: '12' }, { id: '14' }],
+      },
+    };
     const ids = url.searchParams.getAll('id');
+    const expand = url.searchParams.get('expand') === 'issueTypeScreenSchemes';
     return json(response, 200, {
       isLast: true,
-      values: ids.filter((id) => names[id]).map((id) => ({ id: Number(id), name: names[id] })),
+      values: Object.entries(schemes)
+        .filter(([id]) => (ids.length > 0 ? ids.includes(id) : expand))
+        .map(([id, scheme]) => ({
+          id: Number(id),
+          name: scheme.name,
+          screens: scheme.screens,
+          ...(expand ? { issueTypeScreenSchemes: scheme.issueTypeScreenSchemes } : {}),
+        })),
     });
+  }
+  const screensProjects = /^\/rest\/api\/3\/issuetypescreenscheme\/([^/]+)\/project$/.exec(path);
+  if (screensProjects && request.method === 'GET') {
+    const projects = {
+      12: [{ id: '10000', key: 'OPS' }],
+      14: [{ id: '10300', key: 'HR' }],
+    };
+    return json(response, 200, paged(url, projects[screensProjects[1]] ?? []));
+  }
+  if (path === '/rest/api/3/issuetypescheme' && request.method === 'GET') {
+    const scheme = site.issueTypeScheme;
+    const ids = url.searchParams.getAll('id');
+    return json(
+      response,
+      200,
+      paged(url, ids.includes(scheme.id) ? [{ id: scheme.id, name: scheme.name }] : [])
+    );
+  }
+  if (path === '/rest/api/3/issuetypescreenscheme' && request.method === 'GET') {
+    const scheme = site.screensScheme;
+    const ids = url.searchParams.getAll('id');
+    return json(
+      response,
+      200,
+      paged(url, ids.includes(scheme.id) ? [{ id: scheme.id, name: scheme.name }] : [])
+    );
+  }
+  const workflowScheme = /^\/rest\/api\/3\/workflowscheme\/(\d+)(\/projectUsages)?$/.exec(path);
+  if (workflowScheme && request.method === 'GET') {
+    const scheme = site.workflowScheme;
+    if (workflowScheme[1] !== scheme.id) {
+      return jiraError(response, 404, 'The workflow scheme was not found.');
+    }
+    // OPS and HR run on it.
+    return workflowScheme[2]
+      ? json(response, 200, {
+          workflowSchemeId: scheme.id,
+          projects: { values: [{ id: '10000' }, { id: '10300' }] },
+        })
+      : json(response, 200, { id: Number(scheme.id), name: scheme.name });
   }
   if (path === '/rest/api/3/workflowscheme/project' && request.method === 'GET') {
     const scheme = site.workflowScheme;
@@ -2203,7 +2444,84 @@ function handleAutomation(request, url, response) {
   return json(response, 404, { message: 'The stub does not answer that path.' });
 }
 
+/**
+ * The site's own lookups a space proposal makes (lib/jira-admin/people.ts,
+ * lib/jira-admin/space-config.ts): its project roles, its people and
+ * groups, and its schemes by id — the ones OPS runs on.
+ */
+const JIRA_PEOPLE = [
+  {
+    accountId: 'acct-dana',
+    accountType: 'atlassian',
+    displayName: 'Dana Admin',
+    emailAddress: 'dana@example.com',
+    active: true,
+  },
+];
+const JIRA_GROUPS = [
+  { groupId: 'g-admins', name: 'ops-admins' },
+  { groupId: 'g-users', name: 'jira-software-users' },
+  { groupId: 'g-hr', name: 'hr-admins' },
+];
+
+function handleJiraSite(request, url, response, path) {
+  if (request.method !== 'GET') return jiraError(response, 405, 'Method not allowed.');
+  if (path === '/rest/api/3/role') {
+    return json(
+      response,
+      200,
+      Object.entries(ROLE_NAMES).map(([id, name]) => ({ id: Number(id), name }))
+    );
+  }
+  if (path === '/rest/api/3/user') {
+    const person = JIRA_PEOPLE.find(
+      (candidate) => candidate.accountId === url.searchParams.get('accountId')
+    );
+    return person ? json(response, 200, person) : jiraError(response, 404, 'No user.');
+  }
+  if (path === '/rest/api/3/user/search') {
+    const query = (url.searchParams.get('query') ?? '').toLowerCase();
+    return json(
+      response,
+      200,
+      JIRA_PEOPLE.filter(
+        (person) =>
+          person.displayName.toLowerCase().includes(query) ||
+          person.emailAddress.toLowerCase().startsWith(query)
+      )
+    );
+  }
+  if (path === '/rest/api/3/group/bulk') {
+    const names = url.searchParams.getAll('groupName');
+    return json(
+      response,
+      200,
+      paged(
+        url,
+        JIRA_GROUPS.filter((group) => names.includes(group.name))
+      )
+    );
+  }
+  // OPS is on the system default field configuration: no scheme row.
+  if (path === '/rest/api/3/fieldconfigurationscheme/project') {
+    return json(response, 200, paged(url, []));
+  }
+  const scheme = /^\/rest\/api\/3\/(permissionscheme|notificationscheme)\/(\d+)$/.exec(path);
+  if (scheme) {
+    const known = { permissionscheme: '15', notificationscheme: '16' };
+    return scheme[2] === known[scheme[1]]
+      ? json(response, 200, { id: Number(scheme[2]) })
+      : jiraError(response, 404, 'No such scheme.');
+  }
+  return jiraError(response, 404, 'The stub does not answer that path.');
+}
+
 function handleJiraAdmin(request, url, response) {
+  const siteLookups =
+    /^\/jira\/[^/]+(\/rest\/api\/3\/(?:role|user|user\/search|group\/bulk|fieldconfigurationscheme\/project|permissionscheme\/\d+|notificationscheme\/\d+))$/.exec(
+      url.pathname
+    );
+  if (siteLookups) return handleJiraSite(request, url, response, siteLookups[1]);
   const workTypes =
     /^\/jira\/([^/]+)(\/rest\/api\/3\/(?:issuetype|avatar|issuetypescheme|issuetypescreenscheme|screenscheme|workflowscheme|workflows|project\/search)(?:\/.*)?|\/rest\/servicedeskapi\/.*)$/.exec(
       url.pathname
@@ -2292,18 +2610,6 @@ function handleJiraAdmin(request, url, response) {
 }
 
 /**
- * An Anthropic Messages endpoint, stood in for: a spec that needs a chat
- * turn to actually run (a preview card's decision opening the model's
- * reply, widget-card.spec.ts) seeds its model config with
- * `base_url = http://127.0.0.1:8092/anthropic`, and the app's adapter
- * (packages/agent-llm/src/anthropic.ts) streams from here instead of the
- * network. The reply is one text block that quotes the last user
- * message's first line, so a spec can assert the model was handed what
- * it expects. The frames are the ones the adapter parses — message_start,
- * content_block_start/delta/stop, message_delta, message_stop — and
- * nothing more.
- */
-/**
  * Mistral OCR, one call per file. The file's own bytes decide how long it
  * takes: one that says SLOW is held for a few seconds, so a spec can see a
  * read in flight; any other file answers at once.
@@ -2328,137 +2634,6 @@ async function handleMistralOcr(request, response) {
   });
 }
 
-function handleAnthropic(request, url, response) {
-  if (request.method !== 'POST' || url.pathname !== '/anthropic/v1/messages') {
-    return json(response, 404, { type: 'error', error: { type: 'not_found_error' } });
-  }
-  void readBody(request).then((body) => {
-    const messages = Array.isArray(body.messages) ? body.messages : [];
-    const lastUser = [...messages].reverse().find((message) => message?.role === 'user');
-    const content = lastUser?.content;
-    const text =
-      typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content
-              .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-              .map((block) => block.text)
-              .join('\n')
-          : '';
-    const firstLine = text.split('\n').find((line) => line.trim()) ?? '';
-    const reply = `Stub model: I saw “${firstLine.trim()}”`;
-    // A scripted tool call: a user message of the form
-    // `[[call <tool> <json arguments>]]` is answered with that one
-    // tool_use, streamed the way the real API streams it (an empty input
-    // on the start frame, the arguments as one input_json_delta), so a
-    // spec can have the model reach for a tool without a real model. The
-    // round after — the tool's result comes back as a tool_result block,
-    // never as text — gets the plain text reply below.
-    const scripted = /^\[\[call\s+([A-Za-z0-9_.-]+)\s*(\{[\s\S]*\})?\s*\]\]$/.exec(
-      firstLine.trim()
-    );
-    // The artifact digest (apps/web/lib/chat/artifact-digest.ts) forces its
-    // one tool; it is answered from the text itself — a summary naming the
-    // first line, the longer words as keywords — so a spec can see a
-    // file's digest land and search by it.
-    const digested = text.replace(/^<file[^>]*>\n?/, '').replace(/\n?<\/file>$/, '');
-    const digestLine = digested.split('\n').find((line) => line.trim()) ?? '';
-    // A picture comes with its bytes as an image block, and is described
-    // rather than read: a fixed description, so a spec can see a photo
-    // with no text come back as what it shows.
-    const pictured = JSON.stringify(body.messages ?? []).includes('"type":"image"');
-    const forced =
-      body.tool_choice?.type === 'tool' && body.tool_choice.name === 'artifact_digest'
-        ? [
-            'artifact_digest',
-            JSON.stringify(
-              pictured
-                ? {
-                    summary:
-                      'A red car on a street beside a beach, with modern buildings along the shoreline.',
-                    keywords: ['car', 'red', 'street', 'beach', 'buildings', 'shoreline', 'modern'],
-                  }
-                : {
-                    summary: `Stub summary: ${digestLine.trim()}`,
-                    keywords: [...new Set(digested.toLowerCase().match(/[a-z]{4,}/g) ?? [])].slice(
-                      0,
-                      8
-                    ),
-                  }
-            ),
-          ]
-        : null;
-    const call = scripted ? [scripted[1], scripted[2] ?? '{}'] : forced;
-    const frames = call
-      ? [
-          { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
-          {
-            type: 'content_block_start',
-            index: 0,
-            content_block: {
-              type: 'tool_use',
-              id: `toolu_stub_${Date.now()}`,
-              name: call[0],
-              input: {},
-            },
-          },
-          {
-            type: 'content_block_delta',
-            index: 0,
-            delta: { type: 'input_json_delta', partial_json: call[1] },
-          },
-          { type: 'content_block_stop', index: 0 },
-          {
-            type: 'message_delta',
-            delta: { stop_reason: 'tool_use' },
-            usage: { output_tokens: 8 },
-          },
-          { type: 'message_stop' },
-        ]
-      : [
-          { type: 'message_start', message: { usage: { input_tokens: 12, output_tokens: 1 } } },
-          { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: reply } },
-          { type: 'content_block_stop', index: 0 },
-          {
-            type: 'message_delta',
-            delta: { stop_reason: 'end_turn' },
-            usage: { output_tokens: 8 },
-          },
-          { type: 'message_stop' },
-        ];
-    // A one-shot call (`complete`, no `stream`) reads one JSON message, as
-    // the real API answers it — the chat's title and an artifact's digest
-    // are asked for this way.
-    if (body.stream !== true) {
-      return json(response, 200, {
-        type: 'message',
-        role: 'assistant',
-        content: call
-          ? [
-              {
-                type: 'tool_use',
-                id: `toolu_stub_${Date.now()}`,
-                name: call[0],
-                input: JSON.parse(call[1]),
-              },
-            ]
-          : [{ type: 'text', text: reply }],
-        stop_reason: call ? 'tool_use' : 'end_turn',
-        usage: { input_tokens: 12, output_tokens: 8 },
-      });
-    }
-    response.writeHead(200, {
-      'content-type': 'text/event-stream',
-      'cache-control': 'no-cache',
-    });
-    for (const frame of frames) {
-      response.write(`event: ${frame.type}\ndata: ${JSON.stringify(frame)}\n\n`);
-    }
-    response.end();
-  });
-}
-
 const server = createServer((request, response) => {
   const url = new URL(request.url ?? '/', 'http://stub.internal');
   // The worker's /health names what it can do (apps/worker-sandbox
@@ -2475,13 +2650,31 @@ const server = createServer((request, response) => {
         scripts: 'isolated',
       },
     });
-  // The model, stood in for: a seeded model config points its base_url here.
+  // Mistral OCR, stood in for: the org's OCR connector points its base URL here.
   if (url.pathname === '/mistral/v1/ocr') return handleMistralOcr(request, response);
-  if (url.pathname.startsWith('/anthropic/')) return handleAnthropic(request, url, response);
   // Bitbucket, stood in for: the app is pointed here with
   // BITBUCKET_API_BASE_URL, so the picker's browsing and a project page's
   // README are exercised without the network.
   if (url.pathname.startsWith('/bitbucket/2.0/')) return handleBitbucket(request, url, response);
+  // GitHub, stood in for (the app is pointed at /github with
+  // GITHUB_API_BASE_URL); the connect flow's token and identity are the
+  // in-memory app's own fake OAuth. Only opening a pull request is stood
+  // in for — #12, on any repository — so a code chat's milestone card has
+  // a host's answer to show.
+  if (url.pathname.startsWith('/github/')) {
+    if (request.method === 'POST' && /^\/github\/repos\/[^/]+\/[^/]+\/pulls$/.test(url.pathname)) {
+      void readBody(request).then((body) =>
+        json(response, 201, {
+          number: 12,
+          title: body.title ?? '',
+          head: { ref: body.head ?? '' },
+          base: { ref: body.base ?? '' },
+        })
+      );
+      return;
+    }
+    return error(response, 404, 'not_found');
+  }
   // Jira administration's option endpoints, for applying change requests.
   if (url.pathname.startsWith('/jira/')) return handleJiraAdmin(request, url, response);
   if (url.pathname.startsWith('/automation/')) return handleAutomation(request, url, response);

@@ -19,50 +19,32 @@
  * whoever opens the chat next.
  */
 
-import { sql, type Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { encryptWithResourceKey } from '@renkei/crypto';
 import { delegateClient } from '@renkei/delegate-client';
 
 /** The note's blocks sealed the way the chat's own rows are: under the chat's key, as its owner. */
-async function sealNote(
-  db: Kysely<DB>,
-  chatId: string,
-  text: string
-): Promise<string> {
-  const chat = await db
-    .selectFrom('chats')
-    .select('owner_subject')
-    .where('id', '=', chatId)
-    .executeTakeFirst();
+async function sealNote(chatId: string, text: string): Promise<string> {
+  const chat = await getDataStore().chats.get(chatId);
   if (!chat) throw new Error('the chat is gone');
   const key = await delegateClient().ensureResourceKey(
     { kind: 'chat', resourceId: chatId },
-    chat.owner_subject
+    chat.ownerSubject
   );
   if (!key.ok) throw new Error(`the chat's key could not be opened (${key.err.type})`);
   return encryptWithResourceKey(JSON.stringify([{ type: 'text', text }]), key.val.id, key.val.key);
 }
 
-export async function insertChatNote(
-  chatId: string,
-  text: string
-): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
-  const sealed = await sealNote(db, chatId, text);
+export async function insertChatNote(chatId: string, text: string): Promise<void> {
+  const sealed = await sealNote(chatId, text);
 
-  await db
-    .insertInto('chat_messages')
-    .values({
-      chat_id: chatId,
-      turn_id: null,
-      seq: sql<number>`(SELECT COALESCE(MAX(seq), 0) + 1 FROM chat_messages WHERE chat_id = ${chatId})`,
-      role: 'user',
-      kind: 'note',
-      status: 'complete',
-      content: sealed,
-    })
-    .execute();
+  // Appended at the chat's next seq, like every other message of it.
+  await getDataStore().chatThreads.insertMessage({
+    chatId,
+    turnId: null,
+    role: 'user',
+    kind: 'note',
+    status: 'complete',
+    content: sealed,
+  });
 }

@@ -15,22 +15,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { parseAgentDefinition } from '@renkei/agents';
 import { getSessionFromRequest } from '@/lib/session';
 import { createDraft, latestReadyDraft } from '@/lib/agents/draft-store';
+import { getAgent } from '@/lib/agents/store';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
 
   const body: unknown = await request.json().catch(() => null);
   const payload: {
@@ -58,17 +53,10 @@ export async function POST(
   // opening that agent.
   const agentId =
     typeof payload.agentId === 'string' && isUuid(payload.agentId)
-      ? ((
-          await dbResult.val
-            .selectFrom('agents')
-            .select('id')
-            .where('owner_subject', '=', session.subject)
-            .where('id', '=', payload.agentId)
-            .executeTakeFirst()
-        )?.id ?? null)
+      ? ((await getAgent(session.subject, payload.agentId))?.id ?? null)
       : null;
 
-  const draftId = await createDraft(dbResult.val, {
+  const draftId = await createDraft({
     ownerSubject: session.subject,
     agentId,
     request: {
@@ -116,17 +104,12 @@ export async function POST(
  * revision belongs to the agent it revises, and a draft with no agent is
  * for the next new one.
  */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   const requested = request.nextUrl.searchParams.get('agentId');
   const agentId = requested && isUuid(requested) ? requested : null;
-  const draft = await latestReadyDraft(dbResult.val, session.subject, agentId);
+  const draft = await latestReadyDraft(session.subject, agentId);
   return NextResponse.json({ draft });
 }

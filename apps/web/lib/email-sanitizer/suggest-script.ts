@@ -14,8 +14,6 @@
  * proposes, a person enables.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
   runCleanerScript,
@@ -100,7 +98,6 @@ function promptOf(sample: string, instructions: string, kind: CleanerScriptKind)
 }
 
 export async function suggestCleanerScript(
-  db: Kysely<DB>,
   rawSample: string,
   rawInstructions: string,
   kind: CleanerScriptKind = 'msg'
@@ -111,7 +108,7 @@ export async function suggestCleanerScript(
   }
   const instructions = rawInstructions.trim().slice(0, 2_000);
 
-  const llmResult = await resolveAgentLlm(db, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }

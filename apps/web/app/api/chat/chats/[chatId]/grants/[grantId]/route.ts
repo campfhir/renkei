@@ -11,10 +11,10 @@ export async function DELETE(
   const { chatId, grantId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const revoked = await revokeResourceGrant(db, session.subject, 'chat', chatId, grantId);
+  const { session } = ready.context;
+  const revoked = await revokeResourceGrant(session.subject, 'chat', chatId, grantId);
   if (!revoked) return jsonError(404, 'not-found', 'No such share');
   // The grant is gone; so is their wrapping of the chat's key.
-  await revokeKey(db, 'chat', chatId, revoked);
+  await revokeKey('chat', chatId, revoked);
   return NextResponse.json({ ok: true });
 }

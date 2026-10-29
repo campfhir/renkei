@@ -36,8 +36,6 @@
  *    label that no row claims.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   SERVICE_MAX_PER_SUBJECT,
   SERVICE_START_TIMEOUT_MS,
@@ -69,7 +67,6 @@ const READY_POLL_MS = 250;
 const FAILURE_LOG_LINES = 40;
 
 export interface ServiceManagerOptions {
-  db: Kysely<DB>;
   engine: DockerEngine;
   /** The network every service is created on and this worker is attached to. */
   network: string;
@@ -108,14 +105,12 @@ function engineMessage(error: unknown): string {
 }
 
 export class ServiceManager {
-  private readonly db: Kysely<DB>;
   private readonly engine: DockerEngine;
   private readonly network: string;
   private readonly selfContainer: string | null;
   private readonly limits: () => Promise<ServiceLimits>;
 
   constructor(options: ServiceManagerOptions) {
-    this.db = options.db;
     this.engine = options.engine;
     this.network = options.network;
     this.selfContainer = options.selfContainer;
@@ -131,10 +126,8 @@ export class ServiceManager {
   }
 
   /** Which rule admits an image, and the credential its host pulls with — or the refusal. */
-  private async admit(
-    image: ImageReference
-  ): Promise<{ auth: RegistryAuth | null }> {
-    const all = await rules.listImageRulesForMatching(this.db);
+  private async admit(image: ImageReference): Promise<{ auth: RegistryAuth | null }> {
+    const all = await rules.listImageRulesForMatching();
     const winner = matchImageRule(all, image);
     if (!winner) {
       const allowed = all.map((rule) => rule.pattern).sort();
@@ -186,7 +179,7 @@ export class ServiceManager {
     if (!parsed.ok) throw new ServiceOpError('bad_request', parsed.message);
     const image = parsed.image;
 
-    const existing = await store.getServiceByName(this.db, target, input.name);
+    const existing = await store.getServiceByName(target, input.name);
     if (existing) {
       const state = await this.reconcile(existing);
       if (state.status === 'running' || state.status === 'starting') {
@@ -198,7 +191,7 @@ export class ServiceManager {
       // A stopped, failed or vanished one under that name makes way.
       await this.remove(state);
     }
-    const others = await store.listServices(this.db, target);
+    const others = await store.listServices(target);
     const running = others.filter((row) => row.status === 'running' || row.status === 'starting');
     if (running.length >= SERVICE_MAX_PER_SUBJECT) {
       throw new ServiceOpError(
@@ -208,14 +201,14 @@ export class ServiceManager {
     }
     const { auth } = await this.admit(image);
 
-    const row = await store.insertService(this.db, {
+    const row = await store.insertService({
       ...target,
       name: input.name,
       image: image.canonical,
       exports: input.exports,
     });
     const fail = async (message: string): Promise<never> => {
-      await store.updateService(this.db, row.id, { status: 'failed', error: message });
+      await store.updateService(row.id, { status: 'failed', error: message });
       throw new ServiceOpError('engine', message);
     };
 
@@ -259,7 +252,7 @@ export class ServiceManager {
     } catch (error) {
       return fail(`The container could not be created: ${engineMessage(error)}`);
     }
-    await store.updateService(this.db, row.id, { containerId, ports });
+    await store.updateService(row.id, { containerId, ports });
     try {
       await this.engine.startContainer(containerId);
     } catch (error) {
@@ -281,13 +274,13 @@ export class ServiceManager {
         ? await this.engine.containerLogs(containerId, FAILURE_LOG_LINES).catch(() => '')
         : '';
       await this.engine.removeContainer(containerId).catch(() => undefined);
-      await store.updateService(this.db, row.id, { containerId: null });
+      await store.updateService(row.id, { containerId: null });
       return fail(
         `The container exited right after starting${state?.exitCode !== null && state?.exitCode !== undefined ? ` (exit ${state.exitCode})` : ''}.` +
           (tail.trim() ? `\n--- last log lines ---\n${tail.trim()}` : '')
       );
     }
-    await store.updateService(this.db, row.id, {
+    await store.updateService(row.id, {
       status: 'running',
       error: null,
       host: state.ip,
@@ -301,7 +294,7 @@ export class ServiceManager {
       container: containerId,
     });
     return (
-      (await store.getServiceByName(this.db, target, input.name)) ?? {
+      (await store.getServiceByName(target, input.name)) ?? {
         ...row,
         status: 'running',
         host: state.ip,
@@ -331,7 +324,7 @@ export class ServiceManager {
       return service;
     }
     if (!state) {
-      await store.updateService(this.db, service.id, {
+      await store.updateService(service.id, {
         status: 'gone',
         host: null,
         error: 'The container is no longer on the engine.',
@@ -346,13 +339,13 @@ export class ServiceManager {
     if (!state.running) {
       if (service.status !== 'stopped') {
         const error = `The container is ${state.status}${state.exitCode !== null ? ` (exit ${state.exitCode})` : ''}.`;
-        await store.updateService(this.db, service.id, { status: 'stopped', host: null, error });
+        await store.updateService(service.id, { status: 'stopped', host: null, error });
         return { ...service, status: 'stopped', host: null, error };
       }
       return service;
     }
     if (service.status !== 'running' || service.host !== state.ip) {
-      await store.updateService(this.db, service.id, {
+      await store.updateService(service.id, {
         status: 'running',
         host: state.ip,
         error: null,
@@ -363,14 +356,14 @@ export class ServiceManager {
   }
 
   async list(target: store.ServiceTarget): Promise<store.StoredService[]> {
-    const rows = await store.listServices(this.db, target);
+    const rows = await store.listServices(target);
     const out: store.StoredService[] = [];
     for (const row of rows) out.push(await this.reconcile(row));
     return out;
   }
 
   async get(target: store.ServiceTarget, name: string): Promise<store.StoredService> {
-    const row = await store.getServiceByName(this.db, target, name);
+    const row = await store.getServiceByName(target, name);
     if (!row) throw new ServiceOpError('not_found', `No service named ${name} — see the list.`);
     return this.reconcile(row);
   }
@@ -416,7 +409,7 @@ export class ServiceManager {
     target: store.ServiceTarget,
     input: { lines: number; since: string | null; match?: RegExp | null }
   ): Promise<{ entries: ServiceLogEntry[]; truncated: boolean; unreadable: string[] }> {
-    const rows = await store.listServices(this.db, target);
+    const rows = await store.listServices(target);
     const perService: ServiceLogEntry[][] = [];
     const unreadable: string[] = [];
     for (const row of rows) {
@@ -450,7 +443,7 @@ export class ServiceManager {
         );
       }
     }
-    await store.deleteServiceById(this.db, service.id);
+    await store.deleteServiceById(service.id);
   }
 
   async stop(target: store.ServiceTarget, name: string): Promise<store.StoredService> {
@@ -470,7 +463,7 @@ export class ServiceManager {
    * extends every running service's lifetime.
    */
   async environmentFor(target: store.ServiceTarget): Promise<Record<string, string>> {
-    const rows = await store.listServices(this.db, target);
+    const rows = await store.listServices(target);
     if (rows.length === 0) return {};
     const running: Array<{
       name: string;
@@ -490,7 +483,7 @@ export class ServiceManager {
       });
       used.push(current.id);
     }
-    await store.touchServices(this.db, used);
+    await store.touchServices(used);
     return serviceEnvironment(running);
   }
 
@@ -501,7 +494,7 @@ export class ServiceManager {
    * failure never stops the batch.
    */
   async sweep(limit: number): Promise<void> {
-    const expired = await store.listExpiredServices(this.db, limit);
+    const expired = await store.listExpiredServices(limit);
     for (const service of expired) {
       try {
         await this.remove(service);
@@ -521,7 +514,7 @@ export class ServiceManager {
     try {
       const labelled = await this.engine.listContainers(`${SERVICE_LABEL}=1`);
       if (labelled.length === 0) return;
-      const claimed = await store.listClaimedContainerIds(this.db);
+      const claimed = await store.listClaimedContainerIds();
       for (const container of labelled) {
         if (claimed.has(container.id)) continue;
         await this.engine.removeContainer(container.id);

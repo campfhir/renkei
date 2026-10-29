@@ -1,7 +1,8 @@
 import React from 'react';
 import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import AutoRefresh from '@/components/auto-refresh';
@@ -26,36 +27,26 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/notifications`));
 
-  const dbResult = getDatabase();
   // One extra row, never rendered, just to answer "is there more?" without
-  // a second count query — PAGE_SIZE + 1 rows back means yes.
-  const fetched = dbResult.ok
-    ? await dbResult.val
-        .selectFrom('agent_notifications')
-        .selectAll()
-        // Own rows only, and structurally so: no parameter here can name
-        // another subject.
-        .where('subject', '=', session.subject)
-        .orderBy('created_at', 'desc')
-        .limit(PAGE_SIZE + 1)
-        .execute()
-    : [];
-  const hasMore = fetched.length > PAGE_SIZE;
-  const rows = hasMore ? fetched.slice(0, PAGE_SIZE) : fetched;
-
+  // a second count query — PAGE_SIZE + 1 rows back means yes. Own rows
+  // only, and structurally so: no parameter here can name another subject.
+  //
   // A person can have more unread notifications than fit in PAGE_SIZE — the
   // ones past it never render, so they can never be clicked read one at a
   // time. "Mark all as read" has to reach every one of them, which means
   // knowing the true total, not just what's on the page.
-  const unreadTotal = dbResult.ok
-    ? await dbResult.val
-        .selectFrom('agent_notifications')
-        .select((eb) => eb.fn.countAll<string>().as('count'))
-        .where('subject', '=', session.subject)
-        .where('read_at', 'is', null)
-        .executeTakeFirst()
-    : undefined;
-  const unreadCount = Number(unreadTotal?.count ?? 0);
+  const store = getDataStore().notifications;
+  const read = await wrapAsync(
+    () =>
+      Promise.all([
+        store.list(session.subject, { limit: PAGE_SIZE + 1 }),
+        store.countUnread(session.subject),
+      ]),
+    'DB_ERROR' as const
+  );
+  const [fetched, unreadCount] = read.ok ? read.val : [[], 0];
+  const hasMore = fetched.length > PAGE_SIZE;
+  const rows = hasMore ? fetched.slice(0, PAGE_SIZE) : fetched;
 
   const cards: NotificationCard[] = rows.map((row) => ({
     id: row.id,
@@ -63,13 +54,13 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
     connector: row.connector,
     entity: row.entity,
     headline: row.headline,
-    refUrl: row.ref_url,
-    agentId: row.agent_id,
-    agentName: row.agent_name,
-    runId: row.run_id,
-    meta: row.meta ?? null,
-    unread: row.read_at === null,
-    createdAt: new Date(row.created_at).toISOString(),
+    refUrl: row.refUrl,
+    agentId: row.agentId,
+    agentName: row.agentName,
+    runId: row.runId,
+    meta: row.meta,
+    unread: row.readAt === null,
+    createdAt: row.createdAt.toISOString(),
   }));
 
   return (
@@ -80,10 +71,7 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
         What your agents and batch jobs did — the things that changed something, not every step they
         took.{' '}
         <CoachTarget name="notifications-preferences-link" as="span">
-          <Link
-            href={`/preferences`}
-            className="text-blue-600 hover:underline dark:text-blue-400"
-          >
+          <Link href={`/preferences`} className="text-blue-600 hover:underline dark:text-blue-400">
             Choose what appears here
           </Link>
         </CoachTarget>
@@ -95,11 +83,7 @@ export default async function NotificationsPage(): Promise<React.ReactNode> {
           Nothing yet. When one of your agents files a ticket or sends a message, it lands here.
         </p>
       ) : (
-        <NotificationsList
-          rows={cards}
-          unreadCount={unreadCount}
-          initialHasMore={hasMore}
-        />
+        <NotificationsList rows={cards} unreadCount={unreadCount} initialHasMore={hasMore} />
       )}
     </div>
   );

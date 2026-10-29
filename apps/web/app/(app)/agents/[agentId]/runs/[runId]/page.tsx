@@ -1,6 +1,5 @@
 import React from 'react';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -29,28 +28,15 @@ export default async function AgentRunDetailPage({
     redirect(signInUrl(`/agents/${agentId}/runs/${runId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const access = await resolveAgentAccess(dbResult.val, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) notFound();
   const agent = access.agent;
-  const data = await getOwnerRunPageData(
-    dbResult.val,
-    access.ownerSubject,
-    access.viewerIsOwner,
-    agentId,
-    runId
-  );
+  const data = await getOwnerRunPageData(access.ownerSubject, access.viewerIsOwner, agentId, runId);
   if (!data) notFound();
 
   return (
     <div className="mx-auto max-w-3xl">
-      <RunLive
-        agentId={agentId}
-        runId={runId}
-        agentName={agent.name}
-        initialData={data}
-      />
+      <RunLive agentId={agentId} runId={runId} agentName={agent.name} initialData={data} />
     </div>
   );
 }

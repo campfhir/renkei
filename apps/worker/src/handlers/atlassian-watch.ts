@@ -20,8 +20,7 @@
  *   idempotent upserts rather than skipping past unprocessed items.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { atlassianFetch, fieldScreenFor, listOf, rec, str } from '@renkei/connector-atlassian';
 import { resolveEmbeddingProvider } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
@@ -86,10 +85,7 @@ function jqlTimestamp(iso: string): string {
   );
 }
 
-async function syncJira(
-  access: AtlassianAccess,
-  row: WatchRow
-): Promise<WatchSyncResult> {
+async function syncJira(access: AtlassianAccess, row: WatchRow): Promise<WatchSyncResult> {
   const since = windowStart(row.cursor);
   const clauses = [`project = "${row.scope_key.replace(/"/g, '')}"`];
   // receivedDateTime-style ordering rule: the $orderby field must lead the
@@ -182,10 +178,7 @@ async function syncJira(
   return { items, titles: indexed.titles(), cursor: newest };
 }
 
-async function syncConfluence(
-  access: AtlassianAccess,
-  row: WatchRow
-): Promise<WatchSyncResult> {
+async function syncConfluence(access: AtlassianAccess, row: WatchRow): Promise<WatchSyncResult> {
   const since = windowStart(row.cursor);
   let items = 0;
   const indexed = new TitleList();
@@ -352,10 +345,6 @@ export async function runWatchSync(
   access: AtlassianAccess,
   row: WatchRow
 ): Promise<WatchSyncResult> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
-
   const embedder = await resolveEmbeddingProvider();
   if (!embedder) {
     // No embedding provider means the knowledge layer is off for this org.
@@ -364,26 +353,16 @@ export async function runWatchSync(
   }
 
   const result =
-    row.provider === 'jira'
-      ? await syncJira(access, row)
-      : await syncConfluence(access, row);
+    row.provider === 'jira' ? await syncJira(access, row) : await syncConfluence(access, row);
 
   // Cursor and counters written LAST and together: a crash before this
   // point replays the round into idempotent upserts, which is the safe
   // direction. Advancing the cursor first would skip unprocessed items.
-  await db
-    .updateTable('content_watches')
-    .set({
-      cursor: result.cursor,
-      last_synced_at: sql<Date>`NOW()`,
-      last_run_items: result.items,
-      total_items: sql<number>`total_items + ${result.items}`,
-      sync_status: 'idle',
-      last_error: null,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', row.id)
-    .execute();
+  await getDataStore().contentWatches.recordRound(row.id, {
+    cursor: result.cursor,
+    items: result.items,
+    syncStatus: 'idle',
+  });
 
   return result;
 }

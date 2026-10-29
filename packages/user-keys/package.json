@@ -14,8 +14,7 @@
   "dependencies": {
     "@campfhir/safe-functions": "^0.1.3",
     "@renkei/crypto": "workspace:*",
-    "@renkei/db": "workspace:*",
-    "kysely": "^0.29.7"
+    "@renkei/db": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

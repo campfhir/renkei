@@ -8,25 +8,29 @@
  * back. Also that the row fits the screen, and that at desktop width the
  * separate buttons are still there and the merged one is not.
  *
- * "Phone width" is a resized Chromium viewport, not the `mobile` project's
- * device descriptor (see AGENTS.md's "UI changes"). The voice vendor is
- * answered at the browser edge (voice-fixtures.ts) and the microphone is
- * Chromium's fake device; the fixtures seeded per project so parallel
- * projects don't share a row.
+ * "Phone width" is a resized Chromium viewport, not a device descriptor.
+ * The code project and its chat are the test's own person's
+ * (e2e/support/code-host.ts); the speech service and the person's voice
+ * are staged as e2e/support/voice.ts stages them, the vendor answered at
+ * the browser edge, and the microphone is Chromium's fake device.
  */
 
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { MODEL_ID, mockVendor, seedVoice, shot } from './voice-fixtures';
+import { randomUUID } from 'node:crypto';
+import type { Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { removeModel } from './support/stub-model';
+import { createChat, createCodeProject, setUpCode } from './support/code-host';
+import { VOICE_PREFS, enableVoiceService, mockVendor, shot } from './support/voice';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 test.use({
+  // The speech service, the code host and the chat's model are an operator's to stage.
+  roles: ['renkei-user', 'renkei-operator'],
   permissions: ['microphone'],
   browserName: 'chromium',
   launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE,
     args: [
       '--no-sandbox',
       '--use-fake-ui-for-media-stream',
@@ -36,42 +40,52 @@ test.use({
   },
 });
 
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `79797979-7979-4797-8797-7979797979${digit}1`,
-    chatId: `79797979-7979-4797-8797-7979797979${digit}2`,
-    projectName: `Tools menu service (${digit})`,
-    chatTitle: `Which endpoint posts refunds? (${digit})`,
-  };
-}
+let chatId = '';
+let modelId = '';
 
-test.beforeEach(async ({ browserName: _browser }, testInfo) => {
-  const ids = idsFor(testInfo.project.name);
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await seedVoice(client);
-    await client.query('DELETE FROM chats WHERE project_id = $1', [ids.projectId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'A code project.', 'code', 'atlassian-bitbucket', 'acme/tools-menu', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, llm_model_id, last_message_at)\n       VALUES ($1, $2, $3, $4, $5, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle, MODEL_ID]
-    );
-  } finally {
-    await client.end();
-  }
+test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  await enableVoiceService(page.request);
+  const prefs = await page.request.put('/api/preferences', { data: { voice: VOICE_PREFS } });
+  expect(prefs.ok(), await prefs.text()).toBe(true);
+  modelId = await setUpCode(page, request, tag);
+  const projectId = await createCodeProject(page.request, {
+    name: `Tools menu service (${tag})`,
+    repository: 'acme/tools-menu',
+    branch: 'main',
+    description: 'A code project.',
+  });
+  chatId = await createChat(page.request, {
+    projectId,
+    title: `Which endpoint posts refunds? (${tag})`,
+    llmModelId: modelId,
+  });
+  // The chat offers voice — with the code pane put away, which opens
+  // beside a code chat on a wide screen and narrows its composer.
+  await page.goto(`/chat/${chatId}`);
+  await hideCode(page);
+  await expect(page.getByRole('button', { name: 'Voice', exact: true })).toBeVisible();
 });
 
-async function openChat(page: Page, project: string): Promise<void> {
-  const ids = idsFor(project);
+/** The message box (a built app can hold a hidden copy of it in a streamed render). */
+function composer(page: Page) {
+  return page.getByLabel('Message').filter({ visible: true });
+}
+
+async function hideCode(page: Page): Promise<void> {
+  const hide = page.getByRole('button', { name: 'Hide the code' });
+  await expect(composer(page)).toBeVisible({ timeout: 30_000 });
+  if (await hide.isVisible()) await hide.click();
+}
+
+test.afterEach(async ({ page }) => {
+  await removeModel(page.request, modelId);
+});
+
+async function openChat(page: Page): Promise<void> {
   await mockVendor(page);
-  await page.goto(`/chat/${ids.chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible();
+  await page.goto(`/chat/${chatId}`);
+  await expect(composer(page)).toBeVisible();
   // The dev server's floating "N" badge sits over the composer's left edge
   // at phone width, swallowing clicks and hiding the very buttons under test.
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
@@ -79,11 +93,11 @@ async function openChat(page: Page, project: string): Promise<void> {
 
 /** Every control in the composer's bottom row sits inside the screen. */
 async function expectRowFits(page: Page): Promise<void> {
-  const viewport = page.viewportSize()!;
-  const box = await page.getByLabel('Message').boundingBox();
+  const viewport = page.viewportSize() ?? MOBILE_VIEWPORT;
+  const box = await composer(page).boundingBox();
   const send = await page.getByRole('button', { name: 'Send' }).boundingBox();
   expect(box).not.toBeNull();
-  expect(send!.x + send!.width).toBeLessThanOrEqual(viewport.width);
+  expect((send?.x ?? 0) + (send?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
@@ -94,7 +108,7 @@ test('phone: prompts, dictation and voice fold into one two-level menu', async (
   page,
 }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await openChat(page, testInfo.project.name);
+  await openChat(page);
 
   // One button stands in for three; the separate ones are not on screen.
   const tools = page.getByRole('button', { name: 'Prompts and voice' });
@@ -121,8 +135,8 @@ test('phone: prompts, dictation and voice fold into one two-level menu', async (
   await expect(page.getByRole('combobox').filter({ hasText: 'Sonia' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Close voice menu' })).toBeVisible();
   const panel = await page.getByRole('menu').boundingBox();
-  expect(panel!.x).toBeGreaterThanOrEqual(0);
-  expect(panel!.x + panel!.width).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  expect(panel?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect((panel?.x ?? 0) + (panel?.width ?? Infinity)).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'tools-menu-03-voice-level', false);
   await page.getByRole('button', { name: 'Back to tools' }).click();
   await expect(menu).toBeVisible();
@@ -138,20 +152,18 @@ test('phone: prompts, dictation and voice fold into one two-level menu', async (
   // Dictate: the button becomes the microphone, and one tap stops it.
   await tools.click();
   await menu.getByRole('menuitem', { name: 'Dictate' }).click();
-  await expect(page.getByLabel('Message')).toHaveAttribute('placeholder', /Speak, then pause/);
+  await expect(composer(page)).toHaveAttribute('placeholder', /Speak, then pause/);
   const stop = page.getByRole('button', { name: 'Stop dictating' });
   await expect(stop).toBeVisible();
   await shot(page, testInfo, 'tools-menu-05-dictating', false);
   await stop.click();
   await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible();
-  await expect(page.getByLabel('Message')).not.toHaveAttribute('placeholder', /Speak, then pause/);
+  await expect(composer(page)).not.toHaveAttribute('placeholder', /Speak, then pause/);
 });
 
-test('phone: the voice conversation is reachable and Escape closes the menu', async ({
-  page,
-}, testInfo) => {
+test('phone: the voice conversation is reachable and Escape closes the menu', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await openChat(page, testInfo.project.name);
+  await openChat(page);
   await page.getByRole('button', { name: 'Prompts and voice' }).click();
   await page.getByRole('menuitem', { name: 'Voice' }).click();
   await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
@@ -159,9 +171,9 @@ test('phone: the voice conversation is reachable and Escape closes the menu', as
   await expect(page.getByRole('menu')).toBeHidden();
 });
 
-test('phone: Escape closes the tools menu', async ({ page }, testInfo) => {
+test('phone: Escape closes the tools menu', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await openChat(page, testInfo.project.name);
+  await openChat(page);
   await page.getByRole('button', { name: 'Prompts and voice' }).click();
   await expect(page.getByRole('menu')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -172,7 +184,8 @@ test('desktop: the separate buttons stay, the merged one is not there', async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 800 });
-  await openChat(page, testInfo.project.name);
+  await openChat(page);
+  await hideCode(page);
   await expect(page.getByRole('button', { name: 'Insert a prompt' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Dictate', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Voice', exact: true })).toBeVisible();

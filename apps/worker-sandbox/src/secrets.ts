@@ -10,8 +10,6 @@
  * because the model's only remedy is to tell the person.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   secretHostAllowed,
   type SandboxSecretSummary,
@@ -28,9 +26,9 @@ export type SecretResolver = (
   pageHost: string
 ) => Promise<string>;
 
-export function createSecretResolver(db: Kysely<DB>, vault: SecretVault): SecretResolver {
+export function createSecretResolver(vault: SecretVault): SecretResolver {
   return async (target, ref, pageHost) => {
-    const secret = await getSecretByName(db, target, ref.name);
+    const secret = await getSecretByName(target, ref.name);
     if (!secret) {
       throw new BrowserOpError(
         'secret_unavailable',
@@ -63,7 +61,7 @@ export function createSecretResolver(db: Kysely<DB>, vault: SecretVault): Secret
         `Secret "${ref.name}" has no value for "${ref.field}".`
       );
     }
-    await touchSecretUsed(db, secret.id).catch(() => {});
+    await touchSecretUsed(secret.id).catch(() => {});
     return value;
   };
 }
@@ -81,9 +79,6 @@ export async function secretSummary(
     createdAt: secret.createdAt,
     expiresAt: secret.expiresAt,
     lastUsedAt: secret.lastUsedAt,
-    unlockedUntil: await vault.unlockedUntil(
-      { subject: secret.subject },
-      secret.id
-    ),
+    unlockedUntil: await vault.unlockedUntil({ subject: secret.subject }, secret.id),
   };
 }

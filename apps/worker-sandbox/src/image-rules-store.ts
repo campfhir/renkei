@@ -1,18 +1,17 @@
 /**
- * Postgres access for an organization's service image allow-list — the
- * `code_service_image_rules` rows (migration 122). A rule's registry
- * credential is sealed here under this worker's own key (the env-secrets
- * arrangement: SANDBOX_ENV_SECRETS_KEY, else TOKEN_ENCRYPTION_KEY), with a
- * `reg1.` prefix so a row can never be mistaken for an environment
- * secret and opened as one. The username is kept in the clear — a
- * listing shows it, so an operator can tell which credential a rule
- * carries; the secret is opened only for a pull, into the one request
- * that presents it.
+ * An organization's service image allow-list — the
+ * `code_service_image_rules` rows (migration 122), through the data store
+ * (`codeServiceImageRules`). A rule's registry credential is sealed here
+ * under this worker's own key (the env-secrets arrangement:
+ * SANDBOX_ENV_SECRETS_KEY, else TOKEN_ENCRYPTION_KEY), with a `reg1.`
+ * prefix so a row can never be mistaken for an environment secret and
+ * opened as one. The username is kept in the clear — a listing shows it,
+ * so an operator can tell which credential a rule carries; the secret is
+ * opened only for a pull, into the one request that presents it.
  */
 
 import { decrypt, encrypt } from '@renkei/crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { DEFAULT_IMAGE_RULES, type ImageRuleSummary } from '@renkei/connector-sandbox';
 import { envSecretsKey } from './env-secrets';
 
@@ -28,56 +27,18 @@ export function openRegistrySecret(sealed: string, key: Buffer): string | null {
   return opened.ok ? opened.val : null;
 }
 
-const SUMMARY_COLUMNS = [
-  'id',
-  'pattern',
-  'note',
-  'registry_username',
-  'created_at',
-  'updated_at',
-] as const;
+const rules = () => getDataStore().codeServiceImageRules;
 
-function toSummary(row: {
-  id: string;
-  pattern: string;
-  note: string | null;
-  registry_username: string | null;
-  created_at: Date;
-  updated_at: Date;
-}): ImageRuleSummary {
-  return {
-    id: row.id,
-    pattern: row.pattern,
-    note: row.note,
-    registryUsername: row.registry_username,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  };
+export async function listImageRules(): Promise<ImageRuleSummary[]> {
+  return rules().list();
 }
 
-export async function listImageRules(
-  db: Kysely<DB>
-): Promise<ImageRuleSummary[]> {
-  const rows = await db
-    .selectFrom('code_service_image_rules')
-    .select(SUMMARY_COLUMNS)
-    .orderBy('pattern')
-    .execute();
-  return rows.map(toSummary);
-}
-
-export async function countImageRules(db: Kysely<DB>): Promise<number> {
-  const row = await db
-    .selectFrom('code_service_image_rules')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .executeTakeFirst();
-  return row?.count ? Number(row.count) : 0;
+export async function countImageRules(): Promise<number> {
+  return rules().count();
 }
 
 /** Every rule with what a pull needs: the pattern, and the credential's sealed value when there is one. */
-export async function listImageRulesForMatching(
-  db: Kysely<DB>
-): Promise<
+export async function listImageRulesForMatching(): Promise<
   Array<{
     id: string;
     pattern: string;
@@ -85,16 +46,7 @@ export async function listImageRulesForMatching(
     registrySealed: string | null;
   }>
 > {
-  const rows = await db
-    .selectFrom('code_service_image_rules')
-    .select(['id', 'pattern', 'registry_username', 'registry_sealed'])
-    .execute();
-  return rows.map((row) => ({
-    id: row.id,
-    pattern: row.pattern,
-    registryUsername: row.registry_username,
-    registrySealed: row.registry_sealed,
-  }));
+  return rules().listForMatching();
 }
 
 export class DuplicateRuleError extends Error {
@@ -104,33 +56,19 @@ export class DuplicateRuleError extends Error {
   }
 }
 
+/** A unique violation: the pattern is the table's one unique key besides the generated id. */
 function isDuplicate(error: unknown): boolean {
-  return (
-    error instanceof Error && error.message.includes('idx_code_service_image_rules_pattern')
-  );
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
-export async function insertImageRule(
-  db: Kysely<DB>,
-  input: {
-    pattern: string;
-    note: string | null;
-    registryUsername: string | null;
-    registrySealed: string | null;
-  }
-): Promise<ImageRuleSummary> {
+export async function insertImageRule(input: {
+  pattern: string;
+  note: string | null;
+  registryUsername: string | null;
+  registrySealed: string | null;
+}): Promise<ImageRuleSummary> {
   try {
-    const row = await db
-      .insertInto('code_service_image_rules')
-      .values({
-        pattern: input.pattern,
-        note: input.note,
-        registry_username: input.registryUsername,
-        registry_sealed: input.registrySealed,
-      })
-      .returning(SUMMARY_COLUMNS)
-      .executeTakeFirstOrThrow();
-    return toSummary(row);
+    return await rules().insert(input);
   } catch (error) {
     if (isDuplicate(error)) throw new DuplicateRuleError();
     throw error;
@@ -142,64 +80,29 @@ export async function insertImageRule(
  * `credential` is given — a new pair replaces it, null clears it, and
  * undefined leaves what is there.
  */
-export async function updateImageRule(
-  db: Kysely<DB>,
-  input: {
-    id: string;
-    pattern: string;
-    note: string | null;
-    credential?: { registryUsername: string; registrySealed: string } | null;
-  }
-): Promise<ImageRuleSummary | undefined> {
+export async function updateImageRule(input: {
+  id: string;
+  pattern: string;
+  note: string | null;
+  credential?: { registryUsername: string; registrySealed: string } | null;
+}): Promise<ImageRuleSummary | undefined> {
   try {
-    const row = await db
-      .updateTable('code_service_image_rules')
-      .set({
-        pattern: input.pattern,
-        note: input.note,
-        updated_at: new Date(),
-        ...(input.credential === undefined
-          ? {}
-          : input.credential === null
-            ? { registry_username: null, registry_sealed: null }
-            : {
-                registry_username: input.credential.registryUsername,
-                registry_sealed: input.credential.registrySealed,
-              }),
-      })
-      .where('id', '=', input.id)
-      .returning(SUMMARY_COLUMNS)
-      .executeTakeFirst();
-    return row ? toSummary(row) : undefined;
+    return (await rules().update({ ...input, updatedAt: new Date() })) ?? undefined;
   } catch (error) {
     if (isDuplicate(error)) throw new DuplicateRuleError();
     throw error;
   }
 }
 
-export async function deleteImageRule(
-  db: Kysely<DB>,
-  id: string
-): Promise<boolean> {
-  const result = await db
-    .deleteFrom('code_service_image_rules')
-    .where('id', '=', id)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0) > 0;
+export async function deleteImageRule(id: string): Promise<boolean> {
+  return rules().delete(id);
 }
 
 /** Put the seeded defaults back — the ones missing; rows an operator kept or changed are left alone. */
-export async function restoreDefaultImageRules(db: Kysely<DB>): Promise<number> {
-  let added = 0;
-  for (const rule of DEFAULT_IMAGE_RULES) {
-    const result = await db
-      .insertInto('code_service_image_rules')
-      .values({ pattern: rule.pattern, note: rule.note })
-      .onConflict((oc) => oc.columns(['pattern']).doNothing())
-      .executeTakeFirst();
-    added += Number(result.numInsertedOrUpdatedRows ?? 0);
-  }
-  return added;
+export async function restoreDefaultImageRules(): Promise<number> {
+  return rules().insertMissing(
+    DEFAULT_IMAGE_RULES.map((rule) => ({ pattern: rule.pattern, note: rule.note }))
+  );
 }
 
 /** Whether a credential can be sealed here at all — the same key the env secrets need. */

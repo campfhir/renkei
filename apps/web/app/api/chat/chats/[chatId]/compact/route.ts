@@ -19,9 +19,9 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
 
-  const started = await startCompactionTurn(db, {
+  const started = await startCompactionTurn({
     session: { subject: session.subject, roles: session.roles },
     chatId,
   });

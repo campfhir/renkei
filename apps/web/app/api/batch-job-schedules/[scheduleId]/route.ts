@@ -8,10 +8,15 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
-import { getSchedule, updateSchedule, deleteSchedule, type UpdateScheduleInput } from '@renkei/batch-jobs-store';
+import {
+  getSchedule,
+  updateSchedule,
+  deleteSchedule,
+  isDuplicateScheduleName,
+  type UpdateScheduleInput,
+} from '@renkei/batch-jobs-store';
 import { parseScheduleConfig, type ScheduleConfig } from '@renkei/agents';
 import { parseGrouping } from '@/lib/batch-jobs/grouping';
 import {
@@ -35,10 +40,7 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const schedule = await getSchedule(dbResult.val, scheduleId);
+  const schedule = await getSchedule(scheduleId);
   if (!schedule || schedule.subject !== session.subject) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
   }
@@ -65,10 +67,7 @@ export async function PUT(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const existing = await getSchedule(dbResult.val, scheduleId);
+  const existing = await getSchedule(scheduleId);
   if (!existing || existing.subject !== session.subject) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
   }
@@ -114,9 +113,11 @@ export async function PUT(
       return NextResponse.json({ error: 'skipProcessed must be a boolean' }, { status: 400 });
     }
     const afterProcessing = parseAfterProcessing(body.afterProcessing);
-    if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
-    const shares = await listConnectedShares(dbResult.val, session.subject);
-    if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
+    if (!afterProcessing)
+      return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
+    const shares = await listConnectedShares(session.subject);
+    if (!shares.ok)
+      return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
     const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
     if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
     updates.config = {
@@ -127,7 +128,8 @@ export async function PUT(
   let newScheduleConfig: ScheduleConfig | undefined;
   if (body.scheduleConfig !== undefined) {
     const parsed = parseScheduleConfig(body.scheduleConfig);
-    if (!parsed) return NextResponse.json({ error: 'scheduleConfig is malformed' }, { status: 400 });
+    if (!parsed)
+      return NextResponse.json({ error: 'scheduleConfig is malformed' }, { status: 400 });
     newScheduleConfig = parsed;
     // See the collection route's own comment: the store stays
     // dependency-light and just wants a JSON-safe Record.
@@ -148,10 +150,13 @@ export async function PUT(
   if (newScheduleConfig || reEnabling) {
     const effectiveConfig = newScheduleConfig ?? parseScheduleConfig(existing.schedule_config);
     if (!effectiveConfig) {
-      return NextResponse.json({ error: 'The stored schedule is malformed; set scheduleConfig to fix it' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'The stored schedule is malformed; set scheduleConfig to fix it' },
+        { status: 400 }
+      );
     }
     try {
-      updates.nextRunAt = await nextRunAtFor(dbResult.val, effectiveConfig);
+      updates.nextRunAt = await nextRunAtFor(effectiveConfig);
     } catch {
       return NextResponse.json(
         { error: 'No next occurrence could be found for that schedule (check blackout dates).' },
@@ -161,12 +166,15 @@ export async function PUT(
   }
 
   try {
-    const updated = await updateSchedule(dbResult.val, scheduleId, updates);
+    const updated = await updateSchedule(scheduleId, updates);
     if (!updated) return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('batch_job_schedules_name')) {
-      return NextResponse.json({ error: 'A schedule with that name already exists' }, { status: 409 });
+    if (isDuplicateScheduleName(error)) {
+      return NextResponse.json(
+        { error: 'A schedule with that name already exists' },
+        { status: 409 }
+      );
     }
     throw error;
   }
@@ -180,14 +188,11 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const existing = await getSchedule(dbResult.val, scheduleId);
+  const existing = await getSchedule(scheduleId);
   if (!existing || existing.subject !== session.subject) {
     return NextResponse.json({ error: 'Schedule not found' }, { status: 404 });
   }
 
-  await deleteSchedule(dbResult.val, scheduleId);
+  await deleteSchedule(scheduleId);
   return NextResponse.json({ ok: true });
 }

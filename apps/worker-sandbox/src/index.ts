@@ -73,7 +73,7 @@
  *     organization will ever have workspaces or scripts on.
  */
 
-import { closeDatabase, getDatabase } from '@renkei/db';
+import { checkDataStore, closeDataStore } from '@renkei/db';
 import { ensureDataRoot, getDataRoot } from './disk';
 import { createBrowserStateStore } from './browser-state';
 import { createSecretKeyStore } from './secret-key-store';
@@ -200,8 +200,8 @@ async function main(): Promise<void> {
     fatal('SANDBOX_WORKER_API_KEY is required (comma-separated bearer keys)');
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) fatal(`database unavailable: ${String(dbResult.err)}`);
+  const ready = checkDataStore();
+  if (!ready.ok) fatal(`database unavailable: ${String(ready.err)}`);
 
   await ensureDataRoot();
 
@@ -278,7 +278,6 @@ async function main(): Promise<void> {
     try {
       const selfContainer = await ownContainer(engine);
       const manager = new ServiceManager({
-        db: dbResult.val,
         engine,
         network: (process.env.SANDBOX_SERVICES_NETWORK ?? '').trim() || 'renkei-sandbox-services',
         selfContainer,
@@ -348,7 +347,6 @@ async function main(): Promise<void> {
         return Math.max(SCRIPT_MIN_MEMORY_BYTES, org.sandboxScriptMemoryBytes);
       };
       const runner = new ScriptRunner({
-        db: dbResult.val,
         runsRoot: configuredDirectory('SANDBOX_RUNS_DIR', '/runs'),
         python,
         networkIsolation: isolation.mode,
@@ -436,7 +434,7 @@ async function main(): Promise<void> {
     );
   }
   const browser = new BrowserSessions({
-    secrets: createSecretResolver(dbResult.val, vault),
+    secrets: createSecretResolver(vault),
     state,
   });
 
@@ -444,7 +442,7 @@ async function main(): Promise<void> {
   // pages are stored sealed, so only with a key. Crawls a stopped worker
   // left mid-way are released for a resume, and expired ones swept.
   const crawlKey = envSecretsKey();
-  const crawlStore = crawlKey ? createCrawlStore(dbResult.val, crawlKey, keyDomain) : null;
+  const crawlStore = crawlKey ? createCrawlStore(crawlKey, keyDomain) : null;
   const crawler = crawlStore
     ? new Crawler({
         store: crawlStore,
@@ -482,7 +480,6 @@ async function main(): Promise<void> {
   }
 
   const server = createSandboxServer({
-    db: dbResult.val,
     apiKeys,
     browser,
     crawler,
@@ -544,7 +541,7 @@ async function main(): Promise<void> {
       vault.close();
       logger.info('stopped', { component: 'worker-sandbox/server' });
       await logger.flush();
-      await closeDatabase();
+      await closeDataStore();
       process.exit(0);
     })().catch((error: unknown) => {
       console.error('[worker-sandbox] shutdown failed:', error);

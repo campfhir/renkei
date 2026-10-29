@@ -15,8 +15,6 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   scriptTimeoutMs,
   validateInputFileIds,
@@ -29,7 +27,6 @@ import { decideScriptsFor, type OrgFeaturesLookup, type SandboxCapabilities } fr
 import type { NetworkIsolation } from './workspaces';
 
 export interface ScriptHandlerDeps {
-  db: Kysely<DB>;
   /** The runner, or null when this worker has no interpreter. */
   runner: ScriptRunner | null;
   /** What this worker can do about scripts (features.ts), found at boot. */

@@ -15,7 +15,7 @@
  * access (@/lib/mcp-tools/graph/client.ts, @/lib/webex-user-access.ts).
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { MICROSOFT, WEBEX_USER } from '@renkei/provider-grants';
 import { outlookScopeFor } from '@/lib/mcp-tools/outlook';
 import { webexScopeFor } from '@/lib/mcp-tools/webex';
@@ -28,23 +28,14 @@ export interface ChannelAvailability {
 const OUTLOOK_REQUIRED = outlookScopeFor('outlook_send_mail');
 const WEBEX_REQUIRED = webexScopeFor('webex_note_to_self');
 
-export async function getChannelAvailability(
-  subject: string
-): Promise<ChannelAvailability> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { outlook: false, webex: false };
-
-  const rows = await dbResult.val
-    .selectFrom('provider_grants')
-    .select(['provider', 'granted_scopes'])
-    .where('subject', '=', subject)
-    .where('provider', 'in', [MICROSOFT, WEBEX_USER])
-    .execute()
+export async function getChannelAvailability(subject: string): Promise<ChannelAvailability> {
+  const rows = await getDataStore()
+    .personalAccount.grantScopes(subject, [MICROSOFT, WEBEX_USER])
     .catch(() => []);
 
   const hasScopes = (provider: string, required: string[]) => {
     const row = rows.find((r) => r.provider === provider);
-    const granted = new Set(row?.granted_scopes ?? []);
+    const granted = new Set(row?.grantedScopes ?? []);
     return required.length > 0 && required.every((scope) => granted.has(scope));
   };
 

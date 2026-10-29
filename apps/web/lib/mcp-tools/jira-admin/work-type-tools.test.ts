@@ -16,9 +16,6 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
-}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
@@ -83,7 +80,7 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<T
 const propose = (args: Record<string, unknown>) => call('jira_admin_propose_work_type', args);
 const text = (result: ToolResult) => result.content[0]?.text ?? '';
 const stored = () =>
-  jest.mocked(createChangeRequest).mock.calls[0]?.[1]?.payload as WorkTypePayload | undefined;
+  jest.mocked(createChangeRequest).mock.calls[0]?.[0]?.payload as WorkTypePayload | undefined;
 
 /** OPS (Task, Bug) on schemes HR shares, with Bug on its own screens and workflow. */
 function opsSite(): Record<string, [number, unknown]> {
@@ -235,7 +232,7 @@ beforeEach(() => {
     return new Response(JSON.stringify(body), { status });
   }) as unknown as typeof fetch;
   jest.mocked(createChangeRequest).mockReset();
-  jest.mocked(createChangeRequest).mockImplementation(async (_db, input) => {
+  jest.mocked(createChangeRequest).mockImplementation(async (input) => {
     const now = new Date();
     const change: ChangeRequest = {
       id: CHANGE_ID,
@@ -333,7 +330,7 @@ describe('jira_admin_propose_work_type', () => {
         likeName: 'Bug',
       },
     ]);
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1]).toMatchObject({
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0]).toMatchObject({
       kind: 'work_type',
       title: 'New work type “Incident” for OPS',
       reason: 'On-call asked',

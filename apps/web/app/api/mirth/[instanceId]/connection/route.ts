@@ -13,7 +13,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import {
   deleteConnection,
   getConnection,
@@ -46,11 +45,7 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const instance = await getInstance(db, instanceId);
+  const instance = await getInstance(instanceId);
   if (!instance.ok) {
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
@@ -70,7 +65,6 @@ export async function POST(
       return NextResponse.json({ error: exposure.error }, { status: 400 });
     }
     const updated = await updateConnectionPermissions(
-      db,
       instanceId,
       session.subject,
       exposure.permissions
@@ -112,13 +106,15 @@ export async function POST(
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
       ? NextResponse.json(
-          { error: 'Your encryption key is not connected to this session. Sign in again and retry.' },
+          {
+            error: 'Your encryption key is not connected to this session. Sign in again and retry.',
+          },
           { status: 423 }
         )
       : NextResponse.json({ error: 'Encryption key unavailable' }, { status: 503 });
   }
 
-  const stored = await upsertConnection(db, instanceId, session.subject, {
+  const stored = await upsertConnection(instanceId, session.subject, {
     encryptedCredentials: sealed.val[0],
     username: parsed.credentials.username,
     permissions: parsed.permissions,
@@ -145,10 +141,7 @@ export async function DELETE(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const existing = await getConnection(dbResult.val, instanceId, session.subject);
+  const existing = await getConnection(instanceId, session.subject);
   if (!existing.ok) {
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
@@ -158,12 +151,12 @@ export async function DELETE(
   // instance; the stored credential goes right after regardless.
   await mirthLogout({ instanceId, subject: session.subject });
 
-  const deleted = await deleteConnection(dbResult.val, instanceId, session.subject);
+  const deleted = await deleteConnection(instanceId, session.subject);
   if (!deleted.ok) {
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 
-  const instance = await getInstance(dbResult.val, instanceId);
+  const instance = await getInstance(instanceId);
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'mirth.disconnected',

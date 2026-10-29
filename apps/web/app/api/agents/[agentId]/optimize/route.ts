@@ -8,13 +8,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import {
   createOptimization,
+  deleteOptimization,
   inFlightOptimization,
   latestOptimization,
 } from '@/lib/agents/optimization-store';
@@ -28,11 +28,7 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
   if (!access.viewerIsOwner) {
     return NextResponse.json({ error: 'Only the owner can analyze this agent.' }, { status: 403 });
@@ -40,7 +36,7 @@ export async function POST(
 
   // One at a time: a second pass while the first runs would spend a second
   // model call on the same evidence for the same answer.
-  const running = await inFlightOptimization(db, agentId);
+  const running = await inFlightOptimization(agentId);
   if (running) {
     return NextResponse.json({ optimizationId: running.id, status: 'queued' }, { status: 202 });
   }
@@ -49,7 +45,7 @@ export async function POST(
   // at even if the setting changes afterwards.
   const settings = await getOrgSettings();
   if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
-  const optimizationId = await createOptimization(db, {
+  const optimizationId = await createOptimization({
     ownerSubject: session.subject,
     agentId,
     request: { windowDays: settings.val.agentOptimizerWindowDays },
@@ -67,7 +63,7 @@ export async function POST(
       optimizationId,
       error: enqueued.err.message ?? 'unknown',
     });
-    await db.deleteFrom('agent_optimizations').where('id', '=', optimizationId).execute();
+    await deleteOptimization(optimizationId);
     return NextResponse.json(
       { error: 'Could not start the analysis. Try again in a moment.' },
       { status: 503 }
@@ -85,11 +81,8 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // Owner-scoped by the read itself: a grantee (or anyone else) gets null,
   // which is the same answer as "no pass yet".
-  const optimization = await latestOptimization(dbResult.val, session.subject, agentId);
+  const optimization = await latestOptimization(session.subject, agentId);
   return NextResponse.json({ optimization });
 }

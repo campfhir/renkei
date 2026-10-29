@@ -5,16 +5,11 @@
  */
 
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { test, expect } from './fixtures';
 
 test('top bar search: Ctrl+K focuses it, a setting is found and opened', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'Keyboard and results are a desktop check.');
   await page.goto(`/agents`);
@@ -61,6 +56,7 @@ test('top bar search: Ctrl+K focuses it, a setting is found and opened', async (
 
 test('on a phone the top bar folds search into a magnifier that opens a full field', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'One viewport resize is enough here.');
   await page.setViewportSize({ width: 390, height: 844 });

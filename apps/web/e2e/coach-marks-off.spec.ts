@@ -5,137 +5,113 @@
  * nothing, the Tutorials door leaves the account menu, and the Tutorials
  * page says why.
  *
- * Runs in a tenant of its own. The switch is org-wide, and the three
- * projects work the shared `e2e` tenant side by side: flipping it there
- * would blank out another project's tour mid-step.
+ * The person has the tours left on for themselves, so it is the org
+ * switch that keeps them away. The switch is organization-wide: the test
+ * holds the suite's exclusive lock on it (e2e/support/org-lock.ts) — the
+ * tour specs hold it shared — flips it through the settings route, and
+ * puts it back on afterwards.
  */
 
 import path from 'node:path';
-import { createHash } from 'node:crypto';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { createPerson, signIn } from './support/person';
+import { holdExclusive } from './support/org-lock';
 
-/**
- * A tenant per project: the three projects run side by side, and a tenant
- * one of them is deleting is no place for another to be signed in.
- */
-function idsFor(project: string) {
-  const hex = createHash('sha1').update(`coach-marks-off:${project}`).digest('hex');
-  const uuid = (offset: number) =>
-    `${hex.slice(offset, offset + 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
-  return {
-    sessionId: uuid(4),
-    slug: `e2e-tours-off-${project}`,
-    subject: `e2e-tours-off-${project}@example.com`,
-  };
-}
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-  // eslint-disable-next-line no-empty-pattern
-  storageState: async ({}, use, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    await use({
-      cookies: [
-        {
-          name: `renkei_session`,
-          value: ids.sessionId,
-          domain: '127.0.0.1',
-          path: '/',
-          expires: -1,
-          httpOnly: true,
-          secure: false,
-          sameSite: 'Lax',
-        },
-      ],
-      origins: [],
-    });
-  },
-});
+const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      `${name}.png`
-    ),
+    path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
     fullPage: false,
   });
 }
 
-let client: Client;
-let ids: ReturnType<typeof idsFor>;
-
-async function reset(): Promise<void> {
-  // The org switch back to its default (on), and this spec's person gone.
-  await client.query(`DELETE FROM settings WHERE key = 'coach_marks_enabled'`);
-  await client.query('DELETE FROM sessions WHERE subject = $1', [ids.subject]);
+/**
+ * Flip the switch, then check the pages say so. Each server bundle reads
+ * org settings through a cache of its own, a minute long in production;
+ * the suite runs with it at zero (playwright.config.ts), so the next
+ * render already does.
+ */
+async function setTours(page: Page, on: boolean): Promise<void> {
+  // A busy server can drop a connection now and then: say it again until it lands.
+  await expect(async () => {
+    const written = await page.request.put('/api/admin/org-settings', {
+      data: { coachMarksEnabled: on },
+    });
+    expect(written.ok(), await written.text()).toBe(true);
+  }).toPass({ timeout: 30_000 });
+  await expect
+    .poll(
+      async () => {
+        const tutorials = await page.request.get('/tutorials');
+        return (await tutorials.text()).includes('data-testid="tutorials-off"');
+      },
+      { timeout: 10_000 }
+    )
+    .toBe(!on);
 }
-
-// eslint-disable-next-line no-empty-pattern
-test.beforeAll(async ({}, testInfo) => {
-  ids = idsFor(testInfo.project.name);
-  client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  await reset();
-  await client.query(
-    `INSERT INTO settings (key, value) VALUES ('coach_marks_enabled', 'false'::jsonb)`
-  );
-  await client.query(
-    `INSERT INTO sessions (id, subject, roles, expires_at)\n     VALUES ($1, $2, $3, NOW() + INTERVAL '1 day')`,
-    [ids.sessionId, ids.subject, ['renkei-user', 'renkei-operator']]
-  );
-  // Enrolled already, so the first-sign-in "your encryption key is ready"
-  // dialog does not sit over the shell this spec clicks through.
-  await enrollForE2E(client, ids.subject);
-});
-
-test.afterAll(async () => {
-  await reset();
-  await client.end();
-});
 
 test('with the org switch off, no tour runs and the Tutorials door is closed', async ({
   page,
+  request,
 }, testInfo) => {
-  // The welcome tour would greet a newcomer here; the switch says no.
-  await page.goto(`/`);
-  await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
-  await page.waitForTimeout(1200);
-  await expect(page.getByTestId('coach-mark')).toHaveCount(0);
+  test.setTimeout(300_000);
+  // An operator (the settings page is theirs) with the tours left on.
+  const person = await createPerson(request, {
+    roles: ['renkei-user', 'renkei-operator'],
+    coachMarks: true,
+  });
+  await signIn(page.context(), person);
+  const release = await holdExclusive('tours');
+  try {
+    await setTours(page, false);
 
-  // Nor does a link that asks for one by name.
-  await page.goto(`/?tour=welcome`);
-  await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
-  await page.waitForTimeout(1200);
-  await expect(page.getByTestId('coach-mark')).toHaveCount(0);
+    // The welcome tour would greet a newcomer here; the switch says no.
+    await page.goto(`/`);
+    await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
+    await page.waitForTimeout(1200);
+    await expect(page.getByTestId('coach-mark')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Account menu' }).click();
-  const menu = page.getByRole('menu');
-  await expect(menu.getByRole('menuitem', { name: 'Preferences' })).toBeVisible();
-  await expect(menu.getByRole('menuitem', { name: 'Tutorials' })).toHaveCount(0);
-  await shot(page, testInfo, 'coach-off-account-menu');
-  await page.keyboard.press('Escape');
+    // Nor does a link that asks for one by name.
+    await page.goto(`/?tour=welcome`);
+    await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
+    await page.waitForTimeout(1200);
+    await expect(page.getByTestId('coach-mark')).toHaveCount(0);
 
-  // The page itself still answers, and says why there is nothing to start.
-  await page.goto(`/tutorials`);
-  await expect(page.getByTestId('tutorials-off')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Start|Replay/ })).toHaveCount(0);
-  await shot(page, testInfo, 'coach-off-tutorials');
+    const menu = page.getByRole('menu');
+    // The page may still be settling (hydrating, dropping the query): open
+    // the menu until it stays open.
+    await expect(async () => {
+      if ((await menu.count()) === 0) {
+        await page.getByRole('button', { name: 'Account menu' }).click();
+      }
+      await expect(menu.getByRole('menuitem', { name: 'Preferences' })).toBeVisible({
+        timeout: 2_000,
+      });
+    }).toPass({ timeout: 30_000 });
+    await expect(menu.getByRole('menuitem', { name: 'Tutorials' })).toHaveCount(0);
+    await shot(page, testInfo, 'coach-off-account-menu');
+    await page.keyboard.press('Escape');
 
-  // Where the switch lives.
-  await page.goto(`/admin/settings`);
-  const toggle = page.getByRole('switch', { name: 'Guided tours' });
-  await expect(toggle).toBeVisible();
-  await expect(toggle).toHaveAttribute('aria-checked', 'false');
-  await toggle.scrollIntoViewIfNeeded();
-  await shot(page, testInfo, 'coach-off-org-switch');
+    // The page itself still answers, and says why there is nothing to start.
+    await page.goto(`/tutorials`);
+    await expect(page.getByTestId('tutorials-off')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Start|Replay/ })).toHaveCount(0);
+    await shot(page, testInfo, 'coach-off-tutorials');
+
+    // Where the switch lives.
+    await page.goto(`/admin/settings`);
+    const toggle = page.getByRole('switch', { name: 'Guided tours' });
+    await expect(toggle).toBeVisible();
+    await expect(toggle).toHaveAttribute('aria-checked', 'false');
+    await toggle.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, 'coach-off-org-switch');
+  } finally {
+    try {
+      await setTours(page, true);
+    } finally {
+      await release();
+    }
+  }
 });

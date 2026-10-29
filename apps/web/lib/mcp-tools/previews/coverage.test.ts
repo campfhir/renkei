@@ -15,15 +15,6 @@
 
 const fetchSpy = jest.fn();
 
-jest.mock('kysely', () => ({
-  sql: Object.assign(() => ({ as: () => ({}) }), {
-    raw: () => ({}),
-    join: () => ({}),
-    ref: () => ({}),
-    lit: () => ({}),
-  }),
-}));
-
 jest.mock('@/lib/logger', () => ({
   logger: {
     info: jest.fn(),
@@ -44,31 +35,27 @@ const GRANT = {
 };
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: (table: string) => {
-        if (table === 'file_share_connections') {
-          const shareChain = {
-            innerJoin: () => shareChain,
-            select: () => shareChain,
-            where: () => shareChain,
-            execute: async () => [{ tool_access: 'read_write', allow_delete: true }],
-          };
-          return shareChain;
-        }
-        const chain = {
-          select: () => chain,
-          where: () => chain,
-          limit: () => chain,
-          executeTakeFirst: async () => GRANT,
-          // Every grant of a provider (Salesforce: one per connected org).
-          execute: async () => [GRANT],
-        };
-        return chain;
-      },
+  // One read/write share connection with delete: the whole fileshare surface.
+  getDataStore: () => ({
+    fileShares: {
+      connectionExposures: async () => [{ toolAccess: 'read_write', allowDelete: true }],
+    },
+    // Every provider connected, with the grant's scopes.
+    providerGrants: {
+      listForSubject: async (subject: string, options: { provider?: string } = {}) => [
+        {
+          provider: options.provider ?? '',
+          accountId: 'acct-1',
+          subject,
+          displayName: 'acct-1',
+          requestedScopes: GRANT.requested_scopes,
+          grantedScopes: GRANT.granted_scopes,
+          metadata: {},
+        },
+      ],
     },
   }),
+  memoryDataStoreRequested: () => false,
 }));
 
 jest.mock('@renkei/settings', () => ({

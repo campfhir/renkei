@@ -11,10 +11,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { listConnectedShares } from '@renkei/connector-fileshares';
-import { createSchedule, listSchedules, DOCUMENT_OCR_PIPELINE_KIND } from '@renkei/batch-jobs-store';
+import {
+  createSchedule,
+  listSchedules,
+  isDuplicateScheduleName,
+  DOCUMENT_OCR_PIPELINE_KIND,
+} from '@renkei/batch-jobs-store';
 import { parseScheduleConfig } from '@renkei/agents';
 import { parseGrouping } from '@/lib/batch-jobs/grouping';
 import {
@@ -30,16 +34,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const schedules = await listSchedules(dbResult.val, session.subject);
+  const schedules = await listSchedules(session.subject);
   return NextResponse.json({
     schedules: schedules.map((schedule) => ({
       id: schedule.id,
@@ -56,9 +55,7 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -90,27 +87,26 @@ export async function POST(
     return NextResponse.json({ error: 'skipProcessed must be a boolean' }, { status: 400 });
   }
   const afterProcessing = parseAfterProcessing(body.afterProcessing);
-  if (!afterProcessing) return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
+  if (!afterProcessing)
+    return NextResponse.json({ error: AFTER_PROCESSING_SHAPE }, { status: 400 });
 
   const scheduleConfig = parseScheduleConfig(body.scheduleConfig);
   if (!scheduleConfig) {
     return NextResponse.json({ error: 'scheduleConfig is missing or malformed' }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
   // The share must exist and this caller must have connected their own
   // credentials to it, and moving/deleting there must be within what they
   // allowed on the Connectors page — same check the one-off start route makes.
-  const shares = await listConnectedShares(dbResult.val, session.subject);
-  if (!shares.ok) return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
+  const shares = await listConnectedShares(session.subject);
+  if (!shares.ok)
+    return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
   if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 
   let nextRunAt: Date;
   try {
-    nextRunAt = await nextRunAtFor(dbResult.val, scheduleConfig);
+    nextRunAt = await nextRunAtFor(scheduleConfig);
   } catch {
     return NextResponse.json(
       { error: 'No next occurrence could be found for that schedule (check blackout dates).' },
@@ -124,18 +120,23 @@ export async function POST(
   const scheduleConfigRecord: Record<string, unknown> = { ...scheduleConfig };
 
   try {
-    const schedule = await createSchedule(dbResult.val, {
+    const schedule = await createSchedule({
       subject: session.subject,
       name,
       kind: DOCUMENT_OCR_PIPELINE_KIND,
-      config: { ...documentPipelineConfig({ shareId, path, grouping, skipProcessed, afterProcessing }) },
+      config: {
+        ...documentPipelineConfig({ shareId, path, grouping, skipProcessed, afterProcessing }),
+      },
       scheduleConfig: scheduleConfigRecord,
       nextRunAt,
     });
     return NextResponse.json({ id: schedule.id }, { status: 201 });
   } catch (error) {
-    if (error instanceof Error && error.message.includes('batch_job_schedules_name')) {
-      return NextResponse.json({ error: 'A schedule with that name already exists' }, { status: 409 });
+    if (isDuplicateScheduleName(error)) {
+      return NextResponse.json(
+        { error: 'A schedule with that name already exists' },
+        { status: 409 }
+      );
     }
     throw error;
   }

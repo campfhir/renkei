@@ -14,10 +14,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { getSessionFromRequest } from '@/lib/session';
-import { bindConnectFlow } from '@/lib/connect-flow-binding';
+import { redirectToConsent } from '@/lib/consent-redirect';
 import { getSalesforceConnector } from '@/lib/salesforce-app';
 import { SALESFORCE_OAUTH_SCOPES } from '@/lib/salesforce-scopes';
 import type { SalesforceKind } from '@/lib/salesforce-kinds';
@@ -29,11 +29,6 @@ export async function authorizeSalesforce(
   { params }: { params: Promise<{ connector: string }> }
 ): Promise<NextResponse> {
   const { connector: connectorKey } = await params;
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
   // The resulting grant is bound to whoever completes this flow.
   const session = await getSessionFromRequest(request);
   if (!session) {
@@ -77,21 +72,17 @@ export async function authorizeSalesforce(
   const codeVerifier = randomBytes(32).toString('base64url');
   const codeChallenge = createHash('sha256').update(codeVerifier).digest('base64url');
   const state = randomUUID();
-  await db
-    .insertInto('pending_oidc_signin')
-    .values({
-      id: randomUUID(),
-      state,
-      nonce: randomUUID(),
-      subject: session.subject,
-      provider: kind.provider,
-      connector_key: connector.key,
-      scopes: effectiveScopes,
-      code_verifier: codeVerifier,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      created_at: new Date().toISOString(),
-    })
-    .execute();
+  await getDataStore().pendingSignins.create({
+    id: randomUUID(),
+    state,
+    nonce: randomUUID(),
+    subject: session.subject,
+    provider: kind.provider,
+    connectorKey: connector.key,
+    scopes: effectiveScopes,
+    codeVerifier,
+    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+  });
 
   const authUrl = new URL(`${connector.myDomain}/services/oauth2/authorize`);
   authUrl.searchParams.append('response_type', 'code');
@@ -103,5 +94,5 @@ export async function authorizeSalesforce(
   authUrl.searchParams.append('code_challenge_method', 'S256');
 
   // Bound to this browser: the callback requires the cookie this sets.
-  return bindConnectFlow(NextResponse.redirect(authUrl.toString()), state);
+  return await redirectToConsent(authUrl, state);
 }

@@ -25,8 +25,7 @@
  * through the person's ring (keyring.ts).
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ResourceKeyWrappingRecord } from '@renkei/db';
 import {
   generateDataKey,
   openSealedBox,
@@ -64,37 +63,21 @@ export type ShareKeyError =
   /** The grantee has not enrolled: there is no public key to wrap to yet. */
   | 'GRANTEE_NOT_ENROLLED';
 
-interface GrantRow {
-  resource_key_id: string;
-  holder_kind: string;
-  holder: string;
-  wrapped_key: string;
-}
+type GrantRow = ResourceKeyWrappingRecord;
 
 /** How deep a chain of `resource` wrappings is followed: a chat under its project, no further. */
 const MAX_PARENT_DEPTH = 1;
 
-async function keyRow(db: Kysely<DB>, ref: ResourceRef): Promise<{ id: string } | null> {
-  const row = await db
-    .selectFrom('resource_keys')
-    .select('id')
-    .where('resource_kind', '=', ref.kind)
-    .where('resource_id', '=', ref.resourceId)
-    .executeTakeFirst();
-  return row ?? null;
+async function keyRow(ref: ResourceRef): Promise<{ id: string } | null> {
+  const id = await getDataStore().resourceKeys.find(ref.kind, ref.resourceId);
+  return id === null ? null : { id };
 }
 
-async function grantRows(db: Kysely<DB>, keyIds: string[]): Promise<GrantRow[]> {
-  if (keyIds.length === 0) return [];
-  return db
-    .selectFrom('resource_key_grants')
-    .select(['resource_key_id', 'holder_kind', 'holder', 'wrapped_key'])
-    .where('resource_key_id', 'in', keyIds)
-    .execute();
+async function grantRows(keyIds: string[]): Promise<GrantRow[]> {
+  return getDataStore().resourceKeys.wrappings(keyIds);
 }
 
 async function upsertWrapping(
-  db: Kysely<DB>,
   keyId: string,
   holderKind: HolderKind,
   holder: string,
@@ -102,22 +85,14 @@ async function upsertWrapping(
   version: number,
   grantedBy: string | null
 ): Promise<void> {
-  await db
-    .insertInto('resource_key_grants')
-    .values({
-      resource_key_id: keyId,
-      holder_kind: holderKind,
-      holder,
-      wrapped_key: wrapped,
-      kek_version: version,
-      granted_by: grantedBy,
-    })
-    .onConflict((oc) =>
-      oc
-        .columns(['resource_key_id', 'holder_kind', 'holder'])
-        .doUpdateSet({ wrapped_key: wrapped, kek_version: version, granted_by: grantedBy })
-    )
-    .execute();
+  await getDataStore().resourceKeys.upsertWrapping({
+    resourceKeyId: keyId,
+    holderKind,
+    holder,
+    wrappedKey: wrapped,
+    kekVersion: version,
+    grantedBy,
+  });
 }
 
 /**
@@ -133,23 +108,23 @@ function openDirect(
   let needsSession = false;
   for (const row of rows) {
     if (row.holder !== ring.subject) continue;
-    if (row.holder_kind === 'user') {
+    if (row.holderKind === 'user') {
       if (!ring.userKey) {
         needsSession = true;
         continue;
       }
-      const key = unwrapKey(row.wrapped_key, ring.userKey);
+      const key = unwrapKey(row.wrappedKey, ring.userKey);
       if (key.ok) return { key: key.val, via: 'user' };
-    } else if (row.holder_kind === 'automation') {
-      const key = unwrapKey(row.wrapped_key, ring.automationKey);
+    } else if (row.holderKind === 'automation') {
+      const key = unwrapKey(row.wrappedKey, ring.automationKey);
       if (key.ok) return { key: key.val, via: 'automation' };
-    } else if (row.holder_kind === 'public') {
+    } else if (row.holderKind === 'public') {
       const privateKey = ring.privateKey();
       if (!privateKey) {
         needsSession = true;
         continue;
       }
-      const opened = openSealedBox({ publicKey: ring.publicKey, privateKey }, row.wrapped_key);
+      const opened = openSealedBox({ publicKey: ring.publicKey, privateKey }, row.wrappedKey);
       if (opened.ok && opened.val.byteLength === 32) return { key: opened.val, via: 'public' };
     }
   }
@@ -161,7 +136,6 @@ function openDirect(
  * parent key as this person and unwrap under it.
  */
 async function openThroughParents(
-  db: Kysely<DB>,
   rows: GrantRow[],
   ring: KeyRing,
   depth: number
@@ -169,10 +143,10 @@ async function openThroughParents(
   if (depth > MAX_PARENT_DEPTH) return null;
   let needsSession = false;
   for (const row of rows) {
-    if (row.holder_kind !== 'resource') continue;
-    const parent = await openKeyById(db, row.holder, ring, depth + 1);
+    if (row.holderKind !== 'resource') continue;
+    const parent = await openKeyById(row.holder, ring, depth + 1);
     if (parent.ok) {
-      const key = unwrapKey(row.wrapped_key, parent.val);
+      const key = unwrapKey(row.wrappedKey, parent.val);
       if (key.ok) return ok(key.val);
     } else if (parent.err.type === 'NEEDS_SESSION') {
       needsSession = true;
@@ -182,43 +156,24 @@ async function openThroughParents(
 }
 
 /** A public wrapping just opened becomes a user wrapping, so the next open is a plain unwrap. */
-async function convertPublicWrapping(
-  db: Kysely<DB>,
-  keyId: string,
-  ring: KeyRing,
-  key: Buffer
-): Promise<void> {
+async function convertPublicWrapping(keyId: string, ring: KeyRing, key: Buffer): Promise<void> {
   if (!ring.userKey) return;
-  await upsertWrapping(
-    db,
-    keyId,
-    'user',
-    ring.subject,
-    wrapKey(key, ring.userKey),
-    ring.version,
-    null
-  );
-  await db
-    .deleteFrom('resource_key_grants')
-    .where('resource_key_id', '=', keyId)
-    .where('holder_kind', '=', 'public')
-    .where('holder', '=', ring.subject)
-    .execute();
+  await upsertWrapping(keyId, 'user', ring.subject, wrapKey(key, ring.userKey), ring.version, null);
+  await getDataStore().resourceKeys.deleteWrappings(keyId, ring.subject, ['public']);
 }
 
 async function openKeyById(
-  db: Kysely<DB>,
   keyId: string,
   ring: KeyRing,
   depth: number
 ): Promise<Result<Buffer, OpenKeyError>> {
-  const rows = await grantRows(db, [keyId]);
+  const rows = await grantRows([keyId]);
   const direct = openDirect(rows, ring);
   if (direct.key) {
-    if (direct.via === 'public') await convertPublicWrapping(db, keyId, ring, direct.key);
+    if (direct.via === 'public') await convertPublicWrapping(keyId, ring, direct.key);
     return ok(direct.key);
   }
-  const viaParent = await openThroughParents(db, rows, ring, depth);
+  const viaParent = await openThroughParents(rows, ring, depth);
   if (viaParent) return viaParent;
   return err(direct.needsSession ? ('NEEDS_SESSION' as const) : ('NO_ACCESS' as const));
 }
@@ -229,21 +184,20 @@ function ringError(error: KeyError): OpenKeyError {
 }
 
 /** Does the resource have a key at all? (Not whether anyone in particular may open it.) */
-export async function hasResourceKey(db: Kysely<DB>, ref: ResourceRef): Promise<boolean> {
-  return (await keyRow(db, ref)) !== null;
+export async function hasResourceKey(ref: ResourceRef): Promise<boolean> {
+  return (await keyRow(ref)) !== null;
 }
 
 /** The resource's key as this person: through whichever of their wrappings their keys reach. */
 export async function openResourceKey(
-  db: Kysely<DB>,
   ref: ResourceRef,
   subject: string
 ): Promise<Result<ResourceKey, OpenKeyError>> {
-  const row = await keyRow(db, ref);
+  const row = await keyRow(ref);
   if (!row) return err('NO_KEY' as const);
-  const ring = await getKeyRing(db, subject);
+  const ring = await getKeyRing(subject);
   if (!ring.ok) return err(ringError(ring.err.type));
-  const key = await openKeyById(db, row.id, ring.val, 0);
+  const key = await openKeyById(row.id, ring.val, 0);
   return key.ok ? ok({ id: row.id, key: key.val }) : key;
 }
 
@@ -261,27 +215,20 @@ export interface CreateKeyOptions {
  * instead — the owner always holds a wrapping of the key that won.
  */
 export async function createResourceKey(
-  db: Kysely<DB>,
   ref: ResourceRef,
   ownerSubject: string,
   options: CreateKeyOptions = {}
 ): Promise<Result<ResourceKey, OpenKeyError>> {
-  const ring = await getKeyRing(db, ownerSubject);
+  const ring = await getKeyRing(ownerSubject);
   if (!ring.ok) return err(ringError(ring.err.type));
   const key = generateDataKey();
-  const inserted = await db
-    .insertInto('resource_keys')
-    .values({ resource_kind: ref.kind, resource_id: ref.resourceId })
-    .onConflict((oc) => oc.columns(['resource_kind', 'resource_id']).doNothing())
-    .returning('id')
-    .executeTakeFirst();
-  if (!inserted) return openResourceKey(db, ref, ownerSubject);
-  await wrapForRing(db, inserted.id, key, ring.val, options.automation === true);
-  return ok({ id: inserted.id, key });
+  const inserted = await getDataStore().resourceKeys.insertIfAbsent(ref.kind, ref.resourceId);
+  if (inserted === null) return openResourceKey(ref, ownerSubject);
+  await wrapForRing(inserted, key, ring.val, options.automation === true);
+  return ok({ id: inserted, key });
 }
 
 async function wrapForRing(
-  db: Kysely<DB>,
   keyId: string,
   key: Buffer,
   ring: KeyRing,
@@ -289,7 +236,6 @@ async function wrapForRing(
 ): Promise<void> {
   if (ring.userKey) {
     await upsertWrapping(
-      db,
       keyId,
       'user',
       ring.subject,
@@ -300,7 +246,6 @@ async function wrapForRing(
   }
   if (automation || !ring.userKey) {
     await upsertWrapping(
-      db,
       keyId,
       'automation',
       ring.subject,
@@ -316,14 +261,13 @@ async function wrapForRing(
  * for them — the owner's path on a legacy resource's first keyed write.
  */
 export async function ensureResourceKey(
-  db: Kysely<DB>,
   ref: ResourceRef,
   ownerSubject: string,
   options: CreateKeyOptions = {}
 ): Promise<Result<ResourceKey, OpenKeyError>> {
-  const opened = await openResourceKey(db, ref, ownerSubject);
+  const opened = await openResourceKey(ref, ownerSubject);
   if (opened.ok || opened.err.type !== 'NO_KEY') return opened;
-  return createResourceKey(db, ref, ownerSubject, options);
+  return createResourceKey(ref, ownerSubject, options);
 }
 
 /**
@@ -332,18 +276,16 @@ export async function ensureResourceKey(
  * for them now (either scope: the automation key is in both rings).
  */
 export async function grantAutomationAccess(
-  db: Kysely<DB>,
   ref: ResourceRef,
   subject: string
 ): Promise<Result<void, OpenKeyError>> {
-  const row = await keyRow(db, ref);
+  const row = await keyRow(ref);
   if (!row) return err('NO_KEY' as const);
-  const ring = await getKeyRing(db, subject);
+  const ring = await getKeyRing(subject);
   if (!ring.ok) return err(ringError(ring.err.type));
-  const key = await openKeyById(db, row.id, ring.val, 0);
+  const key = await openKeyById(row.id, ring.val, 0);
   if (!key.ok) return key;
   await upsertWrapping(
-    db,
     row.id,
     'automation',
     subject,
@@ -360,32 +302,22 @@ export async function grantAutomationAccess(
  * what opened; a caller decides what to do about the rest.
  */
 export async function openResourceKeys(
-  db: Kysely<DB>,
   kind: ResourceKeyKind,
   entries: { resourceId: string; subject: string }[]
 ): Promise<Map<string, ResourceKey>> {
   const out = new Map<string, ResourceKey>();
   if (entries.length === 0) return out;
-  const keys = await db
-    .selectFrom('resource_keys')
-    .select(['id', 'resource_id'])
-    .where('resource_kind', '=', kind)
-    .where(
-      'resource_id',
-      'in',
-      entries.map((entry) => entry.resourceId)
-    )
-    .execute();
-  const keyIdOf = new Map(keys.map((row) => [row.resource_id, row.id]));
-  const rows = await grantRows(
-    db,
-    keys.map((row) => row.id)
+  const keys = await getDataStore().resourceKeys.findMany(
+    kind,
+    entries.map((entry) => entry.resourceId)
   );
+  const keyIdOf = new Map(keys.map((row) => [row.resourceId, row.id]));
+  const rows = await grantRows(keys.map((row) => row.id));
   const rowsByKey = new Map<string, GrantRow[]>();
   for (const row of rows) {
-    const list = rowsByKey.get(row.resource_key_id) ?? [];
+    const list = rowsByKey.get(row.resourceKeyId) ?? [];
     list.push(row);
-    rowsByKey.set(row.resource_key_id, list);
+    rowsByKey.set(row.resourceKeyId, list);
   }
   const rings = new Map<string, KeyRing | null>();
   for (const entry of entries) {
@@ -393,18 +325,18 @@ export async function openResourceKeys(
     if (!keyId || out.has(entry.resourceId)) continue;
     let ring = rings.get(entry.subject);
     if (ring === undefined) {
-      const resolved = await getKeyRing(db, entry.subject);
+      const resolved = await getKeyRing(entry.subject);
       ring = resolved.ok ? resolved.val : null;
       rings.set(entry.subject, ring);
     }
     if (!ring) continue;
     const direct = openDirect(rowsByKey.get(keyId) ?? [], ring);
     if (direct.key) {
-      if (direct.via === 'public') await convertPublicWrapping(db, keyId, ring, direct.key);
+      if (direct.via === 'public') await convertPublicWrapping(keyId, ring, direct.key);
       out.set(entry.resourceId, { id: keyId, key: direct.key });
       continue;
     }
-    const viaParent = await openThroughParents(db, rowsByKey.get(keyId) ?? [], ring, 0);
+    const viaParent = await openThroughParents(rowsByKey.get(keyId) ?? [], ring, 0);
     if (viaParent?.ok) out.set(entry.resourceId, { id: keyId, key: viaParent.val });
   }
   return out;
@@ -418,27 +350,22 @@ export async function openResourceKeys(
  * as they are.
  */
 export async function shareResourceKey(
-  db: Kysely<DB>,
   ref: ResourceRef,
   fromSubject: string,
   toSubject: string
 ): Promise<Result<void, ShareKeyError>> {
-  const opened = await openResourceKey(db, ref, fromSubject);
+  const opened = await openResourceKey(ref, fromSubject);
   if (!opened.ok) return opened;
-  const grantee = await readKeyRow(db, toSubject);
+  const grantee = await readKeyRow(toSubject);
   if (!grantee || grantee.mode !== 'held' || !grantee.public_key) {
     return err('GRANTEE_NOT_ENROLLED' as const);
   }
-  const held = await db
-    .selectFrom('resource_key_grants')
-    .select('holder_kind')
-    .where('resource_key_id', '=', opened.val.id)
-    .where('holder', '=', toSubject)
-    .where('holder_kind', 'in', ['user', 'automation'])
-    .executeTakeFirst();
+  const held = await getDataStore().resourceKeys.holdsWrapping(opened.val.id, toSubject, [
+    'user',
+    'automation',
+  ]);
   if (held) return ok();
   await upsertWrapping(
-    db,
     opened.val.id,
     'public',
     toSubject,
@@ -455,17 +382,15 @@ export async function shareResourceKey(
  * parent's key, so a new member of the project needs nothing more.
  */
 export async function wrapResourceKeyUnder(
-  db: Kysely<DB>,
   ref: ResourceRef,
   bySubject: string,
   parent: ResourceRef
 ): Promise<Result<void, OpenKeyError>> {
-  const child = await openResourceKey(db, ref, bySubject);
+  const child = await openResourceKey(ref, bySubject);
   if (!child.ok) return child;
-  const parentKey = await openResourceKey(db, parent, bySubject);
+  const parentKey = await openResourceKey(parent, bySubject);
   if (!parentKey.ok) return parentKey;
   await upsertWrapping(
-    db,
     child.val.id,
     'resource',
     parentKey.val.id,
@@ -477,29 +402,20 @@ export async function wrapResourceKeyUnder(
 }
 
 /** Unsharing: forget this person's wrappings. The key itself and everyone else's stay. */
-export async function revokeResourceKey(
-  db: Kysely<DB>,
-  ref: ResourceRef,
-  subject: string
-): Promise<boolean> {
-  const row = await keyRow(db, ref);
+export async function revokeResourceKey(ref: ResourceRef, subject: string): Promise<boolean> {
+  const row = await keyRow(ref);
   if (!row) return false;
-  const result = await db
-    .deleteFrom('resource_key_grants')
-    .where('resource_key_id', '=', row.id)
-    .where('holder', '=', subject)
-    .where('holder_kind', 'in', ['user', 'automation', 'public'])
-    .executeTakeFirst();
-  return Number(result.numDeletedRows) > 0;
+  const deleted = await getDataStore().resourceKeys.deleteWrappings(row.id, subject, [
+    'user',
+    'automation',
+    'public',
+  ]);
+  return deleted > 0;
 }
 
 /** The resource is gone: its key and every wrapping go with it (grants cascade). */
-export async function deleteResourceKey(db: Kysely<DB>, ref: ResourceRef): Promise<void> {
-  await db
-    .deleteFrom('resource_keys')
-    .where('resource_kind', '=', ref.kind)
-    .where('resource_id', '=', ref.resourceId)
-    .execute();
+export async function deleteResourceKey(ref: ResourceRef): Promise<void> {
+  await getDataStore().resourceKeys.delete(ref.kind, ref.resourceId);
 }
 
 export interface ResourceKeyHolder {
@@ -514,24 +430,11 @@ function holderKindOf(value: string): HolderKind {
 }
 
 /** Who holds a wrapping of this resource's key — for the owner's view and for tests. */
-export async function listResourceKeyHolders(
-  db: Kysely<DB>,
-  ref: ResourceRef
-): Promise<ResourceKeyHolder[]> {
-  const row = await keyRow(db, ref);
+export async function listResourceKeyHolders(ref: ResourceRef): Promise<ResourceKeyHolder[]> {
+  const row = await keyRow(ref);
   if (!row) return [];
-  const rows = await db
-    .selectFrom('resource_key_grants')
-    .select(['holder_kind', 'holder', 'granted_by', 'kek_version'])
-    .where('resource_key_id', '=', row.id)
-    .orderBy('created_at', 'asc')
-    .execute();
-  return rows.map((grant) => ({
-    holderKind: holderKindOf(grant.holder_kind),
-    holder: grant.holder,
-    grantedBy: grant.granted_by,
-    kekVersion: grant.kek_version,
-  }));
+  const rows = await getDataStore().resourceKeys.holders(row.id);
+  return rows.map((grant) => ({ ...grant, holderKind: holderKindOf(grant.holderKind) }));
 }
 
 /**
@@ -539,14 +442,6 @@ export async function listResourceKeyHolders(
  * deletes a resource's key with the resource". Returns how many were
  * removed.
  */
-export async function pruneOrphanResourceKeys(db: Kysely<DB>): Promise<number> {
-  const result = await sql<{ id: string }>`
-    DELETE FROM resource_keys k
-     WHERE (k.resource_kind = 'chat' AND NOT EXISTS (SELECT 1 FROM chats c WHERE c.id = k.resource_id))
-        OR (k.resource_kind = 'chat_project' AND NOT EXISTS (SELECT 1 FROM chat_projects p WHERE p.id = k.resource_id))
-        OR (k.resource_kind = 'prompt_library' AND NOT EXISTS (SELECT 1 FROM prompt_libraries l WHERE l.id = k.resource_id))
-        OR (k.resource_kind = 'artifact' AND NOT EXISTS (SELECT 1 FROM artifacts a WHERE a.id = k.resource_id))
-    RETURNING k.id
-  `.execute(db);
-  return result.rows.length;
+export async function pruneOrphanResourceKeys(): Promise<number> {
+  return getDataStore().resourceKeys.pruneOrphans();
 }

@@ -8,8 +8,6 @@
  * - the executor's outcome is written back to the slot row.
  */
 
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: jest.fn(() => '') }));
 jest.mock('@/lib/upload-executors', () => ({ completeUploadSlot: jest.fn() }));
 jest.mock('@/lib/logger', () => ({
@@ -17,154 +15,142 @@ jest.mock('@/lib/logger', () => ({
 }));
 
 import { NextRequest } from 'next/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { hashUploadToken } from '@/lib/mcp-tools/upload-slots';
 import { GET, POST } from './route';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { completeUploadSlot: mockCompleteUploadSlot } = jest.requireMock<{
   completeUploadSlot: jest.Mock;
 }>('@/lib/upload-executors');
 
-interface Recorded {
-  claimFilters: Array<[string, string, unknown]>;
-  finishes: Array<Record<string, unknown>>;
-}
+const SLOT_ID = '00000000-0000-4000-8000-000000000001';
+const TOKEN = 'token-abc';
 
-/**
- * Kysely stand-in for the route's two UPDATE shapes (the conditional claim
- * with .returning(), then the outcome write) plus GET's slot lookup.
- */
-function stubDb(
-  claim: Record<string, unknown> | undefined,
-  selectRow?: Record<string, unknown>
-): Recorded {
-  const recorded: Recorded = { claimFilters: [], finishes: [] };
-  const db = {
-    updateTable: () => {
-      let values: Record<string, unknown> = {};
-      const chain = {
-        set(next: Record<string, unknown>) {
-          values = next;
-          return chain;
-        },
-        where(column: string, op: string, value: unknown) {
-          recorded.claimFilters.push([column, op, value]);
-          return chain;
-        },
-        returning: () => chain,
-        executeTakeFirst: async () => claim,
-        execute: async () => {
-          recorded.finishes.push(values);
-          return [];
-        },
-      };
-      return chain;
-    },
-    selectFrom: () => {
-      const chain = {
-        select: () => chain,
-        where: () => chain,
-        executeTakeFirst: async () => selectRow,
-      };
-      return chain;
-    },
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: db });
-  return recorded;
-}
+let store: ReturnType<typeof createMemoryDataStore>;
 
-const CLAIMED = {
-  id: 'slot-1',
-  subject: 'subject-1',
-  account_id: 'acct-1',
-  kind: 'jira-attachment',
-  destination: { issueKey: 'PROJ-1' },
-  filename: 'report.pdf',
-  content_type: 'application/pdf',
-  max_bytes: 1024,
-};
+/** A memory store holding one slot, minted for TOKEN. */
+async function seedSlot(extra: Record<string, unknown> = {}): Promise<void> {
+  await store.seed({
+    upload_slots: [
+      {
+        id: SLOT_ID,
+        token_hash: hashUploadToken(TOKEN),
+        subject: 'subject-1',
+        account_id: 'acct-1',
+        kind: 'jira-attachment',
+        destination: { issueKey: 'PROJ-1' },
+        filename: 'report.pdf',
+        content_type: 'application/pdf',
+        max_bytes: 1024,
+        expires_at: new Date(Date.now() + 60_000),
+        status: 'pending',
+        result: null,
+        completed_at: null,
+        created_at: new Date(),
+        ...extra,
+      },
+    ],
+  });
+}
 
 function post(body: BodyInit | null, token?: string): Promise<Response> {
   return POST(
-    new NextRequest('https://renkei.example/api/upload/slot-1', {
+    new NextRequest(`https://renkei.example/api/upload/${SLOT_ID}`, {
       method: 'POST',
       headers: token ? { authorization: `Bearer ${token}` } : {},
       body,
     }),
-    { params: Promise.resolve({ slotId: 'slot-1' }) }
+    { params: Promise.resolve({ slotId: SLOT_ID }) }
   );
 }
 
+function get(): Promise<Response> {
+  return GET(new NextRequest(`https://renkei.example/api/upload/${SLOT_ID}`), {
+    params: Promise.resolve({ slotId: SLOT_ID }),
+  });
+}
+
 beforeEach(() => {
-  mockGetDatabase.mockReset();
+  store = createMemoryDataStore();
+  registerDataStore(store);
   mockCompleteUploadSlot.mockReset();
+});
+
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('POST /api/upload/[slotId]', () => {
   it('requires the bearer token in the Authorization header', async () => {
-    stubDb(CLAIMED);
+    await seedSlot();
     const response = await post('bytes');
     expect(response.status).toBe(401);
     expect(mockCompleteUploadSlot).not.toHaveBeenCalled();
+    expect((await store.uploadSlots.get(SLOT_ID))?.status).toBe('pending');
   });
 
-  it('answers 410 for wrong token / expired / reused alike', async () => {
-    stubDb(undefined);
-    const response = await post('bytes', 'wrong-token');
-    expect(response.status).toBe(410);
-    const body = (await response.json()) as { detail: string };
-    // One message on purpose — the reasons are indistinguishable.
-    expect(body.detail).toContain('wrong token, expired, or already used');
+  it('answers 410 for wrong token / expired / reused / missing alike', async () => {
+    const wrong = await post('bytes', 'wrong-token');
+    await seedSlot({ expires_at: new Date(Date.now() - 1_000) });
+    const expired = await post('bytes', TOKEN);
+    for (const response of [wrong, expired]) {
+      expect(response.status).toBe(410);
+      const body = (await response.json()) as { detail: string };
+      // One message on purpose — the reasons are indistinguishable.
+      expect(body.detail).toContain('wrong token, expired, or already used');
+    }
     expect(mockCompleteUploadSlot).not.toHaveBeenCalled();
   });
 
-  it('claims with the HASH of the presented token, never the token', async () => {
-    const recorded = stubDb(CLAIMED);
+  it('claims with the token, once: a second POST is refused', async () => {
+    await seedSlot();
     mockCompleteUploadSlot.mockResolvedValue({ ok: true, detail: 'done' });
-
-    await post('bytes', 'token-abc');
-
-    expect(recorded.claimFilters).toContainEqual(['token_hash', '=', hashUploadToken('token-abc')]);
-    expect(recorded.claimFilters).toContainEqual(['status', '=', 'pending']);
-    expect(
-      recorded.claimFilters.some(([, , value]) => value === 'token-abc')
-    ).toBe(false);
+    expect((await post('bytes', 'not-the-token')).status).toBe(410);
+    expect((await post('bytes', TOKEN)).status).toBe(200);
+    expect((await post('bytes', TOKEN)).status).toBe(410);
+    expect(mockCompleteUploadSlot).toHaveBeenCalledTimes(1);
   });
 
   it('refuses an oversized body at 413 before the executor runs', async () => {
-    const recorded = stubDb({ ...CLAIMED, max_bytes: 10 });
+    await seedSlot({ max_bytes: 10 });
 
-    const response = await post(Buffer.alloc(32), 'token-abc');
+    const response = await post(Buffer.alloc(32), TOKEN);
 
     expect(response.status).toBe(413);
     expect(mockCompleteUploadSlot).not.toHaveBeenCalled();
-    expect(recorded.finishes[0]?.status).toBe('failed');
+    const slot = await store.uploadSlots.get(SLOT_ID);
+    expect(slot?.status).toBe('failed');
+    expect(slot?.result).toContain('10-byte limit');
   });
 
   it('hands the bytes to completeUploadSlot and reports its outcome', async () => {
-    stubDb(CLAIMED);
-    mockCompleteUploadSlot.mockResolvedValue({ ok: true, detail: 'Attached "report.pdf" to PROJ-1.' });
+    await seedSlot();
+    mockCompleteUploadSlot.mockResolvedValue({
+      ok: true,
+      detail: 'Attached "report.pdf" to PROJ-1.',
+    });
 
-    const response = await post(Buffer.from('file-bytes'), 'token-abc');
+    const response = await post(Buffer.from('file-bytes'), TOKEN);
 
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; detail: string };
     expect(body.ok).toBe(true);
     expect(body.detail).toContain('PROJ-1');
-    const [, claimed, bytes] = mockCompleteUploadSlot.mock.calls[0] as [
-      unknown,
-      { id: string },
+    const [claimed, bytes] = mockCompleteUploadSlot.mock.calls[0] as [
+      { id: string; destination: unknown; max_bytes: number },
       Buffer,
     ];
-    expect(claimed.id).toBe(CLAIMED.id);
+    expect(claimed.id).toBe(SLOT_ID);
+    expect(claimed.destination).toEqual({ issueKey: 'PROJ-1' });
+    expect(claimed.max_bytes).toBe(1024);
     expect(Buffer.from(bytes).toString()).toBe('file-bytes');
   });
 
   it('answers 502 when completeUploadSlot reports a failed outcome', async () => {
-    stubDb(CLAIMED);
+    await seedSlot();
     mockCompleteUploadSlot.mockResolvedValue({ ok: false, detail: 'Jira said no.' });
 
-    const response = await post(Buffer.from('file-bytes'), 'token-abc');
+    const response = await post(Buffer.from('file-bytes'), TOKEN);
 
     expect(response.status).toBe(502);
     const body = (await response.json()) as { ok: boolean; detail: string };
@@ -175,18 +161,9 @@ describe('POST /api/upload/[slotId]', () => {
 
 describe('GET /api/upload/[slotId]', () => {
   it('serves the upload page for a pending slot', async () => {
-    stubDb(undefined, {
-      id: 'slot-1',
-      filename: 'report.pdf',
-      kind: 'jira-attachment',
-      status: 'pending',
-      expires_at: new Date(Date.now() + 60_000),
-    });
+    await seedSlot();
 
-    const response = await GET(
-      new NextRequest('https://renkei.example/api/upload/slot-1'),
-      { params: Promise.resolve({ slotId: 'slot-1' }) }
-    );
+    const response = await get();
 
     const html = await response.text();
     expect(response.headers.get('content-type')).toContain('text/html');
@@ -196,15 +173,16 @@ describe('GET /api/upload/[slotId]', () => {
     expect(html).toContain('location.hash');
   });
 
+  it('explains a used slot without offering an upload control', async () => {
+    await seedSlot({ status: 'completed' });
+
+    const html = await (await get()).text();
+    expect(html).toContain('already completed');
+    expect(html).not.toContain('type="file"');
+  });
+
   it('explains a missing slot without offering an upload control', async () => {
-    stubDb(undefined, undefined);
-
-    const response = await GET(
-      new NextRequest('https://renkei.example/api/upload/slot-1'),
-      { params: Promise.resolve({ slotId: 'slot-1' }) }
-    );
-
-    const html = await response.text();
+    const html = await (await get()).text();
     expect(html).toContain('not found');
     expect(html).not.toContain('type="file"');
   });

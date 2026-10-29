@@ -23,7 +23,7 @@
  * together.
  */
 
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { eventsQueue } from './queue';
 
 /** Max characters of message/body content carried in a domain event.
@@ -46,18 +46,9 @@ export function isRecentMail(receivedDateTime: string): boolean {
 }
 
 /** The Microsoft grant's owner — whose event a mailbox notification is. */
-export async function subjectForMicrosoftAccount(
-  accountId: string
-): Promise<string | null> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return null;
-  const row = await dbResult.val
-    .selectFrom('provider_grants')
-    .select('subject')
-    .where('provider', '=', 'microsoft')
-    .where('provider_account_id', '=', accountId)
-    .executeTakeFirst();
-  return row?.subject ?? null;
+export async function subjectForMicrosoftAccount(accountId: string): Promise<string | null> {
+  const grant = await getDataStore().providerGrants.find('microsoft', accountId);
+  return grant?.subject ?? null;
 }
 
 export interface DomainEventInput {

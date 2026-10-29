@@ -42,8 +42,6 @@ jest.mock('./store', () => ({
   deleteById: jest.fn(),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { ChartRenderError, type ChartVerbs } from './charts';
@@ -77,7 +75,6 @@ async function listen(deps: {
   charts: { render: jest.Mock } | null;
 }): Promise<{ server: Server; base: string }> {
   const created = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     maxFileBytes: async () => 1_048_576,
     browser: null,
@@ -181,7 +178,7 @@ describe('charts/stage', () => {
     disk.writeStream.mockResolvedValue({ ok: true, sizeBytes: 9 });
     const createdAt = new Date('2026-01-01T00:00:00Z');
     store.insertFile.mockImplementation(
-      async (_db: unknown, input: { filename: string; contentType: string; source: string }) => ({
+      async (input: { filename: string; contentType: string; source: string }) => ({
         id: 'chart-1',
         filename: input.filename,
         contentType: input.contentType,
@@ -198,7 +195,7 @@ describe('charts/stage', () => {
       filename: 'tickets.svg',
     });
     expect(response.status).toBe(200);
-    const inserted = store.insertFile.mock.calls[0]?.[1] as Record<string, unknown>;
+    const inserted = store.insertFile.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(inserted).toMatchObject({
       ...TARGET,
       filename: 'tickets.png',
@@ -223,7 +220,7 @@ describe('charts/stage', () => {
 
   it('names the file when the caller does not, and refuses a bad name before drawing', async () => {
     disk.writeStream.mockResolvedValue({ ok: true, sizeBytes: 9 });
-    store.insertFile.mockImplementation(async (_db: unknown, input: { filename: string }) => ({
+    store.insertFile.mockImplementation(async (input: { filename: string }) => ({
       id: 'chart-2',
       filename: input.filename,
       contentType: 'application/pdf',

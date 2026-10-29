@@ -6,10 +6,9 @@
  * totals over a span in the viewer's zone, org-wide or for one person.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
-import { inSpan, type UsageSpan } from './user-utilization';
+import type { UsageSpan } from './user-utilization';
 
 /** `ocr`: a read by the OCR connector; `summary`: a digest of text; `describe`: a picture described. */
 export type DocumentKind = 'ocr' | 'summary' | 'describe';
@@ -25,22 +24,16 @@ export interface RecordDocumentUsageInput {
 }
 
 /** Writes one row. A failed write is logged and never fails the work it describes. */
-export async function recordDocumentUsage(
-  db: Kysely<DB>,
-  input: RecordDocumentUsageInput
-): Promise<void> {
+export async function recordDocumentUsage(input: RecordDocumentUsageInput): Promise<void> {
   try {
-    await db
-      .insertInto('document_usage')
-      .values({
-        subject: input.subject,
-        artifact_id: input.artifactId,
-        kind: input.kind,
-        pages: Math.max(0, Math.round(input.pages ?? 0)),
-        input_tokens: Math.max(0, Math.round(input.inputTokens ?? 0)),
-        output_tokens: Math.max(0, Math.round(input.outputTokens ?? 0)),
-      })
-      .execute();
+    await getDataStore().usage.recordDocument({
+      subject: input.subject,
+      artifactId: input.artifactId,
+      kind: input.kind,
+      pages: Math.max(0, Math.round(input.pages ?? 0)),
+      inputTokens: Math.max(0, Math.round(input.inputTokens ?? 0)),
+      outputTokens: Math.max(0, Math.round(input.outputTokens ?? 0)),
+    });
   } catch (error) {
     logger.warn('document usage not recorded', {
       component: 'web/document-usage',
@@ -71,48 +64,23 @@ export const ZERO_DOCUMENT_TOTALS: DocumentTotals = {
   outputTokens: 0,
 };
 
-interface KindRow {
-  kind: string;
-  count: string;
-  pages: string;
-  input_tokens: string;
-  output_tokens: string;
-}
-
-/** `AND subject = <subject>` when scoped, nothing when org-wide. */
-function ownedBy(ownerSubject: string | null) {
-  return ownerSubject === null ? sql`` : sql`AND subject = ${ownerSubject}`;
-}
-
 export async function getDocumentTotals(
-  db: Kysely<DB>,
   span: UsageSpan,
   timeZone: string,
   ownerSubject: string | null = null
 ): Promise<DocumentTotals> {
-  const result = await sql<KindRow>`
-    SELECT kind,
-           COUNT(*) AS count,
-           COALESCE(SUM(pages), 0) AS pages,
-           COALESCE(SUM(input_tokens), 0) AS input_tokens,
-           COALESCE(SUM(output_tokens), 0) AS output_tokens
-    FROM document_usage
-    WHERE ${inSpan('created_at', span, timeZone)}
-      ${ownedBy(ownerSubject)}
-    GROUP BY kind
-  `.execute(db);
+  const rows = await getDataStore().usage.documentByKind({ span, timeZone }, ownerSubject);
   const totals: DocumentTotals = { ...ZERO_DOCUMENT_TOTALS };
-  for (const row of result.rows) {
-    const count = Number(row.count);
-    totals.inputTokens += Number(row.input_tokens);
-    totals.outputTokens += Number(row.output_tokens);
+  for (const row of rows) {
+    totals.inputTokens += row.inputTokens;
+    totals.outputTokens += row.outputTokens;
     if (row.kind === 'ocr') {
-      totals.ocrReads += count;
-      totals.pages += Number(row.pages);
+      totals.ocrReads += row.count;
+      totals.pages += row.pages;
     } else if (row.kind === 'summary') {
-      totals.summaries += count;
+      totals.summaries += row.count;
     } else if (row.kind === 'describe') {
-      totals.pictures += count;
+      totals.pictures += row.count;
     }
   }
   return totals;

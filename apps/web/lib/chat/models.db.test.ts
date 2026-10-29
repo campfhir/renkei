@@ -9,16 +9,14 @@
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
 import { encrypt, parseEncryptionKey } from '@renkei/crypto';
 import { invalidateLlmCache, resolveAgentLlm, resolveImageModel } from '@renkei/agent-llm';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { listChatModels, listImageModels } from './models';
 
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('image generation models', () => {
-  let db: Kysely<DB>;
   const chatId = randomUUID();
   const imageId = randomUUID();
   const fluxId = randomUUID();
@@ -37,37 +35,33 @@ maybe('image generation models', () => {
     label: string;
     provider: string;
     model: string;
-    settings: object;
+    settings: Record<string, unknown>;
     enabled?: boolean;
     isDefault?: boolean;
   }) {
-    await db
-      .insertInto('llm_model_configs')
-      .values({
-        id: values.id,
-        label: values.label,
-        provider: values.provider,
-        model: values.model,
-        base_url: null,
-        settings: JSON.stringify(values.settings),
-        encrypted_secrets: sealed(),
-        enabled: values.enabled ?? true,
-        is_default: values.isDefault ?? false,
-      })
-      .execute();
+    const created = await getDataStore().llmModels.create(values.id, {
+      label: values.label,
+      provider: values.provider,
+      model: values.model,
+      baseUrl: null,
+      settings: values.settings,
+      encryptedSecrets: sealed(),
+      enabled: values.enabled ?? true,
+      isDefault: values.isDefault ?? false,
+    });
+    if (created !== 'created') throw new Error(`${values.label}: ${created}`);
   }
 
   beforeAll(async () => {
     process.env.TOKEN_ENCRYPTION_KEY ||= randomBytes(32).toString('base64');
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
     // Labels are unique organization-wide, and a run that died before its
-    // afterAll leaves this suite's rows behind under fresh ids: clear them
-    // by label (these names are this suite's alone) before inserting.
-    await sql`DELETE FROM llm_model_configs WHERE label IN ('Chatty', 'Painter', 'Fox', 'Retired painter', 'Claude')`.execute(
-      db
-    );
+    // afterAll leaves this suite's rows behind under fresh ids: remove them
+    // by label (these names are this suite's alone) before adding.
+    const store = getDataStore();
+    const labels = new Set(['Chatty', 'Painter', 'Fox', 'Retired painter', 'Claude']);
+    for (const model of await store.llmModels.list()) {
+      if (labels.has(model.label)) await store.llmModels.delete(model.id);
+    }
     await addModel({
       id: chatId,
       label: 'Chatty',
@@ -110,8 +104,11 @@ maybe('image generation models', () => {
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM llm_model_configs WHERE id IN (${chatId}, ${imageId}, ${fluxId}, ${offImageId}, ${anthropicId})`.execute(db);
-    await closeDatabase();
+    const store = getDataStore();
+    for (const id of [chatId, imageId, fluxId, offImageId, anthropicId]) {
+      await store.llmModels.delete(id);
+    }
+    await closeDataStore();
     if (previousKey === undefined) delete process.env.TOKEN_ENCRYPTION_KEY;
     else process.env.TOKEN_ENCRYPTION_KEY = previousKey;
   });
@@ -120,9 +117,9 @@ maybe('image generation models', () => {
     // Both lists are the organization's, so other suites' models in a shared
     // database sit beside these; only this suite's own are judged.
     const mine = new Set<string>([chatId, imageId, fluxId, offImageId, anthropicId]);
-    const chat = (await listChatModels(db)).filter((model) => mine.has(model.id));
+    const chat = (await listChatModels()).filter((model) => mine.has(model.id));
     expect(chat.map((model) => model.label).sort()).toEqual(['Chatty', 'Claude']);
-    const images = (await listImageModels(db)).filter((model) => mine.has(model.id));
+    const images = (await listImageModels()).filter((model) => mine.has(model.id));
     // The disabled one is not offered either.
     expect(images).toEqual([
       { id: fluxId, label: 'Fox', model: 'FLUX.2-flex' },
@@ -132,41 +129,56 @@ maybe('image generation models', () => {
 
   it('never resolves an image model as a chat model, by id or as the default', async () => {
     for (const imageModel of [imageId, fluxId]) {
-      const byId = await resolveAgentLlm(db, imageModel);
+      const byId = await resolveAgentLlm(imageModel);
       // An override that is not a chat model falls back to the org default.
       expect(byId.ok && byId.val.modelConfigId).toBe(chatId);
     }
-    const fallback = await resolveAgentLlm(db, null);
+    const fallback = await resolveAgentLlm(null);
     expect(fallback.ok && fallback.val.modelConfigId).toBe(chatId);
   });
 
   it('resolves an image model with its key, and only an enabled image model', async () => {
     // The first by label is the FLUX row, and its surface travels with it.
-    const first = await resolveImageModel(db, null);
+    const first = await resolveImageModel(null);
     expect(first.ok && first.val).toMatchObject({
       modelConfigId: fluxId,
       label: 'Fox',
       config: { apiKey: 'sk-test', model: 'FLUX.2-flex', surface: 'flux' },
     });
-    const named = await resolveImageModel(db, imageId);
+    const named = await resolveImageModel(imageId);
     expect(named.ok && named.val).toMatchObject({
       modelConfigId: imageId,
       config: { model: 'gpt-image-1', surface: 'images' },
     });
 
     for (const notAnImageModel of [chatId, anthropicId, offImageId]) {
-      const refused = await resolveImageModel(db, notAnImageModel);
+      const refused = await resolveImageModel(notAnImageModel);
       expect(!refused.ok && refused.err.type).toBe('NO_MODEL');
     }
   });
 
   it('has no image model to resolve once the organization has none left on', async () => {
-    await db
-      .updateTable('llm_model_configs')
-      .set({ enabled: false })
-      .where('id', 'in', [imageId, fluxId])
-      .execute();
-    const result = await resolveImageModel(db, null);
+    // Switched off the way the admin page's edit does: everything else kept.
+    const store = getDataStore();
+    for (const id of [imageId, fluxId]) {
+      const model = await store.llmModels.get(id);
+      if (!model) throw new Error('no such model');
+      const settings =
+        typeof model.settings === 'object' && model.settings !== null
+          ? Object.fromEntries(Object.entries(model.settings))
+          : {};
+      await store.llmModels.update(id, {
+        label: model.label,
+        provider: model.provider,
+        model: model.model,
+        baseUrl: model.baseUrl,
+        settings,
+        encryptedSecrets: model.encryptedSecrets,
+        enabled: false,
+        isDefault: model.isDefault,
+      });
+    }
+    const result = await resolveImageModel(null);
     expect(!result.ok && result.err.type).toBe('NO_MODEL');
   });
 });

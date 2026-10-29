@@ -7,7 +7,6 @@
  */
 
 import { createHash } from 'node:crypto';
-import { vectorLiteral } from '@renkei/knowledge';
 import type { EmbeddingProvider } from '@renkei/knowledge';
 import { sanitizeEmail } from './pipeline';
 import { stripTags } from './normalize';
@@ -30,10 +29,7 @@ function hashContent(content: string): string {
 }
 
 function excerptOf(raw: RawEmail): string {
-  const snippet = stripTags(raw.body.content, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 400);
+  const snippet = stripTags(raw.body.content, ' ').replace(/\s+/g, ' ').trim().slice(0, 400);
   return `Subject: ${raw.subject}\nFrom: ${raw.fromName} <${raw.fromAddress}>\n\n${snippet}`.slice(
     0,
     1000
@@ -92,10 +88,7 @@ async function runScriptsOver(
       body = run.val;
       if (script.lastError) await recordCleanerScriptError(script.id, null);
     } else {
-      await recordCleanerScriptError(
-        script.id,
-        `${run.err.type}: ${run.detail ?? ''}`.trim()
-      );
+      await recordCleanerScriptError(script.id, `${run.err.type}: ${run.detail ?? ''}`.trim());
     }
   }
   return header ? `${header}\n\n${body}` : body;
@@ -197,11 +190,10 @@ export async function sanitizeEmailForTenant(
   let contentHash: string | null = null;
   if (result.action === 'index') {
     contentHash = hashContent(result.content);
-    const dupResult = await hasRecentDuplicate(
-      contentHash,
-      DUPLICATE_LOOKBACK_DAYS,
-      { ownerUpn: options.ownerUpn, refId: options.refId }
-    );
+    const dupResult = await hasRecentDuplicate(contentHash, DUPLICATE_LOOKBACK_DAYS, {
+      ownerUpn: options.ownerUpn,
+      refId: options.refId,
+    });
     if (dupResult.ok && dupResult.val) {
       result = excludedAsDuplicate(result);
     } else if (options.embedder) {
@@ -210,10 +202,10 @@ export async function sanitizeEmailForTenant(
       // timestamp/name) before paying to index it as if it were new.
       const embedded = await options.embedder.embed([result.content]);
       if (embedded.ok && embedded.val[0]) {
-        const nearDupResult = await hasNearDuplicateChunk(
-          vectorLiteral(embedded.val[0]),
-          { refId: options.refId, refIdPrefix: namespaceOf(options.refId) }
-        );
+        const nearDupResult = await hasNearDuplicateChunk(embedded.val[0], {
+          refId: options.refId,
+          refIdPrefix: namespaceOf(options.refId),
+        });
         if (nearDupResult.ok && nearDupResult.val) {
           result = excludedAsDuplicate(result);
         } else {

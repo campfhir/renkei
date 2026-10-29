@@ -47,8 +47,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { resolveAct } from '@renkei/tool-outcomes';
 import {
   effectiveDelivery,
@@ -205,7 +204,6 @@ type NotificationRowContext = Pick<NotifierContext, 'subject' | 'agentId' | 'age
  * not try to re-headline a row that was never written.
  */
 async function write(
-  db: Kysely<DB>,
   context: NotificationRowContext,
   row: {
     kind: string;
@@ -221,25 +219,23 @@ async function write(
   id: string = randomUUID()
 ): Promise<boolean> {
   try {
-    await db
-      .insertInto('agent_notifications')
-      .values({
-        id,
-        subject: context.subject,
-        kind: row.kind,
-        category: row.category ?? null,
-        connector: row.connector ?? null,
-        tool: row.tool ?? null,
-        entity: row.entity ?? null,
-        headline: row.headline,
-        ref_id: row.refId ?? null,
-        ref_url: row.refUrl ?? null,
-        agent_id: context.agentId,
-        agent_name: context.agentName,
-        run_id: context.runId,
-        step_id: row.stepId ?? null,
-      })
-      .execute();
+    await getDataStore().notifications.insert({
+      id,
+      subject: context.subject,
+      kind: row.kind,
+      category: row.category ?? null,
+      connector: row.connector ?? null,
+      tool: row.tool ?? null,
+      entity: row.entity ?? null,
+      headline: row.headline,
+      refId: row.refId ?? null,
+      refUrl: row.refUrl ?? null,
+      agentId: context.agentId,
+      agentName: context.agentName,
+      runId: context.runId,
+      stepId: row.stepId ?? null,
+      meta: null,
+    });
   } catch (error) {
     logger.warn('could not record a notification for run {runId}', {
       component: 'worker-agents/notifications',
@@ -261,7 +257,6 @@ async function write(
     // sent) is news regardless of what's on screen, so it stays unquiet.
     const quiet = row.kind === 'question' || row.kind === 'approval';
     void sendPush(
-      db,
       context.subject,
       keyResult.val,
       {
@@ -287,7 +282,6 @@ async function write(
  * this directly; only their email/WebEx copy is gated on a preference.
  */
 export async function writeNotificationRow(
-  db: Kysely<DB>,
   context: NotificationRowContext,
   row: {
     kind: string;
@@ -297,7 +291,7 @@ export async function writeNotificationRow(
     stepId?: string | null;
   }
 ): Promise<void> {
-  await write(db, context, row);
+  await write(context, row);
 }
 
 /**
@@ -305,14 +299,9 @@ export async function writeNotificationRow(
  * read_at reset — a person who already saw "×3" is not woken for "×4".
  * Same swallow as `write`; the act happened either way.
  */
-async function retally(
-  db: Kysely<DB>,
-  context: NotifierContext,
-  id: string,
-  headline: string
-): Promise<void> {
+async function retally(context: NotifierContext, id: string, headline: string): Promise<void> {
   try {
-    await db.updateTable('agent_notifications').set({ headline }).where('id', '=', id).execute();
+    await getDataStore().notifications.setHeadline(id, headline);
   } catch (error) {
     logger.warn('could not tally a notification for run {runId}', {
       component: 'worker-agents/notifications',
@@ -322,7 +311,7 @@ async function retally(
   }
 }
 
-export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifier {
+export function createNotifier(context: NotifierContext): Notifier {
   const tally = createRunTally();
   return {
     async act(tool, kind, meta, stepId) {
@@ -354,13 +343,12 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
         // also once per run — the tally is the rule, the row is one of
         // its outlets.
         const outcome = await tally.record(`${tool}\n${resolved.headline}`, randomUUID(), {
-          insert: (id) => (wantsApp ? write(db, context, row, id) : Promise.resolve(false)),
-          update: (id, count) =>
-            retally(db, context, id, talliedHeadline(resolved.headline, count)),
+          insert: (id) => (wantsApp ? write(context, row, id) : Promise.resolve(false)),
+          update: (id, count) => retally(context, id, talliedHeadline(resolved.headline, count)),
         });
         if (!outcome.first) return;
       } else if (wantsApp) {
-        await write(db, context, row);
+        await write(context, row);
       }
 
       if ((wantsEmail || wantsWebex) && context.mcp && context.toolsByName) {
@@ -383,7 +371,7 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
       if (!wanted.app && !wanted.email && !wanted.webex) return;
       const headline = `“${context.agentName}” started`;
       if (wanted.app) {
-        await write(db, context, { kind: 'run_started', headline });
+        await write(context, { kind: 'run_started', headline });
       }
       if ((wanted.email || wanted.webex) && context.mcp && context.toolsByName) {
         const { deliverOwnerNotifications } = notificationDeliverer(
@@ -414,7 +402,7 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
           ? `“${context.agentName}” failed${error ? `: ${error}` : ''}`
           : `“${context.agentName}” finished`;
       if (wanted.app) {
-        await write(db, context, {
+        await write(context, {
           kind: status === 'failed' ? 'run_failed' : 'run_finished',
           headline,
         });
@@ -442,10 +430,7 @@ export function createNotifier(db: Kysely<DB>, context: NotifierContext): Notifi
 }
 
 /** Read one run's preferences once, beside the org settings. */
-export async function notifierFor(
-  db: Kysely<DB>,
-  context: Omit<NotifierContext, 'prefs'>
-): Promise<Notifier> {
+export async function notifierFor(context: Omit<NotifierContext, 'prefs'>): Promise<Notifier> {
   const prefs = await getNotificationPrefs(context.subject);
-  return createNotifier(db, { ...context, prefs });
+  return createNotifier({ ...context, prefs });
 }

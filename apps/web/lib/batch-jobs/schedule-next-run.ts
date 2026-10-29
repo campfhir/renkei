@@ -6,8 +6,7 @@
  * cross-tenant) rather than an error.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import {
   blackoutPredicate,
   computeNextRunForSchedule,
@@ -16,18 +15,11 @@ import {
   type ScheduleConfig,
 } from '@renkei/agents';
 
-export async function nextRunAtFor(
-  db: Kysely<DB>,
-  config: ScheduleConfig
-): Promise<Date> {
+export async function nextRunAtFor(config: ScheduleConfig): Promise<Date> {
   let calendarDates: BlackoutEntry[] = [];
   if (config.calendarId) {
-    const row = await db
-      .selectFrom('schedule_calendars')
-      .select(['dates'])
-      .where('id', '=', config.calendarId)
-      .executeTakeFirst();
-    calendarDates = row && Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [];
+    const dates = await getDataStore().batchJobSchedules.calendarDates(config.calendarId);
+    calendarDates = Array.isArray(dates) ? dates.filter(isBlackoutEntry) : [];
   }
   return computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
 }

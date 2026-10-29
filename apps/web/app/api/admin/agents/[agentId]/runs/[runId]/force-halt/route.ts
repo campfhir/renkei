@@ -5,7 +5,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { forceHaltRun } from '@/lib/agents/force-halt';
 import { isUuid } from '@/lib/uuid';
@@ -22,10 +21,7 @@ export async function POST(
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const result = await forceHaltRun(dbResult.val, {
+  const result = await forceHaltRun({
     agentId,
     runId,
     haltedBySubject: session.subject,

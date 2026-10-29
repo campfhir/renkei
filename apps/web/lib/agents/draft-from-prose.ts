@@ -20,8 +20,6 @@
  * the draft in the builder like anything they typed themselves.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import {
   BUILTIN_VARIABLES,
   INSTRUCTION_SECTIONS,
@@ -415,7 +413,6 @@ function errorFor(kind: LlmErrorKind, message: string | undefined, detail?: stri
 }
 
 export async function draftAgentFromProse(
-  db: Kysely<DB>,
   text: string,
   tools: ToolDescriptor[],
   options: {
@@ -447,13 +444,15 @@ export async function draftAgentFromProse(
   const guardrails = options.guardrails?.trim() || null;
   const offerGuardrails = guardrails === null;
 
-  const llmResult = await resolveAgentLlm(db, null);
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) return { error: 'No model is configured for this organization yet.' };
   const llm = llmResult.val;
   const settings = await getOrgSettings();
   const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
 
-  const validTools = new Set(tools.filter((tool) => !tool.appOnly && !tool.previewOf).map((tool) => tool.name));
+  const validTools = new Set(
+    tools.filter((tool) => !tool.appOnly && !tool.previewOf).map((tool) => tool.name)
+  );
   const system = draftSystemPrompt({
     tools,
     triggerVars: options.triggerVars ?? [],

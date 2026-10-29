@@ -46,6 +46,40 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-29',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Panning a mockup with the hand tool always moves it',
+        detail:
+          'Dragging with the hand tool over a mockup could go to the mockup itself and leave the view where it was.',
+      },
+      {
+        kind: 'fixed',
+        title: "A file's summary appears once its text is read",
+        detail:
+          'The artifacts library keeps refreshing after a file\'s text has been read until its summary arrives, instead of waiting on "Summary on its way…" until you reload.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Links with an id that looks like a card number come through intact',
+        detail:
+          "Redaction no longer mistakes the digits at the start of an id inside a link, such as a Jira change request's review link, for a payment card number.",
+      },
+    ],
+  },
+  {
+    date: '2026-10-27',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Cleaner script editor opens again',
+        detail:
+          'The script editor on Email sanitizer settings loads with TypeScript checking instead of showing an error page.',
+      },
+    ],
+  },
+  {
     date: '2026-10-25',
     entries: [
       {

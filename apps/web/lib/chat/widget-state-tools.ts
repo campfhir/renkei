@@ -155,12 +155,8 @@ export function widgetStateTools(): LocalTool[] {
         inputSchema: { type: 'object', properties: {} },
       },
       async execute(_input, context) {
-        const messages = await listMessages(
-          context.db,
-          context.chatId,
-          context.cipher
-        );
-        const decisions = await listWidgetDecisions(context.db, context.chatId);
+        const messages = await listMessages(context.chatId, context.cipher);
+        const decisions = await listWidgetDecisions(context.chatId);
         const cards = widgetCardsOf(messages, decisions);
         if (cards.length === 0) return textResult('No preview cards in this chat.');
         const pending = cards.filter((card) => !card.resolved).length;
@@ -228,12 +224,8 @@ export function widgetStateTools(): LocalTool[] {
           (outcome === 'done' ? 'Done' : 'Cancelled');
         const detail = str(input.detail).slice(0, MAX_DETAIL_CHARS);
 
-        const messages = await listMessages(
-          context.db,
-          context.chatId,
-          context.cipher
-        );
-        const decisions = await listWidgetDecisions(context.db, context.chatId);
+        const messages = await listMessages(context.chatId, context.cipher);
+        const decisions = await listWidgetDecisions(context.chatId);
         const card = findWidgetCard(widgetCardsOf(messages, decisions), widget);
         if (!card) {
           return errorResult(
@@ -251,7 +243,7 @@ export function widgetStateTools(): LocalTool[] {
           headline,
           ...(detail ? { detail } : {}),
         };
-        const recorded = await recordWidgetDecision(context.db, {
+        const recorded = await recordWidgetDecision({
           chatId: context.chatId,
           subject: context.subject,
           stateKey: card.stateKey,
@@ -263,7 +255,7 @@ export function widgetStateTools(): LocalTool[] {
         // a button click on another device that landed between the read
         // above and this write is the receipt now, and the model should
         // say so rather than report its own wording as what the card shows.
-        const now = await getWidgetDecision(context.db, card.stateKey);
+        const now = await getWidgetDecision(card.stateKey);
         if (!now) return errorResult('The card could not be marked.');
         if (now.icon !== state.icon || now.headline !== state.headline) {
           return errorResult(

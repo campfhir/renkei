@@ -5,7 +5,7 @@
 
 // chunking.ts → ingest.ts → @renkei/db + kysely (ESM, unloadable under
 // jest); the pure functions under test never touch either.
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
+jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
 jest.mock('kysely', () => ({ sql: jest.fn() }));
 // Keyword enrichment resolves the org's default LLM; these tests are about
 // chunking and embedding, so the org has none unless a test passes one.
@@ -22,7 +22,9 @@ import { chunkText, chunkRefId, ingestObjectChunks } from './chunking';
 import type { EmbeddingProvider } from './embeddings';
 import type { KeywordExtractor } from './keywords';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { getDataStore: mockGetDataStore } = jest.requireMock<{ getDataStore: jest.Mock }>(
+  '@renkei/db'
+);
 
 describe('chunkText', () => {
   it('returns nothing for blank input', () => {
@@ -90,24 +92,16 @@ describe('ingestObjectChunks — embedding batches', () => {
     else process.env.CONTENT_ENCRYPTION_KEY = savedContentKey;
   });
 
-  /** A db stub whose delete and insert chains both succeed silently; inserted rows are kept. */
+  /** A store stub whose deletes and upserts both succeed silently; upserted chunks are kept. */
   let inserted: Record<string, unknown>[] = [];
   function stubDb(): void {
     inserted = [];
-    mockGetDatabase.mockReturnValue({
-      ok: true,
-      val: {
-        deleteFrom: () => ({
-          where: function where() {
-            return { where, execute: async () => [] };
-          },
-        }),
-        insertInto: () => ({
-          values: (row: Record<string, unknown>) => {
-            inserted.push(row);
-            return { onConflict: () => ({ execute: async () => [] }) };
-          },
-        }),
+    mockGetDataStore.mockReturnValue({
+      knowledgeChunks: {
+        deleteObject: async () => 0,
+        upsert: async (chunk: Record<string, unknown>) => {
+          inserted.push(chunk);
+        },
       },
     });
   }
@@ -165,11 +159,9 @@ describe('ingestObjectChunks — embedding batches', () => {
 
   it('skips the embed call entirely when a matching vector is precomputed', async () => {
     const calls: string[][] = [];
-    const result = await ingestObjectChunks(
-      embedderRecording(calls),
-      object('short content'),
-      { precomputed: { content: 'short content', vector: [0.5, 0.5] } }
-    );
+    const result = await ingestObjectChunks(embedderRecording(calls), object('short content'), {
+      precomputed: { content: 'short content', vector: [0.5, 0.5] },
+    });
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(0);
   });

@@ -15,8 +15,7 @@
  * verb that can only fail.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { LocalTool, LocalToolContext } from './local-tools';
 import type { ChatToolConfig } from './tool-config';
 import { sandboxChartsEnabled, sandboxConfig, sandboxScriptsServed } from '@renkei/sandbox-client';
@@ -37,7 +36,6 @@ import { listImageModels } from './models';
 import { widgetStateTools } from './widget-state-tools';
 
 export async function chatLocalTools(
-  db: Kysely<DB>,
   context: LocalToolContext,
   toolConfig: ChatToolConfig,
   /** The org has somewhere to keep files; without one nothing written could be kept. */
@@ -51,27 +49,11 @@ export async function chatLocalTools(
   // worker and no project — every chat, a code project's included, can
   // show one (mockup-tools.ts).
   tools.push(...mockupTools());
-  const hasFiles = await db
-    .selectFrom('artifacts')
-    .select('id')
-    .where((eb) =>
-      eb.or([
-        eb('chat_id', '=', context.chatId),
-        ...(context.projectId
-          ? [
-              eb.exists(
-                eb
-                  .selectFrom('artifact_references')
-                  .select('artifact_references.id')
-                  .whereRef('artifact_references.artifact_id', '=', 'artifacts.id')
-                  .where('artifact_references.project_id', '=', context.projectId)
-              ),
-            ]
-          : []),
-      ])
-    )
-    .limit(1)
-    .executeTakeFirst();
+  // A file of the chat's own, or one its project holds.
+  const hasFiles =
+    (await getDataStore().artifacts.listByChat(context.chatId)).length > 0 ||
+    (context.projectId !== null &&
+      (await getDataStore().artifacts.listForProject(context.projectId)).length > 0);
   if (hasFiles) {
     tools.push(...attachmentTools());
     // Searching across them, keeping one for the project, sharing one
@@ -96,7 +78,7 @@ export async function chatLocalTools(
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.
     const [imageModels, imagePrefs] = await Promise.all([
-      listImageModels(db).catch(() => []),
+      listImageModels().catch(() => []),
       getImagePrefs(context.subject),
     ]);
     const imageTool = imageGenerationTool({

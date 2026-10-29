@@ -13,9 +13,6 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
-}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({}));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
@@ -35,6 +32,7 @@ jest.mock('@/lib/jira-admin/change-requests', () => {
   };
 });
 
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { authedFetch } from '@renkei/delegate-client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
@@ -140,6 +138,15 @@ function storedChange(overrides: Partial<ChangeRequest> = {}): ChangeRequest {
   };
 }
 
+// Closing a replaced request notifies its requester through the data store;
+// a fresh memory store per test takes those notices.
+beforeEach(() => {
+  registerDataStore(createMemoryDataStore());
+});
+afterAll(() => {
+  resetDataStore();
+});
+
 beforeEach(() => {
   jest.mocked(createChangeRequest).mockReset();
   jest.mocked(cancelChangeRequest).mockReset();
@@ -149,7 +156,7 @@ beforeEach(() => {
   jest.mocked(listChangeRequests).mockReset();
   jest
     .mocked(createChangeRequest)
-    .mockImplementation(async (_db, input) =>
+    .mockImplementation(async (input) =>
       storedChange({ title: input.title, payload: input.payload, kind: input.kind })
     );
 
@@ -195,7 +202,7 @@ describe('jira_admin_propose_option_changes', () => {
     expect(result.isError).toBeUndefined();
     expect(requests.every((request) => request.method === 'GET')).toBe(true);
 
-    const input = jest.mocked(createChangeRequest).mock.calls[0]?.[1];
+    const input = jest.mocked(createChangeRequest).mock.calls[0]?.[0];
     expect(input).toMatchObject({
       subject: 'subject-1',
       cloudId: 'cloud-1',
@@ -228,7 +235,7 @@ describe('jira_admin_propose_option_changes', () => {
       { field: 'Source', add: ['Vendor'] },
       { ...context, agent: { agentId: 'agent-7' } }
     );
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1].agentId).toBe('agent-7');
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0].agentId).toBe('agent-7');
   });
 
   it('refuses what could never apply, and stores nothing', async () => {
@@ -286,7 +293,7 @@ describe('jira_admin_propose_option_changes', () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1].payload).toMatchObject({
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0].payload).toMatchObject({
       context: { id: '10300', global: true, spaces: [] },
     });
     expect(text(result)).toContain(
@@ -328,7 +335,7 @@ describe('jira_admin_propose_option_changes', () => {
       add: ['Vendor', 'Reseller'],
       replaces: 'b7c2a1d0-1111-4222-8333-944455556666',
     });
-    expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(1)).toEqual([
+    expect(jest.mocked(cancelChangeRequest).mock.calls[0]?.slice(0)).toEqual([
       'subject-1',
       'b7c2a1d0-1111-4222-8333-944455556666',
     ]);
@@ -338,11 +345,13 @@ describe('jira_admin_propose_option_changes', () => {
 
 describe('building a request in words', () => {
   it('closes the free-text request it replaces, whoever filed it, instead of cancelling it', async () => {
-    jest
-      .mocked(getChangeRequestById)
-      .mockResolvedValueOnce(
-        storedChange({ id: 'b7c2a1d0-1111-4222-8333-944455556666', kind: 'request', subject: 'asker' })
-      );
+    jest.mocked(getChangeRequestById).mockResolvedValueOnce(
+      storedChange({
+        id: 'b7c2a1d0-1111-4222-8333-944455556666',
+        kind: 'request',
+        subject: 'asker',
+      })
+    );
     jest.mocked(closeRequestAsProposed).mockResolvedValueOnce(true);
     const result = await call('jira_admin_propose_option_changes', {
       field: 'Source',
@@ -350,7 +359,6 @@ describe('building a request in words', () => {
       replaces: 'b7c2a1d0-1111-4222-8333-944455556666',
     });
     expect(closeRequestAsProposed).toHaveBeenCalledWith(
-      expect.anything(),
       'b7c2a1d0-1111-4222-8333-944455556666',
       expect.any(String)
     );
@@ -399,11 +407,19 @@ describe('jira_admin_list_changes', () => {
     jest.mocked(listAllChangeRequests).mockResolvedValue([storedChange({ subject: 'asker' })]);
     jest.mocked(listChangeRequests).mockResolvedValue([]);
     const operator = text(
-      await call('jira_admin_list_changes', { everyone: true }, { ...context, roles: ['renkei-operator'] })
+      await call(
+        'jira_admin_list_changes',
+        { everyone: true },
+        { ...context, roles: ['renkei-operator'] }
+      )
     );
     expect(operator).toContain('asked by asker');
     const ordinary = text(
-      await call('jira_admin_list_changes', { everyone: true }, { ...context, roles: ['renkei-user'] })
+      await call(
+        'jira_admin_list_changes',
+        { everyone: true },
+        { ...context, roles: ['renkei-user'] }
+      )
     );
     expect(listAllChangeRequests).toHaveBeenCalledTimes(1);
     expect(ordinary).toContain('No Jira admin change requests yet.');

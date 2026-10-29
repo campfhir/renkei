@@ -8,38 +8,18 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-
-  const rows = await dbResult.val
-    .selectFrom('llm_model_configs')
-    .select([
-      'id',
-      'label',
-      'provider',
-      'model',
-      'base_url',
-      'settings',
-      'enabled',
-      'is_default',
-      'encrypted_secrets',
-    ])
-    .orderBy('label')
-    .execute();
+  const rows = await getDataStore().llmModels.list();
 
   return NextResponse.json({
     models: rows.map((row) => ({
@@ -47,18 +27,16 @@ export async function GET(
       label: row.label,
       provider: row.provider,
       model: row.model,
-      baseUrl: row.base_url,
+      baseUrl: row.baseUrl,
       settings: row.settings,
       enabled: row.enabled,
-      isDefault: row.is_default,
-      hasApiKey: Boolean(row.encrypted_secrets),
+      isDefault: row.isDefault,
+      hasApiKey: Boolean(row.encryptedSecrets),
     })),
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -73,9 +51,7 @@ export async function POST(
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
+  const models = getDataStore().llmModels;
 
   // One connection, many model rows: the key can be borrowed from a sibling
   // config instead of retyped. Copying the encrypted blob is enough — every
@@ -85,52 +61,30 @@ export async function POST(
     ? encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val)
     : null;
   if (!encryptedSecrets && parsed.apiKeyFromId) {
-    const source = await db
-      .selectFrom('llm_model_configs')
-      .select(['encrypted_secrets'])
-      .where('id', '=', parsed.apiKeyFromId)
-      .executeTakeFirst();
-    if (!source?.encrypted_secrets) {
+    const source = await models.get(parsed.apiKeyFromId);
+    if (!source?.encryptedSecrets) {
       return NextResponse.json(
         { error: 'The model to reuse the key from has no key stored.' },
         { status: 400 }
       );
     }
-    encryptedSecrets = source.encrypted_secrets;
+    encryptedSecrets = source.encryptedSecrets;
   }
   if (!encryptedSecrets) return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
 
   const id = randomUUID();
-  try {
-    if (parsed.isDefault) {
-      await db
-        .updateTable('llm_model_configs')
-        .set({ is_default: false, updated_at: sql`NOW()` })
-        .where('is_default', '=', true)
-        .execute();
-    }
-    await db
-      .insertInto('llm_model_configs')
-      .values({
-        id,
-        label: parsed.label,
-        provider: parsed.provider,
-        model: parsed.model,
-        base_url: parsed.baseUrl,
-        settings: JSON.stringify(parsed.settings),
-        encrypted_secrets: encryptedSecrets,
-        enabled: parsed.enabled,
-        is_default: parsed.isDefault,
-      })
-      .execute();
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('llm_model_configs_label')) {
-      return NextResponse.json(
-        { error: 'A model with this label already exists.' },
-        { status: 409 }
-      );
-    }
-    throw error;
+  const created = await models.create(id, {
+    label: parsed.label,
+    provider: parsed.provider,
+    model: parsed.model,
+    baseUrl: parsed.baseUrl,
+    settings: parsed.settings,
+    encryptedSecrets,
+    enabled: parsed.enabled,
+    isDefault: parsed.isDefault,
+  });
+  if (created === 'duplicate-label') {
+    return NextResponse.json({ error: 'A model with this label already exists.' }, { status: 409 });
   }
 
   invalidateLlmCache();

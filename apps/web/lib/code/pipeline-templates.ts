@@ -13,8 +13,8 @@
  * another provider's rows in the same table.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { isUniqueViolation } from './project-templates';
 import { ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
 import { isUuid } from '@/lib/uuid';
 
@@ -33,23 +33,8 @@ export interface PipelineTemplate {
   body: string;
 }
 
-export async function listPipelineTemplates(
-  db: Kysely<DB>,
-  provider?: string
-): Promise<PipelineTemplate[]> {
-  let query = db
-    .selectFrom('pipeline_templates')
-    .select(['id', 'provider', 'name', 'description', 'body'])
-    ;
-  if (provider) query = query.where('provider', '=', provider);
-  const rows = await query.orderBy('provider').orderBy('name').execute();
-  return rows.map((row) => ({
-    id: row.id,
-    provider: row.provider,
-    name: row.name,
-    description: row.description,
-    body: row.body,
-  }));
+export async function listPipelineTemplates(provider?: string): Promise<PipelineTemplate[]> {
+  return getDataStore().codeTemplates.listPipelineTemplates(provider);
 }
 
 export interface PipelineTemplateInput {
@@ -88,68 +73,32 @@ export function parsePipelineTemplatePayload(
   return { provider, name, description, body: text };
 }
 
-const UNIQUE_INDEX = 'idx_pipeline_templates_provider_name';
-
 export async function createPipelineTemplate(
-  db: Kysely<DB>,
   input: PipelineTemplateInput
 ): Promise<{ ok: true; id: string } | { ok: false; error: 'duplicate' }> {
   try {
-    const inserted = await db
-      .insertInto('pipeline_templates')
-      .values({
-        provider: input.provider,
-        name: input.name,
-        description: input.description,
-        body: input.body,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    return { ok: true, id: inserted.id };
+    return { ok: true, id: await getDataStore().codeTemplates.createPipelineTemplate(input) };
   } catch (error) {
-    if (error instanceof Error && error.message.includes(UNIQUE_INDEX)) {
-      return { ok: false, error: 'duplicate' };
-    }
+    if (isUniqueViolation(error)) return { ok: false, error: 'duplicate' };
     throw error;
   }
 }
 
 export async function updatePipelineTemplate(
-  db: Kysely<DB>,
   templateId: string,
   input: PipelineTemplateInput
 ): Promise<{ ok: true } | { ok: false; error: 'not-found' | 'duplicate' }> {
   if (!isUuid(templateId)) return { ok: false, error: 'not-found' };
   try {
-    const result = await db
-      .updateTable('pipeline_templates')
-      .set({
-        provider: input.provider,
-        name: input.name,
-        description: input.description,
-        body: input.body,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', templateId)
-      .executeTakeFirst();
-    if (Number(result.numUpdatedRows ?? 0) === 0) return { ok: false, error: 'not-found' };
-    return { ok: true };
+    const updated = await getDataStore().codeTemplates.updatePipelineTemplate(templateId, input);
+    return updated ? { ok: true } : { ok: false, error: 'not-found' };
   } catch (error) {
-    if (error instanceof Error && error.message.includes(UNIQUE_INDEX)) {
-      return { ok: false, error: 'duplicate' };
-    }
+    if (isUniqueViolation(error)) return { ok: false, error: 'duplicate' };
     throw error;
   }
 }
 
-export async function deletePipelineTemplate(
-  db: Kysely<DB>,
-  templateId: string
-): Promise<boolean> {
+export async function deletePipelineTemplate(templateId: string): Promise<boolean> {
   if (!isUuid(templateId)) return false;
-  const result = await db
-    .deleteFrom('pipeline_templates')
-    .where('id', '=', templateId)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0) > 0;
+  return getDataStore().codeTemplates.deletePipelineTemplate(templateId);
 }

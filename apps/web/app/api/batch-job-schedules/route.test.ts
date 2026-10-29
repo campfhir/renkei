@@ -6,9 +6,10 @@
  */
 
 jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/connector-fileshares', () => ({ listConnectedShares: jest.fn() }));
 jest.mock('@renkei/batch-jobs-store', () => ({
+  isDuplicateScheduleName: (error: unknown) =>
+    error instanceof Error && error.message.includes('batch_job_schedules_name'),
   createSchedule: jest.fn(),
   listSchedules: jest.fn(),
   DOCUMENT_OCR_PIPELINE_KIND: 'document-ocr-pipeline',
@@ -19,7 +20,9 @@ jest.mock('@/lib/batch-jobs/schedule-next-run', () => ({ nextRunAtFor: jest.fn()
 import { NextRequest } from 'next/server';
 import { GET, POST } from './route';
 
-const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>('@/lib/session');
+const { getSessionFromRequest } = jest.requireMock<{ getSessionFromRequest: jest.Mock }>(
+  '@/lib/session'
+);
 const { listConnectedShares } = jest.requireMock<{ listConnectedShares: jest.Mock }>(
   '@renkei/connector-fileshares'
 );
@@ -27,8 +30,12 @@ const { createSchedule, listSchedules } = jest.requireMock<{
   createSchedule: jest.Mock;
   listSchedules: jest.Mock;
 }>('@renkei/batch-jobs-store');
-const { parseScheduleConfig } = jest.requireMock<{ parseScheduleConfig: jest.Mock }>('@renkei/agents');
-const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>('@/lib/batch-jobs/schedule-next-run');
+const { parseScheduleConfig } = jest.requireMock<{ parseScheduleConfig: jest.Mock }>(
+  '@renkei/agents'
+);
+const { nextRunAtFor } = jest.requireMock<{ nextRunAtFor: jest.Mock }>(
+  '@/lib/batch-jobs/schedule-next-run'
+);
 
 const SHARE_ID = '11111111-2222-3333-4444-555555555555';
 const SCHEDULE_CONFIG = { recurrences: [{ every: 'hour' }], timezone: 'UTC' };
@@ -58,7 +65,7 @@ describe('GET', () => {
     expect(response.status).toBe(401);
   });
 
-  test('lists the caller\'s schedules', async () => {
+  test("lists the caller's schedules", async () => {
     listSchedules.mockResolvedValue([
       {
         id: 'sched-1',
@@ -91,14 +98,24 @@ describe('POST', () => {
 
   test('a missing name is a 400', async () => {
     const response = await POST(
-      reqOf({ shareId: SHARE_ID, grouping: { strategy: 'whole-file' }, scheduleConfig: SCHEDULE_CONFIG }));
+      reqOf({
+        shareId: SHARE_ID,
+        grouping: { strategy: 'whole-file' },
+        scheduleConfig: SCHEDULE_CONFIG,
+      })
+    );
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
 
   test('a missing shareId is a 400', async () => {
     const response = await POST(
-      reqOf({ name: 'Nightly OCR', grouping: { strategy: 'whole-file' }, scheduleConfig: SCHEDULE_CONFIG }));
+      reqOf({
+        name: 'Nightly OCR',
+        grouping: { strategy: 'whole-file' },
+        scheduleConfig: SCHEDULE_CONFIG,
+      })
+    );
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -111,7 +128,8 @@ describe('POST', () => {
         shareId: SHARE_ID,
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }));
+      })
+    );
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -119,7 +137,13 @@ describe('POST', () => {
   test('a malformed scheduleConfig is a 400', async () => {
     parseScheduleConfig.mockReturnValue(null);
     const response = await POST(
-      reqOf({ name: 'Nightly OCR', shareId: SHARE_ID, grouping: { strategy: 'whole-file' }, scheduleConfig: {} }));
+      reqOf({
+        name: 'Nightly OCR',
+        shareId: SHARE_ID,
+        grouping: { strategy: 'whole-file' },
+        scheduleConfig: {},
+      })
+    );
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -132,7 +156,8 @@ describe('POST', () => {
         shareId: SHARE_ID,
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }));
+      })
+    );
     expect(response.status).toBe(400);
     expect(createSchedule).not.toHaveBeenCalled();
   });
@@ -145,11 +170,11 @@ describe('POST', () => {
         path: '/inbox',
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }));
+      })
+    );
     expect(response.status).toBe(201);
     expect(await response.json()).toEqual({ id: 'sched-1' });
     expect(createSchedule).toHaveBeenCalledWith(
-      {},
       expect.objectContaining({
         subject: 'auth0|alice',
         name: 'Nightly OCR',
@@ -167,14 +192,17 @@ describe('POST', () => {
   });
 
   test('a duplicate name is a 409', async () => {
-    createSchedule.mockRejectedValue(new Error('duplicate key value violates batch_job_schedules_name'));
+    createSchedule.mockRejectedValue(
+      new Error('duplicate key value violates batch_job_schedules_name')
+    );
     const response = await POST(
       reqOf({
         name: 'Nightly OCR',
         shareId: SHARE_ID,
         grouping: { strategy: 'whole-file' },
         scheduleConfig: SCHEDULE_CONFIG,
-      }));
+      })
+    );
     expect(response.status).toBe(409);
   });
 });

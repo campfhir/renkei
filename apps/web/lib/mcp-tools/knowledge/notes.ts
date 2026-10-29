@@ -24,8 +24,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
@@ -34,7 +33,7 @@ import {
   noteRefId,
   NOTE_KNOWLEDGE_PROVIDER,
   NOTE_CHUNKING,
-  searchTextFragment,
+  LEXICAL_CONFIG,
   normalizeKeywords,
 } from '@renkei/knowledge';
 import { keywordsFieldSchema, type MCPToolContext } from '../common';
@@ -56,10 +55,6 @@ const NO_EMAIL =
   'Renkei has no email on record for your identity, so your notes cannot be ' +
   'addressed. Sign in to Renkei again to refresh it.';
 
-function escapeLike(value: string): string {
-  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
-}
-
 /** `owner/noteId` and `owner/noteId#0002` → `noteId`. */
 function noteIdOfRefId(refId: string, ownerEmail: string): string {
   const bare = refId.slice(ownerEmail.length + 1);
@@ -71,18 +66,15 @@ function noteIdOfRefId(refId: string, ownerEmail: string): string {
 async function findNoteChunk(
   refId: string
 ): Promise<{ metadata: unknown; keywords: unknown } | null | 'DB_ERROR'> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return 'DB_ERROR';
-  const row = await dbResult.val
-    .selectFrom('knowledge_chunks')
-    .select(['metadata', 'keywords'])
-    .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
-    .where((eb) =>
-      eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
-    )
-    .limit(1)
-    .executeTakeFirst();
-  return row ?? null;
+  try {
+    const [first] = await getDataStore().knowledgeChunks.objectChunks(
+      NOTE_KNOWLEDGE_PROVIDER,
+      refId
+    );
+    return first ? { metadata: first.metadata, keywords: first.keywords } : null;
+  } catch {
+    return 'DB_ERROR';
+  }
 }
 
 /** The caller's keyword list as strings; validation of shape is zod's, this only narrows. */
@@ -223,18 +215,10 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
         // regions), and the embedding keys off content, which is unchanged.
         // The lexical entry is rebuilt from the row's own decrypted text so
         // the new title/keywords rank in keyword search immediately.
-        const dbResult = getDatabase();
-        if (!dbResult.ok) return errText('Database unavailable.');
         const keyResult = contentEncryptionKey();
         if (!keyResult.ok) return errText('The knowledge store could not be written.');
-        const chunks = await dbResult.val
-          .selectFrom('knowledge_chunks')
-          .select(['id', 'content', 'metadata', 'keywords'])
-          .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
-          .where((eb) =>
-            eb.or([eb('ref_id', '=', refId), eb('ref_id', 'like', `${escapeLike(refId)}#%`)])
-          )
-          .execute();
+        const chunksStore = getDataStore().knowledgeChunks;
+        const chunks = await chunksStore.objectChunks(NOTE_KNOWLEDGE_PROVIDER, refId);
         const newTitle =
           title ?? (typeof existingMeta.title === 'string' ? existingMeta.title : '');
         for (const chunk of chunks) {
@@ -243,17 +227,11 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
             : null;
           const nextKeywords = keywords !== undefined ? normalizeKeywords(keywords) : stored;
           const text = revealContent(chunk.content, keyResult.val);
-          await dbResult.val
-            .updateTable('knowledge_chunks')
-            .set({
-              ...(title !== undefined
-                ? { metadata: sql`metadata || jsonb_build_object('title', ${title}::text)` }
-                : {}),
-              keywords: nextKeywords,
-              search_text: searchTextFragment(newTitle, nextKeywords, text),
-            })
-            .where('id', '=', chunk.id)
-            .execute();
+          await chunksStore.rewriteChunk(chunk.id, {
+            ...(title !== undefined ? { title } : {}),
+            keywords: nextKeywords,
+            lexical: { config: LEXICAL_CONFIG, title: newTitle, keywords: nextKeywords, text },
+          });
         }
         return textResult(title !== undefined ? 'Note title updated.' : 'Note keywords updated.');
       }
@@ -337,21 +315,16 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
       const limit =
         typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 20;
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
       const prefix = `${userEmail.toLowerCase()}/`;
-      const rows = await dbResult.val
-        .selectFrom('knowledge_chunks')
-        .select(['ref_id', 'metadata', 'source_at'])
-        .where('provider', '=', NOTE_KNOWLEDGE_PROVIDER)
-        .where('ref_id', 'like', `${escapeLike(prefix)}%`)
-        .orderBy('source_at', 'desc')
-        .execute();
+      const rows = await getDataStore().knowledgeChunks.listByRefPrefix(
+        NOTE_KNOWLEDGE_PROVIDER,
+        prefix
+      );
 
       // Collapse chunk suffixes to one row per note, first chunk wins.
       const seen = new Map<string, { title: string; authoredBy: string; sourceAt: string }>();
       for (const row of rows) {
-        const noteId = noteIdOfRefId(row.ref_id, userEmail.toLowerCase());
+        const noteId = noteIdOfRefId(row.refId, userEmail.toLowerCase());
         if (seen.has(noteId)) continue;
         const meta: Record<string, unknown> =
           typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
@@ -360,7 +333,7 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
         seen.set(noteId, {
           title: typeof meta.title === 'string' ? meta.title : '(untitled)',
           authoredBy: meta.authoredBy === 'agent' ? 'agent' : 'user',
-          sourceAt: row.source_at ? new Date(row.source_at).toISOString() : '',
+          sourceAt: row.sourceAt ? row.sourceAt.toISOString() : '',
         });
         if (seen.size >= limit) break;
       }

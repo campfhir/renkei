@@ -14,8 +14,7 @@
  * first match, for the sidebar to show under the title.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { openBlocks, unavailableCipher, type ContentCipher } from './content-crypto';
 import {
@@ -51,7 +50,6 @@ const PAGE_SIZE = 500;
  * and matches nothing.
  */
 export async function searchChatMessages(
-  db: Kysely<DB>,
   chatIds: string[],
   query: string,
   ciphers: Map<string, ContentCipher> = new Map()
@@ -64,30 +62,20 @@ export async function searchChatMessages(
   const hits = new Map<string, ChatSearchHit>();
   let offset = 0;
   while (hits.size < CHAT_SEARCH_MAX_HITS && offset < CHAT_SEARCH_MAX_ROWS) {
-    const rows = await db
-      .selectFrom('chat_messages')
-      .innerJoin('chats', 'chats.id', 'chat_messages.chat_id')
-      .select([
-        'chat_messages.id as id',
-        'chat_messages.chat_id as chat_id',
-        'chat_messages.content as content',
-      ])
-      .where('chat_messages.chat_id', 'in', ids)
-      .where('chat_messages.kind', 'in', ['prompt', 'assistant'])
-      .orderBy('chats.updated_at', 'desc')
-      .orderBy('chat_messages.seq', 'desc')
-      .limit(Math.min(PAGE_SIZE, CHAT_SEARCH_MAX_ROWS - offset))
-      .offset(offset)
-      .execute();
+    const rows = await getDataStore().chatThreads.searchMessages(ids, {
+      kinds: ['prompt', 'assistant'],
+      limit: Math.min(PAGE_SIZE, CHAT_SEARCH_MAX_ROWS - offset),
+      offset,
+    });
     for (const row of rows) {
       // Newest message first within a chat: the first match is the one kept.
-      if (hits.has(row.chat_id)) continue;
+      if (hits.has(row.chatId)) continue;
       const snippet = snippetAround(
-        searchableText(openBlocks(row.content, ciphers.get(row.chat_id) ?? noKey)),
+        searchableText(openBlocks(row.content, ciphers.get(row.chatId) ?? noKey)),
         needle
       );
       if (snippet === null) continue;
-      hits.set(row.chat_id, { chatId: row.chat_id, messageId: row.id, snippet });
+      hits.set(row.chatId, { chatId: row.chatId, messageId: row.id, snippet });
       if (hits.size >= CHAT_SEARCH_MAX_HITS) break;
     }
     if (rows.length < PAGE_SIZE) break;

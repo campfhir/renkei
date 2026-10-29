@@ -1,5 +1,6 @@
 /**
- * DB accessors for `email_cleaner_scripts` — tenant-editable sandboxed
+ * `email_cleaner_scripts`, through the data store
+ * (`getDataStore().emailSanitizer`) — tenant-editable sandboxed
  * cleaner functions. Content-free like classifier rules: a script is code the
  * admin wrote, never message content, so the admin route reads and writes
  * it directly. Execution lives in ../scripts/run.ts; this module only
@@ -7,9 +8,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { getDataStore } from '@renkei/db';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { CleanerScriptKind } from '../scripts/run';
 
@@ -52,18 +52,9 @@ function kindsOf(stored: readonly string[] | null): CleanerScriptKind[] {
   return known.length > 0 ? known : ['msg'];
 }
 
-export async function listCleanerScripts(
-): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
+export async function listCleanerScripts(): Promise<Result<CleanerScript[], 'DB_ERROR'>> {
   const rowsResult = await wrapAsync(
-    () =>
-      dbResult.val
-        .selectFrom('email_cleaner_scripts')
-        .select(['id', 'name', 'script', 'compiled', 'enabled', 'applies_to', 'last_error'])
-        .orderBy('created_at', 'asc')
-        .execute(),
+    () => getDataStore().emailSanitizer.listScripts(),
     'DB_ERROR' as const
   );
   if (!rowsResult.ok) return rowsResult;
@@ -76,8 +67,8 @@ export async function listCleanerScripts(
       // are already JavaScript, so the source IS the runnable form.
       compiled: row.compiled ?? row.script,
       enabled: row.enabled,
-      appliesTo: kindsOf(row.applies_to),
-      lastError: row.last_error,
+      appliesTo: kindsOf(row.appliesTo),
+      lastError: row.lastError,
     }))
   );
 }
@@ -112,40 +103,21 @@ export interface CleanerScriptInput {
 export async function upsertCleanerScript(
   input: CleanerScriptInput
 ): Promise<Result<CleanerScript, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-
   const id = input.id ?? randomUUID();
+  const stored = {
+    id,
+    name: input.name,
+    script: input.script,
+    compiled: input.compiled ?? null,
+    enabled: input.enabled,
+    appliesTo: kindsOf(input.appliesTo ?? null),
+  };
   const saved = await wrapAsync(async () => {
-    if (input.id) {
-      await dbResult.val
-        .updateTable('email_cleaner_scripts')
-        .set({
-          name: input.name,
-          script: input.script,
-          compiled: input.compiled ?? null,
-          enabled: input.enabled,
-          applies_to: kindsOf(input.appliesTo ?? null),
-          // An edited script starts with a clean bill of health — its old
-          // error described code that no longer exists.
-          last_error: null,
-          updated_at: sql`now()`,
-        })
-        .where('id', '=', input.id)
-        .execute();
-    } else {
-      await dbResult.val
-        .insertInto('email_cleaner_scripts')
-        .values({
-          id,
-          name: input.name,
-          script: input.script,
-          compiled: input.compiled ?? null,
-          enabled: input.enabled,
-          applies_to: kindsOf(input.appliesTo ?? null),
-        })
-        .execute();
-    }
+    const store = getDataStore();
+    // An edited script starts with a clean bill of health — its old error
+    // described code that no longer exists (updateScript clears it).
+    if (input.id) await store.emailSanitizer.updateScript(stored);
+    else await store.emailSanitizer.insertScript(stored);
   }, 'DB_ERROR' as const);
   if (!saved.ok) return saved;
   return ok({
@@ -159,17 +131,9 @@ export async function upsertCleanerScript(
   });
 }
 
-export async function deleteCleanerScript(
-  id: string
-): Promise<Result<void, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
+export async function deleteCleanerScript(id: string): Promise<Result<void, 'DB_ERROR'>> {
   const deleted = await wrapAsync(
-    () =>
-      dbResult.val
-        .deleteFrom('email_cleaner_scripts')
-        .where('id', '=', id)
-        .execute(),
+    () => getDataStore().emailSanitizer.deleteScript(id),
     'DB_ERROR' as const
   );
   if (!deleted.ok) return deleted;
@@ -177,19 +141,9 @@ export async function deleteCleanerScript(
 }
 
 /** Best-effort health write; a failure here must never block mail flow. */
-export async function recordCleanerScriptError(
-  id: string,
-  error: string | null
-): Promise<void> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return;
+export async function recordCleanerScriptError(id: string, error: string | null): Promise<void> {
   await wrapAsync(
-    () =>
-      dbResult.val
-        .updateTable('email_cleaner_scripts')
-        .set({ last_error: error, updated_at: sql`now()` })
-        .where('id', '=', id)
-        .execute(),
+    () => getDataStore().emailSanitizer.setScriptError(id, error),
     'DB_ERROR' as const
   );
 }

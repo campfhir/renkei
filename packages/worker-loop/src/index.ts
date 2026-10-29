@@ -216,6 +216,38 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
 }
 
 /**
+ * A wake a consumer can wait on instead of its idle poll: the memory data
+ * store's queue notify (@renkei/db's QueueSignal), for a consumer that
+ * shares a process with its producers. `version` moves on every wake.
+ */
+export interface LoopWake {
+  readonly version: number;
+  wait(since: number, timeoutMs: number): Promise<void>;
+}
+
+/**
+ * The `claim` and `sleep` of a loop that wakes on `wake`: an idle sleep
+ * returns as soon as something was enqueued since the claim that found
+ * nothing (the version read just before it), and otherwise lasts as long
+ * as it would have — so a message whose retry delay runs out is still
+ * picked up by the poll. The short sleep between busy claims stays a timer.
+ */
+export function wakeOnSignal<M>(
+  wake: LoopWake,
+  claim: () => Promise<M | null>,
+  busyDelayMs = BUSY_DELAY_MS
+): { claim: () => Promise<M | null>; sleep: (ms: number) => Promise<void> } {
+  let seen = wake.version;
+  return {
+    claim: () => {
+      seen = wake.version;
+      return claim();
+    },
+    sleep: (ms) => (ms <= busyDelayMs ? defaultSleep(ms) : wake.wait(seen, ms)),
+  };
+}
+
+/**
  * A periodic sweep, on its own independent timer — never `await`ed by the
  * event-processing loop.
  *

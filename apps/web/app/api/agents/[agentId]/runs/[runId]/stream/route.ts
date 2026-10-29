@@ -20,7 +20,6 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { getOwnerRunPageData, type OwnerRunPageData } from '@/lib/agents/run-page-data';
@@ -46,15 +45,10 @@ export async function GET(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const initial = await getOwnerRunPageData(
-    db,
     access.ownerSubject,
     access.viewerIsOwner,
     agentId,
@@ -102,15 +96,11 @@ export async function GET(
 
       timer = setInterval(() => {
         if (closed) return;
-        void getOwnerRunPageData(
-          db,
-          access.ownerSubject,
-          access.viewerIsOwner,
-          agentId,
-          runId
-        ).then((data) => {
-          if (data) send(data);
-        });
+        void getOwnerRunPageData(access.ownerSubject, access.viewerIsOwner, agentId, runId).then(
+          (data) => {
+            if (data) send(data);
+          }
+        );
       }, POLL_MS);
     },
     cancel() {

@@ -1,66 +1,83 @@
-import path from 'node:path';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { AGENT_RICH_ID } from './seed';
+/**
+ * An agent's Knowledge panel: selection, the purge affordance, and no
+ * overflow. The notes are added the way the panel's own form adds them
+ * (POST /api/agents/:id/knowledge), embedded synchronously by the
+ * organization's embedding provider — the stand-in model's /embeddings
+ * (e2e/llm-stub.mjs), configured through the admin route and left on.
+ * One note carries a long unbroken id, which is what used to overflow the
+ * card: min-w-0 cannot break a string with no break opportunity.
+ */
 
-// Knowledge notes are not seeded (they normally need an embedding provider),
-// so this writes chunks directly — enough for the panel, which only reads
-// rows. One note carries a long unbroken id, which is what used to overflow
-// the card: min-w-0 cannot break a string with no break opportunity.
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import { test, expect } from './fixtures';
+import { LLM_STUB_BASE_URL } from './constants';
+
 const LONG = 'ref-9f2c1a7e4b8d40f1a6c3e5079bd21c8a4f6e9012345678abcdef0123456789';
 
-test('knowledge panel: selection, purge, and no overflow', async ({ page }, testInfo) => {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    const zero = `[${Array(1536).fill(0).join(',')}]`;
-    for (const [i, body] of [
-      `A short readable note.`,
-      `Identifiers the model needs but nobody reads: ${LONG}`,
-    ].entries()) {
-      await client.query(
-        `INSERT INTO knowledge_chunks (id, provider, ref_id, metadata, content, embedding, source_at)\n         VALUES (gen_random_uuid(), 'note', $1, $2::jsonb, $3, $4::vector, NOW())\n         ON CONFLICT (provider, ref_id) DO NOTHING`,
-        [`e2e@example.com/note-${i}`, JSON.stringify({
-                      kind: 'note',
-                      title: i === 0 ? 'Short note' : `Long identifiers ${LONG}`,
-                      authoredBy: i === 0 ? 'user' : 'agent',
-                      agentId: AGENT_RICH_ID,
-                      scope: 'agent',
-                    }), body, zero]
-      );
-    }
+// Configuring the embedding provider is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-    await page.goto(`/agents/${AGENT_RICH_ID}`);
-    // CollapsibleSection is a native <details> on desktop, shut by default.
-    await page.locator('summary', { hasText: 'Knowledge' }).click();
-    await expect(page.getByText('Short note')).toBeVisible();
+test('knowledge panel: selection, purge, and no overflow', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const embeddings = await page.request.put('/api/admin/connectors/embeddings', {
+    data: { baseUrl: LLM_STUB_BASE_URL, model: 'stub-embedding', apiKey: 'stub-key' },
+  });
+  expect(embeddings.ok(), await embeddings.text()).toBe(true);
 
-    // The selection toolbar and the purge affordance both exist.
-    await expect(page.getByText('Select all')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Clear knowledge' })).toBeVisible();
-
-    await page.getByRole('checkbox', { name: 'Select Short note' }).check();
-    await expect(page.getByRole('button', { name: 'Delete 1' })).toBeVisible();
-
-    // Nothing may spill horizontally out of the page.
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
-    );
-    expect(overflow).toBe(true);
-
-    await page.screenshot({
-      path: path.join(
-        import.meta.dirname,
-        '..',
-        'test-results',
-        'screens',
-        testInfo.project.name,
-        'knowledge-panel.png'
-      ),
-      fullPage: true,
+  const created = await page.request.post('/api/agents', {
+    data: { name: `Knowledge keeper ${tag}`, instructions: 'Keep notes.', tools: [], triggers: [] },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const { agentId } = await created.json();
+  for (const [title, content] of [
+    ['Short note', 'A short readable note.'],
+    [`Long identifiers ${LONG}`, `Identifiers the model needs but nobody reads: ${LONG}`],
+  ]) {
+    const note = await page.request.post(`/api/agents/${agentId}/knowledge`, {
+      data: { title, content },
     });
-  } finally {
-    await client.query(`DELETE FROM knowledge_chunks WHERE provider = 'note'`);
-    await client.end();
+    expect(note.status(), await note.text()).toBe(201);
   }
+
+  await page.goto(`/agents/${agentId}`);
+  // CollapsibleSection is a native <details> on desktop, shut by default.
+  // A click before hydration can be undone by it: open it until it stays open.
+  await expect(async () => {
+    const section = page.locator('details', {
+      has: page.locator('summary', { hasText: 'Knowledge' }),
+    });
+    if ((await section.getAttribute('open')) === null) {
+      await section.locator('summary').click();
+    }
+    await expect(page.getByText('Short note')).toBeVisible({ timeout: 2_000 });
+  }).toPass({ timeout: 20_000 });
+
+  // The selection toolbar and the purge affordance both exist.
+  await expect(page.getByText('Select all')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Clear knowledge' })).toBeVisible();
+
+  await page.getByRole('checkbox', { name: 'Select Short note' }).check();
+  await expect(page.getByRole('button', { name: 'Delete 1' })).toBeVisible();
+
+  // Nothing may spill horizontally out of the page.
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
+  );
+  expect(overflow).toBe(true);
+
+  await page.screenshot({
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      'knowledge-panel.png'
+    ),
+    fullPage: true,
+  });
 });

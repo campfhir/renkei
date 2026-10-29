@@ -3,208 +3,29 @@
  * it on a cheaper model of the org's (`code_delegate`'s `model`,
  * lib/code/delegate.ts), so its card in the thread says which, and the
  * run's transcript (lib/chat/subagent-runs.ts, migration 118) names the
- * model that actually answered, by the config's label. Seeded straight
- * into the database as the runner leaves a finished turn — no model is
- * called — with ids of its own per Playwright project, so the projects
- * running side by side never race (code.spec.ts keeps the same rule).
- * Also a viewport pass at phone width.
+ * model that actually answered, by the config's label.
+ *
+ * All of it runs for real on the in-memory app: the project and chat are
+ * the test's own person's (e2e/support/code-host.ts), the org's two models
+ * are the stand-in (e2e/llm-stub.mjs) under two labels, and the stand-in
+ * calls the tools the prompt scripts — the orchestrator `code_delegate`
+ * on the "fast" model, the sub-agent `code_grep` in the checkout — before
+ * each answers with its fixed reply. Also a viewport pass at phone width.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { keyFor } from './keys';
+import type { Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { LLM_STUB_REPLY } from './constants';
+import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
+import { askAndWait, setUpCode, stageCodeProject } from './support/code-host';
 
-test.use({
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here; the pinned Chromium runs every project.
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-/** `@renkei/crypto`'s secretbox: `v1.<iv>.<tag>.<ciphertext>` under TOKEN_ENCRYPTION_KEY. */
-function secretbox(plaintext: string): string {
-  const encoded = process.env.TOKEN_ENCRYPTION_KEY;
-  if (!encoded) throw new Error('TOKEN_ENCRYPTION_KEY is not set');
-  const key = Buffer.from(encoded, 'base64');
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
-}
-
-/** Per-project fixtures: the Playwright projects share one database. */
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '5', 'desktop-dark': '6', mobile: '7' }[project] ?? '8';
-  return {
-    projectId: `77777777-7777-4777-8777-7777777777${digit}1`,
-    chatId: `77777777-7777-4777-8777-7777777777${digit}2`,
-    turnId: `77777777-7777-4777-8777-7777777777${digit}3`,
-    fastModelId: `77777777-7777-4777-8777-7777777777${digit}4`,
-    fastModelLabel: `Fast model (${digit})`,
-    projectName: `Billing service (sub-agent ${digit})`,
-    chatTitle: `Why does the invoice job retry? (sub-agent ${digit})`,
-  };
-}
+// The stand-in models are staged by an operator.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const TASK = 'Find every place the invoice job’s retry count is read or written.';
-const REPORT =
-  'Three places: jobs/invoice.ts:41 reads it, jobs/invoice.ts:58 increments it, and lib/retry.ts:12 caps nothing.';
-
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-async function clean(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.fastModelId]);
-  } finally {
-    await client.end();
-  }
-}
-
-/**
- * A code project, a chat in it, and one finished turn: the prompt, the
- * sub-agent the orchestrator sent to investigate on the org's cheaper
- * model (its run recorded with that model), and the reply.
- */
-async function seed(ids: ReturnType<typeof idsFor>): Promise<void> {
-  await clean(ids);
-  const client = await db();
-  try {
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, description, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'Invoices and the nightly jobs.', 'code', 'atlassian-bitbucket', 'acme/billing-service', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
-    );
-    const chatKey = await keyFor(client, {
-      kind: 'chat',
-      resourceId: ids.chatId,
-      ownerSubject: E2E_SUBJECT,
-    });
-    await client.query(
-      `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n       VALUES ($1, $2, 'anthropic', 'claude-haiku-4-5', $3, TRUE, FALSE)`,
-      [ids.fastModelId, ids.fastModelLabel, secretbox('{"apiKey":"e2e"}')]
-    );
-    await client.query(
-      `INSERT INTO chat_turns (id, chat_id, status, iterations, input_tokens, output_tokens, finished_at)\n       VALUES ($1, $2, 'completed', 2, 1540, 210, NOW())`,
-      [ids.turnId, ids.chatId]
-    );
-    const rows: {
-      seq: number;
-      role: string;
-      kind: string;
-      stop: string | null;
-      blocks: unknown[];
-    }[] = [
-      {
-        seq: 1,
-        role: 'user',
-        kind: 'prompt',
-        stop: null,
-        blocks: [{ type: 'text', text: 'Why does the invoice job retry forever?' }],
-      },
-      {
-        seq: 2,
-        role: 'assistant',
-        kind: 'assistant',
-        stop: 'tool_use',
-        blocks: [
-          {
-            type: 'tool_use',
-            id: 'toolu_e2e_delegate',
-            name: 'code_delegate',
-            input: { task: TASK, readOnly: true, model: ids.fastModelLabel },
-          },
-        ],
-      },
-      {
-        seq: 3,
-        role: 'user',
-        kind: 'tool_results',
-        stop: null,
-        blocks: [
-          {
-            type: 'tool_result',
-            toolUseId: 'toolu_e2e_delegate',
-            content: `Sub-agent done — 2 model calls, 1 tool call (code_grep×1).\n\nReport:\n${REPORT}`,
-          },
-        ],
-      },
-      {
-        seq: 4,
-        role: 'assistant',
-        kind: 'assistant',
-        stop: 'end_turn',
-        blocks: [
-          {
-            type: 'text',
-            text: 'The retry loop has no ceiling: three places touch the count and none caps it.',
-          },
-        ],
-      },
-    ];
-    for (const row of rows) {
-      await client.query(
-        `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, stop_reason)\n         VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7)`,
-        [ids.chatId, ids.turnId, row.seq, row.role, row.kind, chatKey.seal(JSON.stringify(row.blocks)), row.stop]
-      );
-    }
-    const transcript = [
-      { role: 'user', content: [{ type: 'text', text: TASK }] },
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'Searching for the retry count.' },
-          {
-            type: 'tool_use',
-            id: 'toolu_e2e_sub_grep',
-            name: 'code_grep',
-            input: { pattern: 'retryCount' },
-          },
-        ],
-        // How long this model call took, as delegate.ts keeps it beside the message.
-        durationMs: 4200,
-      },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'tool_result',
-            toolUseId: 'toolu_e2e_sub_grep',
-            content: 'jobs/invoice.ts:41\njobs/invoice.ts:58\nlib/retry.ts:12',
-            durationMs: 310,
-          },
-        ],
-      },
-      { role: 'assistant', content: [{ type: 'text', text: REPORT }] },
-    ];
-    await client.query(
-      `INSERT INTO chat_subagent_runs\n         (chat_id, turn_id, tool_use_id, status, task, read_only, max_steps, steps, tool_calls,\n          transcript, report, input_tokens, output_tokens, llm_model_id, provider, model, started_at, finished_at)\n       VALUES ($1, $2, 'toolu_e2e_delegate', 'completed', $3, TRUE, 40, 2, 1, $4, $5, 640, 90,\n               $6, 'anthropic', 'claude-haiku-4-5', NOW() - INTERVAL '3 minutes 5 seconds', NOW())`,
-      [ids.chatId, ids.turnId, chatKey.seal(TASK), chatKey.seal(JSON.stringify(transcript)), chatKey.seal(REPORT), ids.fastModelId]
-    );
-  } finally {
-    await client.end();
-  }
-}
+const PROMPT = 'Why does the invoice job retry forever?';
 
 async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   const overflow = await page.evaluate(
@@ -213,48 +34,66 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-test.describe('code chat sub-agent model', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    await seed(idsFor(testInfo.project.name));
-  });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await clean(idsFor(testInfo.project.name));
-  });
+test('the card names the model the orchestrator picked; the transcript names what answered', async ({
+  page,
+  request,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const shot = (name: string) =>
+    page.screenshot({
+      path: path.join(
+        import.meta.dirname,
+        '..',
+        'test-results',
+        'screens',
+        testInfo.project.name,
+        name
+      ),
+      fullPage: false,
+    });
+  const modelId = await setUpCode(page, request, tag);
+  // The org's cheaper model, the one the orchestrator sends the sub-agent on.
+  const fastModelId = await addStubModel(page.request, `fast-${tag}`);
+  const fastModelLabel = `Stub model fast-${tag}`;
+  try {
+    const { chatIds } = await stageCodeProject(page.request, {
+      name: `Billing service (sub-agent ${tag})`,
+      description: 'Invoices and the nightly jobs.',
+      repository: 'acme/billing-service',
+      branch: 'main',
+      chats: [`Why does the invoice job retry? (sub-agent ${tag})`],
+      llmModelId: modelId,
+    });
+    const chatId = chatIds[0];
+    // The sub-agent's task scripts its own one grep; the orchestrator's
+    // prompt scripts the delegation.
+    const delegate = {
+      task: scripted(TASK, [toolStep('code_grep', { pattern: 'retryCount' })]),
+      readOnly: true,
+      model: fastModelLabel,
+    };
+    await askAndWait(
+      page.request,
+      chatId,
+      { text: scripted(PROMPT, [toolStep('code_delegate', delegate)]), llmModelId: modelId },
+      120_000
+    );
 
-  test('the card names the model the orchestrator picked; the transcript names what answered', async ({
-    page,
-  }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const shot = (name: string) =>
-      page.screenshot({
-        path: path.join(
-          import.meta.dirname,
-          '..',
-          'test-results',
-          'screens',
-          testInfo.project.name,
-          name
-        ),
-        fullPage: false,
-      });
     const main = page.getByRole('main');
-
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
+    await page.goto(`/chat/${chatId}`);
+    await expect(main.getByText(PROMPT)).toBeVisible();
 
     // ── The sub-agent's card, folded: the model it was sent on, beside
-    //    its read-only mark and the first line of its report. The one
-    //    call of its turn, it stands on its own in the thread rather than
-    //    inside a fold of steps ──
+    //    its read-only mark and the first line of its report ──
     const subagent = main.locator('details[data-subagent]');
     await expect(subagent).toContainText('Sub-agent reported');
     await expect(subagent).toContainText('read-only');
-    await expect(subagent.locator('[data-subagent-model]')).toHaveText(`on ${ids.fastModelLabel}`);
+    await expect(subagent.locator('[data-subagent-model]')).toHaveText(`on ${fastModelLabel}`);
     await subagent.locator('> summary').click();
     await expect(subagent).toHaveAttribute('open', '');
-    await expect(subagent.getByText('Three places:', { exact: false })).toBeVisible();
+    await expect(subagent.getByText(LLM_STUB_REPLY, { exact: false })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-subagent-card.png');
 
@@ -263,20 +102,21 @@ test.describe('code chat sub-agent model', () => {
     //    the sub-agent's own steps ──
     await subagent.getByRole('button', { name: 'View transcript' }).click();
     const dialog = page.getByRole('dialog', { name: 'Sub-agent' });
-    await expect(dialog.getByText('2 of 40 model calls')).toBeVisible();
+    // Two model calls: the grep, then the report.
+    await expect(dialog).toContainText(/2 of \d+ model calls · 1 tool call/);
     // How long it ran: its start to its finish, the run being over.
-    await expect(dialog.locator('[data-subagent-elapsed]')).toHaveText('ran for 3m 05s');
+    await expect(dialog.locator('[data-subagent-elapsed]')).toHaveText(/^ran for \d/);
     const model = dialog.locator('[data-subagent-model]');
-    await expect(model).toHaveText(`on ${ids.fastModelLabel}`);
-    await expect(model).toHaveAttribute('title', 'anthropic claude-haiku-4-5');
-    await expect(dialog.getByText('Searching for the retry count.')).toBeVisible();
-    await expect(dialog.getByText(TASK)).toBeVisible();
+    await expect(model).toHaveText(`on ${fastModelLabel}`);
+    await expect(model).toHaveAttribute('title', 'openai stub-model');
+    await expect(dialog.getByText(TASK, { exact: false })).toBeVisible();
+    // The grep is the sub-agent's own step (the stub worker answers no grep,
+    // so the step reads failed — which step it was is what is shown here).
+    await expect(dialog.getByText(/Search code/).first()).toBeVisible();
     // Where its time went: each model call's own duration on its heading,
-    // and the tool call's on its line — the second model call, recorded
-    // before durations were kept, carries none and says nothing.
-    await expect(dialog.locator('[data-model-call-duration]')).toHaveCount(1);
-    await expect(dialog.locator('[data-model-call-duration]')).toHaveText('· 4s');
-    await expect(dialog.locator('[data-call-duration]')).toHaveText('0.3s');
+    // and the tool call's on its line.
+    await expect(dialog.locator('[data-model-call-duration]').first()).toHaveText(/^· /);
+    await expect(dialog.locator('[data-call-duration]')).toHaveText(/s$/);
     await shot('code-chat-subagent-transcript.png');
     await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(dialog).toHaveCount(0);
@@ -284,10 +124,13 @@ test.describe('code chat sub-agent model', () => {
     // ── Phone width: the same card and the same line, nothing overflowing ──
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
-    await expect(main.getByText('Why does the invoice job retry forever?')).toBeVisible();
+    await expect(main.getByText(PROMPT)).toBeVisible();
     const narrow = main.locator('details[data-subagent]');
-    await expect(narrow.locator('[data-subagent-model]')).toHaveText(`on ${ids.fastModelLabel}`);
+    await expect(narrow.locator('[data-subagent-model]')).toHaveText(`on ${fastModelLabel}`);
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-subagent-mobile.png');
-  });
+  } finally {
+    await removeModel(page.request, fastModelId);
+    await removeModel(page.request, modelId);
+  }
 });

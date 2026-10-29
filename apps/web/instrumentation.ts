@@ -1,6 +1,12 @@
 import type { Instrumentation } from 'next';
 import { logger } from '@/lib/logger';
-import { getDatabase } from '@renkei/db';
+import {
+  checkDataStore,
+  createLogAdapter,
+  createMemoryDataStore,
+  memoryDataStoreRequested,
+  registerDataStore,
+} from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
 import { watchLogLevel } from '@renkei/settings';
 import type { LogCipher } from '@/lib/log-encryption';
@@ -30,6 +36,30 @@ export async function register() {
       process.exit(1);
     }
 
+    // RENKEI_DATA_STORE=memory: the data store is plain JavaScript in this
+    // process (packages/db/src/store/memory.ts), for the UI suite that
+    // needs no database (playwright.config.ts). Nothing here then
+    // has a database to reach — no log table, no schema to check, no turn
+    // or apply-job rows to recover — so boot stops after registering it.
+    // Specs stage their data through the app's own routes, signed in
+    // through app/api/test/session. The delegate runs in this process too
+    // (lib/memory-delegate.ts), on the same store, and so do the agents
+    // worker's consumer and the event dispatcher (lib/memory-workers.ts):
+    // imported only here, so nothing of them loads on Postgres.
+    if (memoryDataStoreRequested()) {
+      registerDataStore(createMemoryDataStore());
+      const { startMemoryDelegate } = await import('@/lib/memory-delegate');
+      await startMemoryDelegate();
+      const { startMemoryWorkers } = await import('@/lib/memory-workers');
+      startMemoryWorkers();
+      watchLogLevel(logger);
+      globalMarks.__renkeiPgLogAdapterAttached = true;
+      logger.warn('Running on the IN-MEMORY data store: nothing is persisted', {
+        component: 'web/instrumentation',
+      });
+      return;
+    }
+
     // Every adapter starts at info, which holds only for the few seconds
     // before the database is reachable; once it is, the org `logLevel` dial
     // (packages/settings) governs, polled and reapplied here so a saved
@@ -39,13 +69,11 @@ export async function register() {
     // import without expecting a background DB-polling timer to start.
     watchLogLevel(logger);
 
-    const { PostgresAdapter } = await import('@campfhir/bored-logs/adapters/psql');
-
-    const dbResult = getDatabase();
-    if (!dbResult.ok) {
+    const ready = checkDataStore();
+    if (!ready.ok) {
       logger.error('Failed to initialize database for bored-logs', {
         component: 'web/instrumentation',
-        error: String(dbResult.err),
+        error: String(ready.err),
       });
       return;
     }
@@ -65,8 +93,9 @@ export async function register() {
       process.exit(1);
     }
 
-    const adapter = new PostgresAdapter({
-      db: dbResult.val,
+    // The adapter rides @renkei/db's own connection: this process never
+    // holds the handle.
+    const built = await createLogAdapter({
       level: 'info',
       encrypt: cipher.encrypt,
       decrypt: cipher.decrypt,
@@ -78,6 +107,14 @@ export async function register() {
         }
       },
     });
+    if (!built.ok) {
+      logger.error('Failed to initialize database for bored-logs', {
+        component: 'web/instrumentation',
+        error: String(built.err),
+      });
+      return;
+    }
+    const adapter = built.val;
 
     // Idempotent (CREATE IF NOT EXISTS) — brings a table set created by an
     // older bored-logs up to the current schema on every boot.
@@ -103,17 +140,17 @@ export async function register() {
         signal,
       })
     );
-    startTurnRecovery(dbResult.val);
+    startTurnRecovery();
 
     // Approved Salesforce and Jira admin changes run as jobs in this
     // process (an after() from the approve route); this sweep starts any
     // that were queued as a process went away, and takes over any whose job
     // stopped reporting. See lib/salesforce-admin/apply-job.ts.
     const { startApplyJobRecovery } = await import('@/lib/salesforce-admin/apply-job');
-    startApplyJobRecovery(dbResult.val);
+    startApplyJobRecovery();
     const { startApplyJobRecovery: startJiraApplyJobRecovery } =
       await import('@/lib/jira-admin/apply-job');
-    startJiraApplyJobRecovery(dbResult.val);
+    startJiraApplyJobRecovery();
   }
 }
 

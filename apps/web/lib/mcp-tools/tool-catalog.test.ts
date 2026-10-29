@@ -47,45 +47,39 @@ let embeddingProvider: string | null = null;
 let webSearchProvisioned = false;
 let readOnly = false;
 let disabledConnectors: string[] = [];
-/** The caller's file_share_connections rows the exposure aggregate reads. */
+/** The caller's file-share exposure rows, as the data store returns them (snake_case here). */
 let fileshareConnections: Array<{ tool_access: string; allow_delete: boolean }> = [];
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({
-    ok: true,
-    val: {
-      selectFrom: (table: string) => {
-        // File shares are connection rows in Renkei's own table, not
-        // provider_grants — availability is the joined exposure aggregate.
-        if (table === 'file_share_connections') {
-          const shareChain = {
-            innerJoin: () => shareChain,
-            select: () => shareChain,
-            where: () => shareChain,
-            execute: async () => fileshareConnections,
-          };
-          return shareChain;
-        }
-        let provider = '';
-        const chain = {
-          select: () => chain,
-          where: (column: string, _op: string, value: string) => {
-            if (column === 'provider') provider = value;
-            return chain;
-          },
-          limit: () => chain,
-          executeTakeFirst: async () => {
-            const row = grants[provider];
-            return row ? { provider_account_id: 'acct-1', ...row } : undefined;
-          },
-          // Every grant of a provider (Salesforce: one per connected org).
-          execute: async () => {
-            const row = grants[provider];
-            return row ? [{ provider_account_id: 'acct-1', ...row }] : [];
-          },
-        };
-        return chain;
+  // File shares are connection rows in Renkei's own table, not
+  // provider_grants — availability is the exposure aggregate the data
+  // store answers.
+  getDataStore: () => ({
+    // The caller's grants, as the data store answers them: one per provider.
+    providerGrants: {
+      listForSubject: async (subject: string, options: { provider?: string } = {}) => {
+        const row = grants[options.provider ?? ''];
+        return row
+          ? [
+              {
+                provider: options.provider ?? '',
+                accountId: 'acct-1',
+                subject,
+                displayName: 'acct-1',
+                requestedScopes: row.requested_scopes,
+                grantedScopes: row.granted_scopes,
+                metadata: {},
+              },
+            ]
+          : [];
       },
+    },
+    fileShares: {
+      connectionExposures: async () =>
+        fileshareConnections.map((row) => ({
+          toolAccess: row.tool_access,
+          allowDelete: row.allow_delete,
+        })),
     },
   }),
 }));

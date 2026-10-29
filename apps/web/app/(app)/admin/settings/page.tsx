@@ -2,13 +2,13 @@ import React from 'react';
 import Link from 'next/link';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { SizeRequests } from './size-requests';
 import { listSizeRequests } from '@/lib/code/size-requests';
 import { SettingsForm, type EditableSettings } from './settings-form';
 import IdentityForm from './identity-form';
 import { observedIdpGroups } from '@/lib/identity';
+import { getTenantOidcSummary } from '@/lib/tenant-operations';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
@@ -23,28 +23,13 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     redirect(`/admin`);
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return (
-      <div>
-        <h2 className="mb-2 text-lg font-semibold">Error</h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">
-          Unable to connect to the database. Please try again later.
-        </p>
-      </div>
-    );
-  }
-
-  const [settingsResult, oidc, observedGroups, sizeRequests] = await Promise.all([
+  const [settingsResult, oidcResult, observedGroups, sizeRequests] = await Promise.all([
     getOrgSettings(),
-    dbResult.val
-      .selectFrom('oidc_config')
-      .select(['issuer', 'role_claim', 'operator_idp_value', 'user_idp_value', 'groups_claim'])
-      .executeTakeFirst(),
-    observedIdpGroups(dbResult.val, '', 10_000),
-    listSizeRequests(dbResult.val),
+    getTenantOidcSummary(),
+    observedIdpGroups('', 10_000),
+    listSizeRequests(),
   ]);
-  if (!settingsResult.ok) {
+  if (!settingsResult.ok || !oidcResult.ok) {
     return (
       <div>
         <h2 className="mb-2 text-lg font-semibold">Error</h2>
@@ -53,6 +38,7 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
     );
   }
   const settings = settingsResult.val;
+  const oidc = oidcResult.val;
   const initial: EditableSettings = {
     organizationName: settings.organizationName,
     readOnly: settings.readOnly,
@@ -174,10 +160,10 @@ export default async function SettingsPage(): Promise<React.ReactNode> {
         {oidc && (
           <IdentityForm
             initial={{
-              roleClaim: oidc.role_claim ?? '',
-              operatorIdpValue: oidc.operator_idp_value ?? '',
-              userIdpValue: oidc.user_idp_value ?? '',
-              groupsClaim: oidc.groups_claim ?? '',
+              roleClaim: oidc.roleClaim ?? '',
+              operatorIdpValue: oidc.operatorIdpValue ?? '',
+              userIdpValue: oidc.userIdpValue ?? '',
+              groupsClaim: oidc.groupsClaim ?? '',
             }}
             observedGroups={observedGroups.length}
           />

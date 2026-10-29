@@ -11,7 +11,6 @@
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: () => ({ ok: true, val: {} }) }));
 jest.mock('@renkei/settings', () => ({ getPublicBaseUrl: () => null }));
 jest.mock('@/lib/admin-changes/notify', () => ({
   notifyOperatorsOfRequest: jest.fn(),
@@ -60,7 +59,7 @@ const args = {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  store.createRequest.mockImplementation(async (_db: unknown, input: Record<string, unknown>) => ({
+  store.createRequest.mockImplementation(async (input: Record<string, unknown>) => ({
     id: '99999999-2222-4333-8444-555555555555',
     ...input,
   }));
@@ -75,7 +74,7 @@ describe('jira_request_admin_change', () => {
       reason: 'Procurement tags vendor tickets',
     });
     expect(result.isError).toBeUndefined();
-    expect(store.createRequest.mock.calls[0][1]).toMatchObject({
+    expect(store.createRequest.mock.calls[0][0]).toMatchObject({
       subject: 'subject-1',
       cloudId: 'cloud-1',
       siteUrl: 'https://acme.atlassian.net',

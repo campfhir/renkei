@@ -24,14 +24,12 @@
  *             the run — `skip` carries those between batches.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { decryptContent } from '@renkei/crypto';
-import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
+import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { vectorLiteral } from './embeddings';
 import type { EmbeddingProvider } from './embeddings';
-import { searchTextFragment } from './ingest';
+import { searchTextParts, LEXICAL_CONFIG } from './ingest';
 import { titleOf, chunkContext, embeddingInput } from './context';
 import type { KeywordExtractor } from './keywords';
 
@@ -78,18 +76,9 @@ export async function reindexLexicalBatch(
   key: Buffer,
   limit: number
 ): Promise<Result<BatchOutcome, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
-
   return wrapAsync(async () => {
-    const query = db
-      .selectFrom('knowledge_chunks')
-      .select(['id', 'content', 'metadata', 'keywords'])
-      .where('search_text', 'is', null)
-      .orderBy('id')
-      .limit(limit);
-    const rows = await query.execute();
+    const chunks = getDataStore().knowledgeChunks;
+    const rows = await chunks.listUnsearchable(limit);
 
     let skipped = 0;
     for (const row of rows) {
@@ -98,24 +87,13 @@ export async function reindexLexicalBatch(
         // Wrong key or a pre-encryption row: give it an empty entry so the
         // sweep terminates rather than re-selecting it forever.
         skipped += 1;
-        await db
-          .updateTable('knowledge_chunks')
-          .set({ search_text: sql<string>`to_tsvector('')` })
-          .where('id', '=', row.id)
-          .execute();
+        await chunks.setSearchText(row.id, null);
         continue;
       }
-      await db
-        .updateTable('knowledge_chunks')
-        .set({
-          search_text: searchTextFragment(
-            titleOf(metadataOf(row.metadata)),
-            keywordsOf(row.keywords),
-            opened.val
-          ),
-        })
-        .where('id', '=', row.id)
-        .execute();
+      await chunks.setSearchText(
+        row.id,
+        searchTextParts(titleOf(metadataOf(row.metadata)), keywordsOf(row.keywords), opened.val)
+      );
     }
     return {
       processed: rows.length - skipped,
@@ -134,20 +112,14 @@ export async function reembedBatch(
   cursor: string | null,
   limit: number
 ): Promise<Result<BatchOutcome, 'DB_ERROR' | 'EMBEDDING_FAILED'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
+  const chunks = getDataStore().knowledgeChunks;
 
-  const rowsResult = await wrapAsync(() => {
-    let query = db
-      .selectFrom('knowledge_chunks')
-      .select(['id', 'content', 'metadata'])
-      // Only multi-chunk rows carry a header; ingest stamps `chunkCount`
-      // on exactly those.
-      .where(sql<boolean>`(metadata ->> 'chunkCount')::int > 1`);
-    if (cursor) query = query.where('id', '>', cursor);
-    return query.orderBy('id').limit(limit).execute();
-  }, 'DB_ERROR' as const);
+  // Only multi-chunk rows carry a header; ingest stamps `chunkCount` on
+  // exactly those. A null cursor (the first batch) means no id filter.
+  const rowsResult = await wrapAsync(
+    () => chunks.listMultiChunk(cursor || null, limit),
+    'DB_ERROR' as const
+  );
   if (!rowsResult.ok) return rowsResult;
   const rows = rowsResult.val;
 
@@ -177,12 +149,7 @@ export async function reembedBatch(
       const vector = embedded.val[index];
       if (!vector) continue;
       const updated = await wrapAsync(
-        () =>
-          db
-            .updateTable('knowledge_chunks')
-            .set({ embedding: sql`${vectorLiteral(vector)}::vector` })
-            .where('id', '=', input.id)
-            .execute(),
+        () => chunks.setEmbedding(input.id, vector),
         'DB_ERROR' as const
       );
       if (!updated.ok) return updated;
@@ -200,47 +167,27 @@ export async function reembedBatch(
   });
 }
 
-/** The logical object a chunk row belongs to: its ref before the `#0001` suffix. */
-const objectRef = sql<string>`regexp_replace(ref_id, '#[0-9]{4}$', '')`;
-
 export async function extractKeywordsBatch(
   extractor: KeywordExtractor,
   key: Buffer,
   limit: number,
   skip: ReadonlySet<string>
 ): Promise<Result<BatchOutcome, 'DB_ERROR'>> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return err('DB_ERROR' as const);
-  const db = dbResult.val;
-
   return wrapAsync(async () => {
-    // Objects, not rows: one model call covers every chunk of an object.
-    // Over-select by the skip list so skipped objects cannot crowd out
-    // the ones still to do.
-    const pending = await db
-      .selectFrom('knowledge_chunks')
-      .select(['provider', objectRef.as('object_ref')])
-      .where('keywords', 'is', null)
-      .groupBy(['provider', objectRef])
-      .orderBy('provider')
-      .orderBy(objectRef)
-      .limit(limit + skip.size)
-      .execute();
+    const chunks = getDataStore().knowledgeChunks;
+    // Objects, not rows: one model call covers every chunk of an object
+    // (its ref before the `#0001` suffix). Over-select by the skip list so
+    // skipped objects cannot crowd out the ones still to do.
+    const pending = await chunks.listObjectsWithoutKeywords(limit + skip.size);
     const todo = pending
-      .filter((row) => !skip.has(`${row.provider} ${row.object_ref}`))
+      .filter((row) => !skip.has(`${row.provider} ${row.objectRef}`))
       .slice(0, limit);
 
     let processed = 0;
     let skipped = 0;
     const failedKeys: string[] = [];
-    for (const { provider, object_ref: ref } of todo) {
-      const rows = await db
-        .selectFrom('knowledge_chunks')
-        .select(['id', 'ref_id', 'content', 'metadata'])
-        .where('provider', '=', provider)
-        .where((eb) => eb.or([eb('ref_id', '=', ref), eb('ref_id', 'like', `${ref}#%`)]))
-        .orderBy('ref_id')
-        .execute();
+    for (const { provider, objectRef: ref } of todo) {
+      const rows = await chunks.objectChunks(provider, ref);
 
       const pieces: string[] = [];
       let undecryptable = false;
@@ -268,14 +215,10 @@ export async function extractKeywordsBatch(
       if (keywords === null) continue;
 
       for (const [index, row] of rows.entries()) {
-        await db
-          .updateTable('knowledge_chunks')
-          .set({
-            keywords,
-            search_text: searchTextFragment(title, keywords, pieces[index] ?? ''),
-          })
-          .where('id', '=', row.id)
-          .execute();
+        await chunks.rewriteChunk(row.id, {
+          keywords,
+          lexical: { config: LEXICAL_CONFIG, title, keywords, text: pieces[index] ?? '' },
+        });
       }
       if (!undecryptable) processed += 1;
     }

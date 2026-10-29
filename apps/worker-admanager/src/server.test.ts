@@ -9,8 +9,6 @@
  * ADManager Plus.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { InstanceRow, ResolvedTarget } from '@renkei/connector-admanager';
@@ -60,7 +58,6 @@ let base: string;
 
 beforeAll(async () => {
   server = createAdManagerServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     dial: async (input) => {
       calls.push(input);

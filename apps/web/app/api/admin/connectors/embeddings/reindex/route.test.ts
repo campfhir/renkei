@@ -11,7 +11,6 @@ jest.mock('@/lib/access', () => ({
   ROLE_OPERATOR: 'renkei-operator',
 }));
 jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/queue', () => ({ embeddingJobsQueue: jest.fn() }));
 jest.mock('@renkei/settings', () => ({ getOrgSettings: jest.fn() }));
 jest.mock('@renkei/knowledge', () => ({
@@ -22,6 +21,12 @@ jest.mock('@renkei/knowledge', () => ({
 }));
 
 import { NextRequest } from 'next/server';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { POST } from './route';
 
 const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mock }>(
@@ -30,110 +35,26 @@ const { checkAccess: mockCheckAccess } = jest.requireMock<{ checkAccess: jest.Mo
 const { embeddingJobsQueue: mockQueue } = jest.requireMock<{ embeddingJobsQueue: jest.Mock }>(
   '@renkei/queue'
 );
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>(
-  '@renkei/db'
-);
 
-interface RunRow {
-  id: string;
+const RUN = '00000000-0000-4000-8000-000000000001';
+
+interface RunSeed {
   kind: string;
   status: string;
-  cursor: string | null;
-  last_error: string | null;
-  created_at: string;
-  started_at: string | null;
-  finished_at: string | null;
+  cursor?: string | null;
+  last_error?: string | null;
+  finished_at?: Date | null;
 }
 
-type Where = [string, string, unknown];
-
-function matches(row: RunRow, wheres: Where[]): boolean {
-  return wheres.every(([col, op, val]) => {
-    const cell = Reflect.get(row, col);
-    return op === 'in' ? Array.isArray(val) && val.includes(cell) : cell === val;
-  });
+/** A memory store holding one reindex run (or none), registered as the data store. */
+async function storeWith(run?: RunSeed): Promise<MemoryDataStore> {
+  const store = createMemoryDataStore();
+  if (run) await store.seed({ knowledge_reindex_runs: [{ id: RUN, ...run }] });
+  registerDataStore(store);
+  return store;
 }
 
-/** A minimal in-memory `knowledge_reindex_runs` table over Kysely's shape. */
-function fakeDb(seed: RunRow[]) {
-  const rows = [...seed];
-  const inserted: RunRow[] = [];
-
-  function select() {
-    const wheres: Where[] = [];
-    const builder = {
-      select: () => builder,
-      where: (col: string, op: string, val: unknown) => {
-        wheres.push([col, op, val]);
-        return builder;
-      },
-      orderBy: () => builder,
-      limit: () => builder,
-      executeTakeFirst: async () => rows.find((row) => matches(row, wheres)),
-      execute: async () => rows.filter((row) => matches(row, wheres)),
-    };
-    return builder;
-  }
-
-  function update() {
-    const wheres: Where[] = [];
-    let patch: Record<string, unknown> = {};
-    const builder = {
-      set: (values: Record<string, unknown>) => {
-        patch = values;
-        return builder;
-      },
-      where: (col: string, op: string, val: unknown) => {
-        wheres.push([col, op, val]);
-        return builder;
-      },
-      executeTakeFirst: async () => {
-        let count = 0;
-        for (const row of rows) {
-          if (matches(row, wheres)) {
-            Object.assign(row, patch);
-            count += 1;
-          }
-        }
-        return { numUpdatedRows: BigInt(count) };
-      },
-      execute: async function execute() {
-        return this.executeTakeFirst();
-      },
-    };
-    return builder;
-  }
-
-  return {
-    rows,
-    inserted,
-    ok: true as const,
-    val: {
-      selectFrom: () => select(),
-      updateTable: () => update(),
-      insertInto: () => ({
-        values: (values: Record<string, unknown>) => ({
-          execute: async () => {
-            const id = typeof values.id === 'string' ? values.id : '';
-            const kind = typeof values.kind === 'string' ? values.kind : '';
-            const row: RunRow = {
-              id,
-              kind,
-              status: 'queued',
-              cursor: null,
-              last_error: null,
-              created_at: new Date().toISOString(),
-              started_at: null,
-              finished_at: null,
-            };
-            rows.push(row);
-            inserted.push(row);
-          },
-        }),
-      }),
-    },
-  };
-}
+const theRun = (store: MemoryDataStore, kind: string) => store.knowledgeReindexRuns.find(RUN, kind);
 
 function reqOf(body: unknown): NextRequest {
   return new NextRequest(
@@ -146,6 +67,8 @@ function reqOf(body: unknown): NextRequest {
 
 let mockEnqueue: jest.Mock;
 
+afterEach(() => resetDataStore());
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockCheckAccess.mockResolvedValue({ subject: 'auth0|alice' });
@@ -155,161 +78,98 @@ beforeEach(() => {
 
 describe('POST .../reindex', () => {
   it('starts a fresh run and enqueues the first link', async () => {
-    const db = fakeDb([]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith();
 
     const response = await POST(reqOf({ kind: 'lexical' }));
 
     expect(response.status).toBe(200);
-    expect(db.inserted).toHaveLength(1);
-    expect(db.inserted[0]).toMatchObject({ kind: 'lexical', status: 'queued' });
+    const runs = await store.knowledgeReindexRuns.listRecent(10);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({
+      kind: 'lexical',
+      status: 'queued',
+      requestedBy: 'auth0|alice',
+    });
     expect(mockEnqueue).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: expect.objectContaining({ runId: db.inserted[0]!.id, kind: 'lexical' }),
+        payload: expect.objectContaining({ runId: runs[0]!.id, kind: 'lexical' }),
       })
     );
   });
 
   it('refuses to start a second run of the same kind while one is active', async () => {
-    const db = fakeDb([
-      {
-        id: 'run-1',
-        kind: 'lexical',
-        status: 'running',
-        cursor: null,
-        last_error: null,
-        created_at: '',
-        started_at: null,
-        finished_at: null,
-      },
-    ]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith({ kind: 'lexical', status: 'running', cursor: null });
 
     const response = await POST(reqOf({ kind: 'lexical' }));
 
     expect(response.status).toBe(409);
-    expect(db.inserted).toHaveLength(0);
+    expect(await store.knowledgeReindexRuns.listRecent(10)).toHaveLength(1);
   });
 
   it('pauses an active run without touching its progress', async () => {
-    const db = fakeDb([
-      {
-        id: 'run-1',
-        kind: 'embed',
-        status: 'running',
-        cursor: 'row-50',
-        last_error: null,
-        created_at: '',
-        started_at: null,
-        finished_at: null,
-      },
-    ]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith({ kind: 'embed', status: 'running', cursor: 'row-50' });
 
-    const response = await POST(
-      reqOf({ kind: 'embed', action: 'pause', runId: 'run-1' }));
+    const response = await POST(reqOf({ kind: 'embed', action: 'pause', runId: RUN }));
 
     expect(response.status).toBe(200);
-    expect(db.rows[0]).toMatchObject({ status: 'paused', cursor: 'row-50' });
+    expect(await theRun(store, 'embed')).toMatchObject({ status: 'paused', cursor: 'row-50' });
   });
 
   it('refuses to pause a run that is not active', async () => {
-    const db = fakeDb([
-      {
-        id: 'run-1',
-        kind: 'embed',
-        status: 'done',
-        cursor: null,
-        last_error: null,
-        created_at: '',
-        started_at: null,
-        finished_at: null,
-      },
-    ]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith({ kind: 'embed', status: 'done', cursor: null });
 
-    const response = await POST(
-      reqOf({ kind: 'embed', action: 'pause', runId: 'run-1' }));
+    const response = await POST(reqOf({ kind: 'embed', action: 'pause', runId: RUN }));
 
     expect(response.status).toBe(409);
-    expect(db.rows[0]!.status).toBe('done');
+    expect((await theRun(store, 'embed'))?.status).toBe('done');
   });
 
   it('resumes a failed run from its stored cursor instead of starting fresh', async () => {
-    const db = fakeDb([
-      {
-        id: 'run-1',
-        kind: 'embed',
-        status: 'failed',
-        cursor: 'row-3328',
-        last_error: 'embeddings endpoint returned 500',
-        created_at: '',
-        started_at: null,
-        finished_at: '2026-01-01T00:00:00.000Z',
-      },
-    ]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith({
+      kind: 'embed',
+      status: 'failed',
+      cursor: 'row-3328',
+      last_error: 'embeddings endpoint returned 500',
+      finished_at: new Date('2026-01-01T00:00:00.000Z'),
+    });
 
-    const response = await POST(
-      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }));
+    const response = await POST(reqOf({ kind: 'embed', action: 'resume', runId: RUN }));
 
     expect(response.status).toBe(200);
-    expect(db.rows[0]).toMatchObject({ status: 'queued', last_error: null, finished_at: null });
+    expect(await theRun(store, 'embed')).toMatchObject({
+      status: 'queued',
+      lastError: null,
+      finishedAt: null,
+    });
     // No second row — resume reuses the same run, it does not start a new one.
-    expect(db.inserted).toHaveLength(0);
+    expect(await store.knowledgeReindexRuns.listRecent(10)).toHaveLength(1);
     expect(mockEnqueue).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: expect.objectContaining({ runId: 'run-1', kind: 'embed', cursor: 'row-3328' }),
+        payload: expect.objectContaining({ runId: RUN, kind: 'embed', cursor: 'row-3328' }),
       })
     );
   });
 
   it('resumes a paused run the same way', async () => {
-    const db = fakeDb([
-      {
-        id: 'run-1',
-        kind: 'embed',
-        status: 'paused',
-        cursor: 'row-42',
-        last_error: null,
-        created_at: '',
-        started_at: null,
-        finished_at: null,
-      },
-    ]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith({ kind: 'embed', status: 'paused', cursor: 'row-42' });
 
-    const response = await POST(
-      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }));
+    const response = await POST(reqOf({ kind: 'embed', action: 'resume', runId: RUN }));
 
     expect(response.status).toBe(200);
-    expect(db.rows[0]!.status).toBe('queued');
+    expect((await theRun(store, 'embed'))?.status).toBe('queued');
   });
 
   it('refuses to resume a run that is active or already done', async () => {
-    const db = fakeDb([
-      {
-        id: 'run-1',
-        kind: 'embed',
-        status: 'done',
-        cursor: 'row-999',
-        last_error: null,
-        created_at: '',
-        started_at: null,
-        finished_at: null,
-      },
-    ]);
-    mockGetDatabase.mockReturnValue(db);
+    const store = await storeWith({ kind: 'embed', status: 'done', cursor: 'row-999' });
 
-    const response = await POST(
-      reqOf({ kind: 'embed', action: 'resume', runId: 'run-1' }));
+    const response = await POST(reqOf({ kind: 'embed', action: 'resume', runId: RUN }));
 
     expect(response.status).toBe(409);
-    expect(db.rows[0]!.status).toBe('done');
+    expect((await theRun(store, 'embed'))?.status).toBe('done');
   });
 
   it('requires runId for pause and resume', async () => {
-    mockGetDatabase.mockReturnValue(fakeDb([]));
+    await storeWith();
     const pause = await POST(reqOf({ kind: 'embed', action: 'pause' }));
     expect(pause.status).toBe(400);
     const resume = await POST(reqOf({ kind: 'embed', action: 'resume' }));

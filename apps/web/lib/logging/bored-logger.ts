@@ -13,10 +13,7 @@
  */
 
 import { createLogger, type Logger } from '@campfhir/bored-logs';
-import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
-
-import { Kysely, PostgresDialect } from 'kysely';
-import type { Pool } from 'pg';
+import { getDataStore } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -24,25 +21,19 @@ import type { Result } from '@campfhir/safe-functions/types';
 let instance: Logger | null = null;
 
 /**
- * Initialize the application logger with PostgreSQL backend.
- * Must be called once at startup with the existing database pool.
+ * Initialize the application logger, writing to the log tables through the
+ * data store (bored-logs' PostgresAdapter on Postgres). Call once at startup.
  */
-export function initializeLogger(pool: Pool): Logger {
+export function initializeLogger(): Logger {
   if (instance) return instance;
-
-  // Create Kysely instance from the pg pool
-  const db = new Kysely({
-    dialect: new PostgresDialect({ pool }),
-  });
 
   instance = createLogger({
     level: 'debug',
     application: 'renkei',
   });
 
-  // Add PostgresAdapter with bored-logs' default table schema
-  const adapter = new PostgresAdapter({ db });
-  instance.addAdapter(adapter);
+  // bored-logs' default table schema, at the adapter's default level.
+  instance.addAdapter(getDataStore().activityLogs.writer());
 
   return instance;
 }

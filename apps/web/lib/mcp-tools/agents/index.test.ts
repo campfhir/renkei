@@ -6,8 +6,7 @@
  * knowledge operations report per-entry results.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
+jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
 jest.mock('@/lib/agents/store', () => ({ listAgents: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({
   resolveAgentAccess: jest.fn(),
@@ -103,7 +102,9 @@ import { registerAgentTools } from './index';
 import type { MCPToolContext } from '../common';
 import { INSTRUCTION_SECTIONS } from '@renkei/agents';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const { getDataStore: mockGetDataStore } = jest.requireMock<{
+  getDataStore: jest.Mock;
+}>('@renkei/db');
 const storeMock = jest.requireMock<{ listAgents: jest.Mock }>('@/lib/agents/store');
 const accessGrantsMock = jest.requireMock<{
   resolveAgentAccess: jest.Mock;
@@ -184,17 +185,25 @@ function registerAll(context: Partial<MCPToolContext>): Map<string, Handler> {
   return handlers;
 }
 
-/** A db whose select chains resolve to the given rows/row. */
-function stubDb(options: { rows?: unknown[]; row?: unknown } = {}): void {
-  const chain = {
-    selectFrom: () => chain,
-    innerJoin: () => chain,
-    select: () => chain,
-    where: () => chain,
-    execute: async () => options.rows ?? [],
-    executeTakeFirst: async () => options.row,
-  };
-  mockGetDatabase.mockReturnValue({ ok: true, val: chain });
+/**
+ * The data store the tools read through: `rows` are the agents chained
+ * after the one asked about, `row` the run a run id resolves to.
+ */
+function stubDb(
+  options: {
+    rows?: { id: string; name: string }[];
+    row?: { agent_id: string; trigger_kind?: string };
+  } = {}
+): void {
+  const { row } = options;
+  mockGetDataStore.mockReturnValue({
+    agents: { listChainedAfter: async () => options.rows ?? [] },
+    agentRuns: {
+      findRunAgent: async (runId: string) => (row ? { id: runId, agentId: row.agent_id } : null),
+      findRunOrigin: async () =>
+        row ? { agentId: row.agent_id, triggerKind: row.trigger_kind ?? 'manual' } : null,
+    },
+  });
 }
 
 const AGENT = {
@@ -329,7 +338,6 @@ test('agent_create without confirm is a dry run that persists nothing', async ()
   expect(result.isError).toBeUndefined();
   expect(result.content[0]?.text).toContain('Nothing was saved');
   expect(saveMock.saveAgent).toHaveBeenCalledWith(
-    expect.anything(),
     'auth0|alice',
     expect.objectContaining({ draft: expect.objectContaining({ enabled: false }) }),
     expect.objectContaining({ dryRun: true })
@@ -354,7 +362,6 @@ test('agent_create with confirm persists disabled and reports the id', async () 
   expect(result.content[0]?.text).toContain('agent-new');
   expect(result.content[0]?.text).toContain('DISABLED');
   expect(saveMock.saveAgent).toHaveBeenCalledWith(
-    expect.anything(),
     'auth0|alice',
     expect.anything(),
     expect.objectContaining({ dryRun: false })
@@ -377,7 +384,6 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
     confirm: true,
   });
   expect(saveMock.saveAgent).toHaveBeenLastCalledWith(
-    expect.anything(),
     'auth0|alice',
     expect.objectContaining({ draft: expect.objectContaining({ enabled: true }) }),
     expect.objectContaining({ agentId: 'agent-1' })
@@ -391,7 +397,6 @@ test('agent_update keeps an already-enabled agent on, unless keepEnabled:false',
     confirm: true,
   });
   expect(saveMock.saveAgent).toHaveBeenLastCalledWith(
-    expect.anything(),
     'auth0|alice',
     expect.objectContaining({ draft: expect.objectContaining({ enabled: false }) }),
     expect.anything()
@@ -483,7 +488,6 @@ test('agent_knowledge_update carries omitted fields over from the stored note', 
   });
   expect(result.isError).toBeUndefined();
   expect(notesMock.updateAgentNote).toHaveBeenCalledWith(
-    expect.anything(),
     expect.objectContaining({
       title: 'Old title',
       content: 'New content',
@@ -887,7 +891,7 @@ describe('a waiting run says what it is waiting on', () => {
   it('annotates the waiting run in agent_runs_list', async () => {
     // "waiting" alone reads as stuck. The answer is a decision the caller
     // reading this line can make.
-    stubDb({ row: { id: 'agent-1' } });
+    stubDb();
     accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
     runsMock.listRunsForOwner.mockResolvedValue([
       {
@@ -912,7 +916,7 @@ describe('a waiting run says what it is waiting on', () => {
   });
 
   it('spends no query on approvals when nothing is waiting', async () => {
-    stubDb({ row: { id: 'agent-1' } });
+    stubDb();
     accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
     runsMock.listRunsForOwner.mockResolvedValue([
       {
@@ -936,7 +940,7 @@ describe('a waiting run says what it is waiting on', () => {
 
 describe('agent_memory_forget', () => {
   beforeEach(() => {
-    stubDb({ row: { id: 'agent-1' } });
+    stubDb();
     accessGrantsMock.resolveAgentAccess.mockResolvedValue(ownerAccess(AGENT));
   });
 
@@ -970,7 +974,7 @@ describe('agent_memory_forget', () => {
       entryIds: ['mem-1', 'mem-9'],
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith('agent-1', {
       kind: 'entries',
       entryIds: ['mem-1', 'mem-9'],
     });
@@ -1017,7 +1021,7 @@ describe('agent_memory_forget', () => {
       confirm: true,
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith('agent-1', {
       kind: 'all',
     });
     expect(result.content[0]?.text).toContain('12 entries and the rolling summary forgotten');
@@ -1072,7 +1076,7 @@ describe('agent_memory_forget', () => {
       summary: true,
     });
     expect(result.isError).toBeUndefined();
-    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith(expect.anything(), 'agent-1', {
+    expect(memoryMock.forgetAgentMemory).toHaveBeenCalledWith('agent-1', {
       kind: 'summary',
     });
     expect(result.content[0]?.text).toContain('Rolling summary cleared.');
@@ -1114,7 +1118,6 @@ describe('agent_run_now', () => {
     // Recorded as the manual run it is, with the state a scheduled run gets
     // so trigger.scheduledFor binds the same way.
     expect(runNowMock.createAgentRun).toHaveBeenCalledWith(
-      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         agentId: 'agent-1',
@@ -1275,7 +1278,6 @@ describe('agent_run_now', () => {
       expect(result.content[0]?.text).toContain('runId: run-7');
       expect(runNowMock.createAgentRun).toHaveBeenCalledWith(
         expect.anything(),
-        expect.anything(),
         expect.objectContaining({
           agentId: 'agent-1',
           triggerId: null,
@@ -1415,7 +1417,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
     await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
 
     expect(runsMock.listRunsForOwner).toHaveBeenCalledWith(
-      expect.anything(),
       'auth0|owner',
       'agent-1',
       expect.anything()
@@ -1439,7 +1440,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
     });
 
     expect(saveMock.saveAgent).toHaveBeenCalledWith(
-      expect.anything(),
       // The actor in the audit trail is still the caller, not the owner.
       'auth0|alice',
       expect.anything(),
@@ -1482,7 +1482,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
 
     expect(result.isError).toBeUndefined();
     expect(runs.resumeAgentRun).toHaveBeenCalledWith(
-      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         agentId: 'agent-1',
@@ -1529,7 +1528,6 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
 
     expect(result.isError).toBeUndefined();
     expect(cancelMock.requestRunCancellation).toHaveBeenCalledWith(
-      expect.anything(),
       expect.anything(),
       expect.objectContaining({
         agentId: 'agent-1',
@@ -1586,10 +1584,7 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     const result = await handlers.get('agent_runs_list')!({ agentId: 'agent-1' });
 
     const text = result.content[0]?.text ?? '';
-    expect(usageMock.getTokenUsageByRun).toHaveBeenCalledWith(expect.anything(), [
-      'run-1',
-      'run-2',
-    ]);
+    expect(usageMock.getTokenUsageByRun).toHaveBeenCalledWith(['run-1', 'run-2']);
     expect(text).toContain(
       '  runId: run-1\n  tokens: 12,400 in (3,100 cached) · 900 out · 3 model calls'
     );
@@ -1652,12 +1647,8 @@ describe("token usage — the dashboards' numbers, over MCP", () => {
     const result = await handlers.get('agent_usage_get')!({ agentId: 'agent-1', period: 'week' });
 
     expect(result.isError).toBeUndefined();
-    expect(accessGrantsMock.resolveAgentAccess).toHaveBeenCalledWith(
-      expect.anything(),
-      'auth0|alice',
-      'agent-1'
-    );
-    expect(usageMock.getAgentToolUsage).toHaveBeenCalledWith(expect.anything(), 'agent-1', 30);
+    expect(accessGrantsMock.resolveAgentAccess).toHaveBeenCalledWith('auth0|alice', 'agent-1');
+    expect(usageMock.getAgentToolUsage).toHaveBeenCalledWith('agent-1', 30);
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('Usage of "Triage" (agentId: agent-1)');
     expect(text).toContain('- This week: 5,000 in (1,000 cached) · 400 out');

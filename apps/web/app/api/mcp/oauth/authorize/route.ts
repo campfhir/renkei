@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
-import { getDatabase } from '@renkei/db';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ConsentRequestRecord } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest, type Session } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
@@ -62,15 +60,8 @@ function redirectWithError(
   return NextResponse.redirect(url.toString(), 303);
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
-  }
-  const db = dbResult.val;
+export async function GET(request: NextRequest): Promise<NextResponse> {
+  const store = getDataStore().oauthConsents;
 
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -93,11 +84,7 @@ export async function GET(
       return oauthError(400, 'invalid_request', 'state is too long');
     }
 
-    const client = await db
-      .selectFrom('oauth_clients')
-      .selectAll()
-      .where('client_id', '=', clientId)
-      .executeTakeFirst();
+    const client = await store.getClient(clientId);
     if (!client) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
     }
@@ -105,7 +92,7 @@ export async function GET(
     // Nothing is redirected anywhere until the redirect URI is known to be
     // the client's own: an error sent to an unverified URI is itself the
     // open redirect this flow exists to avoid.
-    if (!redirectUriMatches(client.redirect_uris, redirectUri)) {
+    if (!redirectUriMatches(client.redirectUris, redirectUri)) {
       return oauthError(400, 'invalid_request', 'redirect_uri is not registered for this client');
     }
 
@@ -142,27 +129,21 @@ export async function GET(
 
     // Abandoned consent pages leave rows behind; sweep them on the
     // way past rather than carrying a scheduled job for a few bytes.
-    await db
-      .deleteFrom('oauth_consent_requests')
-      .where('expires_at', '<', new Date())
-      .execute();
+    await store.sweepExpired(new Date());
 
     const requestId = randomUUID();
-    await db
-      .insertInto('oauth_consent_requests')
-      .values({
-        id: requestId,
-        client_id: clientId,
-        session_id: session.id,
-        subject: session.subject,
-        redirect_uri: redirectUri,
-        state,
-        scope: scope || 'openid profile email',
-        code_challenge: codeChallenge!,
-        code_challenge_method: codeChallengeMethod!,
-        expires_at: new Date(Date.now() + CONSENT_REQUEST_TTL_MS),
-      })
-      .execute();
+    await store.createRequest({
+      id: requestId,
+      clientId,
+      sessionId: session.id,
+      subject: session.subject,
+      redirectUri,
+      state,
+      scope: scope || 'openid profile email',
+      codeChallenge: codeChallenge!,
+      codeChallengeMethod: codeChallengeMethod!,
+      expiresAt: new Date(Date.now() + CONSENT_REQUEST_TTL_MS),
+    });
 
     const consentUrl = new URL('/oauth/consent', originResult.val);
     consentUrl.searchParams.set('request', requestId);
@@ -188,10 +169,7 @@ export function submittedFromThisOrigin(request: NextRequest, ourOrigin: string)
   return request.headers.get('sec-fetch-site') === 'same-origin';
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const verdict = checkInboundLimit('oauth/consent', request, POST_LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
@@ -223,11 +201,7 @@ export async function POST(
     return oauthError(400, 'invalid_request', 'decision must be allow or deny');
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
-  }
-  const db = dbResult.val;
+  const store = getDataStore().oauthConsents;
 
   try {
     const session = await getSessionFromRequest(request);
@@ -237,12 +211,8 @@ export async function POST(
 
     // Spent on the first answer, whatever it is: a second POST with the same
     // id — a double click, a replay — finds nothing.
-    const pending = await db
-      .deleteFrom('oauth_consent_requests')
-      .where('id', '=', requestId)
-      .returningAll()
-      .executeTakeFirst();
-    if (!pending || pending.expires_at < new Date()) {
+    const pending = await store.takeRequest(requestId);
+    if (!pending || pending.expiresAt < new Date()) {
       return oauthError(
         400,
         'invalid_request',
@@ -252,38 +222,38 @@ export async function POST(
 
     // The binding that makes the page mean something: the browser that was
     // shown the client's name is the only one whose answer counts.
-    if (pending.session_id !== session.id || pending.subject !== session.subject) {
+    if (pending.sessionId !== session.id || pending.subject !== session.subject) {
       return oauthError(403, 'invalid_request', 'This request belongs to another session');
     }
 
-    const redirectTarget = describeRedirectTarget(pending.redirect_uri);
+    const redirectTarget = describeRedirectTarget(pending.redirectUri);
 
     if (decision === 'deny') {
       recordAuditEvent({
         actorSubject: session.subject,
         action: 'oauth.consent_denied',
         targetKind: 'oauth_client',
-        targetLabel: pending.client_id,
-        details: { clientId: pending.client_id, redirectTarget },
+        targetLabel: pending.clientId,
+        details: { clientId: pending.clientId, redirectTarget },
       });
       return redirectWithError(
-        pending.redirect_uri,
+        pending.redirectUri,
         pending.state,
         'access_denied',
         'The person declined to authorize this application'
       );
     }
 
-    const code = await mintAuthorizationCode(db, pending, session);
+    const code = await mintAuthorizationCode(pending, session);
     recordAuditEvent({
       actorSubject: session.subject,
       action: 'oauth.consent_granted',
       targetKind: 'oauth_client',
-      targetLabel: pending.client_id,
-      details: { clientId: pending.client_id, redirectTarget, scope: pending.scope },
+      targetLabel: pending.clientId,
+      details: { clientId: pending.clientId, redirectTarget, scope: pending.scope },
     });
 
-    const callbackUrl = new URL(pending.redirect_uri);
+    const callbackUrl = new URL(pending.redirectUri);
     callbackUrl.searchParams.set('code', code);
     callbackUrl.searchParams.set('state', pending.state);
     return NextResponse.redirect(callbackUrl.toString(), 303);
@@ -307,14 +277,7 @@ export async function POST(
  * same flow to pick it up.
  */
 async function mintAuthorizationCode(
-  db: Kysely<DB>,
-  pending: {
-    client_id: string;
-    redirect_uri: string;
-    scope: string | null;
-    code_challenge: string;
-    code_challenge_method: string;
-  },
+  pending: ConsentRequestRecord,
   session: Session
 ): Promise<string> {
   const code = `code_${randomUUID()}`;
@@ -322,19 +285,16 @@ async function mintAuthorizationCode(
   const settings = settingsResult.ok ? settingsResult.val : DEFAULT_ORG_SETTINGS;
   const expiresAt = new Date(Date.now() + settings.authorizationCodeTtlSeconds * 1000);
 
-  await db
-    .insertInto('oauth_authorization_codes')
-    .values({
-      code,
-      client_id: pending.client_id,
-      subject: session.subject,
-      scope: pending.scope || 'openid profile email',
-      redirect_uri: pending.redirect_uri,
-      code_challenge: pending.code_challenge,
-      code_challenge_method: pending.code_challenge_method,
-      roles: session.roles,
-      expires_at: expiresAt,
-    })
-    .execute();
+  await getDataStore().oauthConsents.insertAuthorizationCode({
+    code,
+    clientId: pending.clientId,
+    subject: session.subject,
+    scope: pending.scope || 'openid profile email',
+    redirectUri: pending.redirectUri,
+    codeChallenge: pending.codeChallenge,
+    codeChallengeMethod: pending.codeChallengeMethod,
+    roles: session.roles,
+    expiresAt,
+  });
   return code;
 }

@@ -11,106 +11,47 @@
  * A GitHub project, to exercise the Actions card path (Bitbucket's
  * richer Pipelines is already covered by code.spec.ts's fixtures).
  *
- * Own tenant fixtures under the shared e2e/seed.ts tenant, with
- * project/chat ids distinct from code.spec.ts's and
- * branch-switcher.spec.ts's own so the specs never collide running
- * side by side.
+ * The project is the test's own person's, who connects GitHub through the
+ * real connect flow (e2e/support/code-host.ts: the in-memory app's fake
+ * OAuth answers the consent, the exchange and the identity read). The no-access case is
+ * the same kind of project shared with a second person who never
+ * connected GitHub.
  */
 
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { createPerson, signIn } from './support/person';
+import {
+  connectCodeHost,
+  createChat,
+  createCodeProject,
+  prepareCodeHost,
+} from './support/code-host';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `66666666-6666-4666-8666-6666666666${digit}1`,
-    chatId: `66666666-6666-4666-8666-6666666666${digit}2`,
-    projectName: `Pulls & commits project (${digit})`,
-    chatTitle: `Ship the fix (${digit})`,
-  };
+interface Ids {
+  projectId: string;
+  chatId: string;
+  projectName: string;
+  chatTitle: string;
 }
 
-/**
- * A project whose owner has no GitHub grant — the e2e tenant's own
- * default state (only a Jira grant is seeded). No page.route mocking
- * needed: resolveGitHubAccess (lib/mcp-tools/github/client.ts) returns
- * its "not connected" string before ever reaching GitHub, so this
- * exercises the real failure path with no vendor call in it at all.
- */
-function noAccessIdsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    projectId: `66666666-6666-4666-8666-6666666667${digit}1`,
-    projectName: `No GitHub access project (${digit})`,
-  };
-}
-
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-async function seedFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', 'acme/site', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, project_id, title, last_message_at)\n       VALUES ($1, $2, $3, $4, NOW())`,
-      [ids.chatId, E2E_SUBJECT, ids.projectId, ids.chatTitle]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-async function cleanFixtures(ids: ReturnType<typeof idsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chats WHERE id = $1', [ids.chatId]);
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
-}
-
-async function seedNoAccessFixture(ids: ReturnType<typeof noAccessIdsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch)\n       VALUES ($1, $2, $3, 'code', 'github', 'acme/no-access-repo', 'main')`,
-      [ids.projectId, E2E_SUBJECT, ids.projectName]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-async function cleanNoAccessFixture(ids: ReturnType<typeof noAccessIdsFor>): Promise<void> {
-  const client = await db();
-  try {
-    await client.query('DELETE FROM chat_projects WHERE id = $1', [ids.projectId]);
-  } finally {
-    await client.end();
-  }
+/** A GitHub project of the person's own, with a chat in it. */
+async function stage(page: Page, testInfo: TestInfo, repository: string): Promise<Ids> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const projectName = `Pulls & commits project (${tag})`;
+  const chatTitle = `Ship the fix (${tag})`;
+  const projectId = await createCodeProject(page.request, {
+    provider: 'github',
+    name: projectName,
+    repository,
+    branch: 'main',
+  });
+  const chatId = await createChat(page.request, { projectId, title: chatTitle });
+  return { projectId, chatId, projectName, chatTitle };
 }
 
 const MOST_RECENT_PR = {
@@ -141,7 +82,7 @@ const LAST_RUN = {
   startedAt: '2026-09-01T00:00:00.000Z',
 };
 
-async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<void> {
+async function mockRoutes(page: Page, ids: Ids): Promise<void> {
   await page.route(`**/api/code/projects/${ids.projectId}/pulls**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.searchParams.get('view') === 'summary') {
@@ -158,7 +99,12 @@ async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<v
       body: JSON.stringify({
         pullRequests: [
           MOST_RECENT_PR,
-          { ...MOST_RECENT_PR, number: 41, title: 'Earlier fix', url: 'https://github.com/acme/site/pull/41' },
+          {
+            ...MOST_RECENT_PR,
+            number: 41,
+            title: 'Earlier fix',
+            url: 'https://github.com/acme/site/pull/41',
+          },
         ],
         hasMore: false,
       }),
@@ -208,7 +154,13 @@ async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<v
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        pullRequest: { number: 42, title: 'Fix the timeout', state: 'open', host: 'github', url: MOST_RECENT_PR.url },
+        pullRequest: {
+          number: 42,
+          title: 'Fix the timeout',
+          state: 'open',
+          host: 'github',
+          url: MOST_RECENT_PR.url,
+        },
       }),
     });
   });
@@ -216,26 +168,30 @@ async function mockRoutes(page: Page, ids: ReturnType<typeof idsFor>): Promise<v
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
-    path: path.join(import.meta.dirname, '..', 'test-results', 'screens', testInfo.project.name, name),
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      name
+    ),
     fullPage: false,
   });
 }
 
 test.describe('project pulls, commits and actions', () => {
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    await seedFixtures(idsFor(testInfo.project.name));
-  });
-  // eslint-disable-next-line no-empty-pattern
-  test.afterEach(async ({}, testInfo) => {
-    await cleanFixtures(idsFor(testInfo.project.name));
+  test.beforeEach(async ({ page, request, person: _person }) => {
+    await prepareCodeHost(request);
+    await connectCodeHost(page, 'github');
   });
 
   test('cards on the project screen, a chat row PR badge, and the full pages', async ({
     page,
   }, testInfo) => {
-    const ids = idsFor(testInfo.project.name);
-    const mobile = testInfo.project.name === 'mobile';
+    const ids = await stage(page, testInfo, 'acme/site');
+    // The phone pass runs once, on a resized viewport.
+    const mobile = testInfo.project.name === 'desktop-light';
     await mockRoutes(page, ids);
     const main = page.getByRole('main');
 
@@ -295,31 +251,45 @@ test.describe('project pulls, commits and actions', () => {
 
   test('the cards stay visible with the actual reason, not hidden, on no GitHub access', async ({
     page,
+    browser,
+    request,
   }, testInfo) => {
-    const ids = noAccessIdsFor(testInfo.project.name);
-    await seedNoAccessFixture(ids);
+    // The project is shared with someone who never connected GitHub: the
+    // cards read the repository with the VIEWER's own grant, which is not
+    // there, so nothing reaches GitHub at all.
+    const ids = await stage(page, testInfo, 'acme/no-access-repo');
+    const viewer = await createPerson(request, { displayName: 'No GitHub viewer' });
+    const shared = await page.request.post(`/api/chat/projects/${ids.projectId}/grants`, {
+      data: { granteeSubject: viewer.subject, role: 'viewer' },
+    });
+    expect(shared.ok(), await shared.text()).toBe(true);
+    const context = await browser.newContext();
+    await signIn(context, viewer);
+    const viewerPage = await context.newPage();
     try {
-      const main = page.getByRole('main');
-      await page.goto(`/code/${ids.projectId}`);
-      await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
+      const main = viewerPage.getByRole('main');
+      await viewerPage.goto(`/code/${ids.projectId}`);
+      await expect(
+        viewerPage.getByRole('heading', { level: 1, name: ids.projectName })
+      ).toBeVisible();
 
       const pulls = main.locator('section', {
-        has: page.getByRole('heading', { level: 2, name: 'Pull requests' }),
+        has: viewerPage.getByRole('heading', { level: 2, name: 'Pull requests' }),
       });
       const commits = main.locator('section', {
-        has: page.getByRole('heading', { level: 2, name: 'Commits' }),
+        has: viewerPage.getByRole('heading', { level: 2, name: 'Commits' }),
       });
       const actions = main.locator('section', {
-        has: page.getByRole('heading', { level: 2, name: 'Actions' }),
+        has: viewerPage.getByRole('heading', { level: 2, name: 'Actions' }),
       });
       // The cards stay on the page — not hidden entirely — and each
       // names the actual reason a person can act on.
       await expect(pulls.getByRole('alert')).toContainText('GitHub is not connected');
       await expect(commits.getByRole('alert')).toContainText('GitHub is not connected');
       await expect(actions.getByRole('alert')).toContainText('GitHub is not connected');
-      await shot(page, testInfo, 'project-pulls-commits-no-access.png');
+      await shot(viewerPage, testInfo, 'project-pulls-commits-no-access.png');
     } finally {
-      await cleanNoAccessFixture(ids);
+      await context.close();
     }
   });
 });

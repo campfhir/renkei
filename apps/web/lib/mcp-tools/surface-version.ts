@@ -47,44 +47,21 @@
  * we are paying to avoid.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 /**
- * The newest relevant `updated_at`, as an opaque string.
+ * The newest relevant `updated_at`, as an opaque string
+ * (`toolSurface.version` in the data store reads it, one round trip).
  *
- * One round trip. Returns `'unknown'` if the query fails, which is
- * deliberately a CONSTANT rather than a timestamp: a transient database
- * error should not mint a fresh key on every request and fill the cache with
- * single-use handlers. It means "reuse whatever is cached", and the next
- * successful request corrects it.
+ * Returns `'unknown'` if the read fails, which is deliberately a CONSTANT
+ * rather than a timestamp: a transient database error should not mint a
+ * fresh key on every request and fill the cache with single-use handlers.
+ * It means "reuse whatever is cached", and the next successful request
+ * corrects it. `'empty'` is the constant for nothing stamped yet.
  */
-export async function toolSurfaceVersion(db: Kysely<DB>, subject: string): Promise<string> {
+export async function toolSurfaceVersion(subject: string): Promise<string> {
   try {
-    const row = await sql<{ version: string | null }>`
-      SELECT to_char(MAX(t), 'YYYYMMDDHH24MISS.US') AS version FROM (
-        SELECT MAX(updated_at) AS t FROM provider_grants
-          WHERE subject = ${subject}
-        UNION ALL
-        SELECT MAX(updated_at) FROM settings
-        UNION ALL
-        SELECT MAX(updated_at) FROM connector_configs
-        UNION ALL
-        SELECT MAX(updated_at) FROM file_shares
-        UNION ALL
-        SELECT MAX(updated_at) FROM file_share_connections
-          WHERE subject = ${subject}
-        UNION ALL
-        SELECT MAX(updated_at) FROM identities
-          WHERE subject = ${subject}
-        UNION ALL
-        SELECT MAX(updated_at) FROM mcp_servers
-        UNION ALL
-        SELECT MAX(fetched_at) FROM mcp_user_tool_lists
-          WHERE subject = ${subject}
-      ) AS sources
-    `.execute(db);
-    return row.rows[0]?.version ?? 'empty';
+    return (await getDataStore().toolSurface.version(subject)) ?? 'empty';
   } catch {
     return 'unknown';
   }

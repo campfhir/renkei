@@ -3,34 +3,46 @@
  * composer was seen bobbing while a reply played. Chromium's fake
  * microphone cannot be fed a file here, so this is the part that needs no
  * microphone: press Listen, and prove the composer holds still while the
- * bars move. Same fixtures and the same measurement as voice.spec.ts.
+ * bars move. Same staging and the same measurement as voice.spec.ts
+ * (e2e/support/voice.ts).
+ *
+ * It needs WebKit, which the browser suite's projects do not install: it
+ * runs only where `PLAYWRIGHT_WEBKIT=1` says WebKit is there, and is
+ * skipped otherwise.
  */
 
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
+import { randomUUID } from 'node:crypto';
+import { test, expect } from './fixtures';
+import { removeModel } from './support/stub-model';
 import {
-  CHAT_ID,
   CHAT_TITLE,
   expectComposerStillWhileReading,
   mockVendor,
-  seedVoice,
-} from './voice-fixtures';
+  stageVoice,
+  type VoiceChat,
+} from './support/voice';
 
-test.use({ browserName: 'webkit' });
+// The memory config's launch options name a Chromium binary; WebKit takes none.
+test.use({
+  roles: ['renkei-user', 'renkei-operator'],
+  browserName: 'webkit',
+  launchOptions: {},
+});
+test.skip(!process.env.PLAYWRIGHT_WEBKIT, 'WebKit is not installed for this suite.');
 
-test.beforeAll(async () => {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await seedVoice(client);
-  } finally {
-    await client.end();
-  }
+let voice: VoiceChat;
+
+test.beforeEach(async ({ page, person: _person }, testInfo) => {
+  voice = await stageVoice(page.request, `${testInfo.project.name}-${randomUUID().slice(0, 6)}`);
+});
+
+test.afterEach(async ({ page }) => {
+  await removeModel(page.request, voice.modelId);
 });
 
 test('webkit: the composer holds still while a reply is read aloud', async ({ page }) => {
   await mockVendor(page);
-  await page.goto(`/chat/${CHAT_ID}`);
+  await page.goto(`/chat/${voice.chatId}`);
   await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
   await expectComposerStillWhileReading(page);
 });

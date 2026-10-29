@@ -5,8 +5,7 @@
  * a cursor that restarts an enumeration instead of resuming it.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-jest.mock('kysely', () => ({ sql: () => 'sql-fragment' }));
+// The data store is the real memory one, registered per test below.
 jest.mock('@renkei/knowledge', () => ({ readObjectMetadataBatch: jest.fn() }));
 jest.mock('../enqueue', () => ({ enqueueKnowledgeEvent: jest.fn() }));
 jest.mock('@renkei/connector-microsoft', () => ({
@@ -16,6 +15,12 @@ jest.mock('@renkei/connector-microsoft', () => ({
   SHAREPOINT_KNOWLEDGE_PROVIDER: 'sharepoint',
 }));
 
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { runDriveWatchSync, type DriveWatchRow } from './sharepoint-watch';
 import type { MicrosoftAccess } from './microsoft-access';
 import { authedFetch } from '@renkei/delegate-client';
@@ -23,7 +28,39 @@ import { authedFetch } from '@renkei/delegate-client';
 /** A grant fetcher stand-in: the code under test only passes it through. */
 const auth = authedFetch(async () => new Response(), 'microsoft:tenant-1:acct-1');
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+const WATCH = '00000000-0000-4000-8000-000000000001';
+
+/** The memory store the round writes its cursor and counters back to. */
+let store: MemoryDataStore;
+
+/** The watch row's poller state after the round. */
+async function written(id: string) {
+  return store.contentWatches.getSyncState(id);
+}
+
+afterEach(() => {
+  resetDataStore();
+});
+
+beforeEach(async () => {
+  store = createMemoryDataStore();
+  registerDataStore(store);
+  await store.seed({
+    content_watches: [
+      {
+        id: WATCH,
+        subject: 'alice',
+        account_id: 'acct-1',
+        provider: 'sharepoint',
+        scope_type: 'drive',
+        scope_key: 'drive-1',
+        cursor: 'stored-cursor',
+        total_items: 10,
+        last_error: 'earlier failure',
+      },
+    ],
+  });
+});
 const { runDeltaRound: mockRunDeltaRound } = jest.requireMock<{ runDeltaRound: jest.Mock }>(
   '@renkei/connector-microsoft'
 );
@@ -34,23 +71,8 @@ const { enqueueKnowledgeEvent: mockEnqueue } = jest.requireMock<{
   enqueueKnowledgeEvent: jest.Mock;
 }>('../enqueue');
 
-/** What the sync wrote back to content_watches. */
-let written: Record<string, unknown> | null = null;
-
 beforeEach(() => {
   jest.clearAllMocks();
-  written = null;
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: {
-      updateTable: () => ({
-        set: (values: Record<string, unknown>) => {
-          written = values;
-          return { where: () => ({ execute: async () => [] }) };
-        },
-      }),
-    },
-  });
   mockReadMetadata.mockResolvedValue({ ok: true, val: new Map() });
 });
 
@@ -63,7 +85,7 @@ const access = (): MicrosoftAccess => ({
 });
 
 const row = (over: Partial<DriveWatchRow> = {}): DriveWatchRow => ({
-  id: 'watch-1',
+  id: WATCH,
   account_id: 'acct-1',
   scope_key: 'drive-1',
   scope_label: 'Engineering / Shared Documents',
@@ -199,7 +221,10 @@ describe('runDriveWatchSync', () => {
     const result = await runDriveWatchSync(access(), row());
 
     expect(result.cursor).toBe('https://graph/page-11');
-    expect(written).toMatchObject({ cursor: 'https://graph/page-11', sync_status: 'syncing' });
+    expect(await written(WATCH)).toMatchObject({
+      cursor: 'https://graph/page-11',
+      syncStatus: 'syncing',
+    });
   });
 
   it('drops the cursor on a 410 rather than treating it as an error', async () => {
@@ -213,7 +238,7 @@ describe('runDriveWatchSync', () => {
     const result = await runDriveWatchSync(access(), row());
 
     expect(result.cursor).toBeNull();
-    expect(written).toMatchObject({ cursor: null });
+    expect(await written(WATCH)).toMatchObject({ cursor: null, syncStatus: 'syncing' });
   });
 
   it('throws on a genuine delta failure so the sweep records it on the row', async () => {
@@ -264,11 +289,12 @@ describe('runDriveWatchSync', () => {
 
     // A crash before this point replays into idempotent enqueues; advancing
     // the cursor first would skip unprocessed items permanently.
-    expect(written).toMatchObject({
+    expect(await written(WATCH)).toMatchObject({
       cursor: 'https://graph/delta?token=next',
-      last_run_items: 1,
-      sync_status: 'idle',
-      last_error: null,
+      lastRunItems: 1,
+      totalItems: 11,
+      syncStatus: 'idle',
+      lastError: null,
     });
   });
 });

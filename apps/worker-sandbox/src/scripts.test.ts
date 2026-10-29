@@ -26,8 +26,6 @@ import { chmod, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import * as disk from './disk';
 import {
   NETWORK_ISOLATION_MODES,
@@ -94,7 +92,6 @@ beforeAll(async () => {
   await stage(REPORT_ID, 'report.csv', 'mrn,name,phone\n1001,Ada,415-0100\n1002,Grace,\n');
   await stage(LOOKUP_ID, 'report.csv', 'mrn,text_ok\n1001,Y\n1002,N\n');
   runner = new ScriptRunner({
-    db: {} as Kysely<DB>,
     runsRoot,
     python: python ?? 'python3',
     networkIsolation,
@@ -107,7 +104,6 @@ beforeAll(async () => {
 /** A runner like the suite's, in one isolation mode. */
 function runnerIn(mode: NetworkIsolation | null): ScriptRunner {
   return new ScriptRunner({
-    db: {} as Kysely<DB>,
     runsRoot,
     python: python ?? 'python3',
     networkIsolation: mode,
@@ -136,13 +132,13 @@ beforeEach(() => {
   jest.clearAllMocks();
   store.countFiles.mockResolvedValue(0);
   store.totalStagedBytes.mockResolvedValue(0);
-  store.getFile.mockImplementation(async (_db: unknown, target: typeof TARGET, id: string) =>
+  store.getFile.mockImplementation(async (target: typeof TARGET, id: string) =>
     target.subject === TARGET.subject ? staged.get(id) : undefined
   );
-  store.listFiles.mockImplementation(async (_db: unknown, target: typeof TARGET) =>
+  store.listFiles.mockImplementation(async (target: typeof TARGET) =>
     target.subject === TARGET.subject ? [...staged.values()].map((file) => ({ id: file.id })) : []
   );
-  store.insertFile.mockImplementation(async (_db: unknown, input: Record<string, unknown>) => ({
+  store.insertFile.mockImplementation(async (input: Record<string, unknown>) => ({
     id: `staged-${input.filename}`,
     filename: input.filename,
     contentType: input.contentType,
@@ -228,7 +224,7 @@ describe('a run', () => {
       expect(outcome.uidIsolated).toBe(canIsolateByUid());
       expect(outcome.networkIsolated).toBe(networkIsolated);
       // The staged bytes are the file the script wrote.
-      const storageKey = (store.insertFile.mock.calls[0]![1] as { storageKey: string }).storageKey;
+      const storageKey = (store.insertFile.mock.calls[0]![0] as { storageKey: string }).storageKey;
       const bytes = await disk.readFile(storageKey);
       expect(bytes?.toString('utf8')).toContain('1002,Grace,,N');
       // Nothing of the run is left behind.

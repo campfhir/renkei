@@ -7,8 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { InMemoryQueue } from '@renkei/queue';
 import type { AgentDefinition } from '@renkei/agents';
 import { createFinalizeHook } from './finalize';
@@ -19,113 +18,109 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('finalize hook', () => {
   jest.setTimeout(20_000);
 
-  // Acquired in beforeAll, not at describe-collection time: describe.skip still
-  // runs its callback to register tests, so acquiring the database here (when
-  // this suite is skipped for lack of DATABASE_URL) would throw at collection
-  // and fail the whole file instead of skipping it.
-  let db: Kysely<DB>;
-
+  // Every suite run seeds under its own owner and ids, so nothing needs
+  // deleting afterwards and a shared database never collides.
   const suiteId = randomUUID();
   const owner = `chain-owner-${suiteId.slice(0, 8)}`;
 
   const definition: AgentDefinition = { instructions: '## Goal\n\nReact to the email.', tools: [] };
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-  });
-
   afterAll(async () => {
-    await sql`DELETE FROM agent_runs WHERE owner_subject = ${owner}`.execute(db);
-    await sql`DELETE FROM agent_triggers WHERE agent_id IN (SELECT id FROM agents WHERE owner_subject = ${owner})`.execute(
-      db
-    );
-    await sql`DELETE FROM agents WHERE owner_subject = ${owner}`.execute(db);
-    await closeDatabase();
+    await closeDataStore();
   });
 
   async function seedAgent(name: string): Promise<string> {
     const agentId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: owner,
-        name: `${name}-${agentId.slice(0, 8)}`,
-        instructions: definition.instructions,
-        tools: JSON.stringify(definition.tools),
-        enabled: true,
-      })
-      .execute();
+    await getDataStore().agents.create({
+      id: agentId,
+      ownerSubject: owner,
+      name: `${name}-${agentId.slice(0, 8)}`,
+      instructions: definition.instructions,
+      tools: definition.tools,
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
     return agentId;
   }
 
-  async function chainTrigger(targetAgentId: string, callerAgentId: string): Promise<string> {
+  async function addTrigger(
+    agentId: string,
+    trigger: { kind: string; eventSource?: string; eventType?: string; config: unknown }
+  ): Promise<string> {
     const triggerId = randomUUID();
-    await db
-      .insertInto('agent_triggers')
-      .values({
-        id: triggerId,
-        agent_id: targetAgentId,
-        kind: 'agent',
-        config: JSON.stringify({ callerAgentId }),
-        enabled: true,
-      })
-      .execute();
+    await getDataStore().agents.applyTriggerChanges(agentId, {
+      update: [],
+      insert: [
+        {
+          id: triggerId,
+          kind: trigger.kind,
+          eventSource: trigger.eventSource ?? null,
+          eventType: trigger.eventType ?? null,
+          config: JSON.stringify(trigger.config),
+          enabled: true,
+          nextRunAt: null,
+        },
+      ],
+      remove: [],
+    });
     return triggerId;
   }
 
-  async function seedRun(agentId: string, lineage: string[]): Promise<string> {
+  const chainTrigger = (targetAgentId: string, callerAgentId: string): Promise<string> =>
+    addTrigger(targetAgentId, { kind: 'agent', config: { callerAgentId } });
+
+  /** A run created queued, then ended by its executor as succeeded. */
+  async function seedFinishedRun(run: {
+    agentId: string;
+    lineage: string[];
+    triggerId?: string;
+    triggerKind: string;
+    initialState?: Record<string, unknown>;
+  }): Promise<string> {
+    const runs = getDataStore().agentRuns;
     const runId = randomUUID();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id: runId,
-        agent_id: agentId,
-        owner_subject: owner,
-        trigger_kind: 'manual',
-        definition_snapshot: JSON.stringify(definition),
-        lineage: JSON.stringify(lineage),
-        depth: lineage.length,
-        status: 'succeeded',
-      })
-      .execute();
+    await runs.createQueued({
+      id: runId,
+      agentId: run.agentId,
+      ownerSubject: owner,
+      triggerId: run.triggerId ?? null,
+      triggerKind: run.triggerKind,
+      triggeredBySubject: null,
+      parentRunId: null,
+      lineage: run.lineage,
+      definitionSnapshot: definition,
+      llmModelId: null,
+      initialState: run.initialState ?? null,
+    });
+    await runs.finishExecution(runId, { status: 'succeeded', errorKind: null, error: null });
     return runId;
   }
 
+  const seedRun = (agentId: string, lineage: string[]): Promise<string> =>
+    seedFinishedRun({ agentId, lineage, triggerKind: 'manual' });
+
   /** A run started by a WebEx event trigger, thread coordinates in state. */
   async function seedWebexRun(agentId: string): Promise<string> {
-    const triggerId = randomUUID();
-    await db
-      .insertInto('agent_triggers')
-      .values({
-        id: triggerId,
-        agent_id: agentId,
-        kind: 'event',
-        event_source: 'webex',
-        event_type: 'message.received',
-        config: JSON.stringify({ match: {} }),
-        enabled: true,
-      })
-      .execute();
-    const runId = randomUUID();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id: runId,
-        agent_id: agentId,
-        owner_subject: owner,
-        trigger_id: triggerId,
-        trigger_kind: 'event',
-        definition_snapshot: JSON.stringify(definition),
-        lineage: JSON.stringify([]),
-        initial_state: JSON.stringify({ roomId: 'room-1', messageId: 'msg-1', text: 'hello' }),
-        status: 'succeeded',
-      })
-      .execute();
-    return runId;
+    const triggerId = await addTrigger(agentId, {
+      kind: 'event',
+      eventSource: 'webex',
+      eventType: 'message.received',
+      config: { match: {} },
+    });
+    return seedFinishedRun({
+      agentId,
+      lineage: [],
+      triggerId,
+      triggerKind: 'event',
+      initialState: { roomId: 'room-1', messageId: 'msg-1', text: 'hello' },
+    });
   }
+
+  const runsOf = (agentId: string) =>
+    getDataStore().agentRuns.list({ agentId, ownerSubject: owner, audience: 'owner', limit: 100 });
 
   const finalized = (
     runId: string,
@@ -151,25 +146,23 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(parentRunId, a, 'succeeded'));
 
-    const child = await db
-      .selectFrom('agent_runs')
-      .select(['agent_id', 'parent_run_id', 'lineage', 'depth', 'trigger_kind', 'initial_state'])
-      .where('agent_id', '=', b)
-      .executeTakeFirstOrThrow();
-    expect(child.parent_run_id).toBe(parentRunId);
-    expect(child.lineage).toEqual([a]);
-    expect(child.depth).toBe(1);
-    expect(child.trigger_kind).toBe('agent');
+    const childRuns = await runsOf(b);
+    expect(childRuns).toHaveLength(1);
+    const childId = childRuns[0].id;
+    const link = await getDataStore().agentRuns.findChainLink(childId);
+    expect(link?.parentRunId).toBe(parentRunId);
+    // The depth is the lineage's length; the store derives one from the other.
+    expect(link?.lineage).toEqual([a]);
+    expect(link?.triggerKind).toBe('agent');
+    const child = await getDataStore().agentRuns.findForExecution(childId);
+    const initialState = child?.initialState;
     const state: { parentSummary?: unknown } =
-      typeof child.initial_state === 'object' &&
-      child.initial_state !== null &&
-      !Array.isArray(child.initial_state)
-        ? child.initial_state
+      typeof initialState === 'object' && initialState !== null && !Array.isArray(initialState)
+        ? initialState
         : {};
     expect(String(state.parentSummary)).toContain('PROJ-42');
   });
@@ -184,24 +177,16 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(bRunId, b, 'succeeded'));
 
-    const aRuns = await db
-      .selectFrom('agent_runs')
-      .select('id')
-      .where('agent_id', '=', a)
-      .execute();
-    expect(aRuns).toHaveLength(0);
+    expect(await runsOf(a)).toHaveLength(0);
 
-    const trigger = await db
-      .selectFrom('agent_triggers')
-      .select('last_error')
-      .where('id', '=', backTrigger)
-      .executeTakeFirstOrThrow();
-    expect(trigger.last_error).toContain('already ran');
+    const trigger = (await getDataStore().agents.listTriggers(a)).find(
+      (row) => row.id === backTrigger
+    );
+    expect(trigger?.lastError).toContain('already ran');
   });
 
   it('never posts an automatic thread reply — answering the room is a STEP', async () => {
@@ -210,7 +195,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )({
@@ -226,7 +210,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(runId, agentId, 'failed'));
@@ -245,7 +228,6 @@ maybe('finalize hook', () => {
     const agentQueue = new InMemoryQueue();
     const eventsQueue = new InMemoryQueue();
     await createFinalizeHook(
-      db,
       agentQueue.producer,
       eventsQueue.producer
     )(finalized(runId, a, 'failed'));
@@ -253,11 +235,6 @@ maybe('finalize hook', () => {
     const event = await eventsQueue.consumer.claim();
     expect(event?.source).toBe('agents');
     expect(event?.type).toBe('run.failed');
-    const bRuns = await db
-      .selectFrom('agent_runs')
-      .select('id')
-      .where('agent_id', '=', b)
-      .execute();
-    expect(bRuns).toHaveLength(0);
+    expect(await runsOf(b)).toHaveLength(0);
   });
 });

@@ -39,6 +39,7 @@ import {
   renameArtifact,
   shareArtifact,
 } from './artifact-library';
+import { getDataStore } from '@renkei/db';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 
 const WINDOW_CHARS = 1_200;
@@ -121,9 +122,9 @@ export function scoreText(
 
 /** The files a search covers: the project's on-demand artifacts, then the chat's own files. */
 async function searchableFiles(context: LocalToolContext): Promise<AttachmentRow[]> {
-  const own = await listAttachments(context.db, { chatId: context.chatId });
+  const own = await listAttachments({ chatId: context.chatId });
   if (!context.projectId) return own;
-  const held = await listProjectArtifacts(context.db, context.projectId);
+  const held = await listProjectArtifacts(context.projectId);
   // "Always" artifacts are in the prompt already; searching them again adds nothing.
   return [
     ...held.filter((row) => row.mode !== 'always'),
@@ -150,9 +151,8 @@ export async function searchArtifacts(
     const cipher =
       row.keyKind === 'chat' && row.keyRef === context.chatId
         ? context.cipher
-        : ((await resolveArtifactAccess(context.db, context.subject, row, context.projectId))
-            ?.cipher ?? null);
-    const text = cipher ? await getAttachmentText(context.db, row.id, cipher) : null;
+        : ((await resolveArtifactAccess(context.subject, row, context.projectId))?.cipher ?? null);
+    const text = cipher ? await getAttachmentText(row.id, cipher) : null;
     if (!text || text.startsWith('[content unavailable')) {
       unreadable.push(row.filename);
       continue;
@@ -255,7 +255,7 @@ export function artifactAttachTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be attached.');
       if (!context.projectId) return errorResult('This chat is not in a project.');
       const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
-      const result = await attachToProject(context.db, {
+      const result = await attachToProject({
         actorSubject: context.subject,
         artifactId: id,
         projectId: context.projectId,
@@ -309,13 +309,9 @@ export function artifactShareTool(): LocalTool {
       const id = typeof input.attachmentId === 'string' ? input.attachmentId : '';
       const email = typeof input.email === 'string' ? input.email.trim().toLowerCase() : '';
       if (!email) return errorResult('Say whose email to share with.');
-      const person = await context.db
-        .selectFrom('identities')
-        .select(['subject', 'display_name'])
-        .where('email', '=', email)
-        .executeTakeFirst();
+      const person = await getDataStore().identities.findByEmail(email);
       if (!person) return errorResult(`Nobody in the directory has the email ${email}.`);
-      const result = await shareArtifact(context.db, {
+      const result = await shareArtifact({
         ownerSubject: context.subject,
         artifactId: id,
         granteeSubject: person.subject,
@@ -334,7 +330,7 @@ export function artifactShareTool(): LocalTool {
         }
       }
       return textResult(
-        `Shared with ${person.display_name ?? email}; they can use it in their own projects.`
+        `Shared with ${person.displayName ?? email}; they can use it in their own projects.`
       );
     },
   };
@@ -369,14 +365,14 @@ export function artifactRenameTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be renamed.');
       const newName = typeof input.newName === 'string' ? input.newName.trim() : '';
       if (!newName) return errorResult('Say the new name.');
-      const row = await findChatAttachment(context.db, {
+      const row = await findChatAttachment({
         chatId: context.chatId,
         ownerSubject: context.subject,
         id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
-      const renamed = await renameArtifact(context.db, {
+      const renamed = await renameArtifact({
         ownerSubject: context.subject,
         artifactId: row.id,
         filename: newName,
@@ -404,14 +400,14 @@ export function artifactDeleteTool(): LocalTool {
     readOnly: false,
     async execute(input, context) {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be deleted.');
-      const row = await findChatAttachment(context.db, {
+      const row = await findChatAttachment({
         chatId: context.chatId,
         ownerSubject: context.subject,
         id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file of yours in this chat; name it by id or name.');
-      const impact = await artifactImpact(context.db, row);
+      const impact = await artifactImpact(row);
       if (impact.projects.length > 0 || impact.sharedWith.length > 0) {
         const users = [
           ...impact.projects.map((project) => `project ${project.name}`),
@@ -421,7 +417,7 @@ export function artifactDeleteTool(): LocalTool {
           `${row.filename} is used by ${users.join(', ')}. Deleting it would remove it for everyone, so it was not deleted. Hand it over or detach it on the Artifacts page first.`
         );
       }
-      const deleted = await deleteArtifact(context.db, row);
+      const deleted = await deleteArtifact(row);
       if (!deleted) return errorResult(`${row.filename} could not be deleted.`);
       return textResult(`Deleted ${row.filename}.`);
     },
@@ -457,14 +453,14 @@ export function artifactDescribeTool(): LocalTool {
       if (context.readOnly) return errorResult('Read-only mode: nothing can be changed.');
       const digest = parseDigest(input);
       if (!digest) return errorResult('Say what the file is about: `summary` is empty.');
-      const row = await findChatAttachment(context.db, {
+      const row = await findChatAttachment({
         chatId: context.chatId,
         ownerSubject: context.subject,
         id: typeof input.attachmentId === 'string' ? input.attachmentId.trim() : null,
         filename: typeof input.filename === 'string' ? input.filename.trim() : null,
       });
       if (!row) return errorResult('No such file in this chat; name one by its file name or id.');
-      await storeDigest(context.db, row.id, digest);
+      await storeDigest(row.id, digest);
       return textResult(`Described ${row.filename} for the Artifacts search.`, {
         attachmentId: row.id,
       });

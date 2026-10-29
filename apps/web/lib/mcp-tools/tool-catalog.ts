@@ -28,9 +28,7 @@
 
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { WidgetKind } from '@renkei/mcp-client';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
-import { getDatabase } from '@renkei/db';
+import { grantRow } from './grant-row';
 import { getOrgSettings } from '@renkei/settings';
 import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -135,19 +133,12 @@ function collectingServer(): { server: McpServer; tools: ToolDescriptor[] } {
 }
 
 async function jiraScopesFor(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ connected: boolean; scopes: string[]; accountId: string | null }> {
   // Read straight from the grant row rather than asking the delegate to
   // describe the grant: rendering a page needs scopes only, and must not be
   // able to reach a provider.
-  const row = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-    .where('provider', '=', ATLASSIAN)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
+  const row = await grantRow(ATLASSIAN, subject);
   if (!row) return { connected: false, scopes: [], accountId: null };
   return {
     connected: true,
@@ -167,16 +158,9 @@ async function jiraScopesFor(
  * resolved, because enumeration must never be able to transact.
  */
 async function jsmGrantScopesFor(
-  db: Kysely<DB>,
   subject: string
 ): Promise<{ accountId: string; scopes: string[] } | null> {
-  const row = await db
-    .selectFrom('provider_grants')
-    .select(['provider_account_id', 'requested_scopes', 'granted_scopes'])
-    .where('provider', '=', ATLASSIAN_JSM)
-    .where('subject', '=', subject)
-    .limit(1)
-    .executeTakeFirst();
+  const row = await grantRow(ATLASSIAN_JSM, subject);
   if (!row) return null;
   return {
     accountId: row.provider_account_id,
@@ -254,22 +238,15 @@ export async function listAvailableTools(
   const cached = catalogCache.get(key);
   if (!options.fresh && cached && cached.expiresAt > Date.now()) return cached.value;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return [];
-  const db = dbResult.val;
-
-  const [jira, jsm] = await Promise.all([
-    jiraScopesFor(db, subject),
-    jsmGrantScopesFor(db, subject),
-  ]);
+  const [jira, jsm] = await Promise.all([jiraScopesFor(subject), jsmGrantScopesFor(subject)]);
 
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) return [];
   const settings = settingsResult.val;
 
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveConnectorAvailability(subject),
+    resolveAudience(subject),
   ]);
   const projection = buildProjection({ settings, availability, roles, audience });
 
@@ -303,7 +280,6 @@ export async function listAvailableTools(
     jsmGrant: jsm
       ? { auth: null, cloudId: '', accountId: jsm.accountId, scopes: jsm.scopes }
       : undefined,
-    db,
   };
 
   const { server, tools } = collectingServer();

@@ -13,6 +13,7 @@ jest.mock('@/lib/logger', () => ({
   logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
 }));
 import type { McpServer } from '@modelcontextprotocol/server';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import type { MCPToolContext } from '../common';
 import { registerUtilityTools } from './utilities';
 
@@ -31,24 +32,27 @@ function fakeServer(): { server: McpServer; handlers: Map<string, ToolHandler> }
   return { server, handlers };
 }
 
-function fakeDb(result: unknown): {
-  db: MCPToolContext['db'];
-  wheres: Array<[unknown, unknown, unknown]>;
-} {
-  const wheres: Array<[unknown, unknown, unknown]> = [];
-  const chain = {
-    selectFrom: () => chain,
-    select: () => chain,
-    where: (column: unknown, op: unknown, value: unknown) => {
-      wheres.push([column, op, value]);
-      return chain;
-    },
-    executeTakeFirst: async () => result,
+function grant(account: string, displayName: string) {
+  return {
+    provider: 'atlassian',
+    provider_account_id: account,
+    client_id: 'client',
+    display_name: displayName,
+    subject: `${account}@example.com`,
+    encrypted_access_token: 'a',
+    encrypted_refresh_token: 'r',
+    expires_at: new Date(Date.now() + 60_000),
+    metadata: { siteUrl: 'https://example.atlassian.net' },
   };
-  return { db: chain as unknown as MCPToolContext['db'], wheres };
 }
 
-function contextWith(db: MCPToolContext['db']): MCPToolContext {
+async function withGrants(rows: ReturnType<typeof grant>[]) {
+  const store = createMemoryDataStore();
+  await store.seed({ provider_grants: rows });
+  registerDataStore(store);
+}
+
+function context(): MCPToolContext {
   return {
     accountId: 'acct-caller',
     siteUrl: 'https://example.atlassian.net',
@@ -56,43 +60,41 @@ function contextWith(db: MCPToolContext['db']): MCPToolContext {
     jiraAuth: null,
     maxJqlResults: 100,
     origin: 'https://mcp.example.com',
-    db,
   };
 }
 
-async function connectJira(db: MCPToolContext['db']): Promise<{
-  text: string;
-  wheres: Array<[unknown, unknown, unknown]>;
-}> {
+async function connectJira(): Promise<string> {
   const { server, handlers } = fakeServer();
-  await registerUtilityTools(server, contextWith(db));
+  await registerUtilityTools(server, context());
   const handler = handlers.get('jira_connect');
   if (!handler) throw new Error('jira_connect was not registered');
   const result = await handler({});
-  return { text: result.content[0]?.text ?? '', wheres: [] };
+  return result.content[0]?.text ?? '';
 }
+
+afterEach(() => {
+  resetDataStore();
+});
 
 describe('jira_connect', () => {
   it('checks only the calling user’s grant, never the whole tenant', async () => {
-    const { db, wheres } = fakeDb(undefined);
-    await connectJira(db);
+    await withGrants([grant('acct-other', 'Someone Else')]);
+    const text = await connectJira();
 
-    expect(wheres).toContainEqual(['provider_account_id', '=', 'acct-caller']);
+    expect(text).not.toContain('Someone Else');
+    expect(text).toContain('not connected');
   });
 
   it('reports an existing grant belonging to the caller', async () => {
-    const { db } = fakeDb({
-      display_name: 'Caller Name',
-      metadata: { siteUrl: 'https://example.atlassian.net' },
-    });
-    const { text } = await connectJira(db);
+    await withGrants([grant('acct-other', 'Someone Else'), grant('acct-caller', 'Caller Name')]);
+    const text = await connectJira();
 
     expect(text).toContain('already connected as Caller Name');
   });
 
   it('links to this server’s authorize route, not a hand-built Atlassian URL', async () => {
-    const { db } = fakeDb(undefined);
-    const { text } = await connectJira(db);
+    await withGrants([]);
+    const text = await connectJira();
 
     expect(text).toContain('https://mcp.example.com/api/mcp/authorize');
     expect(text).not.toContain('auth.atlassian.com');

@@ -13,7 +13,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { actMeta } from '@renkei/tool-outcomes';
 import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
@@ -154,10 +153,7 @@ async function saveAndAnswer(
   notes: string[]
 ) {
   if (!context.subject) return errText('No signed-in subject on this MCP session.');
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
-  const db = dbResult.val;
-  const change = await createChangeRequest(db, {
+  const change = await createChangeRequest({
     subject: context.subject,
     agentId: context.agent?.agentId,
     cloudId: access.cloudId,
@@ -168,7 +164,7 @@ async function saveAndAnswer(
     payload: input.payload,
   });
   if (input.replaces) {
-    notes.push(await replaceRequest(db, context.subject, input.replaces, change.id));
+    notes.push(await replaceRequest(context.subject, input.replaces, change.id));
   }
   const link = `${reviewPrefix(context)}${change.id}`;
   const { operations, reach } = describeChange(change);

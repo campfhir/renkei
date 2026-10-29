@@ -16,7 +16,6 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDatabase } from '@renkei/db';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
 import type { JiraAdminAuth } from './jira-admin-auth';
@@ -199,16 +198,12 @@ export async function registerProposeSpaceTools(
         versions.push(version);
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable; nothing was proposed.');
-      const db = dbResult.val;
-
       // The base: a template (checked still intact) or a live space.
       let base: SpaceBase;
       let source: CreateSpacePayload['source'];
       const notes: string[] = [];
       if (templateRef) {
-        const template = await findSpaceTemplate(db, access.cloudId, templateRef);
+        const template = await findSpaceTemplate(access.cloudId, templateRef);
         if (!template) {
           return errText(
             `No template is named “${templateRef}”. jira_admin_list_space_templates lists them.`
@@ -347,7 +342,7 @@ export async function registerProposeSpaceTools(
         );
       }
       const reason = text(args.reason);
-      const change = await createChangeRequest(db, {
+      const change = await createChangeRequest({
         subject: context.subject,
         agentId: context.agent?.agentId,
         cloudId: access.cloudId,
@@ -360,7 +355,7 @@ export async function registerProposeSpaceTools(
 
       const replaces = text(args.replaces);
       if (replaces) {
-        notes.push(await replaceRequest(db, context.subject, replaces, change.id));
+        notes.push(await replaceRequest(context.subject, replaces, change.id));
       }
 
       const link = `${reviewPrefix(context)}${change.id}`;

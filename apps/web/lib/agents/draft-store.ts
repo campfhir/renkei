@@ -8,8 +8,7 @@
  * member of the tenant may collect, however uninteresting its contents.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB, Json } from '@renkei/db';
+import { getDataStore, type AgentDraftRecord, type Json } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 
 export type DraftStatus = 'queued' | 'running' | 'succeeded' | 'failed';
@@ -60,80 +59,37 @@ function requestOf(value: Json): DraftRequest {
   };
 }
 
-interface DraftRow {
-  id: string;
-  agent_id: string | null;
-  status: string;
-  request: Json;
-  result: Json | null;
-  error: string | null;
-  error_detail: string | null;
-  created_at: Date;
-  finished_at: Date | null;
-}
-
-function viewOf(row: DraftRow): AgentDraft {
+function viewOf(row: AgentDraftRecord): AgentDraft {
   return {
     id: row.id,
-    agentId: row.agent_id,
+    agentId: row.agentId,
     status: statusOf(row.status),
     request: requestOf(row.request),
     result: row.result,
     error: row.error,
-    errorDetail: row.error_detail,
-    createdAt: row.created_at.toISOString(),
-    finishedAt: row.finished_at ? row.finished_at.toISOString() : null,
+    errorDetail: row.errorDetail,
+    createdAt: row.createdAt.toISOString(),
+    finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
   };
 }
 
-const DRAFT_COLUMNS = [
-  'id',
-  'agent_id',
-  'status',
-  'request',
-  'result',
-  'error',
-  'error_detail',
-  'created_at',
-  'finished_at',
-] as const;
-
 /** Start a draft. The queue job that does the work is enqueued by the caller. */
-export async function createDraft(
-  db: Kysely<DB>,
-  params: {
-    ownerSubject: string;
-    agentId: string | null;
-    request: DraftRequest;
-  }
-): Promise<string> {
-  const row = await db
-    .insertInto('agent_drafts')
-    .values({
-      owner_subject: params.ownerSubject,
-      agent_id: params.agentId,
-      status: 'queued',
-      // Kysely wants the jsonb column as a string.
-      request: JSON.stringify(params.request),
-    })
-    .returning('id')
-    .executeTakeFirstOrThrow();
-  return row.id;
+export async function createDraft(params: {
+  ownerSubject: string;
+  agentId: string | null;
+  request: DraftRequest;
+}): Promise<string> {
+  return getDataStore().agentDrafts.create({
+    ownerSubject: params.ownerSubject,
+    agentId: params.agentId,
+    request: asJson(params.request),
+  });
 }
 
 /** One draft, for its owner. Null for anyone else, which is the same answer. */
-export async function getDraft(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  draftId: string
-): Promise<AgentDraft | null> {
+export async function getDraft(ownerSubject: string, draftId: string): Promise<AgentDraft | null> {
   if (!isUuid(draftId)) return null;
-  const row = await db
-    .selectFrom('agent_drafts')
-    .select(DRAFT_COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', draftId)
-    .executeTakeFirst();
+  const row = await getDataStore().agentDrafts.find(ownerSubject, draftId);
   return row ? viewOf(row) : null;
 }
 
@@ -147,21 +103,11 @@ export async function getDraft(
  * than resurrected on a later visit as though it were a result.
  */
 export async function latestReadyDraft(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string | null
 ): Promise<AgentDraft | null> {
-  let query = db
-    .selectFrom('agent_drafts')
-    .select(DRAFT_COLUMNS)
-    .where('owner_subject', '=', ownerSubject)
-    .where('status', '=', 'succeeded')
-    // Not yet picked up. Without this the same result is offered on every
-    // open, which reads as the draft having run again.
-    .where('consumed_at', 'is', null);
-  query =
-    agentId === null ? query.where('agent_id', 'is', null) : query.where('agent_id', '=', agentId);
-  const row = await query.orderBy('created_at', 'desc').limit(1).executeTakeFirst();
+  if (agentId !== null && !isUuid(agentId)) return null;
+  const row = await getDataStore().agentDrafts.latestReady(ownerSubject, agentId);
   return row ? viewOf(row) : null;
 }
 
@@ -172,18 +118,9 @@ export async function latestReadyDraft(
  * merely offered — dismissing the offer leaves the draft available, because
  * "not now" and "never" are different answers.
  */
-export async function consumeDraft(
-  db: Kysely<DB>,
-  ownerSubject: string,
-  draftId: string
-): Promise<void> {
+export async function consumeDraft(ownerSubject: string, draftId: string): Promise<void> {
   if (!isUuid(draftId)) return;
-  await db
-    .updateTable('agent_drafts')
-    .set({ consumed_at: new Date(), updated_at: new Date() })
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', draftId)
-    .execute();
+  await getDataStore().agentDrafts.consume(ownerSubject, draftId);
 }
 
 /**
@@ -194,43 +131,35 @@ export async function consumeDraft(
  * duplicate finds zero rows and stops. Same shape as the trigger firing
  * lock, and for the same reason.
  */
-export async function claimDraft(db: Kysely<DB>, draftId: string): Promise<boolean> {
-  const result = await db
-    .updateTable('agent_drafts')
-    .set({ status: 'running', attempts: (eb) => eb('attempts', '+', 1), updated_at: new Date() })
-    .where('id', '=', draftId)
-    .where('status', '=', 'queued')
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+export async function claimDraft(draftId: string): Promise<boolean> {
+  return getDataStore().agentDrafts.claim(draftId);
 }
 
 export async function finishDraft(
-  db: Kysely<DB>,
   draftId: string,
   outcome:
     | { status: 'succeeded'; result: unknown }
     | { status: 'failed'; error: string; detail?: string | null }
 ): Promise<void> {
-  await db
-    .updateTable('agent_drafts')
-    .set(
-      outcome.status === 'succeeded'
-        ? {
-            status: 'succeeded',
-            result: JSON.stringify(outcome.result),
-            error: null,
-            error_detail: null,
-            finished_at: new Date(),
-            updated_at: new Date(),
-          }
-        : {
-            status: 'failed',
-            error: outcome.error.slice(0, 2000),
-            error_detail: outcome.detail ? outcome.detail.slice(0, 4000) : null,
-            finished_at: new Date(),
-            updated_at: new Date(),
-          }
-    )
-    .where('id', '=', draftId)
-    .execute();
+  await getDataStore().agentDrafts.finish(
+    draftId,
+    outcome.status === 'succeeded'
+      ? { status: 'succeeded', result: asJson(outcome.result) }
+      : {
+          status: 'failed',
+          error: outcome.error.slice(0, 2000),
+          detail: outcome.detail ? outcome.detail.slice(0, 4000) : null,
+        }
+  );
+}
+
+/** A value as the JSON it is stored as (what JSON.stringify keeps of it). */
+function asJson(value: unknown): Json {
+  const json: Json = JSON.parse(JSON.stringify(value ?? null));
+  return json;
+}
+
+/** Remove a draft whose job could not be queued. */
+export async function deleteDraft(draftId: string): Promise<void> {
+  await getDataStore().agentDrafts.delete(draftId);
 }

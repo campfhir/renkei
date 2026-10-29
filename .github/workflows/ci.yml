@@ -53,6 +53,162 @@ jobs:
       - name: Test
         run: pnpm test
 
+  # The data store against a real, migrated Postgres. `pnpm test` above
+  # holds the memory store to itself (every repository method has a
+  # differential scenario, answered deterministically); this job runs each
+  # scenario against a freshly truncated contract database AND the memory
+  # store (seeded with the same rows, as Postgres stored them) and requires
+  # equal answers, and runs the older contract cases. Scenarios use values
+  # that sort alike under the database's collation and the memory store's
+  # plain string compare.
+  db-contract:
+    name: data store (postgres vs memory)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
+        env:
+          POSTGRES_USER: renkei
+          POSTGRES_PASSWORD: renkei
+          POSTGRES_DB: renkei
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U renkei -d renkei"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://renkei:renkei@localhost:5432/renkei
+      CONTRACT_DATABASE_URL: postgres://renkei:renkei@localhost:5432/renkei_contract
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create the contract database
+        run: >-
+          psql "$DATABASE_URL" -c "CREATE DATABASE renkei_contract TEMPLATE template0
+          LOCALE_PROVIDER icu ICU_LOCALE 'en-US' LOCALE 'C.UTF-8'"
+
+      - name: Migrate
+        run: |
+          pnpm --filter @renkei/db migrate
+          DATABASE_URL="$CONTRACT_DATABASE_URL" pnpm --filter @renkei/db migrate
+
+      - name: Differential and contract
+        run: pnpm --filter @renkei/db test:contract
+
+  # The browser suite (apps/web/playwright.config.ts): a production build of
+  # the web app on the in-memory data store (RENKEI_DATA_STORE=memory, no
+  # Postgres), its delegate and workers in-process, beside the sandbox, MCP and
+  # model stubs. Built once here with the suite's environment
+  # (apps/web/e2e/server-env.ts), then run in three shards that each start
+  # that build (E2E_PREBUILT) instead of building again.
+  e2e-build:
+    name: e2e build (memory store)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the web app for the suite
+        run: pnpm --filter renkei e2e:build
+
+      # A tarball, so the links .next/node_modules holds into the pnpm store
+      # survive the trip; each shard installs the same lockfile they point at.
+      - name: Pack the build
+        run: tar -cf web-build.tar -C apps/web --exclude=.next/cache .next
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: e2e-web-build
+          path: web-build.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  e2e-shard:
+    name: e2e shard ${{ matrix.shard }}/3 (memory store)
+    needs: e2e-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The full Chromium build only: the suite runs it in headless mode
+      # (channel 'chromium', playwright.config.ts), never the headless shell.
+      - name: Install Chromium
+        run: pnpm --filter renkei exec playwright install --with-deps --no-shell chromium
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: e2e-web-build
+
+      - name: Unpack the build
+        run: tar -xf web-build.tar -C apps/web
+
+      - name: Browser suite (shard ${{ matrix.shard }} of 3)
+        env:
+          E2E_PREBUILT: '1'
+          SHARD: ${{ matrix.shard }}/3
+        run: pnpm --filter renkei exec playwright test --shard="$SHARD"
+
+      # A failed shard's traces and screenshots (retain-on-failure in
+      # playwright.config.ts) and its HTML report, to open with
+      # `npx playwright show-trace` / `show-report`.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: e2e-results-shard-${{ matrix.shard }}
+          path: |
+            apps/web/test-results
+            apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The one check to require: every shard passed (a skipped or cancelled
+  # shard, or a failed build, fails it).
+  e2e-memory:
+    name: e2e (memory store)
+    needs: e2e-shard
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.e2e-shard.result }}
+        run: test "$RESULT" = success
+
   # Every change to the product (apps/, packages/, docker/) needs an entry in
   # apps/web/lib/changelog.ts in the same pull request, or a commit that says
   # `Changelog: none`. `pnpm changelog add` writes the entry with today's date.

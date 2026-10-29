@@ -5,8 +5,6 @@
  * 'chat', attributed to the person whose turn it was.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings } from '@renkei/settings';
 import { logger } from '@/lib/logger';
@@ -41,23 +39,20 @@ export async function chatFileMaxBytes(): Promise<number> {
   return settings.ok ? settings.val.maxAttachmentBytes : 20_971_520;
 }
 
-export function createTurnStore(
-  db: Kysely<DB>,
-  scope: {
-    chatId: string;
-    turnId: string;
-    subject: string;
-    /** For the permission notification's wording; null before the first reply names the chat. */
-    chatTitle: string | null;
-    /** The model this turn runs on, stamped on every ledger row it writes. */
-    model: LlmCallModel | null;
-    /** The chat's cipher: every row this turn writes is sealed under it. */
-    cipher: ContentCipher;
-  }
-): TurnStore {
+export function createTurnStore(scope: {
+  chatId: string;
+  turnId: string;
+  subject: string;
+  /** For the permission notification's wording; null before the first reply names the chat. */
+  chatTitle: string | null;
+  /** The model this turn runs on, stamped on every ledger row it writes. */
+  model: LlmCallModel | null;
+  /** The chat's cipher: every row this turn writes is sealed under it. */
+  cipher: ContentCipher;
+}): TurnStore {
   return {
     async appendMessage(input) {
-      const inserted = await insertMessage(db, {
+      const inserted = await insertMessage({
         chatId: scope.chatId,
         turnId: scope.turnId,
         role: input.role,
@@ -70,25 +65,25 @@ export function createTurnStore(
       return inserted;
     },
     async flushAssistant(id, blocks, patch) {
-      await updateMessageContent(db, id, blocks, scope.cipher, patch);
+      await updateMessageContent(id, blocks, scope.cipher, patch);
     },
     heartbeat(iterations, stage) {
-      return heartbeatTurn(db, scope.turnId, iterations, stage);
+      return heartbeatTurn(scope.turnId, iterations, stage);
     },
     async finishTurn(outcome) {
-      await finishTurn(db, scope.turnId, outcome);
+      await finishTurn(scope.turnId, outcome);
       // A sub-agent still marked running now has no turn to report to.
-      await interruptSubagentRunsOfTurn(db, scope.turnId);
-      await touchChat(db, scope.chatId, {});
+      await interruptSubagentRunsOfTurn(scope.turnId);
+      await touchChat(scope.chatId, {});
     },
     async suspendTurn(iterations) {
-      await suspendTurn(db, scope.turnId, iterations);
+      await suspendTurn(scope.turnId, iterations);
       // A sub-agent in flight dies with this process; the resumed turn
       // is told its delegation was interrupted and delegates again.
-      await interruptSubagentRunsOfTurn(db, scope.turnId);
+      await interruptSubagentRunsOfTurn(scope.turnId);
     },
     async recordUsage(usage, model, durationMs) {
-      await recordLlmCall(db, {
+      await recordLlmCall({
         subject: scope.subject,
         agentId: null,
         purpose: 'chat',
@@ -106,7 +101,7 @@ export function createTurnStore(
       });
     },
     async requestToolPermission(ask) {
-      await requestToolPermission(db, scope.turnId, {
+      await requestToolPermission(scope.turnId, {
         toolUseId: ask.toolUseId,
         messageId: ask.messageId,
         name: ask.name,
@@ -123,17 +118,17 @@ export function createTurnStore(
       });
     },
     async readToolPermission(toolUseId) {
-      const record = await readToolPermission(db, scope.turnId, toolUseId);
+      const record = await readToolPermission(scope.turnId, toolUseId);
       return record?.decision ?? null;
     },
     async clearToolPermission() {
-      await clearToolPermission(db, scope.turnId);
+      await clearToolPermission(scope.turnId);
     },
     async storeArtifacts(messageId, files) {
       const kept: AttachmentView[] = [];
       const maxBytes = await chatFileMaxBytes();
       for (const file of files) {
-        const created = await createAttachment(db, {
+        const created = await createAttachment({
           ownerSubject: scope.subject,
           chatId: scope.chatId,
           filename: file.filename,
@@ -153,8 +148,8 @@ export function createTurnStore(
           // the model gave as it wrote the file, stored as they are; else
           // asked of the organization's model once the turn's response is
           // out of the way (or, on a turn served by no request, beside it).
-          if (file.digest) await storeDigest(db, created.val.id, file.digest);
-          else deferDigest(db, scope.subject, [created.val], after);
+          if (file.digest) await storeDigest(created.val.id, file.digest);
+          else deferDigest(scope.subject, [created.val], after);
         } else if (created.err.type !== 'UNCONFIGURED') {
           logger.warn('chat artifact not stored: {reason} {message}', {
             reason: created.err.type,

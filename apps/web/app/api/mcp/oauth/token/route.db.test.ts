@@ -5,13 +5,14 @@
  * and the subject's access tokens; the refreshed token takes the roles of
  * the subject's newest live browser session; and rotation never extends the
  * family's lifetime. The row lock and the transaction are the reason this
- * runs against Postgres rather than a stub.
+ * runs against Postgres rather than a stub. Every check is on what a
+ * client can see: which tokens the endpoint still honours, and the roles
+ * an issued access token carries.
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
 import { NextRequest } from 'next/server';
-import { getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { hashToken } from '@/lib/mcp-token';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { POST } from './route';
@@ -19,29 +20,26 @@ import { POST } from './route';
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('refresh-token rotation', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const clientId = `client_${suiteId.slice(0, 8)}`;
   const clientSecret = 'client-secret-for-tests';
   const subject = `person-${suiteId.slice(0, 8)}@example.com`;
 
-  async function issueRefreshToken(options: { familyId?: string; roles?: string[] } = {}) {
+  /** A refresh token as the code exchange issues one (its own family). */
+  async function issueRefreshToken(
+    options: { roles?: string[]; expiresAt?: Date } = {}
+  ): Promise<{ token: string }> {
     const token = `rt_${randomUUID()}`;
-    const familyId = options.familyId ?? randomUUID();
-    await db
-      .insertInto('oauth_refresh_tokens')
-      .values({
-        token_id: randomUUID(),
-        client_id: clientId,
-        subject,
-        scope: 'openid',
-        roles: options.roles ?? ['renkei-user'],
-        token_hash: hashToken(token),
-        family_id: familyId,
-        expires_at: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
-      })
-      .execute();
-    return { token, familyId };
+    await getDataStore().oauthTokens.insertRefreshToken({
+      tokenId: randomUUID(),
+      clientId,
+      subject,
+      scope: 'openid',
+      roles: options.roles ?? ['renkei-user'],
+      tokenHash: hashToken(token),
+      expiresAt: options.expiresAt ?? new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
+    });
+    return { token };
   }
 
   async function refresh(token: string) {
@@ -60,50 +58,44 @@ maybe('refresh-token rotation', () => {
     return { status: response.status, body: await response.json() };
   }
 
-  const liveRefreshTokens = () =>
-    db
-      .selectFrom('oauth_refresh_tokens')
-      .select(['token_hash', 'rotated_at', 'family_id', 'roles', 'expires_at'])
-      .execute();
+  /** The access token the endpoint issued, as the MCP routes look it up; null once revoked. */
+  const accessToken = (token: string) =>
+    getDataStore().oauthTokens.findAccessToken(hashToken(token), 'jira');
 
-  const accessTokens = () =>
-    db
-      .selectFrom('oauth_access_tokens')
-      .select(['token_hash', 'roles'])
-      .where('subject', '=', subject)
-      .execute();
+  const signIn = (expiresAt: Date) =>
+    getDataStore().sessions.create({
+      id: randomUUID(),
+      subject,
+      roles: ['renkei-user'],
+      expiresAt,
+    });
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await db
-      .insertInto('oauth_clients')
-      .values({
-        client_id: clientId,
-        client_name: 'rotation test',
-        client_secret_hash: hashToken(clientSecret),
-        redirect_uris: ['https://client.example/cb'],
-      })
-      .execute();
+    await getDataStore().oauthConsents.registerClient({
+      clientId,
+      clientSecretHash: hashToken(clientSecret),
+      clientName: 'rotation test',
+      redirectUris: ['https://client.example/cb'],
+      responseTypes: ['code'],
+      grantTypes: ['authorization_code', 'refresh_token'],
+    });
+  });
+
+  // Signing the person out everywhere ends their sessions and every token.
+  beforeEach(async () => {
+    await getDataStore().sessions.revokeAll(subject);
   });
 
   afterAll(async () => {
-    await db.deleteFrom('sessions').where('subject', '=', subject).execute();
-    await db.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
-    await db.deleteFrom('oauth_refresh_tokens').where('subject', '=', subject).execute();
-    await db.deleteFrom('oauth_clients').where('client_id', '=', clientId).execute();
+    await getDataStore().sessions.revokeAll(subject);
+    await closeDataStore();
   });
 
-  beforeEach(async () => {
-    await db.deleteFrom('sessions').where('subject', '=', subject).execute();
-    await db.deleteFrom('oauth_access_tokens').where('subject', '=', subject).execute();
-    await db.deleteFrom('oauth_refresh_tokens').where('subject', '=', subject).execute();
-  });
-
-  it('rotates: a new refresh token in the same family, the old one retired, lifetime unchanged', async () => {
-    const { token, familyId } = await issueRefreshToken();
-    const before = (await liveRefreshTokens())[0];
+  it('rotates: a new refresh token, the old one retired, lifetime unchanged', async () => {
+    // A family close to the end of its life: rotation must not extend it.
+    const lifetimeMs = 2_000;
+    const expiresAt = new Date(Date.now() + lifetimeMs);
+    const { token } = await issueRefreshToken({ expiresAt });
 
     const first = await refresh(token);
 
@@ -111,88 +103,76 @@ maybe('refresh-token rotation', () => {
     expect(typeof first.body.refresh_token).toBe('string');
     expect(first.body.refresh_token).not.toBe(token);
     expect(typeof first.body.access_token).toBe('string');
-
-    const rows = await liveRefreshTokens();
-    expect(rows).toHaveLength(2);
-    const old = rows.find((r) => r.token_hash === hashToken(token));
-    const next = rows.find((r) => r.token_hash === hashToken(first.body.refresh_token));
-    expect(old?.rotated_at).not.toBeNull();
-    expect(next?.rotated_at).toBeNull();
-    expect(next?.family_id).toBe(familyId);
-    expect(new Date(String(next?.expires_at)).getTime()).toBe(
-      new Date(String(before.expires_at)).getTime()
-    );
+    expect(await accessToken(first.body.access_token)).not.toBeNull();
 
     // The successor refreshes in turn.
     const second = await refresh(first.body.refresh_token);
     expect(second.status).toBe(200);
     expect(second.body.refresh_token).not.toBe(first.body.refresh_token);
+
+    // Past the family's original end, its newest token is expired too.
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.max(0, expiresAt.getTime() - Date.now()) + 100)
+    );
+    const late = await refresh(second.body.refresh_token);
+    expect(late.status).toBe(400);
+    expect(late.body.error_description).toBe('Refresh token expired');
   });
 
   it("revokes the whole family and the subject's access tokens when a rotated token is reused", async () => {
-    const { token, familyId } = await issueRefreshToken();
+    const { token } = await issueRefreshToken();
     // An unrelated family for the same subject and client stays untouched.
     const other = await issueRefreshToken();
 
     const first = await refresh(token);
     expect(first.status).toBe(200);
-    expect(await accessTokens()).toHaveLength(1);
+    expect(await accessToken(first.body.access_token)).not.toBeNull();
 
     const replay = await refresh(token);
 
     expect(replay.status).toBe(400);
     expect(replay.body.error).toBe('invalid_grant');
     expect(replay.body.error_description).toMatch(/reuse/i);
-    const rows = await liveRefreshTokens();
-    expect(rows.filter((r) => r.family_id === familyId)).toHaveLength(0);
-    expect(rows.filter((r) => r.family_id === other.familyId)).toHaveLength(1);
-    expect(await accessTokens()).toHaveLength(0);
+    expect(await accessToken(first.body.access_token)).toBeNull();
 
     // The successor died with its family.
     const successor = await refresh(first.body.refresh_token);
     expect(successor.status).toBe(400);
     expect(successor.body.error_description).toBe('Refresh token not found');
+
+    // The other family still refreshes.
+    expect((await refresh(other.token)).status).toBe(200);
   });
 
   it("re-derives roles from the subject's newest live browser session", async () => {
     const { token } = await issueRefreshToken({ roles: ['renkei-user', 'renkei-operator'] });
     // The person signed in again since; the IdP no longer asserts operator.
-    await db
-      .insertInto('sessions')
-      .values({
-        id: randomUUID(),
-        subject,
-        roles: ['renkei-user'],
-        expires_at: new Date(Date.now() + 60 * 60 * 1000),
-      })
-      .execute();
+    await signIn(new Date(Date.now() + 60 * 60 * 1000));
 
     const result = await refresh(token);
 
     expect(result.status).toBe(200);
-    const [access] = await accessTokens();
-    expect(access.roles).toEqual(['renkei-user']);
-    const next = (await liveRefreshTokens()).find((r) => r.rotated_at === null);
-    expect(next?.roles).toEqual(['renkei-user']);
+    expect((await accessToken(result.body.access_token))?.roles).toEqual(['renkei-user']);
+
+    // The successor carries the re-derived roles forward: with no session
+    // left to re-derive from, its own roles are what the next token gets.
+    await getDataStore().sessions.deleteForSubject(subject);
+    const next = await refresh(result.body.refresh_token);
+    expect(next.status).toBe(200);
+    expect((await accessToken(next.body.access_token))?.roles).toEqual(['renkei-user']);
   });
 
   it('keeps the frozen roles when the subject holds no live session', async () => {
     const { token } = await issueRefreshToken({ roles: ['renkei-user', 'renkei-operator'] });
     // An expired session does not count.
-    await db
-      .insertInto('sessions')
-      .values({
-        id: randomUUID(),
-        subject,
-        roles: ['renkei-user'],
-        expires_at: new Date(Date.now() - 1000),
-      })
-      .execute();
+    await signIn(new Date(Date.now() - 1000));
 
     const result = await refresh(token);
 
     expect(result.status).toBe(200);
-    const [access] = await accessTokens();
-    expect(access.roles).toEqual(['renkei-user', 'renkei-operator']);
+    expect((await accessToken(result.body.access_token))?.roles).toEqual([
+      'renkei-user',
+      'renkei-operator',
+    ]);
   });
 });

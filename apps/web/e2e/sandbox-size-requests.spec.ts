@@ -7,143 +7,31 @@
  * worker is the stub in sandbox-stub.mjs, so the project's checkout is
  * "ready" without any network.
  *
- * Each Playwright project gets its own tenant, derived from the project
- * name (the llm-models.spec.ts pattern): this spec writes settings and
- * requests, and projects run concurrently against one dev database.
+ * The project is the test's own person's (an operator, who also
+ * approves): connected to Bitbucket and made through the Code routes
+ * (e2e/support/code-host.ts), its checkout cloned by a first chat turn.
+ * The org limit and the admin's list are the one organization's, so the
+ * Playwright projects take turns (a lock directory).
  *
  * Mobile is a resized Chromium viewport, not the `mobile` project's device
  * descriptor (AGENTS.md, "UI changes"). Screenshots land under
  * test-results/screens/<project>/size-requests-*.png.
  */
 
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test, expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import { expect as baseExpect, type Page, type TestInfo } from '@playwright/test';
+import { test } from './fixtures';
+import { removeModel } from './support/stub-model';
+import { setUpCode, stageCodeProject } from './support/code-host';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const GB = 1_073_741_824;
 
-test.use({
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here; the pinned Chromium runs every project (AGENTS.md).
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-function fixtureFor(projectName: string) {
-  return {
-    sessionId: uuidFrom(`size-requests-e2e-session:${projectName}`),
-    projectId: uuidFrom(`size-requests-e2e-project:${projectName}`),
-    slug: `e2e-size-requests-${projectName}`,
-    subject: `e2e-size-requests-${projectName}@example.com`,
-    projectName: `Monorepo (${projectName})`,
-  };
-}
-type Fixture = ReturnType<typeof fixtureFor>;
-
-async function seed(fixture: Fixture): Promise<void> {
-  const worker = process.env.SANDBOX_WORKER_URL ?? 'http://127.0.0.1:8092';
-  const headers = {
-    authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
-    'content-type': 'application/json',
-  };
-  const target = { subject: `code-project:${fixture.projectId}` };
-  const cloned = await fetch(`${worker}/v1/workspaces/clone`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      ...target,
-      provider: 'atlassian-bitbucket',
-      repoFullName: 'acme/monorepo',
-      branch: 'main',
-      cloneUrl: 'https://bitbucket.org/acme/monorepo.git',
-      gitProxy: {
-        base: 'http://127.0.0.1:8096/git/e2e/bitbucket.org/',
-        insteadOf: 'https://bitbucket.org/',
-      },
-    }),
-  });
-  const { workspace }: { workspace: { id: string } } = await cloned.json();
-  for (let tries = 0; tries < 20; tries += 1) {
-    const got = await fetch(`${worker}/v1/workspaces/get`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ ...target, id: workspace.id }),
-    });
-    const state: { workspace: { status: string } } = await got.json();
-    if (state.workspace.status === 'ready') break;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    // Requests are keyed by the project's own target subject, and this
-    // project's id is the same every run.
-    await client.query(
-      'DELETE FROM sandbox_size_requests WHERE subject = $1 OR requested_by = $2',
-      [target.subject, fixture.subject]
-    );
-    await client.query(`DELETE FROM settings WHERE key = 'sandbox_workspace_max_bytes'`);
-    await client.query('DELETE FROM chat_projects WHERE owner_subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, 'E2E Tester')`,
-      [fixture.subject, fixture.subject]
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
-      [fixture.subject]
-    );
-    await client.query(
-      `INSERT INTO chat_projects\n         (id, owner_subject, name, kind, repo_provider, repo_full_name, repo_branch, workspace_id)\n       VALUES ($1, $2, $3, 'code', 'atlassian-bitbucket', 'acme/monorepo', 'main', $4)`,
-      [fixture.projectId, fixture.subject, fixture.projectName, workspace.id]
-    );
-    // Enrolled already, so the first-sign-in "your encryption key is ready"
-    // dialog does not sit over the project page this spec works in.
-    await enrollForE2E(client, fixture.subject);
-  } finally {
-    await client.end();
-  }
-}
-
-async function signIn(page: Page, fixture: Fixture): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
@@ -160,25 +48,15 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-async function dbRows<T extends Record<string, unknown>>(
-  sql: string,
-  params: unknown[] = []
-): Promise<T[]> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return (await client.query<T>(sql, params)).rows;
-  } finally {
-    await client.end();
-  }
-}
-
 /**
  * The org limit and the admin's request list are one organization's, so the
  * three Playwright projects cannot run this at the same time: whoever holds
  * the lock directory runs, the others wait for it.
  */
-const LOCK = path.join(tmpdir(), 'renkei-e2e-size-requests.lock');
+const LOCK = path.join(
+  tmpdir(),
+  `renkei-e2e-size-requests-${process.env.E2E_MEMORY_PORT ?? 3100}.lock`
+);
 async function withOrgLock<T>(run: () => Promise<T>): Promise<T> {
   const deadline = Date.now() + 600_000;
   for (;;) {
@@ -197,18 +75,39 @@ async function withOrgLock<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-test('checkout limit: org setting, request, approve, deny', async ({ page }, testInfo) => {
-  // Up to three runs of the body in turn, the dev server compiling each route on its first hit.
+test('checkout limit: org setting, request, approve, deny', async ({
+  page,
+  request,
+  person: _person,
+}, testInfo) => {
+  // Up to two runs of the body in turn, the dev server compiling each route on its first hit.
   test.setTimeout(720_000);
-  await withOrgLock(() => checkoutLimit(page, testInfo));
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await setUpCode(page, request, tag);
+  try {
+    await withOrgLock(() => checkoutLimit(page, testInfo, tag, modelId));
+  } finally {
+    await removeModel(page.request, modelId);
+  }
 });
 
-async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
+async function checkoutLimit(
+  page: Page,
+  testInfo: TestInfo,
+  tag: string,
+  llmModelId: string
+): Promise<void> {
   // The dev server compiles each route on its first hit, which outlasts the default 5s.
   const expect = baseExpect.configure({ timeout: 30_000 });
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  await signIn(page, fixture);
+  const projectName = `Monorepo (${tag})`;
+  const { projectId } = await stageCodeProject(page.request, {
+    name: projectName,
+    repository: 'acme/monorepo',
+    branch: 'main',
+    chats: ['First look'],
+    clone: true,
+    llmModelId,
+  });
   // The org limit is one shared setting behind a 60s server cache: an earlier
   // project's run leaves its 12 GB in that cache. Putting the default back
   // through the API invalidates it, whatever ran before.
@@ -216,7 +115,7 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
     data: { sandboxWorkspaceMaxBytes: 8 * GB },
   });
   expect(reset.ok()).toBe(true);
-  const projectUrl = `/code/${fixture.projectId}`;
+  const projectUrl = `/code/${projectId}`;
   const settingsUrl = `/admin/settings`;
   // Scoped to the main region: across a navigation the dev server can leave
   // the outgoing page's span in the DOM for a beat, and strict mode would
@@ -224,17 +123,13 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   const limitText = page.getByRole('main').getByTestId('size-limit');
 
   // ── Default: 8 GB, with the way to ask for more ──
-  // The pages read the org settings through a cache of their own (the dev
-  // server holds one per route bundle, so the reset above does not reach it):
-  // read again until the previous project's 12 GB has aged out.
+  // The pages read the org settings through a cache of their own, which
+  // the suite runs at zero (playwright.config.ts): the reset shows at once.
   await page.goto(projectUrl);
-  for (let tries = 0; tries < 15; tries += 1) {
-    if ((await limitText.textContent({ timeout: 30_000 })) === 'Checkout limit 8 GB.') break;
-    await page.waitForTimeout(5_000);
-    await page.reload();
-  }
+  // The outgoing page can linger for a beat beside the new one.
+  await expect(limitText).toHaveCount(1);
   await expect(limitText).toHaveText('Checkout limit 8 GB.');
-  await expect(page.getByTestId('size-request-pending')).toHaveCount(0);
+  await expect(page.getByRole('main').getByTestId('size-request-pending')).toHaveCount(0);
   await shot(page, testInfo, '01-project-default');
 
   // ── A member asks for more: the form needs a reason; a second ask waits ──
@@ -255,14 +150,14 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   await shot(page, testInfo, '03-request-form');
   await send.click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByTestId('size-request-pending')).toHaveText(
+  await expect(page.getByRole('main').getByTestId('size-request-pending')).toHaveText(
     'Your request for 24 GB is waiting for an admin.'
   );
   await expect(page.getByRole('button', { name: 'Ask for more space' })).toHaveCount(0);
   await shot(page, testInfo, '04-request-pending');
 
   // The server refuses a duplicate and a request at or under the limit.
-  const api = `/api/code/projects/${fixture.projectId}/size-request`;
+  const api = `/api/code/projects/${projectId}/size-request`;
   const duplicate = await page.request.post(api, {
     data: { requestedBytes: 30 * GB, reason: 'again' },
   });
@@ -270,11 +165,15 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
 
   // ── The admin approves less than was asked; the limit rises for the project ──
   await page.goto(settingsUrl);
+  await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toHaveCount(1);
   // One organization: the admin's list holds every project's requests, so the
   // rows are this run's project's own.
-  const rows = page.getByTestId('size-request-row').filter({ hasText: fixture.projectName });
+  const rows = page
+    .getByRole('main')
+    .getByTestId('size-request-row')
+    .filter({ hasText: projectName });
   await expect(rows).toHaveCount(1);
-  await expect(rows.first()).toContainText(fixture.projectName);
+  await expect(rows.first()).toContainText(projectName);
   await expect(rows.first()).toContainText('24 GB');
   await expect(rows.first()).toContainText('Monorepo with vendored toolchains');
   await shot(page, testInfo, '05-admin-pending');
@@ -284,8 +183,10 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   await expect(page.getByTestId('size-requests')).toContainText('20 GB approved');
 
   await page.goto(projectUrl);
+  // The outgoing page can linger for a beat beside the new one.
+  await expect(limitText).toHaveCount(1);
   await expect(limitText).toHaveText('Checkout limit 20 GB.');
-  await expect(page.getByTestId('size-request-last')).toContainText(
+  await expect(page.getByRole('main').getByTestId('size-request-last')).toContainText(
     'Your request for 20 GB was approved.'
   );
   await shot(page, testInfo, '06-project-approved');
@@ -295,16 +196,19 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   await page.getByLabel('Size wanted (GB)').fill('40');
   await page.getByLabel('Why you need it').fill('Want it all');
   await page.getByRole('button', { name: 'Send request' }).click();
-  await expect(page.getByTestId('size-request-pending')).toBeVisible();
+  await expect(page.getByRole('main').getByTestId('size-request-pending')).toBeVisible();
 
   await page.goto(settingsUrl);
+  await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toHaveCount(1);
   await rows.getByLabel('Note').fill('Prune build output first');
   await rows.getByRole('button', { name: 'Deny' }).click();
   await expect(rows).toHaveCount(0);
 
   await page.goto(projectUrl);
+  // The outgoing page can linger for a beat beside the new one.
+  await expect(limitText).toHaveCount(1);
   await expect(limitText).toHaveText('Checkout limit 20 GB.');
-  await expect(page.getByTestId('size-request-last')).toContainText(
+  await expect(page.getByRole('main').getByTestId('size-request-last')).toContainText(
     'Your last request was denied: Prune build output first'
   );
   await shot(page, testInfo, '07-project-denied');
@@ -313,15 +217,14 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   // Saved and stored at once; the pages read it through the org settings'
   // 60-second cache, which this spec deliberately does not wait out.
   await page.goto(settingsUrl);
+  await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toHaveCount(1);
   const orgLimit = page.getByLabel('sandboxWorkspaceMaxGb');
+  // The outgoing page's form can linger for a beat beside the new one.
+  await expect(orgLimit).toHaveCount(1);
   await expect(orgLimit).toHaveValue('8');
   await orgLimit.fill('12');
   await page.getByRole('button', { name: 'Save settings' }).click();
   await expect(page.getByText('Saved.')).toBeVisible();
-  const stored = await dbRows<{ value: string }>(
-    `SELECT value FROM settings WHERE key = 'sandbox_workspace_max_bytes'`
-  );
-  expect(Number(stored[0]?.value)).toBe(12 * GB);
   const read = await page.request.get(`/api/admin/org-settings`);
   expect((await read.json()).settings.sandboxWorkspaceMaxBytes).toBe(12 * GB);
   // Out of range is clamped, never stored as typed.
@@ -337,11 +240,14 @@ async function checkoutLimit(page: Page, testInfo: TestInfo): Promise<void> {
   // ── Phone width: both pages hold their layout ──
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto(projectUrl);
+  // The outgoing page can linger for a beat beside the new one.
+  await expect(limitText).toHaveCount(1);
   await page.getByRole('button', { name: 'Ask for more space' }).click();
   await expect(page.getByRole('button', { name: 'Send request' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await shot(page, testInfo, '09-project-mobile');
   await page.goto(settingsUrl);
+  await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toHaveCount(1);
   await expect(page.getByLabel('sandboxWorkspaceMaxGb')).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await shot(page, testInfo, '10-settings-mobile');

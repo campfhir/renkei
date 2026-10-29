@@ -2,97 +2,106 @@
  * The app menu column: the version stays pinned to its foot and only the
  * chat list scrolls. The menu's sections above it do not move with the list.
  *
- * Whether the list actually overflows depends on how many chats the seed
- * holds, so the scroll itself is exercised only when it can overflow; the
- * layout that must hold either way is asserted unconditionally.
+ * The chats are the person's own, each asked one question through the
+ * chat routes (the sidebar lists only chats with a message in them),
+ * answered by the stand-in model: enough of them in the first test that
+ * the list overflows and the scroll itself is exercised.
  */
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import type { APIRequestContext } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel } from './support/stub-model';
+import { createChat, send } from './support/chat';
+
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
+
+async function chatsTitled(
+  request: APIRequestContext,
+  modelId: string,
+  prefix: string,
+  count: number
+): Promise<void> {
+  for (let index = 1; index <= count; index += 1) {
+    const chatId = await createChat(request, { llmModelId: modelId, title: `${prefix} ${index}` });
+    await send(request, chatId, 'Hello.', modelId);
+  }
+}
 
 test('app menu: version is pinned to the foot and the chat list scrolls on its own', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  // A standard desktop window. Below this height the menu sections and the
-  // list's minimum no longer fit, and the column scrolls as a fallback.
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto(`/agents`);
+  test.slow();
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
+  try {
+    await chatsTitled(page.request, modelId, `Scroll e2e ${tag}`, 14);
+    // A standard desktop window. Below this height the menu sections and the
+    // list's minimum no longer fit, and the column scrolls as a fallback.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(`/agents`);
 
-  const column = page.getByRole('navigation', { name: 'Application' });
-  const chats = column.getByRole('navigation', { name: 'Chats' });
-  const version = column.locator(':scope > p').last();
-  await expect(chats).toBeVisible();
-  await expect(version).toBeVisible();
+    const column = page.getByRole('navigation', { name: 'Application' });
+    const chats = column.getByRole('navigation', { name: 'Chats' });
+    const version = column.locator(':scope > p').last();
+    await expect(chats).toBeVisible();
+    await expect(version).toBeVisible();
 
-  // The chat list is its own scroll box; the column above it is not.
-  await expect(chats).toHaveCSS('overflow-y', 'auto');
-  const overflowing = await chats.evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+    // The chat list is its own scroll box; the column above it is not.
+    await expect(chats).toHaveCSS('overflow-y', 'auto');
+    await expect
+      .poll(() => chats.evaluate((el) => el.scrollHeight > el.clientHeight + 1))
+      .toBe(true);
 
-  const footerBox = await version.boundingBox();
-  const columnBox = await column.boundingBox();
-  expect(footerBox && columnBox).toBeTruthy();
-  // Pinned: the version sits at the foot of the column, inside its padding.
-  expect(footerBox!.y + footerBox!.height).toBeGreaterThan(columnBox!.y + columnBox!.height - 40);
-  expect(footerBox!.y + footerBox!.height).toBeLessThanOrEqual(
-    columnBox!.y + columnBox!.height + 1
-  );
+    const footerBox = await version.boundingBox();
+    const columnBox = await column.boundingBox();
+    if (!footerBox || !columnBox) throw new Error('The menu column is not on screen.');
+    // Pinned: the version sits at the foot of the column, inside its padding.
+    expect(footerBox.y + footerBox.height).toBeGreaterThan(columnBox.y + columnBox.height - 40);
+    expect(footerBox.y + footerBox.height).toBeLessThanOrEqual(columnBox.y + columnBox.height + 1);
 
-  // The menu's own sections never scroll with the chat list.
-  const workspace = column.getByRole('link', { name: 'Home', exact: true });
-  const workspaceBefore = await workspace.boundingBox();
+    // The menu's own sections never scroll with the chat list.
+    const workspace = column.getByRole('link', { name: 'Home', exact: true });
+    const workspaceBefore = await workspace.boundingBox();
 
-  if (overflowing) {
     await chats.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
     });
     await expect.poll(() => chats.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+
+    const footerAfter = await version.boundingBox();
+    const workspaceAfter = await workspace.boundingBox();
+    expect(footerAfter?.y).toBeCloseTo(footerBox.y, 0);
+    expect(workspaceAfter?.y).toBeCloseTo(workspaceBefore?.y ?? Number.NaN, 0);
+
+    await page.screenshot({
+      path: path.join(
+        import.meta.dirname,
+        '..',
+        'test-results',
+        'screens',
+        testInfo.project.name,
+        'nav-chat-scroll.png'
+      ),
+    });
+  } finally {
+    await removeModel(page.request, modelId);
   }
-
-  const footerAfter = await version.boundingBox();
-  const workspaceAfter = await workspace.boundingBox();
-  expect(footerAfter!.y).toBeCloseTo(footerBox!.y, 0);
-  expect(workspaceAfter!.y).toBeCloseTo(workspaceBefore!.y, 0);
-
-  await page.screenshot({
-    path: path.join(
-      import.meta.dirname,
-      '..',
-      'test-results',
-      'screens',
-      testInfo.project.name,
-      'nav-chat-scroll.png'
-    ),
-  });
 });
 
 test('app menu: three chats show at a desktop height without scrolling the list', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop column check.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  // Titles carry the project name: the projects run in parallel against one database.
-  const prefix = `Menu height e2e ${testInfo.project.name}`;
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const prefix = `Menu height e2e ${tag}`;
+  const modelId = await addStubModel(page.request, tag);
   try {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
-    for (let index = 1; index <= 5; index += 1) {
-      await client.query(
-        'INSERT INTO chats (id, owner_subject, title, last_message_at) VALUES ($1, $2, $3, NOW())',
-        [randomUUID(), E2E_SUBJECT, `${prefix} ${index}`]
-      );
-    }
+    await chatsTitled(page.request, modelId, prefix, 5);
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/agents`);
@@ -105,6 +114,7 @@ test('app menu: three chats show at a desktop height without scrolling the list'
     // Each row whose top and bottom both sit inside the list's visible box.
     const visible = await rows.evaluateAll(
       (links, list) => {
+        if (!list) return 0;
         const box = list.getBoundingClientRect();
         return links.filter((link) => {
           const row = link.getBoundingClientRect();
@@ -115,33 +125,22 @@ test('app menu: three chats show at a desktop height without scrolling the list'
     );
     expect(visible).toBeGreaterThanOrEqual(3);
   } finally {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });
 
 test('app menu: the column never scrolls, only the chat list does, on desktop and in the phone drawer', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A layout check at two widths.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const prefix = 'Menu scroll e2e';
+  test.slow();
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const prefix = `Menu scroll e2e ${tag}`;
+  const modelId = await addStubModel(page.request, tag);
   try {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
     // More chats than the menu holds, so the list has to scroll.
-    for (let index = 1; index <= 14; index += 1) {
-      await client.query(
-        "INSERT INTO chats (id, owner_subject, title, last_message_at) VALUES ($1, $2, $3, NOW() - ($4 || ' minutes')::interval)",
-        [randomUUID(), E2E_SUBJECT, `${prefix} ${index}`, index]
-      );
-    }
+    await chatsTitled(page.request, modelId, prefix, 14);
 
     // The phone drawer, a laptop, and a desktop: the menu never scrolls at any of them.
     for (const size of [
@@ -158,14 +157,15 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
       await expect(column.getByRole('link', { name: `${prefix} 1`, exact: true })).toBeAttached();
 
       const layout = await column.evaluate((element) => {
-        const list = element.querySelector<HTMLElement>('nav[aria-label="Chats"]')!;
+        const list = element.querySelector<HTMLElement>('nav[aria-label="Chats"]');
         const footers = element.querySelectorAll<HTMLElement>(':scope > p');
         const footer = footers[footers.length - 1];
         return {
           columnScrolls: element.scrollHeight > element.clientHeight + 1,
-          listScrolls: list.scrollHeight > list.clientHeight + 1,
-          footerInside:
-            footer.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom + 1,
+          listScrolls: list ? list.scrollHeight > list.clientHeight + 1 : false,
+          footerInside: footer
+            ? footer.getBoundingClientRect().bottom <= element.getBoundingClientRect().bottom + 1
+            : false,
         };
       });
       expect(layout, `menu at ${size.width}px`).toEqual({
@@ -184,34 +184,26 @@ test('app menu: the column never scrolls, only the chat list does, on desktop an
       expect(fourShown, `chats shown at ${size.width}px`).toBeGreaterThanOrEqual(4);
     }
   } finally {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });
 
 test('app menu: day headings stick to the top of the history, and the filter stays available', async ({
   page,
+  person: _person,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-light', 'A desktop layout check.');
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  const prefix = 'Sticky heading e2e';
+  test.slow();
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const prefix = `Sticky heading e2e ${tag}`;
+  const modelId = await addStubModel(page.request, tag);
   try {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
-    // Chats in several day groups, with enough old ones to scroll.
-    const hours = [1, 1, 30, 30, 100, 100, ...Array.from({ length: 10 }, () => 500)];
-    for (const [index, age] of hours.entries()) {
-      await client.query(
-        "INSERT INTO chats (id, owner_subject, title, last_message_at, updated_at) VALUES ($1, $2, $3, NOW() - ($4 || ' hours')::interval, NOW() - ($4 || ' hours')::interval)",
-        [randomUUID(), E2E_SUBJECT, `${prefix} ${index + 1}`, age]
-      );
-    }
+    // Enough chats to scroll. A chat's day is its last message's, which
+    // the server stamps now; the browser's clock is moved a month on, so
+    // the list (which groups by the browser's day, chat-nav.tsx) files
+    // them under its oldest heading.
+    await chatsTitled(page.request, modelId, prefix, 16);
+    await page.clock.setFixedTime(new Date(Date.now() + 30 * 86_400_000));
 
     await page.setViewportSize({ width: 1366, height: 768 });
     await page.goto('/agents');
@@ -223,11 +215,12 @@ test('app menu: day headings stick to the top of the history, and the filter sta
     await list.evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });
-    const listTop = (await list.boundingBox())!.y;
+    const listTop = (await list.boundingBox())?.y ?? Number.NaN;
     await expect
       .poll(
         async () =>
-          (await list.getByText('Earlier', { exact: true }).locator('..').boundingBox())!.y
+          (await list.getByText('Earlier', { exact: true }).locator('..').boundingBox())?.y ??
+          Number.POSITIVE_INFINITY
       )
       .toBeLessThanOrEqual(listTop + 2);
 
@@ -235,12 +228,8 @@ test('app menu: day headings stick to the top of the history, and the filter sta
     // there at the bottom: level with the list's top edge.
     await expect(filter).toBeInViewport();
     const control = await filter.boundingBox();
-    expect(Math.abs(control!.y - listTop)).toBeLessThan(4);
+    expect(Math.abs((control?.y ?? Number.NaN) - listTop)).toBeLessThan(4);
   } finally {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1 AND title LIKE $2', [
-      E2E_SUBJECT,
-      `${prefix} %`,
-    ]);
-    await client.end();
+    await removeModel(page.request, modelId);
   }
 });

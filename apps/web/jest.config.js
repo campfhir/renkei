@@ -23,6 +23,7 @@ export default {
     // Tests run the delegate in-process (lib/test-support/delegate.ts); the
     // web app itself only ever reaches it over HTTP.
     '^@renkei/worker-delegate$': '<rootDir>/../../apps/worker-delegate/src/server.ts',
+    '^@renkei/worker-delegate/embedded$': '<rootDir>/../../apps/worker-delegate/src/embedded.ts',
     '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
     '^@renkei/notifications$': '<rootDir>/../../packages/notifications/src/index.ts',

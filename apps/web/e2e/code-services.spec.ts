@@ -8,18 +8,15 @@
  * with a credential is added through the form, its username shown and
  * its secret never echoed, then removed; the defaults are restored; and
  * the page is checked at phone width. Screenshots land under
- * test-results/screens/<project>/code-services-*.png.
+ * test-results/screens/<project>/code-services-*.png. An operator's
+ * page: the test's person has the role.
  */
 
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+import { test, expect } from './fixtures';
+import { prepareCodeHost } from './support/code-host';
+
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 /** Per-project registry: the three Playwright projects share one stub tenant. */
 function registryFor(project: string): string {
@@ -30,7 +27,11 @@ function registryFor(project: string): string {
 test.describe('code services', () => {
   test('the allow-list: seeded images, a private registry with a credential, defaults restored', async ({
     page,
+    request,
+    person: _person,
   }, testInfo) => {
+    // The page manages the rules only while services are switched on.
+    await prepareCodeHost(request);
     const registry = registryFor(testInfo.project.name);
     const shot = (name: string) =>
       page.screenshot({

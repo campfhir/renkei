@@ -75,8 +75,6 @@ const recordProcessedFilesMock = recordProcessedFiles as jest.Mock;
 const kind = getBatchJobKind('document-ocr-pipeline');
 if (!kind) throw new Error('document-ocr-pipeline did not register itself');
 
-const DB = {} as never;
-
 const sha = (bytes: number[]) => createHash('sha256').update(Uint8Array.from(bytes)).digest('hex');
 
 function batch(config: Record<string, unknown>): BatchJobRow {
@@ -131,7 +129,7 @@ describe('discover', () => {
       },
     });
 
-    const outcome = await kind.discover(DB, batch({}));
+    const outcome = await kind.discover(batch({}));
 
     if (!outcome.ok) throw new Error(outcome.error);
     expect(outcome.items).toEqual([
@@ -160,7 +158,6 @@ describe('discover', () => {
     });
 
     const outcome = await kind.discover(
-      DB,
       batch({
         grouping: {
           strategy: 'filename-pattern',
@@ -189,7 +186,6 @@ describe('discover', () => {
     });
 
     const outcome = await kind.discover(
-      DB,
       batch({
         grouping: {
           strategy: 'filename-pattern',
@@ -209,13 +205,12 @@ describe('discover', () => {
 
   it('fails cleanly when the fileshare listing fails', async () => {
     fsListFolderMock.mockResolvedValue({ ok: false, err: { message: 'share not connected' } });
-    const outcome = await kind.discover(DB, batch({}));
+    const outcome = await kind.discover(batch({}));
     expect(outcome).toEqual({ ok: false, error: 'share not connected' });
   });
 
   it('rejects a pattern missing the required named capture groups', async () => {
     const outcome = await kind.discover(
-      DB,
       batch({ grouping: { strategy: 'filename-pattern', pattern: '.*' } })
     );
     expect(outcome.ok).toBe(false);
@@ -224,7 +219,6 @@ describe('discover', () => {
 
   it('rejects an afterProcessing move with no destination share', async () => {
     const outcome = await kind.discover(
-      DB,
       batch({ afterProcessing: { action: 'move', path: '/done' } })
     );
     expect(outcome.ok).toBe(false);
@@ -253,10 +247,10 @@ describe('discover', () => {
         ])
       );
 
-      const outcome = await kind.discover(DB, batch({}));
+      const outcome = await kind.discover(batch({}));
 
       if (!outcome.ok) throw new Error(outcome.error);
-      expect(findProcessedByPathMock).toHaveBeenCalledWith(DB, 'share-1', [
+      expect(findProcessedByPathMock).toHaveBeenCalledWith('share-1', [
         '/in/old.pdf',
         '/in/new.pdf',
       ]);
@@ -286,7 +280,7 @@ describe('discover', () => {
         ])
       );
 
-      const outcome = await kind.discover(DB, batch({}));
+      const outcome = await kind.discover(batch({}));
 
       if (!outcome.ok) throw new Error(outcome.error);
       expect(outcome.items).toHaveLength(1);
@@ -313,7 +307,6 @@ describe('discover', () => {
       );
 
       const outcome = await kind.discover(
-        DB,
         batch({
           grouping: {
             strategy: 'filename-pattern',
@@ -330,7 +323,7 @@ describe('discover', () => {
     it('never consults the ledger when the batch opted out', async () => {
       fsListFolderMock.mockResolvedValue({ ok: true, val: { entries: [entry('/in/old.pdf')] } });
 
-      const outcome = await kind.discover(DB, batch({ skipProcessed: false }));
+      const outcome = await kind.discover(batch({ skipProcessed: false }));
 
       if (!outcome.ok) throw new Error(outcome.error);
       expect(findProcessedByPathMock).not.toHaveBeenCalled();
@@ -380,7 +373,7 @@ describe('runItem', () => {
   it('OCRs each source file in order, assembles pages into one staged document, and records the ledger', async () => {
     happyPath();
 
-    const outcome = await kind.runItem(DB, batch({}), item());
+    const outcome = await kind.runItem(batch({}), item());
 
     expect(fsReadFileMock).toHaveBeenNthCalledWith(1, expect.anything(), '/in/inv-7-p1.tif');
     expect(fsReadFileMock).toHaveBeenNthCalledWith(2, expect.anything(), '/in/inv-7-p2.tif');
@@ -401,7 +394,7 @@ describe('runItem', () => {
         contentHashes: [sha([1]), sha([2])],
       },
     });
-    expect(recordProcessedFilesMock).toHaveBeenCalledWith(DB, 'share-1', 'batch-1', [
+    expect(recordProcessedFilesMock).toHaveBeenCalledWith('share-1', 'batch-1', [
       expect.objectContaining({
         contentHash: sha([1]),
         path: '/in/inv-7-p1.tif',
@@ -430,12 +423,9 @@ describe('runItem', () => {
       .mockResolvedValueOnce({ ok: true, val: new Uint8Array([2]) });
     findProcessedHashesMock.mockResolvedValue(new Set([sha([1]), sha([2])]));
 
-    const outcome = await kind.runItem(DB, batch({}), item());
+    const outcome = await kind.runItem(batch({}), item());
 
-    expect(findProcessedHashesMock).toHaveBeenCalledWith(DB, 'share-1', [
-      sha([1]),
-      sha([2]),
-    ]);
+    expect(findProcessedHashesMock).toHaveBeenCalledWith('share-1', [sha([1]), sha([2])]);
     expect(callMistralOcrMock).not.toHaveBeenCalled();
     expect(sbWriteFileMock).not.toHaveBeenCalled();
     expect(recordProcessedFilesMock).not.toHaveBeenCalled();
@@ -450,7 +440,7 @@ describe('runItem', () => {
     happyPath();
     findProcessedHashesMock.mockResolvedValue(new Set([sha([1])]));
 
-    const outcome = await kind.runItem(DB, batch({}), item());
+    const outcome = await kind.runItem(batch({}), item());
 
     expect(callMistralOcrMock).toHaveBeenCalledTimes(2);
     expect(outcome.ok).toBe(true);
@@ -460,7 +450,7 @@ describe('runItem', () => {
   it('neither reads nor writes the ledger when the batch opted out', async () => {
     happyPath();
 
-    const outcome = await kind.runItem(DB, batch({ skipProcessed: false }), item());
+    const outcome = await kind.runItem(batch({ skipProcessed: false }), item());
 
     expect(outcome.ok).toBe(true);
     expect(findProcessedHashesMock).not.toHaveBeenCalled();
@@ -471,7 +461,7 @@ describe('runItem', () => {
     happyPath();
     recordProcessedFilesMock.mockRejectedValue(new Error('db down'));
 
-    const outcome = await kind.runItem(DB, batch({}), item());
+    const outcome = await kind.runItem(batch({}), item());
 
     expect(outcome.ok).toBe(true);
     expect(outcome.result?.sandboxFileId).toBe('file-1');
@@ -479,7 +469,7 @@ describe('runItem', () => {
 
   it('fails without calling OCR when the Mistral connector is not configured', async () => {
     resolveMistralOcrConfigMock.mockResolvedValue({ ok: false, err: 'unconfigured' });
-    const outcome = await kind.runItem(DB, batch({}), item());
+    const outcome = await kind.runItem(batch({}), item());
     expect(outcome.ok).toBe(false);
     expect(fsReadFileMock).not.toHaveBeenCalled();
   });
@@ -491,7 +481,7 @@ describe('runItem', () => {
     });
     fsReadFileMock.mockResolvedValue({ ok: false, err: { message: 'not found' } });
 
-    const outcome = await kind.runItem(DB, batch({}), item());
+    const outcome = await kind.runItem(batch({}), item());
 
     expect(outcome).toEqual({ ok: false, error: 'not found' });
     expect(callMistralOcrMock).not.toHaveBeenCalled();
@@ -499,7 +489,7 @@ describe('runItem', () => {
 
   it('reads items written before `sources` existed from their paths alone', async () => {
     happyPath();
-    const outcome = await kind.runItem(DB, batch({}), item({ sources: undefined }));
+    const outcome = await kind.runItem(batch({}), item({ sources: undefined }));
     expect(outcome.ok).toBe(true);
     expect(fsReadFileMock).toHaveBeenCalledTimes(2);
   });
@@ -509,11 +499,7 @@ describe('runItem', () => {
       happyPath();
       fsRemoveEntryMock.mockResolvedValue({ ok: true, val: {} });
 
-      const outcome = await kind.runItem(
-        DB,
-        batch({ afterProcessing: { action: 'delete' } }),
-        item()
-      );
+      const outcome = await kind.runItem(batch({ afterProcessing: { action: 'delete' } }), item());
 
       expect(fsRemoveEntryMock).toHaveBeenNthCalledWith(
         1,
@@ -539,7 +525,6 @@ describe('runItem', () => {
         .mockResolvedValueOnce({ ok: true, val: { path: '/done/inv-7-p2.tif', unchanged: false } });
 
       const outcome = await kind.runItem(
-        DB,
         batch({ afterProcessing: { action: 'move', shareId: 'share-1', path: '/done' } }),
         item()
       );
@@ -570,7 +555,6 @@ describe('runItem', () => {
       fsRemoveEntryMock.mockResolvedValue({ ok: true, val: {} });
 
       const outcome = await kind.runItem(
-        DB,
         batch({ afterProcessing: { action: 'move', shareId: 'share-2', path: '/archive' } }),
         item()
       );
@@ -605,7 +589,6 @@ describe('runItem', () => {
       fsStatEntryMock.mockResolvedValue({ ok: true, val: { path: '/archive/inv-7-p1.tif' } });
 
       const outcome = await kind.runItem(
-        DB,
         batch({ afterProcessing: { action: 'move', shareId: 'share-2', path: '/archive' } }),
         item()
       );
@@ -624,11 +607,7 @@ describe('runItem', () => {
       happyPath();
       fsRemoveEntryMock.mockResolvedValue({ ok: false, err: { message: 'access denied' } });
 
-      const outcome = await kind.runItem(
-        DB,
-        batch({ afterProcessing: { action: 'delete' } }),
-        item()
-      );
+      const outcome = await kind.runItem(batch({ afterProcessing: { action: 'delete' } }), item());
 
       expect(outcome.ok).toBe(false);
       expect(outcome.error).toContain('could not delete /in/inv-7-p1.tif: access denied');

@@ -22,9 +22,8 @@
  *     correct response is to drop the cursor and re-enumerate.
  */
 
-import { sql } from 'kysely';
 import { randomUUID } from 'node:crypto';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { actorForAccount } from '../log-actor';
 import {
   initialDeltaUrl,
@@ -91,9 +90,7 @@ export async function runDriveWatchSync(
   access: MicrosoftAccess,
   row: DriveWatchRow
 ): Promise<DriveSyncResult> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) throw new Error('database unavailable');
-  const db = dbResult.val;
+  const watches = getDataStore().contentWatches;
 
   const driveId = row.scope_key;
   const fullEnumeration = row.cursor === null;
@@ -108,11 +105,7 @@ export async function runDriveWatchSync(
     // to start over. Cheap, because the cTag skip means re-enumerating costs
     // enumeration only: no re-download, no re-embed.
     if (round.err.cause === 410) {
-      await db
-        .updateTable('content_watches')
-        .set({ cursor: null, sync_status: 'syncing', updated_at: sql<Date>`NOW()` })
-        .where('id', '=', row.id)
-        .execute();
+      await watches.restartCursor(row.id);
       logger.info('drive delta token expired for {scope}; will re-enumerate', {
         component: COMPONENT,
         scope: row.scope_label ?? driveId,
@@ -137,10 +130,7 @@ export async function runDriveWatchSync(
   const candidateRefIds = entries
     .filter((entry) => !isDeleted(entry) && !isContainer(entry) && str(entry.id))
     .map((entry) => sharepointRefId(driveId, str(entry.id)));
-  const stored = await readObjectMetadataBatch(
-    SHAREPOINT_KNOWLEDGE_PROVIDER,
-    candidateRefIds
-  );
+  const stored = await readObjectMetadataBatch(SHAREPOINT_KNOWLEDGE_PROVIDER, candidateRefIds);
   const known = stored.ok ? stored.val : new Map<string, Record<string, unknown>>();
 
   const orderingKey = `sharepoint/${driveId}`;
@@ -250,22 +240,14 @@ export async function runDriveWatchSync(
 
   // Cursor and counters written LAST and together: a crash before this point
   // replays the round into idempotent enqueues, which is the safe direction.
-  await db
-    .updateTable('content_watches')
-    .set({
-      cursor: result.cursor,
-      last_synced_at: sql<Date>`NOW()`,
-      last_run_items: result.items,
-      total_items: sql<number>`total_items + ${result.items}`,
-      // A capped round is mid-enumeration; only a real deltaLink means caught up.
-      sync_status: round.val.deltaLink === null ? 'syncing' : 'idle',
-      last_error: null,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', row.id)
-    .execute();
+  await watches.recordRound(row.id, {
+    cursor: result.cursor,
+    items: result.items,
+    // A capped round is mid-enumeration; only a real deltaLink means caught up.
+    syncStatus: round.val.deltaLink === null ? 'syncing' : 'idle',
+  });
 
-  const actor = await actorForAccount(db, row.account_id);
+  const actor = await actorForAccount(row.account_id);
   const fields = {
     component: COMPONENT,
     scope: row.scope_label ?? driveId,

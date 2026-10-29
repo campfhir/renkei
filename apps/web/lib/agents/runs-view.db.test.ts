@@ -9,8 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import { getDatabase, type DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { splitDetailForSealing } from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { useTestDelegate } from '@/lib/test-support/delegate';
@@ -21,7 +20,6 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('run detail with sealed attempt content', () => {
   jest.setTimeout(30_000);
   const delegate = useTestDelegate();
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const owner = `owner-${suiteId.slice(0, 8)}`;
   const stranger = `stranger-${suiteId.slice(0, 8)}`;
@@ -44,63 +42,84 @@ maybe('run detail with sealed attempt content', () => {
     usage: { inputTokens: 1, outputTokens: 1 },
   };
 
+  const agentsCreated: { ownerSubject: string; agentId: string }[] = [];
+
+  /**
+   * A run the engine finished: the agent saved, the run queued, started,
+   * one turn opened and written with `storedDetail`, then the run settled.
+   */
   async function seedRun(
     ownerSubject: string,
     status: string,
     storedDetail: unknown
   ): Promise<{ agentId: string; runId: string }> {
+    const store = getDataStore();
     const agentId = randomUUID();
     const runId = randomUUID();
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: ownerSubject,
-        name: `agent-${agentId.slice(0, 8)}`,
-        instructions: definition.instructions,
-        tools: JSON.stringify(definition.tools),
-        enabled: true,
-      })
-      .execute();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id: runId,
-        agent_id: agentId,
-        owner_subject: ownerSubject,
-        trigger_kind: 'manual',
-        definition_snapshot: JSON.stringify(definition),
-        lineage: JSON.stringify([]),
-        initial_state: JSON.stringify({}),
-        status,
-      })
-      .execute();
-    await db
-      .insertInto('agent_run_steps')
-      .values({
-        id: randomUUID(),
-        run_id: runId,
-        step_id: 'turn',
-        step_index: 1,
-        attempt: 1,
-        status: status === 'failed' ? 'failed' : 'succeeded',
-        detail: JSON.stringify(storedDetail),
-      })
-      .execute();
+    await store.agents.create({
+      id: agentId,
+      ownerSubject,
+      name: `agent-${agentId.slice(0, 8)}`,
+      instructions: definition.instructions,
+      tools: definition.tools,
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
+    agentsCreated.push({ ownerSubject, agentId });
+    await store.agentRuns.createQueued({
+      id: runId,
+      agentId,
+      ownerSubject,
+      triggerId: null,
+      triggerKind: 'manual',
+      triggeredBySubject: ownerSubject,
+      parentRunId: null,
+      lineage: [],
+      definitionSnapshot: definition,
+      llmModelId: null,
+      initialState: {},
+    });
+    await store.agentRuns.updateExecution(runId, { status: 'running', startedAt: new Date() });
+    const turnId = randomUUID();
+    const detailText = JSON.stringify(storedDetail);
+    await store.agentRuns.openTurn({
+      id: turnId,
+      runId,
+      stepId: 'turn',
+      attempt: 1,
+      detail: detailText,
+    });
+    await store.agentRuns.writeTurn(turnId, {
+      status: status === 'failed' ? 'failed' : 'succeeded',
+      toolCallCount: 1,
+      inputTokens: 1,
+      outputTokens: 1,
+      cacheReadInputTokens: null,
+      cacheWriteInputTokens: null,
+      outcome: null,
+      detail: detailText,
+      finished: true,
+    });
+    await store.agentRuns.finishExecution(runId, {
+      status,
+      errorKind: null,
+      error: status === 'failed' ? 'The run failed.' : null,
+    });
     return { agentId, runId };
   }
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
     await delegate.enroll(owner);
   });
 
   afterAll(async () => {
-    await db.deleteFrom('agent_runs').where('owner_subject', 'in', [owner, stranger]).execute();
-    await db.deleteFrom('agents').where('owner_subject', 'in', [owner, stranger]).execute();
-    await db.deleteFrom('user_encryption_keys').where('subject', 'in', [owner, stranger]).execute();
+    // Deleting an agent takes its runs, steps and batches with it.
+    for (const { ownerSubject, agentId } of agentsCreated) {
+      await getDataStore().agents.delete(ownerSubject, agentId);
+    }
   });
 
   it('round-trips: the owner reads the attempt as the engine wrote it, and the row holds no content', async () => {
@@ -112,7 +131,7 @@ maybe('run detail with sealed attempt content', () => {
     expect(JSON.stringify(stored)).not.toContain('Jane Doe');
 
     const { agentId, runId } = await seedRun(owner, 'succeeded', stored);
-    const run = await getRunForOwner(db, owner, agentId, runId);
+    const run = await getRunForOwner(owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
     expect(run?.definition).toEqual(definition);
   });
@@ -120,30 +139,34 @@ maybe('run detail with sealed attempt content', () => {
   it('shows an admin nothing of a working run, and the staged batches only on a failed one', async () => {
     const working = await seedRun(stranger, 'succeeded', detail);
     const failed = await seedRun(stranger, 'failed', detail);
+    // Each run staged one auto-accepted batch, which then ran to completion.
     for (const { runId, agentId } of [working, failed]) {
-      await db
-        .insertInto('agent_action_batches')
-        .values({
-          id: randomUUID(),
-          run_id: runId,
-          agent_id: agentId,
-          owner_subject: stranger,
-          turn: 1,
-          status: 'completed',
-          summary: 'Comment on PROJ-42',
-          actions: JSON.stringify([
-            { tool: 'jira_add_comment', args: { issueKey: 'PROJ-42' }, reason: 'r' },
-          ]),
-        })
-        .execute();
+      const batchId = randomUUID();
+      const runs = getDataStore().agentRuns;
+      await runs.stageBatch({
+        id: batchId,
+        runId,
+        agentId,
+        ownerSubject: stranger,
+        turn: 1,
+        status: 'accepted',
+        summary: 'Comment on PROJ-42',
+        actions: [{ tool: 'jira_add_comment', args: { issueKey: 'PROJ-42' }, reason: 'r' }],
+        reviewReason: null,
+        acceptedBy: 'auto',
+        decided: true,
+        waitingUntil: null,
+      });
+      expect(await runs.claimBatch(batchId)).toBe(true);
+      await runs.completeBatch(batchId, []);
     }
-    const quiet = await getRunForAdmin(db, working.agentId, working.runId);
+    const quiet = await getRunForAdmin(working.agentId, working.runId);
     expect(quiet?.attempts[0]?.redacted).toBe(true);
     expect(quiet?.batches[0]).toMatchObject({ actionCount: 1, status: 'completed' });
     expect(quiet?.batches[0]).not.toHaveProperty('actions');
     expect(JSON.stringify(quiet)).not.toContain('PROJ-42');
 
-    const broken = await getRunForAdmin(db, failed.agentId, failed.runId);
+    const broken = await getRunForAdmin(failed.agentId, failed.runId);
     expect(broken?.batches[0]?.actions?.[0]?.tool).toBe('jira_add_comment');
   });
 
@@ -154,7 +177,7 @@ maybe('run detail with sealed attempt content', () => {
       ...clear,
       sealed: 'uenc1:not-openable',
     });
-    const run = await getRunForAdmin(db, agentId, runId);
+    const run = await getRunForAdmin(agentId, runId);
     const shown = run?.attempts[0]?.detail;
     expect(shown).toMatchObject({
       finish: 'done',
@@ -169,7 +192,7 @@ maybe('run detail with sealed attempt content', () => {
 
   it('passes a pre-sealing plaintext row through as it is', async () => {
     const { agentId, runId } = await seedRun(owner, 'succeeded', detail);
-    const run = await getRunForOwner(db, owner, agentId, runId);
+    const run = await getRunForOwner(owner, agentId, runId);
     expect(run?.attempts[0]?.detail).toEqual(detail);
   });
 });

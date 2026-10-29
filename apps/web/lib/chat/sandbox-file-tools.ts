@@ -92,9 +92,9 @@ export function pickByName<T extends NamedFile>(files: readonly T[], wanted: str
 
 /** The chat's own files, then its project's, oldest first within each. */
 async function filesOf(context: LocalToolContext): Promise<AttachmentRow[]> {
-  const own = await listAttachments(context.db, { chatId: context.chatId });
+  const own = await listAttachments({ chatId: context.chatId });
   if (!context.projectId) return own;
-  const shared = await listProjectArtifacts(context.db, context.projectId);
+  const shared = await listProjectArtifacts(context.projectId);
   return [...shared, ...own];
 }
 

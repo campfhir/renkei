@@ -5,8 +5,12 @@
  * yields no identity — recorded as absent, never guessed.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
-
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import {
   identityClaimsFromIdToken,
   groupValuesFromIdToken,
@@ -16,10 +20,15 @@ import {
   clearIdpGroups,
 } from './identity';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+let store: MemoryDataStore;
 
 beforeEach(() => {
-  mockGetDatabase.mockReset();
+  store = createMemoryDataStore();
+  registerDataStore(store);
+});
+
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('identityClaimsFromIdToken', () => {
@@ -105,76 +114,55 @@ describe('hasGroupsOverage', () => {
 });
 
 describe('upsertIdentity / getIdentityEmail', () => {
-  it('round-trips through the database chains', async () => {
-    const inserted: Array<Record<string, unknown>> = [];
-    const insertChain = {
-      values: (row: Record<string, unknown>) => {
-        inserted.push(row);
-        return insertChain;
-      },
-      onConflict: () => insertChain,
-      execute: async () => [],
-    };
-    const selectChain = {
-      select: () => selectChain,
-      where: () => selectChain,
-      executeTakeFirst: async () => ({ email: 'sam@example.com' }),
-    };
-    mockGetDatabase.mockReturnValue({
-      ok: true,
-      val: { insertInto: () => insertChain, selectFrom: () => selectChain },
-    });
-
+  it('round-trips through the data store', async () => {
     const wrote = await upsertIdentity('subject-1', {
       email: 'sam@example.com',
       displayName: 'Sam',
       idpGroups: ['eng'],
     });
     expect(wrote.ok).toBe(true);
-    expect(inserted[0]?.email).toBe('sam@example.com');
-    expect(inserted[0]?.subject).toBe('subject-1');
+    expect(await store.identities.get('subject-1')).toEqual({
+      subject: 'subject-1',
+      email: 'sam@example.com',
+      displayName: 'Sam',
+      idpGroups: ['eng'],
+    });
 
     const read = await getIdentityEmail('subject-1');
     expect(read.ok && read.val).toBe('sam@example.com');
   });
 
   it('clears only the groups of the named subject', async () => {
-    const sets: Array<Record<string, unknown>> = [];
-    const wheres: unknown[][] = [];
-    const updateChain = {
-      set: (values: Record<string, unknown>) => {
-        sets.push(values);
-        return updateChain;
-      },
-      where: (...args: unknown[]) => {
-        wheres.push(args);
-        return updateChain;
-      },
-      execute: async () => [],
-    };
-    mockGetDatabase.mockReturnValue({ ok: true, val: { updateTable: () => updateChain } });
+    await upsertIdentity('subject-1', {
+      email: 'a@example.com',
+      displayName: 'A',
+      idpGroups: ['x'],
+    });
+    await upsertIdentity('subject-2', {
+      email: 'b@example.com',
+      displayName: 'B',
+      idpGroups: ['y'],
+    });
 
     const cleared = await clearIdpGroups('subject-1');
     expect(cleared.ok).toBe(true);
-    expect(sets[0]?.idp_groups).toEqual([]);
-    expect(sets[0]?.email).toBeUndefined();
-    expect(wheres).toEqual([['subject', '=', 'subject-1']]);
+    expect(await store.identities.get('subject-1')).toMatchObject({
+      email: 'a@example.com',
+      idpGroups: [],
+    });
+    expect((await store.identities.get('subject-2'))?.idpGroups).toEqual(['y']);
   });
 
   it('reports null for a subject with no recorded identity', async () => {
-    const selectChain = {
-      select: () => selectChain,
-      where: () => selectChain,
-      executeTakeFirst: async () => undefined,
-    };
-    mockGetDatabase.mockReturnValue({ ok: true, val: { selectFrom: () => selectChain } });
-
     const read = await getIdentityEmail('stranger');
     expect(read.ok && read.val === null).toBe(true);
   });
 
-  it('fails with DB_ERROR when the database is unavailable', async () => {
-    mockGetDatabase.mockReturnValue({ ok: false, err: { type: 'DB_ERROR' } });
+  it('fails with DB_ERROR when the store cannot be read', async () => {
+    registerDataStore({
+      ...store,
+      identities: { ...store.identities, get: () => Promise.reject(new Error('down')) },
+    });
     const read = await getIdentityEmail('subject-1');
     expect(read.ok).toBe(false);
   });

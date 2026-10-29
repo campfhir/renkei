@@ -13,7 +13,6 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { normalizeLocale } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
@@ -28,17 +27,11 @@ const LIMITS = {
   global: { limit: 1_000, windowMs: 60_000 },
 };
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const verdict = checkInboundLimit(
-    `voice/transcribe:${session.subject}`,
-    request,
-    LIMITS
-  );
+  const verdict = checkInboundLimit(`voice/transcribe:${session.subject}`, request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
       { error: 'Too many transcription requests; slow down a little.' },
@@ -86,15 +79,12 @@ export async function POST(
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });
   }
   // The ledger row (migration 110): seconds of sound, never the words.
-  const dbResult = getDatabase();
-  if (dbResult.ok) {
-    void recordVoiceUsage(dbResult.val, {
-      subject: session.subject,
-      kind: 'transcription',
-      audioMs: wavDurationMs(audio.byteLength),
-      provider: resolved.provider.kind,
-      locale: result.val.locale ?? locale,
-    });
-  }
+  void recordVoiceUsage({
+    subject: session.subject,
+    kind: 'transcription',
+    audioMs: wavDurationMs(audio.byteLength),
+    provider: resolved.provider.kind,
+    locale: result.val.locale ?? locale,
+  });
   return NextResponse.json({ text: result.val.text, locale: result.val.locale });
 }

@@ -6,13 +6,13 @@
  * session that was shown the page may answer, only from this origin, and
  * only once; Deny sends `access_denied`; Allow mints a code the token
  * endpoint exchanges for exactly the verifier the challenge committed to,
- * and for nothing else.
+ * and for nothing else. The client, sessions and person are this run's
+ * own; nothing org-wide is cleared.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
 import { NextRequest } from 'next/server';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { hashToken } from '@/lib/mcp-token';
 import { resetInboundLimits } from '@/lib/inbound-rate-limit';
 import { computeS256 } from '@/lib/oauth-pkce';
@@ -23,12 +23,12 @@ import { POST as token } from '../token/route';
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('the consent step of the authorization endpoint', () => {
-  let db: Kysely<DB>;
   let origin: string;
   const runId = randomUUID();
   const clientId = `client_${runId.slice(0, 8)}`;
   const clientSecret = 'client-secret-for-tests';
   const subject = `person-${runId.slice(0, 8)}@example.com`;
+  const someoneElse = `someone-else-${runId.slice(0, 8)}@example.com`;
   const sessionId = randomUUID();
   const otherSessionId = randomUUID();
   const redirectUri = 'http://127.0.0.1/callback';
@@ -110,48 +110,32 @@ maybe('the consent step of the authorization endpoint', () => {
   }
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
     const originResult = await getOrigin(new NextRequest('http://localhost/x'));
     if (!originResult.ok) throw new Error('no origin');
     origin = originResult.val;
-    await db
-      .insertInto('oauth_clients')
-      .values({
-        client_id: clientId,
-        client_name: 'Test MCP client',
-        client_secret_hash: hashToken(clientSecret),
-        redirect_uris: [redirectUri],
-      })
-      .execute();
-    const inAnHour = new Date(Date.now() + 3_600_000);
-    for (const id of [sessionId, otherSessionId]) {
-      await db
-        .insertInto('sessions')
-        .values({
-          id,
-          subject: id === sessionId ? subject : `someone-else-${runId.slice(0, 8)}@example.com`,
-          roles: ['renkei-user'],
-          expires_at: inAnHour,
-        })
-        .execute();
-    }
+    const store = getDataStore();
+    await store.oauthConsents.registerClient({
+      clientId,
+      clientSecretHash: hashToken(clientSecret),
+      clientName: 'Test MCP client',
+      redirectUris: [redirectUri],
+      responseTypes: ['code'],
+      grantTypes: ['authorization_code', 'refresh_token'],
+    });
+    const expiresAt = new Date(Date.now() + 3_600_000);
+    await store.sessions.create({ id: sessionId, subject, roles: ['renkei-user'], expiresAt });
+    await store.sessions.create({
+      id: otherSessionId,
+      subject: someoneElse,
+      roles: ['renkei-user'],
+      expiresAt,
+    });
   });
 
   afterAll(async () => {
-    for (const table of [
-      'audit_events',
-      'oauth_access_tokens',
-      'oauth_refresh_tokens',
-      'oauth_authorization_codes',
-      'oauth_consent_requests',
-      'oauth_clients',
-      'sessions',
-    ] as const) {
-      await db.deleteFrom(table).execute();
-    }
-    await closeDatabase();
+    // Signing both people out ends their sessions and the tokens minted here.
+    for (const person of [subject, someoneElse]) await getDataStore().sessions.revokeAll(person);
+    await closeDataStore();
   });
 
   beforeEach(() => {
@@ -172,13 +156,9 @@ maybe('the consent step of the authorization endpoint', () => {
       expect(location.searchParams.get('error')).toBe('invalid_request');
       expect(location.searchParams.get('state')).toBe('xyz');
       expect(location.searchParams.get('code')).toBeNull();
+      // No consent request was recorded to answer later.
+      expect(location.searchParams.get('request')).toBeNull();
     }
-    expect(
-      await db
-        .selectFrom('oauth_consent_requests')
-        .selectAll()
-        .execute()
-    ).toHaveLength(0);
   });
 
   it('never redirects to a URI the client did not register, loopback port aside', async () => {
@@ -195,27 +175,21 @@ maybe('the consent step of the authorization endpoint', () => {
     const response = await authorize();
     expect(response.status).toBe(303);
     const requestId = requestIdOf(response);
-    const row = await db
-      .selectFrom('oauth_consent_requests')
-      .selectAll()
-      .where('id', '=', requestId)
-      .executeTakeFirstOrThrow();
+    const row = await getDataStore().oauthConsents.getRequest(requestId);
     expect(row).toMatchObject({
-      client_id: clientId,
-      session_id: sessionId,
+      clientId,
+      sessionId,
       subject,
-      redirect_uri: 'http://127.0.0.1:50321/callback',
+      redirectUri: 'http://127.0.0.1:50321/callback',
       state: 'xyz',
       scope: 'openid',
-      code_challenge: challenge,
-      code_challenge_method: 'S256',
+      codeChallenge: challenge,
+      codeChallengeMethod: 'S256',
+      clientName: 'Test MCP client',
     });
-    expect(
-      await db
-        .selectFrom('oauth_authorization_codes')
-        .selectAll()
-        .execute()
-    ).toHaveLength(0);
+    // The redirect goes to the consent page, carrying no code.
+    const location = new URL(response.headers.get('location')!);
+    expect(location.searchParams.get('code')).toBeNull();
   });
 
   it('accepts an answer only from the session that was shown the page, posted from this origin', async () => {
@@ -226,13 +200,7 @@ maybe('the consent step of the authorization endpoint', () => {
     const noOrigin = await answer(requestId, 'allow', { origin: null });
     expect(noOrigin.status).toBe(403);
     // Refused before the database: the request is still pending for its own session.
-    expect(
-      await db
-        .selectFrom('oauth_consent_requests')
-        .selectAll()
-        .where('id', '=', requestId)
-        .execute()
-    ).toHaveLength(1);
+    expect(await getDataStore().oauthConsents.getRequest(requestId)).not.toBeNull();
 
     const otherSession = await answer(requestId, 'allow', { session: otherSessionId });
     expect(otherSession.status).toBe(403);
@@ -241,6 +209,7 @@ maybe('the consent step of the authorization endpoint', () => {
     // comes out of it. A replay by the right session finds nothing.
     const replay = await answer(requestId, 'allow');
     expect(replay.status).toBe(400);
+    expect(await getDataStore().oauthConsents.getRequest(requestId)).toBeNull();
   });
 
   it('sends access_denied when the person declines, and spends the request', async () => {
@@ -253,12 +222,10 @@ maybe('the consent step of the authorization endpoint', () => {
     expect(location.searchParams.get('state')).toBe('xyz');
     const again = await answer(requestId, 'deny');
     expect(again.status).toBe(400);
-    const audit = await db
-      .selectFrom('audit_events')
-      .select(['action', 'actor_subject'])
-      .where('action', '=', 'oauth.consent_denied')
-      .execute();
-    expect(audit).toEqual([{ action: 'oauth.consent_denied', actor_subject: subject }]);
+    const audit = (await getDataStore().auditEvents.listRecent(500)).filter(
+      (event) => event.actorSubject === subject
+    );
+    expect(audit.map((event) => event.action)).toEqual(['oauth.consent_denied']);
   });
 
   it('mints a code on Allow that only the committed verifier can exchange', async () => {
@@ -271,13 +238,9 @@ maybe('the consent step of the authorization endpoint', () => {
     const code = location.searchParams.get('code');
     expect(code).toMatch(/^code_/);
 
-    const row = await db
-      .selectFrom('oauth_authorization_codes')
-      .selectAll()
-      .where('code', '=', code!)
-      .executeTakeFirstOrThrow();
-    expect(row).toMatchObject({ subject, client_id: clientId, code_challenge_method: 'S256' });
-    expect(row.roles).toEqual(['renkei-user']);
+    const row = await getDataStore().oauthConsents.getAuthorizationCode(code!);
+    expect(row).toMatchObject({ subject, clientId, codeChallengeMethod: 'S256' });
+    expect(row?.roles).toEqual(['renkei-user']);
 
     const missing = await exchange(code!, undefined);
     expect(missing.status).toBe(400);

@@ -26,10 +26,10 @@ export async function GET(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, session.subject, chatId);
+  const { session } = ready.context;
+  const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
-  return NextResponse.json(await loadChatView(db, access, session.subject));
+  return NextResponse.json(await loadChatView(access, session.subject));
 }
 
 export async function PATCH(
@@ -39,7 +39,7 @@ export async function PATCH(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
 
   const patch: ChatPatch = {};
@@ -60,7 +60,7 @@ export async function PATCH(
   if (typeof body.autoMode === 'boolean') patch.autoMode = body.autoMode;
   if (typeof body.archived === 'boolean') patch.archived = body.archived;
 
-  const updated = await updateChat(db, session.subject, chatId, patch);
+  const updated = await updateChat(session.subject, chatId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such chat');
   return NextResponse.json({ ok: true });
 }
@@ -72,9 +72,9 @@ export async function DELETE(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, session.subject, chatId);
-  const deleted = await deleteChat(db, session.subject, chatId);
+  const { session } = ready.context;
+  const chat = await getChatForOwner(session.subject, chatId);
+  const deleted = await deleteChat(session.subject, chatId);
   if (!deleted) return jsonError(404, 'not-found', 'No such chat');
   // A code chat's worktree goes with it; what this misses the worker's sweep takes.
   if (chat?.projectId) await deleteChatWorktree(chat.projectId, chat.workspaceId);

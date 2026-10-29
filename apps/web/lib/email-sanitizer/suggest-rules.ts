@@ -12,8 +12,7 @@
  * operator through the ordinary rules API, one deliberate click each.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import type { ClassifierRule, EmailCategory } from '@renkei/email-sanitizer';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
@@ -74,34 +73,18 @@ function promptOf(
   ].join('\n');
 }
 
-export async function suggestSanitizerRules(
-  db: Kysely<DB>
-): Promise<{ suggestions: RuleSuggestion[] } | { error: string }> {
-  const llmResult = await resolveAgentLlm(db, null);
+export async function suggestSanitizerRules(): Promise<
+  { suggestions: RuleSuggestion[] } | { error: string }
+> {
+  const llmResult = await resolveAgentLlm(null);
   if (!llmResult.ok) {
     return { error: 'No model is configured for this organization.' };
   }
   const llm = llmResult.val;
 
   // Corrections first (the classifier was WRONG), unsure rows to fill.
-  const corrected = await db
-    .selectFrom('email_classification_log')
-    .select(['excerpt', 'category', 'override_category'])
-    .where('override_category', 'is not', null)
-    .orderBy('overridden_at', 'desc')
-    .limit(MAX_EXAMPLES)
-    .execute();
-  const unsure =
-    corrected.length < MAX_EXAMPLES
-      ? await db
-          .selectFrom('email_classification_log')
-          .select(['excerpt', 'category'])
-          .where('needs_review', '=', true)
-          .where('override_category', 'is', null)
-          .orderBy('created_at', 'desc')
-          .limit(MAX_EXAMPLES - corrected.length)
-          .execute()
-      : [];
+  const store = getDataStore();
+  const { corrected, unsure } = await store.mailReview.suggestionEvidence(MAX_EXAMPLES);
 
   if (corrected.length + unsure.length === 0) {
     return {
@@ -114,18 +97,14 @@ export async function suggestSanitizerRules(
   const examples = [
     ...corrected.map(
       (row) =>
-        `Classified "${row.category}"; the user corrected it to "${row.override_category}".\n${row.excerpt}`
+        `Classified "${row.category}"; the user corrected it to "${row.overrideCategory}".\n${row.excerpt}`
     ),
     ...unsure.map((row) => `Classifier unsure; guessed "${row.category}".\n${row.excerpt}`),
   ];
 
-  const existing = await db
-    .selectFrom('email_classifier_rules')
-    .select(['match_type', 'match_value', 'category'])
-    .where('enabled', '=', true)
-    .execute();
+  const existing = (await store.emailSanitizer.listRules()).filter((rule) => rule.enabled);
   const existingKeys = new Set(
-    existing.map((rule) => `${rule.match_type}:${rule.match_value.toLowerCase()}`)
+    existing.map((rule) => `${rule.matchType}:${rule.matchValue.toLowerCase()}`)
   );
 
   // The timer is cleared after the race — left running it would hold the
@@ -143,8 +122,8 @@ export async function suggestSanitizerRules(
               text: promptOf(
                 examples,
                 existing.map((rule) => ({
-                  matchType: rule.match_type,
-                  matchValue: rule.match_value,
+                  matchType: rule.matchType,
+                  matchValue: rule.matchValue,
                   category: rule.category,
                 }))
               ),

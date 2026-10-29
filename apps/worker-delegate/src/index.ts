@@ -31,7 +31,6 @@
  *     enrollment reads it here.
  */
 
-import { getDatabase } from '@renkei/db';
 import { enrollmentCensus, legacyMasterAvailable } from '@renkei/user-keys';
 import { runWorker } from '@renkei/worker-kit';
 import { createDelegateServer } from './server';
@@ -62,7 +61,7 @@ void runWorker({
   defaultCallerName: 'web',
   logger,
   attachPersistentLogging,
-  createServer: ({ db, encryptionKey, apiKeys, namedApiKeys }) => {
+  createServer: ({ encryptionKey, apiKeys, namedApiKeys }) => {
     const refusal = developmentKeyRefusal(apiKeys);
     if (refusal) {
       console.error(`FATAL [worker-delegate]: ${refusal}`);
@@ -76,14 +75,14 @@ void runWorker({
         );
       }
     }
-    void registerInstance(db, logger)
+    void registerInstance(logger)
       .then(async (instance) => {
         const retire = (): void => {
           void instance.retire();
         };
         process.once('SIGTERM', retire);
         process.once('SIGINT', retire);
-        const census = await enrollmentCensus(db);
+        const census = await enrollmentCensus();
         const pending = census.managed + census.own;
         if (pending > 0 && !legacyMasterAvailable()) {
           logger.warn(
@@ -105,17 +104,13 @@ void runWorker({
       });
     // The deployment's signing key: made on the first boot, read on every
     // later one, so a browser can accept a new instance's key on its say-so.
-    const signer = loadOrCreateSigningKey(db, encryptionKey, logger).catch((error: unknown) => {
+    const signer = loadOrCreateSigningKey(encryptionKey, logger).catch((error: unknown) => {
       logger.error('the delegate signing key could not be loaded: {error}', {
         component: 'worker-delegate/signing',
         error: error instanceof Error ? error.message : String(error),
       });
       return null;
     });
-    return createDelegateServer({ db, encryptionKey, apiKeys: namedApiKeys, logger, signer });
+    return createDelegateServer({ encryptionKey, apiKeys: namedApiKeys, logger, signer });
   },
 });
-
-// A boot without a database is already fatal in runWorker; this import
-// keeps the census above honest about which pool it reads.
-void getDatabase;

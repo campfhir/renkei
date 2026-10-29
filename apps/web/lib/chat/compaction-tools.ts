@@ -28,7 +28,7 @@ export function compactionTools(): LocalTool[] {
         if (!context.llm) return errorResult('No model is available to summarize with.');
         let result;
         try {
-          result = await compactChat(context.db, {
+          result = await compactChat({
             chatId: context.chatId,
             llm: context.llm,
             createdBy: 'tool',

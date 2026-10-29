@@ -19,9 +19,7 @@
  * already has a client; this layer only owns the row.
  */
 
-import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 
 /**
  * Matches the `knowledge_chunks.provider` each poller writes, so the ACL
@@ -72,10 +70,28 @@ const SCOPE_METADATA_KEY: Record<string, string> = {
   sharepoint: 'scopeKey',
 };
 
+type WatchResult<T> = ({ ok: true } & T) | { ok: false; error: string };
+
+/**
+ * The result shape the watch tools branch on. A store failure rejects, as a
+ * query here always did; `ok: false` is kept for the callers' contract.
+ */
+async function guarded<T>(work: () => Promise<T>): Promise<WatchResult<T>> {
+  return { ok: true, ...(await work()) };
+}
+
 /**
  * Create or re-enable a watch. Re-watching an existing scope is a no-op on
  * the cursor — deliberately, so a user who unwatches and re-watches does
- * not trigger a full re-index of a large space.
+ * not trigger a full re-index of a large space. A re-watch also clears a
+ * stale failure, so the connectors page doesn't keep showing an error from
+ * a grant problem the user just fixed.
+ *
+ * A fresh row for a scope some OTHER subject already indexed inherits that
+ * row's cursor: the index already holds the scope's history, so starting
+ * this watch from NULL would re-read an entire space to rebuild what is
+ * already there. This is how a watch orphaned by a dead grant gets picked
+ * up by the next person without the costly full re-read.
  */
 export async function upsertWatch(
   owner: WatchOwner,
@@ -83,67 +99,10 @@ export async function upsertWatch(
   scopeType: WatchScopeType,
   scopeKey: string,
   scopeLabel: string | null
-): Promise<{ ok: true; created: boolean } | { ok: false; error: string }> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
-
-  const existing = await dbResult.val
-    .selectFrom('content_watches')
-    .select(['id', 'enabled'])
-    .where('provider', '=', provider)
-    .where('subject', '=', owner.subject)
-    .where('scope_type', '=', scopeType)
-    .where('scope_key', '=', scopeKey)
-    .executeTakeFirst();
-
-  if (existing) {
-    await dbResult.val
-      .updateTable('content_watches')
-      .set({
-        enabled: true,
-        scope_label: scopeLabel,
-        // A re-watch clears a stale failure so the connectors page doesn't
-        // keep showing an error from a grant problem the user just fixed.
-        last_error: null,
-        sync_status: 'idle',
-        account_id: owner.accountId,
-        updated_at: sql<Date>`NOW()`,
-      })
-      .where('id', '=', existing.id)
-      .execute();
-    return { ok: true, created: !existing.enabled };
-  }
-
-  // A fresh row for a scope some OTHER subject already indexed inherits
-  // that row's cursor: the index already holds the scope's history, so
-  // starting this watch from NULL would re-read an entire space to rebuild
-  // what is already there. This is how a watch orphaned by a dead grant
-  // gets picked up by the next person without the costly full re-read.
-  const sibling = await dbResult.val
-    .selectFrom('content_watches')
-    .select('cursor')
-    .where('provider', '=', provider)
-    .where('scope_type', '=', scopeType)
-    .where('scope_key', '=', scopeKey)
-    .where('cursor', 'is not', null)
-    .orderBy('updated_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-
-  await dbResult.val
-    .insertInto('content_watches')
-    .values({
-      id: randomUUID(),
-      provider,
-      account_id: owner.accountId,
-      subject: owner.subject,
-      scope_type: scopeType,
-      scope_key: scopeKey,
-      scope_label: scopeLabel,
-      cursor: sibling?.cursor ?? null,
-    })
-    .execute();
-  return { ok: true, created: true };
+): Promise<WatchResult<{ created: boolean }>> {
+  return guarded(() =>
+    getDataStore().contentWatches.watch(owner, { provider, scopeType, scopeKey, scopeLabel })
+  );
 }
 
 /**
@@ -156,7 +115,10 @@ export async function upsertWatch(
  * "adding" the same scope creates a SECOND watch with a NULL cursor — a
  * full re-read of the whole space, which is exactly the costly thing a
  * repair must avoid. Taking the existing rows over instead resumes
- * incremental polling from where they stopped.
+ * incremental polling from where they stopped. The rows are marked
+ * never-synced, which puts them at the head of the sweep's
+ * never-synced-first ordering — "repair" should visibly poll within
+ * minutes, not wait out the org's normal cadence.
  *
  * Safe to point at someone else's watch because the caller's own access
  * was just proven against the provider (the route resolves the scope
@@ -169,30 +131,14 @@ export async function repairWatch(
   provider: WatchProvider,
   scopeType: WatchScopeType,
   scopeKey: string
-): Promise<{ ok: true; repaired: number } | { ok: false; error: string }> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
-
-  const result = await dbResult.val
-    .updateTable('content_watches')
-    .set({
-      subject: owner.subject,
-      account_id: owner.accountId,
-      enabled: true,
-      last_error: null,
-      sync_status: 'idle',
-      // NULL puts the row at the head of the sweep's never-synced-first
-      // ordering — "repair" should visibly poll within minutes, not wait
-      // out the org's normal cadence. The cursor is deliberately untouched.
-      last_synced_at: null,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('provider', '=', provider)
-    .where('scope_type', '=', scopeType)
-    .where('scope_key', '=', scopeKey)
-    .executeTakeFirst();
-
-  return { ok: true, repaired: Number(result.numUpdatedRows ?? 0) };
+): Promise<WatchResult<{ repaired: number }>> {
+  return guarded(async () => ({
+    repaired: await getDataStore().contentWatches.repair(owner, {
+      provider,
+      scopeType,
+      scopeKey,
+    }),
+  }));
 }
 
 /**
@@ -206,100 +152,41 @@ export async function disableWatch(
   provider: WatchProvider,
   scopeType: WatchScopeType,
   scopeKey: string
-): Promise<{ ok: true; found: boolean } | { ok: false; error: string }> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
-
-  const result = await dbResult.val
-    .updateTable('content_watches')
-    .set({ enabled: false, sync_status: 'idle', updated_at: sql<Date>`NOW()` })
-    .where('provider', '=', provider)
-    .where('subject', '=', owner.subject)
-    .where('scope_type', '=', scopeType)
-    .where('scope_key', '=', scopeKey)
-    .where('enabled', '=', true)
-    .executeTakeFirst();
-
-  return { ok: true, found: Number(result.numUpdatedRows ?? 0) > 0 };
+): Promise<WatchResult<{ found: boolean }>> {
+  return guarded(async () => ({
+    found:
+      (await getDataStore().contentWatches.disable(owner.subject, {
+        provider,
+        scopeType,
+        scopeKey,
+      })) > 0,
+  }));
 }
 
 export async function listWatches(
   owner: WatchOwner,
   provider: WatchProvider
-): Promise<{ ok: true; watches: WatchRecord[] } | { ok: false; error: string }> {
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return { ok: false, error: 'Database unavailable.' };
+): Promise<WatchResult<{ watches: WatchRecord[] }>> {
+  return guarded(async () => {
+    const store = getDataStore().contentWatches;
+    const rows = await store.list(owner.subject, provider);
 
-  const rows = await dbResult.val
-    .selectFrom('content_watches')
-    .select([
-      'provider',
-      'scope_type',
-      'scope_key',
-      'scope_label',
-      'enabled',
-      'last_synced_at',
-      'last_run_items',
-      'total_items',
-      'sync_status',
-      'last_error',
-    ])
-    .where('provider', '=', provider)
-    .where('subject', '=', owner.subject)
-    .orderBy('scope_key', 'asc')
-    .execute();
+    // Two grouped reads for the whole list rather than two per watch.
+    // Counted by OBJECT, not by chunk row: one issue becomes several
+    // chunks, and "1,004 indexed" meaning chunks would not line up with
+    // the page count an admin recognises.
+    const counts = await store.objectCounts(provider, SCOPE_METADATA_KEY[provider] ?? 'project');
+    const indexedByScope = new Map(counts.indexed.map((row) => [row.scope, row.objects]));
+    const queuedByScope = new Map(counts.queued.map((row) => [row.scope, row.objects]));
 
-  const metadataKey = SCOPE_METADATA_KEY[provider] ?? 'project';
-
-  // Two grouped reads for the whole list rather than two per watch. Counted
-  // by OBJECT, not by chunk row: one issue becomes several chunks, and "1,004
-  // indexed" meaning chunks would not line up with the page count an admin
-  // recognises.
-  const indexed = await dbResult.val
-    .selectFrom('knowledge_chunks')
-    .select([
-      sql<string>`metadata ->> ${metadataKey}`.as('scope'),
-      sql<string>`count(DISTINCT split_part(ref_id, '#', 1))`.as('objects'),
-    ])
-    .where('provider', '=', provider)
-    // GROUP BY the output ALIAS, never a repeat of the expression: each
-    // `${metadataKey}` becomes its own bound parameter, so Postgres sees
-    // `->> $2` against `->> $3`, calls them different expressions, and
-    // rejects the query. Naming it once removes the possibility.
-    .groupBy(sql`scope`)
-    .execute();
-
-  const queued = await dbResult.val
-    .selectFrom('embedding_jobs')
-    .select([
-      sql<string>`payload -> 'metadata' ->> ${metadataKey}`.as('scope'),
-      sql<string>`count(*)`.as('objects'),
-    ])
-    .where('status', '=', 'pending')
-    .where(sql<boolean>`payload ->> 'provider' = ${provider}`)
-    .groupBy(sql`scope`)
-    .execute();
-
-  const indexedByScope = new Map(indexed.map((row) => [row.scope, Number(row.objects)]));
-  const queuedByScope = new Map(queued.map((row) => [row.scope, Number(row.objects)]));
-
-  return {
-    ok: true,
-    watches: rows.map((row) => ({
-      provider: row.provider,
-      scopeType: row.scope_type,
-      scopeKey: row.scope_key,
-      scopeLabel: row.scope_label,
-      enabled: row.enabled,
-      lastSyncedAt: row.last_synced_at,
-      lastRunItems: row.last_run_items,
-      totalItems: row.total_items,
-      indexedObjects: indexedByScope.get(row.scope_key) ?? 0,
-      queuedObjects: queuedByScope.get(row.scope_key) ?? 0,
-      syncStatus: row.sync_status,
-      lastError: row.last_error,
-    })),
-  };
+    return {
+      watches: rows.map((row) => ({
+        ...row,
+        indexedObjects: indexedByScope.get(row.scopeKey) ?? 0,
+        queuedObjects: queuedByScope.get(row.scopeKey) ?? 0,
+      })),
+    };
+  });
 }
 
 /** One watch as a line of tool output. */

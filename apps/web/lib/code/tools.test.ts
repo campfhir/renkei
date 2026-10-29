@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * The code_* tools against a scripted worker client: every verb reaches
  * the worker under the PROJECT's target with the bound checkout (no
@@ -68,7 +67,6 @@ const git = jest.requireMock<Record<string, jest.Mock>>('@/lib/sandbox/workspace
 const TARGET = { subject: 'code-project:p1' };
 const WS_ID = '11111111-1111-4111-8111-111111111111';
 const context: LocalToolContext = {
-  db: {} as LocalToolContext['db'],
   subject: 'auth0|alice',
   chatId: 'chat-1',
   cipher: testCipher,

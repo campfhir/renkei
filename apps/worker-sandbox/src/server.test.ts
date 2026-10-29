@@ -26,8 +26,6 @@ jest.mock('./store', () => ({
   deleteById: jest.fn(),
 }));
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { BlockedUrlError } from '@renkei/connector-sandbox';
@@ -62,7 +60,6 @@ let base: string;
 
 beforeAll(async () => {
   server = createSandboxServer({
-    db: {} as Kysely<DB>,
     apiKeys: [API_KEY],
     maxFileBytes: async () => 1_048_576,
     fetchUrl: (url, init) => fetchUrl(url, init),
@@ -114,7 +111,7 @@ describe('authentication', () => {
   });
 
   it('refuses everything when no keys are configured', async () => {
-    const closed = createSandboxServer({ db: {} as Kysely<DB>, apiKeys: [] });
+    const closed = createSandboxServer({ apiKeys: [] });
     await new Promise<void>((resolve) => closed.listen(0, '127.0.0.1', resolve));
     const port = (closed.address() as AddressInfo).port;
     try {
@@ -189,9 +186,9 @@ describe('batch quota pool', () => {
     });
 
     expect(response.status).toBe(200);
-    expect(store.countFilesForBatch).toHaveBeenCalledWith(expect.anything(), BATCH_ID);
+    expect(store.countFilesForBatch).toHaveBeenCalledWith(BATCH_ID);
     expect(store.countFiles).not.toHaveBeenCalled();
-    const inserted = store.insertFile.mock.calls[0]?.[1] as { batchId: string | null };
+    const inserted = store.insertFile.mock.calls[0]?.[0] as { batchId: string | null };
     expect(inserted.batchId).toBe(BATCH_ID);
   });
 
@@ -329,7 +326,6 @@ describe('list/stat/delete dispatch', () => {
 describe('draining', () => {
   it('turns every request away with 503 shutting_down once draining starts, health included', async () => {
     const draining = createSandboxServer({
-      db: {} as Kysely<DB>,
       apiKeys: [API_KEY],
       maxFileBytes: async () => 1_048_576,
     });

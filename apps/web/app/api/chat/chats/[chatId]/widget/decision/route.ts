@@ -48,21 +48,20 @@ export async function POST(
   const { chatId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const chat = await getChatForOwner(db, session.subject, chatId);
+  const { session } = ready.context;
+  const chat = await getChatForOwner(session.subject, chatId);
   if (!chat) return jsonError(404, 'not-found', 'No such chat');
 
   const body = await readJsonBody(request);
   const stateKey = typeof body.stateKey === 'string' ? body.stateKey : '';
-  const decision = body.decision === 'confirmed' || body.decision === 'cancelled'
-    ? body.decision
-    : null;
+  const decision =
+    body.decision === 'confirmed' || body.decision === 'cancelled' ? body.decision : null;
   const state = JSON.stringify(body.state).length <= MAX_STATE_CHARS ? stateOf(body.state) : null;
   if (!stateKey || !decision || !state) {
     return jsonError(400, 'invalid', 'stateKey, decision and state are required.');
   }
 
-  const recorded = await recordWidgetDecision(db, {
+  const recorded = await recordWidgetDecision({
     chatId: chat.id,
     subject: session.subject,
     stateKey,

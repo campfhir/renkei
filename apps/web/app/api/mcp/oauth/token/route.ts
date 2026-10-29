@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { storeAccessToken, generateSecret, hashToken, digestsMatch } from '@/lib/mcp-token';
 import {
   readClientCredentials,
@@ -30,10 +28,7 @@ const LIMITS = {
  * OAuth 2.0 Token endpoint (RFC 6749)
  * Exchanges authorization codes for access tokens and refresh tokens.
  */
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const verdict = checkInboundLimit('oauth/token', request, LIMITS);
   if (!verdict.allowed) {
     return NextResponse.json(
@@ -47,12 +42,6 @@ export async function POST(
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
   const settings = settingsResult.val;
-
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'server_error' }, { status: 500 });
-  }
-  const db = dbResult.val;
 
   try {
     // Verify tenant exists
@@ -83,15 +72,17 @@ export async function POST(
     // registration response tells clients to use client_secret_basic.
     const credentials = readClientCredentials(request.headers.get('authorization'), params);
 
-    const grantType = params.grant_type;
+    // The client authenticates before the grant type is even looked at:
+    // nothing the request names decides whether it is checked.
+    const authenticated = await authenticateClient(credentials);
+    if (authenticated instanceof NextResponse) return authenticated;
+    const clientId = authenticated.clientId;
 
-    // A token request names its own grant type by definition; each handler
-    // then authenticates the client and the grant it presents.
-    // codeql[js/user-controlled-bypass]
+    const grantType = params.grant_type;
     if (grantType === 'authorization_code') {
-      return handleAuthorizationCodeGrant(params, credentials, db, settings);
+      return redeemCode(params, clientId, settings);
     } else if (grantType === 'refresh_token') {
-      return handleRefreshTokenGrant(params, credentials, db, settings);
+      return exchangeRefreshToken(params, clientId, settings);
     } else {
       return NextResponse.json(
         {
@@ -110,14 +101,10 @@ export async function POST(
   }
 }
 
-async function handleAuthorizationCodeGrant(
-  params: Record<string, string>,
-  credentials: ClientCredentials | null,
-  db: Kysely<DB>,
-  settings: OrgSettings
-): Promise<NextResponse> {
-  const { code, redirect_uri, code_verifier } = params;
-
+/** The client's own credentials, checked: its id, or the 401 to send. */
+async function authenticateClient(
+  credentials: ClientCredentials | null
+): Promise<{ clientId: string } | NextResponse> {
   if (!credentials) {
     return NextResponse.json(
       {
@@ -129,6 +116,45 @@ async function handleAuthorizationCodeGrant(
     );
   }
   const { clientId: client_id, clientSecret: client_secret } = credentials;
+
+  const client = await getDataStore().oauthConsents.getClientCredentials(client_id);
+
+  // Constant-time comparison of digests; the secret itself is not stored.
+  if (!client) {
+    return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
+  }
+
+  const secretCheck = verifyClientSecret(client.secretHash, client_secret, hashToken, digestsMatch);
+  if (secretCheck !== 'ok') {
+    if (secretCheck === 'unusable') {
+      // Not the client's fault, and not something it can act on: no digest is
+      // stored for this row, so nothing it presents can ever match.
+      logger.error('Client row has no usable secret digest', {
+        component: 'auth/oauth-token',
+        client_id,
+        hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
+      });
+    }
+    return NextResponse.json(
+      {
+        error: 'invalid_client',
+        error_description:
+          secretCheck === 'unusable'
+            ? 'This client cannot be authenticated on this server. Register again.'
+            : 'Client authentication failed',
+      },
+      { status: 401 }
+    );
+  }
+  return { clientId: client_id };
+}
+
+async function redeemCode(
+  params: Record<string, string>,
+  client_id: string,
+  settings: OrgSettings
+): Promise<NextResponse> {
+  const { code, redirect_uri, code_verifier } = params;
 
   // Validate required parameters
   if (!code || !redirect_uri) {
@@ -142,52 +168,8 @@ async function handleAuthorizationCodeGrant(
   }
 
   try {
-    // Verify client credentials and tenant ownership
-    const client = await db
-      .selectFrom('oauth_clients')
-      .selectAll()
-      .where('client_id', '=', client_id)
-      .executeTakeFirst();
-
-    // Constant-time comparison of digests; the secret itself is not stored.
-    if (!client) {
-      return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
-    }
-
-    const secretCheck = verifyClientSecret(
-      client.client_secret_hash,
-      client_secret,
-      hashToken,
-      digestsMatch
-    );
-    if (secretCheck !== 'ok') {
-      if (secretCheck === 'unusable') {
-        // Not the client's fault, and not something it can act on: no digest is
-        // stored for this row, so nothing it presents can ever match.
-        logger.error('Client row has no usable secret digest', {
-          component: 'auth/oauth-token',
-          client_id,
-          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
-        });
-      }
-      return NextResponse.json(
-        {
-          error: 'invalid_client',
-          error_description:
-            secretCheck === 'unusable'
-              ? 'This client cannot be authenticated on this server. Register again.'
-              : 'Client authentication failed',
-        },
-        { status: 401 }
-      );
-    }
-
     // Retrieve and validate authorization code
-    const authCode = await db
-      .selectFrom('oauth_authorization_codes')
-      .selectAll()
-      .where('code', '=', code)
-      .executeTakeFirst();
+    const authCode = await getDataStore().oauthConsents.getAuthorizationCode(code);
 
     if (!authCode) {
       return NextResponse.json(
@@ -196,22 +178,22 @@ async function handleAuthorizationCodeGrant(
       );
     }
 
-    if (authCode.client_id !== client_id) {
+    if (authCode.clientId !== client_id) {
       return NextResponse.json(
         { error: 'invalid_grant', error_description: 'Client ID mismatch' },
         { status: 400 }
       );
     }
 
-    if (new Date() > authCode.expires_at) {
-      await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
+    if (new Date() > authCode.expiresAt) {
+      await getDataStore().oauthConsents.deleteAuthorizationCode(code);
       return NextResponse.json(
         { error: 'invalid_grant', error_description: 'Authorization code expired' },
         { status: 400 }
       );
     }
 
-    if (authCode.redirect_uri !== redirect_uri) {
+    if (authCode.redirectUri !== redirect_uri) {
       return NextResponse.json(
         { error: 'invalid_grant', error_description: 'Redirect URI mismatch' },
         { status: 400 }
@@ -221,8 +203,8 @@ async function handleAuthorizationCodeGrant(
     // PKCE is not optional: the authorize endpoint refuses a request
     // without an S256 challenge, so a code row without one was not minted
     // by this server's current flow and is not exchanged.
-    if (authCode.code_challenge_method !== 'S256' || !authCode.code_challenge) {
-      await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
+    if (authCode.codeChallengeMethod !== 'S256' || !authCode.codeChallenge) {
+      await getDataStore().oauthConsents.deleteAuthorizationCode(code);
       return NextResponse.json(
         {
           error: 'invalid_grant',
@@ -241,9 +223,9 @@ async function handleAuthorizationCodeGrant(
         { status: 400 }
       );
     }
-    if (!verifierMatchesChallenge(code_verifier, authCode.code_challenge)) {
+    if (!verifierMatchesChallenge(code_verifier, authCode.codeChallenge)) {
       // A wrong verifier burns the code: whoever holds it is guessing.
-      await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
+      await getDataStore().oauthConsents.deleteAuthorizationCode(code);
       return NextResponse.json(
         { error: 'invalid_grant', error_description: 'PKCE verification failed' },
         { status: 400 }
@@ -261,22 +243,19 @@ async function handleAuthorizationCodeGrant(
       Date.now() + settings.refreshTokenTtlDays * 24 * 60 * 60 * 1000
     );
 
-    await db
-      .insertInto('oauth_refresh_tokens')
-      .values({
-        token_id: refreshTokenId,
-        client_id,
-        subject: authCode.subject,
-        scope: authCode.scope,
-        // Carried forward so a later refresh (below) can reissue an access
-        // token with the same roles, without re-touching the browser session.
-        roles: authCode.roles,
-        // Only the digest is kept; the token itself exists solely in the
-        // response below and in the client that receives it.
-        token_hash: hashToken(refreshToken),
-        expires_at: refreshTokenExpiresAt,
-      })
-      .execute();
+    await getDataStore().oauthTokens.insertRefreshToken({
+      tokenId: refreshTokenId,
+      clientId: client_id,
+      subject: authCode.subject,
+      scope: authCode.scope,
+      // Carried forward so a later refresh (below) can reissue an access
+      // token with the same roles, without re-touching the browser session.
+      roles: authCode.roles,
+      // Only the digest is kept; the token itself exists solely in the
+      // response below and in the client that receives it.
+      tokenHash: hashToken(refreshToken),
+      expiresAt: refreshTokenExpiresAt,
+    });
 
     // Persist the access token so the MCP transport can identify its caller.
     // Only the digest is stored; this is the sole record binding the token to a user.
@@ -290,7 +269,7 @@ async function handleAuthorizationCodeGrant(
     });
 
     // Delete the authorization code (one-time use)
-    await db.deleteFrom('oauth_authorization_codes').where('code', '=', code).execute();
+    await getDataStore().oauthConsents.deleteAuthorizationCode(code);
 
     return NextResponse.json({
       access_token: accessToken,
@@ -308,25 +287,12 @@ async function handleAuthorizationCodeGrant(
   }
 }
 
-async function handleRefreshTokenGrant(
+async function exchangeRefreshToken(
   params: Record<string, string>,
-  credentials: ClientCredentials | null,
-  db: Kysely<DB>,
+  client_id: string,
   settings: OrgSettings
 ): Promise<NextResponse> {
   const { refresh_token } = params;
-
-  if (!credentials) {
-    return NextResponse.json(
-      {
-        error: 'invalid_client',
-        error_description:
-          'Client authentication required: send an Authorization: Basic header, or client_id and client_secret in the body',
-      },
-      { status: 401 }
-    );
-  }
-  const { clientId: client_id, clientSecret: client_secret } = credentials;
 
   if (!refresh_token) {
     return NextResponse.json(
@@ -336,46 +302,6 @@ async function handleRefreshTokenGrant(
   }
 
   try {
-    // Verify client credentials and tenant ownership
-    const client = await db
-      .selectFrom('oauth_clients')
-      .selectAll()
-      .where('client_id', '=', client_id)
-      .executeTakeFirst();
-
-    // Constant-time comparison of digests; the secret itself is not stored.
-    if (!client) {
-      return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
-    }
-
-    const secretCheck = verifyClientSecret(
-      client.client_secret_hash,
-      client_secret,
-      hashToken,
-      digestsMatch
-    );
-    if (secretCheck !== 'ok') {
-      if (secretCheck === 'unusable') {
-        // Not the client's fault, and not something it can act on: no digest is
-        // stored for this row, so nothing it presents can ever match.
-        logger.error('Client row has no usable secret digest', {
-          component: 'auth/oauth-token',
-          client_id,
-          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
-        });
-      }
-      return NextResponse.json(
-        {
-          error: 'invalid_client',
-          error_description:
-            secretCheck === 'unusable'
-              ? 'This client cannot be authenticated on this server. Register again.'
-              : 'Client authentication failed',
-        },
-        { status: 401 }
-      );
-    }
-
     // Rotation with reuse detection (migration 147), in one transaction so
     // the presented token is retired exactly when its successor exists.
     // The row is locked for the duration: two concurrent refreshes with the
@@ -386,110 +312,56 @@ async function handleRefreshTokenGrant(
     const nextRefreshToken = generateSecret(32);
     const tokenExpiresIn = settings.accessTokenTtlMinutes * 60;
 
-    const outcome = await db.transaction().execute(async (trx) => {
-      // Matched on the digest — the presented token is never compared
-      // against anything stored in the clear.
-      const token = await trx
-        .selectFrom('oauth_refresh_tokens')
-        .selectAll()
-        .where('token_hash', '=', presentedHash)
-        .forUpdate()
-        .executeTakeFirst();
-
-      if (!token || !digestsMatch(token.token_hash, presentedHash)) {
-        return { error: 'Refresh token not found' } as const;
-      }
-
-      if (token.client_id !== client_id) {
-        return { error: 'Client ID mismatch' } as const;
-      }
-
-      if (new Date() > token.expires_at) {
-        // The family's time is up: every rotated predecessor goes with it.
-        await trx
-          .deleteFrom('oauth_refresh_tokens')
-          .where('family_id', '=', token.family_id)
-          .execute();
-        return { error: 'Refresh token expired' } as const;
-      }
-
-      if (token.rotated_at !== null) {
-        // REUSE. This token was already exchanged for a successor, so two
-        // parties hold copies of the family's history — the client (a retry
-        // that lost its response) or whoever lifted the token from it. The
-        // server cannot tell which, so the whole family dies: every refresh
-        // token descended from this authorization, and the subject's access
-        // tokens for this client. A legitimate client re-authorizes through
-        // the browser; a thief's copies stop working now.
-        await trx
-          .deleteFrom('oauth_refresh_tokens')
-          .where('family_id', '=', token.family_id)
-          .execute();
-        await trx
-          .deleteFrom('oauth_access_tokens')
-          .where('client_id', '=', client_id)
-          .where('subject', '=', token.subject)
-          .where('application', '=', 'jira')
-          .execute();
-        logger.warn('Refresh token reuse detected; family revoked', {
-          component: 'auth/oauth-token',
-          client_id,
-          subject: token.subject,
-          familyId: token.family_id,
-        });
-        return { error: 'Refresh token reuse detected; authorize again' } as const;
-      }
-
-      // The roles the refreshed token acts with are re-derived from the
-      // subject's CURRENT browser session when one exists — the freshest
-      // thing the IdP has asserted about them, re-minted at every sign-in —
-      // rather than frozen at the original authorization. Without a live
-      // session the frozen roles stand, bounded by the family's lifetime
-      // below (there is no other durable store of a person's roles: the
-      // IdP asserts them only at sign-in).
-      const roles = await currentRolesFor(trx, token.subject, token.roles);
-
-      await trx
-        .updateTable('oauth_refresh_tokens')
-        .set({ rotated_at: new Date() })
-        .where('token_id', '=', token.token_id)
-        .execute();
-      await trx
-        .insertInto('oauth_refresh_tokens')
-        .values({
-          token_id: randomUUID(),
-          client_id,
-          subject: token.subject,
-          scope: token.scope,
-          roles,
-          token_hash: hashToken(nextRefreshToken),
-          family_id: token.family_id,
-          // The family's absolute lifetime, fixed at the original
-          // authorization: rotation never extends it, so stale roles and a
-          // stolen copy alike can outlive sign-in by at most
-          // refreshTokenTtlDays.
-          expires_at: token.expires_at,
-        })
-        .execute();
-
-      // Carry the original grant's subject forward — the refreshed token
-      // must act as the same person, not as whoever holds the refresh token.
-      await storeAccessToken({
-        token: accessToken,
-        clientId: client_id,
-        subject: token.subject,
-        scope: token.scope,
-        roles,
-        ttlSeconds: tokenExpiresIn,
-        db: trx,
-      });
-
-      return { scope: token.scope } as const;
+    // Matched on the digest — the presented token is never compared against
+    // anything stored in the clear. The store carries out the whole exchange
+    // (oauthTokens.rotateRefreshToken):
+    //
+    //   - an expired token takes its family with it: every rotated
+    //     predecessor goes too;
+    //   - a token already rotated is REUSE. It was already exchanged for a
+    //     successor, so two parties hold copies of the family's history —
+    //     the client (a retry that lost its response) or whoever lifted the
+    //     token from it. The server cannot tell which, so the whole family
+    //     dies: every refresh token descended from this authorization, and
+    //     the subject's access tokens for this client. A legitimate client
+    //     re-authorizes through the browser; a thief's copies stop working;
+    //   - otherwise the successor joins the family with the family's
+    //     absolute lifetime, fixed at the original authorization (rotation
+    //     never extends it, so stale roles and a stolen copy alike can
+    //     outlive sign-in by at most refreshTokenTtlDays), and the access
+    //     token is stored for the original grant's subject — the refreshed
+    //     token acts as the same person, not as whoever holds the refresh
+    //     token. Its roles are re-derived from the subject's CURRENT browser
+    //     session when one is live — the freshest thing the IdP has asserted
+    //     about them — and otherwise the frozen roles stand.
+    const outcome = await getDataStore().oauthTokens.rotateRefreshToken({
+      presentedHash,
+      clientId: client_id,
+      now: new Date(),
+      next: { tokenId: randomUUID(), tokenHash: hashToken(nextRefreshToken) },
+      access: {
+        tokenHash: hashToken(accessToken),
+        expiresAt: new Date(Date.now() + tokenExpiresIn * 1000),
+      },
     });
 
-    if ('error' in outcome) {
+    if (outcome.outcome === 'reused') {
+      logger.warn('Refresh token reuse detected; family revoked', {
+        component: 'auth/oauth-token',
+        client_id,
+        subject: outcome.subject,
+        familyId: outcome.familyId,
+      });
+    }
+    if (outcome.outcome !== 'rotated') {
+      const refusal = {
+        not_found: 'Refresh token not found',
+        client_mismatch: 'Client ID mismatch',
+        expired: 'Refresh token expired',
+        reused: 'Refresh token reuse detected; authorize again',
+      }[outcome.outcome];
       return NextResponse.json(
-        { error: 'invalid_grant', error_description: outcome.error },
+        { error: 'invalid_grant', error_description: refusal },
         { status: 400 }
       );
     }
@@ -508,26 +380,4 @@ async function handleRefreshTokenGrant(
     });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
-}
-
-/**
- * The subject's roles as of their most recent live browser session in this
- * tenant, or `fallback` when they hold none. A session's roles are what the
- * IdP asserted at that sign-in (lib/session.ts), so the newest one is the
- * closest thing to "current" the server has.
- */
-async function currentRolesFor(
-  db: Kysely<DB>,
-  subject: string,
-  fallback: string[]
-): Promise<string[]> {
-  const live = await db
-    .selectFrom('sessions')
-    .select('roles')
-    .where('subject', '=', subject)
-    .where('expires_at', '>', new Date())
-    .orderBy('created_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  return live ? live.roles : fallback;
 }

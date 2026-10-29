@@ -5,8 +5,7 @@
  * once cost duplicate reads, never wrong writes.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { deleteStaleChatPresence } from '@renkei/notifications';
@@ -20,31 +19,30 @@ import { logger } from './logger';
 const CHAT_PRESENCE_MAX_AGE_MS = 60 * 60_000;
 
 const RETENTION_BATCH = 500;
+const DAY_MS = 86_400_000;
+/** A queued or running run this old with no live job has been abandoned. */
+const STUCK_RUN_MS = 2 * 60 * 60_000;
+const ABANDONED_ERROR = 'The run was abandoned — its job left the queue without finishing.';
 
 /**
  * Delete runs older than agentRunRetentionDays. Batched so a neglected
  * table never produces one giant delete; steps go via cascade. One batch
  * per pass — the hourly cadence catches up quickly and a pass stays cheap.
  */
-export function createRetentionSweep(db: Kysely<DB>) {
+export function createRetentionSweep() {
   return async function sweep(): Promise<void> {
     const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) return;
     const days = settingsResult.val.agentRunRetentionDays;
 
-    const deleted = await sql<{ id: string }>`
-      DELETE FROM agent_runs WHERE id IN (
-        SELECT id FROM agent_runs
-        WHERE status IN ('succeeded', 'failed', 'canceled', 'stopped')
-          AND created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    if (deleted.rows.length > 0) {
+    const deleted = await getDataStore().agentRuns.pruneFinishedBefore(
+      new Date(Date.now() - days * DAY_MS),
+      RETENTION_BATCH
+    );
+    if (deleted > 0) {
       logger.info('retention pruned {count} runs', {
         component: 'worker-agents/retention',
-        count: deleted.rows.length,
+        count: deleted,
       });
     }
   };
@@ -62,24 +60,20 @@ export function createRetentionSweep(db: Kysely<DB>) {
  * round to looking — and an unread notification from three weeks ago is not
  * going to be read now.
  */
-export function createNotificationRetentionSweep(db: Kysely<DB>) {
+export function createNotificationRetentionSweep() {
   return async function sweep(): Promise<void> {
     const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) return;
     const days = settingsResult.val.agentNotificationRetentionDays;
 
-    const deleted = await sql<{ id: string }>`
-      DELETE FROM agent_notifications WHERE id IN (
-        SELECT id FROM agent_notifications
-        WHERE created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    if (deleted.rows.length > 0) {
+    const deleted = await getDataStore().notifications.pruneBefore(
+      new Date(Date.now() - days * DAY_MS),
+      RETENTION_BATCH
+    );
+    if (deleted > 0) {
       logger.info('retention pruned {count} notifications', {
         component: 'worker-agents/notification-retention',
-        count: deleted.rows.length,
+        count: deleted,
       });
     }
   };
@@ -95,45 +89,29 @@ export function createNotificationRetentionSweep(db: Kysely<DB>) {
  * The live-job check is what keeps the janitor from racing a real worker:
  * a slow-but-alive run still has its processing row, and is left alone.
  */
-export function createStuckRunJanitor(db: Kysely<DB>) {
+export function createStuckRunJanitor() {
   return async function sweep(): Promise<void> {
-    const stuck = await db
-      .selectFrom('agent_runs')
-      .select(['id', 'agent_id', 'owner_subject', 'started_at'])
-      .where('status', 'in', ['queued', 'running'])
-      .where('created_at', '<', sql<Date>`NOW() - INTERVAL '2 hours'`)
-      .limit(50)
-      .execute();
+    const store = getDataStore();
+    const stuck = await store.agentRuns.listStaleInProgress(
+      new Date(Date.now() - STUCK_RUN_MS),
+      50
+    );
 
     for (const run of stuck) {
-      const liveJob = await db
-        .selectFrom('agent_jobs')
-        .select('id')
-        .where('status', 'in', ['pending', 'processing'])
-        .where(sql<string>`payload->>'runId'`, '=', run.id)
-        .executeTakeFirst();
-      if (liveJob) continue;
+      if (await store.queues.hasLiveAgentRunJob(run.id)) continue;
 
-      await db
-        .updateTable('agent_runs')
-        .set({
-          status: 'failed',
-          error_kind: 'timeout',
-          error: 'The run was abandoned — its job left the queue without finishing.',
-          finished_at: sql`NOW()`,
-          updated_at: sql`NOW()`,
-        })
-        .where('id', '=', run.id)
-        .where('status', 'in', ['queued', 'running'])
-        .execute();
+      await store.agentRuns.failAbandoned(run.id, {
+        errorKind: 'timeout',
+        error: ABANDONED_ERROR,
+      });
       // The run log must agree: an abandoned run is a failed run there too.
-      await recordAgentRunOutcome(db, {
-        agentId: run.agent_id,
+      await recordAgentRunOutcome({
+        agentId: run.agentId,
         runId: run.id,
-        ownerSubject: run.owner_subject,
+        ownerSubject: run.ownerSubject,
         status: 'failed',
         errorKind: 'timeout',
-        error: 'The run was abandoned — its job left the queue without finishing.',
+        error: ABANDONED_ERROR,
       });
       logger.warn('janitor closed abandoned run {runId}', {
         component: 'worker-agents/janitor',
@@ -151,68 +129,32 @@ export function createStuckRunJanitor(db: Kysely<DB>) {
  * vs 30 days) because these are what make a year of usage readable after
  * the runs are gone.
  */
-export function createUsageRetentionSweep(db: Kysely<DB>) {
+export function createUsageRetentionSweep() {
   return async function sweep(): Promise<void> {
     const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) return;
     const days = settingsResult.val.agentUsageRetentionDays;
 
-    const runs = await sql<{ run_id: string }>`
-      DELETE FROM agent_run_log WHERE run_id IN (
-        SELECT run_id FROM agent_run_log
-        WHERE created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING run_id
-    `.execute(db);
-    const calls = await sql<{ id: string }>`
-      DELETE FROM llm_calls WHERE id IN (
-        SELECT id FROM llm_calls
-        WHERE created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    const voice = await sql<{ id: string }>`
-      DELETE FROM voice_usage WHERE id IN (
-        SELECT id FROM voice_usage
-        WHERE created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    const images = await sql<{ id: string }>`
-      DELETE FROM image_usage WHERE id IN (
-        SELECT id FROM image_usage
-        WHERE created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    const documents = await sql<{ id: string }>`
-      DELETE FROM document_usage WHERE id IN (
-        SELECT id FROM document_usage
-        WHERE created_at < NOW() - make_interval(days => ${days})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
+    const pruned = await getDataStore().agentUsage.pruneLedgersBefore(
+      new Date(Date.now() - days * DAY_MS),
+      RETENTION_BATCH
+    );
     if (
-      runs.rows.length > 0 ||
-      calls.rows.length > 0 ||
-      voice.rows.length > 0 ||
-      images.rows.length > 0 ||
-      documents.rows.length > 0
+      pruned.runLog > 0 ||
+      pruned.llmCalls > 0 ||
+      pruned.voice > 0 ||
+      pruned.images > 0 ||
+      pruned.documents > 0
     ) {
       logger.info(
         'retention pruned {runs} run log row(s), {calls} token ledger row(s), {voice} voice ledger row(s), {images} image ledger row(s) and {documents} document ledger row(s)',
         {
           component: 'worker-agents/usage-retention',
-          voice: voice.rows.length,
-          images: images.rows.length,
-          documents: documents.rows.length,
-          runs: runs.rows.length,
-          calls: calls.rows.length,
+          voice: pruned.voice,
+          images: pruned.images,
+          documents: pruned.documents,
+          runs: pruned.runLog,
+          calls: pruned.llmCalls,
         }
       );
     }
@@ -226,9 +168,9 @@ export function createUsageRetentionSweep(db: Kysely<DB>) {
  * table nothing reads past a fixed, generous age, not a retention policy
  * an org has a reason to tune.
  */
-export function createChatPresenceSweep(db: Kysely<DB>) {
+export function createChatPresenceSweep() {
   return async function sweep(): Promise<void> {
-    const deleted = await deleteStaleChatPresence(db, CHAT_PRESENCE_MAX_AGE_MS);
+    const deleted = await deleteStaleChatPresence(CHAT_PRESENCE_MAX_AGE_MS);
     if (deleted > 0) {
       logger.info('pruned {count} stale chat presence row(s)', {
         component: 'worker-agents/chat-presence-sweep',

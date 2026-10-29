@@ -156,7 +156,7 @@ export interface ImageToolOptions {
   /** The Images API call — real by default, a fake in tests. */
   generate?: typeof callImagesApi;
   /** How a chosen row becomes a config with its key — real by default. */
-  resolve?: typeof resolveImageModel;
+  resolve?: (modelConfigId: string) => ReturnType<typeof resolveImageModel>;
   /** Finds and reads back an earlier picture of the chat — real by default. */
   loadSource?: (scope: SourceScope, wanted: string) => Promise<SourceLoad>;
 }
@@ -174,7 +174,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
   const { models } = options;
   if (models.length === 0) return null;
   const generate = options.generate ?? callImagesApi;
-  const resolve = options.resolve ?? resolveImageModel;
+  const resolve = options.resolve ?? ((modelConfigId: string) => resolveImageModel(modelConfigId));
   const loadSource = options.loadSource ?? loadSourceImage;
 
   /**
@@ -423,7 +423,7 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
 
       const choice = pickImageModel(models, options.preferredModelId);
       if (!choice) return errorResult('No image model is available.');
-      const resolved = await resolve(context.db, choice.id);
+      const resolved = await resolve(choice.id);
       if (!resolved.ok || resolved.val.modelConfigId !== choice.id) {
         return errorResult(
           `The image model "${choice.label}" cannot be used right now (it is disabled or its configuration is incomplete). Tell the person to ask an administrator.`
@@ -437,7 +437,6 @@ export function imageGenerationTool(options: ImageToolOptions): LocalTool | null
       if (wantedSource !== null && wantedSource !== '') {
         const loaded = await loadSource(
           {
-            db: context.db,
             subject: context.subject,
             chatId: context.chatId,
             cipher: context.cipher,

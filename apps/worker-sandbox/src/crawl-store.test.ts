@@ -1,19 +1,16 @@
 /**
- * The Postgres crawl store against a real database when DATABASE_URL is
- * set (skipped otherwise): content sealed at rest, every read scoped to
- * its subject, recipes upserted by name, and the sweeps.
+ * The crawl store over a registered memory data store (the differential
+ * suite holds the store's two implementations to each other): content
+ * sealed at rest, every read scoped to its subject, recipes upserted by
+ * name, and the sweeps.
  */
 
 import { randomBytes, randomUUID } from 'node:crypto';
-import { getDatabase, type DB } from '@renkei/db';
-import type { Kysely } from 'kysely';
+import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import type { CrawlRecipe } from '@renkei/connector-sandbox';
 import { createCrawlStore, type CrawlStore } from './crawl-store';
 
-const hasDb = Boolean(process.env.DATABASE_URL);
-
-(hasDb ? describe : describe.skip)('crawl store (Postgres)', () => {
-  let db: Kysely<DB>;
+describe('crawl store', () => {
   let store: CrawlStore;
   const me = { subject: `crawl-test-${randomUUID()}` };
   const other = { subject: `crawl-test-${randomUUID()}` };
@@ -26,21 +23,12 @@ const hasDb = Boolean(process.env.DATABASE_URL);
   };
 
   beforeAll(() => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
-    store = createCrawlStore(db, randomBytes(32), 'test-domain');
+    registerDataStore(createMemoryDataStore());
+    store = createCrawlStore(randomBytes(32), 'test-domain');
   });
 
-  afterAll(async () => {
-    await db
-      .deleteFrom('sandbox_crawl_recipes')
-      .where('subject', 'in', [me.subject, other.subject])
-      .execute();
-    await db
-      .deleteFrom('sandbox_crawls')
-      .where('subject', 'in', [me.subject, other.subject])
-      .execute();
+  afterAll(() => {
+    resetDataStore();
   });
 
   it('seals page content, opens it for its subject only, and orders pages', async () => {
@@ -91,14 +79,13 @@ const hasDb = Boolean(process.env.DATABASE_URL);
       me.subject
     );
 
-    const stored = await db
-      .selectFrom('sandbox_crawl_pages')
-      .select('content')
-      .where('crawl_id', '=', crawl.id)
-      .where('url', '=', 'https://hl7.example/Segments/AIL')
-      .executeTakeFirstOrThrow();
-    expect(stored.content?.startsWith('crawl1.')).toBe(true);
-    expect(stored.content).not.toContain('AIL.1');
+    const [stored] = await getDataStore().sandboxCrawls.pages(me.subject, crawl.id, {
+      urls: ['https://hl7.example/Segments/AIL'],
+      offset: 0,
+      limit: 1,
+    });
+    expect(stored?.content?.startsWith('crawl1.')).toBe(true);
+    expect(stored?.content).not.toContain('AIL.1');
 
     const pages = await store.pages(me, crawl.id, { offset: 0, limit: 10, withContent: true });
     expect(pages.map((page) => page.seq)).toEqual([1, 2]);

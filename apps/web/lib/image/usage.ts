@@ -9,8 +9,7 @@
  * near this file; only how much.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 /** What a tool reports about one picture; the person and org are added by the turn. */
@@ -32,26 +31,19 @@ export interface RecordImageUsageInput extends ImageUsageReport {
   subject: string;
 }
 
-export async function recordImageUsage(
-  db: Kysely<DB>,
-  input: RecordImageUsageInput
-): Promise<void> {
+export async function recordImageUsage(input: RecordImageUsageInput): Promise<void> {
   try {
-    await db
-      .insertInto('image_usage')
-      .values({
-        subject: input.subject,
-        surface: input.surface.slice(0, 16),
-        provider: input.provider.slice(0, 32),
-        model: input.model.slice(0, 120),
-        images: 1,
-        image_bytes: Math.max(0, Math.round(input.imageBytes)),
-        width: input.width ?? null,
-        height: input.height ?? null,
-        input_tokens: Math.max(0, Math.round(input.inputTokens ?? 0)),
-        output_tokens: Math.max(0, Math.round(input.outputTokens ?? 0)),
-      })
-      .execute();
+    await getDataStore().usage.recordImage({
+      subject: input.subject,
+      surface: input.surface.slice(0, 16),
+      provider: input.provider.slice(0, 32),
+      model: input.model.slice(0, 120),
+      imageBytes: Math.max(0, Math.round(input.imageBytes)),
+      width: input.width ?? null,
+      height: input.height ?? null,
+      inputTokens: Math.max(0, Math.round(input.inputTokens ?? 0)),
+      outputTokens: Math.max(0, Math.round(input.outputTokens ?? 0)),
+    });
   } catch (error) {
     logger.warn('image usage not recorded', {
       component: 'web/image-usage',

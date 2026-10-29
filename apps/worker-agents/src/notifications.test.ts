@@ -9,8 +9,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { ACT_META_KEY } from '@renkei/tool-outcomes';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
 import { createNotifier } from './notifications';
@@ -42,53 +41,55 @@ const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 maybe('agent notifications', () => {
   jest.setTimeout(20_000);
 
-  let db: Kysely<DB>;
-  const suiteId = randomUUID();
-  const subject = `owner-${suiteId.slice(0, 8)}`;
-  const agentId = randomUUID();
-  const runId = randomUUID();
+  // Each test notifies a fresh person, so every one starts from an empty
+  // feed with nothing to delete, and a shared database never collides.
+  let subject: string;
+  let agentId: string;
+  let runId: string;
 
-  beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('database unavailable');
-    db = result.val;
+  beforeEach(async () => {
+    subject = `owner-${randomUUID().slice(0, 8)}`;
+    agentId = randomUUID();
+    runId = randomUUID();
     // The agent and the run have to exist: a notification points at both by
     // foreign key, so that a deleted agent nulls the reference and a pruned
     // run takes its notifications with it.
-    await db
-      .insertInto('agents')
-      .values({
-        id: agentId,
-        owner_subject: subject,
-        name: 'Triage bot',
-        enabled: true,
-      })
-      .execute();
-    await db
-      .insertInto('agent_runs')
-      .values({
-        id: runId,
-        agent_id: agentId,
-        owner_subject: subject,
-        trigger_kind: 'manual',
-        definition_snapshot: JSON.stringify({ instructions: 'Go.', tools: [] }),
-      })
-      .execute();
+    const store = getDataStore();
+    // Agent names are unique org-wide; the notifier's own copy of the name
+    // (agentName below) is what the rows carry.
+    await store.agents.create({
+      id: agentId,
+      ownerSubject: subject,
+      name: `Triage bot ${agentId.slice(0, 8)}`,
+      instructions: '',
+      tools: [],
+      llmModelId: null,
+      enabled: true,
+      guardrails: null,
+      canAskQuestions: false,
+      autoAcceptActions: false,
+    });
+    await store.agentRuns.createQueued({
+      id: runId,
+      agentId,
+      ownerSubject: subject,
+      triggerId: null,
+      triggerKind: 'manual',
+      triggeredBySubject: null,
+      parentRunId: null,
+      lineage: [],
+      definitionSnapshot: { instructions: 'Go.', tools: [] },
+      llmModelId: null,
+      initialState: null,
+    });
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agent_runs WHERE owner_subject = ${subject}`.execute(db);
-    await sql`DELETE FROM agents WHERE owner_subject = ${subject}`.execute(db);
-    await closeDatabase();
-  });
-
-  beforeEach(async () => {
-    await sql`DELETE FROM agent_notifications WHERE subject = ${subject}`.execute(db);
+    await closeDataStore();
   });
 
   const notifier = (prefs: Partial<NotificationPrefs> = {}) =>
-    createNotifier(db, {
+    createNotifier({
       subject,
       agentId,
       // Denormalized: the row keeps the name even after the agent is gone.
@@ -100,13 +101,9 @@ maybe('agent notifications', () => {
       ownerEmail: undefined,
     });
 
-  const rows = () =>
-    db
-      .selectFrom('agent_notifications')
-      .selectAll()
-      .where('subject', '=', subject)
-      .orderBy('created_at')
-      .execute();
+  /** The person's feed, oldest first. */
+  const rows = async () =>
+    (await getDataStore().notifications.list(subject, { limit: 100 })).reverse();
 
   it('records a curated act with its identifier and link', async () => {
     await notifier().act(
@@ -128,12 +125,13 @@ maybe('agent notifications', () => {
     expect(row?.connector).toBe('jira');
     expect(row?.tool).toBe('jira_create_issue');
     expect(row?.entity).toBe('issue');
-    expect(row?.ref_id).toBe('PROJ-42');
-    expect(row?.ref_url).toBe('https://example.atlassian.net/browse/PROJ-42');
-    expect(row?.step_id).toBe('step-1');
-    expect(row?.agent_name).toBe('Triage bot');
+    expect(row?.refUrl).toBe('https://example.atlassian.net/browse/PROJ-42');
+    expect(row?.agentName).toBe('Triage bot');
     // Unread is the arrival state; the badge counts on it.
-    expect(row?.read_at).toBeNull();
+    expect(row?.readAt).toBeNull();
+    // The row is keyed to the identifier it is about: marking by that ref
+    // reaches it.
+    expect(await getDataStore().notifications.markReadByRef(subject, 'act', 'PROJ-42')).toBe(1);
   });
 
   it('folds a run’s repeated batch acts into one tallied row', async () => {
@@ -167,7 +165,7 @@ maybe('agent notifications', () => {
 
   it('emails a batch act once per run, not once per call', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -220,7 +218,7 @@ maybe('agent notifications', () => {
 
   it('fires email/WebEx for a category wanted on those channels, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -246,7 +244,7 @@ maybe('agent notifications', () => {
 
   it('skips email silently when the tool is not connected, and does not throw', async () => {
     const { mcp, toolsByName, calls } = fakeMcp([]); // Neither tool registered.
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -268,7 +266,7 @@ maybe('agent notifications', () => {
 
   it('never calls outlook_send_mail or webex_note_to_self when email/WebEx are off, even though both tools are connected and ready', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -309,7 +307,7 @@ maybe('agent notifications', () => {
 
   it('fires email/WebEx for a run starting and a successful finish, independent of App', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -339,7 +337,7 @@ maybe('agent notifications', () => {
 
   it('never sends email/WebEx for a failed run from here — that goes through the run.failed queue handler', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -361,7 +359,7 @@ maybe('agent notifications', () => {
 
   it('lets an agent override reach email/WebEx even when the general preference is off', async () => {
     const { mcp, toolsByName, calls } = fakeMcp(['outlook_send_mail', 'webex_note_to_self']);
-    const notifierWithMcp = createNotifier(db, {
+    const notifierWithMcp = createNotifier({
       subject,
       agentId,
       agentName: 'Triage bot',
@@ -388,7 +386,7 @@ maybe('agent notifications', () => {
     // A tenant that does not exist violates the FK. The act already
     // happened, so this must be a warning and not an exception climbing
     // back into the run loop.
-    const orphan = createNotifier(db, {
+    const orphan = createNotifier({
       subject,
       agentId,
       agentName: 'Ghost',

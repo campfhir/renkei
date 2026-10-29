@@ -9,7 +9,22 @@
  */
 
 jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: false, error: 'no db in this suite' }),
+  // Every data-store method rejects, as an unreachable database does.
+  getDataStore: () =>
+    new Proxy(
+      {},
+      {
+        get: () =>
+          new Proxy(
+            {},
+            {
+              get: () => async () => {
+                throw new Error('no data store in this suite');
+              },
+            }
+          ),
+      }
+    ),
 }));
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -51,7 +66,10 @@ const ARGS: Record<string, Record<string, unknown>> = {
   onbase_list_custom_queries: {},
   onbase_list_notes: { documentId: '42' },
   onbase_get_document_history: { documentId: '42' },
-  onbase_archive_document: { uploadId: '11111111-2222-3333-4444-555555555555', documentType: 'Invoices' },
+  onbase_archive_document: {
+    uploadId: '11111111-2222-3333-4444-555555555555',
+    documentType: 'Invoices',
+  },
   onbase_update_keywords: { documentId: '42', keywords: [{ type: 'Vendor', values: ['Acme'] }] },
   onbase_add_note: { documentId: '42', noteType: 'Sticky', text: 'hello' },
   onbase_reindex_document: { documentId: '42', targetDocumentType: 'Invoices' },

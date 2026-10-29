@@ -7,8 +7,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
+import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
 import { executeCreateIssue, readCreateIssueAction } from '@/lib/actionable-items';
 
@@ -34,24 +34,20 @@ export async function POST(
     return NextResponse.json({ error: "decision must be 'approve' or 'dismiss'" }, { status: 400 });
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
-    return NextResponse.json({ error: 'Database error' }, { status: 500 });
-  }
-  const db = dbResult.val;
+  const store = getDataStore().actionableItems;
 
   // Same visibility rule as the feed: a caller may act only on a tenant-wide
   // card (no owner) or their own. Scoping the fetch by owner means a private
   // card owned by another user is 404 here, not decidable — without this a
   // signed-in user could approve/dismiss someone else's private card by id.
-  const item = await db
-    .selectFrom('actionable_items')
-    .select(['id', 'kind', 'status', 'suggested_action'])
-    .where('id', '=', itemId)
-    .where((eb) =>
-      eb.or([eb('owner_subject', 'is', null), eb('owner_subject', '=', session.subject)])
-    )
-    .executeTakeFirst();
+  const found = await wrapAsync(
+    () => store.findVisible(session.subject, itemId),
+    'DB_ERROR' as const
+  );
+  if (!found.ok) {
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
+  const item = found.val;
   if (!item) {
     return NextResponse.json({ error: 'Item not found' }, { status: 404 });
   }
@@ -88,23 +84,11 @@ export async function POST(
     // Dismissing also archives: one click both records the decision and
     // removes the card from the default feed. The history view still shows
     // it, so the audit trail loses nothing.
-    await db
-      .updateTable('actionable_items')
-      .set({
-        status: 'dismissed',
-        decided_by: session.subject,
-        decided_at: sql`NOW()`,
-        archived_at: sql`NOW()`,
-        archived_by: session.subject,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', itemId)
-      .where('status', '=', 'suggested')
-      .execute();
+    await store.decide(itemId, session.subject, 'dismissed');
     return NextResponse.json({ status: 'dismissed' });
   }
 
-  const action = readCreateIssueAction(item.suggested_action);
+  const action = readCreateIssueAction(item.suggestedAction);
   if (!action) {
     return NextResponse.json({ error: 'Item carries no executable action' }, { status: 422 });
   }
@@ -119,34 +103,18 @@ export async function POST(
 
   // Claim the decision before executing so two approvers cannot both run the
   // action: only the update that actually flips suggested → approved wins.
-  const claimed = await db
-    .updateTable('actionable_items')
-    .set({
-      status: 'approved',
-      decided_by: session.subject,
-      decided_at: sql`NOW()`,
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', itemId)
-    .where('status', '=', 'suggested')
-    .executeTakeFirst();
-  if (Number(claimed.numUpdatedRows ?? 0) === 0) {
+  const claimed = await store.decide(itemId, session.subject, 'approved');
+  if (claimed === 0) {
     return NextResponse.json({ error: 'Item was already decided' }, { status: 409 });
   }
 
   const outcome = await executeCreateIssue(session.subject, action, projectKey);
 
-  await db
-    .updateTable('actionable_items')
-    .set({
-      status: outcome.ok ? 'executed' : 'failed',
-      result: JSON.stringify(
-        outcome.ok ? { issueKey: outcome.issueKey, url: outcome.url } : { error: outcome.error }
-      ),
-      updated_at: sql`NOW()`,
-    })
-    .where('id', '=', itemId)
-    .execute();
+  await store.recordOutcome(
+    itemId,
+    outcome.ok ? 'executed' : 'failed',
+    outcome.ok ? { issueKey: outcome.issueKey, url: outcome.url } : { error: outcome.error }
+  );
 
   if (!outcome.ok) {
     return NextResponse.json({ status: 'failed', error: outcome.error }, { status: 502 });

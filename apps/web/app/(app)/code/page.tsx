@@ -1,5 +1,4 @@
-import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { sandboxWorkspacesEnabled } from '@renkei/sandbox-client';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
@@ -18,11 +17,9 @@ import CodeIndex from './_components/code-index';
 export default async function CodePage() {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/code`));
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
   const [sidebar, access] = await Promise.all([
-    loadChatSidebar(dbResult.val, session.subject),
-    codeProjectProviderAccess(dbResult.val, session.subject),
+    loadChatSidebar(session.subject),
+    codeProjectProviderAccess(session.subject),
   ]);
   const bitbucketAccess = access[ATLASSIAN_BITBUCKET]!;
   const githubAccess = access[GITHUB]!;
@@ -31,11 +28,11 @@ export default async function CodePage() {
   // connected but missing a capability beats "connect it at all").
   const accessNotice = canCreate
     ? null
-    : (bitbucketAccess.connected
+    : ((bitbucketAccess.connected
         ? codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)
         : null) ??
       (githubAccess.connected ? codeProjectAccessMessage(githubAccess, GITHUB) : null) ??
-      `${codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)} Or connect GitHub instead.`;
+      `${codeProjectAccessMessage(bitbucketAccess, ATLASSIAN_BITBUCKET)} Or connect GitHub instead.`);
   return (
     <CodeIndex
       projects={sidebar.code.projects}

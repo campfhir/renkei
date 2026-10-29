@@ -15,8 +15,7 @@
  * means.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { mintRunToken, revokeRunToken } from './token';
 import { logger } from './logger';
 
@@ -42,16 +41,11 @@ function payloadOf(value: unknown): DraftJobPayload | null {
  * would be a payload that could borrow one.
  */
 async function ownerOf(
-  db: Kysely<DB>,
   draftId: string
 ): Promise<{ subject: string; agentId: string | null } | null> {
-  const row = await db
-    .selectFrom('agent_drafts')
-    .select(['owner_subject', 'agent_id', 'status'])
-    .where('id', '=', draftId)
-    .executeTakeFirst();
+  const row = await getDataStore().agentDrafts.ownerOf(draftId);
   if (!row) return null;
-  return { subject: row.owner_subject, agentId: row.agent_id };
+  return { subject: row.ownerSubject, agentId: row.agentId };
 }
 
 /**
@@ -66,18 +60,14 @@ type PostJson = (
   init: { method: string; headers: Record<string, string>; body: string }
 ) => Promise<{ ok: boolean; status: number }>;
 
-export function createDraftHandler(deps: {
-  db: Kysely<DB>;
-  webBaseUrl: string;
-  fetchImpl?: PostJson;
-}) {
+export function createDraftHandler(deps: { webBaseUrl: string; fetchImpl?: PostJson }) {
   const doFetch: PostJson = deps.fetchImpl ?? fetch;
 
   return async function handleDraft(event: { payload: unknown }): Promise<'skipped' | undefined> {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('draft job payload missing draftId');
 
-    const owner = await ownerOf(deps.db, payload.draftId);
+    const owner = await ownerOf(payload.draftId);
     if (!owner) {
       // The draft was deleted, or its agent was and took it with it. Nothing
       // to do and nothing wrong — retrying would never find it.
@@ -88,7 +78,7 @@ export function createDraftHandler(deps: {
       return 'skipped';
     }
 
-    const token = await mintRunToken(deps.db, {
+    const token = await mintRunToken({
       subject: owner.subject,
       // Drafting acts as the PERSON, not as an agent — there is usually no
       // agent yet, and even when revising one the draft is the author's work.
@@ -118,7 +108,7 @@ export function createDraftHandler(deps: {
       });
       return undefined;
     } finally {
-      await revokeRunToken(deps.db, token);
+      await revokeRunToken(token);
     }
   };
 }

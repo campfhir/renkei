@@ -17,13 +17,11 @@ import {
 } from '@/lib/chat/user-memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const memory = await readUserMemory(db, session.subject, { maxEntries: 300 });
+  const { session } = ready.context;
+  const memory = await readUserMemory(session.subject, { maxEntries: 300 });
   return NextResponse.json({
     summary: memory.summary,
     entries: memory.entries.map((entry) => ({
@@ -35,18 +33,16 @@ export async function GET(
   });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const content = typeof body.content === 'string' ? body.content.trim() : '';
   if (!content) return jsonError(400, 'invalid', 'Write something first');
   const settings = await getOrgSettings();
   const redactor = settings.ok ? createOutboundRedactor(settings.val) : null;
-  const id = await appendUserMemory(db, {
+  const id = await appendUserMemory({
     ownerSubject: session.subject,
     content: redactor ? redactor.apply(content).text : content,
     chatId: null,
@@ -55,12 +51,10 @@ export async function POST(
   return NextResponse.json({ id }, { status: 201 });
 }
 
-export async function PATCH(
-  request: NextRequest
-): Promise<Response> {
+export async function PATCH(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const id = typeof body.id === 'string' ? body.id : '';
   const content = typeof body.content === 'string' ? body.content.trim() : '';
@@ -69,7 +63,6 @@ export async function PATCH(
   const settings = await getOrgSettings();
   const redactor = settings.ok ? createOutboundRedactor(settings.val) : null;
   const updated = await editUserMemory(
-    db,
     session.subject,
     id,
     redactor ? redactor.apply(content).text : content
@@ -78,18 +71,15 @@ export async function PATCH(
   return NextResponse.json({ ok: true });
 }
 
-export async function DELETE(
-  request: NextRequest
-): Promise<Response> {
+export async function DELETE(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const ids = Array.isArray(body.ids)
     ? body.ids.filter((id): id is string => typeof id === 'string')
     : [];
   const deleted = await forgetUserMemory(
-    db,
     session.subject,
     body.all === true ? { kind: 'all' } : { kind: 'entries', ids }
   );

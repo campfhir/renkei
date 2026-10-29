@@ -18,8 +18,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { getAgent, getAgentWithOwner, type StoredAgent } from './store';
 
@@ -59,30 +58,23 @@ const grantIso = (value: Date | null): string | null => (value ? value.toISOStri
  * ownership rule everywhere else).
  */
 export async function resolveAgentAccess(
-  db: Kysely<DB>,
   viewerSubject: string,
   agentId: string
 ): Promise<AgentAccess | null> {
-  const owned = await getAgent(db, viewerSubject, agentId);
+  const owned = await getAgent(viewerSubject, agentId);
   if (owned) {
     return { agent: owned, ownerSubject: viewerSubject, viewerIsOwner: true, grant: null };
   }
   if (!isUuid(agentId)) return null;
-  const grant = await db
-    .selectFrom('agent_access_grants')
-    .select(['id', 'owner_subject', 'expires_at'])
-    .where('agent_id', '=', agentId)
-    .where('grantee_subject', '=', viewerSubject)
-    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
-    .executeTakeFirst();
+  const grant = await getDataStore().agents.findActiveGrant(agentId, viewerSubject);
   if (!grant) return null;
-  const found = await getAgentWithOwner(db, agentId);
+  const found = await getAgentWithOwner(agentId);
   if (!found) return null;
   return {
     agent: found.agent,
     ownerSubject: found.ownerSubject,
     viewerIsOwner: false,
-    grant: { id: grant.id, expiresAt: grantIso(grant.expires_at) },
+    grant: { id: grant.id, expiresAt: grantIso(grant.expiresAt) },
   };
 }
 
@@ -91,20 +83,9 @@ export async function resolveAgentAccess(
  * that already hold the agent row and only need the yes/no (the invoke and
  * rerun paths). Everything else wants resolveAgentAccess.
  */
-export async function hasActiveGrant(
-  db: Kysely<DB>,
-  agentId: string,
-  viewerSubject: string
-): Promise<boolean> {
+export async function hasActiveGrant(agentId: string, viewerSubject: string): Promise<boolean> {
   if (!isUuid(agentId)) return false;
-  const row = await db
-    .selectFrom('agent_access_grants')
-    .select('id')
-    .where('agent_id', '=', agentId)
-    .where('grantee_subject', '=', viewerSubject)
-    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
-    .executeTakeFirst();
-  return row !== undefined;
+  return (await getDataStore().agents.findActiveGrant(agentId, viewerSubject)) !== null;
 }
 
 /**
@@ -112,83 +93,57 @@ export async function hasActiveGrant(
  * refreshes the expiry) access to one person.
  */
 export async function grantAgentAccess(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string,
   input: { granteeSubject: string; expiresAt: Date | null }
 ): Promise<'OK' | 'NOT_FOUND' | 'SELF'> {
   if (input.granteeSubject === ownerSubject) return 'SELF';
-  const owned = await getAgent(db, ownerSubject, agentId);
+  const owned = await getAgent(ownerSubject, agentId);
   if (!owned) return 'NOT_FOUND';
-  await db
-    .insertInto('agent_access_grants')
-    .values({
-      id: randomUUID(),
-      agent_id: agentId,
-      owner_subject: ownerSubject,
-      grantee_subject: input.granteeSubject,
-      expires_at: input.expiresAt,
-    })
-    .onConflict((oc) =>
-      oc.columns(['agent_id', 'grantee_subject']).doUpdateSet({ expires_at: input.expiresAt })
-    )
-    .execute();
+  await getDataStore().agents.upsertGrant({
+    id: randomUUID(),
+    agentId,
+    ownerSubject,
+    granteeSubject: input.granteeSubject,
+    expiresAt: input.expiresAt,
+  });
   return 'OK';
 }
 
 /** The owner's list for the sharing modal, expired rows included. */
 export async function listAgentAccessGrants(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string
 ): Promise<AgentAccessGrantView[] | null> {
-  const owned = await getAgent(db, ownerSubject, agentId);
+  const owned = await getAgent(ownerSubject, agentId);
   if (!owned) return null;
-  const rows = await db
-    .selectFrom('agent_access_grants')
-    .leftJoin('identities', (join) =>
-      join
-        .onRef('identities.subject', '=', 'agent_access_grants.grantee_subject')
-    )
-    .select([
-      'agent_access_grants.id as id',
-      'agent_access_grants.grantee_subject as grantee_subject',
-      'agent_access_grants.expires_at as expires_at',
-      'agent_access_grants.created_at as created_at',
-      'identities.display_name as display_name',
-      'identities.email as email',
-    ])
-    .where('agent_access_grants.agent_id', '=', agentId)
-    .orderBy('agent_access_grants.created_at', 'asc')
-    .execute();
+  const rows = await getDataStore().agents.listGrants(agentId);
   const now = Date.now();
   return rows.map((row) => ({
     id: row.id,
-    granteeSubject: row.grantee_subject,
-    granteeName: row.display_name,
-    granteeEmail: row.email,
-    expiresAt: grantIso(row.expires_at),
-    expired: row.expires_at !== null && row.expires_at.getTime() <= now,
-    createdAt: row.created_at.toISOString(),
+    granteeSubject: row.granteeSubject,
+    granteeName: row.granteeName,
+    granteeEmail: row.granteeEmail,
+    expiresAt: grantIso(row.expiresAt),
+    expired: row.expiresAt !== null && row.expiresAt.getTime() <= now,
+    createdAt: row.createdAt.toISOString(),
   }));
 }
 
 /** Owner deletes a grant row — revocation. Returns the row for the audit label. */
 export async function revokeAgentAccessGrant(
-  db: Kysely<DB>,
   ownerSubject: string,
   agentId: string,
   grantId: string
 ): Promise<{ granteeSubject: string } | null> {
   if (!isUuid(grantId) || !isUuid(agentId)) return null;
-  const row = await db
-    .deleteFrom('agent_access_grants')
-    .where('agent_id', '=', agentId)
-    .where('owner_subject', '=', ownerSubject)
-    .where('id', '=', grantId)
-    .returning(['grantee_subject'])
-    .executeTakeFirst();
-  return row ? { granteeSubject: row.grantee_subject } : null;
+  return getDataStore().agents.revokeGrant(ownerSubject, agentId, grantId);
+}
+
+/** How many unexpired grants an agent has — the owner's badge. */
+export async function countActiveAgentGrants(agentId: string): Promise<number> {
+  if (!isUuid(agentId)) return 0;
+  return getDataStore().agents.countActiveGrants(agentId);
 }
 
 /**
@@ -196,37 +151,18 @@ export async function revokeAgentAccessGrant(
  * group on the agents screen. Only unexpired grants appear; a lapsed share
  * simply drops out of the viewer's list.
  */
-export async function listAgentsSharedWith(
-  db: Kysely<DB>,
-  granteeSubject: string
-): Promise<SharedAgentListing[]> {
-  const rows = await db
-    .selectFrom('agent_access_grants')
-    .leftJoin('identities', (join) =>
-      join
-        .onRef('identities.subject', '=', 'agent_access_grants.owner_subject')
-    )
-    .select([
-      'agent_access_grants.agent_id as agent_id',
-      'agent_access_grants.owner_subject as owner_subject',
-      'agent_access_grants.expires_at as expires_at',
-      'identities.display_name as owner_name',
-      'identities.email as owner_email',
-    ])
-    .where('agent_access_grants.grantee_subject', '=', granteeSubject)
-    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', sql<Date>`NOW()`)]))
-    .orderBy('agent_access_grants.created_at', 'desc')
-    .execute();
+export async function listAgentsSharedWith(granteeSubject: string): Promise<SharedAgentListing[]> {
+  const rows = await getDataStore().agents.listSharedWith(granteeSubject);
   const listings: SharedAgentListing[] = [];
   for (const row of rows) {
-    const found = await getAgentWithOwner(db, row.agent_id);
+    const found = await getAgentWithOwner(row.agentId);
     if (!found) continue;
     listings.push({
       agent: found.agent,
-      ownerSubject: row.owner_subject,
-      ownerName: row.owner_name,
-      ownerEmail: row.owner_email,
-      expiresAt: grantIso(row.expires_at),
+      ownerSubject: row.ownerSubject,
+      ownerName: row.ownerName,
+      ownerEmail: row.ownerEmail,
+      expiresAt: grantIso(row.expiresAt),
     });
   }
   return listings;

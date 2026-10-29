@@ -34,15 +34,14 @@
  * the organization's model here.
  */
 
-import type { Kysely } from 'kysely';
-import { sql } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm, type LlmToolDef, type ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
 import { artifactCipher } from './artifact-access';
 import {
+  getAttachments,
   getAttachmentText,
   isDescribablePicture,
   readAttachmentBytes,
@@ -130,30 +129,36 @@ export function digestPrompt(
  * keywords weigh more than the summary. `null` records a failure.
  */
 export async function storeDigest(
-  db: Kysely<DB>,
   artifactId: string,
   digest: ArtifactDigest | null
 ): Promise<void> {
-  if (!digest) {
-    await db
-      .updateTable('artifacts')
-      .set({ digest_status: 'failed', updated_at: new Date() })
-      .where('id', '=', artifactId)
-      .execute();
-    return;
+  await getDataStore().artifacts.storeDigest(
+    artifactId,
+    digest ? { summary: digest.summary, keywords: digest.keywords } : null
+  );
+}
+
+/**
+ * The organization's default model, for a digest. Resolving it and
+ * recording its call (`recordLlmCall`) still take the database handle
+ * (@renkei/agent-llm, @renkei/agents); without one there is no model.
+ */
+async function resolveDigestLlm(): Promise<ResolvedLlm | null> {
+  try {
+    const resolved = await resolveAgentLlm(null);
+    if (resolved.ok) return resolved.val;
+    logger.debug('artifact digest skipped: {reason}', {
+      component: 'chat/artifact-digest',
+      reason: resolved.err.type,
+    });
+    return null;
+  } catch (error) {
+    logger.debug('artifact digest skipped: {reason}', {
+      component: 'chat/artifact-digest',
+      reason: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   }
-  const keywords = digest.keywords.join(' ');
-  await db
-    .updateTable('artifacts')
-    .set({
-      summary: digest.summary,
-      keywords: digest.keywords,
-      digest_status: 'done',
-      search_vector: sql`setweight(to_tsvector('english', ${keywords}), 'A') || setweight(to_tsvector('english', ${digest.summary}), 'B')`,
-      updated_at: new Date(),
-    })
-    .where('id', '=', artifactId)
-    .execute();
 }
 
 /**
@@ -162,40 +167,22 @@ export async function storeDigest(
  * it), or `pending` (no model, or one that could not be reached — worth
  * asking again later). Never throws.
  */
-export async function digestText(
-  db: Kysely<DB>,
-  input: {
-    /** The uploader: the model call is billed to them. */
-    subject: string;
-    file: { id: string; filename: string; contentType: string };
-    /** The file's text; empty for a picture, which is described from its bytes. */
-    text: string;
-    picture?: { mediaType: string; dataBase64: string };
-    llm?: ResolvedLlm;
-  }
-): Promise<DigestStatus> {
+export async function digestText(input: {
+  /** The uploader: the model call is billed to them. */
+  subject: string;
+  file: { id: string; filename: string; contentType: string };
+  /** The file's text; empty for a picture, which is described from its bytes. */
+  text: string;
+  picture?: { mediaType: string; dataBase64: string };
+  llm?: ResolvedLlm;
+}): Promise<DigestStatus> {
   const back = async (status: 'pending' | 'failed'): Promise<DigestStatus> => {
-    await db
-      .updateTable('artifacts')
-      .set({ digest_status: status, updated_at: new Date() })
-      .where('id', '=', input.file.id)
-      .execute();
+    await setDigestStatus(input.file.id, status);
     return status;
   };
   try {
-    let llm = input.llm;
-    if (!llm) {
-      const resolved = await resolveAgentLlm(db, null);
-      if (!resolved.ok) {
-        logger.debug('artifact digest skipped: {reason}', {
-          component: 'chat/artifact-digest',
-          artifactId: input.file.id,
-          reason: resolved.err.type,
-        });
-        return back('pending');
-      }
-      llm = resolved.val;
-    }
+    const llm = input.llm ?? (await resolveDigestLlm());
+    if (!llm) return back('pending');
     const startedAt = Date.now();
     const picture = input.picture;
     const completion = await llm.provider.complete({
@@ -224,7 +211,7 @@ export async function digestText(
       });
       return back('pending');
     }
-    await recordLlmCall(db, {
+    await recordLlmCall({
       subject: input.subject,
       agentId: null,
       purpose: 'artifact_digest',
@@ -239,7 +226,7 @@ export async function digestText(
         : {}),
       model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
     });
-    await recordDocumentUsage(db, {
+    await recordDocumentUsage({
       subject: input.subject,
       artifactId: input.file.id,
       kind: picture ? 'describe' : 'summary',
@@ -250,7 +237,7 @@ export async function digestText(
       (block) => block.type === 'tool_use' && block.name === ARTIFACT_DIGEST_TOOL
     );
     const digest = parseDigest(call?.type === 'tool_use' ? call.input : null);
-    await storeDigest(db, input.file.id, digest);
+    await storeDigest(input.file.id, digest);
     return digest ? 'done' : 'failed';
   } catch (error) {
     logger.warn('artifact digest failed: {message}', {
@@ -267,21 +254,8 @@ export async function digestText(
  * a `running` left behind long enough to count as dropped. False when
  * another process has it, or it needs none.
  */
-async function claimDigest(db: Kysely<DB>, artifactId: string): Promise<boolean> {
-  const stale = new Date(Date.now() - RUNNING_STALE_MS);
-  const claimed = await db
-    .updateTable('artifacts')
-    .set({ digest_status: 'running', updated_at: new Date() })
-    .where('id', '=', artifactId)
-    .where((eb) =>
-      eb.or([
-        eb('digest_status', '=', 'pending'),
-        eb.and([eb('digest_status', '=', 'running'), eb('updated_at', '<', stale)]),
-      ])
-    )
-    .returning('id')
-    .executeTakeFirst();
-  return claimed !== undefined;
+async function claimDigest(artifactId: string): Promise<boolean> {
+  return getDataStore().artifacts.claimDigest(artifactId, new Date(Date.now() - RUNNING_STALE_MS));
 }
 
 type DigestSource =
@@ -295,12 +269,11 @@ type DigestSource =
  * for a reader who can.
  */
 async function digestSourceOf(
-  db: Kysely<DB>,
   row: AttachmentRow,
   cipher: ContentCipher
 ): Promise<DigestSource | null> {
   if (row.extractStatus === 'done') {
-    const text = await getAttachmentText(db, row.id, cipher);
+    const text = await getAttachmentText(row.id, cipher);
     return text && !text.startsWith('[content unavailable') ? { kind: 'text', text } : null;
   }
   const bytes = await readAttachmentBytes(row, cipher);
@@ -313,16 +286,8 @@ async function digestSourceOf(
   };
 }
 
-async function setDigestStatus(
-  db: Kysely<DB>,
-  artifactId: string,
-  status: DigestStatus
-): Promise<void> {
-  await db
-    .updateTable('artifacts')
-    .set({ digest_status: status, updated_at: new Date() })
-    .where('id', '=', artifactId)
-    .execute();
+async function setDigestStatus(artifactId: string, status: DigestStatus): Promise<void> {
+  await getDataStore().artifacts.update(artifactId, { digestStatus: status });
 }
 
 /**
@@ -333,7 +298,6 @@ async function setDigestStatus(
  * from its own bytes. The uploader is billed for the model call.
  */
 export async function digestPendingArtifacts(
-  db: Kysely<DB>,
   viewerSubject: string,
   rows: AttachmentRow[],
   limit: number = DIGEST_BATCH
@@ -351,32 +315,31 @@ export async function digestPendingArtifacts(
   if (wanted.length === 0) return;
   let llm: ResolvedLlm | undefined;
   for (const row of wanted) {
-    if (!(await claimDigest(db, row.id))) continue;
+    if (!(await claimDigest(row.id))) continue;
     const cipher = await artifactCipher(
-      db,
       row,
       viewerSubject,
       row.ownerSubject === viewerSubject ? 'owner' : 'grant',
       null
     );
-    const source = cipher.unavailable ? null : await digestSourceOf(db, row, cipher);
+    const source = cipher.unavailable ? null : await digestSourceOf(row, cipher);
     if (source === null) {
-      await setDigestStatus(db, row.id, 'pending');
+      await setDigestStatus(row.id, 'pending');
       continue;
     }
     if (source.kind === 'too-large') {
-      await setDigestStatus(db, row.id, 'none');
+      await setDigestStatus(row.id, 'none');
       continue;
     }
     if (!llm) {
-      const resolved = await resolveAgentLlm(db, null);
-      if (!resolved.ok) {
-        await setDigestStatus(db, row.id, 'pending');
+      const resolved = await resolveDigestLlm();
+      if (!resolved) {
+        await setDigestStatus(row.id, 'pending');
         return;
       }
-      llm = resolved.val;
+      llm = resolved;
     }
-    await digestText(db, {
+    await digestText({
       subject: row.ownerSubject,
       file: { id: row.id, filename: row.filename, contentType: row.contentType },
       text: source.kind === 'text' ? source.text : '',
@@ -388,6 +351,16 @@ export async function digestPendingArtifacts(
   }
 }
 
+/** `digestPendingArtifacts` for these artifact ids, once the org's switch lets one run. */
+export async function digestPendingArtifactIds(
+  viewerSubject: string,
+  artifactIds: string[]
+): Promise<void> {
+  if (!(await digestsEnabled())) return;
+  const rows = await getAttachments(artifactIds);
+  await digestPendingArtifacts(viewerSubject, rows);
+}
+
 /**
  * Asks for a digest after the response that created the row: Next's
  * `after()` where a request is being served, a detached promise where
@@ -395,14 +368,13 @@ export async function digestPendingArtifacts(
  * model.
  */
 export function deferDigest(
-  db: Kysely<DB>,
   viewerSubject: string,
   rows: AttachmentRow[],
   defer: (task: () => Promise<void>) => void
 ): void {
   const task = async () => {
     try {
-      await digestPendingArtifacts(db, viewerSubject, rows);
+      await digestPendingArtifacts(viewerSubject, rows);
     } catch (error) {
       logger.warn('deferred artifact digest failed: {message}', {
         component: 'chat/artifact-digest',

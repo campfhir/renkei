@@ -7,16 +7,19 @@
  * unrecorded until an operator re-saved the mapping.
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/crypto', () => ({
   loadKeyring: jest.fn(() => ({ ok: true, val: 'keyring' })),
   encrypt: jest.fn((value: string) => `sealed:${value}`),
-  decrypt: jest.fn((value: string) => value.replace(/^sealed:/, '')),
+  decrypt: jest.fn((value: string) => ({ ok: true, val: value.replace(/^sealed:/, '') })),
 }));
 
-import { createTenantOidcIfAbsent, setTenantOidc, type TenantOidc } from './tenant-operations';
-
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import {
+  createTenantOidcIfAbsent,
+  getTenantOidc,
+  setTenantOidc,
+  type TenantOidc,
+} from './tenant-operations';
 
 const OIDC: TenantOidc = {
   issuer: 'https://idp.example.com',
@@ -28,67 +31,52 @@ const OIDC: TenantOidc = {
   groupsClaim: 'memberOf',
 };
 
-/** A database that records what each writer hands it. */
-function recordingDb() {
-  const inserted: Array<Record<string, unknown>> = [];
-  const updated: Array<Record<string, unknown>> = [];
-  const insertChain = {
-    values: (row: Record<string, unknown>) => {
-      inserted.push(row);
-      return insertChain;
-    },
-    onConflict: (build: (oc: unknown) => unknown) => {
-      const oc = {
-        expression: () => ({
-          doNothing: () => oc,
-          doUpdateSet: (row: Record<string, unknown>) => {
-            updated.push(row);
-            return oc;
-          },
-        }),
-      };
-      build(oc);
-      return insertChain;
-    },
-    execute: async () => [],
-    executeTakeFirst: async () => ({ numInsertedOrUpdatedRows: BigInt(1) }),
+/** A fresh memory store, and a read of the one row it holds. */
+function freshStore() {
+  const store = createMemoryDataStore();
+  registerDataStore(store);
+  return () => {
+    const [row] = store.tables.select('oidc_config');
+    return row && { ...row, id: undefined, created_at: undefined };
   };
-  mockGetDatabase.mockReturnValue({ ok: true, val: { insertInto: () => insertChain } });
-  return { inserted, updated };
 }
 
-beforeEach(() => {
-  mockGetDatabase.mockReset();
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('the identity provider record', () => {
   it('is written the same by first-run setup and by an operator', async () => {
-    const first = recordingDb();
-    const created = await createTenantOidcIfAbsent(OIDC);
-    expect(created).toEqual({ ok: true, val: true });
+    const first = freshStore();
+    expect(await createTenantOidcIfAbsent(OIDC)).toEqual({ ok: true, val: true });
 
-    const later = recordingDb();
-    const saved = await setTenantOidc(OIDC);
-    expect(saved.ok).toBe(true);
+    const later = freshStore();
+    expect((await setTenantOidc(OIDC)).ok).toBe(true);
+    const insertedByOperator = later();
+    // …and an operator replacing an existing record writes the same again.
+    expect((await setTenantOidc(OIDC)).ok).toBe(true);
 
-    const persisted = (row: Record<string, unknown>) => ({
-      issuer: row.issuer,
-      client_id: row.client_id,
-      client_secret: row.client_secret,
-      role_claim: row.role_claim,
-      operator_idp_value: row.operator_idp_value,
-      user_idp_value: row.user_idp_value,
-      groups_claim: row.groups_claim,
-    });
-    expect(persisted(first.inserted[0])).toEqual(persisted(later.inserted[0]));
-    expect(persisted(first.inserted[0])).toEqual(persisted(later.updated[0]));
-    expect(first.inserted[0].groups_claim).toBe('memberOf');
-    expect(first.inserted[0].client_secret).toBe('sealed:secret-1');
+    expect(first()).toEqual(insertedByOperator);
+    expect(later()).toEqual(insertedByOperator);
+    expect(first()?.groups_claim).toBe('memberOf');
+    expect(first()?.client_secret).toBe('sealed:secret-1');
   });
 
   it('records no groups claim when the form left it empty', async () => {
-    const { inserted } = recordingDb();
+    const row = freshStore();
     await createTenantOidcIfAbsent({ ...OIDC, groupsClaim: '' });
-    expect(inserted[0].groups_claim).toBeNull();
+    expect(row()?.groups_claim).toBeNull();
+  });
+
+  it('keeps the first configuration when setup races', async () => {
+    freshStore();
+    expect(await createTenantOidcIfAbsent(OIDC)).toEqual({ ok: true, val: true });
+    expect(await createTenantOidcIfAbsent({ ...OIDC, issuer: 'https://other.example' })).toEqual({
+      ok: true,
+      val: false,
+    });
+    const read = await getTenantOidc();
+    expect(read.ok && read.val?.issuer).toBe('https://idp.example.com');
+    expect(read.ok && read.val?.clientSecret).toBe('secret-1');
   });
 });

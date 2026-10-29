@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { WEBEX_USER } from '@renkei/provider-grants';
 import { verifyWebexSignature, parseWebhookPayload } from '@renkei/connector-webex';
@@ -42,18 +42,13 @@ export async function POST(
   if (!bodyResult.ok) return payloadTooLarge();
   const rawBody = bodyResult.val;
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) {
+  let grant: { metadata: unknown } | null;
+  try {
+    grant = await getDataStore().providerGrants.find(WEBEX_USER, accountId);
+  } catch {
     // 500 so WebEx retries instead of dropping the delivery.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
-
-  const grant = await dbResult.val
-    .selectFrom('provider_grants')
-    .select(['metadata', 'subject'])
-    .where('provider', '=', WEBEX_USER)
-    .where('provider_account_id', '=', accountId)
-    .executeTakeFirst();
   const metadata: { allSpaces?: unknown; allSpacesSecret?: unknown } =
     typeof grant?.metadata === 'object' && grant.metadata !== null && !Array.isArray(grant.metadata)
       ? grant.metadata

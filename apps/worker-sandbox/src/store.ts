@@ -1,6 +1,7 @@
 /**
- * Postgres access for sandbox file metadata. Bytes never pass through here —
- * see server.ts for the disk side — this is purely the `sandbox_files` row:
+ * Sandbox file metadata, through the data store (`sandboxFiles`). Bytes
+ * never pass through here — see server.ts for the disk side — this is
+ * purely the `sandbox_files` row:
  * insert on stage, list/get/delete by (tenantId, subject), and the sweep's
  * expiry walk. Every function takes tenantId + subject explicitly and
  * filters on both, the same no-cross-caller-reads discipline upload_slots
@@ -15,8 +16,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type SandboxFileRecord } from '@renkei/db';
 import type { SandboxFileSummary } from '@renkei/connector-sandbox';
 
 export interface SandboxTarget {
@@ -33,122 +33,17 @@ export interface StageFileInput extends SandboxTarget {
   expiresAt: Date;
 }
 
-function toSummary(row: {
-  id: string;
-  filename: string;
-  content_type: string | null;
-  size_bytes: number;
-  source: string;
-  batch_id: string | null;
-  created_at: Date;
-  expires_at: Date;
-}): SandboxFileSummary {
+function toSummary(record: SandboxFileRecord): SandboxFileSummary {
   return {
-    id: row.id,
-    filename: row.filename,
-    contentType: row.content_type,
-    sizeBytes: row.size_bytes,
-    source: row.source,
-    batchId: row.batch_id,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at,
+    id: record.id,
+    filename: record.filename,
+    contentType: record.contentType,
+    sizeBytes: record.sizeBytes,
+    source: record.source,
+    batchId: record.batchId,
+    createdAt: record.createdAt,
+    expiresAt: record.expiresAt,
   };
-}
-
-const SUMMARY_COLUMNS = [
-  'id',
-  'filename',
-  'content_type',
-  'size_bytes',
-  'source',
-  'batch_id',
-  'created_at',
-  'expires_at',
-] as const;
-
-export async function insertFile(
-  db: Kysely<DB>,
-  input: StageFileInput
-): Promise<SandboxFileSummary> {
-  const row = await db
-    .insertInto('sandbox_files')
-    .values({
-      id: randomUUID(),
-      subject: input.subject,
-      filename: input.filename,
-      content_type: input.contentType,
-      size_bytes: input.sizeBytes,
-      storage_key: input.storageKey,
-      source: input.source,
-      batch_id: input.batchId,
-      expires_at: input.expiresAt,
-    })
-    .returning(SUMMARY_COLUMNS)
-    .executeTakeFirstOrThrow();
-  return toSummary(row);
-}
-
-export async function listFiles(
-  db: Kysely<DB>,
-  target: SandboxTarget,
-  batchId?: string
-): Promise<SandboxFileSummary[]> {
-  let query = db
-    .selectFrom('sandbox_files')
-    .select(SUMMARY_COLUMNS)
-    .where('subject', '=', target.subject);
-  if (batchId) query = query.where('batch_id', '=', batchId);
-  const rows = await query.orderBy('created_at', 'desc').execute();
-  return rows.map(toSummary);
-}
-
-/** Current total staged bytes for a caller — the quota check reads this before staging a new file. */
-export async function totalStagedBytes(db: Kysely<DB>, target: SandboxTarget): Promise<number> {
-  const row = await db
-    .selectFrom('sandbox_files')
-    .select((eb) => eb.fn.sum<string>('size_bytes').as('total'))
-    .where('subject', '=', target.subject)
-    .executeTakeFirst();
-  return row?.total ? Number(row.total) : 0;
-}
-
-export async function countFiles(db: Kysely<DB>, target: SandboxTarget): Promise<number> {
-  const row = await db
-    .selectFrom('sandbox_files')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('subject', '=', target.subject)
-    .executeTakeFirst();
-  return row?.count ? Number(row.count) : 0;
-}
-
-/**
- * The batch quota pool: totals for (tenantId, batchId) rather than the
- * caller's whole scratch space. A batch is tenant-scoped only — its owning
- * subject already governs every row's read access, so the quota pool
- * doesn't need to repeat that filter.
- */
-export async function totalStagedBytesForBatch(
-  db: Kysely<DB>,
-  batchId: string
-): Promise<number> {
-  const row = await db
-    .selectFrom('sandbox_files')
-    .select((eb) => eb.fn.sum<string>('size_bytes').as('total'))
-    .where('batch_id', '=', batchId)
-    .executeTakeFirst();
-  return row?.total ? Number(row.total) : 0;
-}
-
-export async function countFilesForBatch(
-  db: Kysely<DB>,
-  batchId: string
-): Promise<number> {
-  const row = await db
-    .selectFrom('sandbox_files')
-    .select((eb) => eb.fn.countAll<string>().as('count'))
-    .where('batch_id', '=', batchId)
-    .executeTakeFirst();
-  return row?.count ? Number(row.count) : 0;
 }
 
 export interface StoredFile {
@@ -158,66 +53,82 @@ export interface StoredFile {
   storageKey: string;
 }
 
+function toStored(record: SandboxFileRecord): StoredFile {
+  return {
+    id: record.id,
+    filename: record.filename,
+    contentType: record.contentType,
+    storageKey: record.storageKey,
+  };
+}
+
+export async function insertFile(input: StageFileInput): Promise<SandboxFileSummary> {
+  const record = await getDataStore().sandboxFiles.insert({
+    id: randomUUID(),
+    subject: input.subject,
+    filename: input.filename,
+    contentType: input.contentType,
+    sizeBytes: input.sizeBytes,
+    storageKey: input.storageKey,
+    source: input.source,
+    batchId: input.batchId,
+    expiresAt: input.expiresAt,
+  });
+  return toSummary(record);
+}
+
+export async function listFiles(
+  target: SandboxTarget,
+  batchId?: string
+): Promise<SandboxFileSummary[]> {
+  return (await getDataStore().sandboxFiles.list(target.subject, batchId)).map(toSummary);
+}
+
+/** Current total staged bytes for a caller — the quota check reads this before staging a new file. */
+export async function totalStagedBytes(target: SandboxTarget): Promise<number> {
+  return getDataStore().sandboxFiles.totalBytesForSubject(target.subject);
+}
+
+export async function countFiles(target: SandboxTarget): Promise<number> {
+  return getDataStore().sandboxFiles.countForSubject(target.subject);
+}
+
+/**
+ * The batch quota pool: totals for a batch rather than the caller's whole
+ * scratch space. A batch is not subject-scoped — its owning subject already
+ * governs every row's read access, so the quota pool doesn't need to repeat
+ * that filter.
+ */
+export async function totalStagedBytesForBatch(batchId: string): Promise<number> {
+  return getDataStore().sandboxFiles.totalBytesForBatch(batchId);
+}
+
+export async function countFilesForBatch(batchId: string): Promise<number> {
+  return getDataStore().sandboxFiles.countForBatch(batchId);
+}
+
 export async function getFile(
-  db: Kysely<DB>,
   target: SandboxTarget,
   fileId: string
 ): Promise<StoredFile | undefined> {
-  const row = await db
-    .selectFrom('sandbox_files')
-    .select(['id', 'filename', 'content_type', 'storage_key'])
-    .where('subject', '=', target.subject)
-    .where('id', '=', fileId)
-    .executeTakeFirst();
-  if (!row) return undefined;
-  return {
-    id: row.id,
-    filename: row.filename,
-    contentType: row.content_type,
-    storageKey: row.storage_key,
-  };
+  const record = await getDataStore().sandboxFiles.get(target.subject, fileId);
+  return record ? toStored(record) : undefined;
 }
 
 export async function deleteFile(
-  db: Kysely<DB>,
   target: SandboxTarget,
   fileId: string
 ): Promise<StoredFile | undefined> {
-  const row = await db
-    .deleteFrom('sandbox_files')
-    .where('subject', '=', target.subject)
-    .where('id', '=', fileId)
-    .returning(['id', 'filename', 'content_type', 'storage_key'])
-    .executeTakeFirst();
-  if (!row) return undefined;
-  return {
-    id: row.id,
-    filename: row.filename,
-    contentType: row.content_type,
-    storageKey: row.storage_key,
-  };
+  const record = await getDataStore().sandboxFiles.delete(target.subject, fileId);
+  return record ? toStored(record) : undefined;
 }
 
 /** Rows past their expiry — the sweep deletes each one's bytes, then this row. */
-export async function listExpired(
-  db: Kysely<DB>,
-  limit: number
-): Promise<(StoredFile & { expiresAt: Date })[]> {
-  const rows = await db
-    .selectFrom('sandbox_files')
-    .select(['id', 'filename', 'content_type', 'storage_key', 'expires_at'])
-    .where('expires_at', '<', new Date())
-    .limit(limit)
-    .execute();
-  return rows.map((row) => ({
-    id: row.id,
-    filename: row.filename,
-    contentType: row.content_type,
-    storageKey: row.storage_key,
-    expiresAt: row.expires_at,
-  }));
+export async function listExpired(limit: number): Promise<(StoredFile & { expiresAt: Date })[]> {
+  const records = await getDataStore().sandboxFiles.listExpired(new Date(), limit);
+  return records.map((record) => ({ ...toStored(record), expiresAt: record.expiresAt }));
 }
 
-export async function deleteById(db: Kysely<DB>, id: string): Promise<void> {
-  await db.deleteFrom('sandbox_files').where('id', '=', id).execute();
+export async function deleteById(id: string): Promise<void> {
+  await getDataStore().sandboxFiles.deleteById(id);
 }

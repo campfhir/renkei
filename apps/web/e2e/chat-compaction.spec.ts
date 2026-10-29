@@ -1,301 +1,180 @@
 /**
- * Chat compaction's UI, against a real server and a real database — no
- * model is ever called, by construction: every seeded chat stays under
- * CHAT_COMPACT_MIN_FOLD + CHAT_COMPACT_KEEP_RECENT (compaction.ts), so
- * compactChat's early return fires before any LLM call, and a "compaction
- * already in flight" turn is seeded directly rather than started, since
- * nothing in this process is running it. That keeps every assertion here
- * deterministic and network-free, the same discipline chat.spec.ts and
- * code.spec.ts already follow.
+ * Chat compaction's UI, against the real turn engine: every reply and
+ * every summary comes from the stand-in model (e2e/support/stub-model.ts),
+ * scripted where a test needs a tool call or a slow answer.
  *
  * Four things get exercised:
- *  - the chat_compact tool call renders with the package icon (static rows,
- *    like chat.spec.ts's own tool-call fold);
- *  - a compaction turn already running (seeded, no live channel — the
- *    multi-replica/reconnect case) shows the live progress card through the
- *    stream route's snapshot-polling fallback, then settles once the row's
- *    status changes underneath it;
+ *  - the chat_compact tool call renders with the package icon;
+ *  - a compaction pass already running when the page opens (its summary
+ *    call held by the stub) shows the live progress card, then settles
+ *    without a reload;
  *  - /compact and the prompt picker's quick action both start a REAL
  *    compaction turn through the actual route and SSE stream, settling to
  *    "nothing to fold" on a chat too small to need one;
  *  - a message sent while another turn is already running queues instead
- *    of being silently dropped, survives a reload, and Clear empties the
- *    queue again.
+ *    of being silently dropped, survives a reload, and drains on its own
+ *    once the model is free.
  */
 
-import { createCipheriv, randomBytes } from 'node:crypto';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { keyFor } from './keys';
-import { shot } from './voice-fixtures';
+import { randomUUID } from 'node:crypto';
+import path from 'node:path';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import {
+  addStubModel,
+  toolStep,
+  releaseStub,
+  removeModel,
+  scripted,
+  type StubStep,
+} from './support/stub-model';
+import { createChat, readChat, send, settled, startTurn } from './support/chat';
 
-test.use({
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here (code.spec.ts's own note); the pinned Chromium runs
-  // every project.
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
+// Adding a model to the roster is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-/** Fixture ids differ per Playwright project — see chat.spec.ts's idsFor. */
-function idsFor(project: string) {
-  const digit = { 'desktop-light': '1', 'desktop-dark': '2', mobile: '3' }[project] ?? '4';
-  return {
-    modelId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}1`,
-    iconChatId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}2`,
-    iconTurnId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}3`,
-    snapshotChatId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}4`,
-    snapshotTurnId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}5`,
-    liveChatId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}6`,
-    liveTurnId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}7`,
-    queueChatId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}8`,
-    queueTurnId: `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${digit}9`,
-    iconTitle: `Compaction icon check (${digit})`,
-    snapshotTitle: `Compaction snapshot check (${digit})`,
-    liveTitle: `Compaction live check (${digit})`,
-    queueTitle: `Compaction queue check (${digit})`,
-  };
-}
-type Ids = ReturnType<typeof idsFor>;
-const TOOL_USE_ID = 'toolu_e2e_compact_0001';
-/** components/icons.tsx's `package` entry — asserted literally, not imported (see chat.spec.ts's header note on the TS loader). */
+/** components/icons.tsx's `package` entry — asserted literally, not imported. */
 const PACKAGE_ICON_D = 'M12 3l8 4.5v9L12 21l-8-4.5v-9zM4 7.5L12 12l8-4.5M12 12v9M8 5.25l8 4.5';
+const NOTHING = 'Nothing to compact — the conversation is already tight.';
 
-/** `@renkei/crypto`'s content envelope, reproduced — see chat.spec.ts. */
-function secretbox(plaintext: string, encoded: string, name: string): string {
-  const key = Buffer.from(encoded, 'base64');
-  if (key.byteLength !== 32) {
-    throw new Error(`${name} must decode to 32 bytes for the chat-compaction spec to seed rows.`);
-  }
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
-  return [
-    'v1',
-    iv.toString('base64'),
-    cipher.getAuthTag().toString('base64'),
-    ciphertext.toString('base64'),
-  ].join('.');
+function tagOf(testInfo: TestInfo): string {
+  return `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
 }
 
-function sealSecret(plaintext: string): string {
-  return secretbox(plaintext, process.env.TOKEN_ENCRYPTION_KEY ?? '', 'TOKEN_ENCRYPTION_KEY');
-}
-
-async function seedModel(client: Client, ids: Ids): Promise<void> {
-  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
-  await client.query(
-    `INSERT INTO llm_model_configs (id, label, provider, model, encrypted_secrets, enabled, is_default)\n     VALUES ($1, $2, 'anthropic', 'e2e-model', $3, true, false)`,
-    [ids.modelId, `E2E compaction model ${ids.modelId.slice(-2)}`, sealSecret(JSON.stringify({ apiKey: 'e2e' }))]
-  );
-}
-
-async function insertMessage(
-  client: Client,
-  input: {
-    chatId: string;
-    turnId: string;
-    seq: number;
-    role: string;
-    kind: string;
-    blocks: unknown[];
-    modelId?: string;
-  }
-): Promise<void> {
-  const assistant = input.role === 'assistant';
-  const chatKey = await keyFor(client, {
-    kind: 'chat',
-    resourceId: input.chatId,
-    ownerSubject: E2E_SUBJECT,
+async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
+  await page.screenshot({
+    path: path.join(
+      import.meta.dirname,
+      '..',
+      'test-results',
+      'screens',
+      testInfo.project.name,
+      `${name}.png`
+    ),
   });
-  await client.query(
-    `INSERT INTO chat_messages (chat_id, turn_id, seq, role, kind, status, content, llm_model_id, provider, model)\n     VALUES ($1, $2, $3, $4, $5, 'complete', $6, $7, $8, $9)`,
-    [input.chatId, input.turnId, input.seq, input.role, input.kind, chatKey.seal(JSON.stringify(input.blocks)), assistant ? (input.modelId ?? null) : null, assistant ? 'anthropic' : null, assistant ? 'e2e-model' : null]
-  );
 }
 
-async function cleanup(client: Client, ids: Ids): Promise<void> {
-  for (const chatId of [ids.iconChatId, ids.snapshotChatId, ids.liveChatId, ids.queueChatId]) {
-    await client.query('DELETE FROM chats WHERE id = $1', [chatId]);
+/**
+ * Enough history that a pass has something to fold (compaction.ts keeps 20,
+ * folds at least 6). `summary` scripts the one-shot call that folds the
+ * first message: the pass's summary.
+ */
+async function longHistory(
+  request: APIRequestContext,
+  chatId: string,
+  modelId: string,
+  summary?: StubStep
+) {
+  for (let index = 1; index <= 13; index += 1) {
+    const text = `Earlier question ${index}.`;
+    // The summary's script rides the second prompt: the first is titled by
+    // a one-shot call of its own, which the script's one-shot step would
+    // answer (and hold) too.
+    await send(request, chatId, index === 2 && summary ? scripted(text, [summary]) : text, modelId);
   }
-  await client.query('DELETE FROM llm_model_configs WHERE id = $1', [ids.modelId]);
 }
 
 test.describe('chat compaction', () => {
-  test('a chat_compact tool call renders with the package icon', async ({ page }, testInfo) => {
-    const client = new Client({ connectionString: process.env.DATABASE_URL });
-    await client.connect();
-    const ids = idsFor(testInfo.project.name);
+  // A long history is a dozen real turns, and the last test waits out a slow reply.
+  test.slow();
+  test('a chat_compact tool call renders with the package icon', async ({
+    page,
+    person: _person,
+  }, testInfo) => {
+    const tag = tagOf(testInfo);
+    const title = `Compaction icon check ${tag}`;
+    const prompt = 'This is getting long — trim the older part.';
+    const modelId = await addStubModel(page.request, tag);
     try {
-      await seedModel(client, ids);
-      await client.query(
-        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
-        [ids.iconChatId, E2E_SUBJECT, ids.iconTitle, ids.modelId]
-      );
-      await client.query(
-        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id, finished_at)\n         VALUES ($1, $2, 'completed', 'reply', $3, NOW())`,
-        [ids.iconTurnId, ids.iconChatId, ids.modelId]
-      );
-      await insertMessage(client, {
-        chatId: ids.iconChatId,
-        turnId: ids.iconTurnId,
-        seq: 1,
-        role: 'user',
-        kind: 'prompt',
-        blocks: [{ type: 'text', text: 'This is getting long — trim the older part.' }],
-      });
-      await insertMessage(client, {
-        chatId: ids.iconChatId,
-        turnId: ids.iconTurnId,
-        seq: 2,
-        role: 'assistant',
-        kind: 'assistant',
-        modelId: ids.modelId,
-        blocks: [
-          { type: 'text', text: "I'll compact the earlier part of this conversation." },
-          { type: 'tool_use', id: TOOL_USE_ID, name: 'chat_compact', input: {} },
-        ],
-      });
-      await insertMessage(client, {
-        chatId: ids.iconChatId,
-        turnId: ids.iconTurnId,
-        seq: 3,
-        role: 'user',
-        kind: 'tool_results',
-        blocks: [
-          {
-            type: 'tool_result',
-            toolUseId: TOOL_USE_ID,
-            content:
-              'Folded 12 earlier message(s) into a summary. They will be replaced by the summary starting next turn.',
-          },
-        ],
-      });
-      await insertMessage(client, {
-        chatId: ids.iconChatId,
-        turnId: ids.iconTurnId,
-        seq: 4,
-        role: 'assistant',
-        kind: 'assistant',
-        modelId: ids.modelId,
-        blocks: [{ type: 'text', text: 'Done — the earlier back-and-forth is now a summary.' }],
-      });
+      const chatId = await createChat(page.request, { llmModelId: modelId, title });
+      await longHistory(page.request, chatId, modelId);
+      // Compacting acts on the chat, so the turn asks first: allowed once.
+      const steps = [
+        toolStep('chat_compact', {}, "I'll compact the earlier part of this conversation."),
+        { text: 'Done — the earlier back-and-forth is now a summary.' },
+      ];
+      await send(page.request, chatId, scripted(prompt, steps), modelId, { allow: true });
 
-      await page.goto(`/chat/${ids.iconChatId}`);
-      await expect(page.getByRole('heading', { level: 1, name: ids.iconTitle })).toBeVisible();
-
-      const work = page.locator('details.chat-fold', { hasText: '1 tool call' });
+      await page.goto(`/chat/${chatId}`);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+      const work = page.locator('details.chat-fold', { hasText: '1 tool call' }).last();
       await expect(work).toBeVisible();
       await work.locator('> summary').click();
-
       const call = work.locator('details.chat-fold', { hasText: 'Compact' });
       await expect(call).toBeVisible();
       await expect(call.locator('> summary')).toContainText('Called');
       await expect(call.locator('> summary svg path').first()).toHaveAttribute('d', PACKAGE_ICON_D);
-
       await call.locator('> summary').click();
-      await expect(call.getByText(/Folded 12 earlier message/)).toBeVisible();
+      await expect(call.getByText(/Folded \d+ earlier message/)).toBeVisible();
+      await expect(
+        page.getByText('Done — the earlier back-and-forth is now a summary.')
+      ).toBeVisible();
     } finally {
-      await cleanup(client, ids);
-      await client.end();
+      await removeModel(page.request, modelId);
     }
   });
 
   test('a compaction turn already running shows live progress and settles', async ({
     page,
+    person: _person,
   }, testInfo) => {
-    const client = new Client({ connectionString: process.env.DATABASE_URL });
-    await client.connect();
-    const ids = idsFor(testInfo.project.name);
+    const tag = tagOf(testInfo);
+    const title = `Compaction snapshot check ${tag}`;
+    const modelId = await addStubModel(page.request, tag);
     try {
-      await seedModel(client, ids);
-      await client.query(
-        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
-        [ids.snapshotChatId, E2E_SUBJECT, ids.snapshotTitle, ids.modelId]
-      );
-      // A compaction pass "already in flight" — seeded directly, as if
-      // another process/replica started it, so the browser reaches it
-      // only through the stream route's snapshot-polling fallback (no
-      // in-process channel exists for a turn this test never started).
-      await client.query(
-        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id)\n         VALUES ($1, $2, 'running', 'compaction', $3)`,
-        [ids.snapshotTurnId, ids.snapshotChatId, ids.modelId]
-      );
+      const chatId = await createChat(page.request, { llmModelId: modelId, title });
+      // The pass's summary is held until the running card has been seen.
+      await longHistory(page.request, chatId, modelId, {
+        oneShot: true,
+        until: tag,
+        delayMs: 30_000,
+        text: 'A summary of the start.',
+      });
+      // The pass starts before the page is open: it reaches the browser on load.
+      const started = await page.request.post(`/api/chat/chats/${chatId}/compact`);
+      expect(started.status(), await started.text()).toBe(202);
 
-      await page.goto(`/chat/${ids.snapshotChatId}`);
-      await expect(page.getByRole('heading', { level: 1, name: ids.snapshotTitle })).toBeVisible();
-      await expect(page.getByText('Compacting the conversation…')).toBeVisible();
-      // No progress has been reported yet (a fresh reconnect) — the bar is
-      // indeterminate, not a stalled 0%.
-      await expect(page.locator('.chat-compact-indeterminate')).toBeVisible();
-
-      // The other process finishes it; the stream route's 1s poll picks it
-      // up and the card settles without a page reload.
-      await client.query(
-        `UPDATE chat_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`,
-        [ids.snapshotTurnId]
-      );
-      await expect(
-        page.getByText('Nothing to compact — the conversation is already tight.')
-      ).toBeVisible({ timeout: 10_000 });
+      await page.goto(`/chat/${chatId}`);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+      await expect(page.getByText(/Compacting the conversation…/)).toBeVisible({ timeout: 15_000 });
+      await shot(page, testInfo, 'chat-compaction-running');
+      // The summary lands; the card settles without a page reload.
+      await releaseStub(page.request, tag);
+      await expect(page.getByText(/Compacted \d+ earlier messages? into a summary\./)).toBeVisible({
+        timeout: 20_000,
+      });
     } finally {
-      await cleanup(client, ids);
-      await client.end();
+      await removeModel(page.request, modelId);
     }
   });
 
   test('/compact and the prompt picker each run a real compaction pass', async ({
     page,
+    person: _person,
   }, testInfo) => {
-    const client = new Client({ connectionString: process.env.DATABASE_URL });
-    await client.connect();
-    const ids = idsFor(testInfo.project.name);
+    const tag = tagOf(testInfo);
+    const title = `Compaction live check ${tag}`;
+    const modelId = await addStubModel(page.request, tag);
     try {
-      await seedModel(client, ids);
-      await client.query(
-        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
-        [ids.liveChatId, E2E_SUBJECT, ids.liveTitle, ids.modelId]
-      );
-      const turnId = ids.liveTurnId;
-      await client.query(
-        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id, finished_at)\n         VALUES ($1, $2, 'completed', 'reply', $3, NOW())`,
-        [turnId, ids.liveChatId, ids.modelId]
-      );
-      // Well under CHAT_COMPACT_KEEP_RECENT (20) + CHAT_COMPACT_MIN_FOLD (6):
-      // compactChat returns null before ever reaching the model.
-      await insertMessage(client, {
-        chatId: ids.liveChatId,
-        turnId,
-        seq: 1,
-        role: 'user',
-        kind: 'prompt',
-        blocks: [{ type: 'text', text: 'Just saying hello.' }],
-      });
-      await insertMessage(client, {
-        chatId: ids.liveChatId,
-        turnId,
-        seq: 2,
-        role: 'assistant',
-        kind: 'assistant',
-        modelId: ids.modelId,
-        blocks: [{ type: 'text', text: 'Hello! What can I help with?' }],
-      });
+      const chatId = await createChat(page.request, { llmModelId: modelId, title });
+      // Well under what a pass folds: compactChat returns before reaching the model.
+      await send(page.request, chatId, 'Just saying hello.', modelId);
 
-      await page.goto(`/chat/${ids.liveChatId}`);
-      await expect(page.getByRole('heading', { level: 1, name: ids.liveTitle })).toBeVisible();
+      await page.goto(`/chat/${chatId}`);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
 
       // The literal slash command.
       const box = page.getByRole('textbox', { name: 'Message' });
+      const passes: number[] = [];
+      page.on('response', (response) => {
+        if (response.url().endsWith(`/api/chat/chats/${chatId}/compact`)) {
+          passes.push(response.status());
+        }
+      });
       await box.fill('/compact');
       await page.getByRole('button', { name: 'Send', exact: true }).click();
       await expect(box).toHaveValue('');
-      await expect(
-        page.getByText('Nothing to compact — the conversation is already tight.')
-      ).toBeVisible({ timeout: 10_000 });
+      await expect(page.getByText(NOTHING)).toBeVisible({ timeout: 10_000 });
 
       // The prompt picker's quick action — opened on an empty box, since
       // typing "/" there is the picker's own trigger.
@@ -305,75 +184,60 @@ test.describe('chat compaction', () => {
       await expect(compactAction).toBeVisible();
       await expect(compactAction.locator('svg path').first()).toHaveAttribute('d', PACKAGE_ICON_D);
       await compactAction.click();
-      // Proves a SECOND turn actually started and finished — the card's
-      // settled text is already showing from the first pass, so asserting
-      // on it alone would pass even if this click did nothing. Polling the
-      // database (both the count AND every row's settled status, in the
-      // SAME retried check) rather than a "Stop" button: on this tiny,
-      // network-free chat the whole pass, insert-to-completed, can finish
-      // faster than the UI can be caught mid-transition — and a row exists
-      // (count reaches 2) a moment before its status leaves 'running'.
-      await expect
-        .poll(
-          async () => {
-            const rows = await client.query(
-              `SELECT status FROM chat_turns WHERE chat_id = $1 AND kind = 'compaction'`,
-              [ids.liveChatId]
-            );
-            return rows.rows.length >= 2 && rows.rows.every((row) => row.status === 'completed');
-          },
-          { timeout: 10_000 }
-        )
-        .toBe(true);
-
-      // The card reflects the settled state either way.
-      await expect(
-        page.getByText('Nothing to compact — the conversation is already tight.')
-      ).toBeVisible({ timeout: 10_000 });
+      // Proves a SECOND pass actually started — the card's settled text is
+      // already showing from the first, so asserting on it alone would pass
+      // even if this click did nothing: two passes were accepted, and the
+      // chat has no turn left running.
+      await expect.poll(() => passes, { timeout: 10_000 }).toEqual([202, 202]);
+      await settled(page.request, chatId);
+      await expect(page.getByText(NOTHING).first()).toBeVisible({ timeout: 10_000 });
     } finally {
-      await cleanup(client, ids);
-      await client.end();
+      await removeModel(page.request, modelId);
     }
   });
 
   test('queued sends are listed individually, can be removed one at a time, and drain on their own once the model is free', async ({
     page,
+    person: _person,
   }, testInfo) => {
-    const client = new Client({ connectionString: process.env.DATABASE_URL });
-    await client.connect();
-    const ids = idsFor(testInfo.project.name);
+    const tag = tagOf(testInfo);
+    const title = `Compaction queue check ${tag}`;
+    const busy = 'Take your time over this one.';
+    const modelId = await addStubModel(page.request, tag);
     try {
-      await seedModel(client, ids);
-      await client.query(
-        `INSERT INTO chats (id, owner_subject, title, llm_model_id, last_message_at)\n         VALUES ($1, $2, $3, $4, NOW())`,
-        [ids.queueChatId, E2E_SUBJECT, ids.queueTitle, ids.modelId]
-      );
-      // A reply "already in flight" from another process — the same
-      // running-turn-with-no-channel shape the snapshot test uses, this
-      // time to make Composer's `running` true from the first paint.
-      await client.query(
-        `INSERT INTO chat_turns (id, chat_id, status, kind, llm_model_id)\n         VALUES ($1, $2, 'running', 'reply', $3)`,
-        [ids.queueTurnId, ids.queueChatId, ids.modelId]
+      const chatId = await createChat(page.request, { llmModelId: modelId, title });
+      // A reply in flight from the first paint: the model holds it until
+      // the queue has been looked at (released below), or 45s at most.
+      await startTurn(
+        page.request,
+        chatId,
+        scripted(busy, [{ until: tag, delayMs: 45_000, text: 'Finally done.' }]),
+        modelId
       );
 
-      await page.goto(`/chat/${ids.queueChatId}`);
-      await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
+      await page.goto(`/chat/${chatId}`);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Queue this message' })).toBeHidden();
-      await shot(page, testInfo, 'chat-queue-empty-shows-stop', false);
+      await shot(page, testInfo, 'chat-queue-empty-shows-stop');
 
       // Queue a plain message. One item stays inline, plain and simple —
       // no dialog to open for a queue of one.
       const box = page.getByRole('textbox', { name: 'Message' });
-      await box.fill('Left this for when it is free.');
       // Typing swaps Stop out of the send slot for the blue queue button:
       // the one place a thumb goes to send must never stop the reply
-      // instead. Stop returns once the box is empty again.
-      await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
+      // instead. Stop returns once the box is empty again. (Typed again
+      // until it takes: text filled before the page hydrates is lost.)
       const queueButton = page.getByRole('button', { name: 'Queue this message' });
-      await expect(queueButton).toBeVisible();
+      await expect(async () => {
+        await box.fill('');
+        await box.fill('Left this for when it is free.');
+        await expect(queueButton).toBeVisible({ timeout: 1_000 });
+      }).toPass({ timeout: 15_000 });
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeHidden();
       await expect(queueButton).toHaveClass(/bg-blue-600/);
-      await shot(page, testInfo, 'chat-queue-draft-swaps-stop', false);
+      await shot(page, testInfo, 'chat-queue-draft-swaps-stop');
+
       // Phone width — where the mis-tap actually happened: the same swap,
       // and the composer row still fits without a sideways scroll.
       await page.setViewportSize({ width: 390, height: 844 });
@@ -384,8 +248,9 @@ test.describe('chat compaction', () => {
           () => document.documentElement.scrollWidth - document.documentElement.clientWidth
         )
       ).toBe(0);
-      await shot(page, testInfo, 'chat-queue-draft-swaps-stop-mobile', false);
+      await shot(page, testInfo, 'chat-queue-draft-swaps-stop-mobile');
       await page.setViewportSize({ width: 1440, height: 900 });
+
       await queueButton.click();
       await expect(box).toHaveValue('');
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
@@ -399,7 +264,6 @@ test.describe('chat compaction', () => {
       await page.getByRole('button', { name: /Compact this conversation/ }).click();
       await expect(page.getByText('2 queued', { exact: false })).toBeVisible();
       await expect(page.getByText('Left this for when it is free.')).toBeHidden();
-
       await page.getByRole('button', { name: 'View' }).click();
       const dialog = page.getByRole('dialog', { name: 'Queued (2)' });
       await expect(dialog).toBeVisible();
@@ -412,51 +276,38 @@ test.describe('chat compaction', () => {
       await dialog
         .getByRole('button', { name: 'Remove "Left this for when it is free." from the queue' })
         .click();
-      await expect(dialog).toBeHidden();
-      await expect(page.getByText('Compact this conversation')).toBeVisible();
+      // By role and prefix: the dialog renames itself to "Queued (1)" before
+      // it closes, which would hide the "Queued (2)" locator early.
+      await expect(page.getByRole('dialog', { name: /^Queued/ })).toBeHidden();
+      await expect(
+        page.getByText('Compact this conversation').filter({ visible: true })
+      ).toBeVisible();
       await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
 
-      // The queue is durable: it is in the database, and a reload — which
-      // used to drop it — still shows what is waiting.
+      // The queue is durable: the server holds it (the chat reads it back),
+      // and a reload — which used to drop it — still shows what is waiting.
       await expect
-        .poll(async () => {
-          const rows = await client.query(
-            `SELECT queue FROM chat_queued_sends WHERE chat_id = $1`,
-            [ids.queueChatId]
-          );
-          return rows.rows[0]?.queue.map((item: { kind: string }) => item.kind);
-        })
+        .poll(async () => (await readChat(page.request, chatId)).chat.queue.map((q) => q.kind))
         .toEqual(['compact']);
       await page.reload();
-      await expect(page.getByRole('heading', { level: 1, name: ids.queueTitle })).toBeVisible();
-      await expect(page.getByText('Compact this conversation')).toBeVisible();
-      await expect(page.getByText('queued', { exact: true })).toBeVisible();
-
-      // The other process finishes its reply — nobody clicks anything, the
-      // queued compaction pass sends itself the moment the model is free.
-      await client.query(
-        `UPDATE chat_turns SET status = 'completed', finished_at = NOW() WHERE id = $1`,
-        [ids.queueTurnId]
-      );
-      await expect(page.getByText(/queued/)).toBeHidden({ timeout: 10_000 });
-      await expect
-        .poll(
-          async () => {
-            const rows = await client.query(
-              `SELECT status FROM chat_turns WHERE chat_id = $1 AND kind = 'compaction'`,
-              [ids.queueChatId]
-            );
-            return rows.rows.length === 1 && rows.rows[0].status === 'completed';
-          },
-          { timeout: 10_000 }
-        )
-        .toBe(true);
+      await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
       await expect(
-        page.getByText('Nothing to compact — the conversation is already tight.')
-      ).toBeVisible({ timeout: 10_000 });
+        page.getByText('Compact this conversation').filter({ visible: true })
+      ).toBeVisible();
+      await expect(
+        page.getByText('queued', { exact: true }).filter({ visible: true })
+      ).toBeVisible();
+
+      // The model finishes its reply — nobody clicks anything, the queued
+      // compaction pass sends itself the moment the model is free.
+      await releaseStub(page.request, tag);
+      await expect(page.getByText('Finally done.')).toBeVisible({ timeout: 60_000 });
+      await expect(page.getByText(/queued/)).toBeHidden({ timeout: 10_000 });
+      await expect(page.getByText(NOTHING)).toBeVisible({ timeout: 10_000 });
+      await settled(page.request, chatId);
+      expect((await readChat(page.request, chatId)).chat.queue).toEqual([]);
     } finally {
-      await cleanup(client, ids);
-      await client.end();
+      await removeModel(page.request, modelId);
     }
   });
 });

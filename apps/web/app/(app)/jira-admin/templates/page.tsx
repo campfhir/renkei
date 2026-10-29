@@ -1,7 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { viewGate } from '@/lib/jira-admin/apply';
@@ -22,10 +21,8 @@ export default async function JiraAdminTemplatesPage(): Promise<React.ReactNode>
     redirect(signInUrl(`/jira-admin/templates`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const gate = await viewGate(dbResult.val, session.subject);
-  const templates = gate.ok ? await listSpaceTemplates(dbResult.val) : [];
+  const gate = await viewGate(session.subject);
+  const templates = gate.ok ? await listSpaceTemplates() : [];
 
   return (
     <div className="mx-auto max-w-3xl">

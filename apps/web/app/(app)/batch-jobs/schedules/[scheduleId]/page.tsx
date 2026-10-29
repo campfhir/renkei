@@ -1,7 +1,6 @@
 import React from 'react';
 import BackLink from '@/components/back-link';
 import { redirect, notFound } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { getSchedule } from '@renkei/batch-jobs-store';
@@ -50,12 +49,10 @@ export default async function EditBatchJobSchedulePage({
     redirect(signInUrl(`/batch-jobs/schedules/${scheduleId}`));
   }
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const schedule = await getSchedule(dbResult.val, scheduleId);
+  const schedule = await getSchedule(scheduleId);
   if (!schedule || schedule.subject !== session.subject) notFound();
 
-  const calendars = await loadCalendarOptions(dbResult.val);
+  const calendars = await loadCalendarOptions().catch(() => []);
   const fallbackScheduleConfig: ScheduleConfig = {
     recurrences: [{ every: 'day', at: '09:00' }],
     timezone: 'UTC',

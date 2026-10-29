@@ -1,14 +1,13 @@
-import { notFound, redirect } from 'next/navigation';
+import { redirect } from 'next/navigation';
 import { after } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { parseLibraryQuery } from '@/lib/chat/artifact-library-params';
 import { queryLibrary } from '@/lib/chat/artifact-library-query';
-import { digestPendingArtifacts } from '@/lib/chat/artifact-digest';
-import { getAttachments } from '@/lib/chat/attachments';
+import { digestPendingArtifactIds } from '@/lib/chat/artifact-digest';
+import { listProjectsById } from '@/lib/chat/projects';
 import { listAccessibleProjectIds } from '@/lib/chat/access';
 import ArtifactsIndex from '../_components/artifacts-index';
 
@@ -30,33 +29,26 @@ export default async function ArtifactsPage({
 }) {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/chat/artifacts`));
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
-  const db = dbResult.val;
   const query = parseLibraryQuery(await searchParams);
   const [page, uploads, projectIds, settings] = await Promise.all([
-    queryLibrary(db, session.subject, query),
+    queryLibrary(session.subject, query),
     tenantBlobStoreConfigured(),
-    listAccessibleProjectIds(db, session.subject),
+    listAccessibleProjectIds(session.subject),
     getOrgSettings(),
   ]);
   const digests = settings.ok && settings.val.artifactDigestEnabled;
-  const projects =
-    projectIds.length > 0
-      ? await db
-          .selectFrom('chat_projects')
-          .select(['id', 'name', 'kind'])
-          .where('id', 'in', projectIds)
-          .orderBy('name', 'asc')
-          .execute()
-      : [];
+  const projects = (await listProjectsById(projectIds, { orderBy: 'name' })).map((project) => ({
+    id: project.id,
+    name: project.name,
+    kind: project.kind,
+  }));
   const undigested = page.artifacts
     .filter((item) => item.digestStatus === 'pending' || item.digestStatus === 'running')
     .map((item) => item.id);
   if (digests && undigested.length > 0) {
     const subject = session.subject;
     after(async () => {
-      await digestPendingArtifacts(db, subject, await getAttachments(db, undigested));
+      await digestPendingArtifactIds(subject, undigested);
     });
   }
   return (

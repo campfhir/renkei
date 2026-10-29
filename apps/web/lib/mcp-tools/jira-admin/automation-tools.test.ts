@@ -16,9 +16,6 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
-}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({ ATLASSIAN_ADMIN_TOKEN: 'atlassian-admin-token' }));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
@@ -93,7 +90,7 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<T
 
 const text = (result: ToolResult) => result.content[0]?.text ?? '';
 const stored = <T>() =>
-  jest.mocked(createChangeRequest).mock.calls[0]?.[1]?.payload as T | undefined;
+  jest.mocked(createChangeRequest).mock.calls[0]?.[0]?.payload as T | undefined;
 
 const RULE = {
   uuid: 'rule-1',
@@ -171,7 +168,7 @@ beforeEach(() => {
     apiToken: true,
   });
   jest.mocked(createChangeRequest).mockReset();
-  jest.mocked(createChangeRequest).mockImplementation(async (_db, input) => {
+  jest.mocked(createChangeRequest).mockImplementation(async (input) => {
     const now = new Date();
     const change: ChangeRequest = {
       id: CHANGE_ID,
@@ -263,7 +260,7 @@ describe('jira_admin_propose_automation_rule_state', () => {
     expect(stored<AutomationStatePayload>()).toEqual({
       rules: [{ uuid: 'rule-1', name: 'Escalate outages', from: 'ENABLED', to: 'DISABLED' }],
     });
-    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1]).toMatchObject({
+    expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0]).toMatchObject({
       kind: 'automation_state',
       title: 'Disable the automation rule “Escalate outages”',
       reason: 'Freeze week',

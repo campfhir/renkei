@@ -5,7 +5,6 @@
  * Outlook mail on every failure, regardless of preference).
  */
 
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/user-prefs', () => ({
   ...jest.requireActual('@renkei/user-prefs'),
   getNotificationPrefs: jest.fn(),
@@ -27,11 +26,11 @@ jest.mock('../logger', () => ({
 }));
 
 import { authedFetch } from '@renkei/delegate-client';
+import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { createAgentRunFailedHandler } from './agent-run-failed';
 import type { ClaimedEvent } from '../queue';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs';
 
-const { getDatabase: mockGetDatabase } = jest.requireMock<{ getDatabase: jest.Mock }>('@renkei/db');
 const { getNotificationPrefs: mockGetNotificationPrefs } = jest.requireMock<{
   getNotificationPrefs: jest.Mock;
 }>('@renkei/user-prefs');
@@ -49,16 +48,38 @@ const { resolveWebexUserAccessBySubject: mockResolveWebexAccess } = jest.require
 }>('./webex-linked-user');
 const OWNER_SUBJECT = 'owner-1';
 
-/** Any `.select(...).where(...).where(...).executeTakeFirst()` chain resolves to `rows[table]`. */
-function stubDb(rows: Record<string, unknown>): void {
-  const builder = (table: string): unknown => ({
-    select: () => builder(table),
-    where: () => builder(table),
-    executeTakeFirst: async () => rows[table],
-  });
-  mockGetDatabase.mockReturnValue({
-    ok: true,
-    val: { selectFrom: (table: string) => builder(table) },
+const AGENT_ID = '00000000-0000-4000-8000-000000000001';
+const RUN_ID = '00000000-0000-4000-8000-000000000002';
+
+/** The agent, its failed run, and the owner's identity and Outlook grant, in a memory store. */
+async function seedStore(): Promise<void> {
+  const store = createMemoryDataStore();
+  registerDataStore(store);
+  await store.seed({
+    identities: [{ subject: OWNER_SUBJECT, email: 'owner@example.com' }],
+    agents: [{ id: AGENT_ID, name: 'Sweep the queue', owner_subject: OWNER_SUBJECT }],
+    agent_runs: [
+      {
+        id: RUN_ID,
+        agent_id: AGENT_ID,
+        owner_subject: OWNER_SUBJECT,
+        trigger_kind: 'manual',
+        status: 'failed',
+        error: 'A step failed',
+      },
+    ],
+    provider_grants: [
+      {
+        provider: 'microsoft',
+        provider_account_id: 'ms-account-1',
+        client_id: 'client',
+        display_name: 'Owner',
+        subject: OWNER_SUBJECT,
+        encrypted_access_token: 'sealed-a',
+        encrypted_refresh_token: 'sealed-r',
+        expires_at: new Date('2030-01-01T00:00:00.000Z'),
+      },
+    ],
   });
 }
 
@@ -76,22 +97,21 @@ function event(): ClaimedEvent {
     type: 'run.failed',
     attempts: 1,
     payload: {
-      runId: 'run-1',
-      agentId: 'agent-1',
+      runId: RUN_ID,
+      agentId: AGENT_ID,
       ownerSubject: OWNER_SUBJECT,
       errorKind: 'step_failed',
     },
   };
 }
 
-beforeEach(() => {
+afterEach(() => {
+  resetDataStore();
+});
+
+beforeEach(async () => {
   jest.clearAllMocks();
-  stubDb({
-    agents: { name: 'Sweep the queue' },
-    agent_runs: { error: 'A step failed' },
-    identities: { email: 'owner@example.com' },
-    provider_grants: { provider_account_id: 'ms-account-1' },
-  });
+  await seedStore();
   mockResolveMicrosoftAccess.mockResolvedValue({ accessToken: 'ms-token' });
   mockResolveWebexAccess.mockResolvedValue({
     auth: webexAuth,
@@ -123,6 +143,10 @@ describe('agent-run-failed handler', () => {
 
     expect(mockGraphRequest).toHaveBeenCalledTimes(1);
     expect(mockGraphRequest.mock.calls[0][1]).toBe('/me/sendMail');
+    expect(mockResolveMicrosoftAccess).toHaveBeenCalledWith('ms-account-1');
+    const mail = JSON.parse(String(mockGraphRequest.mock.calls[0][2].body));
+    expect(mail.message.toRecipients).toEqual([{ emailAddress: { address: 'owner@example.com' } }]);
+    expect(mail.message.body.content).toContain('A step failed');
     expect(MockWebexClient).not.toHaveBeenCalled();
     expect(mockResolveWebexAccess).not.toHaveBeenCalled();
   });
@@ -170,7 +194,7 @@ describe('agent-run-failed handler', () => {
       ...DEFAULT_NOTIFICATION_PREFS,
       runFailed: { app: true, email: false, webex: false },
       agentOverrides: {
-        'agent-1': { runFailed: { app: true, email: false, webex: true } },
+        [AGENT_ID]: { runFailed: { app: true, email: false, webex: true } },
       },
     });
     const sendNoteToSelf = jest

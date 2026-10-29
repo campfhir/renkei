@@ -16,9 +16,6 @@ jest.mock('@/lib/logger', () => ({
 jest.mock('../common', () => ({
   withPresentationHint: (body: string) => body,
 }));
-jest.mock('@renkei/db', () => ({
-  getDatabase: () => ({ ok: true, val: {} }),
-}));
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: false }) }));
 jest.mock('@renkei/provider-grants', () => ({ ATLASSIAN_JSM: 'atlassian-jsm' }));
 jest.mock('@/lib/atlassian-app', () => ({ getAtlassianAdminApp: jest.fn() }));
@@ -105,7 +102,7 @@ async function propose(
 
 const text = (result: ToolResult) => result.content[0]?.text ?? '';
 const stored = () =>
-  jest.mocked(createChangeRequest).mock.calls[0]?.[1]?.payload as RequestTypePayload | undefined;
+  jest.mocked(createChangeRequest).mock.calls[0]?.[0]?.payload as RequestTypePayload | undefined;
 
 const LISTING =
   '/rest/servicedeskapi/servicedesk/3/requesttype?limit=100&includeHiddenRequestTypesInSearch=true' +
@@ -155,7 +152,7 @@ beforeEach(() => {
     return new Response(JSON.stringify(body), { status });
   }) as unknown as typeof fetch;
   jest.mocked(createChangeRequest).mockReset();
-  jest.mocked(createChangeRequest).mockImplementation(async (_db, input) => {
+  jest.mocked(createChangeRequest).mockImplementation(async (input) => {
     const now = new Date();
     const change: ChangeRequest = {
       id: CHANGE_ID,
@@ -228,7 +225,7 @@ it('proposes a request type, reading the space on one grant and the desk on the 
       },
     ],
   });
-  expect(jest.mocked(createChangeRequest).mock.calls[0]?.[1]).toMatchObject({
+  expect(jest.mocked(createChangeRequest).mock.calls[0]?.[0]).toMatchObject({
     kind: 'request_type',
     title: 'New request type “Report an outage” for HELP',
     cloudId: 'cloud-1',

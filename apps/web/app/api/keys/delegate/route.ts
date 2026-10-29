@@ -18,12 +18,10 @@ import { resumeRunsNeedingSignIn } from '@/lib/agents/needs-sign-in';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, sealedDelegationsOf, setAutomationDays } from '@/lib/keys/status';
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   const body = await readJsonBody(request);
   const sessionDelegations = sealedDelegationsOf(body.session ?? []);
   const automation = sealedDelegationsOf(body.automation ?? []);
@@ -64,7 +62,7 @@ export async function POST(
       details: { instances: automation.length, days: days ?? null },
     });
   }
-  if (days) await setAutomationDays(db, session.subject, days);
-  await resumeRunsNeedingSignIn(db, agentJobsQueue().producer, session.subject);
+  if (days) await setAutomationDays(session.subject, days);
+  await resumeRunsNeedingSignIn(agentJobsQueue().producer, session.subject);
   return NextResponse.json({ ok: true });
 }

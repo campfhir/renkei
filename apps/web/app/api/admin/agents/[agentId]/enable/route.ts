@@ -9,8 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { isUuid } from '@/lib/uuid';
@@ -24,42 +23,24 @@ export async function POST(
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const agent = await db
-    .selectFrom('agents')
-    .select(['name'])
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-
-  const updated = await db
-    .updateTable('agents')
-    .set({ enabled: true, updated_at: sql`NOW()` })
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  if (Number(updated.numUpdatedRows ?? 0) === 0) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  }
+  const store = getDataStore();
+  const agent = await store.agents.setEnabled(agentId, true);
+  if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   // Twice on purpose: the deployment-scoped log is the installation's
   // record; the tenant trail is what the org's own audit page reads.
-  await db
-    .insertInto('platform_audit_log')
-    .values({
-      id: randomUUID(),
-      event_type: 'agent.enabled_by_admin',
-      actor_id: access.subject,
-      resource_id: agentId,
-      details: JSON.stringify({ }),
-    })
-    .execute();
+  await store.auditEvents.recordPlatform({
+    id: randomUUID(),
+    eventType: 'agent.enabled_by_admin',
+    actorId: access.subject,
+    resourceId: agentId,
+    details: {},
+  });
   recordAuditEvent({
     actorSubject: access.subject,
     action: 'agent.enabled',
     targetKind: 'agent',
-    targetLabel: agent?.name ?? agentId,
+    targetLabel: agent.name,
     details: { byAdmin: true },
   });
 

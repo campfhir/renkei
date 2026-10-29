@@ -8,8 +8,7 @@
  * replicas.
  */
 
-import { sql, type Kysely, type Transaction } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type ChatTurnInsert, type ChatTurnRecord } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isUuid } from '@/lib/uuid';
@@ -106,29 +105,6 @@ export interface TurnRow {
   finishedAt: Date | null;
 }
 
-const TURN_COLUMNS = [
-  'id',
-  'chat_id',
-  'status',
-  'kind',
-  'llm_model_id',
-  'thinking_budget',
-  'iterations',
-  'input_tokens',
-  'output_tokens',
-  'cancel_requested_at',
-  'error',
-  'stage',
-  'stage_at',
-  'tool_permission',
-  'suspended_at',
-  'resume_count',
-  'runner',
-  'started_at',
-  'updated_at',
-  'finished_at',
-] as const;
-
 function turnKindOf(value: string): TurnKind {
   return value === 'compaction' ? 'compaction' : 'reply';
 }
@@ -216,35 +192,37 @@ export function toTurnView(turn: TurnRow): TurnView {
   };
 }
 
-function isUniqueViolation(error: unknown): boolean {
+export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
 
-export async function createTurn(
-  db: Kysely<DB> | Transaction<DB>,
-  input: {
-    chatId: string;
-    llmModelId: string | null;
-    thinkingBudget: number | null;
-    kind?: TurnKind;
-    /** Kept for a resume (turn-recovery.ts); a compaction turn has none. */
-    runner?: TurnRunnerContext;
-  }
-): Promise<Result<string, 'ALREADY_RUNNING' | 'DB_ERROR'>> {
+/** What a new turn row carries, as the store takes it. */
+export function turnInsertOf(input: {
+  chatId: string;
+  llmModelId: string | null;
+  thinkingBudget: number | null;
+  kind?: TurnKind;
+  runner?: TurnRunnerContext;
+}): ChatTurnInsert {
+  return {
+    chatId: input.chatId,
+    kind: input.kind ?? 'reply',
+    llmModelId: input.llmModelId,
+    thinkingBudget: input.thinkingBudget,
+    runner: input.runner ?? null,
+  };
+}
+
+export async function createTurn(input: {
+  chatId: string;
+  llmModelId: string | null;
+  thinkingBudget: number | null;
+  kind?: TurnKind;
+  /** Kept for a resume (turn-recovery.ts); a compaction turn has none. */
+  runner?: TurnRunnerContext;
+}): Promise<Result<string, 'ALREADY_RUNNING' | 'DB_ERROR'>> {
   try {
-    const inserted = await db
-      .insertInto('chat_turns')
-      .values({
-        chat_id: input.chatId,
-        status: 'running',
-        kind: input.kind ?? 'reply',
-        llm_model_id: input.llmModelId,
-        thinking_budget: input.thinkingBudget,
-        runner: input.runner ? JSON.stringify(input.runner) : null,
-      })
-      .returning('id')
-      .executeTakeFirstOrThrow();
-    return ok(inserted.id);
+    return ok(await getDataStore().chatThreads.createTurn(turnInsertOf(input)));
   } catch (error) {
     if (isUniqueViolation(error)) {
       return err('ALREADY_RUNNING' as const, { message: 'A reply is already in progress.' });
@@ -255,30 +233,42 @@ export async function createTurn(
   }
 }
 
-export async function getTurn(
-  db: Kysely<DB>,
-  chatId: string,
-  turnId: string
-): Promise<TurnRow | null> {
-  if (!isUuid(chatId) || !isUuid(turnId)) return null;
-  const raw = await db
-    .selectFrom('chat_turns')
-    .select(TURN_COLUMNS)
-    .where('chat_id', '=', chatId)
-    .where('id', '=', turnId)
-    .executeTakeFirst();
-  return raw ? rowOf(raw) : null;
+/** A turn as the store returns it, read the way rowOf reads a raw row. */
+export function rowOfRecord(turn: ChatTurnRecord): TurnRow {
+  return rowOf({
+    id: turn.id,
+    chat_id: turn.chatId,
+    status: turn.status,
+    kind: turn.kind,
+    llm_model_id: turn.llmModelId,
+    thinking_budget: turn.thinkingBudget,
+    iterations: turn.iterations,
+    input_tokens: turn.inputTokens,
+    output_tokens: turn.outputTokens,
+    cancel_requested_at: turn.cancelRequestedAt,
+    error: turn.error,
+    stage: turn.stage,
+    stage_at: turn.stageAt,
+    tool_permission: turn.toolPermission,
+    suspended_at: turn.suspendedAt,
+    resume_count: turn.resumeCount,
+    runner: turn.runner,
+    started_at: turn.startedAt,
+    updated_at: turn.updatedAt,
+    finished_at: turn.finishedAt,
+  });
 }
 
-export async function getActiveTurn(db: Kysely<DB>, chatId: string): Promise<TurnRow | null> {
+export async function getTurn(chatId: string, turnId: string): Promise<TurnRow | null> {
+  if (!isUuid(chatId) || !isUuid(turnId)) return null;
+  const turn = await getDataStore().chatThreads.getTurn(chatId, turnId);
+  return turn ? rowOfRecord(turn) : null;
+}
+
+export async function getActiveTurn(chatId: string): Promise<TurnRow | null> {
   if (!isUuid(chatId)) return null;
-  const raw = await db
-    .selectFrom('chat_turns')
-    .select(TURN_COLUMNS)
-    .where('chat_id', '=', chatId)
-    .where('status', '=', 'running')
-    .executeTakeFirst();
-  return raw ? rowOf(raw) : null;
+  const turn = await getDataStore().chatThreads.getActiveTurn(chatId);
+  return turn ? rowOfRecord(turn) : null;
 }
 
 /**
@@ -291,28 +281,14 @@ export async function getActiveTurn(db: Kysely<DB>, chatId: string): Promise<Tur
  * has been stuck there, not just that the process was still alive.
  */
 export async function heartbeatTurn(
-  db: Kysely<DB>,
   turnId: string,
   iterations: number,
   stage: string | null
 ): Promise<boolean> {
-  const row = await db
-    .updateTable('chat_turns')
-    .set({
-      updated_at: sql<Date>`NOW()`,
-      iterations,
-      stage,
-      stage_at: sql<Date>`CASE WHEN stage IS DISTINCT FROM ${stage} THEN NOW() ELSE stage_at END`,
-    })
-    .where('id', '=', turnId)
-    .where('status', '=', 'running')
-    .returning('cancel_requested_at')
-    .executeTakeFirst();
-  return row?.cancel_requested_at !== null && row?.cancel_requested_at !== undefined;
+  return getDataStore().chatThreads.heartbeatTurn(turnId, iterations, stage);
 }
 
 export async function finishTurn(
-  db: Kysely<DB>,
   turnId: string,
   outcome: {
     status: Exclude<TurnStatus, 'running'>;
@@ -322,22 +298,8 @@ export async function finishTurn(
     outputTokens: number;
   }
 ): Promise<void> {
-  await db
-    .updateTable('chat_turns')
-    .set({
-      status: outcome.status,
-      error: outcome.error,
-      iterations: outcome.iterations,
-      input_tokens: outcome.inputTokens,
-      output_tokens: outcome.outputTokens,
-      // A turn that ends mid-ask (a crash, a cancel) leaves no ask behind.
-      tool_permission: null,
-      updated_at: sql<Date>`NOW()`,
-      finished_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', turnId)
-    .where('status', '=', 'running')
-    .execute();
+  // A turn that ends mid-ask (a crash, a cancel) leaves no ask behind.
+  await getDataStore().chatThreads.finishTurn(turnId, outcome);
 }
 
 /**
@@ -345,23 +307,8 @@ export async function finishTurn(
  * `running`, with no stage and a mark that nobody is executing it, for
  * `claimResumableTurns` to hand to another process at once.
  */
-export async function suspendTurn(
-  db: Kysely<DB>,
-  turnId: string,
-  iterations: number
-): Promise<void> {
-  await db
-    .updateTable('chat_turns')
-    .set({
-      suspended_at: sql<Date>`NOW()`,
-      iterations,
-      stage: null,
-      stage_at: null,
-      updated_at: sql<Date>`NOW()`,
-    })
-    .where('id', '=', turnId)
-    .where('status', '=', 'running')
-    .execute();
+export async function suspendTurn(turnId: string, iterations: number): Promise<void> {
+  await getDataStore().chatThreads.suspendTurn(turnId, iterations);
 }
 
 /**
@@ -369,49 +316,18 @@ export async function suspendTurn(
  * process: suspended by a runner that shut down, or with a heartbeat
  * older than `staleSeconds` (the runner heartbeats every couple of
  * seconds, while it prepares and while it works, so that is a process
- * that died). The claim is the UPDATE itself — row-locked, skipping rows
- * another replica's sweep holds — so two replicas never resume one turn.
- * Only `reply` turns: a compaction pass has no rows to resume from and
- * is the janitor's. A turn resumed `maxResumes` times already is left
- * for `interruptExhaustedTurns`.
+ * that died). On Postgres the claim is the UPDATE itself — row-locked,
+ * skipping rows another replica's sweep holds — so two replicas never
+ * resume one turn. Only `reply` turns: a compaction pass has no rows to
+ * resume from and is the janitor's. A turn resumed `maxResumes` times
+ * already is left for `interruptExhaustedTurns`.
  */
-export async function claimResumableTurns(
-  db: Kysely<DB>,
-  options: { staleSeconds: number; maxResumes: number; limit: number }
-): Promise<TurnRow[]> {
-  const result = await sql<{ id: string }>`
-    UPDATE chat_turns t
-       SET suspended_at = NULL,
-           resume_count = t.resume_count + 1,
-           tool_permission = NULL,
-           stage = NULL,
-           stage_at = NULL,
-           updated_at = NOW()
-      FROM (
-        SELECT id FROM chat_turns
-         WHERE status = 'running'
-           AND kind = 'reply'
-           AND resume_count < ${options.maxResumes}
-           AND (suspended_at IS NOT NULL
-                OR updated_at < NOW() - make_interval(secs => ${options.staleSeconds}))
-         ORDER BY updated_at
-         LIMIT ${options.limit}
-         FOR UPDATE SKIP LOCKED
-      ) due
-     WHERE t.id = due.id
-    RETURNING t.id
-  `.execute(db);
-  if (result.rows.length === 0) return [];
-  const rows = await db
-    .selectFrom('chat_turns')
-    .select(TURN_COLUMNS)
-    .where(
-      'id',
-      'in',
-      result.rows.map((row) => row.id)
-    )
-    .execute();
-  return rows.map(rowOf);
+export async function claimResumableTurns(options: {
+  staleSeconds: number;
+  maxResumes: number;
+  limit: number;
+}): Promise<TurnRow[]> {
+  return (await getDataStore().chatThreads.claimResumableTurns(options)).map(rowOfRecord);
 }
 
 /**
@@ -420,67 +336,27 @@ export async function claimResumableTurns(
  * ride out. Ended as interrupted, with its streaming rows, the way the
  * janitor ends a turn nobody came back for. Returns the ids it ended.
  */
-export async function interruptExhaustedTurns(
-  db: Kysely<DB>,
-  options: { staleSeconds: number; maxResumes: number; error: string }
-): Promise<string[]> {
-  const result = await sql<{ id: string }>`
-    UPDATE chat_turns
-       SET status = 'interrupted',
-           error = ${options.error},
-           tool_permission = NULL,
-           suspended_at = NULL,
-           finished_at = NOW(),
-           updated_at = NOW()
-     WHERE status = 'running'
-       AND kind = 'reply'
-       AND resume_count >= ${options.maxResumes}
-       AND (suspended_at IS NOT NULL
-            OR updated_at < NOW() - make_interval(secs => ${options.staleSeconds}))
-    RETURNING id
-  `.execute(db);
-  const ids = result.rows.map((row) => row.id);
-  if (ids.length > 0) {
-    await db
-      .updateTable('chat_messages')
-      .set({ status: 'interrupted', updated_at: sql<Date>`NOW()` })
-      .where('turn_id', 'in', ids)
-      .where('status', '=', 'streaming')
-      .execute();
-  }
-  return ids;
+export async function interruptExhaustedTurns(options: {
+  staleSeconds: number;
+  maxResumes: number;
+  error: string;
+}): Promise<string[]> {
+  return getDataStore().chatThreads.interruptExhaustedTurns(options);
 }
 
 /** Marks the wish; the runner (any replica) honors it on its next heartbeat. */
-export async function requestTurnCancel(
-  db: Kysely<DB>,
-  chatId: string,
-  turnId: string
-): Promise<boolean> {
+export async function requestTurnCancel(chatId: string, turnId: string): Promise<boolean> {
   if (!isUuid(chatId) || !isUuid(turnId)) return false;
-  const result = await db
-    .updateTable('chat_turns')
-    .set({ cancel_requested_at: sql<Date>`NOW()` })
-    .where('chat_id', '=', chatId)
-    .where('id', '=', turnId)
-    .where('status', '=', 'running')
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  return getDataStore().chatThreads.requestTurnCancel(chatId, turnId);
 }
 
 /** The runner parks the turn behind this call; the row is what a reload or another replica reads. */
 export async function requestToolPermission(
-  db: Kysely<DB>,
   turnId: string,
   ask: PendingToolPermission
 ): Promise<void> {
   const record: ToolPermissionRecord = { ...ask, decision: null, decidedAt: null };
-  await db
-    .updateTable('chat_turns')
-    .set({ tool_permission: JSON.stringify(record), updated_at: sql<Date>`NOW()` })
-    .where('id', '=', turnId)
-    .where('status', '=', 'running')
-    .execute();
+  await getDataStore().chatThreads.setToolPermission(turnId, record);
 }
 
 /**
@@ -489,50 +365,28 @@ export async function requestToolPermission(
  * already, or a stale page) updates nothing and says so.
  */
 export async function decideToolPermission(
-  db: Kysely<DB>,
   chatId: string,
   turnId: string,
   toolUseId: string,
   decision: ToolPermissionDecision
 ): Promise<boolean> {
   if (!isUuid(chatId) || !isUuid(turnId)) return false;
-  const result = await db
-    .updateTable('chat_turns')
-    .set({
-      tool_permission: sql`tool_permission || ${JSON.stringify({
-        decision,
-        decidedAt: new Date().toISOString(),
-      })}::jsonb`,
-    })
-    .where('chat_id', '=', chatId)
-    .where('id', '=', turnId)
-    .where('status', '=', 'running')
-    .where(sql`tool_permission->>'toolUseId'`, '=', toolUseId)
-    .where(sql`tool_permission->>'decision'`, 'is', null)
-    .executeTakeFirst();
-  return Number(result.numUpdatedRows) > 0;
+  return getDataStore().chatThreads.decideToolPermission(chatId, turnId, toolUseId, {
+    decision,
+    decidedAt: new Date().toISOString(),
+  });
 }
 
 /** What the row says about one ask right now — the runner's poll while it waits. */
 export async function readToolPermission(
-  db: Kysely<DB>,
   turnId: string,
   toolUseId: string
 ): Promise<ToolPermissionRecord | null> {
-  const row = await db
-    .selectFrom('chat_turns')
-    .select('tool_permission')
-    .where('id', '=', turnId)
-    .executeTakeFirst();
-  const record = parseToolPermission(row?.tool_permission);
+  const record = parseToolPermission(await getDataStore().chatThreads.getToolPermission(turnId));
   return record && record.toolUseId === toolUseId ? record : null;
 }
 
 /** The ask is over (answered, timed out, or the turn is ending): nothing pending. */
-export async function clearToolPermission(db: Kysely<DB>, turnId: string): Promise<void> {
-  await db
-    .updateTable('chat_turns')
-    .set({ tool_permission: null })
-    .where('id', '=', turnId)
-    .execute();
+export async function clearToolPermission(turnId: string): Promise<void> {
+  await getDataStore().chatThreads.clearToolPermission(turnId);
 }

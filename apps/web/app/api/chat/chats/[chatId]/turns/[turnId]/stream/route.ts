@@ -16,8 +16,7 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { pingChatPresence } from '@renkei/notifications';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext } from '@/lib/chat/route-support';
@@ -35,27 +34,19 @@ const POLL_MS = 1_000;
 const PING_MS = 15_000;
 
 async function snapshotOf(
-  db: Kysely<DB>,
   chatId: string,
   turnId: string,
   cipher: ContentCipher
 ): Promise<ChatStreamEvent | null> {
-  const turn = await getTurn(db, chatId, turnId);
+  const turn = await getTurn(chatId, turnId);
   if (!turn) return null;
-  const messages = await listTurnMessages(db, turnId, cipher);
+  const messages = await listTurnMessages(turnId, cipher);
+  const messageIds = new Set(messages.map((message) => message.id));
   const produced =
     messages.length > 0
-      ? await db
-          .selectFrom('artifacts')
-          .select(['id', 'filename', 'content_type', 'size_bytes', 'extract_status'])
-          .where('origin', '=', 'model')
-          .where(
-            'message_id',
-            'in',
-            messages.map((message) => message.id)
-          )
-          .orderBy('created_at', 'asc')
-          .execute()
+      ? (await getDataStore().artifacts.listByChat(chatId, { origin: 'model' })).filter(
+          (row) => row.messageId !== null && messageIds.has(row.messageId)
+        )
       : [];
   return {
     type: 'snapshot',
@@ -64,9 +55,9 @@ async function snapshotOf(
     artifacts: produced.map((row) => ({
       id: row.id,
       filename: row.filename,
-      contentType: row.content_type,
-      sizeBytes: Number(row.size_bytes),
-      extractStatus: row.extract_status,
+      contentType: row.contentType,
+      sizeBytes: row.sizeBytes,
+      extractStatus: row.extractStatus,
     })),
   };
 }
@@ -81,10 +72,10 @@ export async function GET(
   }
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
-  const access = await resolveChatAccess(db, session.subject, chatId);
+  const { session } = ready.context;
+  const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
-  const turn = await getTurn(db, chatId, turnId);
+  const turn = await getTurn(chatId, turnId);
   if (!turn) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const lastEventId = request.headers.get('last-event-id');
@@ -96,7 +87,13 @@ export async function GET(
   // reader, and a missed touch there just costs a suppression, never a
   // wrong send.
   const touchPresence = () => {
-    void pingChatPresence(db, session.subject, chatId).catch(() => {});
+    // chat_presence is not behind the data store yet: the database is
+    // reached for here, lazily, and a store without one just skips it.
+    try {
+      void pingChatPresence(session.subject, chatId).catch(() => {});
+    } catch {
+      // No database: no presence to record.
+    }
   };
 
   const encoder = new TextEncoder();
@@ -166,7 +163,7 @@ export async function GET(
         // A channel that closed before we subscribed already replayed its
         // ending; a turn settled in the database says the same thing.
         if (channel.closed || isTurnSettled(turn.status)) {
-          const snapshot = await snapshotOf(db, chatId, turnId, access.cipher);
+          const snapshot = await snapshotOf(chatId, turnId, access.cipher);
           if (snapshot) send(null, snapshot);
           touchPresence();
           send(null, { type: 'turn_end', turnId, status: turn.status, error: turn.error });
@@ -181,7 +178,7 @@ export async function GET(
       let lastSent = '';
       const tick = async () => {
         if (closed) return;
-        const snapshot = await snapshotOf(db, chatId, turnId, access.cipher);
+        const snapshot = await snapshotOf(chatId, turnId, access.cipher);
         if (!snapshot || snapshot.type !== 'snapshot') {
           close();
           return;

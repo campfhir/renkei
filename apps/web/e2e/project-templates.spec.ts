@@ -4,41 +4,25 @@
  * operator-only admin page that manages the catalog. Every tenant starts
  * with a few rows from migration 114 — there is no separate "built-in"
  * concept, they are ordinary rows an operator can rename, rewrite or
- * delete. Bitbucket is the stub in sandbox-stub.mjs, same as code.spec.ts.
+ * delete. Bitbucket is the stub in sandbox-stub.mjs, connected through the
+ * real connect flow (e2e/support/code-host.ts). The catalog is the
+ * organization's: the spec's own template is tagged and deleted again.
  * Screenshots land under test-results/screens/<project>/project-templates-*.png.
  */
 
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect } from '@playwright/test';
-import { Client } from 'pg';
-import { E2E_SUBJECT } from './seed';
-import { sealForSubject } from './keys';
+import { test, expect } from './fixtures';
+import { connectBitbucket, prepareCodeHost } from './support/code-host';
 
-test.use({
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-async function db(): Promise<Client> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  return client;
-}
-
-/** Per-project name: the three Playwright projects share one database. */
-function customTemplateNameFor(project: string): string {
-  return `Playwright screenshot template (${project})`;
-}
+// The catalog's admin page is an operator's.
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 /**
- * What migration 114 seeds for a real tenant, reproduced here: global-setup
- * deletes and reinserts the e2e tenant on every run, and tenant_id cascades
- * — which drops whatever the migration seeded for it. A real tenant is
- * never recreated that way, so this is purely an e2e-fixture gap, patched
- * the same way code.spec.ts patches in its own Bitbucket grant.
+ * What migration 114 seeds for a real organization. The in-memory store
+ * starts from the schema alone, so an operator adds them through the
+ * catalog's own route when they are missing (and they stay, as the
+ * migration's rows would).
  */
 const SEED_TEMPLATES = [
   {
@@ -65,33 +49,19 @@ const SEED_TEMPLATES = [
 ];
 
 test.describe('code project templates', () => {
-  // Playwright requires the destructuring pattern even when no fixture is used.
-  // eslint-disable-next-line no-empty-pattern
-  test.beforeEach(async ({}, testInfo) => {
-    const customTemplateName = customTemplateNameFor(testInfo.project.name);
-    const client = await db();
-    try {
-      // A Bitbucket grant so the new-project form offers to create a
-      // project at all — the picker itself does not need this, but the
-      // full page context (no "Connect Bitbucket first" banner) does.
-      await client.query(
-        `INSERT INTO provider_grants\n           (provider, provider_account_id, subject, client_id, display_name,\n            encrypted_access_token, encrypted_refresh_token, expires_at, requested_scopes, metadata)\n         VALUES ('atlassian-bitbucket', 'e2e-bitbucket-account', $1, 'e2e-client', 'E2E Bitbucket',\n                 $2, $3, $4, $5, $6)\n         ON CONFLICT (provider, provider_account_id) DO UPDATE\n           SET subject = EXCLUDED.subject,\n               encrypted_access_token = EXCLUDED.encrypted_access_token,\n               encrypted_refresh_token = EXCLUDED.encrypted_refresh_token,\n               expires_at = EXCLUDED.expires_at`,
-        [E2E_SUBJECT, await sealForSubject(client, E2E_SUBJECT, 'e2e-access-token'), await sealForSubject(client, E2E_SUBJECT, 'e2e-refresh-token'), new Date(Date.now() + 365 * 86_400_000), ['account', 'repository', 'repository:write', 'pullrequest', 'pullrequest:write'], JSON.stringify({ username: 'e2e-dev' })]
-      );
-      for (const template of SEED_TEMPLATES) {
-        await client.query(
-          `INSERT INTO code_project_templates (name, description, instructions)\n           VALUES ($1, $2, $3)\n           ON CONFLICT (name) DO NOTHING`,
-          [template.name, template.description, template.instructions]
-        );
-      }
-      await client.query(`DELETE FROM code_project_templates WHERE name = $1`, [customTemplateName]);
-    } finally {
-      await client.end();
+  test.beforeEach(async ({ page, request, person: _person }) => {
+    // The form offers to create a project only to someone connected.
+    await prepareCodeHost(request);
+    await connectBitbucket(page);
+    for (const template of SEED_TEMPLATES) {
+      const added = await page.request.post('/api/admin/project-templates', { data: template });
+      // 409: already there, from an earlier test.
+      expect([201, 409], await added.text()).toContain(added.status());
     }
   });
 
   test('picker on the new-project form, and the admin catalog', async ({ page }, testInfo) => {
-    const customTemplateName = customTemplateNameFor(testInfo.project.name);
+    const customTemplateName = `Playwright screenshot template (${testInfo.project.name}-${randomUUID().slice(0, 6)})`;
     const shot = (name: string) =>
       page.screenshot({
         path: path.join(
@@ -158,5 +128,13 @@ test.describe('code project templates', () => {
       customTemplateName
     );
     await shot('project-templates-picker-with-custom.png');
+
+    // The catalog is everyone's: the spec's own template goes again.
+    const listed = await page.request.get('/api/admin/project-templates');
+    const { templates }: { templates: { id: string; name: string }[] } = await listed.json();
+    for (const template of templates.filter((entry) => entry.name === customTemplateName)) {
+      const removed = await page.request.delete(`/api/admin/project-templates/${template.id}`);
+      expect(removed.ok()).toBe(true);
+    }
   });
 });

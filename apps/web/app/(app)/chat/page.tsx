@@ -1,5 +1,4 @@
-import { notFound, redirect } from 'next/navigation';
-import { getDatabase } from '@renkei/db';
+import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { listOwnedChats } from '@/lib/chat/store';
@@ -12,9 +11,7 @@ import { listOwnedChats } from '@/lib/chat/store';
 export default async function ChatIndexPage() {
   const session = await getSessionFromCookies();
   if (!session) redirect(signInUrl(`/chat`));
-  const dbResult = getDatabase();
-  if (!dbResult.ok) notFound();
 
-  const [latest] = await listOwnedChats(dbResult.val, session.subject);
+  const [latest] = await listOwnedChats(session.subject);
   redirect(latest ? `/chat/${latest.id}` : `/chat/new`);
 }

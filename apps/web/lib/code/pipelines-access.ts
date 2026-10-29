@@ -32,7 +32,7 @@ export async function pipelinesProjectContext(
 ): Promise<{ ok: true; context: PipelinesProjectContext } | { ok: false; response: NextResponse }> {
   const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready;
-  const { db, session, access, project } = ready.context;
+  const { session, access, project } = ready.context;
   if (!project.repo || project.repo.provider !== ATLASSIAN_BITBUCKET) {
     return {
       ok: false,
@@ -54,7 +54,7 @@ export async function pipelinesProjectContext(
       };
     }
   }
-  const scopes = await grantScopes(db, session.subject, ATLASSIAN_BITBUCKET);
+  const scopes = await grantScopes(session.subject, ATLASSIAN_BITBUCKET);
   return {
     ok: true,
     context: { project: { ...project, repo: project.repo }, subject: session.subject, scopes },

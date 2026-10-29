@@ -91,11 +91,11 @@ export async function GET(
   const { projectId, chatId } = await params;
   const ready = await codeProjectContext(request, projectId);
   if (!ready.ok) return ready.response;
-  const { db, session, project } = ready.context;
-  const chatAccess = await resolveChatAccess(db, session.subject, chatId);
+  const { session, project } = ready.context;
+  const chatAccess = await resolveChatAccess(session.subject, chatId);
   if (!chatAccess) return jsonError(404, 'not-found', 'No such chat');
 
-  const rows = await listMessages(db, chatId, chatAccess.cipher);
+  const rows = await listMessages(chatId, chatAccess.cipher);
   const pullRequest = latestPrInTranscript(rows.map(toMessageView));
   const refs = detectIssueRefs({
     branch: project.repo!.branch,

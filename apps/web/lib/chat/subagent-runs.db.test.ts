@@ -14,8 +14,7 @@ jest.mock('./content-crypto', () => ({
 }));
 
 import { randomUUID } from 'node:crypto';
-import { sql, type Kysely } from 'kysely';
-import { closeDatabase, getDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore } from '@renkei/db';
 import { createSubagentRun, finishSubagentRun, getSubagentRunByCall } from './subagent-runs';
 import { resourceCipher } from './content-crypto';
 
@@ -28,49 +27,54 @@ const testCipher = resourceCipher({
 const maybe = process.env.DATABASE_URL ? describe : describe.skip;
 
 maybe('chat_subagent_runs model', () => {
-  let db: Kysely<DB>;
   const suiteId = randomUUID();
   const subject = `owner-${suiteId.slice(0, 8)}`;
-  const chatId = randomUUID();
-  const turnId = randomUUID();
+  // Labels are unique organization-wide: this suite's is its own.
+  const fastLabel = `Fast model ${suiteId}`;
   const fastModelId = randomUUID();
+  let chatId = '';
+  let turnId = '';
 
   beforeAll(async () => {
-    const result = getDatabase();
-    if (!result.ok) throw new Error('no database');
-    db = result.val;
-    await db
-      .insertInto('chats')
-      .values({ id: chatId, owner_subject: subject })
-      .execute();
-    await db
-      .insertInto('chat_turns')
-      .values({ id: turnId, chat_id: chatId, status: 'running' })
-      .execute();
-    await db
-      .insertInto('llm_model_configs')
-      .values({
-        id: fastModelId,
-        label: 'Fast model',
-        provider: 'anthropic',
-        model: 'claude-haiku-4-5',
-        encrypted_secrets: 'sealed',
-        enabled: true,
-        is_default: false,
-      })
-      .execute();
+    const store = getDataStore();
+    chatId = await store.chats.create({
+      ownerSubject: subject,
+      projectId: null,
+      llmModelId: null,
+      toolConfig: null,
+      thinkingEnabled: false,
+      autoMode: false,
+    });
+    turnId = await store.chatThreads.createTurn({
+      chatId,
+      kind: 'reply',
+      llmModelId: null,
+      thinkingBudget: null,
+      runner: null,
+    });
+    const created = await store.llmModels.create(fastModelId, {
+      label: fastLabel,
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5',
+      baseUrl: null,
+      settings: {},
+      encryptedSecrets: 'sealed',
+      enabled: true,
+      isDefault: false,
+    });
+    if (created !== 'created') throw new Error(`model not created: ${created}`);
   });
 
   afterAll(async () => {
-    await sql`DELETE FROM chat_subagent_runs WHERE chat_id = ${chatId}`.execute(db);
-    await sql`DELETE FROM chat_turns WHERE chat_id = ${chatId}`.execute(db);
-    await sql`DELETE FROM chats WHERE id = ${chatId}`.execute(db);
-    await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
-    await closeDatabase();
+    // The chat's turns and sub-agent runs go with it.
+    const store = getDataStore();
+    await store.chats.delete(subject, chatId);
+    await store.llmModels.delete(fastModelId);
+    await closeDataStore();
   });
 
   it('keeps the model a run started on and reads it back with its label, then without', async () => {
-    const runId = await createSubagentRun(db, {
+    const runId = await createSubagentRun({
       chatId,
       turnId,
       toolUseId: 'toolu_fast',
@@ -83,7 +87,6 @@ maybe('chat_subagent_runs model', () => {
     });
     expect(runId).not.toBeNull();
     await finishSubagentRun(
-      db,
       runId!,
       {
         status: 'completed',
@@ -95,21 +98,21 @@ maybe('chat_subagent_runs model', () => {
       },
       testCipher
     );
-    const run = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
+    const run = await getSubagentRunByCall(chatId, 'toolu_fast', testCipher);
     expect(run?.model).toEqual({
       provider: 'anthropic',
       model: 'claude-haiku-4-5',
-      label: 'Fast model',
+      label: fastLabel,
     });
 
     // The config removed: the run still says what answered, by name.
-    await sql`DELETE FROM llm_model_configs WHERE id = ${fastModelId}`.execute(db);
-    const later = await getSubagentRunByCall(db, chatId, 'toolu_fast', testCipher);
+    expect(await getDataStore().llmModels.delete(fastModelId)).toBe(true);
+    const later = await getSubagentRunByCall(chatId, 'toolu_fast', testCipher);
     expect(later?.model).toEqual({ provider: 'anthropic', model: 'claude-haiku-4-5', label: null });
   });
 
   it('records no model for a run started without one, as before the column existed', async () => {
-    const runId = await createSubagentRun(db, {
+    const runId = await createSubagentRun({
       chatId,
       turnId,
       toolUseId: 'toolu_plain',
@@ -121,7 +124,7 @@ maybe('chat_subagent_runs model', () => {
       cipher: testCipher,
     });
     expect(runId).not.toBeNull();
-    const run = await getSubagentRunByCall(db, chatId, 'toolu_plain', testCipher);
+    const run = await getSubagentRunByCall(chatId, 'toolu_plain', testCipher);
     expect(run?.model).toBeNull();
   });
 });

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * What a batch announces, to whom, and under which preference — and the
  * contract with @renkei/agents' trigger catalog: every key the events
@@ -27,6 +26,12 @@ jest.mock('../logger', () => ({
 }));
 
 import { TRIGGER_EVENT_CATALOG, matchesTriggerEvent } from '@renkei/agents';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type MemoryDataStore,
+} from '@renkei/db';
 import { DEFAULT_NOTIFICATION_PREFS, type NotificationPrefs } from '@renkei/user-prefs/prefs';
 import type { BatchJobRow } from '@renkei/batch-jobs-store';
 import {
@@ -69,18 +74,13 @@ function batch(over: Partial<BatchJobRow> = {}): BatchJobRow {
   };
 }
 
-/** A db whose insertInto records what it was handed. */
-function fakeDb() {
-  const inserts: { table: string; values: Record<string, unknown> }[] = [];
-  const db = {
-    insertInto: (table: string) => ({
-      values: (values: Record<string, unknown>) => {
-        inserts.push({ table, values });
-        return { execute: async () => undefined };
-      },
-    }),
-  };
-  return { db: db as unknown as Parameters<typeof announceBatchFinished>[0], inserts };
+/** What deliverToOwnerChannels is handed; the module itself never queries it. */
+
+let store: MemoryDataStore;
+
+/** The feed rows written, as the memory store holds them (agent_notifications). */
+function inserted() {
+  return store.tables.select('agent_notifications');
 }
 
 const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
@@ -91,6 +91,12 @@ const prefs = (over: Partial<NotificationPrefs> = {}): NotificationPrefs => ({
 beforeEach(() => {
   jest.clearAllMocks();
   getNotificationPrefs.mockResolvedValue(prefs());
+  store = createMemoryDataStore();
+  registerDataStore(store);
+});
+
+afterEach(() => {
+  resetDataStore();
 });
 
 describe('the catalog contract', () => {
@@ -144,8 +150,7 @@ describe('the catalog contract', () => {
 
 describe('announceBatchFinished', () => {
   it('publishes the domain event to the owner, keyed by the batch', async () => {
-    const { db } = fakeDb();
-    await announceBatchFinished(db, batch());
+    await announceBatchFinished(batch());
     expect(publishDomainEvent).toHaveBeenCalledTimes(1);
     expect(publishDomainEvent.mock.calls[0][0]).toMatchObject({
       provider: 'batch',
@@ -161,20 +166,17 @@ describe('announceBatchFinished', () => {
     getNotificationPrefs.mockResolvedValue(
       prefs({ batchFinished: { app: false, email: false, webex: false } })
     );
-    const { db, inserts } = fakeDb();
-    await announceBatchFinished(db, batch());
+    await announceBatchFinished(batch());
     expect(publishDomainEvent).toHaveBeenCalledTimes(1);
-    expect(inserts).toHaveLength(0);
+    expect(inserted()).toHaveLength(0);
     expect(deliverToOwnerChannels).not.toHaveBeenCalled();
   });
 
   it('writes the feed row with the batch facts as meta, and pushes', async () => {
-    const { db, inserts } = fakeDb();
-    await announceBatchFinished(db, batch({ status: 'partial', succeeded: 40, failed: 2 }));
+    await announceBatchFinished(batch({ status: 'partial', succeeded: 40, failed: 2 }));
 
-    expect(inserts).toHaveLength(1);
-    const row = inserts[0]!.values;
-    expect(inserts[0]!.table).toBe('agent_notifications');
+    expect(inserted()).toHaveLength(1);
+    const row = inserted()[0]!;
     expect(row).toMatchObject({
       subject: 'auth0|alice',
       kind: 'batch_finished',
@@ -183,11 +185,11 @@ describe('announceBatchFinished', () => {
       ref_id: 'Nightly scans',
       headline: '“Nightly scans” finished with failures: OCR’d 40 of 42 documents, 2 failed',
     });
-    expect(JSON.parse(String(row.meta))).toEqual(
+    expect(row.meta).toEqual(
       batchNotificationMeta(batch({ status: 'partial', succeeded: 40, failed: 2 }))
     );
     expect(sendPush).toHaveBeenCalledTimes(1);
-    expect(sendPush.mock.calls[0][3]).toMatchObject({
+    expect(sendPush.mock.calls[0][2]).toMatchObject({
       title: expect.stringContaining('Nightly scans'),
       body: 'Document OCR pipeline',
       tag: 'batch:batch-1',
@@ -201,13 +203,11 @@ describe('announceBatchFinished', () => {
         batchFailed: { app: true, email: false, webex: false },
       })
     );
-    const { db, inserts } = fakeDb();
     await announceBatchFinished(
-      db,
       batch({ status: 'failed', total: null, succeeded: 0, last_error: 'share unreachable' })
     );
-    expect(inserts).toHaveLength(1);
-    expect(inserts[0]!.values).toMatchObject({
+    expect(inserted()).toHaveLength(1);
+    expect(inserted()[0]).toMatchObject({
       kind: 'batch_failed',
       headline: '“Nightly scans” failed: share unreachable',
     });
@@ -217,11 +217,10 @@ describe('announceBatchFinished', () => {
     getNotificationPrefs.mockResolvedValue(
       prefs({ batchFinished: { app: false, email: true, webex: true } })
     );
-    const { db, inserts } = fakeDb();
-    await announceBatchFinished(db, batch());
-    expect(inserts).toHaveLength(0);
+    await announceBatchFinished(batch());
+    expect(inserted()).toHaveLength(0);
     expect(deliverToOwnerChannels).toHaveBeenCalledTimes(1);
-    expect(deliverToOwnerChannels.mock.calls[0][1]).toMatchObject({
+    expect(deliverToOwnerChannels.mock.calls[0][0]).toMatchObject({
       ownerSubject: 'auth0|alice',
       email: true,
       webex: true,
@@ -232,35 +231,37 @@ describe('announceBatchFinished', () => {
 
   it('never throws — a failed publish or write is a warning', async () => {
     publishDomainEvent.mockRejectedValue(new Error('queue down'));
-    const db = {
-      insertInto: () => {
-        throw new Error('db down');
+    registerDataStore({
+      ...store,
+      notifications: {
+        ...store.notifications,
+        insert: async () => {
+          throw new Error('db down');
+        },
       },
-    } as unknown as Parameters<typeof announceBatchFinished>[0];
-    await expect(announceBatchFinished(db, batch())).resolves.toBeUndefined();
+    });
+    await expect(announceBatchFinished(batch())).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalled();
   });
 });
 
 describe('announceBatchStarted', () => {
   it('is off by default in the feed, but the agent event still goes out', async () => {
-    const { db, inserts } = fakeDb();
-    await announceBatchStarted(db, batch({ status: 'discovering', total: null }));
+    await announceBatchStarted(batch({ status: 'discovering', total: null }));
     expect(publishDomainEvent.mock.calls[0][0]).toMatchObject({
       type: 'job.started',
       occurredAt: '2026-09-01T02:00:00.000Z',
       data: { batchId: 'batch-1', name: 'Nightly scans', scheduleId: 'sched-1' },
     });
-    expect(inserts).toHaveLength(0);
+    expect(inserted()).toHaveLength(0);
   });
 
   it('writes a batch_started row once turned on', async () => {
     getNotificationPrefs.mockResolvedValue(
       prefs({ batchStarted: { app: true, email: false, webex: false } })
     );
-    const { db, inserts } = fakeDb();
-    await announceBatchStarted(db, batch({ status: 'discovering', total: null }));
-    expect(inserts[0]!.values).toMatchObject({
+    await announceBatchStarted(batch({ status: 'discovering', total: null }));
+    expect(inserted()[0]).toMatchObject({
       kind: 'batch_started',
       headline: '“Nightly scans” started',
     });

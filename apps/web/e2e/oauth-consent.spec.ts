@@ -1,104 +1,52 @@
 /**
  * The MCP OAuth consent page: a signed-in browser sent to the authorize
  * endpoint by a client lands on a page naming the client, Deny returns
- * `access_denied` to the client's loopback callback, Allow returns a code,
- * and the same page at phone width still reads. This spec writes data
- * (a client, consent requests, a code), so it gets its own tenant per
- * Playwright project (the llm-models.spec.ts pattern). Pinned Chromium;
- * mobile is a viewport resize.
+ * `access_denied` to the client's loopback callback, Allow returns a code
+ * the client can exchange (with its PKCE verifier) for tokens, and the
+ * same page at phone width still reads.
+ *
+ * The client registers itself the way an MCP client does (dynamic
+ * registration, e2e/support/mcp-client.ts — the org setting that opens it
+ * is put back as it was), once per project, under a name of its own. The person who
+ * consents is the test's own, with a name of its own, so the audit
+ * trail's lines (read on the Audit page by an operator) are theirs alone.
+ * Pinned Chromium; mobile is a viewport resize.
  */
 
-import { createHash, randomBytes } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { deleteRowsOf } from './seed';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import { createPerson, signIn } from './support/person';
+import { authorizeUrl, exchangeCode, registerClient, type McpClient } from './support/mcp-client';
+import { MEMORY_BASE_URL } from './constants';
+import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 /** A port no real listener holds; the callback is intercepted with page.route. */
 const CALLBACK = 'http://127.0.0.1:47391/callback';
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
+function tagOf(testInfo: TestInfo): string {
+  return `${testInfo.project.name.replace('desktop-', '')}-${randomUUID().slice(0, 6)}`;
 }
 
-function fixtureFor(projectName: string) {
-  return {
-    slug: `e2e-oauth-consent-${projectName}`,
-    sessionId: uuidFrom(`oauth-consent-e2e-session:${projectName}`),
-    subject: `e2e-consent-${projectName}@example.com`,
-    clientId: `client_e2e_consent_${projectName}`,
-  };
-}
-
-type Fixture = ReturnType<typeof fixtureFor>;
-
-async function withDb<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    return await fn(client);
-  } finally {
-    await client.end();
+/**
+ * One registered client per project per worker, shared by this file's
+ * tests: registration is rate-limited (ten per caller per ten minutes,
+ * app/api/mcp/oauth/register), and a run that registered per test would
+ * leave the next run on the same server refused.
+ */
+const clients = new Map<string, Promise<McpClient>>();
+function clientFor(request: APIRequestContext, testInfo: TestInfo): Promise<McpClient> {
+  const key = testInfo.project.name;
+  let client = clients.get(key);
+  if (!client) {
+    const name = `Claude Code (e2e ${tagOf(testInfo)})`;
+    client = createPerson(request, { roles: ['renkei-user', 'renkei-operator'] }).then((operator) =>
+      registerClient(request, operator, name, CALLBACK)
+    );
+    clients.set(key, client);
   }
-}
-
-async function seed(fixture: Fixture): Promise<void> {
-  await withDb(async (client) => {
-    // Nothing an OAuth client owns cascades from the tenant, so the previous
-    // run's rows go first, newest dependency first.
-    await deleteRowsOf(client, fixture.subject, [
-      'audit_events',
-      'oauth_access_tokens',
-      'oauth_refresh_tokens',
-      'oauth_authorization_codes',
-      'oauth_consent_requests',
-      'oauth_clients',
-      'sessions',
-      'identities',
-    ]);
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 3_600_000)]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
-      [fixture.subject, fixture.subject, 'E2E Person']
-    );
-    // Registered "just now", so the page shows its freshly-registered note.
-    await client.query(
-      `INSERT INTO oauth_clients (client_id, client_name, client_secret_hash, redirect_uris)\n       VALUES ($1, 'Claude Code (e2e)', 'unused', ARRAY['http://127.0.0.1/callback'])`,
-      [fixture.clientId]
-    );
-  });
-}
-
-async function signIn(page: Page, fixture: Fixture): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
+  return client;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -106,21 +54,6 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
     path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
     fullPage: true,
   });
-}
-
-/** What a client would send: the authorize URL with an S256 challenge. */
-function authorizeUrl(fixture: Fixture, state: string): string {
-  const verifier = randomBytes(32).toString('base64url');
-  const query = new URLSearchParams({
-    response_type: 'code',
-    client_id: fixture.clientId,
-    redirect_uri: CALLBACK,
-    state,
-    scope: 'openid profile email',
-    code_challenge: createHash('sha256').update(verifier).digest('base64url'),
-    code_challenge_method: 'S256',
-  });
-  return `/api/mcp/oauth/authorize?${query.toString()}`;
 }
 
 /** Catch the client's loopback callback in the browser instead of letting it fail to connect. */
@@ -139,18 +72,24 @@ async function interceptCallback(page: Page): Promise<() => URL | null> {
 
 test('an MCP client must be allowed on the consent page before it gets a code', async ({
   page,
+  request,
+  browser,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  await signIn(page, fixture);
+  const tag = tagOf(testInfo);
+  const personName = `E2E Person ${tag}`;
+  const operator = await createPerson(request, { roles: ['renkei-user', 'renkei-operator'] });
+  const person = await createPerson(request, { displayName: personName });
+  await signIn(page.context(), person);
+  const client = await clientFor(request, testInfo);
+  const clientName = client.clientName;
   const callback = await interceptCallback(page);
 
   // Deny first: the client hears access_denied and nothing was minted.
-  await page.goto(authorizeUrl(fixture, 'state-deny'));
+  await page.goto(authorizeUrl(client, 'state-deny').url);
   await expect(
-    page.getByRole('heading', { name: 'Allow Claude Code (e2e) to act as you?' })
+    page.getByRole('heading', { name: `Allow ${clientName} to act as you?` })
   ).toBeVisible();
-  await expect(page.getByText('E2E Person')).toBeVisible();
+  await expect(page.getByText(personName)).toBeVisible();
   await expect(page.getByText('an application running on this computer')).toBeVisible();
   await expect(page.getByRole('note')).toContainText('registered itself less than an hour ago');
   await shot(page, testInfo, 'oauth-consent-01-page');
@@ -162,59 +101,75 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
   expect(denied?.searchParams.get('state')).toBe('state-deny');
   expect(denied?.searchParams.get('code')).toBeNull();
 
-  // Allow: the callback receives a code bound to this person.
-  await page.goto(authorizeUrl(fixture, 'state-allow'));
+  // Allow: the callback receives a code bound to this person and to the
+  // S256 challenge — the client's verifier, and only it, redeems it.
+  const allow = authorizeUrl(client, 'state-allow');
+  await page.goto(allow.url);
   await expect(page.getByRole('button', { name: 'Allow' })).toBeVisible();
   await page.getByRole('button', { name: 'Allow' }).click();
   await expect(page.getByTestId('callback')).toBeVisible();
   const allowed = callback();
   expect(allowed?.searchParams.get('state')).toBe('state-allow');
-  expect(allowed?.searchParams.get('code')).toMatch(/^code_/);
-
-  const minted = await withDb((client) =>
-    client.query(
-      'SELECT subject, code_challenge_method FROM oauth_authorization_codes'
-    )
+  const code = allowed?.searchParams.get('code') ?? '';
+  expect(code).toMatch(/^code_/);
+  const wrongVerifier = await request.post('/api/mcp/oauth/token', {
+    form: {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: CALLBACK,
+      code_verifier: authorizeUrl(client, 'other').verifier,
+      client_id: client.clientId,
+      client_secret: client.clientSecret,
+    },
+  });
+  expect(wrongVerifier.ok()).toBe(false);
+  const allowAgain = authorizeUrl(client, 'state-allow-2');
+  await page.goto(allowAgain.url);
+  await page.getByRole('button', { name: 'Allow' }).click();
+  await expect(page.getByTestId('callback')).toBeVisible();
+  const tokens = await exchangeCode(
+    request,
+    client,
+    callback()?.searchParams.get('code') ?? '',
+    allowAgain.verifier
   );
-  expect(minted.rows).toEqual([{ subject: fixture.subject, code_challenge_method: 'S256' }]);
+  expect(tokens.accessToken).toBeTruthy();
 
-  // A consent page that was left open and then answered twice is spent.
-  const audit = await withDb((client) =>
-    client.query(
-      'SELECT action FROM audit_events WHERE action LIKE $1 ORDER BY action',
-      ['oauth.consent_%']
-    )
-  );
-  expect(audit.rows.map((row) => row.action)).toEqual([
-    'oauth.consent_denied',
-    'oauth.consent_granted',
-  ]);
+  // Both answers are on the audit trail, as this person.
+  const operatorPage = await browser.newContext({ baseURL: MEMORY_BASE_URL });
+  await signIn(operatorPage, operator);
+  const audit = await operatorPage.newPage();
+  await audit.goto('/admin/audit');
+  await expect(audit.getByText(`${personName} oauth.consent_denied`)).toBeVisible();
+  await expect(audit.getByText(`${personName} oauth.consent_granted`).first()).toBeVisible();
+  await operatorPage.close();
 
   // Phone width: the same page, buttons stacked, nothing clipped.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto(authorizeUrl(fixture, 'state-mobile'));
+  await page.goto(authorizeUrl(client, 'state-mobile').url);
   await expect(page.getByRole('button', { name: 'Allow' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Deny' })).toBeVisible();
   await shot(page, testInfo, 'oauth-consent-02-mobile');
 });
 
-test('a request without PKCE never reaches the consent page', async ({ page }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  await signIn(page, fixture);
+test('a request without PKCE never reaches the consent page', async ({
+  page,
+  request,
+  person: _person,
+}, testInfo) => {
+  const client = await clientFor(request, testInfo);
 
   // Asked the way the browser would (same cookies), but without following
   // the redirect: what matters is where the server sends it and with what.
   const query = new URLSearchParams({
     response_type: 'code',
-    client_id: fixture.clientId,
+    client_id: client.clientId,
     redirect_uri: CALLBACK,
     state: 'no-pkce',
   });
-  const response = await page.request.get(
-    `/api/mcp/oauth/authorize?${query.toString()}`,
-    { maxRedirects: 0 }
-  );
+  const response = await page.request.get(`/api/mcp/oauth/authorize?${query.toString()}`, {
+    maxRedirects: 0,
+  });
   expect(response.status()).toBe(303);
   const landed = new URL(response.headers()['location']);
   expect(landed.origin).toBe(new URL(CALLBACK).origin);
@@ -222,9 +177,6 @@ test('a request without PKCE never reaches the consent page', async ({ page }, t
   expect(landed.searchParams.get('error_description')).toMatch(/code_challenge/);
   expect(landed.searchParams.get('state')).toBe('no-pkce');
   expect(landed.searchParams.get('code')).toBeNull();
-
-  const pending = await withDb((client) =>
-    client.query('SELECT count(*) FROM oauth_consent_requests')
-  );
-  expect(Number(pending.rows[0].count)).toBe(0);
+  // No consent request was opened: the client went back, not to the page.
+  expect(landed.pathname).not.toContain('/oauth/consent');
 });

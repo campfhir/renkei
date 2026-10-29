@@ -10,125 +10,43 @@
  * chat's own tool_config, permanently overriding the project's setting.
  * See AGENTS.md's "UI changes" section — the convention this spec follows.
  *
- * Own tenant per Playwright project (AGENTS.md's isolation rule): this spec
- * writes its own project and chat rows through the real creation path
- * (chat/new/page.tsx), so it must not share e2e/seed.ts's tenant with
- * specs running concurrently against the same dev database.
+ * The person is the test's own; their personal default and the project
+ * are set through the routes the Tools popover and the new-project form
+ * call (PUT /api/chat/tools, POST /api/chat/projects).
  */
 
-import { createHash } from 'node:crypto';
-import { test, expect, type Page } from '@playwright/test';
-import { Client } from 'pg';
+import path from 'node:path';
+import { test, expect } from './fixtures';
 
-test.use({
-  // The mobile project's device descriptor asks for WebKit, which is not
-  // installed here (see voice.spec.ts / llm-models.spec.ts's note) — the
-  // pinned Chromium runs every project instead.
-  browserName: 'chromium',
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-/** A deterministic (stable across reruns), valid-looking v4 UUID from a seed string. */
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-/** This project's own tenant/session/project/slug — isolated from every other spec. */
-function fixtureFor(projectName: string): {
-  sessionId: string;
-  projectId: string;
-  slug: string;
-  subject: string;
-} {
-  return {
-    sessionId: uuidFrom(`project-tools-e2e-session:${projectName}`),
-    projectId: uuidFrom(`project-tools-e2e-project:${projectName}`),
-    slug: `e2e-project-tools-${projectName}`,
-    subject: `e2e-project-tools-${projectName}@example.com`,
-  };
-}
-
-async function seedTenant(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    // Delete-then-insert, same idempotent shape as e2e/seed.ts, scoped to
-    // just this project's own tenant.
-    await client.query('DELETE FROM chats WHERE owner_subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM chat_projects WHERE owner_subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM user_preferences WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at)\n       VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user', 'renkei-operator'], new Date(Date.now() + 24 * 3_600_000)]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name)\n       VALUES ($1, $2, $3)`,
-      [fixture.subject, fixture.subject, 'E2E Tester']
-    );
-    // No coach marks tour stealing focus mid-test.
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)`,
-      [fixture.subject]
-    );
-    // This person's own personal chat default — deliberately just 'cards',
-    // so it reads nothing like the project's own toolset (below) or the
-    // built-in core set (agents, cards, knowledge, sandbox): a chat that
-    // shows the wrong tier is unambiguous either way. ('knowledge' is left
-    // out of both sets on purpose — its connector only registers once an
-    // embedding provider is configured org-wide, which this fixture does
-    // not set up; 'agents'/'cards'/'sandbox' need no such provisioning.)
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'chatTools', '{"connectors": ["cards"]}'::jsonb)`,
-      [fixture.subject]
-    );
-    // The project's own toolset: agents only, no cards or sandbox —
-    // distinct from both the personal default above and the core default.
-    await client.query(
-      `INSERT INTO chat_projects (id, owner_subject, name, tool_config)\n       VALUES ($1, $2, $3, $4::jsonb)`,
-      [fixture.projectId, fixture.subject, 'Docs project', JSON.stringify({ connectors: ['agents'] })]
-    );
-  } finally {
-    await client.end();
-  }
-}
-
-async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
-}
+const SCREENS = path.join(import.meta.dirname, '..', 'test-results', 'screens');
 
 test('a new chat in a project starts from the project’s toolset, not the person’s personal default', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seedTenant(fixture);
-  await signIn(page, fixture);
+  // This person's own personal chat default — deliberately just 'cards',
+  // so it reads nothing like the project's own toolset (below) or the
+  // built-in core set (agents, cards, knowledge, sandbox): a chat that
+  // shows the wrong tier is unambiguous either way. ('knowledge' is left
+  // out of both sets on purpose — its connector only registers once an
+  // embedding provider is configured org-wide; 'agents'/'cards'/'sandbox'
+  // need no such provisioning.)
+  const personal = await page.request.put('/api/chat/tools', {
+    data: { userDefault: { connectors: ['cards'] } },
+  });
+  expect(personal.ok(), await personal.text()).toBe(true);
+  // The project's own toolset: agents only, no cards or sandbox —
+  // distinct from both the personal default above and the core default.
+  const created = await page.request.post('/api/chat/projects', {
+    data: { name: 'Docs project', toolConfig: { connectors: ['agents'] } },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  const { projectId } = await created.json();
 
   // "+ New" inside the project: the real creation path (chat/new/page.tsx)
   // — an empty chat with tool_config = NULL, same as clicking the
   // project's own "+ New chat" button.
-  await page.goto(`/chat/new?project=${fixture.projectId}`);
+  await page.goto(`/chat/new?project=${projectId}`);
   await page.waitForURL(/\/chat\/[0-9a-f-]{36}$/);
 
   await page.getByRole('button', { name: 'Tools', exact: true }).click();
@@ -145,7 +63,11 @@ test('a new chat in a project starts from the project’s toolset, not the perso
   await expect(page.getByRole('checkbox', { name: /Renkei sandbox/ })).not.toBeChecked();
 
   await page.screenshot({
-    path: `test-results/screens/${testInfo.project.name}/project-tools-popover-01-inherits-project.png`,
+    path: path.join(
+      SCREENS,
+      testInfo.project.name,
+      'project-tools-popover-01-inherits-project.png'
+    ),
     fullPage: false,
   });
 
@@ -158,7 +80,7 @@ test('a new chat in a project starts from the project’s toolset, not the perso
   await page.getByRole('button', { name: 'Tools', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: /Renkei agents/ })).toBeChecked();
   await page.screenshot({
-    path: `test-results/screens/${testInfo.project.name}/project-tools-popover-02-mobile.png`,
+    path: path.join(SCREENS, testInfo.project.name, 'project-tools-popover-02-mobile.png'),
     fullPage: false,
   });
 });

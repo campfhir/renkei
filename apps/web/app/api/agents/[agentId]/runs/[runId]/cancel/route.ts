@@ -12,7 +12,6 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { agentJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
@@ -31,14 +30,10 @@ export async function POST(
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
-  const db = dbResult.val;
-
-  const access = await resolveAgentAccess(db, session.subject, agentId);
+  const access = await resolveAgentAccess(session.subject, agentId);
   if (!access) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const result = await requestRunCancellation(db, agentJobsQueue().producer, {
+  const result = await requestRunCancellation(agentJobsQueue().producer, {
     agentId,
     runId,
     ownerSubject: access.ownerSubject,
@@ -50,7 +45,9 @@ export async function POST(
       return NextResponse.json({ error: 'Not found' }, { status: 404 });
     case 'already-final':
       return NextResponse.json(
-        { error: `This run already ${result.status === 'canceled' ? 'was canceled' : result.status}.` },
+        {
+          error: `This run already ${result.status === 'canceled' ? 'was canceled' : result.status}.`,
+        },
         { status: 409 }
       );
     case 'canceling':

@@ -3,8 +3,8 @@
  * The bulk mail job pair's contracts: the submit tool takes EXACTLY one
  * selection mode, writes the row + queue message as an atomic-feeling pair
  * (an enqueue failure fails the row rather than leaving a zombie), and the
- * status tool's lookup is scoped by tenant AND subject — a foreign job id
- * reads as nonexistent.
+ * status tool's lookup is scoped by subject — a foreign job id reads as
+ * nonexistent. Rows live in a memory data store.
  */
 
 jest.mock('@/lib/logger', () => ({
@@ -14,18 +14,21 @@ const enqueueMock = jest.fn();
 jest.mock('@renkei/queue', () => ({
   webhookEventsQueue: () => ({ producer: { enqueue: enqueueMock } }),
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn() }));
 jest.mock('@renkei/connector-microsoft', () => ({ BATCH_CHUNK_SIZE: 20 }));
 
-import { getDatabase } from '@renkei/db';
+import {
+  createMemoryDataStore,
+  registerDataStore,
+  resetDataStore,
+  type NewMailBulkJob,
+  type TableRows,
+} from '@renkei/db';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import type { GraphAuth } from '../graph/graph-auth';
 import { ACT_META_KEY } from '@renkei/tool-outcomes';
 import { bulkJobLabel, registerBulkJobTools } from './bulk-jobs';
 import { authedFetch } from '@renkei/delegate-client';
-
-const getDatabaseMock = getDatabase as jest.Mock;
 
 type ToolResult = {
   content: { type: string; text?: string }[];
@@ -34,46 +37,24 @@ type ToolResult = {
 };
 type ToolHandler = (args: Record<string, unknown>) => Promise<ToolResult>;
 
-let inserted: Record<string, unknown>[] = [];
-let updates: Record<string, unknown>[] = [];
-/** What the status lookup sees; the recorded wheres prove the scoping. */
-let statusRow: Record<string, unknown> | undefined;
-let statusWheres: [string, string, unknown][] = [];
+let store: ReturnType<typeof createMemoryDataStore>;
+let inserted: NewMailBulkJob[] = [];
 
-function fakeDb() {
-  return {
-    insertInto: () => ({
-      values: (values: Record<string, unknown>) => {
-        inserted.push(values);
-        return { execute: async () => undefined };
+/** A memory store holding these job rows, recording what the tool created. */
+async function withJobs(rows: NonNullable<TableRows['mail_bulk_jobs']> = []): Promise<void> {
+  store = createMemoryDataStore();
+  await store.seed({ mail_bulk_jobs: rows });
+  inserted = [];
+  registerDataStore({
+    ...store,
+    mailBulkJobs: {
+      ...store.mailBulkJobs,
+      create: (job) => {
+        inserted.push(job);
+        return store.mailBulkJobs.create(job);
       },
-    }),
-    updateTable: () => ({
-      set: (values: Record<string, unknown>) => {
-        updates.push(values);
-        return { where: () => ({ execute: async () => undefined }) };
-      },
-    }),
-    selectFrom: () => ({
-      selectAll: () => {
-        const chain = {
-          where: (column: string, op: string, value: unknown) => {
-            statusWheres.push([column, op, value]);
-            return chain;
-          },
-          executeTakeFirst: async () => {
-            // The fake enforces the same rule as SQL: every predicate must hold.
-            if (!statusRow) return undefined;
-            for (const [column, , value] of statusWheres) {
-              if (statusRow[column] !== value) return undefined;
-            }
-            return statusRow;
-          },
-        };
-        return chain;
-      },
-    }),
-  };
+    },
+  });
 }
 
 function stubAuth(): GraphAuth {
@@ -106,14 +87,14 @@ function tools(): Map<string, ToolHandler> {
 
 const textOf = (result: ToolResult): string => result.content[0]?.text ?? '';
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks();
-  inserted = [];
-  updates = [];
-  statusRow = undefined;
-  statusWheres = [];
-  getDatabaseMock.mockReturnValue({ ok: true, val: fakeDb() });
+  await withJobs();
   enqueueMock.mockResolvedValue({ ok: true, val: undefined });
+});
+
+afterAll(() => {
+  resetDataStore();
 });
 
 describe('outlook_start_bulk_mail_job', () => {
@@ -141,10 +122,12 @@ describe('outlook_start_bulk_mail_job', () => {
     expect(inserted).toHaveLength(1);
     expect(inserted[0]).toMatchObject({
       subject: 'user-1',
-      account_id: 'acct-1',
+      accountId: 'acct-1',
       action: 'archive',
+      selection: { messageIds: ['m1', 'm2'] },
     });
     const jobId = String(inserted[0].id);
+    expect((await store.mailBulkJobs.getOwned(jobId, 'user-1'))?.status).toBe('queued');
     expect(textOf(result)).toContain(jobId);
     expect(enqueueMock).toHaveBeenCalledWith({
       source: 'mailjobs',
@@ -160,8 +143,9 @@ describe('outlook_start_bulk_mail_job', () => {
     const result = await submit({ action: 'markRead', messageIds: ['m1'] });
 
     expect(result.isError).toBe(true);
-    expect(updates).toHaveLength(1);
-    expect(updates[0].status).toBe('failed');
+    expect(inserted).toHaveLength(1);
+    const job = await store.mailBulkJobs.getOwned(inserted[0].id, 'user-1');
+    expect(job).toMatchObject({ status: 'failed', lastError: 'could not enqueue the job' });
   });
 
   it('tells the owner what was queued, not that mail was sent', async () => {
@@ -213,42 +197,42 @@ describe('outlook_start_bulk_mail_job', () => {
 describe('outlook_get_bulk_mail_job', () => {
   const JOB_ID = '7a6a5d51-0000-4000-8000-000000000001';
 
-  it('scopes the lookup by tenant AND subject — a foreign job reads as nonexistent', async () => {
-    statusRow = {
-      id: JOB_ID,
-      subject: 'someone-else',
-      action: 'markRead',
-      status: 'succeeded',
-      total: 3,
-      succeeded: 3,
-      failed: 0,
-      failures: [],
-      last_error: null,
-      started_at: null,
-      finished_at: null,
-    };
+  it('scopes the lookup by subject — a foreign job reads as nonexistent', async () => {
+    await withJobs([
+      {
+        id: JOB_ID,
+        subject: 'someone-else',
+        account_id: 'acct-9',
+        action: 'markRead',
+        selection: { messageIds: ['m1'] },
+        status: 'succeeded',
+        total: 3,
+        succeeded: 3,
+      },
+    ]);
     const status = tools().get('outlook_get_bulk_mail_job')!;
     const result = await status({ jobId: JOB_ID });
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toBe('No such job.');
-    expect(statusWheres.map(([column]) => column).sort()).toEqual(['id', 'subject']);
   });
 
   it('renders progress, failures, and a poll hint while running', async () => {
-    statusRow = {
-      id: JOB_ID,
-      subject: 'user-1',
-      action: 'archive',
-      status: 'running',
-      total: 100,
-      succeeded: 40,
-      failed: 2,
-      failures: [{ id: 'm7', error: 'gone' }],
-      last_error: null,
-      started_at: new Date().toISOString(),
-      finished_at: null,
-    };
+    await withJobs([
+      {
+        id: JOB_ID,
+        subject: 'user-1',
+        account_id: 'acct-1',
+        action: 'archive',
+        selection: { messageIds: [] },
+        status: 'running',
+        total: 100,
+        succeeded: 40,
+        failed: 2,
+        failures: [{ id: 'm7', error: 'gone' }],
+        started_at: new Date(),
+      },
+    ]);
     const status = tools().get('outlook_get_bulk_mail_job')!;
     const result = await status({ jobId: JOB_ID });
 

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/consistent-type-assertions -- a null db for a tool that never touches it */
 import { createLocalToolSet, type LocalToolContext } from './local-tools';
 import { findToolsTool, FIND_TOOLS_NAME, recallDiscoveredTools } from './tool-discovery';
 import type { LlmMessage } from '@renkei/agent-llm';
@@ -12,7 +11,6 @@ const testCipher = resourceCipher({
 });
 
 const context: LocalToolContext = {
-  db: null as unknown as LocalToolContext['db'],
   subject: 'u1',
   chatId: 'c1',
   cipher: testCipher,

@@ -1,15 +1,14 @@
 /**
- * Postgres access for code project services — the `sandbox_services` row
- * (migration 122) that describes a container this worker created on its
- * Docker engine (services.ts). Every read and write is scoped by
- * (tenantId, subject), the same no-cross-caller discipline as
- * sandbox_workspaces; the sweep's expiry walk is the one query that is
- * not.
+ * Code project services — the `sandbox_services` row (migration 122) that
+ * describes a container this worker created on its Docker engine
+ * (services.ts), through the data store (`sandboxServices`). Every read and
+ * write is scoped by subject, the same no-cross-caller discipline as
+ * sandbox_workspaces; the sweep's walks are the ones that are not.
+ * Lifetimes are decided here.
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type SandboxServiceRecord } from '@renkei/db';
 import {
   SERVICE_TTL_MS,
   type SandboxServiceSummary,
@@ -25,130 +24,64 @@ export interface StoredService extends SandboxServiceSummary, ServiceTarget {
   exports: Record<string, string>;
 }
 
-const COLUMNS = [
-  'id',
-  'subject',
-  'name',
-  'image',
-  'container_id',
-  'status',
-  'error',
-  'host',
-  'ports',
-  'exports',
-  'created_at',
-  'last_used_at',
-  'expires_at',
-] as const;
-
 function statusOf(value: string): ServiceStatus {
   return value === 'running' || value === 'stopped' || value === 'failed' || value === 'gone'
     ? value
     : 'starting';
 }
 
-function portsOf(value: unknown): number[] {
-  return Array.isArray(value)
-    ? value.filter((port): port is number => typeof port === 'number' && Number.isInteger(port))
-    : [];
-}
-
-function exportsOf(value: unknown): Record<string, string> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  const out: Record<string, string> = {};
-  for (const [name, template] of Object.entries(value)) {
-    if (typeof template === 'string') out[name] = template;
-  }
-  return out;
-}
-
-function toStored(row: {
-  id: string;
-  subject: string;
-  name: string;
-  image: string;
-  container_id: string | null;
-  status: string;
-  error: string | null;
-  host: string | null;
-  ports: unknown;
-  exports: unknown;
-  created_at: Date;
-  last_used_at: Date;
-  expires_at: Date;
-}): StoredService {
-  const exports = exportsOf(row.exports);
+function toStored(record: SandboxServiceRecord): StoredService {
   return {
-    id: row.id,
-    subject: row.subject,
-    name: row.name,
-    image: row.image,
-    containerId: row.container_id,
-    status: statusOf(row.status),
-    error: row.error,
-    host: row.host,
-    ports: portsOf(row.ports),
-    exports,
-    exportNames: Object.keys(exports).sort(),
-    createdAt: row.created_at,
-    lastUsedAt: row.last_used_at,
-    expiresAt: row.expires_at,
+    id: record.id,
+    subject: record.subject,
+    name: record.name,
+    image: record.image,
+    containerId: record.containerId,
+    status: statusOf(record.status),
+    error: record.error,
+    host: record.host,
+    ports: record.ports,
+    exports: record.exports,
+    exportNames: Object.keys(record.exports).sort(),
+    createdAt: record.createdAt,
+    lastUsedAt: record.lastUsedAt,
+    expiresAt: record.expiresAt,
   };
 }
+
+const services = () => getDataStore().sandboxServices;
 
 export function expiryFromNow(): Date {
   return new Date(Date.now() + SERVICE_TTL_MS);
 }
 
 export async function insertService(
-  db: Kysely<DB>,
   input: ServiceTarget & { name: string; image: string; exports: Record<string, string> }
 ): Promise<StoredService> {
-  const row = await db
-    .insertInto('sandbox_services')
-    .values({
-      id: randomUUID(),
-      subject: input.subject,
-      name: input.name,
-      image: input.image,
-      status: 'starting',
-      exports: JSON.stringify(input.exports),
-      expires_at: expiryFromNow(),
-    })
-    .returning(COLUMNS)
-    .executeTakeFirstOrThrow();
-  return toStored(row);
+  const record = await services().insert({
+    id: randomUUID(),
+    subject: input.subject,
+    name: input.name,
+    image: input.image,
+    exports: input.exports,
+    expiresAt: expiryFromNow(),
+  });
+  return toStored(record);
 }
 
-export async function listServices(
-  db: Kysely<DB>,
-  target: ServiceTarget
-): Promise<StoredService[]> {
-  const rows = await db
-    .selectFrom('sandbox_services')
-    .select(COLUMNS)
-    .where('subject', '=', target.subject)
-    .orderBy('name')
-    .execute();
-  return rows.map(toStored);
+export async function listServices(target: ServiceTarget): Promise<StoredService[]> {
+  return (await services().list(target.subject)).map(toStored);
 }
 
 export async function getServiceByName(
-  db: Kysely<DB>,
   target: ServiceTarget,
   name: string
 ): Promise<StoredService | undefined> {
-  const row = await db
-    .selectFrom('sandbox_services')
-    .select(COLUMNS)
-    .where('subject', '=', target.subject)
-    .where('name', '=', name)
-    .executeTakeFirst();
-  return row ? toStored(row) : undefined;
+  const record = await services().getByName(target.subject, name);
+  return record ? toStored(record) : undefined;
 }
 
 export async function updateService(
-  db: Kysely<DB>,
   id: string,
   input: {
     status?: ServiceStatus;
@@ -158,52 +91,25 @@ export async function updateService(
     ports?: number[];
   }
 ): Promise<void> {
-  await db
-    .updateTable('sandbox_services')
-    .set({
-      ...(input.status !== undefined ? { status: input.status } : {}),
-      ...(input.error !== undefined ? { error: input.error } : {}),
-      ...(input.containerId !== undefined ? { container_id: input.containerId } : {}),
-      ...(input.host !== undefined ? { host: input.host } : {}),
-      ...(input.ports !== undefined ? { ports: JSON.stringify(input.ports) } : {}),
-    })
-    .where('id', '=', id)
-    .execute();
+  await services().update(id, input);
 }
 
 /** Any use extends the lifetime: a service the project's commands are talking to is not stale. */
-export async function touchServices(db: Kysely<DB>, ids: string[]): Promise<void> {
+export async function touchServices(ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  await db
-    .updateTable('sandbox_services')
-    .set({ last_used_at: new Date(), expires_at: expiryFromNow() })
-    .where('id', 'in', ids)
-    .execute();
+  await services().touch(ids, { lastUsedAt: new Date(), expiresAt: expiryFromNow() });
 }
 
-export async function deleteServiceById(db: Kysely<DB>, id: string): Promise<void> {
-  await db.deleteFrom('sandbox_services').where('id', '=', id).execute();
+export async function deleteServiceById(id: string): Promise<void> {
+  await services().deleteById(id);
 }
 
 /** Rows past their expiry — the sweep stops and removes each one's container, then the row. */
-export async function listExpiredServices(db: Kysely<DB>, limit: number): Promise<StoredService[]> {
-  const rows = await db
-    .selectFrom('sandbox_services')
-    .select(COLUMNS)
-    .where('expires_at', '<', new Date())
-    .limit(limit)
-    .execute();
-  return rows.map(toStored);
+export async function listExpiredServices(limit: number): Promise<StoredService[]> {
+  return (await services().listExpired(new Date(), limit)).map(toStored);
 }
 
 /** Every container id a row still claims — for the sweep to tell an orphaned container from a claimed one. */
-export async function listClaimedContainerIds(db: Kysely<DB>): Promise<Set<string>> {
-  const rows = await db
-    .selectFrom('sandbox_services')
-    .select('container_id')
-    .where('container_id', 'is not', null)
-    .execute();
-  return new Set(
-    rows.map((row) => row.container_id).filter((id): id is string => typeof id === 'string')
-  );
+export async function listClaimedContainerIds(): Promise<Set<string>> {
+  return new Set(await services().listClaimedContainerIds());
 }

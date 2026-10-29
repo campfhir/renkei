@@ -8,26 +8,19 @@
  * per-file statuses. The manifest and OCR server logic are covered by the
  * unit tests beside attachments.ts.
  *
- * Its own tenant per Playwright project (the llm-models.spec.ts pattern):
- * projects run concurrently against one dev database. Mobile is a resized
+ * The chat is the test's own person's (the browser suite's `person`
+ * fixture), made through the chat's own route. Mobile is a resized
  * Chromium viewport, not the `mobile` project (AGENTS.md).
  */
 
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { createChat } from './support/code-host';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
 
 function uuidFrom(seed: string): string {
   const hex = createHash('sha256').update(seed).digest('hex');
@@ -40,61 +33,8 @@ function uuidFrom(seed: string): string {
   ].join('-');
 }
 
-function fixtureFor(projectName: string) {
-  return {
-    sessionId: uuidFrom(`mass-upload-e2e-session:${projectName}`),
-    chatId: uuidFrom(`mass-upload-e2e-chat:${projectName}`),
-    slug: `e2e-mass-upload-${projectName}`,
-    subject: `e2e-mass-upload-${projectName}@example.com`,
-  };
-}
-
-async function seed(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query('DELETE FROM chats WHERE owner_subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at) VALUES ($1, $2, $3, $4)`,
-      [fixture.sessionId, fixture.subject, ['renkei-user'], new Date(Date.now() + 24 * 3_600_000)]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name) VALUES ($1, $2, $3)`,
-      [fixture.subject, fixture.subject, 'E2E Tester']
-    );
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)\n       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)\n       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
-      [fixture.subject]
-    );
-    await client.query(
-      `INSERT INTO chats (id, owner_subject, title, last_message_at)\n       VALUES ($1, $2, 'Applicant review', NOW())`,
-      [fixture.chatId, fixture.subject]
-    );
-    // Enrolled, with a delegation for this spec's session, the way
-    // e2e/seed.ts enrolls the shared person: otherwise the KeyGuard's
-    // "this device does not have your encryption key" dialog sits over the
-    // composer and swallows every click after the first run has left the
-    // person enrolled in a browser that is gone.
-    await enrollForE2E(client, fixture.subject);
-  } finally {
-    await client.end();
-  }
-}
-
-async function openChat(page: Page, fixture: ReturnType<typeof fixtureFor>) {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
+async function openChat(page: Page) {
+  const chatId = await createChat(page.request, { title: 'Applicant review' });
   const uploaded: string[] = [];
   const ocrRequests: string[][] = [];
   await page.route('**/chat/attachments?*', async (route) => {
@@ -125,7 +65,7 @@ async function openChat(page: Page, fixture: ReturnType<typeof fixtureFor>) {
       body: JSON.stringify({ results: ids.map((id) => ({ id, extractStatus: 'done' })) }),
     });
   });
-  await page.goto(`/chat/${fixture.chatId}`);
+  await page.goto(`/chat/${chatId}`);
   await expect(page.getByRole('textbox', { name: 'Message' })).toBeVisible();
   return { uploaded, ocrRequests };
 }
@@ -147,11 +87,10 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 test('composer: a mass upload warns first, then uploads and OCRs scans', async ({
   page,
-}, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seed(fixture);
-  const { uploaded } = await openChat(page, fixture);
-  const input = page.locator('input[type="file"]');
+  person: _person,
+}, _testInfo) => {
+  const { uploaded } = await openChat(page);
+  const input = page.getByRole('main').locator('input[type="file"]');
 
   // At the threshold (10) nothing asks.
   await input.setInputFiles(pdfs(10));
@@ -164,11 +103,10 @@ test('composer: a mass upload warns first, then uploads and OCRs scans', async (
 
 test('composer: cancelling the warning uploads nothing; confirming uploads all and OCRs scans', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  const fixture = fixtureFor(`${testInfo.project.name}-b`);
-  await seed(fixture);
-  const { uploaded, ocrRequests } = await openChat(page, fixture);
-  const input = page.locator('input[type="file"]');
+  const { uploaded, ocrRequests } = await openChat(page);
+  const input = page.getByRole('main').locator('input[type="file"]');
   const warning = page.getByRole('alertdialog', { name: 'Large upload' });
 
   await input.setInputFiles(pdfs(14, 3));
@@ -228,11 +166,10 @@ test('composer: cancelling the warning uploads nothing; confirming uploads all a
 
 test('composer: 2 files stay as chips; 3 or more become one counter chip, on a phone too', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  const fixture = fixtureFor(`${testInfo.project.name}-c`);
-  await seed(fixture);
-  await openChat(page, fixture);
-  const input = page.locator('input[type="file"]');
+  await openChat(page);
+  const input = page.getByRole('main').locator('input[type="file"]');
 
   // Two files: each is its own chip, no counter.
   await input.setInputFiles(pdfs(2));

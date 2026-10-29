@@ -13,8 +13,7 @@
  * three times.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import {
   blackoutPredicate,
@@ -35,12 +34,8 @@ const MAX_PER_PASS = 25;
  * rather than disabling the trigger: the schedule itself is intact, only
  * its holiday overlay is gone.
  */
-async function calendarDatesOf(db: Kysely<DB>, calendarId: string): Promise<BlackoutEntry[]> {
-  const row = await db
-    .selectFrom('schedule_calendars')
-    .select(['dates'])
-    .where('id', '=', calendarId)
-    .executeTakeFirst();
+async function calendarDatesOf(calendarId: string): Promise<BlackoutEntry[]> {
+  const row = await getDataStore().scheduleCalendars.find(calendarId);
   if (!row) {
     logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
       component: 'worker-agents/schedule',
@@ -51,119 +46,63 @@ async function calendarDatesOf(db: Kysely<DB>, calendarId: string): Promise<Blac
   return Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [];
 }
 
-export function createScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
+export function createScheduleSweep(producer: QueueProducer) {
   return async function sweep(): Promise<void> {
-    const due = await db
-      .selectFrom('agent_triggers as t')
-      .innerJoin('agents as a', 'a.id', 't.agent_id')
-      .select([
-        't.id as trigger_id',
-        't.agent_id',
-        't.config',
-        't.next_run_at',
-        'a.owner_subject',
-        'a.instructions',
-        'a.tools',
-        'a.llm_model_id',
-      ])
-      .where('t.kind', '=', 'schedule')
-      .where('t.enabled', '=', true)
-      .where('a.enabled', '=', true)
-      .where('t.next_run_at', 'is not', null)
-      .where('t.next_run_at', '<=', sql<Date>`NOW()`)
-      .orderBy('t.next_run_at')
-      .limit(MAX_PER_PASS)
-      .execute();
+    const agents = getDataStore().agents;
+    const due = await agents.listDueScheduleTriggers(new Date(), MAX_PER_PASS);
 
     for (const row of due) {
       // parseScheduleConfig also reads the pre-042 single-recurrence shape,
       // so a not-yet-migrated row still fires during a rolling deploy.
       const config = parseScheduleConfig(row.config);
       if (!config) {
-        await db
-          .updateTable('agent_triggers')
-          .set({
-            enabled: false,
-            last_error: 'The schedule is malformed and was turned off.',
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', row.trigger_id)
-          .execute();
+        await agents.disableTrigger(row.triggerId, 'The schedule is malformed and was turned off.');
         continue;
       }
 
-      const observed = row.next_run_at;
-      if (!observed) continue;
+      const observed = row.nextRunAt;
       const scheduledFor = observed.toISOString();
-      const calendarDates = config.calendarId ? await calendarDatesOf(db, config.calendarId) : [];
+      const calendarDates = config.calendarId ? await calendarDatesOf(config.calendarId) : [];
       let next: Date;
       try {
         next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
       } catch {
         // Every rule came up dry (e.g. blackouts smother the walk): turn
         // the trigger off with the reason instead of re-firing every sweep.
-        await db
-          .updateTable('agent_triggers')
-          .set({
-            enabled: false,
-            last_error: 'No next occurrence could be found (check blackout dates); turned off.',
-            updated_at: sql`NOW()`,
-          })
-          .where('id', '=', row.trigger_id)
-          .execute();
+        await agents.disableTrigger(
+          row.triggerId,
+          'No next occurrence could be found (check blackout dates); turned off.'
+        );
         continue;
       }
 
       // The optimistic lock: one replica advances the row, the rest lose.
-      const advanced = await db
-        .updateTable('agent_triggers')
-        .set({ next_run_at: next, last_fired_at: sql`NOW()`, updated_at: sql`NOW()` })
-        .where('id', '=', row.trigger_id)
-        .where('next_run_at', '=', observed)
-        .executeTakeFirst();
-      if (Number(advanced.numUpdatedRows ?? 0) === 0) continue;
+      if (!(await agents.advanceScheduleTrigger(row.triggerId, observed, next))) continue;
 
-      const result = await createAgentRun(db, producer, {
-        agentId: row.agent_id,
-        ownerSubject: row.owner_subject,
+      const result = await createAgentRun(producer, {
+        agentId: row.agentId,
+        ownerSubject: row.ownerSubject,
         definition: agentDefinitionOf(row),
-        llmModelId: row.llm_model_id,
-        triggerId: row.trigger_id,
+        llmModelId: row.llmModelId,
+        triggerId: row.triggerId,
         triggerKind: 'schedule',
         // Just time/date, per spec: a schedule carries no other context.
         initialState: { scheduledFor, timezone: config.timezone },
       });
       if (!result.ok) {
-        await recordTriggerError(
-          db,
-          row.trigger_id,
+        await agents.setTriggerError(
+          row.triggerId,
           result.err.message ?? `The run could not be started (${result.err.type}).`
         );
         continue;
       }
-      await db
-        .updateTable('agent_triggers')
-        .set({ last_error: null, updated_at: sql`NOW()` })
-        .where('id', '=', row.trigger_id)
-        .execute();
+      await agents.setTriggerError(row.triggerId, null);
       logger.debug('schedule fired: agent {agentId} run {runId}', {
         component: 'worker-agents/schedule',
-        agentId: row.agent_id,
+        agentId: row.agentId,
         runId: result.val.runId,
-        subject: row.owner_subject,
+        subject: row.ownerSubject,
       });
     }
   };
-}
-
-async function recordTriggerError(
-  db: Kysely<DB>,
-  triggerId: string,
-  message: string
-): Promise<void> {
-  await db
-    .updateTable('agent_triggers')
-    .set({ last_error: message, updated_at: sql`NOW()` })
-    .where('id', '=', triggerId)
-    .execute();
 }

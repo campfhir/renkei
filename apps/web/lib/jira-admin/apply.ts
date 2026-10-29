@@ -10,8 +10,6 @@
  * pending proposals from being applied, not only new ones from being made.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN_ADMIN_SCOPE_OPTIONS } from '@/lib/atlassian-scopes';
 import { resolveAudience } from '@/lib/connectors/audience';
@@ -91,7 +89,6 @@ export function changeScopes(change: Pick<ChangeRequest, 'kind' | 'payload'>): s
 type Gate = { ok: true } | { ok: false; reason: string };
 
 export async function applyGate(
-  db: Kysely<DB>,
   subject: string,
   roles: readonly string[],
   change: Pick<ChangeRequest, 'kind' | 'payload'>
@@ -111,8 +108,8 @@ export async function applyGate(
   }
 
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveConnectorAvailability(subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&
@@ -150,7 +147,7 @@ export async function applyGate(
   if (change.kind === REQUEST_TYPE_KIND) {
     // The one kind that writes on another grant: the JSM grant, with the
     // picker's "Set up request types" box.
-    const jsmScopes = await jsmGrantScopes(db, subject);
+    const jsmScopes = await jsmGrantScopes(subject);
     if (jsmScopes === null) {
       return {
         ok: false,
@@ -173,7 +170,7 @@ export async function applyGate(
 
   if (isAutomationKind(change.kind)) {
     // The kinds that run on the person's own Atlassian API token.
-    if (!(await hasAutomationToken(db, subject))) return { ok: false, reason: NO_TOKEN };
+    if (!(await hasAutomationToken(subject))) return { ok: false, reason: NO_TOKEN };
   }
 
   // The questions above give a person the reason; the projection is the
@@ -197,7 +194,7 @@ export async function applyGate(
  * decide, as they decide whether its tools register. Read-only mode does
  * not: looking changes nothing.
  */
-export async function viewGate(db: Kysely<DB>, subject: string): Promise<Gate> {
+export async function viewGate(subject: string): Promise<Gate> {
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok)
     return { ok: false, reason: 'Could not read your organization’s settings.' };
@@ -205,8 +202,8 @@ export async function viewGate(db: Kysely<DB>, subject: string): Promise<Gate> {
     return { ok: false, reason: 'Jira Administration is switched off for your organization.' };
   }
   const [availability, audience] = await Promise.all([
-    resolveConnectorAvailability(db, subject),
-    resolveAudience(db, subject),
+    resolveConnectorAvailability(subject),
+    resolveAudience(subject),
   ]);
   if (
     audience.restrictedConnectors.includes(JIRA_ADMIN_MCP_CONNECTOR) &&

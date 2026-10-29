@@ -15,8 +15,7 @@
  * description and who their issues go to, without a lead.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type JiraSpaceTemplateRecord } from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { rec, records, str } from '@/lib/mcp-tools/jira-admin/client';
 import {
@@ -193,50 +192,24 @@ export function nameKeyOf(name: string): string {
   return name.trim().toLowerCase();
 }
 
-const COLUMNS = [
-  'id',
-  'cloud_id',
-  'site_url',
-  'name',
-  'description',
-  'source_space_key',
-  'document',
-  'created_by',
-  'updated_by',
-  'created_at',
-  'updated_at',
-] as const;
-
-type Row = {
-  id: string;
-  cloud_id: string;
-  site_url: string | null;
-  name: string;
-  description: string | null;
-  source_space_key: string | null;
-  document: unknown;
-  created_by: string;
-  updated_by: string;
-  created_at: Date;
-  updated_at: Date;
-};
+const templates = () => getDataStore().jiraSpaceTemplates;
 
 /** A stored row, or null when its document is unreadable (and so unusable). */
-function fromRow(row: Row): SpaceTemplate | null {
+function fromRecord(row: JiraSpaceTemplateRecord): SpaceTemplate | null {
   const document = readTemplateDocument(row.document);
   if (!document) return null;
   return {
     id: row.id,
-    cloudId: row.cloud_id,
-    siteUrl: row.site_url,
+    cloudId: row.cloudId,
+    siteUrl: row.siteUrl,
     name: row.name,
     description: row.description,
-    sourceSpaceKey: row.source_space_key,
+    sourceSpaceKey: row.sourceSpaceKey,
     document,
-    createdBy: row.created_by,
-    updatedBy: row.updated_by,
-    createdAt: new Date(row.created_at),
-    updatedAt: new Date(row.updated_at),
+    createdBy: row.createdBy,
+    updatedBy: row.updatedBy,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 
@@ -249,59 +222,37 @@ export type SaveResult =
  * on the site is refused rather than replaced; with it, the old document is
  * replaced whole.
  */
-export async function saveSpaceTemplate(
-  db: Kysely<DB>,
-  input: {
-    cloudId: string;
-    siteUrl?: string;
-    name: string;
-    description?: string;
-    sourceSpaceKey?: string;
-    document: TemplateDocument;
-    subject: string;
-    overwrite: boolean;
-  }
-): Promise<SaveResult> {
+export async function saveSpaceTemplate(input: {
+  cloudId: string;
+  siteUrl?: string;
+  name: string;
+  description?: string;
+  sourceSpaceKey?: string;
+  document: TemplateDocument;
+  subject: string;
+  overwrite: boolean;
+}): Promise<SaveResult> {
   const name = input.name.trim().slice(0, TEMPLATE_NAME_MAX);
-  const values = {
-    cloud_id: input.cloudId,
-    site_url: input.siteUrl || null,
-    name,
-    name_key: nameKeyOf(name),
-    description: input.description?.trim() ? input.description.trim() : null,
-    source_space_key: input.sourceSpaceKey ?? null,
-    document: JSON.stringify(input.document),
-    created_by: input.subject,
-    updated_by: input.subject,
-  };
-  const insert = db.insertInto('jira_admin_space_templates').values(values);
-  const target = ['cloud_id', 'name_key'] as const;
-  // Without overwrite a taken name is left alone — ON CONFLICT DO NOTHING
-  // returns no row, which is the answer, even when two saves race.
-  const row = input.overwrite
-    ? await insert
-        .onConflict((conflict) =>
-          conflict.columns([...target]).doUpdateSet({
-            name: values.name,
-            description: values.description,
-            source_space_key: values.source_space_key,
-            site_url: values.site_url,
-            document: values.document,
-            updated_by: input.subject,
-            updated_at: sql<Date>`NOW()`,
-          })
-        )
-        .returning(COLUMNS)
-        .executeTakeFirst()
-    : await insert
-        .onConflict((conflict) => conflict.columns([...target]).doNothing())
-        .returning(COLUMNS)
-        .executeTakeFirst();
+  // Without overwrite a taken name is left alone — the store answers null,
+  // even when two saves race.
+  const row = await templates().save(
+    {
+      cloudId: input.cloudId,
+      siteUrl: input.siteUrl || null,
+      name,
+      nameKey: nameKeyOf(name),
+      description: input.description?.trim() ? input.description.trim() : null,
+      sourceSpaceKey: input.sourceSpaceKey ?? null,
+      document: input.document,
+      subject: input.subject,
+    },
+    { overwrite: input.overwrite }
+  );
   if (!row) return { ok: false, reason: 'exists' };
-  const template = fromRow(row);
+  const template = fromRecord(row);
   if (!template) return { ok: false, reason: 'unreadable' };
-  // A fresh insert stamps both times from one NOW(); a replaced row keeps
-  // its original created_at.
+  // A fresh insert stamps both times from one clock reading; a replaced row
+  // keeps its original created_at.
   return {
     ok: true,
     template,
@@ -315,49 +266,31 @@ export async function saveSpaceTemplate(
  * than "no such template".
  */
 export async function findSpaceTemplate(
-  db: Kysely<DB>,
   cloudId: string,
   reference: string
 ): Promise<SpaceTemplate | null> {
   const wanted = reference.trim();
   if (!wanted) return null;
-  const query = db
-    .selectFrom('jira_admin_space_templates')
-    .select(COLUMNS)
-    ;
-  const rows = isUuid(wanted)
-    ? await query.where('id', '=', wanted).execute()
-    : await query.where('name_key', '=', nameKeyOf(wanted)).execute();
-  const row = rows.find((candidate) => candidate.cloud_id === cloudId) ?? rows[0];
-  return row ? fromRow(row) : null;
+  const rows = await templates().find(
+    cloudId,
+    isUuid(wanted) ? { id: wanted } : { nameKey: nameKeyOf(wanted) }
+  );
+  const row = rows[0];
+  return row ? fromRecord(row) : null;
 }
 
 /** Every template in the organization, by name. */
-export async function listSpaceTemplates(
-  db: Kysely<DB>
-): Promise<SpaceTemplate[]> {
-  const rows = await db
-    .selectFrom('jira_admin_space_templates')
-    .select(COLUMNS)
-    .orderBy('name_key')
-    .limit(200)
-    .execute();
+export async function listSpaceTemplates(): Promise<SpaceTemplate[]> {
+  const rows = await templates().list(200);
   return rows.flatMap((row) => {
-    const template = fromRow(row);
+    const template = fromRecord(row);
     return template ? [template] : [];
   });
 }
 
-export async function deleteSpaceTemplate(
-  db: Kysely<DB>,
-  id: string
-): Promise<boolean> {
+export async function deleteSpaceTemplate(id: string): Promise<boolean> {
   if (!isUuid(id)) return false;
-  const result = await db
-    .deleteFrom('jira_admin_space_templates')
-    .where('id', '=', id)
-    .executeTakeFirst();
-  return Number(result.numDeletedRows ?? 0) > 0;
+  return templates().delete(id);
 }
 
 /**

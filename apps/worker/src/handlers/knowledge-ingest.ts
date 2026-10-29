@@ -15,8 +15,7 @@
  * endpoint outage heals by retry instead of silently dropping documents.
  */
 
-import { sql } from 'kysely';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { contentEncryptionKey, decryptContent, isEncryptedContent } from '@renkei/crypto';
 import {
   resolveEmbeddingProvider,
@@ -505,25 +504,16 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
       distance: hit.distance,
     }));
 
-    const dbResult = getDatabase();
-    if (!dbResult.ok) throw new Error('database unavailable');
-    const updated = await dbResult.val
-      .updateTable('actionable_items')
-      .set({
-        evidence: sql`jsonb_set(
-          jsonb_set(evidence, '{related}', ${JSON.stringify(related)}::jsonb),
-          '{relatedElided}', ${JSON.stringify(searched.val.elided)}::jsonb
-        )`,
-        updated_at: sql`NOW()`,
-      })
-      .where('id', '=', itemId)
-      .where('status', '=', 'suggested')
-      .executeTakeFirst();
+    const updated = await getDataStore().actionableItems.setRelatedEvidence(
+      itemId,
+      related,
+      searched.val.elided
+    );
 
     logger.debug('enriched item {itemId} with {count} related hit(s)', {
       component: COMPONENT,
       itemId,
-      count: Number(updated.numUpdatedRows ?? 0) === 0 ? 0 : related.length,
+      count: updated === 0 ? 0 : related.length,
     });
   };
 }

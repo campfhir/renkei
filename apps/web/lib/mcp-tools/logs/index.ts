@@ -52,8 +52,7 @@ import {
   type LogQueryToken,
   type LogRow,
 } from '@campfhir/bored-logs';
-import { PostgresAdapter } from '@campfhir/bored-logs/adapters/psql';
-import { getDatabase } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { buildLogQueryOptions } from '@/lib/log-query';
 import { resolveLogCipher } from '@/lib/log-encryption';
 import { ROLE_OPERATOR } from '@/lib/access';
@@ -324,9 +323,6 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         queryExpr = parsedQuery.val;
       }
 
-      const dbResult = getDatabase();
-      if (!dbResult.ok) return errText('Database unavailable.');
-
       const cipherResult = resolveLogCipher();
       const cipher = cipherResult.state === 'on' ? cipherResult.cipher : undefined;
 
@@ -342,24 +338,23 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       const start = typeof args.start === 'string' ? args.start : defaultStart();
       const end = typeof args.end === 'string' ? args.end : undefined;
 
-      const adapter = new PostgresAdapter({
-        db: dbResult.val,
-        ...(cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : {}),
-      });
-      const result = await adapter.query(
-        buildLogQueryOptions(combineExprs(filterExpr, queryExpr), accountId, {
-          levels,
-          start,
-          end,
-          sort,
-          limit,
-        })
-      );
-      if (!result.ok) {
-        return errText(`Failed to query logs: ${result.err.message || 'unknown error'}`);
+      let rows: LogRow[];
+      try {
+        rows = await getDataStore().activityLogs.search(
+          buildLogQueryOptions(combineExprs(filterExpr, queryExpr), accountId, {
+            levels,
+            start,
+            end,
+            sort,
+            limit,
+          }),
+          cipher ? { encrypt: cipher.encrypt, decrypt: cipher.decrypt } : undefined
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        return errText(`Failed to query logs: ${message || 'unknown error'}`);
       }
 
-      const rows = result.val;
       const scopeLabel = isOperator ? 'organization-wide' : 'your own activity only';
       if (rows.length === 0) {
         return textResult(`No log entries match (${scopeLabel}).`);

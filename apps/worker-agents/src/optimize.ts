@@ -13,8 +13,7 @@
  * the outcome.
  */
 
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { mintRunToken, revokeRunToken } from './token';
 import { logger } from './logger';
 
@@ -39,16 +38,11 @@ function payloadOf(value: unknown): OptimizeJobPayload | null {
  * read and whose catalog a revision is built against.
  */
 async function ownerOf(
-  db: Kysely<DB>,
   optimizationId: string
 ): Promise<{ subject: string; agentId: string } | null> {
-  const row = await db
-    .selectFrom('agent_optimizations')
-    .select(['owner_subject', 'agent_id'])
-    .where('id', '=', optimizationId)
-    .executeTakeFirst();
+  const row = await getDataStore().agentOptimizations.ownerOf(optimizationId);
   if (!row) return null;
-  return { subject: row.owner_subject, agentId: row.agent_id };
+  return { subject: row.ownerSubject, agentId: row.agentId };
 }
 
 type PostJson = (
@@ -56,11 +50,7 @@ type PostJson = (
   init: { method: string; headers: Record<string, string>; body: string }
 ) => Promise<{ ok: boolean; status: number }>;
 
-export function createOptimizeHandler(deps: {
-  db: Kysely<DB>;
-  webBaseUrl: string;
-  fetchImpl?: PostJson;
-}) {
+export function createOptimizeHandler(deps: { webBaseUrl: string; fetchImpl?: PostJson }) {
   const doFetch: PostJson = deps.fetchImpl ?? fetch;
 
   return async function handleOptimize(event: {
@@ -69,7 +59,7 @@ export function createOptimizeHandler(deps: {
     const payload = payloadOf(event.payload);
     if (!payload) throw new Error('optimize job payload missing optimizationId');
 
-    const owner = await ownerOf(deps.db, payload.optimizationId);
+    const owner = await ownerOf(payload.optimizationId);
     if (!owner) {
       logger.debug('optimization {optimizationId} no longer exists; dropping the job', {
         component: 'worker-agents/optimize',
@@ -78,7 +68,7 @@ export function createOptimizeHandler(deps: {
       return 'skipped';
     }
 
-    const token = await mintRunToken(deps.db, {
+    const token = await mintRunToken({
       subject: owner.subject,
       // The analysis acts as the PERSON: it reads their agent's history and
       // may start a revision draft on their behalf, exactly as they could.
@@ -110,7 +100,7 @@ export function createOptimizeHandler(deps: {
       });
       return undefined;
     } finally {
-      await revokeRunToken(deps.db, token);
+      await revokeRunToken(token);
     }
   };
 }

@@ -18,7 +18,6 @@
 
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
-import { getDatabase } from '@renkei/db';
 import { clampRate, normalizeLocale, type SpeechFormat } from '@renkei/voice';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
@@ -38,9 +37,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -100,14 +97,13 @@ export async function POST(
   // person at the encoding's constant bitrate, how long they listened —
   // never the text. A stream the person cut short (Stop) counts what
   // they heard.
-  const dbResult = getDatabase();
   const bitrateKbps = result.val.bitrateKbps ?? 0;
   let bytes = 0;
   let recorded = false;
   const record = () => {
-    if (recorded || !dbResult.ok) return;
+    if (recorded) return;
     recorded = true;
-    void recordVoiceUsage(dbResult.val, {
+    void recordVoiceUsage({
       subject: session.subject,
       kind: 'speech',
       characters: text.length,

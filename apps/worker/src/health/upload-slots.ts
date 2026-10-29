@@ -9,8 +9,7 @@
  *    "did my upload land" while keeping the table from accreting.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { logger } from '../logger';
 
 export const UPLOAD_SLOTS_SWEEP_INTERVAL_MS = 60 * 60_000;
@@ -19,15 +18,10 @@ export const UPLOAD_SLOTS_SWEEP_INTERVAL_MS = 60 * 60_000;
 const RETENTION_DAYS = 1;
 const RETENTION_BATCH = 500;
 
-export function createUploadSlotsSweep(db: Kysely<DB>) {
+export function createUploadSlotsSweep() {
   return async function sweep(): Promise<void> {
-    const expired = await db
-      .updateTable('upload_slots')
-      .set({ status: 'expired' })
-      .where('status', '=', 'pending')
-      .where('expires_at', '<', sql<Date>`NOW()`)
-      .executeTakeFirst();
-    const expiredCount = Number(expired.numUpdatedRows ?? 0);
+    const store = getDataStore();
+    const expiredCount = await store.uploadSlots.expireStale();
     if (expiredCount > 0) {
       logger.info('expired {count} stale upload slot(s)', {
         component: 'uploadslots/sweep',
@@ -35,19 +29,11 @@ export function createUploadSlotsSweep(db: Kysely<DB>) {
       });
     }
 
-    const deleted = await sql<{ id: string }>`
-      DELETE FROM upload_slots WHERE id IN (
-        SELECT id FROM upload_slots
-        WHERE status IN ('completed', 'failed', 'expired')
-          AND created_at < NOW() - make_interval(days => ${RETENTION_DAYS})
-        ORDER BY created_at
-        LIMIT ${RETENTION_BATCH}
-      ) RETURNING id
-    `.execute(db);
-    if (deleted.rows.length > 0) {
+    const deleted = await store.uploadSlots.pruneSettled(RETENTION_DAYS, RETENTION_BATCH);
+    if (deleted > 0) {
       logger.info('retention pruned {count} upload slot(s)', {
         component: 'uploadslots/sweep',
-        count: deleted.rows.length,
+        count: deleted,
       });
     }
   };

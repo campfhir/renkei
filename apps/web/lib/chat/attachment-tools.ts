@@ -8,6 +8,7 @@
  * which looks files up the same way.
  */
 
+import { getDataStore } from '@renkei/db';
 import { openText, type ContentCipher } from './content-crypto';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { getAttachment } from './attachments';
@@ -33,24 +34,15 @@ export async function findAttachment(
   attachmentId: string
 ): Promise<FoundAttachment | null> {
   if (!/^[0-9a-f-]{36}$/i.test(attachmentId)) return null;
-  const row = await getAttachment(context.db, attachmentId);
+  const row = await getAttachment(attachmentId);
   if (!row) return null;
   // The chat's own file, or one its project holds; anything else is "not found".
   if (row.chatId !== context.chatId) {
     if (!context.projectId) return null;
-    const held = await context.db
-      .selectFrom('artifact_references')
-      .select('id')
-      .where('artifact_id', '=', row.id)
-      .where('project_id', '=', context.projectId)
-      .executeTakeFirst();
+    const held = await getDataStore().artifacts.getForProject(context.projectId, row.id);
     if (!held) return null;
   }
-  const stored = await context.db
-    .selectFrom('artifacts')
-    .select('extracted_text')
-    .where('id', '=', row.id)
-    .executeTakeFirst();
+  const extractedText = await getDataStore().artifacts.getText(row.id);
   const cipher = await fileCipherFor(context, row);
   return {
     id: row.id,
@@ -58,9 +50,9 @@ export async function findAttachment(
     contentType: row.contentType,
     blobKey: row.blobKey,
     extractedText:
-      stored?.extracted_text && cipher
-        ? openText(stored.extracted_text, cipher)
-        : stored?.extracted_text
+      extractedText && cipher
+        ? openText(extractedText, cipher)
+        : extractedText
           ? '[content unavailable: no key for this file]'
           : null,
     extractStatus: row.extractStatus,

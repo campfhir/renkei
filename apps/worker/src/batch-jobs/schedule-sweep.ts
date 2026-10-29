@@ -10,8 +10,7 @@
  * one-off batch would, so a future batch kind needs no change here.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { createBatch, enqueueDiscover } from '@renkei/batch-jobs-store';
 import {
@@ -30,73 +29,52 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Same calendar overlay the agent schedule sweep applies — see its own comment. */
-async function calendarDatesOf(
-  db: Kysely<DB>,
-  calendarId: string
-): Promise<BlackoutEntry[]> {
-  const row = await db
-    .selectFrom('schedule_calendars')
-    .select(['dates'])
-    .where('id', '=', calendarId)
-    .executeTakeFirst();
-  if (!row) {
+async function calendarDatesOf(calendarId: string): Promise<BlackoutEntry[]> {
+  const dates = await getDataStore().batchJobSchedules.calendarDates(calendarId);
+  if (dates === undefined) {
     logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
       component: 'worker/batch-jobs-schedule',
       calendarId,
     });
     return [];
   }
-  return Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [];
+  return Array.isArray(dates) ? dates.filter(isBlackoutEntry) : [];
 }
 
-export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer) {
+export function createBatchScheduleSweep(producer: QueueProducer) {
   return async function sweep(): Promise<void> {
-    const due = await db
-      .selectFrom('batch_job_schedules')
-      .select(['id', 'subject', 'name', 'kind', 'config', 'schedule_config', 'next_run_at'])
-      .where('enabled', '=', true)
-      .where('next_run_at', 'is not', null)
-      .where('next_run_at', '<=', sql<Date>`NOW()`)
-      .orderBy('next_run_at')
-      .limit(MAX_PER_PASS)
-      .execute();
+    const schedules = getDataStore().batchJobSchedules;
+    const due = await schedules.listDue(MAX_PER_PASS);
 
     for (const row of due) {
-      const config = parseScheduleConfig(row.schedule_config);
+      const config = parseScheduleConfig(row.scheduleConfig);
       if (!config) {
-        await recordScheduleError(db, row.id, 'The schedule is malformed and was turned off.', true);
+        await schedules.recordError(row.id, 'The schedule is malformed and was turned off.', {
+          disable: true,
+        });
         continue;
       }
 
-      const observed = row.next_run_at;
+      const observed = row.nextRunAt;
       if (!observed) continue;
-      const calendarDates = config.calendarId
-        ? await calendarDatesOf(db, config.calendarId)
-        : [];
+      const calendarDates = config.calendarId ? await calendarDatesOf(config.calendarId) : [];
       let next: Date;
       try {
         next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
       } catch {
-        await recordScheduleError(
-          db,
+        await schedules.recordError(
           row.id,
           'No next occurrence could be found (check blackout dates); turned off.',
-          true
+          { disable: true }
         );
         continue;
       }
 
       // The optimistic lock: one replica advances the row, the rest lose.
-      const advanced = await db
-        .updateTable('batch_job_schedules')
-        .set({ next_run_at: next, last_fired_at: sql`NOW()`, updated_at: sql`NOW()` })
-        .where('id', '=', row.id)
-        .where('next_run_at', '=', observed)
-        .executeTakeFirst();
-      if (Number(advanced.numUpdatedRows ?? 0) === 0) continue;
+      if (!(await schedules.advance(row.id, observed, next))) continue;
 
       try {
-        const batch = await createBatch(db, {
+        const batch = await createBatch({
           subject: row.subject,
           name: row.name,
           kind: row.kind,
@@ -104,11 +82,7 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
           scheduleId: row.id,
         });
         await enqueueDiscover(producer, batch.id);
-        await db
-          .updateTable('batch_job_schedules')
-          .set({ last_error: null, updated_at: sql`NOW()` })
-          .where('id', '=', row.id)
-          .execute();
+        await schedules.clearError(row.id);
         logger.debug('schedule fired: batch {batchId} for schedule {scheduleId}', {
           component: 'worker/batch-jobs-schedule',
           batchId: batch.id,
@@ -116,30 +90,11 @@ export function createBatchScheduleSweep(db: Kysely<DB>, producer: QueueProducer
           subject: row.subject,
         });
       } catch (error) {
-        await recordScheduleError(
-          db,
+        await schedules.recordError(
           row.id,
-          error instanceof Error ? error.message : 'The batch could not be started.',
-          false
+          error instanceof Error ? error.message : 'The batch could not be started.'
         );
       }
     }
   };
-}
-
-async function recordScheduleError(
-  db: Kysely<DB>,
-  scheduleId: string,
-  message: string,
-  disable: boolean
-): Promise<void> {
-  await db
-    .updateTable('batch_job_schedules')
-    .set({
-      last_error: message,
-      updated_at: sql`NOW()`,
-      ...(disable ? { enabled: false } : {}),
-    })
-    .where('id', '=', scheduleId)
-    .execute();
 }

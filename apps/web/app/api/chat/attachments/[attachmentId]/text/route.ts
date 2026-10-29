@@ -19,11 +19,11 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
   const { attachmentId } = await params;
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
-  const { db, session } = ready.context;
+  const { session } = ready.context;
   if (!isUuid(attachmentId)) return jsonError(404, 'not-found', 'No such file');
-  const access = await resolveArtifactAccess(db, session.subject, attachmentId);
+  const access = await resolveArtifactAccess(session.subject, attachmentId);
   if (!access) return jsonError(404, 'not-found', 'No such file');
-  const text = await getAttachmentText(db, access.row.id, access.cipher);
+  const text = await getAttachmentText(access.row.id, access.cipher);
   if (text === null) return jsonError(404, 'not-found', 'This file has no text');
   const base = access.row.filename.replace(/\.[^.]+$/, '') || 'file';
   const encodedName = encodeURIComponent(`${base}.txt`).replace(/'/g, '%27');

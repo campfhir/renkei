@@ -8,133 +8,40 @@
  * same thing on its own, so both are asserted. The sweep that archives
  * chats runs in the worker, not here; this spec covers what a person sets.
  *
- * Each Playwright project gets its own person, derived from the project
- * name, because this spec writes its own preference row and projects run
- * concurrently against the same dev Postgres (AGENTS.md's isolation rule).
- * The organization's chat retention is shared by every spec in a run, so
- * this spec reads it rather than assuming its default.
- *
- * Runs on the pinned Chromium only, with a resized viewport for the phone
- * check (see llm-models.spec.ts for the convention this follows).
+ * What is stored is read back through GET /api/preferences, the route the
+ * page itself reads. The organization's chat retention is shared by every
+ * spec in a run, so it is read from the org settings route rather than
+ * assumed (the reader is an operator for that).
  */
 
-import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { test, expect, type Page, type TestInfo } from '@playwright/test';
-import { Client } from 'pg';
-import { enrollForE2E } from './keys';
+import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
-test.use({
-  launchOptions: {
-    executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-    args: ['--no-sandbox'],
-  },
-});
-
-/** A deterministic (stable across reruns), valid-looking v4 UUID from a seed string. */
-function uuidFrom(seed: string): string {
-  const hex = createHash('sha256').update(seed).digest('hex');
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    `4${hex.slice(13, 16)}`,
-    `8${hex.slice(17, 20)}`,
-    hex.slice(20, 32),
-  ].join('-');
-}
-
-function fixtureFor(projectName: string): {
-  sessionId: string;
-  subject: string;
-} {
-  return {
-    sessionId: uuidFrom(`chat-archive-e2e-session:${projectName}`),
-    subject: `e2e-chat-archive-${projectName}@example.com`,
-  };
-}
-
-async function seedPerson(fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    await client.query('DELETE FROM user_preferences WHERE subject = $1 AND key = $2', [
-      fixture.subject,
-      'chat_archive',
-    ]);
-    await client.query('DELETE FROM sessions WHERE subject = $1', [fixture.subject]);
-    await client.query('DELETE FROM identities WHERE subject = $1', [fixture.subject]);
-    await client.query(
-      `INSERT INTO sessions (id, subject, roles, expires_at)
-       VALUES ($1, $2, $3, $4)`,
-      [
-        fixture.sessionId,
-        fixture.subject,
-        ['renkei-user', 'renkei-operator'],
-        new Date(Date.now() + 24 * 3_600_000),
-      ]
-    );
-    await client.query(
-      `INSERT INTO identities (subject, email, display_name)
-       VALUES ($1, $2, $3)`,
-      [fixture.subject, fixture.subject, 'E2E Tester']
-    );
-    // No coach marks tour stealing focus mid-screenshot.
-    await client.query(
-      `INSERT INTO user_preferences (subject, key, value)
-       VALUES ($1, 'coach_marks', '{"autoStart": false}'::jsonb)
-       ON CONFLICT (subject, key) DO UPDATE SET value = EXCLUDED.value`,
-      [fixture.subject]
-    );
-    await enrollForE2E(client, fixture.subject);
-  } finally {
-    await client.end();
-  }
-}
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 /** The organization's chat retention in days, as the server reads it (0 = keep everything). */
-async function orgRetentionDays(): Promise<number> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    const result = await client.query(
-      `SELECT value FROM settings WHERE key = 'chat_retention_days'`
-    );
-    const stored = result.rows[0]?.value;
-    return stored === undefined ? 365 : Number(stored);
-  } finally {
-    await client.end();
-  }
+async function orgRetentionDays(request: APIRequestContext): Promise<number> {
+  const response = await request.get('/api/admin/org-settings');
+  expect(response.ok(), await response.text()).toBe(true);
+  const body: unknown = await response.json();
+  const settings =
+    typeof body === 'object' && body !== null && 'settings' in body ? body.settings : body;
+  const days =
+    typeof settings === 'object' && settings !== null && 'chatRetentionDays' in settings
+      ? settings.chatRetentionDays
+      : undefined;
+  return typeof days === 'number' ? days : 365;
 }
 
-async function storedArchiveDays(subject: string): Promise<unknown> {
-  const client = new Client({ connectionString: process.env.DATABASE_URL });
-  await client.connect();
-  try {
-    const result = await client.query(
-      `SELECT value FROM user_preferences WHERE subject = $1 AND key = 'chat_archive'`,
-      [subject]
-    );
-    return result.rows[0]?.value?.afterDays ?? null;
-  } finally {
-    await client.end();
-  }
-}
-
-async function signIn(page: Page, fixture: ReturnType<typeof fixtureFor>): Promise<void> {
-  await page.context().addCookies([
-    {
-      name: `renkei_session`,
-      value: fixture.sessionId,
-      domain: '127.0.0.1',
-      path: '/',
-      httpOnly: true,
-      secure: false,
-      sameSite: 'Lax',
-    },
-  ]);
+async function storedArchiveDays(request: APIRequestContext): Promise<unknown> {
+  const response = await request.get('/api/preferences');
+  expect(response.ok()).toBe(true);
+  const body: { chatArchive?: { afterDays?: unknown } | null } = await response.json();
+  return body.chatArchive?.afterDays ?? null;
 }
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -146,11 +53,9 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 
 test('preferences: archive old chats after a chosen number of days, never longer than the org keeps them', async ({
   page,
+  person: _person,
 }, testInfo) => {
-  const fixture = fixtureFor(testInfo.project.name);
-  await seedPerson(fixture);
-  await signIn(page, fixture);
-  const retention = await orgRetentionDays();
+  const retention = await orgRetentionDays(page.request);
 
   await page.goto(`/preferences`);
   const section = page.getByRole('region', { name: 'Archive old chats' });
@@ -169,7 +74,7 @@ test('preferences: archive old chats after a chosen number of days, never longer
   await expect(section.getByText('Saved.')).toBeVisible();
   await page.reload();
   await expect(section.getByLabel('Archive chats after (days)')).toHaveValue('30');
-  expect(await storedArchiveDays(fixture.subject)).toBe(30);
+  expect(await storedArchiveDays(page.request)).toBe(30);
   await shot(page, testInfo, 'chat-archive-02-saved');
 
   // Longer than the organization keeps chats: refused in the field, and the
@@ -185,13 +90,13 @@ test('preferences: archive old chats after a chosen number of days, never longer
     data: { chatArchive: { afterDays: tooLong } },
   });
   expect(refused.status()).toBe(400);
-  expect(await storedArchiveDays(fixture.subject)).toBe(30);
+  expect(await storedArchiveDays(page.request)).toBe(30);
 
   // Clearing the field goes back to never.
   await section.getByLabel('Archive chats after (days)').fill('');
   await section.getByRole('button', { name: 'Save' }).click();
   await expect(section.getByText('Saved.')).toBeVisible();
-  expect(await storedArchiveDays(fixture.subject)).toBeNull();
+  expect(await storedArchiveDays(page.request)).toBeNull();
 
   // Phone width: the field and its note still fit and stay usable.
   await page.setViewportSize(MOBILE_VIEWPORT);

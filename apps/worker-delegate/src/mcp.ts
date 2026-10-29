@@ -20,8 +20,6 @@
  */
 
 import type { ServerResponse } from 'node:http';
-import type { Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
 import { encrypt } from '@renkei/crypto';
 import {
   PROTOCOL_VERSION,
@@ -60,7 +58,6 @@ function statusFor(type: McpPrepareError): number {
 
 export class McpPreparer {
   constructor(
-    private readonly db: Kysely<DB>,
     private readonly encryptionKey: Buffer,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
     /** Tests replace the DNS-resolving guard. */
@@ -73,7 +70,7 @@ export class McpPreparer {
     const serverId = str(body.serverId);
     const redirectUri = str(body.redirectUri);
     if (!serverId || !redirectUri) return fail('bad_request', 'serverId and redirectUri');
-    const read = await getServer(this.db, serverId);
+    const read = await getServer(serverId);
     if (!read.ok || !read.val || !read.val.enabled) return fail('unknown_server');
     let server = read.val;
     if (server.authMode === 'none') return sendJson(response, 200, { authMode: 'none' });
@@ -82,7 +79,7 @@ export class McpPreparer {
       if (!server.oauth || body.refresh === true) {
         const found = await this.discover(server);
         if (found === 'open') return sendJson(response, 200, { authMode: 'none', open: true });
-        const saved = await updateServer(this.db, server.id, { oauth: found });
+        const saved = await updateServer(server.id, { oauth: found });
         if (!saved.ok) return fail('DISCOVERY_FAILED', 'could not save discovery');
         server = saved.val;
       }
@@ -97,7 +94,7 @@ export class McpPreparer {
           );
         }
         const registered = await this.register(server, oauth, redirectUri);
-        const saved = await updateServer(this.db, server.id, {
+        const saved = await updateServer(server.id, {
           clientId: registered.clientId,
           encryptedClientSecret: registered.secret
             ? encrypt(registered.secret, this.encryptionKey)

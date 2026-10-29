@@ -27,10 +27,12 @@
  * skipped here — their rows are theirs to move, and `enroll` did.
  * `chat_summaries.content` predates both envelopes and may be plaintext:
  * such a row is sealed too.
+ *
+ * The rows come and go through the data store (legacyEnvelopes); what is
+ * opened and re-sealed, and under which key, is decided here.
  */
 
-import type { Kysely } from 'kysely';
-import { getDatabase, closeDatabase, type DB } from '@renkei/db';
+import { closeDataStore, getDataStore, type LegacyEnvelopeCredentialTable } from '@renkei/db';
 import {
   contentEncryptionKey,
   decryptContent,
@@ -50,6 +52,8 @@ import {
 } from '../src/index';
 
 const BATCH = 200;
+const KEYED = `${RESOURCE_ENVELOPE_PREFIX}%`;
+const USER_SEALED = `${USER_ENVELOPE_PREFIX}%`;
 
 function fail(message: string): never {
   console.error(message);
@@ -73,35 +77,21 @@ interface Resealer {
 
 /** The resource's key, minted for its owner and wrapped for its grantees; the resealer over it. */
 async function resealerFor(
-  db: Kysely<DB>,
   kind: 'chat' | 'chat_project',
-  resource: { id: string; owner_subject: string },
+  resource: { id: string; ownerSubject: string },
   contentKey: Buffer
 ): Promise<Resealer | null> {
   const ref = { kind, resourceId: resource.id };
-  const key = await legacyEnsureResourceKey(db, ref, resource.owner_subject);
+  const key = await legacyEnsureResourceKey(ref, resource.ownerSubject);
   if (!key.ok) {
     console.warn(`  ${kind} ${resource.id}: no key (${key.err.type}); skipped`);
     return null;
   }
-  const grantees = await db
-    .selectFrom('resource_access_grants')
-    .select('grantee_subject')
-    .where('resource_kind', '=', kind)
-    .where('resource_id', '=', resource.id)
-    .where((eb) => eb.or([eb('expires_at', 'is', null), eb('expires_at', '>', new Date())]))
-    .execute();
+  const grantees = await getDataStore().resourceGrants.activeGrantees(kind, resource.id);
   for (const grantee of grantees) {
-    const shared = await legacyShareResourceKey(
-      db,
-      key.val,
-      resource.owner_subject,
-      grantee.grantee_subject
-    );
+    const shared = await legacyShareResourceKey(key.val, resource.ownerSubject, grantee);
     if (!shared.ok) {
-      console.warn(
-        `  ${kind} ${resource.id}: key not wrapped for ${grantee.grantee_subject} (${shared.err.type})`
-      );
+      console.warn(`  ${kind} ${resource.id}: key not wrapped for ${grantee} (${shared.err.type})`);
     }
   }
   let rows = 0;
@@ -124,148 +114,89 @@ async function resealerFor(
 
 /** The files of a chat or a project: their extracted text under the home's key. */
 async function resealAttachments(
-  db: Kysely<DB>,
-  home: { chat_id: string } | { project_id: string },
+  keyKind: 'chat' | 'chat_project',
+  keyRef: string,
   resealer: Resealer
 ): Promise<void> {
-  let query = db
-    .selectFrom('artifacts')
-    .select(['id', 'extracted_text'])
-    .where('extracted_text', 'is not', null)
-    .where('extracted_text', 'not like', `${RESOURCE_ENVELOPE_PREFIX}%`);
+  const store = getDataStore().legacyEnvelopes;
   // A row still under its chat's or project's key names it (migration 163).
-  query =
-    'chat_id' in home
-      ? query.where('key_kind', '=', 'chat').where('key_ref', '=', home.chat_id)
-      : query.where('key_kind', '=', 'chat_project').where('key_ref', '=', home.project_id);
-  for (const row of await query.execute()) {
-    const next = resealer.reseal(row.extracted_text, false);
+  for (const row of await store.attachments(keyKind, keyRef, KEYED)) {
+    const next = resealer.reseal(row.extractedText, false);
     if (next !== undefined) {
-      await db
-        .updateTable('artifacts')
-        .set({ extracted_text: next })
-        .where('id', '=', row.id)
-        .execute();
+      await store.reseal({ table: 'artifacts', id: row.id, extractedText: next });
     }
   }
 }
 
 async function rekeyChat(
-  db: Kysely<DB>,
-  chat: { id: string; owner_subject: string },
+  chat: { id: string; ownerSubject: string },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
-  const resealer = await resealerFor(db, 'chat', chat, contentKey);
+  const resealer = await resealerFor('chat', chat, contentKey);
   if (!resealer) return { rows: 0, skipped: 1 };
   const reseal = resealer.reseal;
+  const store = getDataStore().legacyEnvelopes;
+  const { messages, summaries, subagentRuns } = await store.chatRows(chat.id, KEYED);
 
-  const messages = await db
-    .selectFrom('chat_messages')
-    .select(['id', 'content'])
-    .where('chat_id', '=', chat.id)
-    .where('content', 'not like', `${RESOURCE_ENVELOPE_PREFIX}%`)
-    .execute();
   for (const row of messages) {
     const next = reseal(row.content, false);
     if (next !== undefined) {
-      await db
-        .updateTable('chat_messages')
-        .set({ content: next })
-        .where('id', '=', row.id)
-        .execute();
+      await store.reseal({ table: 'chat_messages', id: row.id, content: next });
     }
   }
-
-  const summaries = await db
-    .selectFrom('chat_summaries')
-    .select(['id', 'content'])
-    .where('chat_id', '=', chat.id)
-    .where('content', 'not like', `${RESOURCE_ENVELOPE_PREFIX}%`)
-    .execute();
   for (const row of summaries) {
     const next = reseal(row.content, true);
     if (next !== undefined) {
-      await db
-        .updateTable('chat_summaries')
-        .set({ content: next })
-        .where('id', '=', row.id)
-        .execute();
+      await store.reseal({ table: 'chat_summaries', id: row.id, content: next });
     }
   }
-
-  const runs = await db
-    .selectFrom('chat_subagent_runs')
-    .select(['id', 'task', 'instructions', 'transcript', 'report'])
-    .where('chat_id', '=', chat.id)
-    .where('task', 'not like', `${RESOURCE_ENVELOPE_PREFIX}%`)
-    .execute();
-  for (const row of runs) {
+  for (const row of subagentRuns) {
     const task = reseal(row.task, false);
     const instructions = reseal(row.instructions, false);
     const transcript = reseal(row.transcript, false);
     const report = reseal(row.report, false);
     if ([task, instructions, transcript, report].every((value) => value === undefined)) continue;
-    await db
-      .updateTable('chat_subagent_runs')
-      .set({
-        ...(task !== undefined ? { task } : {}),
-        ...(instructions !== undefined ? { instructions } : {}),
-        ...(transcript !== undefined ? { transcript } : {}),
-        ...(report !== undefined ? { report } : {}),
-      })
-      .where('id', '=', row.id)
-      .execute();
+    await store.reseal({
+      table: 'chat_subagent_runs',
+      id: row.id,
+      task,
+      instructions,
+      transcript,
+      report,
+    });
   }
-  await resealAttachments(db, { chat_id: chat.id }, resealer);
+  await resealAttachments('chat', chat.id, resealer);
   return { rows: resealer.rows(), skipped: resealer.skipped() };
 }
 
 /** A project: its instructions, its memory, and its files under the project's key. */
 async function rekeyProject(
-  db: Kysely<DB>,
-  project: { id: string; owner_subject: string; instructions: string | null },
+  project: { id: string; ownerSubject: string; instructions: string | null },
   contentKey: Buffer
 ): Promise<{ rows: number; skipped: number }> {
-  const resealer = await resealerFor(db, 'chat_project', project, contentKey);
+  const resealer = await resealerFor('chat_project', project, contentKey);
   if (!resealer) return { rows: 0, skipped: 1 };
+  const store = getDataStore().legacyEnvelopes;
   const instructions = resealer.reseal(project.instructions, false);
   if (instructions !== undefined) {
-    await db
-      .updateTable('chat_projects')
-      .set({ instructions })
-      .where('id', '=', project.id)
-      .execute();
+    await store.reseal({ table: 'chat_projects', id: project.id, instructions });
   }
-  const memories = await db
-    .selectFrom('chat_project_memories')
-    .select(['id', 'content'])
-    .where('project_id', '=', project.id)
-    .where('content', 'not like', `${RESOURCE_ENVELOPE_PREFIX}%`)
-    .execute();
-  for (const row of memories) {
+  for (const row of await store.projectMemories(project.id, KEYED)) {
     const next = resealer.reseal(row.content, false);
     if (next !== undefined) {
-      await db
-        .updateTable('chat_project_memories')
-        .set({ content: next })
-        .where('id', '=', row.id)
-        .execute();
+      await store.reseal({ table: 'chat_project_memories', id: row.id, content: next });
     }
   }
-  await resealAttachments(db, { project_id: project.id }, resealer);
+  await resealAttachments('chat_project', project.id, resealer);
   return { rows: resealer.rows(), skipped: resealer.skipped() };
 }
 
-async function rekeyProjects(db: Kysely<DB>, contentKey: Buffer): Promise<void> {
-  const projects = await db
-    .selectFrom('chat_projects')
-    .select(['id', 'owner_subject', 'instructions'])
-    .orderBy('id', 'asc')
-    .execute();
+async function rekeyProjects(contentKey: Buffer): Promise<void> {
+  const projects = await getDataStore().legacyEnvelopes.projects();
   let rows = 0;
   let skipped = 0;
   for (const project of projects) {
-    const done = await rekeyProject(db, project, contentKey);
+    const done = await rekeyProject(project, contentKey);
     rows += done.rows;
     skipped += done.skipped;
   }
@@ -275,23 +206,16 @@ async function rekeyProjects(db: Kysely<DB>, contentKey: Buffer): Promise<void> 
 }
 
 /** A person's own memory: `renc1` rows moved directly under the person's key. */
-async function rekeyUserMemories(db: Kysely<DB>, contentKey: Buffer): Promise<void> {
-  const rows = await db
-    .selectFrom('chat_user_memories')
-    .select(['id', 'owner_subject', 'content'])
-    .where('content', 'not like', `${USER_ENVELOPE_PREFIX}%`)
-    .execute();
+async function rekeyUserMemories(contentKey: Buffer): Promise<void> {
+  const store = getDataStore().legacyEnvelopes;
+  const rows = await store.userMemories(USER_SEALED);
   let moved = 0;
   for (const row of rows) {
     const text = openLegacy(row.content, contentKey, false);
     if (text === null) continue;
-    const sealed = await legacySealForSubject(db, row.owner_subject, text);
+    const sealed = await legacySealForSubject(row.ownerSubject, text);
     if (!sealed.ok) continue;
-    await db
-      .updateTable('chat_user_memories')
-      .set({ content: sealed.val })
-      .where('id', '=', row.id)
-      .execute();
+    await store.reseal({ table: 'chat_user_memories', id: row.id, content: sealed.val });
     moved += 1;
   }
   console.log(
@@ -299,7 +223,7 @@ async function rekeyUserMemories(db: Kysely<DB>, contentKey: Buffer): Promise<vo
   );
 }
 
-async function rekeyChats(db: Kysely<DB>): Promise<void> {
+async function rekeyChats(): Promise<void> {
   const contentKeyResult = contentEncryptionKey();
   if (!contentKeyResult.ok)
     fail(`No content key for the renc1 rows: ${contentKeyResult.err.message}`);
@@ -310,16 +234,10 @@ async function rekeyChats(db: Kysely<DB>): Promise<void> {
   let rows = 0;
   let skipped = 0;
   for (;;) {
-    let query = db
-      .selectFrom('chats')
-      .select(['id', 'owner_subject'])
-      .orderBy('id', 'asc')
-      .limit(BATCH);
-    if (after) query = query.where('id', '>', after);
-    const batch = await query.execute();
+    const batch = await getDataStore().legacyEnvelopes.chatsPage(after, BATCH);
     if (batch.length === 0) break;
     for (const chat of batch) {
-      const done = await rekeyChat(db, chat, contentKey);
+      const done = await rekeyChat(chat, contentKey);
       rows += done.rows;
       skipped += done.skipped;
       chats += 1;
@@ -330,70 +248,51 @@ async function rekeyChats(db: Kysely<DB>): Promise<void> {
   console.log(
     `Done — ${chats} chat(s) keyed, ${rows} row(s) re-sealed, ${skipped} row(s) skipped.`
   );
-  await rekeyProjects(db, contentKey);
-  await rekeyUserMemories(db, contentKey);
+  await rekeyProjects(contentKey);
+  await rekeyUserMemories(contentKey);
 }
 
 /** One credential table: every row not yet under its owner's key, re-sealed. */
 async function rekeyCredentials(
-  db: Kysely<DB>,
-  table: 'mirth_instance_connections' | 'admanager_instance_connections' | 'file_share_connections',
+  table: LegacyEnvelopeCredentialTable,
   legacyKey: Buffer
 ): Promise<void> {
-  const rows = await db
-    .selectFrom(table)
-    .select(['subject', 'encrypted_credentials'])
-    .where('encrypted_credentials', 'not like', `${USER_ENVELOPE_PREFIX}%`)
-    .execute();
+  const store = getDataStore().legacyEnvelopes;
+  const rows = await store.credentials(table, USER_SEALED);
   let moved = 0;
   for (const row of rows) {
-    const opened = decrypt(row.encrypted_credentials, legacyKey);
+    const opened = decrypt(row.encryptedCredentials, legacyKey);
     if (!opened.ok) {
       console.warn(
         `  ${table}: a row for ${row.subject} did not open under the legacy key; skipped`
       );
       continue;
     }
-    const sealed = await legacySealForSubject(db, row.subject, opened.val);
+    const sealed = await legacySealForSubject(row.subject, opened.val);
     if (!sealed.ok) {
       console.warn(`  ${table}: ${row.subject} could not be sealed (${sealed.err.type}); skipped`);
       continue;
     }
-    await db
-      .updateTable(table)
-      .set({ encrypted_credentials: sealed.val })
-      .where('subject', '=', row.subject)
-      .where('encrypted_credentials', '=', row.encrypted_credentials)
-      .execute();
+    await store.reseal({
+      table,
+      subject: row.subject,
+      stored: row.encryptedCredentials,
+      next: sealed.val,
+    });
     moved += 1;
   }
   console.log(`${table}: ${moved} of ${rows.length} row(s) moved under their owner's key.`);
 }
 
-async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<void> {
-  const rows = await db
-    .selectFrom('provider_grants')
-    .select([
-      'provider',
-      'provider_account_id',
-      'subject',
-      'encrypted_access_token',
-      'encrypted_refresh_token',
-    ])
-    .where('subject', 'is not', null)
-    .where((eb) =>
-      eb.or([
-        eb('encrypted_access_token', 'not like', `${USER_ENVELOPE_PREFIX}%`),
-        eb('encrypted_refresh_token', 'not like', `${USER_ENVELOPE_PREFIX}%`),
-      ])
-    )
-    .execute();
+async function rekeyProviderGrants(legacyKey: Buffer): Promise<void> {
+  const store = getDataStore().legacyEnvelopes;
+  const rows = await store.providerGrants(USER_SEALED);
   let moved = 0;
   for (const row of rows) {
     if (!row.subject) continue;
-    const next: { encrypted_access_token?: string; encrypted_refresh_token?: string } = {};
+    const next: { encryptedAccessToken?: string; encryptedRefreshToken?: string } = {};
     let broken = false;
-    for (const column of ['encrypted_access_token', 'encrypted_refresh_token'] as const) {
+    for (const column of ['encryptedAccessToken', 'encryptedRefreshToken'] as const) {
       const stored = row[column];
       if (isUserSealed(stored)) continue;
       const opened = decrypt(stored, legacyKey);
@@ -401,7 +300,7 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
         broken = true;
         break;
       }
-      const sealed = await legacySealForSubject(db, row.subject, opened.val);
+      const sealed = await legacySealForSubject(row.subject, opened.val);
       if (!sealed.ok) {
         broken = true;
         break;
@@ -410,28 +309,28 @@ async function rekeyProviderGrants(db: Kysely<DB>, legacyKey: Buffer): Promise<v
     }
     if (broken) {
       console.warn(
-        `  provider_grants: ${row.provider}/${row.provider_account_id} did not open or seal; skipped`
+        `  provider_grants: ${row.provider}/${row.accountId} did not open or seal; skipped`
       );
       continue;
     }
-    await db
-      .updateTable('provider_grants')
-      .set(next)
-      .where('provider', '=', row.provider)
-      .where('provider_account_id', '=', row.provider_account_id)
-      .execute();
+    await store.reseal({
+      table: 'provider_grants',
+      provider: row.provider,
+      accountId: row.accountId,
+      ...next,
+    });
     moved += 1;
   }
   console.log(`provider_grants: ${moved} of ${rows.length} row(s) moved under their owner's key.`);
 }
 
-async function rekeyConnectors(db: Kysely<DB>): Promise<void> {
+async function rekeyConnectors(): Promise<void> {
   const legacy = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!legacy.ok) fail('TOKEN_ENCRYPTION_KEY (the legacy credential key) is not set or malformed.');
-  await rekeyProviderGrants(db, legacy.val);
-  await rekeyCredentials(db, 'mirth_instance_connections', legacy.val);
-  await rekeyCredentials(db, 'admanager_instance_connections', legacy.val);
-  await rekeyCredentials(db, 'file_share_connections', legacy.val);
+  await rekeyProviderGrants(legacy.val);
+  await rekeyCredentials('mirth_instance_connections', legacy.val);
+  await rekeyCredentials('admanager_instance_connections', legacy.val);
+  await rekeyCredentials('file_share_connections', legacy.val);
 }
 
 async function main(): Promise<void> {
@@ -440,13 +339,11 @@ async function main(): Promise<void> {
   const connectors = all || args.has('--connectors');
   const chats = all || !args.has('--connectors');
 
-  const dbResult = getDatabase();
-  if (!dbResult.ok) fail('Database unavailable — set DATABASE_URL.');
-  const db = dbResult.val;
+  if (!process.env.DATABASE_URL) fail('Database unavailable — set DATABASE_URL.');
 
-  if (chats) await rekeyChats(db);
-  if (connectors) await rekeyConnectors(db);
-  await closeDatabase();
+  if (chats) await rekeyChats();
+  if (connectors) await rekeyConnectors();
+  await closeDataStore();
 }
 
 void main();

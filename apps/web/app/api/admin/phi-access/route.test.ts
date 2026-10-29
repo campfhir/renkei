@@ -10,7 +10,6 @@ jest.mock('@/lib/access', () => ({
   checkAccess: jest.fn(),
   ROLE_OPERATOR: 'renkei-operator',
 }));
-jest.mock('@renkei/db', () => ({ getDatabase: jest.fn(() => ({ ok: true, val: {} })) }));
 jest.mock('@/lib/phi-access', () => ({ listPhiAccessEvents: jest.fn() }));
 
 import { NextRequest } from 'next/server';
@@ -21,8 +20,7 @@ const { listPhiAccessEvents } = jest.requireMock<{ listPhiAccessEvents: jest.Moc
   '@/lib/phi-access'
 );
 
-const get = (query = '') =>
-  GET(new NextRequest(`http://renkei.test/api/admin/phi-access${query}`));
+const get = (query = '') => GET(new NextRequest(`http://renkei.test/api/admin/phi-access${query}`));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -51,14 +49,14 @@ describe('GET /api/admin/phi-access', () => {
     expect(await whole.json()).toEqual({
       events: [expect.objectContaining({ toolName: 'mirth_get_message' })],
     });
-    expect(listPhiAccessEvents).toHaveBeenLastCalledWith({}, {
+    expect(listPhiAccessEvents).toHaveBeenLastCalledWith({
       subject: undefined,
       limit: 100,
       before: undefined,
     });
 
     await get('?subject=alice&limit=25&before=2026-10-01T00:00:00Z');
-    expect(listPhiAccessEvents).toHaveBeenLastCalledWith({}, {
+    expect(listPhiAccessEvents).toHaveBeenLastCalledWith({
       subject: 'alice',
       limit: 25,
       before: new Date('2026-10-01T00:00:00Z'),
@@ -69,9 +67,6 @@ describe('GET /api/admin/phi-access', () => {
     expect((await get('?before=yesterday')).status).toBe(400);
     expect(listPhiAccessEvents).not.toHaveBeenCalled();
     await get('?limit=lots');
-    expect(listPhiAccessEvents).toHaveBeenLastCalledWith(
-      {},
-      expect.objectContaining({ limit: 100 })
-    );
+    expect(listPhiAccessEvents).toHaveBeenLastCalledWith(expect.objectContaining({ limit: 100 }));
   });
 });

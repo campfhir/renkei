@@ -20,8 +20,7 @@
  * deletion is by id.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
   openAgentMemoryContents,
@@ -47,71 +46,40 @@ const COMPACTION_SYSTEM_PROMPT =
   'chatter with no future value. Write plain compact prose or short bullet lines. ' +
   `Stay under ${MEMORY_SUMMARY_MAX_CHARS} characters. Reply with the summary text only.`;
 
-export function createMemoryCompactionSweep(db: Kysely<DB>) {
+export function createMemoryCompactionSweep() {
   return async function sweep(): Promise<void> {
-    const candidates = await db
-      .selectFrom('agent_memories as m')
-      .innerJoin('agents as a', 'a.id', 'm.agent_id')
-      .select([
-        'm.agent_id as agent_id',
-        'a.owner_subject as owner_subject',
-        sql<string>`count(*)`.as('entries'),
-      ])
-      .where('m.kind', '=', 'entry')
-      .groupBy(['m.agent_id', 'a.owner_subject'])
-      .having(sql`count(*)`, '>', MEMORY_COMPACT_THRESHOLD)
-      .orderBy(sql`count(*)`, 'desc')
-      .limit(MAX_AGENTS_PER_PASS)
-      .execute();
+    const candidates = await getDataStore().agents.memoryCompactionCandidates(
+      MEMORY_COMPACT_THRESHOLD,
+      MAX_AGENTS_PER_PASS
+    );
 
     for (const candidate of candidates) {
       try {
-        await compactOne(db, candidate.agent_id, candidate.owner_subject);
+        await compactOne(candidate.agentId, candidate.ownerSubject);
       } catch (error) {
         logger.warn('memory compaction failed for agent {agentId}: {error}', {
           component: 'worker-agents/memory-compaction',
-          agentId: candidate.agent_id,
-          subject: candidate.owner_subject,
+          agentId: candidate.agentId,
+          subject: candidate.ownerSubject,
           error: error instanceof Error ? error.message : String(error),
         });
-        await enforceHardCap(db, candidate.agent_id, candidate.owner_subject);
+        await enforceHardCap(candidate.agentId, candidate.ownerSubject);
       }
     }
   };
 }
 
-async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string): Promise<void> {
-  // Oldest-beyond-the-keep-window, capped: the fold set.
-  const entries = await db
-    .selectFrom('agent_memories')
-    .select(['id', 'content', 'created_at'])
-    .where('agent_id', '=', agentId)
-    .where('kind', '=', 'entry')
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .offset(MEMORY_KEEP_RECENT)
-    .limit(MAX_FOLD_BATCH)
-    .execute();
-  if (entries.length === 0) return;
+async function compactOne(agentId: string, ownerSubject: string): Promise<void> {
+  // Oldest-beyond-the-keep-window, capped: the fold set. Null when there is
+  // nothing to fold, or the agent is gone (the FK cascade took its memory).
+  const foldSet = await getDataStore().agents.memoryFoldSet(agentId, {
+    keepRecent: MEMORY_KEEP_RECENT,
+    limit: MAX_FOLD_BATCH,
+  });
+  if (!foldSet) return;
+  const { entries, summary: summaryContent } = foldSet;
 
-  const summaryRow = await db
-    .selectFrom('agent_memories')
-    .select(['content'])
-    .where('agent_id', '=', agentId)
-    .where('kind', '=', 'summary')
-    .executeTakeFirst();
-
-  const agentRow = await db
-    .selectFrom('agents')
-    .select(['llm_model_id'])
-    .where('id', '=', agentId)
-    .executeTakeFirst();
-  if (!agentRow) {
-    // Agent gone; the FK cascade will have taken the memory with it.
-    return;
-  }
-
-  const llmResult = await resolveAgentLlm(db, agentRow.llm_model_id);
+  const llmResult = await resolveAgentLlm(foldSet.llmModelId);
   if (!llmResult.ok) {
     throw new Error(llmResult.err.message ?? `no model to compact with (${llmResult.err.type})`);
   }
@@ -121,18 +89,18 @@ async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string)
   // opened here as the owner, in one call, or the pass is left for the
   // next sweep — a summary folded from envelopes would be garbage.
   const opened = await openAgentMemoryContents(ownerSubject, [
-    ...(summaryRow ? [summaryRow.content] : []),
+    ...(summaryContent !== null ? [summaryContent] : []),
     ...entries.map((entry) => entry.content),
   ]);
   if (!opened.ok) {
     throw new Error(`memory could not be opened under the owner's key (${opened.reason})`);
   }
-  const summaryText = summaryRow ? opened.contents[0] : null;
-  const entryTexts = opened.contents.slice(summaryRow ? 1 : 0);
+  const summaryText = summaryContent !== null ? opened.contents[0] : null;
+  const entryTexts = opened.contents.slice(summaryContent !== null ? 1 : 0);
 
   // Oldest first, so the model reads a timeline.
   const noteLines = [...entries]
-    .map((entry, index) => ({ at: entry.created_at, text: entryTexts[index] }))
+    .map((entry, index) => ({ at: entry.createdAt, text: entryTexts[index] }))
     .reverse()
     .map((entry) => `- [${entry.at.toISOString().slice(0, 10)}] ${entry.text}`)
     .join('\n');
@@ -159,15 +127,11 @@ async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string)
   // Summary FIRST, then the deletes: a crash between the two leaves the
   // folded entries present AND summarized — duplication the next fold
   // collapses — never a hole.
-  await writeAgentMemorySummary(db, agentId, summary);
-  await db
-    .deleteFrom('agent_memories')
-    .where(
-      'id',
-      'in',
-      entries.map((entry) => entry.id)
-    )
-    .execute();
+  await writeAgentMemorySummary(agentId, summary);
+  await getDataStore().agents.deleteMemoryEntries(
+    agentId,
+    entries.map((entry) => entry.id)
+  );
 
   logger.info('compacted {folded} memory entr(ies) for agent {agentId}', {
     component: 'worker-agents/memory-compaction',
@@ -178,36 +142,16 @@ async function compactOne(db: Kysely<DB>, agentId: string, ownerSubject: string)
 }
 
 /** The lossy last resort, only past the hard cap: drop the oldest rows. */
-async function enforceHardCap(
-  db: Kysely<DB>,
-  agentId: string,
-  ownerSubject: string
-): Promise<void> {
-  const over = await db
-    .selectFrom('agent_memories')
-    .select(['id'])
-    .where('agent_id', '=', agentId)
-    .where('kind', '=', 'entry')
-    .orderBy('created_at', 'desc')
-    .orderBy('id', 'desc')
-    .offset(MEMORY_HARD_CAP)
-    .execute();
-  if (over.length === 0) return;
-  await db
-    .deleteFrom('agent_memories')
-    .where(
-      'id',
-      'in',
-      over.map((row) => row.id)
-    )
-    .execute();
+async function enforceHardCap(agentId: string, ownerSubject: string): Promise<void> {
+  const dropped = await getDataStore().agents.trimMemoryEntries(agentId, MEMORY_HARD_CAP);
+  if (dropped === 0) return;
   logger.warn(
     'memory hard cap: dropped {dropped} oldest entr(ies) for agent {agentId} uncompacted',
     {
       component: 'worker-agents/memory-compaction',
       agentId,
       subject: ownerSubject,
-      dropped: over.length,
+      dropped,
     }
   );
 }

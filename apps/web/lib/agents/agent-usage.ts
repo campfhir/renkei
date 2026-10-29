@@ -14,11 +14,11 @@
  * Calendar buckets (today / this week / …) are cut on the database
  * session's calendar (CURRENT_DATE), which is what these server-rendered
  * panels have always shown; the trend series takes the viewer's zone,
- * because its chart is refetched from the browser.
+ * because its chart is refetched from the browser. The numbers come from
+ * the data store's agentUsage domain; this file shapes them.
  */
 
-import { sql, type Kysely } from 'kysely';
-import type { DB } from '@renkei/db';
+import { getDataStore, type RunLogBucketsRecord } from '@renkei/db';
 import { connectorKeyForTool } from '@renkei/tool-outcomes';
 
 export interface UsageBuckets {
@@ -29,38 +29,6 @@ export interface UsageBuckets {
   quarter: number;
   year: number;
   allTime: number;
-}
-
-/** One grouped ledger row: six calendar buckets per token kind, by prefix. */
-interface TokenBucketRow {
-  in_today: string;
-  in_yesterday: string;
-  in_week: string;
-  in_month: string;
-  in_quarter: string;
-  in_year: string;
-  in_all_time: string;
-  out_today: string;
-  out_yesterday: string;
-  out_week: string;
-  out_month: string;
-  out_quarter: string;
-  out_year: string;
-  out_all_time: string;
-  cr_today: string;
-  cr_yesterday: string;
-  cr_week: string;
-  cr_month: string;
-  cr_quarter: string;
-  cr_year: string;
-  cr_all_time: string;
-  cw_today: string;
-  cw_yesterday: string;
-  cw_week: string;
-  cw_month: string;
-  cw_quarter: string;
-  cw_year: string;
-  cw_all_time: string;
 }
 
 /** One agent, or several summed together — the person page passes its whole roster. */
@@ -77,50 +45,6 @@ const ZERO_BUCKETS: UsageBuckets = {
   year: 0,
   allTime: 0,
 };
-
-/** The same six calendar buckets, per column prefix, off one grouped row. */
-function bucketsOf(row: TokenBucketRow, prefix: 'in' | 'out' | 'cr' | 'cw'): UsageBuckets {
-  return {
-    today: Number(row[`${prefix}_today`] ?? 0),
-    yesterday: Number(row[`${prefix}_yesterday`] ?? 0),
-    week: Number(row[`${prefix}_week`] ?? 0),
-    month: Number(row[`${prefix}_month`] ?? 0),
-    quarter: Number(row[`${prefix}_quarter`] ?? 0),
-    year: Number(row[`${prefix}_year`] ?? 0),
-    allTime: Number(row[`${prefix}_all_time`] ?? 0),
-  };
-}
-
-const TOKEN_BUCKET_COLUMNS = sql`
-  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS in_today,
-  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS in_yesterday,
-  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS in_week,
-  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS in_month,
-  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS in_quarter,
-  COALESCE(SUM(input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS in_year,
-  COALESCE(SUM(input_tokens), 0) AS in_all_time,
-  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS out_today,
-  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS out_yesterday,
-  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS out_week,
-  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS out_month,
-  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS out_quarter,
-  COALESCE(SUM(output_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS out_year,
-  COALESCE(SUM(output_tokens), 0) AS out_all_time,
-  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS cr_today,
-  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS cr_yesterday,
-  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS cr_week,
-  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS cr_month,
-  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS cr_quarter,
-  COALESCE(SUM(cache_read_input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS cr_year,
-  COALESCE(SUM(cache_read_input_tokens), 0) AS cr_all_time,
-  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE), 0) AS cw_today,
-  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date = CURRENT_DATE - 1), 0) AS cw_yesterday,
-  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('week', CURRENT_DATE)), 0) AS cw_week,
-  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('month', CURRENT_DATE)), 0) AS cw_month,
-  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('quarter', CURRENT_DATE)), 0) AS cw_quarter,
-  COALESCE(SUM(cache_write_input_tokens) FILTER (WHERE created_at::date >= date_trunc('year', CURRENT_DATE)), 0) AS cw_year,
-  COALESCE(SUM(cache_write_input_tokens), 0) AS cw_all_time
-`;
 
 /**
  * Token buckets for one agent (or a set of them, summed), calendar-shaped
@@ -146,28 +70,10 @@ export const ZERO_TOKEN_USAGE: TokenUsage = {
   cacheWrite: ZERO_BUCKETS,
 };
 
-function usageOf(row: TokenBucketRow | undefined): TokenUsage {
-  if (!row) return ZERO_TOKEN_USAGE;
-  return {
-    input: bucketsOf(row, 'in'),
-    output: bucketsOf(row, 'out'),
-    cacheRead: bucketsOf(row, 'cr'),
-    cacheWrite: bucketsOf(row, 'cw'),
-  };
-}
-
-export async function getAgentTokenUsage(
-  db: Kysely<DB>,
-  agentId: string | readonly string[]
-): Promise<TokenUsage> {
+export async function getAgentTokenUsage(agentId: string | readonly string[]): Promise<TokenUsage> {
   const ids = idsOf(agentId);
-  if (ids.length === 0) return usageOf(undefined);
-  const result = await sql<TokenBucketRow>`
-    SELECT ${TOKEN_BUCKET_COLUMNS}
-    FROM llm_calls
-    WHERE agent_id IN (${sql.join(ids)})
-  `.execute(db);
-  return usageOf(result.rows[0]);
+  if (ids.length === 0) return ZERO_TOKEN_USAGE;
+  return getDataStore().agentUsage.tokenBuckets(ids);
 }
 
 export interface AgentToolUsageRow {
@@ -189,35 +95,13 @@ export interface AgentToolUsageRow {
  * Complete for every audience: the ledger holds names and timings only.
  */
 export async function getAgentToolUsage(
-  db: Kysely<DB>,
   agentId: string | readonly string[],
   days = 30
 ): Promise<AgentToolUsageRow[]> {
   const ids = idsOf(agentId);
   if (ids.length === 0) return [];
-  const rows = await db
-    .selectFrom('tool_calls')
-    .select([
-      'tool',
-      sql<string>`count(*)`.as('calls'),
-      sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-      sql<string>`percentile_disc(0.5) WITHIN GROUP (ORDER BY duration_ms)`.as('median_ms'),
-      sql<string>`percentile_disc(0.95) WITHIN GROUP (ORDER BY duration_ms)`.as('p95_ms'),
-    ])
-    .where('agent_id', 'in', ids)
-    .where('started_at', '>=', sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`)
-    .groupBy('tool')
-    .orderBy(sql`count(*)`, 'desc')
-    .execute();
-
-  return rows.map((row) => ({
-    tool: row.tool,
-    connector: connectorKeyForTool(row.tool),
-    calls: Number(row.calls),
-    errors: Number(row.errors),
-    medianMs: Number(row.median_ms ?? 0),
-    p95Ms: Number(row.p95_ms ?? 0),
-  }));
+  const rows = await getDataStore().agentUsage.toolUsage(ids, days);
+  return rows.map((row) => ({ ...row, connector: connectorKeyForTool(row.tool) }));
 }
 
 export interface AgentUsageSummary {
@@ -238,63 +122,15 @@ export interface AgentUsageSummary {
  * way to widen, so a forgotten argument narrows rather than leaks.
  */
 export async function getAgentUsageSummaries(
-  db: Kysely<DB>,
   ownerSubject: string | null,
   days: number
 ): Promise<AgentUsageSummary[]> {
-  let agentQuery = db.selectFrom('agents').select(['id', 'name']);
-  if (ownerSubject !== null) agentQuery = agentQuery.where('owner_subject', '=', ownerSubject);
-  const agents = await agentQuery.orderBy('name').execute();
-  if (agents.length === 0) return [];
-  const agentIds = agents.map((agent) => agent.id);
-  const since = sql<Date>`NOW() - MAKE_INTERVAL(days => ${days})`;
-
-  const [callRows, tokenRows] = await Promise.all([
-    db
-      .selectFrom('tool_calls')
-      .select([
-        'agent_id',
-        sql<string>`count(*)`.as('calls'),
-        sql<string>`count(*) FILTER (WHERE status <> 'ok')`.as('errors'),
-      ])
-      .where('agent_id', 'in', agentIds)
-      .where('started_at', '>=', since)
-      .groupBy('agent_id')
-      .execute(),
-    db
-      .selectFrom('llm_calls')
-      .select(({ fn }) => [
-        'agent_id',
-        fn.sum<string>('input_tokens').as('input_tokens'),
-        fn.sum<string>('output_tokens').as('output_tokens'),
-      ])
-      .where('agent_id', 'in', agentIds)
-      .where('created_at', '>=', since)
-      .groupBy('agent_id')
-      .execute(),
-  ]);
-
-  const callsByAgent = new Map(callRows.map((row) => [row.agent_id, row]));
-  const tokensByAgent = new Map(tokenRows.map((row) => [row.agent_id, row]));
-
-  return agents
-    .map((agent) => {
-      const call = callsByAgent.get(agent.id);
-      const tokens = tokensByAgent.get(agent.id);
-      return {
-        agentId: agent.id,
-        name: agent.name,
-        calls: Number(call?.calls ?? 0),
-        errors: Number(call?.errors ?? 0),
-        inputTokens: Number(tokens?.input_tokens ?? 0),
-        outputTokens: Number(tokens?.output_tokens ?? 0),
-      };
-    })
-    .sort(
-      (left, right) =>
-        right.calls - left.calls ||
-        right.inputTokens + right.outputTokens - (left.inputTokens + left.outputTokens)
-    );
+  const rows = await getDataStore().agentUsage.usageSummaries(ownerSubject, days);
+  return [...rows].sort(
+    (left, right) =>
+      right.calls - left.calls ||
+      right.inputTokens + right.outputTokens - (left.inputTokens + left.outputTokens)
+  );
 }
 
 export interface DailyTokenPoint {
@@ -307,52 +143,22 @@ export interface DailyTokenPoint {
 /**
  * Daily token spend for one agent, or several summed — the raw series the
  * person page's trend chart buckets into day/week/month, and the input the
- * chart's per-agent breakdown filters down to a single id.
- *
- * Bucketed in `timeZone` — the viewer's, since the chart refetches from
- * the browser. Grouped by the alias `day`, never a repeat of the
- * expression: each `${timeZone}` is its own bound parameter, and a repeat
- * is a different expression to Postgres.
+ * chart's per-agent breakdown filters down to a single id. Bucketed in
+ * `timeZone` — the viewer's, since the chart refetches from the browser.
  */
 export async function getAgentTokenTrend(
-  db: Kysely<DB>,
   agentId: string | readonly string[],
   days: number,
   timeZone: string
 ): Promise<DailyTokenPoint[]> {
   const ids = idsOf(agentId);
   if (ids.length === 0) return [];
-  const rows = await db
-    .selectFrom('llm_calls')
-    .select(({ fn }) => [
-      sql<string>`to_char(created_at AT TIME ZONE ${timeZone}, 'YYYY-MM-DD')`.as('day'),
-      fn.sum<string>('input_tokens').as('input_tokens'),
-      fn.sum<string>('output_tokens').as('output_tokens'),
-    ])
-    .where('agent_id', 'in', ids)
-    .where(
-      'created_at',
-      '>=',
-      sql<Date>`((date_trunc('day', NOW() AT TIME ZONE ${timeZone}) - MAKE_INTERVAL(days => ${Math.max(0, days - 1)})) AT TIME ZONE ${timeZone})`
-    )
-    .groupBy(sql`day`)
-    .orderBy(sql`day`, 'asc')
-    .execute();
-
-  return rows.map((row) => ({
-    day: row.day,
-    inputTokens: Number(row.input_tokens ?? 0),
-    outputTokens: Number(row.output_tokens ?? 0),
-  }));
+  return getDataStore().agentUsage.tokenTrend(ids, days, timeZone);
 }
 
 /** Every ledger row in the org — runs, optimizer passes and chat alike. */
-export async function getTenantTokenUsage(db: Kysely<DB>): Promise<TokenUsage> {
-  const result = await sql<TokenBucketRow>`
-    SELECT ${TOKEN_BUCKET_COLUMNS}
-    FROM llm_calls
-  `.execute(db);
-  return usageOf(result.rows[0]);
+export async function getTenantTokenUsage(): Promise<TokenUsage> {
+  return getDataStore().agentUsage.tokenBuckets(null);
 }
 
 /**
@@ -362,25 +168,13 @@ export async function getTenantTokenUsage(db: Kysely<DB>): Promise<TokenUsage> {
  * it), matching the agent's own page; chat spend has no agent and only
  * reaches the org total.
  */
-export async function getTokenUsageByAgent(
-  db: Kysely<DB>
-): Promise<Record<string, TokenUsage>> {
-  const result = await sql<TokenBucketRow & { agent_id: string }>`
-    SELECT agent_id, ${TOKEN_BUCKET_COLUMNS}
-    FROM llm_calls
-    WHERE agent_id IS NOT NULL
-    GROUP BY agent_id
-  `.execute(db);
-  return Object.fromEntries(result.rows.map((row) => [row.agent_id, usageOf(row)]));
+export async function getTokenUsageByAgent(): Promise<Record<string, TokenUsage>> {
+  const rows = await getDataStore().agentUsage.tokenBucketsByAgent();
+  return Object.fromEntries(rows.map((row) => [row.agentId, row.usage]));
 }
 
 export interface ModelTokenUsage extends TokenUsage {
   /** Null on rows written before the ledger recorded the model (098). */
-  provider: string | null;
-  model: string | null;
-}
-
-interface ModelBucketRow extends TokenBucketRow {
   provider: string | null;
   model: string | null;
 }
@@ -398,23 +192,11 @@ interface ModelBucketRow extends TokenBucketRow {
  * model was recorded surface as one null-model row.
  */
 export async function getTokenUsageByModel(
-  db: Kysely<DB>,
   agentId: string | readonly string[] | null
 ): Promise<ModelTokenUsage[]> {
   const ids = agentId === null ? null : idsOf(agentId);
   if (ids !== null && ids.length === 0) return [];
-  const result = await sql<ModelBucketRow>`
-    SELECT provider, model, ${TOKEN_BUCKET_COLUMNS}
-    FROM llm_calls
-      ${ids === null ? sql`` : sql`WHERE agent_id IN (${sql.join(ids)})`}
-    GROUP BY provider, model
-    ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
-  `.execute(db);
-  return result.rows.map((row) => ({
-    provider: row.provider,
-    model: row.model,
-    ...usageOf(row),
-  }));
+  return getDataStore().agentUsage.tokenBucketsByModel(ids);
 }
 
 /**
@@ -438,24 +220,6 @@ export const ZERO_RUN_TOTALS: RunTokenTotals = {
   calls: 0,
 };
 
-interface RunTotalRow {
-  input_tokens: string;
-  output_tokens: string;
-  cache_read: string;
-  cache_write: string;
-  calls: string;
-}
-
-function totalsOf(row: RunTotalRow): RunTokenTotals {
-  return {
-    input: Number(row.input_tokens ?? 0),
-    output: Number(row.output_tokens ?? 0),
-    cacheRead: Number(row.cache_read ?? 0),
-    cacheWrite: Number(row.cache_write ?? 0),
-    calls: Number(row.calls ?? 0),
-  };
-}
-
 /**
  * Token totals for a set of runs at once, keyed by run id — the per-run
  * figure beside each line of a run listing, in one query. A run with no
@@ -464,26 +228,11 @@ function totalsOf(row: RunTotalRow): RunTokenTotals {
  * ids only, so a grantee reads the same numbers as the owner.
  */
 export async function getTokenUsageByRun(
-  db: Kysely<DB>,
   runIds: readonly string[]
 ): Promise<Record<string, RunTokenTotals>> {
   if (runIds.length === 0) return {};
-  const rows = await db
-    .selectFrom('llm_calls')
-    .select(({ fn }) => [
-      'run_id',
-      fn.sum<string>('input_tokens').as('input_tokens'),
-      fn.sum<string>('output_tokens').as('output_tokens'),
-      fn.coalesce(fn.sum<string>('cache_read_input_tokens'), sql<string>`0`).as('cache_read'),
-      fn.coalesce(fn.sum<string>('cache_write_input_tokens'), sql<string>`0`).as('cache_write'),
-      fn.countAll<string>().as('calls'),
-    ])
-    .where('run_id', 'in', [...runIds])
-    .groupBy('run_id')
-    .execute();
-  return Object.fromEntries(
-    rows.flatMap((row) => (row.run_id ? [[row.run_id, totalsOf(row)] as const] : []))
-  );
+  const rows = await getDataStore().agentUsage.tokensByRun(runIds);
+  return Object.fromEntries(rows.map((row) => [row.runId, row.totals]));
 }
 
 export interface RunModelTokenUsage extends RunTokenTotals {
@@ -492,30 +241,9 @@ export interface RunModelTokenUsage extends RunTokenTotals {
 }
 
 /** One run's token spend per model, ordered by spend. */
-export async function getRunTokenUsage(
-  db: Kysely<DB>,
-  runId: string
-): Promise<RunModelTokenUsage[]> {
-  const rows = await db
-    .selectFrom('llm_calls')
-    .select(({ fn }) => [
-      'provider',
-      'model',
-      fn.sum<string>('input_tokens').as('input_tokens'),
-      fn.sum<string>('output_tokens').as('output_tokens'),
-      fn.coalesce(fn.sum<string>('cache_read_input_tokens'), sql<string>`0`).as('cache_read'),
-      fn.coalesce(fn.sum<string>('cache_write_input_tokens'), sql<string>`0`).as('cache_write'),
-      fn.countAll<string>().as('calls'),
-    ])
-    .where('run_id', '=', runId)
-    .groupBy(['provider', 'model'])
-    .orderBy(sql`SUM(input_tokens) + SUM(output_tokens)`, 'desc')
-    .execute();
-  return rows.map((row) => ({
-    provider: row.provider,
-    model: row.model,
-    ...totalsOf(row),
-  }));
+export async function getRunTokenUsage(runId: string): Promise<RunModelTokenUsage[]> {
+  const rows = await getDataStore().agentUsage.runTokensByModel(runId);
+  return rows.map((row) => ({ provider: row.provider, model: row.model, ...row.totals }));
 }
 
 /** The grouped rows summed back into one figure — pure, so the tools' text is unit-testable. */
@@ -530,4 +258,41 @@ export function sumRunTotals(rows: readonly RunTokenTotals[]): RunTokenTotals {
     }),
     ZERO_RUN_TOTALS
   );
+}
+
+/** Run counts and failures in calendar buckets, from the durable run log (083). */
+export interface RunTallies {
+  runs: UsageBuckets;
+  failures: UsageBuckets;
+}
+
+function talliesOf(record: RunLogBucketsRecord): RunTallies {
+  return { runs: record.runs, failures: record.failures };
+}
+
+/**
+ * Run tallies for one agent from the durable run log, which survives the
+ * run-retention prune — that survival is what makes the quarterly/yearly/
+ * all-time numbers real — plus the runs started org-wide today, for
+ * reading against the daily cap.
+ */
+export async function getAgentInvocationCounts(
+  agentId: string
+): Promise<{ agent: RunTallies; orgToday: number }> {
+  const counts = await getDataStore().agentUsage.invocationCounts(agentId);
+  return { agent: talliesOf(counts.agent), orgToday: counts.orgToday };
+}
+
+/** Run tallies over the whole org and per agent (keyed by agent id) — the oversight page. */
+export async function getRunTallies(): Promise<{
+  totals: RunTallies;
+  byAgent: Record<string, RunTallies>;
+}> {
+  const buckets = await getDataStore().agentUsage.runLogBuckets();
+  return {
+    totals: talliesOf(buckets.totals),
+    byAgent: Object.fromEntries(
+      buckets.byAgent.map((row) => [row.agentId, talliesOf(row.buckets)])
+    ),
+  };
 }
