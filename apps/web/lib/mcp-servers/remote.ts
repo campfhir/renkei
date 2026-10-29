@@ -105,8 +105,10 @@ export function refreshInBackground(server: McpServer, subject: string): void {
       if (!outcome.ok) {
         logger.warn('MCP tool list refresh failed: {reason}', {
           component: 'mcp-servers',
+          subject,
           server: server.slug,
           reason: outcome.reason,
+          message: outcome.message,
         });
       }
     })

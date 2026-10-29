@@ -98,6 +98,13 @@ export async function POST(
           { status: 409 }
         );
       case 'DB_ERROR':
+        logger.error('The run could not be resumed: {error}', {
+          component: 'web/agents',
+          subject: session.subject,
+          agentId,
+          runId,
+          error: resumed.err.message ?? resumed.err.type,
+        });
         return NextResponse.json({ error: 'The run could not be resumed.' }, { status: 500 });
     }
   }

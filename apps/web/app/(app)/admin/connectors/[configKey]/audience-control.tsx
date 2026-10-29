@@ -18,6 +18,7 @@
 import { useState } from 'react';
 import ChipListInput, { type ChipOption } from '@/components/chip-list-input';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function AudienceControl({ capabilityKey, label, initialValues, groupsClaim, observedGroups }: {
   capabilityKey: string;
@@ -48,11 +49,17 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        setError(
+        const message =
           typeof body === 'object' && body !== null && 'error' in body
             ? String(body.error)
-            : 'Could not save'
+            : 'Could not save';
+        reportFetchFailure(
+          'PUT',
+          `/api/admin/connector-audience/${capabilityKey}`,
+          response.status,
+          message
         );
+        setError(message);
         return;
       }
       setNotice(
@@ -60,7 +67,14 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
           ? 'Saved. Offered to everyone again.'
           : `Saved. Only people in ${next.length} group${next.length === 1 ? '' : 's'} are offered ${label}; tool lists refresh within a minute.`
       );
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'PUT',
+        `/api/admin/connector-audience/${capabilityKey}`,
+        0,
+        'Could not reach the server',
+        error
+      );
       setError('Could not reach the server.');
     } finally {
       setBusy(false);

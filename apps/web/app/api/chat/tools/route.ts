@@ -17,6 +17,7 @@ import {
   toolConfigJson,
 } from '@/lib/chat/tool-config';
 import { getDefaultChatTools, setDefaultChatTools } from '@/lib/chat/tool-prefs';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest
@@ -54,11 +55,25 @@ export async function PUT(
     const config = parseToolConfig(body.userDefault);
     if (!config) return jsonError(400, 'invalid-tool-config', 'Invalid tool configuration');
     const written = await setDefaultChatTools(session.subject, config, kind);
-    if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/chat/tools',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return jsonError(500, 'save-failed', 'Could not save');
+    }
     return NextResponse.json({ userDefault: toolConfigJson(config), kind });
   }
 
   const written = await setDefaultChatTools(session.subject, null, kind);
-  if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
+  if (!written.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/chat/tools',
+      subject: session.subject,
+      error: written.err.message ?? written.err.type,
+    });
+    return jsonError(500, 'save-failed', 'Could not save');
+  }
   return NextResponse.json({ userDefault: null, kind });
 }

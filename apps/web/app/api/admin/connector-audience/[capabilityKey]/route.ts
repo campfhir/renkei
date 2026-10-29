@@ -19,6 +19,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 const MAX_VALUES = 50;
 const MAX_VALUE_CHARS = 255;
@@ -40,6 +41,10 @@ export async function GET(
   }
   const settings = await getOrgSettings();
   if (!settings.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/admin/connector-audience',
+      error: settings.err.message ?? settings.err.type,
+    });
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({ claimValues: settings.val.connectorAudiences[capabilityKey] ?? [] });
@@ -81,6 +86,11 @@ export async function PUT(
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/admin/connector-audience',
+      subject: session.subject,
+      error: settings.err.message ?? settings.err.type,
+    });
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   // Rewrite the whole map: an emptied rule is dropped rather than kept as
@@ -91,6 +101,11 @@ export async function PUT(
 
   const saved = await setOrgSettings({ connectorAudiences });
   if (!saved.ok) {
+    logger.error('Could not save org settings: {error}', {
+      component: 'api/admin/connector-audience',
+      subject: session.subject,
+      error: saved.err.message ?? saved.err.type,
+    });
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
   // Org-wide: every cached catalog in the tenant may now be wrong about

@@ -16,6 +16,7 @@ import {
   isProductionLabel,
 } from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/admanager/parse';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest,
@@ -28,6 +29,11 @@ export async function GET(
 
   const instance = await getInstance(instanceId);
   if (!instance.ok) {
+    logger.error('Could not read the instance: {error}', {
+      component: 'api/admin/admanager',
+      instanceId,
+      error: instance.err.message ?? instance.err.type,
+    });
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
   if (!instance.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -65,6 +71,12 @@ export async function PATCH(
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });
     }
+    logger.error('Could not update the instance: {error}', {
+      component: 'api/admin/admanager',
+      subject: session.subject,
+      instanceId,
+      error: updated.err.message ?? updated.err.type,
+    });
     return NextResponse.json({ error: 'Could not update the instance' }, { status: 500 });
   }
   if (!updated.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -105,6 +117,12 @@ export async function DELETE(
 
   const deleted = await deleteInstance(instanceId);
   if (!deleted.ok) {
+    logger.error('Could not delete the instance: {error}', {
+      component: 'api/admin/admanager',
+      subject: session.subject,
+      instanceId,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not delete the instance' }, { status: 500 });
   }
   if (!deleted.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });

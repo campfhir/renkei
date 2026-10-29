@@ -38,6 +38,7 @@ import {
   revokeRunToken,
   type McpToolResult,
 } from '@renkei/mcp-client';
+import { logger } from '@/lib/logger';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { insertMessageWhenIdle, listMessages } from './messages';
 import { chatCipherById } from './chat-keys';
@@ -105,7 +106,13 @@ export async function confirmWidgetTool(input: {
     await mcp.initialize();
     const result = await mcp.callTool(input.name, input.arguments);
     return { ok: true, result };
-  } catch {
+  } catch (error) {
+    logger.warn('chat card tool call failed: {tool} {error}', {
+      component: 'chat/widget',
+      subject: input.subject,
+      tool: input.name,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, reason: 'call-failed' };
   } finally {
     await revokeRunToken(token);

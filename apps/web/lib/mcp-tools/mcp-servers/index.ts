@@ -141,6 +141,7 @@ export function registerMcpServerTools(
           if (read.ok && read.val) refreshInBackground(read.val, subject);
           logger.warn('MCP tool call failed: {error}', {
             component: 'mcp-servers',
+            subject,
             server: entry.slug,
             tool: tool.name,
             error: error instanceof Error ? error.message : String(error),

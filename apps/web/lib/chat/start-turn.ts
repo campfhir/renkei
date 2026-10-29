@@ -309,6 +309,16 @@ export async function startChatTurn(
       : (chat.llmModelId ?? null);
   const llmResult = await resolveAgentLlm(requestedModel);
   if (!llmResult.ok) {
+    if (llmResult.err.type !== 'NO_MODEL') {
+      logger.warn('chat model could not be resolved: {kind} {error}', {
+        component: 'chat/turn',
+        subject: input.session.subject,
+        chatId: chat.id,
+        llmModelId: requestedModel,
+        kind: llmResult.err.type,
+        error: llmResult.err.message ?? '',
+      });
+    }
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
       {
@@ -400,9 +410,12 @@ export async function startChatTurn(
       })
     );
   } catch (error) {
-    logger.warn('chat turn could not start: {error}', {
+    logger.error('chat turn could not start: {error}', {
       component: 'chat/turn',
+      subject: input.session.subject,
+      chatId: chat.id,
       error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return err('DB_ERROR' as const);
   }
@@ -471,7 +484,15 @@ export async function executeChatTurn(input: ExecuteTurnInput): Promise<void> {
       .then((canceled) => {
         if (canceled) channel.requestCancel();
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        logger.warn('chat turn heartbeat failed while preparing: {error}', {
+          component: 'chat/turn',
+          subject: input.session.subject,
+          chatId: input.chat.id,
+          turnId: input.turnId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }, PREPARING_HEARTBEAT_MS);
   try {
     await executeTurnBody(input, channel, suspend.signal, () => clearInterval(preparing));
@@ -507,6 +528,7 @@ async function executeTurnBody(
   ) =>
     logger[level](message, {
       component: 'chat/turn',
+      subject: input.session.subject,
       chatId: input.chat.id,
       turnId: input.turnId,
       ...fields,
@@ -948,15 +970,25 @@ async function executeTurnBody(
       });
       try {
         await suspendTurn(input.turnId, input.resume?.seed.iterations ?? 0);
-      } catch {
+      } catch (suspendError) {
         // The stale heartbeat says the same thing to the sweep.
+        log('chat turn could not be marked suspended: {error}', {
+          error: suspendError instanceof Error ? suspendError.message : String(suspendError),
+        });
       }
       channel.close();
       return;
     }
-    log('chat turn failed before the model ran: {message}', {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    log(
+      'chat turn failed before the model ran: {message}',
+      {
+        message: error instanceof Error ? error.message : String(error),
+        ...(error instanceof TurnRefused
+          ? {}
+          : { stack: error instanceof Error ? error.stack : undefined }),
+      },
+      error instanceof TurnRefused ? 'warn' : 'error'
+    );
     const failure =
       error instanceof TurnRefused ? error.message : 'The reply could not be started.';
     try {
@@ -971,8 +1003,16 @@ async function executeTurnBody(
         inputTokens: 0,
         outputTokens: 0,
       });
-    } catch {
+    } catch (recordError) {
       // The janitor marks it interrupted.
+      log(
+        'chat turn failure could not be recorded: {error}',
+        {
+          error: recordError instanceof Error ? recordError.message : String(recordError),
+          stack: recordError instanceof Error ? recordError.stack : undefined,
+        },
+        'error'
+      );
     }
     channel.emit({
       type: 'turn_end',

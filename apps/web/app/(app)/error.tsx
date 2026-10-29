@@ -14,6 +14,7 @@
 
 import { useEffect } from 'react';
 import Link from 'next/link';
+import { clientLogger } from '@/lib/client-logger';
 
 function digestOf(error: unknown): string | null {
   if (typeof error !== 'object' || error === null || !('digest' in error)) return null;
@@ -23,7 +24,10 @@ function digestOf(error: unknown): string | null {
 
 export default function AppError({ error, retry }: { error: unknown; retry: () => void }) {
   useEffect(() => {
-    console.error(error);
+    const digest = digestOf(error);
+    clientLogger.error('app/error-boundary', 'page hit the error boundary', error, {
+      ...(digest ? { digest } : {}),
+    });
   }, [error]);
 
   const digest = digestOf(error);

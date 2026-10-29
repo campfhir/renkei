@@ -98,7 +98,7 @@ export class ZoomClient {
       return err('ZOOM_API_ERROR' as const, {
         message: timedOut
           ? `Zoom API timed out after ${REQUEST_TIMEOUT_MS}ms for ${path}`
-          : 'Zoom API unreachable',
+          : `Zoom API unreachable: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
 
@@ -171,7 +171,7 @@ export class ZoomClient {
       return err('ZOOM_API_ERROR' as const, {
         message: timedOut
           ? `Zoom download timed out after ${DOWNLOAD_TIMEOUT_MS}ms`
-          : 'Zoom download host unreachable',
+          : `Zoom download host unreachable: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
 

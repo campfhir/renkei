@@ -16,6 +16,7 @@ import {
   sbSecretRevoke,
   sbSecretUnlock,
 } from '@/lib/sandbox/service-client';
+import { logger } from '@/lib/logger';
 
 const HOUR_MS = 60 * 60_000;
 
@@ -47,6 +48,16 @@ export async function POST(
     });
     if (!unlocked.ok) {
       const failure = clientFailure(unlocked.err);
+      if (failure.status !== 400 && failure.status !== 404) {
+        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+          component: 'api/sandbox/secrets',
+          subject: session.subject,
+          secretId,
+          operation: 'unlocked',
+          status: failure.status,
+          error: 'message' in unlocked.err && unlocked.err.message ? unlocked.err.message : failure.message,
+        });
+      }
       return NextResponse.json({ error: failure.message }, { status: failure.status });
     }
     recordAuditEvent({
@@ -63,6 +74,16 @@ export async function POST(
     const locked = await sbSecretLock(target, secretId);
     if (!locked.ok) {
       const failure = clientFailure(locked.err);
+      if (failure.status !== 400 && failure.status !== 404) {
+        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+          component: 'api/sandbox/secrets',
+          subject: session.subject,
+          secretId,
+          operation: 'locked',
+          status: failure.status,
+          error: 'message' in locked.err && locked.err.message ? locked.err.message : failure.message,
+        });
+      }
       return NextResponse.json({ error: failure.message }, { status: failure.status });
     }
     recordAuditEvent({
@@ -89,6 +110,16 @@ export async function DELETE(
   const revoked = await sbSecretRevoke({ subject: session.subject }, secretId);
   if (!revoked.ok) {
     const failure = clientFailure(revoked.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/sandbox/secrets',
+        subject: session.subject,
+        secretId,
+        operation: 'revoked',
+        status: failure.status,
+        error: 'message' in revoked.err && revoked.err.message ? revoked.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   recordAuditEvent({

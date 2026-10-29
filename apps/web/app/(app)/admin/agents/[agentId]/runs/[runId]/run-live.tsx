@@ -20,6 +20,7 @@ import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import type { RunDetail } from '@/lib/agents/runs-view';
 import ForceHaltButton from './force-halt-button';
+import { clientLogger } from '@/lib/client-logger';
 
 export default function AdminRunLive({ agentId, runId, agentName, initialRun }: {
   agentId: string;
@@ -38,7 +39,8 @@ export default function AdminRunLive({ agentId, runId, agentName, initialRun }: 
         const parsed: { run: RunDetail } = JSON.parse(event.data);
         setRun(parsed.run);
         if (isRunSettled(parsed.run.status)) source.close();
-      } catch {
+      } catch (error) {
+        clientLogger.warn('agents/run-stream', 'malformed run event', error, { agentId, runId });
         // A malformed payload is not worth tearing the view down for.
       }
     });

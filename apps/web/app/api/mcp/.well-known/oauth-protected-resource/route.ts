@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 /**
  * Protected Resource Metadata for this deployment's MCP server (RFC 9728).
@@ -18,6 +19,10 @@ import { getOrigin } from '@/lib/get-origin';
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'api/mcp/.well-known/oauth-protected-resource',
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const issuer = `${originResult.val}/api/mcp`;

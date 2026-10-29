@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { withPresentationHint } from '../common';
+import { logger } from '@/lib/logger';
 import { textResult, errText } from '../graph/client';
 import { resolvePeriod, PERIOD_PRESETS } from './period';
 import { renderSection, type SummaryProvider, type SummarySection } from './types';
@@ -96,7 +97,13 @@ export function registerSummaryTools(
         selected.map(async (provider): Promise<SummarySection | null> => {
           try {
             return await provider.collect(context, period);
-          } catch {
+          } catch (error) {
+            logger.warn('summary source could not be read: {connector} {error}', {
+              component: 'mcp/summary',
+              subject: context.subject,
+              connector: provider.connector,
+              error: error instanceof Error ? error.message : String(error),
+            });
             return {
               connector: provider.connector,
               label: provider.label,
@@ -155,7 +162,13 @@ export function registerSummaryTools(
         let section: SummarySection | null;
         try {
           section = await provider.collect(context, period);
-        } catch {
+        } catch (error) {
+          logger.warn('summary source could not be read: {connector} {error}', {
+            component: 'mcp/summary',
+            subject: context.subject,
+            connector: provider.connector,
+            error: error instanceof Error ? error.message : String(error),
+          });
           return errText(`Could not read ${provider.label.toLowerCase()} for ${period.label}.`);
         }
         if (!section) {

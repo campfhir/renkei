@@ -14,6 +14,8 @@ import { useState } from 'react';
 import type { ThemeMode, ThemePrefs } from '@renkei/user-prefs/prefs';
 import { applyThemeMode, setStoredThemeMode } from '@/lib/theme';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
+import { logFailedResponse } from '@/lib/client-logger';
 
 const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] = [
   { value: 'auto', label: 'Auto', hint: 'Matches your system, and follows it if it changes.' },
@@ -54,9 +56,11 @@ export default function ThemeForm({
         setSaved(prefs);
         setStatus('saved');
       } else {
+        await logFailedResponse('preferences', 'could not save the theme', response);
         setStatus('failed');
       }
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
       setStatus('failed');
     }
   }

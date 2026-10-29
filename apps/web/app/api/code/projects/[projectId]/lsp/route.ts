@@ -27,6 +27,7 @@ import { jsonError } from '@/lib/chat/route-support';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -84,6 +85,17 @@ export async function POST(
   });
   if (!opened.ok) {
     const failure = clientFailure(opened.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/lsp',
+        subject: ready.context.session.subject,
+        projectId,
+        chatId,
+        operation: 'opened',
+        status: failure.status,
+        error: 'message' in opened.err && opened.err.message ? opened.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'lsp', failure.message);
   }
   return NextResponse.json({ session: opened.val });

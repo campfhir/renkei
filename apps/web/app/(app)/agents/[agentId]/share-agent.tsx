@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingRegion, SkeletonList } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The owner's sharing control, opened from the overview header's Share
@@ -72,6 +73,12 @@ function PeopleWithAccess({ agentId }: { agentId: string }) {
       .json()
       .catch(() => ({}));
     if (!response.ok) {
+      reportFetchFailure(
+        'GET',
+        `/api/agents/${agentId}/access`,
+        response.status,
+        body.error ?? 'The access list could not be loaded'
+      );
       setError(body.error ?? 'The access list could not be loaded');
       return;
     }
@@ -95,6 +102,12 @@ function PeopleWithAccess({ agentId }: { agentId: string }) {
       });
       const body: { grants?: GrantRow[]; error?: string } = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'POST',
+          `/api/agents/${agentId}/access`,
+          response.status,
+          body.error ?? 'Access could not be granted'
+        );
         setError(body.error ?? 'Access could not be granted');
         return;
       }
@@ -114,6 +127,12 @@ function PeopleWithAccess({ agentId }: { agentId: string }) {
       });
       if (!response.ok) {
         const body: { error?: string } = await response.json().catch(() => ({}));
+        reportFetchFailure(
+          'DELETE',
+          `/api/agents/${agentId}/access/${grantId}`,
+          response.status,
+          body.error ?? 'The grant could not be revoked'
+        );
         setError(body.error ?? 'The grant could not be revoked');
         return;
       }

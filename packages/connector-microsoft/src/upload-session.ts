@@ -21,6 +21,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest, type GraphRequestOptions } from './client';
+import { graphErrorDetail } from './fetch';
 
 /** 16 × 320KiB — Graph requires non-final chunks be 320KiB multiples. */
 export const UPLOAD_SESSION_CHUNK_BYTES = 16 * 320 * 1024;
@@ -79,13 +80,14 @@ export async function graphUploadViaSession(
       return err('GRAPH_API_ERROR' as const, {
         message: timedOut
           ? `upload session chunk timed out after ${CHUNK_TIMEOUT_MS}ms`
-          : 'upload session unreachable',
+          : `upload session unreachable: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
     if (!response.ok) {
+      const detail = await graphErrorDetail(response);
       await fetch(uploadUrl, { method: 'DELETE' }).catch(() => undefined);
       return err('GRAPH_API_ERROR' as const, {
-        message: `upload session chunk answered ${response.status}`,
+        message: `upload session chunk answered ${response.status}${detail ? `: ${detail}` : ''}`,
         cause: response.status,
       });
     }

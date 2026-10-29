@@ -2199,7 +2199,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       ]);
       if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
       kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
-    } catch {
+    } catch (error) {
+      logger.warn('agent save hints could not be read: {error}', {
+        component: 'mcp/agents',
+        subject: context.subject,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
     const acts = draft.tools.filter((tool) => kinds.get(tool) !== 'read');

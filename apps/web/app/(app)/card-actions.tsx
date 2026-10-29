@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * Approve/dismiss controls for one suggested card. Approval needs a Jira
@@ -44,6 +45,12 @@ export default function CardActions({
           const record: Record<string, unknown> = { ...body };
           if (typeof record.error === 'string') message = record.error;
         }
+        reportFetchFailure(
+          'POST',
+          `/api/actionable-items/${itemId}/decision`,
+          response.status,
+          message
+        );
         setError(message);
         return;
       }

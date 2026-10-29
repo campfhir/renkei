@@ -136,6 +136,7 @@ async function actOnSubscription(
       actionTaken = 'merge_failed';
       logger.warn('could not merge pull request #{pr} on {repo}: {error}', {
         component: COMPONENT,
+        subject: subscription.subscriberSubject,
         pr: subscription.prNumber,
         repo: subscription.repoFullName,
         error: merged.error,
@@ -152,6 +153,7 @@ async function actOnSubscription(
       actionTaken = 'fix_failed';
       logger.warn('could not post the pipeline-failure note into chat {chatId}: {error}', {
         component: COMPONENT,
+        subject: subscription.subscriberSubject,
         chatId: subscription.chatId,
         error: error instanceof Error ? error.message : String(error),
       });

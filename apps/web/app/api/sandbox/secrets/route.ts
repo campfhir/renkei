@@ -22,6 +22,7 @@ import {
   sbSecretCreate,
   sbSecretsList,
 } from '@/lib/sandbox/service-client';
+import { logger } from '@/lib/logger';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
@@ -40,6 +41,15 @@ export async function GET(
   const listed = await sbSecretsList({ subject: session.subject });
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/sandbox/secrets',
+        subject: session.subject,
+        operation: 'listed',
+        status: failure.status,
+        error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ secrets: listed.val });
@@ -86,6 +96,15 @@ export async function POST(
   );
   if (!created.ok) {
     const failure = clientFailure(created.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/sandbox/secrets',
+        subject: session.subject,
+        operation: 'created',
+        status: failure.status,
+        error: 'message' in created.err && created.err.message ? created.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
 

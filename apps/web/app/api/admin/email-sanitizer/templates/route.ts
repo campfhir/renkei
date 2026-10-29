@@ -10,6 +10,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { listTemplateHealth } from '@renkei/email-sanitizer';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest
@@ -21,6 +22,11 @@ export async function GET(
 
   const result = await listTemplateHealth();
   if (!result.ok) {
+    logger.error('Could not read template health: {error}', {
+      component: 'api/admin/email-sanitizer/templates',
+      subject: access.subject,
+      error: result.err.message ?? result.err.type,
+    });
     return NextResponse.json({ error: 'Could not read template health' }, { status: 500 });
   }
   return NextResponse.json({ templates: result.val });

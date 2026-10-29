@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
 import { parseQueue, saveQueuedSends } from '@/lib/chat/queued-sends';
+import { logger } from '@/lib/logger';
 
 export async function PUT(
   request: NextRequest,
@@ -25,7 +26,14 @@ export async function PUT(
   if (!queue) return jsonError(400, 'invalid', 'That is not a queue the composer builds.');
   try {
     await saveQueuedSends(chat.id, queue);
-  } catch {
+  } catch (error) {
+    logger.error('The queue could not be saved: {error}', {
+      component: 'api/chat/chats/queue',
+      subject: session.subject,
+      chatId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return jsonError(500, 'database', 'The queue could not be saved.');
   }
   return NextResponse.json({ ok: true });

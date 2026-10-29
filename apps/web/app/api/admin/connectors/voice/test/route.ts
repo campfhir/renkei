@@ -10,6 +10,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { loadKeyring } from '@renkei/crypto';
 import { getConnectorConfig } from '@renkei/connector-config';
 import { VOICE_CONNECTOR, createVoiceProvider, parseVoiceConfig } from '@renkei/voice';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   _request: NextRequest
@@ -20,6 +21,11 @@ export async function POST(
   }
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
+    logger.error('Could not load the token encryption key: {error}', {
+      component: 'api/admin/connectors/voice/test',
+      subject: access.subject,
+      error: keyResult.err.message ?? keyResult.err.type,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
   const configResult = await getConnectorConfig(VOICE_CONNECTOR, keyResult.val);
@@ -32,6 +38,12 @@ export async function POST(
   }
   const result = await createVoiceProvider(config).listVoices();
   if (!result.ok) {
+    logger.warn('Voice connection test failed ({kind}): {error}', {
+      component: 'api/admin/connectors/voice/test',
+      subject: access.subject,
+      kind: result.error.kind,
+      error: result.error.message,
+    });
     return NextResponse.json(
       { error: result.error.message, kind: result.error.kind },
       { status: 502 }

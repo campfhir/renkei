@@ -31,7 +31,14 @@ export async function startEmbeddedDelegate(options: {
   logger?: DelegateLogger;
 }): Promise<EmbeddedDelegate> {
   const logger = options.logger ?? silentDelegateLogger;
-  const signer = loadOrCreateSigningKey(options.encryptionKey, logger).catch(() => null);
+  const signer = loadOrCreateSigningKey(options.encryptionKey, logger).catch((error: unknown) => {
+    logger.error('the delegate signing key could not be loaded: {error}', {
+      component: 'worker-delegate/signing',
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    return null;
+  });
   const server: Server = createDelegateServer({
     encryptionKey: options.encryptionKey,
     apiKeys: [{ name: 'web', key: options.apiKey }],

@@ -216,6 +216,16 @@ async function extract(
     maxChars: EXTRACTED_TEXT_MAX_CHARS,
   });
   if (!result.ok) {
+    if (result.err.type !== 'UNSUPPORTED_FORMAT' && result.err.type !== 'INPUT_TOO_LARGE') {
+      logger.warn('text extraction failed for {filename}: {reason}', {
+        component: 'chat/attachments',
+        filename,
+        contentType,
+        sizeBytes: bytes.byteLength,
+        reason: result.err.type,
+        ...('message' in result.err && result.err.message ? { detail: result.err.message } : {}),
+      });
+    }
     return {
       text: null,
       status:
@@ -254,6 +264,15 @@ export async function ocrOne(
   try {
     status = await ocrAttempt(row, redactor, cipher, startedAt);
   } catch (error) {
+    logger.error('OCR threw for {filename}: {error}', {
+      component: 'chat/ocr',
+      artifactId: row.id,
+      subject: row.ownerSubject,
+      filename: row.filename,
+      contentType: row.contentType,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     await store.artifacts.update(row.id, { ocrStartedAt: null });
     throw error;
   }
@@ -279,6 +298,8 @@ function logOcrFailure(row: AttachmentRow, outcome: 'failed' | 'deferred', reaso
     component: 'chat/ocr',
     outcome,
     artifactId: row.id,
+    // The owner's subject puts the line in their own Activity view.
+    subject: row.ownerSubject,
     filename: row.filename,
     contentType: row.contentType,
     sizeBytes: Number(row.sizeBytes),
@@ -308,11 +329,12 @@ async function ocrAttempt(
     logOcrFailure(row, 'failed', reason);
     return 'ocr_failed';
   }
-  const ocr = await callMistralOcr(config.val, {
-    bytes: bytes.val,
-    filename: row.filename,
-    contentType: row.contentType,
-  });
+  const ocr = await callMistralOcr(
+    config.val,
+    { bytes: bytes.val, filename: row.filename, contentType: row.contentType },
+    // Debug traces only: a failed read is logged once, by logOcrFailure, with its owner.
+    { logger: { debug: (message, attrs) => logger.debug(message, attrs) } }
+  );
   const markdown = ocr.ok
     ? ocr.val.pages
         .map((page) => page.markdown)

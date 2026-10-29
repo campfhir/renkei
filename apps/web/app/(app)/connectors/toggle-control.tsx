@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function ToggleControl({
   endpoint,
@@ -37,11 +38,18 @@ export default function ToggleControl({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'POST',
+          endpoint,
+          response.status,
+          typeof data.error === 'string' ? data.error : 'Could not update'
+        );
         setNotice(typeof data.error === 'string' ? data.error : 'Could not update');
         return;
       }
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', endpoint, 0, 'Could not reach the server', error);
       setNotice('Could not reach the server');
     } finally {
       setBusy(false);

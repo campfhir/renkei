@@ -79,9 +79,12 @@ export async function searchLogs(search: LogSearch = EMPTY_SEARCH): Promise<LogS
   const accountId = isOperator ? (search.accountId ?? null) : ownAccountId;
   const scope: LogScope = { role, accountId };
 
-  if (!isOperator && !accountId) {
-    return { logs: [], scope, error: 'Connect Jira to see your activity' };
-  }
+  // Everyone else also sees the lines the app wrote on their behalf, tagged
+  // with their own subject, so a failed upload or OCR read shows here with or
+  // without a Jira grant.
+  const owner = isOperator
+    ? (accountId ?? undefined)
+    : { accountId: ownAccountId, subject: session.subject };
 
   // With decrypt configured, secure()-stored attributes (failed-request
   // payloads) come back as plaintext in the detail view.
@@ -90,7 +93,7 @@ export async function searchLogs(search: LogSearch = EMPTY_SEARCH): Promise<LogS
   let logs: LogRow[];
   try {
     logs = await store.activityLogs.search(
-      buildLogQueryOptions(search.expr, accountId ?? undefined, {
+      buildLogQueryOptions(search.expr, owner, {
         levels: search.levels,
         // Without a start the adapter substitutes yesterday, which is not what an
         // empty date picker says. A cleared range means every record.

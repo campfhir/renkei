@@ -143,6 +143,17 @@ export function createActionsHandler(deps: ActionsDeps) {
       }
       const interrupted = actions[results.length];
       if (interrupted) {
+        logger.warn(
+          'staged action {tool} for run {runId} was interrupted; its outcome is unknown',
+          {
+            component: 'worker-agents/actions',
+            runId: batch.runId,
+            agentId: batch.agentId,
+            batchId: batch.id,
+            subject: batch.ownerSubject,
+            tool: interrupted.tool,
+          }
+        );
         results.push({
           tool: interrupted.tool,
           outcome: 'failed',
@@ -194,6 +205,14 @@ export function createActionsHandler(deps: ActionsDeps) {
           }
           const action = actions[index];
           if (!toolsByName.has(action.tool)) {
+            logger.warn('staged action {tool} failed for run {runId}: the tool is not available', {
+              component: 'worker-agents/actions',
+              runId: batch.runId,
+              agentId: batch.agentId,
+              batchId: batch.id,
+              subject: batch.ownerSubject,
+              tool: action.tool,
+            });
             results.push({
               tool: action.tool,
               outcome: 'failed',
@@ -239,6 +258,8 @@ export function createActionsHandler(deps: ActionsDeps) {
               component: 'worker-agents/actions',
               runId: batch.runId,
               agentId: batch.agentId,
+              batchId: batch.id,
+              subject: batch.ownerSubject,
               tool: action.tool,
               error: clip(text, 500),
             });

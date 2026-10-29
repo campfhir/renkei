@@ -23,6 +23,7 @@ import { isEmailCategory, isMessageOverrideAction } from '@/lib/email-sanitizer-
 import { getOwnRow, setOverride } from '@renkei/email-sanitizer';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -69,6 +70,11 @@ export async function POST(
 
   const rowResult = await getOwnRow(userEmail, body.refId);
   if (!rowResult.ok) {
+    logger.error('Could not read your mail review queue: {error}', {
+      component: 'api/mail-review/override',
+      subject: session.subject,
+      error: rowResult.err.message ?? rowResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not read your mail review queue' }, { status: 500 });
   }
   const row = rowResult.val;
@@ -82,6 +88,11 @@ export async function POST(
     senderKey,
   });
   if (!overrideResult.ok) {
+    logger.error('Could not record the override: {error}', {
+      component: 'api/mail-review/override',
+      subject: session.subject,
+      error: overrideResult.err.message ?? overrideResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not record the override' }, { status: 500 });
   }
 
@@ -91,6 +102,11 @@ export async function POST(
   if (row.provider === MICROSOFT) {
     const objectId = objectIdOfMicrosoftRefId(row.refId);
     if (!objectId) {
+      logger.error('Malformed refId for this message: {refId}', {
+        component: 'api/mail-review/override',
+        subject: session.subject,
+        refId: row.refId,
+      });
       return NextResponse.json({ error: 'Malformed refId for this message' }, { status: 500 });
     }
     const enqueued = await webhookEventsQueue().producer.enqueue({
@@ -106,6 +122,11 @@ export async function POST(
       orderingKey: `microsoft/override/${row.refId}`,
     });
     if (!enqueued.ok) {
+      logger.error('Could not enqueue the override: {error}', {
+        component: 'api/mail-review/override',
+        subject: session.subject,
+        error: enqueued.err.message ?? enqueued.err.type,
+      });
       return NextResponse.json({ error: 'Could not enqueue the override' }, { status: 500 });
     }
   }

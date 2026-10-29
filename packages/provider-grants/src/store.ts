@@ -63,7 +63,14 @@ export async function setGrant(
     'DB_ERROR' as const
   );
   if (!sealedAccess.ok || !sealedAccess.val.ok || !sealedRefresh.ok || !sealedRefresh.val.ok) {
-    return err('DB_ERROR' as const);
+    const failed = [sealedAccess, sealedRefresh]
+      .map((sealed) =>
+        !sealed.ok ? sealed.err.message : !sealed.val.ok ? sealed.val.err.message : ''
+      )
+      .find(Boolean);
+    return err('DB_ERROR' as const, {
+      message: `could not seal the grant's tokens: ${failed ?? 'unknown'}`,
+    });
   }
   const encryptedAccessToken = sealedAccess.val.val;
   const encryptedRefreshToken = sealedRefresh.val.val;
@@ -116,10 +123,14 @@ export async function getGrant(
   if (!row) return ok(null);
 
   const accessTokenResult = await openGrantToken(row.subject, row.encryptedAccessToken);
-  if (!accessTokenResult.ok) return err('DECRYPTION_ERROR' as const);
+  if (!accessTokenResult.ok) {
+    return err('DECRYPTION_ERROR' as const, { message: accessTokenResult.err.message });
+  }
 
   const refreshTokenResult = await openGrantToken(row.subject, row.encryptedRefreshToken);
-  if (!refreshTokenResult.ok) return err('DECRYPTION_ERROR' as const);
+  if (!refreshTokenResult.ok) {
+    return err('DECRYPTION_ERROR' as const, { message: refreshTokenResult.err.message });
+  }
 
   return ok({
     provider,

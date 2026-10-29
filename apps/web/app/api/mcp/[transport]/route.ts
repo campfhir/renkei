@@ -78,7 +78,15 @@ async function resolveJiraGrant(
 ): Promise<JiraGrantContext | 'revoked' | 'failed'> {
   const ref = { provider: ATLASSIAN, accountId };
   const described = await delegateGrants().describe(ref);
-  if (!described.ok) return described.err.type === 'NO_GRANT' ? 'revoked' : 'failed';
+  if (!described.ok) {
+    if (described.err.type === 'NO_GRANT') return 'revoked';
+    logger.error('Failed to retrieve Jira grant for {accountId}: {error}', {
+      component: 'mcp/transport',
+      accountId,
+      error: described.err.message ?? described.err.type,
+    });
+    return 'failed';
+  }
   const site = readAtlassianMetadata(described.val.metadata);
   return {
     auth: grantFetch(ref),
@@ -138,6 +146,10 @@ const handler = async (request: NextRequest): Promise<Response> => {
   // link built from it is unreachable for the user. getOrigin resolves the public one.
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'mcp/transport',
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const origin = originResult.val;
@@ -332,6 +344,10 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // Org policy (read-only mode, limits) comes from the database per tenant.
     const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) {
+      logger.error('Could not read org settings: {error}', {
+        component: 'mcp/transport',
+        error: settingsResult.err.message ?? settingsResult.err.type,
+      });
       return NextResponse.json({ error: 'Settings error' }, { status: 500 });
     }
     const settings = settingsResult.val;

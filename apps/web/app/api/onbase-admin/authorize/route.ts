@@ -28,6 +28,7 @@ import { redirectToConsent } from '@/lib/consent-redirect';
 import { getOnBaseApp, onbaseAuthorizeScopes, ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 import { obDiscover, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // The resulting grant is bound to whoever completes this flow, so the
@@ -45,6 +46,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'api/onbase-admin/authorize',
+      subject: session.subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getOnBaseApp(originResult.val, ONBASE_ADMIN_CONNECTOR);
@@ -61,6 +67,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const discovered = await obDiscover({ connector: ONBASE_ADMIN_CONNECTOR });
   if (!discovered.ok) {
     const failure = onbaseClientFailure(discovered.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('OnBase request failed ({status}): {error}', {
+        component: 'api/onbase-admin/authorize',
+        subject: session.subject,
+        operation: 'discovered',
+        status: failure.status,
+        error: 'message' in discovered.err && discovered.err.message ? discovered.err.message : failure.message,
+      });
+    }
     return NextResponse.json(
       { error: `Could not reach the Hyland IdP: ${failure.message}` },
       { status: failure.status }

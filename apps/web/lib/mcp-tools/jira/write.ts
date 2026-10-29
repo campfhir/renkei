@@ -240,6 +240,7 @@ export async function recordUnwritten(
   } catch (error) {
     logger.warn('could not record unwritten fields', {
       component: 'mcp/tool',
+      subject: context.subject,
       issueKey,
       error: error instanceof Error ? error.message : String(error),
     });

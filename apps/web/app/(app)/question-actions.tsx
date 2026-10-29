@@ -12,6 +12,7 @@ import {
   type QuestionAnswerValue,
   type QuestionField,
 } from '@renkei/agents';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The decision controls of a QUESTION card — an `ask_person` call's form,
@@ -77,6 +78,12 @@ export default function QuestionActions({
       const record: Record<string, unknown> =
         typeof body === 'object' && body !== null ? { ...body } : {};
       if (response.status === 502 && typeof record.warning === 'string') {
+        reportFetchFailure(
+          'POST',
+          `/api/actionable-items/${itemId}/question`,
+          response.status,
+          record.warning
+        );
         setNotice(record.warning);
         refresh();
         return;
@@ -98,9 +105,15 @@ export default function QuestionActions({
             )
           );
         }
-        setError(
-          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`
+        const message =
+          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
+        reportFetchFailure(
+          'POST',
+          `/api/actionable-items/${itemId}/question`,
+          response.status,
+          message
         );
+        setError(message);
         return;
       }
       refresh();

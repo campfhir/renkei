@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * Archive/unarchive control for one decided card. Archiving only changes
@@ -33,6 +34,12 @@ export default function ArchiveAction({
           const record: Record<string, unknown> = { ...body };
           if (typeof record.error === 'string') message = record.error;
         }
+        reportFetchFailure(
+          archived ? 'DELETE' : 'POST',
+          `/api/actionable-items/${itemId}/archive`,
+          response.status,
+          message
+        );
         setError(message);
         return;
       }

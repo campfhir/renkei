@@ -26,6 +26,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // the database; without one, no Atlassian flow can start.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oauth',
+        subject: session.subject,
+        error: originResult.err.message ?? originResult.err.type,
+      });
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const app = await getAtlassianApp(originResult.val);

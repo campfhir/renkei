@@ -12,6 +12,9 @@
  * same sequence, which is the point of pulling it out once.
  */
 
+import { reportFetchFailure } from '@/lib/fetch-json';
+import { clientLogger } from '@/lib/client-logger';
+
 export type EnableOutcome = 'granted' | 'denied' | 'unsupported' | 'subscribe-failed';
 
 function supportsPush(): boolean {
@@ -51,13 +54,24 @@ export async function ensurePushSubscription(): Promise<boolean> {
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
       const keyResponse = await fetch(`/api/push/public-key`);
-      if (!keyResponse.ok) return false;
+      if (!keyResponse.ok) {
+        reportFetchFailure(
+          'GET',
+          '/api/push/public-key',
+          keyResponse.status,
+          `Request failed (${keyResponse.status})`
+        );
+        return false;
+      }
       const body: unknown = await keyResponse.json();
       const publicKey =
         typeof body === 'object' && body !== null && 'publicKey' in body
           ? body.publicKey
           : undefined;
-      if (typeof publicKey !== 'string') return false;
+      if (typeof publicKey !== 'string') {
+        clientLogger.warn('push', 'the server sent no push public key');
+        return false;
+      }
 
       subscription = await registration.pushManager.subscribe({
         userVisibleOnly: true,
@@ -66,15 +80,27 @@ export async function ensurePushSubscription(): Promise<boolean> {
     }
 
     const json = subscription.toJSON();
-    if (typeof json.endpoint !== 'string' || !json.keys) return false;
+    if (typeof json.endpoint !== 'string' || !json.keys) {
+      clientLogger.warn('push', 'the browser returned a subscription without an endpoint or keys');
+      return false;
+    }
 
     const saveResponse = await fetch(`/api/push/subscribe`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
     });
+    if (!saveResponse.ok) {
+      reportFetchFailure(
+        'POST',
+        '/api/push/subscribe',
+        saveResponse.status,
+        `Request failed (${saveResponse.status})`
+      );
+    }
     return saveResponse.ok;
-  } catch {
+  } catch (error) {
+    clientLogger.error('push', 'could not subscribe this browser to push', error);
     return false;
   }
 }
@@ -92,7 +118,8 @@ export async function enableDesktopNotifications(): Promise<EnableOutcome> {
   if (permission === 'default') {
     try {
       permission = await Notification.requestPermission();
-    } catch {
+    } catch (error) {
+      clientLogger.warn('push', 'notification permission request failed', error);
       permission = 'denied';
     }
   }

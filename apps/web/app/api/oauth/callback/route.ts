@@ -415,6 +415,11 @@ async function handleCallback(
     // The client secret stays in the delegate's reading of the same config.
     const appOriginResult = await getOrigin(request);
     if (!appOriginResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oauth',
+        subject: session.subject,
+        error: appOriginResult.err.message ?? appOriginResult.err.type,
+      });
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const atlassianApp = await getAtlassianApp(appOriginResult.val);
@@ -711,6 +716,10 @@ async function handleAtlassianJsmCallback(
     (await atlassianAccountIdOffline(subject, code)) ??
     (await atlassianMyself(pending, cloudId))?.accountId;
   if (!accountId) {
+    logger.warn('Token carries no account identity', {
+      component: 'auth/oauth',
+      subject,
+    });
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
   const jiraGrantRow = await callerJiraGrant(subject);
@@ -804,6 +813,10 @@ async function handleAtlassianConfluenceCallback(
     (await atlassianAccountIdOffline(subject, code)) ??
     (await atlassianMyself(pending, cloudId))?.accountId;
   if (!accountId) {
+    logger.warn('Token carries no account identity', {
+      component: 'auth/oauth',
+      subject,
+    });
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
   const jiraGrantRow = await callerJiraGrant(subject);
@@ -896,6 +909,10 @@ async function handleAtlassianAdminCallback(
   const myself = await atlassianMyself(pending, cloudId);
   const accountId = myself?.accountId ?? (await atlassianAccountIdOffline(subject, code));
   if (!accountId) {
+    logger.warn('Token carries no account identity', {
+      component: 'auth/oauth',
+      subject,
+    });
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
   const displayName = myself?.displayName || jiraGrantRow?.display_name || accountId;
@@ -1030,6 +1047,11 @@ async function handleWebexUserCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getWebexUserApp(originResult.val);
@@ -1134,6 +1156,11 @@ async function handleGitHubCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getGitHubApp(originResult.val);
@@ -1222,6 +1249,11 @@ async function handleMicrosoftCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getMicrosoftApp(originResult.val);
@@ -1243,7 +1275,14 @@ async function handleMicrosoftCallback(
   {
     const prior = await getDataStore()
       .providerGrants.find(MICROSOFT, oid)
-      .catch(() => null);
+      .catch((error: unknown) => {
+        logger.warn('Could not read the prior Microsoft grant; indexing opt-in not carried over: {error}', {
+          component: 'auth/oauth',
+          subject,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
     const priorMetadata =
       typeof prior?.metadata === 'object' &&
       prior.metadata !== null &&
@@ -1395,6 +1434,11 @@ async function handleEntraDeveloperCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getEntraDeveloperApp(originResult.val);
@@ -1485,6 +1529,11 @@ async function handleSalesforceCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const connector = await getSalesforceConnector(originResult.val, connectorKey, kind);
@@ -1609,6 +1658,11 @@ async function handleZoomCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getZoomApp(originResult.val);
@@ -1745,7 +1799,14 @@ async function handleMcpServerCallback(
     return NextResponse.json({ error: 'That MCP server is no longer available' }, { status: 404 });
   }
   const originResult = await getOrigin(request);
-  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
   const provider = `mcp:${serverId}`;
   const label = server.val.name;
 
@@ -1866,6 +1927,11 @@ async function handleOnBaseCallback(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth',
+      subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getOnBaseApp(originResult.val, spec.connector);

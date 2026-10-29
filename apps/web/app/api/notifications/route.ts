@@ -22,6 +22,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -86,7 +87,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ]),
     'DB_ERROR' as const
   );
-  if (!read.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  if (!read.ok) {
+    logger.error('Database unavailable: {error}', {
+      component: 'api/notifications',
+      subject: session.subject,
+      error: read.err.message ?? read.err.type,
+    });
+    return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  }
   const [rows, unread] = read.val;
 
   const notifications: NotificationView[] = rows.map((row) => ({
@@ -144,7 +152,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }),
     'DB_ERROR' as const
   );
-  if (!marked.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  if (!marked.ok) {
+    logger.error('Database unavailable: {error}', {
+      component: 'api/notifications',
+      subject: session.subject,
+      error: marked.err.message ?? marked.err.type,
+    });
+    return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  }
   return NextResponse.json({ marked: marked.val });
 }
 
@@ -175,6 +190,13 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     () => getDataStore().notifications.delete(session.subject, ids ? { ids } : { all: true }),
     'DB_ERROR' as const
   );
-  if (!deleted.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  if (!deleted.ok) {
+    logger.error('Database unavailable: {error}', {
+      component: 'api/notifications',
+      subject: session.subject,
+      error: deleted.err.message ?? deleted.err.type,
+    });
+    return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  }
   return NextResponse.json({ deleted: deleted.val });
 }

@@ -22,6 +22,7 @@ import {
 } from '@/lib/connector-catalog';
 import { searchConnectors } from '@/lib/connector-search';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /** What a catalog row needs — the entry, and where this person stands with it. */
 export interface CatalogItem {
@@ -85,6 +86,7 @@ export default function AddConnectorModal({
           typeof body === 'object' && body !== null && 'error' in body
             ? String(body.error)
             : 'Could not add';
+        reportFetchFailure('PUT', '/api/connector-selections', response.status, message);
         setError(message);
         return;
       }
@@ -92,7 +94,14 @@ export default function AddConnectorModal({
       // The card's props (ceilings, grant state) are server-derived, so the
       // page re-renders rather than the modal guessing at them.
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'PUT',
+        '/api/connector-selections',
+        0,
+        'Could not reach the server',
+        error
+      );
       setError('Could not reach the server.');
     } finally {
       setBusy(null);

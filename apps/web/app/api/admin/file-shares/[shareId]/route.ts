@@ -9,6 +9,7 @@ import { deleteShare, getShare, updateShare } from '@renkei/connector-fileshares
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseSharePayload } from '@/lib/file-shares/parse';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest,
@@ -20,7 +21,14 @@ export async function GET(
   }
 
   const share = await getShare(shareId);
-  if (!share.ok) return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
+  if (!share.ok) {
+    logger.error('Could not read the share: {error}', {
+      component: 'api/admin/file-shares',
+      shareId,
+      error: share.err.message ?? share.err.type,
+    });
+    return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
+  }
   if (!share.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   return NextResponse.json({
@@ -45,6 +53,12 @@ export async function PATCH(
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'A share with that name exists' }, { status: 409 });
     }
+    logger.error('Could not update the share: {error}', {
+      component: 'api/admin/file-shares',
+      subject: session.subject,
+      shareId,
+      error: updated.err.message ?? updated.err.type,
+    });
     return NextResponse.json({ error: 'Could not update the share' }, { status: 500 });
   }
   if (!updated.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -74,6 +88,12 @@ export async function DELETE(
 
   const deleted = await deleteShare(shareId);
   if (!deleted.ok) {
+    logger.error('Could not delete the share: {error}', {
+      component: 'api/admin/file-shares',
+      subject: session.subject,
+      shareId,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not delete the share' }, { status: 500 });
   }
   if (!deleted.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });

@@ -13,6 +13,8 @@
  * that does not hold the key.
  */
 
+import { clientLogger } from '@/lib/client-logger';
+
 const DB_NAME = 'renkei-keys';
 const STORE = 'keys';
 /** The delegate instance keys this browser has sealed to, and the signing keys it accepts lists from. */
@@ -56,9 +58,16 @@ function openDatabase(): Promise<IDBDatabase | null> {
         }
       };
       request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
-    } catch {
+      request.onerror = () => {
+        clientLogger.warn('keys/device-store', 'could not open the key store', request.error);
+        resolve(null);
+      };
+      request.onblocked = () => {
+        clientLogger.warn('keys/device-store', 'opening the key store was blocked');
+        resolve(null);
+      };
+    } catch (error) {
+      clientLogger.warn('keys/device-store', 'could not open the key store', error);
       resolve(null);
     }
   });
@@ -86,9 +95,20 @@ async function replaceRecord(db: IDBDatabase, store: string, record: object): Pr
       objects.clear();
       objects.put({ ...record, [KEY_PATH]: RECORD_KEY });
       tx.oncomplete = () => resolve(true);
-      tx.onerror = () => resolve(false);
-      tx.onabort = () => resolve(false);
-    } catch {
+      tx.onerror = () => {
+        clientLogger.warn('keys/device-store', 'could not write the key store', tx.error, {
+          store,
+        });
+        resolve(false);
+      };
+      tx.onabort = () => {
+        clientLogger.warn('keys/device-store', 'writing the key store was aborted', tx.error, {
+          store,
+        });
+        resolve(false);
+      };
+    } catch (error) {
+      clientLogger.warn('keys/device-store', 'could not write the key store', error, { store });
       resolve(false);
     }
   });
@@ -118,7 +138,8 @@ async function read(): Promise<StoredKey | null> {
       };
     }
     return null;
-  } catch {
+  } catch (error) {
+    clientLogger.warn('keys/device-store', 'could not read the stored key', error);
     db.close();
     return null;
   }
@@ -144,7 +165,8 @@ export async function loadUserKey(): Promise<Uint8Array<ArrayBuffer> | null> {
     );
     const bytes = new Uint8Array(opened);
     return bytes.length === 32 ? bytes : null;
-  } catch {
+  } catch (error) {
+    clientLogger.error('keys/device-store', 'the stored key could not be unwrapped', error);
     return null;
   }
 }
@@ -164,7 +186,8 @@ export async function saveUserKey(
       await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, deviceKey, copy(userKey))
     );
     return write({ deviceKey, iv, wrapped, acknowledged: options.acknowledged === true });
-  } catch {
+  } catch (error) {
+    clientLogger.error('keys/device-store', 'could not wrap the key for this device', error);
     return false;
   }
 }

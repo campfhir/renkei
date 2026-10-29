@@ -498,6 +498,7 @@ async function runItem(batch: BatchJobRow, item: BatchJobItemRow): Promise<RunIt
         {
           component: COMPONENT,
           batchJobId: batch.id,
+          subject: batch.subject,
           documentKey,
           error: error instanceof Error ? error.message : String(error),
         }

@@ -29,6 +29,7 @@ import { getActiveTurn } from '@/lib/chat/turns';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -46,7 +47,16 @@ export async function GET(
   if (!adapter)
     return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
   const listed = await adapter.listBranches(project.repo!.fullName);
-  if (!listed.ok) return jsonError(502, 'host', listed.error);
+  if (!listed.ok) {
+    logger.warn('Could not list branches from the code host: {error}', {
+      component: 'api/code/projects/branch',
+      subject: session.subject,
+      projectId,
+      chatId,
+      error: listed.error,
+    });
+    return jsonError(502, 'host', listed.error);
+  }
   return NextResponse.json({ branches: listed.branches });
 }
 
@@ -82,6 +92,17 @@ export async function POST(
   const status = await sbWorkspaceGitStatus(target, { id: workspaceId });
   if (!status.ok) {
     const failure = clientFailure(status.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/branch',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'status',
+        status: failure.status,
+        error: 'message' in status.err && status.err.message ? status.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'status', failure.message);
   }
   if (status.val.status.trim()) {
@@ -109,6 +130,17 @@ export async function POST(
   });
   if (!pulled.ok) {
     const failure = clientFailure(pulled.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/branch',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'pulled',
+        status: failure.status,
+        error: 'message' in pulled.err && pulled.err.message ? pulled.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'switch', failure.message);
   }
   recordAuditEvent({

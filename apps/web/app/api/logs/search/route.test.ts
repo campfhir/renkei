@@ -112,7 +112,10 @@ describe('POST /api/logs/search', () => {
 
     expect(response.status).toBe(200);
     expect(body.accountId).toBe('acc-a');
-    expect(mockBuildQuery).toHaveBeenCalledWith(null, 'acc-a');
+    expect(mockBuildQuery).toHaveBeenCalledWith(null, {
+      accountId: 'acc-a',
+      subject: 'user-a@example.com',
+    });
   });
 
   it('serves a user their own logs even with no accountId in the request', async () => {
@@ -122,16 +125,22 @@ describe('POST /api/logs/search', () => {
     const response = await POST(request());
 
     expect(response.status).toBe(200);
-    expect(mockBuildQuery).toHaveBeenCalledWith(null, 'acc-a');
+    expect(mockBuildQuery).toHaveBeenCalledWith(null, {
+      accountId: 'acc-a',
+      subject: 'user-a@example.com',
+    });
   });
 
-  it('refuses a user with no grant', async () => {
+  it('scopes a user with no grant to their own subject alone', async () => {
     mockGetSession.mockResolvedValue(session('user-c@example.com', ['renkei-user']));
     await stubStore({ 'user-b@example.com': 'acc-b' });
 
     const response = await POST(request());
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: 'No Jira grant for this user' });
+    expect(response.status).toBe(200);
+    expect(mockBuildQuery).toHaveBeenCalledWith(null, {
+      accountId: null,
+      subject: 'user-c@example.com',
+    });
   });
 });

@@ -31,7 +31,15 @@ export async function GET(
   const slot = isUuid(slotId)
     ? await getDataStore()
         .uploadSlots.get(slotId)
-        .catch(() => null)
+        .catch((error: unknown) => {
+          logger.error('Could not read upload slot {slotId}: {error}', {
+            component: 'upload/route',
+            slotId,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          });
+          return null;
+        })
     : null;
 
   // The page renders regardless (a missing slot still explains itself) —
@@ -138,7 +146,7 @@ export async function POST(
   const bytes = Buffer.concat(chunks);
 
   const outcome = await completeUploadSlot(claimed, bytes);
-  logger.info('upload slot {slotId} {status}: {detail}', {
+  logger[outcome.ok ? 'info' : 'warn']('upload slot {slotId} {status}: {detail}', {
     component: 'upload/route',
     slotId: claimed.id,
     kind: claimed.kind,

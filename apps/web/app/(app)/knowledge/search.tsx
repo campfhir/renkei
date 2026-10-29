@@ -11,6 +11,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import ExternalLink from '@/components/external-link';
+import { clientLogger } from '@/lib/client-logger';
 
 const K_OPTIONS = [10, 20, 30];
 
@@ -451,6 +452,10 @@ export default function KnowledgeSearch() {
           window.location.href = signInUrl(window.location.pathname);
           return;
         }
+        if (res.error)
+          clientLogger.warn('knowledge', 'knowledge search failed', res.error, {
+            sources: [...sources].join(','),
+          });
         setResult(res);
         setSearchedQuery(currentQuery);
         setHasSearched(true);

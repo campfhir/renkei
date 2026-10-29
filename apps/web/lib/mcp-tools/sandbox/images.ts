@@ -31,6 +31,7 @@ import {
 import { sanitizeBytes } from '@renkei/document-render';
 import { validateFilename } from '@renkei/connector-sandbox';
 import { getImagePrefs } from '@renkei/user-prefs';
+import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { sbReadFile, sbWriteFile, clientFailure } from '@/lib/sandbox/service-client';
@@ -61,7 +62,11 @@ const DEFAULT_FILENAME = 'image.png';
 export async function sandboxImageModels(): Promise<ImageModelChoice[]> {
   try {
     return await listImageModels();
-  } catch {
+  } catch (error) {
+    logger.warn('image models could not be listed; sandbox image tool withheld: {error}', {
+      component: 'mcp/sandbox',
+      error: error instanceof Error ? error.message : String(error),
+    });
     return [];
   }
 }
@@ -82,7 +87,12 @@ export interface SandboxImageToolDeps {
 async function savedModelId(subject: string): Promise<string | null> {
   try {
     return (await getImagePrefs(subject)).modelId;
-  } catch {
+  } catch (error) {
+    logger.warn('saved image model could not be read: {error}', {
+      component: 'mcp/sandbox',
+      subject,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

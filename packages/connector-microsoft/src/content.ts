@@ -30,6 +30,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 import { graphRequest, GRAPH_BASE_URL } from './client';
+import { graphErrorDetail } from './fetch';
 
 /**
  * Deliberately separate from client.ts's 15s JSON budget: a 25MB file over a
@@ -99,8 +100,10 @@ async function readCapped(
       }
       chunks.push(value);
     }
-  } catch {
-    return err('GRAPH_API_ERROR' as const, { message: 'download interrupted' });
+  } catch (error) {
+    return err('GRAPH_API_ERROR' as const, {
+      message: `download interrupted: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 
   const bytes = new Uint8Array(total);
@@ -128,7 +131,9 @@ async function fetchUnauthenticated(
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
     return err('GRAPH_API_ERROR' as const, {
-      message: timedOut ? `download timed out after ${timeoutMs}ms` : 'download unreachable',
+      message: timedOut
+        ? `download timed out after ${timeoutMs}ms`
+        : `download unreachable: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
   if (!response.ok) {
@@ -199,8 +204,10 @@ export async function graphDownload(
       redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch {
-    return err('GRAPH_API_ERROR' as const, { message: 'content request failed' });
+  } catch (error) {
+    return err('GRAPH_API_ERROR' as const, {
+      message: `content request failed: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 
   const location = redirect.headers.get('location');
@@ -210,8 +217,9 @@ export async function graphDownload(
     return ok({ bytes: fetched.val.bytes, contentType: fetched.val.contentType, item });
   }
   if (!redirect.ok) {
+    const detail = await graphErrorDetail(redirect);
     return err('GRAPH_API_ERROR' as const, {
-      message: `content request failed with ${redirect.status}`,
+      message: `content request failed with ${redirect.status}${detail ? `: ${detail}` : ''}`,
       cause: redirect.status,
     });
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 /**
  * Where to find audit logs for this tenant, scoped to what the caller may see.
@@ -76,7 +77,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json({ error: 'Invalid user role' }, { status: 403 });
   } catch (error) {
-    console.error('Failed to fetch audit logs:', error);
+    logger.error('Failed to fetch audit logs: {error}', {
+      component: 'api/audit',
+      subject: session.subject,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 });
   }
 }

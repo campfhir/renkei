@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { getJson, sendJson } from '@/lib/fetch-json';
+import { getJson, reportFetchFailure, sendJson } from '@/lib/fetch-json';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import DownloadLink from '@/components/download-link';
@@ -849,11 +849,13 @@ function UploadModal({
           typeof body === 'object' && body !== null && 'error' in body
             ? String(Reflect.get(body, 'error'))
             : `Upload failed (${response.status})`;
+        reportFetchFailure('PUT', fileUrl(share.id, ''), response.status, message);
         setError(message);
         setBusy(false);
         return;
       }
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', fileUrl(share.id, ''), 0, 'Upload failed', error);
       setError('Upload failed');
       setBusy(false);
       return;

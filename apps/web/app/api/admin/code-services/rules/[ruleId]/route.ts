@@ -14,6 +14,7 @@ import {
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
 import { isUuid } from '@/lib/uuid';
+import { logger } from '@/lib/logger';
 
 async function operatorGate(): Promise<NextResponse | null> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
@@ -42,6 +43,15 @@ export async function PUT(
   const set = await sbImageRuleSet({ id: ruleId, ...parsed });
   if (!set.ok) {
     const failure = clientFailure(set.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/admin/code-services/rules',
+        ruleId,
+        operation: 'set',
+        status: failure.status,
+        error: 'message' in set.err && set.err.message ? set.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ rule: set.val.rule, dropped: set.val.dropped });
@@ -58,6 +68,15 @@ export async function DELETE(
   const deleted = await sbImageRuleDelete(ruleId);
   if (!deleted.ok) {
     const failure = clientFailure(deleted.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/admin/code-services/rules',
+        ruleId,
+        operation: 'deleted',
+        status: failure.status,
+        error: 'message' in deleted.err && deleted.err.message ? deleted.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ ok: true });

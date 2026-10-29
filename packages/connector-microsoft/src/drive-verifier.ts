@@ -23,7 +23,7 @@
  * collapse below usually makes it fewer.
  */
 
-import type { AccessVerifier, SourceRef } from '@renkei/gates';
+import type { AccessVerifier, SourceRef, VerifyContext } from '@renkei/gates';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
@@ -76,7 +76,8 @@ export function createSharepointAccessVerifier(lookup: MicrosoftCredentialLookup
     provider: SHAREPOINT_KNOWLEDGE_PROVIDER,
     async verifyAccess(
       userEmail: string,
-      refs: readonly SourceRef[]
+      refs: readonly SourceRef[],
+      context?: VerifyContext
     ): Promise<Result<SourceRef[], 'VERIFICATION_FAILED'>> {
       // Distinct documents, not distinct chunks: a 10-hit search is commonly
       // 4-8 documents, and each saved id is a saved sub-request.
@@ -89,7 +90,12 @@ export function createSharepointAccessVerifier(lookup: MicrosoftCredentialLookup
       }
       if (parsed.size === 0) return ok([]);
 
-      const credential = await lookup(userEmail).catch(() => null);
+      const credential = await lookup(userEmail).catch((error: unknown) => {
+        context?.log?.warn('sharepoint access check could not resolve a credential: {error}', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
       if (!credential) return ok([]);
 
       const visible = new Set<string>();
@@ -116,7 +122,13 @@ export function createSharepointAccessVerifier(lookup: MicrosoftCredentialLookup
         // A failed batch leaves its ids unverified, hence denied. Deliberately
         // not `return err(...)`: one broken batch must not deny the batches
         // that did answer.
-        if (!response.ok) continue;
+        if (!response.ok) {
+          context?.log?.warn('sharepoint access check batch failed: {error}', {
+            error: response.err.message ?? response.err.type,
+            refs: batch.length,
+          });
+          continue;
+        }
 
         const body = isRecord(response.val) ? response.val : {};
         const responses = Array.isArray(body.responses) ? body.responses : [];

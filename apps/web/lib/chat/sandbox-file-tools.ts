@@ -37,6 +37,7 @@ import {
 } from './attachments';
 import type { ContentCipher } from './content-crypto';
 import { formatByteSize } from '@/lib/byte-size';
+import { logger } from '@/lib/logger';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { DIGEST_INPUT_PROPERTIES, digestFieldsOf } from './artifact-digest-input';
@@ -155,7 +156,14 @@ export function sandboxFileTools(): LocalTool[] {
           let rows: AttachmentRow[];
           try {
             rows = await filesOf(context);
-          } catch {
+          } catch (error) {
+            logger.error('chat files could not be listed for the sandbox: {error}', {
+              component: 'chat/sandbox-files',
+              subject: context.subject,
+              chatId: context.chatId,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            });
             return errorResult('This chat’s files could not be read just now.');
           }
           const picked = pickByName(rows, wanted);

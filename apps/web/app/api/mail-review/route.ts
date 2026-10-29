@@ -11,6 +11,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { isEmailCategory } from '@/lib/email-sanitizer-guards';
 import { listForOwner, countByCategoryForOwner } from '@renkei/email-sanitizer';
+import { logger } from '@/lib/logger';
 
 /**
  * A spot check, not a browsable archive — with good classification there's
@@ -62,6 +63,11 @@ export async function GET(
     countByCategoryForOwner(userEmail),
   ]);
   if (!pageResult.ok) {
+    logger.error('Could not read your mail review queue: {error}', {
+      component: 'api/mail-review',
+      subject: session.subject,
+      error: pageResult.err.message ?? pageResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not read your mail review queue' }, { status: 500 });
   }
 

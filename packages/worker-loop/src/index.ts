@@ -180,6 +180,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
           attempts: event.attempts,
           error: message,
           status: disposition.status,
+          stack: error instanceof Error ? error.stack : undefined,
         }
       );
     }
@@ -197,6 +198,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         logger.error('loop error: {error}', {
           component,
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         });
       }
       await sleep(hadWork ? busyDelayMs : idleDelayMs);
@@ -280,6 +282,7 @@ export function schedulePeriodicSweep(
       logger.error(`${label} sweep error: {error}`, {
         component,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     }
     if (!stopped) timer = setTimeout(tick, intervalMs);

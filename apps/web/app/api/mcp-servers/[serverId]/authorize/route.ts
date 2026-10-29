@@ -34,7 +34,15 @@ export async function GET(
     );
   }
   const server = await getServer(serverId);
-  if (!server.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  if (!server.ok) {
+    logger.error('Database error: {error}', {
+      component: 'mcp-servers',
+      subject: session.subject,
+      serverId,
+      error: server.err.message ?? server.err.type,
+    });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
   if (!server.val || !server.val.enabled) {
     return NextResponse.json({ error: 'No such MCP server' }, { status: 404 });
   }
@@ -43,7 +51,15 @@ export async function GET(
   }
 
   const origin = await getOrigin(request);
-  if (!origin.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!origin.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'mcp-servers',
+      subject: session.subject,
+      serverId,
+      error: origin.err.message ?? origin.err.type,
+    });
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
   const redirectUri = `${origin.val}/api/oauth/callback`;
 
   const prepared = await delegateGrants().mcpPrepare({ serverId, redirectUri });

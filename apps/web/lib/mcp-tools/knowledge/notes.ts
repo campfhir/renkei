@@ -72,7 +72,12 @@ async function findNoteChunk(
       refId
     );
     return first ? { metadata: first.metadata, keywords: first.keywords } : null;
-  } catch {
+  } catch (error) {
+    logger.error('note chunk could not be read: {error}', {
+      component: 'mcp/knowledge',
+      refId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return 'DB_ERROR';
   }
 }

@@ -53,13 +53,17 @@ export async function getConnectorConfig(
   if (!row) return ok(null);
 
   const secretsJson = decrypt(row.encryptedSecrets, encryptionKey);
-  if (!secretsJson.ok) return err('DECRYPTION_ERROR' as const);
+  if (!secretsJson.ok) {
+    return err('DECRYPTION_ERROR' as const, {
+      message: `${connector} secrets did not decrypt: ${secretsJson.err.message ?? secretsJson.err.type}`,
+    });
+  }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(secretsJson.val);
   } catch {
-    return err('DECRYPTION_ERROR' as const);
+    return err('DECRYPTION_ERROR' as const, { message: `${connector} secrets are not JSON` });
   }
 
   return ok({

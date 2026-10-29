@@ -400,6 +400,7 @@ export async function resolveChatToolSurface(input: {
     // person's: the turn proceeds without tools and says so in the log.
     logger.warn('chat tool surface unavailable: {error}', {
       component: 'chat/tools',
+      subject: input.subject,
       error: error instanceof Error ? error.message : String(error),
     });
     await release();

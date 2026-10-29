@@ -20,6 +20,7 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { isUuid } from '@/lib/uuid';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
@@ -45,6 +46,17 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Re
   });
   if (!sent.ok) {
     const failure = clientFailure(sent.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/lsp',
+        subject: ready.context.session.subject,
+        projectId,
+        sessionId,
+        operation: 'sent',
+        status: failure.status,
+        error: 'message' in sent.err && sent.err.message ? sent.err.message : failure.message,
+      });
+    }
     return jsonError(
       failure.status,
       sent.err.kind === 'op' ? sent.err.type : 'lsp',
@@ -70,6 +82,17 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Res
   );
   if (!events.ok) {
     const failure = clientFailure(events.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/lsp',
+        subject: ready.context.session.subject,
+        projectId,
+        sessionId,
+        operation: 'events',
+        status: failure.status,
+        error: 'message' in events.err && events.err.message ? events.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'lsp', failure.message);
   }
   return new Response(events.val, {

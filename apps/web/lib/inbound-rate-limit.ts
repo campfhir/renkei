@@ -86,17 +86,18 @@ export function clientKey(request: Request): string {
 /**
  * Charge one request against the endpoint's global budget AND the caller's
  * own. Denied when either is exhausted; the caller is told which by nothing
- * at all, on purpose.
+ * at all, on purpose. A string names the caller outright (a signed-in
+ * subject) instead of reading the forwarded address off a request.
  */
 export function checkInboundLimit(
   endpoint: string,
-  request: Request,
+  request: Request | string,
   rules: { perClient: RateLimitRule; global: RateLimitRule },
   now: number = Date.now()
 ): RateLimitVerdict {
   prune(now);
   const globalVerdict = hit(`${endpoint}:global`, rules.global, now);
-  const clientVerdict = hit(`${endpoint}:client:${clientKey(request)}`, rules.perClient, now);
+  const clientVerdict = hit(`${endpoint}:client:${typeof request === 'string' ? request : clientKey(request)}`, rules.perClient, now);
   if (globalVerdict.allowed && clientVerdict.allowed) {
     return { allowed: true, retryAfterSeconds: 0 };
   }

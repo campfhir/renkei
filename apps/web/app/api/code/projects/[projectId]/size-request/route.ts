@@ -12,6 +12,7 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { getOrgSettings } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { createSizeRequest, validReason, validRequestedBytes } from '@/lib/code/size-requests';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -27,7 +28,15 @@ export async function POST(
 
   const body = await readJsonBody(request);
   const settings = await getOrgSettings();
-  if (!settings.ok) return jsonError(500, 'settings', 'Could not read org settings');
+  if (!settings.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/code/projects/size-request',
+      subject: session.subject,
+      projectId,
+      error: settings.err.message ?? settings.err.type,
+    });
+    return jsonError(500, 'settings', 'Could not read org settings');
+  }
   const bytes = validRequestedBytes(body.requestedBytes, settings.val.sandboxWorkspaceMaxBytes);
   if (typeof bytes === 'string') return jsonError(400, 'bad-request', bytes);
   const reason = validReason(body.reason);

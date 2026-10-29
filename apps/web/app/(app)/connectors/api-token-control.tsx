@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function ApiTokenControl({ savedFor }: { savedFor: string | null }) {
   const router = useRouter();
@@ -34,17 +35,23 @@ export default function ApiTokenControl({ savedFor }: { savedFor: string | null 
       const body: Record<string, unknown> =
         typeof data === 'object' && data !== null ? Object.fromEntries(Object.entries(data)) : {};
       if (!response.ok) {
-        setNotice({
-          tone: 'error',
-          text:
-            typeof body.error === 'string' && body.error ? body.error : 'Could not save the token',
-        });
+        const text =
+          typeof body.error === 'string' && body.error ? body.error : 'Could not save the token';
+        reportFetchFailure('POST', '/api/atlassian-admin/token', response.status, text);
+        setNotice({ tone: 'error', text });
         return;
       }
       setToken('');
       if (typeof body.note === 'string' && body.note) setNotice({ tone: 'info', text: body.note });
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'POST',
+        '/api/atlassian-admin/token',
+        0,
+        'Could not reach the server',
+        error
+      );
       setNotice({ tone: 'error', text: 'Could not reach the server' });
     } finally {
       setBusy(false);
@@ -57,12 +64,25 @@ export default function ApiTokenControl({ savedFor }: { savedFor: string | null 
     try {
       const response = await fetch(`/api/atlassian-admin/token`, { method: 'DELETE' });
       if (!response.ok) {
+        reportFetchFailure(
+          'DELETE',
+          '/api/atlassian-admin/token',
+          response.status,
+          'Could not remove the token'
+        );
         setNotice({ tone: 'error', text: 'Could not remove the token' });
         return;
       }
       setConfirming(false);
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'DELETE',
+        '/api/atlassian-admin/token',
+        0,
+        'Could not reach the server',
+        error
+      );
       setNotice({ tone: 'error', text: 'Could not reach the server' });
     } finally {
       setBusy(false);

@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -25,6 +26,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     'DB_ERROR' as const
   );
   if (!read.ok) {
+    logger.error('Database error: {error}', {
+      component: 'api/actionable-items',
+      subject: session.subject,
+      error: read.err.message ?? read.err.type,
+    });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const items = read.val.map((item) => ({

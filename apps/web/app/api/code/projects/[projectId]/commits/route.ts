@@ -12,6 +12,7 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { hostAdapterFor } from '@/lib/code/repo-host';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -38,7 +39,15 @@ export async function GET(
     ref: project.repo!.branch || undefined,
     max,
   });
-  if (!listed.ok) return jsonError(502, 'host', listed.error);
+  if (!listed.ok) {
+    logger.warn('Could not list commits from the code host: {error}', {
+      component: 'api/code/projects/commits',
+      subject: session.subject,
+      projectId,
+      error: listed.error,
+    });
+    return jsonError(502, 'host', listed.error);
+  }
   if (summary) return NextResponse.json({ mostRecent: listed.commits[0] ?? null });
   return NextResponse.json({ commits: listed.commits, hasMore: listed.hasMore });
 }

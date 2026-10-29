@@ -183,7 +183,11 @@ export async function resumeChatTurn(turn: TurnRow): Promise<void> {
       status === 'completed' ? 'complete' : status
     );
     await interruptSubagentRunsOfTurn(turn.id);
-    log('orphaned chat turn ended as {status}', { status, error });
+    log(
+      'orphaned chat turn ended as {status}',
+      { status, error, ...(chat ? { subject: chat.ownerSubject } : {}) },
+      status === 'failed' ? 'warn' : 'info'
+    );
   };
 
   // No person is signed in for a resumed turn: the chat's rows are opened

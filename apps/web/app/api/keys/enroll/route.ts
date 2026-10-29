@@ -23,6 +23,7 @@ import {
   sealedDelegationsOf,
   setAutomationDays,
 } from '@/lib/keys/status';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -68,6 +69,10 @@ export async function POST(request: NextRequest): Promise<Response> {
           'Your earlier key is passphrase-protected; enter the passphrase to move your data.'
         );
       case 'MIGRATION_UNAVAILABLE':
+        logger.warn('Key enrollment could not move existing data: the key migration is unfinished', {
+          component: 'api/keys/enroll',
+          subject: session.subject,
+        });
         return jsonError(
           503,
           'migration',
@@ -77,6 +82,11 @@ export async function POST(request: NextRequest): Promise<Response> {
       case 'KEY_MISMATCH':
         return jsonError(400, 'bad_request', 'The keys this browser sent do not fit together.');
       default:
+        logger.error('The key service could not be reached: {error}', {
+          component: 'api/keys/enroll',
+          subject: session.subject,
+          error: enrolled.err.message ?? enrolled.err.type,
+        });
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }

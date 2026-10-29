@@ -116,6 +116,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const session = await getSessionFromRequest(request);
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oauth-authorize',
+        subject: session?.subject,
+        error: originResult.err.message ?? originResult.err.type,
+      });
       return NextResponse.json({ error: 'server_error' }, { status: 500 });
     }
     if (!session) {
@@ -180,6 +185,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'auth/oauth-authorize',
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
   if (!submittedFromThisOrigin(request, originResult.val)) {

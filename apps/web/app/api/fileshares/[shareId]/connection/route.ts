@@ -25,6 +25,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { clientFailure, fsTestConnection } from '@/lib/file-shares/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/file-shares/parse';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -46,7 +47,15 @@ export async function POST(
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
   const share = await getShare(shareId);
-  if (!share.ok) return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
+  if (!share.ok) {
+    logger.error('Could not read the share: {error}', {
+      component: 'api/fileshares/connection',
+      subject: session.subject,
+      shareId,
+      error: share.err.message ?? share.err.type,
+    });
+    return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
+  }
   if (!share.val || !share.val.summary.enabled) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 });
   }
@@ -69,6 +78,12 @@ export async function POST(
       exposure.allowDelete
     );
     if (!updated.ok) {
+      logger.error('Could not update the connection: {error}', {
+        component: 'api/fileshares/connection',
+        subject: session.subject,
+        shareId,
+        error: updated.err.message ?? updated.err.type,
+      });
       return NextResponse.json({ error: 'Could not update the connection' }, { status: 500 });
     }
     if (!updated.val) {
@@ -89,6 +104,13 @@ export async function POST(
       failure.status === 403 || tested.err.kind === 'op'
         ? `The file server did not accept these credentials: ${failure.message}`
         : failure.message;
+    logger.warn('File share connection test failed ({status}): {error}', {
+      component: 'api/fileshares/connection',
+      subject: session.subject,
+      shareId,
+      status: failure.status,
+      error: failure.message,
+    });
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
@@ -98,6 +120,12 @@ export async function POST(
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
+    logger.warn('Could not seal the File share credentials: {error}', {
+      component: 'api/fileshares/connection',
+      subject: session.subject,
+      shareId,
+      error: sealed.err.message ?? sealed.err.type,
+    });
     return sealed.err.type === 'NEEDS_DELEGATION' ||
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
@@ -117,6 +145,12 @@ export async function POST(
     allowDelete: parsed.allowDelete,
   });
   if (!stored.ok) {
+    logger.error('Could not store the connection: {error}', {
+      component: 'api/fileshares/connection',
+      subject: session.subject,
+      shareId,
+      error: stored.err.message ?? stored.err.type,
+    });
     return NextResponse.json({ error: 'Could not store the connection' }, { status: 500 });
   }
 
@@ -145,12 +179,24 @@ export async function DELETE(
 
   const existing = await getConnection(shareId, session.subject);
   if (!existing.ok) {
+    logger.error('Could not read the connection: {error}', {
+      component: 'api/fileshares/connection',
+      subject: session.subject,
+      shareId,
+      error: existing.err.message ?? existing.err.type,
+    });
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
 
   const deleted = await deleteConnection(shareId, session.subject);
   if (!deleted.ok) {
+    logger.error('Could not disconnect: {error}', {
+      component: 'api/fileshares/connection',
+      subject: session.subject,
+      shareId,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 

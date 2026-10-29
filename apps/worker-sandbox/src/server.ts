@@ -81,6 +81,7 @@ import { orgSandboxFeatures, type OrgFeaturesLookup, type SandboxCapabilities } 
 import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
+import { logErrorResponse, withRequestScope } from './request-log';
 
 /**
  * The browser verbs the HTTP surface dispatches to — structurally the
@@ -234,6 +235,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function sendError(response: ServerResponse, status: number, type: string, message?: string): void {
+  logErrorResponse(status, type, message);
   sendJson(response, status, { error: { type, message } });
 }
 
@@ -979,7 +981,9 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     // Write is the one endpoint whose body IS the file: metadata rides the
     // query string, matching the fileshare worker's /v1/write.
     if (url.pathname === '/v1/write') {
-      return handleWrite(request, url, response);
+      return withRequestScope('write', url.searchParams.get('subject') ?? '', () =>
+        handleWrite(request, url, response)
+      );
     }
     // So is a file uploaded into a code workspace's checkout.
     if (url.pathname === '/v1/workspaces/upload') {
@@ -992,7 +996,9 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
           `A file is at most ${UPLOAD_MAX_BYTES} bytes.`
         );
       }
-      return workspaces.handleUpload(url, bytes, response);
+      return withRequestScope('workspaces/upload', url.searchParams.get('subject') ?? '', () =>
+        workspaces.handleUpload(url, bytes, response)
+      );
     }
 
     const op = url.pathname.startsWith('/v1/') ? url.pathname.slice('/v1/'.length) : '';
@@ -1031,16 +1037,19 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       return sendError(response, 400, 'bad_request');
     }
     if (!isRecord(parsedBody)) return sendError(response, 400, 'bad_request');
-    if (browserOp !== null) return handleBrowser(browserOp, parsedBody, response);
-    if (secretsOp !== null) return handleSecrets(secretsOp, parsedBody, response);
-    if (workspacesOp !== null)
-      return workspaces.handleWorkspaces(workspacesOp, parsedBody, response);
-    if (envOp !== null) return workspaces.handleEnv(envOp, parsedBody, response);
-    if (servicesOp !== null) return services.handleServices(servicesOp, parsedBody, response);
-    if (chartsOp !== null) return handleCharts(chartsOp, parsedBody, response);
-    if (scriptsOp !== null) return scripts.handleScripts(scriptsOp, parsedBody, response);
-    if (crawlsOp !== null) return crawls.handleCrawls(crawlsOp, parsedBody, response);
-    await jsonHandler!(parsedBody, response);
+    const body = parsedBody;
+    const dispatch = async (): Promise<void> => {
+      if (browserOp !== null) return handleBrowser(browserOp, body, response);
+      if (secretsOp !== null) return handleSecrets(secretsOp, body, response);
+      if (workspacesOp !== null) return workspaces.handleWorkspaces(workspacesOp, body, response);
+      if (envOp !== null) return workspaces.handleEnv(envOp, body, response);
+      if (servicesOp !== null) return services.handleServices(servicesOp, body, response);
+      if (chartsOp !== null) return handleCharts(chartsOp, body, response);
+      if (scriptsOp !== null) return scripts.handleScripts(scriptsOp, body, response);
+      if (crawlsOp !== null) return crawls.handleCrawls(crawlsOp, body, response);
+      await jsonHandler!(body, response);
+    };
+    return withRequestScope(op, str(body.subject), dispatch);
   }
 
   const server: SandboxServer = Object.assign(
@@ -1049,6 +1058,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
         logger.error('unhandled sandbox op failure: {error}', {
           component: 'worker-sandbox/server',
           error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         });
         if (!response.headersSent) {
           sendError(response, 500, 'internal');

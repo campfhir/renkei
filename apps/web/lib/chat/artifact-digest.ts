@@ -153,7 +153,7 @@ async function resolveDigestLlm(): Promise<ResolvedLlm | null> {
     });
     return null;
   } catch (error) {
-    logger.debug('artifact digest skipped: {reason}', {
+    logger.warn('artifact digest model could not be resolved: {reason}', {
       component: 'chat/artifact-digest',
       reason: error instanceof Error ? error.message : String(error),
     });
@@ -206,6 +206,7 @@ export async function digestText(input: {
     if (!completion.ok) {
       logger.warn('artifact digest not answered: {message}', {
         component: 'chat/artifact-digest',
+        subject: input.subject,
         artifactId: input.file.id,
         message: completion.err.message ?? completion.err.type,
       });
@@ -238,12 +239,21 @@ export async function digestText(input: {
     );
     const digest = parseDigest(call?.type === 'tool_use' ? call.input : null);
     await storeDigest(input.file.id, digest);
+    if (!digest) {
+      logger.warn('artifact digest failed: the model answered with no usable digest', {
+        component: 'chat/artifact-digest',
+        subject: input.subject,
+        artifactId: input.file.id,
+      });
+    }
     return digest ? 'done' : 'failed';
   } catch (error) {
     logger.warn('artifact digest failed: {message}', {
       component: 'chat/artifact-digest',
+      subject: input.subject,
       artifactId: input.file.id,
       message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     return back('pending');
   }
@@ -378,6 +388,7 @@ export function deferDigest(
     } catch (error) {
       logger.warn('deferred artifact digest failed: {message}', {
         component: 'chat/artifact-digest',
+        subject: viewerSubject,
         message: error instanceof Error ? error.message : String(error),
       });
     }

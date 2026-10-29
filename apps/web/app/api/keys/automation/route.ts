@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server';
 import { delegateClient } from '@renkei/delegate-client';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function DELETE(
   request: NextRequest
@@ -17,7 +18,14 @@ export async function DELETE(
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const revoked = await delegateClient().revokeAutomation(session.subject);
-  if (!revoked.ok) return jsonError(503, 'delegate', 'The key service could not be reached.');
+  if (!revoked.ok) {
+    logger.error('The key service could not be reached: {error}', {
+      component: 'api/keys/automation',
+      subject: session.subject,
+      error: revoked.err.message ?? revoked.err.type,
+    });
+    return jsonError(503, 'delegate', 'The key service could not be reached.');
+  }
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'encryption-key.automation-revoked',

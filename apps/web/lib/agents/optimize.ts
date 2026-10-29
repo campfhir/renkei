@@ -383,7 +383,9 @@ export async function optimizeAgent(
     const message = completion.err.message?.slice(0, 300);
     logger.warn('agent optimization failed: {kind}', {
       component: 'agents/optimize',
+      subject: ownerSubject,
       agentId: agent.id,
+      message,
       kind,
       ms: Date.now() - startedAt,
     });

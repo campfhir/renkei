@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The decision controls of an APPROVAL card — a batch of actions an agent
@@ -43,14 +44,26 @@ export default function ApprovalActions({
       const record: Record<string, unknown> =
         typeof body === 'object' && body !== null ? { ...body } : {};
       if (response.status === 502 && typeof record.warning === 'string') {
+        reportFetchFailure(
+          'POST',
+          `/api/actionable-items/${itemId}/approval`,
+          response.status,
+          record.warning
+        );
         setNotice(record.warning);
         refresh();
         return;
       }
       if (!response.ok) {
-        setError(
-          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`
+        const message =
+          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
+        reportFetchFailure(
+          'POST',
+          `/api/actionable-items/${itemId}/approval`,
+          response.status,
+          message
         );
+        setError(message);
         return;
       }
       refresh();

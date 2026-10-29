@@ -483,6 +483,10 @@ export async function draftAgentFromProse(
     );
     if (completion === 'timeout') {
       if (usable) break;
+      logger.warn('prose draft failed: the model timed out', {
+        component: 'agents/draft',
+        ms: Date.now() - startedAt,
+      });
       return {
         error:
           'The model took over five minutes and was cut off — try again, or try a shorter description.',
@@ -526,7 +530,7 @@ export async function draftAgentFromProse(
     );
   }
 
-  logger.info('prose draft {result} in {ms}ms', {
+  logger[usable ? 'info' : 'warn']('prose draft {result} in {ms}ms', {
     component: 'agents/draft',
     result: usable ? 'ok' : 'unusable',
     ms: Date.now() - startedAt,

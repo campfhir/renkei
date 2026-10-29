@@ -5,6 +5,7 @@ import { useRef, useState, useEffect } from 'react';
 import { isEmailCategory } from '@/lib/email-sanitizer-guards';
 import { humanizeSystemName } from '@/lib/email-sanitizer-display';
 import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
+import { getJson, sendJson } from '@/lib/fetch-json';
 
 type Category = 'human' | 'system_notification' | 'marketing';
 
@@ -51,35 +52,8 @@ function categoryLabel(category: Category): string {
   return 'Human correspondence';
 }
 
-async function getJson<T>(url: string): Promise<{ data: T | null; error: string | null }> {
-  try {
-    const response = await fetch(url);
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        typeof body?.error === 'string' ? body.error : `Request failed (${response.status})`;
-      return { data: null, error: message };
-    }
-    return { data: body, error: null };
-  } catch {
-    return { data: null, error: 'Could not reach the server' };
-  }
-}
-
-async function postJson(url: string, body: unknown): Promise<string | null> {
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (response.ok) return null;
-    const data = await response.json().catch(() => null);
-    if (typeof data?.error === 'string') return data.error;
-    return `Request failed (${response.status})`;
-  } catch {
-    return 'Could not reach the server';
-  }
+function postJson(url: string, body: unknown): Promise<string | null> {
+  return sendJson(url, 'POST', body);
 }
 
 /** The "teach this system's format" flow: mark spans in the excerpt, name each one, save. */

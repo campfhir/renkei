@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The per-user opt-ins for what Renkei does with Outlook in the background.
@@ -45,10 +46,25 @@ export default function OutlookIndexingPrefs() {
     void (async () => {
       try {
         const response = await fetch(`/api/microsoft/indexing`);
-        if (!response.ok) return;
+        if (!response.ok) {
+          reportFetchFailure(
+            'GET',
+            '/api/microsoft/indexing',
+            response.status,
+            `Request failed (${response.status})`
+          );
+          return;
+        }
         const data = await response.json().catch(() => ({}));
         if (!cancelled && data.indexing) setPrefs(data.indexing);
-      } catch {
+      } catch (error) {
+        reportFetchFailure(
+          'GET',
+          '/api/microsoft/indexing',
+          0,
+          'Could not reach the server',
+          error
+        );
         // The section renders disabled until the next visit.
       }
     })();
@@ -71,12 +87,19 @@ export default function OutlookIndexingPrefs() {
       });
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
+        reportFetchFailure(
+          'PUT',
+          '/api/microsoft/indexing',
+          response.status,
+          data.error ?? 'Could not save.'
+        );
         setPrefs(prefs);
         setNotice(data.error ?? 'Could not save.');
         return;
       }
       setNotice(noticeFor(on));
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', '/api/microsoft/indexing', 0, 'Could not reach the server', error);
       setPrefs(prefs);
       setNotice('Could not reach the server.');
     } finally {

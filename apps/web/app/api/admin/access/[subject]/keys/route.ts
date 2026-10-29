@@ -15,6 +15,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function DELETE(
   request: NextRequest,
@@ -32,6 +33,11 @@ export async function DELETE(
   }
   const shredded = await delegateClient().shredUserKey(subject);
   if (!shredded.ok) {
+    logger.error('The key service could not be reached: {error}', {
+      component: 'api/admin/access/keys',
+      subject: access.subject,
+      error: shredded.err.message ?? shredded.err.type,
+    });
     return NextResponse.json({ error: 'The key service could not be reached.' }, { status: 503 });
   }
   await getDataStore().sessions.deleteForSubject(subject);

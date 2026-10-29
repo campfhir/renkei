@@ -290,6 +290,7 @@ export async function listAvailableTools(
     // rather than fail outright.
     logger.warn('tool catalog enumeration failed: {error}', {
       component: 'mcp/catalog',
+      subject,
       error: error instanceof Error ? error.message : String(error),
     });
     return [];

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import RemoveButton from '@/components/remove-button';
+import { clientLogger } from '@/lib/client-logger';
 
 /**
  * A list of values, entered as chips — the app's first multi-select.
@@ -100,6 +101,7 @@ export default function ChipListInput({
         for (const option of found) knownLabels.current.set(option.key, option.label);
         setOptions(found);
       } catch (error) {
+        clientLogger.warn('chip-list', 'could not load options', error);
         setOptions([]);
         setOptionsError(error instanceof Error ? error.message : 'Could not load the list.');
       } finally {

@@ -107,6 +107,7 @@ async function ensureKey(
     warn('key could not be created: {reason}', {
       kind,
       resourceId: resource.id,
+      subject: resource.ownerSubject,
       reason: created.err.type,
     });
     return created.err.type;
@@ -117,6 +118,7 @@ async function ensureKey(
       warn('key could not be wrapped for an existing viewer: {reason}', {
         kind,
         resourceId: resource.id,
+        subject: resource.ownerSubject,
         reason: shared.err.type,
       });
     }
@@ -162,6 +164,7 @@ export async function wrapKeyUnder(
     warn('{kind} key could not be wrapped under its parent: {reason}', {
       kind,
       resourceId: resource.id,
+      subject: resource.ownerSubject,
       parentKind: parent.kind,
       parentId: parent.resourceId,
       reason: wrapped.err.type,
@@ -183,6 +186,7 @@ export async function createKey(
   warn('key could not be created: {reason}', {
     kind,
     resourceId: resource.id,
+    subject: resource.ownerSubject,
     reason: created.err.type,
   });
   return null;
@@ -326,6 +330,7 @@ export async function shareKey(
     warn('key could not be shared: {reason}', {
       kind,
       resourceId: resource.id,
+      subject: resource.ownerSubject,
       reason: shared.err.type,
     });
   }

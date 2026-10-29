@@ -48,6 +48,7 @@
  */
 
 import { getDataStore } from '@renkei/db';
+import { logger } from '@/lib/logger';
 
 /**
  * The newest relevant `updated_at`, as an opaque string
@@ -62,7 +63,12 @@ import { getDataStore } from '@renkei/db';
 export async function toolSurfaceVersion(subject: string): Promise<string> {
   try {
     return (await getDataStore().toolSurface.version(subject)) ?? 'empty';
-  } catch {
+  } catch (error) {
+    logger.error('tool surface version could not be read: {error}', {
+      component: 'mcp/surface',
+      subject,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return 'unknown';
   }
 }

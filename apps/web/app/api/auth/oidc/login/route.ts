@@ -42,6 +42,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Get OIDC config
     const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
+      logger.error('Failed to retrieve OIDC configuration: {error}', {
+        component: 'auth/oidc',
+        error: oidcResult.err.message ?? oidcResult.err.type,
+      });
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
     const oidc = oidcResult.val;
@@ -106,6 +110,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Build OIDC authorization URL
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oidc',
+        error: originResult.err.message ?? originResult.err.type,
+      });
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
@@ -149,7 +157,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return response;
   } catch (error) {
-    console.error('OIDC login error:', error);
+    logger.error('OIDC login setup failed: {error}', {
+      component: 'auth/oidc',
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Authentication setup failed' }, { status: 500 });
   }
 }

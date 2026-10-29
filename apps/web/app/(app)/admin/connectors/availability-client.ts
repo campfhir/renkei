@@ -1,3 +1,4 @@
+import { reportFetchFailure } from '@/lib/fetch-json';
 /**
  * Saving the org-wide off switches. Shared by the catalog list and each
  * connector's own page, both of which hold the whole set — the route
@@ -14,10 +15,20 @@ export async function saveDisabledConnectors(
     });
     if (response.ok) return null;
     const body: unknown = await response.json().catch(() => null);
-    return typeof body === 'object' && body !== null && 'error' in body
-      ? String(body.error)
-      : 'Could not save';
-  } catch {
+    const message =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? String(body.error)
+        : 'Could not save';
+    reportFetchFailure('PUT', '/api/admin/connector-availability', response.status, message);
+    return message;
+  } catch (error) {
+    reportFetchFailure(
+      'PUT',
+      '/api/admin/connector-availability',
+      0,
+      'Could not reach the server',
+      error
+    );
     return 'Could not reach the server.';
   }
 }

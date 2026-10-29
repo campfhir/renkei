@@ -169,6 +169,9 @@ export async function sendPush(
             component: '@renkei/notifications',
             statusCode,
             error: error instanceof Error ? error.message : String(error),
+            // The push service's own reason (an expired VAPID JWT, a payload
+            // too large) — WebPushError carries it on `body`.
+            ...(webPushBody(error) ? { body: webPushBody(error) } : {}),
           });
         }
       })
@@ -184,4 +187,9 @@ export async function sendPush(
 function webPushStatusCode(error: unknown): number | null {
   if (typeof error !== 'object' || error === null || !('statusCode' in error)) return null;
   return typeof error.statusCode === 'number' ? error.statusCode : null;
+}
+
+function webPushBody(error: unknown): string {
+  if (typeof error !== 'object' || error === null || !('body' in error)) return '';
+  return typeof error.body === 'string' ? error.body.trim().slice(0, 300) : '';
 }

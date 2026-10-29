@@ -11,6 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -33,6 +34,12 @@ export async function POST(
     'DB_ERROR' as const
   );
   if (!found.ok) {
+    logger.error('Database error: {error}', {
+      component: 'api/actionable-items/archive',
+      subject: session.subject,
+      itemId,
+      error: found.err.message ?? found.err.type,
+    });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const item = found.val;
@@ -72,6 +79,12 @@ export async function DELETE(
     'DB_ERROR' as const
   );
   if (!result.ok) {
+    logger.error('Database error: {error}', {
+      component: 'api/actionable-items/archive',
+      subject: session.subject,
+      itemId,
+      error: result.err.message ?? result.err.type,
+    });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 

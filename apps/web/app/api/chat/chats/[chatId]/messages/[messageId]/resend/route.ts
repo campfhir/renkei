@@ -11,6 +11,7 @@ import { timeZoneOf } from '@/lib/chat/time-zone';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
 import { resendFromMessage } from '@/lib/chat/resend';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -69,8 +70,22 @@ export async function POST(
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', resent.err.message ?? 'The model is not usable.');
       case 'CONTENT_KEY':
+        logger.error('The content encryption key is not configured: {error}', {
+          component: 'api/chat/chats/messages/resend',
+          subject: session.subject,
+          chatId,
+          messageId,
+          error: resent.err.message ?? resent.err.type,
+        });
         return jsonError(500, 'content-key', 'The content encryption key is not configured.');
       default:
+        logger.error('The message could not be resent: {error}', {
+          component: 'api/chat/chats/messages/resend',
+          subject: session.subject,
+          chatId,
+          messageId,
+          error: resent.err.message ?? resent.err.type,
+        });
         return jsonError(500, 'database', 'The message could not be resent.');
     }
   }

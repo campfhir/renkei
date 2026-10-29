@@ -103,6 +103,7 @@ import {
 } from './workspaces';
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { logger } from './logger';
+import { logErrorResponse } from './request-log';
 
 export interface WorkspaceHandlerDeps {
   /** Whether this worker can run commands for a caller at all (features.ts); off answers every verb 503. */
@@ -144,6 +145,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function sendError(response: ServerResponse, status: number, type: string, message?: string): void {
+  logErrorResponse(status, type, message);
   sendJson(response, status, { error: { type, message } });
 }
 
@@ -275,6 +277,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       logger.warn('workspace {id} is ready but its checkout is missing from disk: {why}', {
         component: 'worker-sandbox/workspaces',
         id: workspace.id,
+        subject: workspace.subject,
         why,
         callerOnDisk,
         worker: workerInstance(),
@@ -385,6 +388,8 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       if (!outcome.ok) {
         logger.warn('workspace clone failed for {repo}: {error}', {
           component: 'worker-sandbox/workspaces',
+          id: row.id,
+          subject: target.subject,
           repo: repo.fullName,
           error: outcome.message,
         });
@@ -400,6 +405,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         logger.error('workspace {id} vanished right after cloning', {
           component: 'worker-sandbox/workspaces',
           id: row.id,
+          subject: target.subject,
           worker: workerInstance(),
         });
         await store.setWorkspaceStatus(row.id, 'failed', { error });
@@ -414,7 +420,11 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     })().catch((error: unknown) => {
       logger.error('workspace clone crashed: {error}', {
         component: 'worker-sandbox/workspaces',
+        id: row.id,
+        subject: target.subject,
+        repo: repo.fullName,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       void store.setWorkspaceStatus(row.id, 'failed', {
         error: 'The clone failed unexpectedly.',
@@ -476,7 +486,16 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       startBranch,
       ...(gitProxy ? { gitProxy } : {}),
     });
-    if (!outcome.ok) return sendError(response, 409, 'worktree_failed', outcome.message);
+    if (!outcome.ok) {
+      logger.warn('worktree {branch} of workspace {baseId} failed: {error}', {
+        component: 'worker-sandbox/workspaces',
+        baseId: base.id,
+        branch: ref.ref,
+        subject: target.subject,
+        error: outcome.message,
+      });
+      return sendError(response, 409, 'worktree_failed', outcome.message);
+    }
     const row = await store.insertWorkspace({
       ...target,
       provider: base.provider,

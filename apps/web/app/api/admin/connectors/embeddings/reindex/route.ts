@@ -34,6 +34,7 @@ import { isReindexKind, REINDEX_KINDS, resolveEmbeddingProvider } from '@renkei/
 import type { ReindexKind } from '@renkei/knowledge';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 /** Runs listed back, newest first — enough to show each kind's latest. */
 const RECENT_RUNS = 12;
@@ -166,6 +167,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
     if (!enqueued.ok) {
       await runs.markFailed(runId, 'could not enqueue the resumed batch');
+      logger.error('Could not resume the reindex: {error}', {
+        component: 'api/admin/connectors/embeddings/reindex',
+        subject: access.subject,
+        error: enqueued.err.message ?? enqueued.err.type,
+      });
       return NextResponse.json({ error: 'Could not resume the reindex.' }, { status: 500 });
     }
 
@@ -197,6 +203,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
   if (!enqueued.ok) {
     await runs.markFailed(newRunId, 'could not enqueue the first batch');
+    logger.error('Could not start the reindex: {error}', {
+      component: 'api/admin/connectors/embeddings/reindex',
+      subject: access.subject,
+      error: enqueued.err.message ?? enqueued.err.type,
+    });
     return NextResponse.json({ error: 'Could not start the reindex.' }, { status: 500 });
   }
 

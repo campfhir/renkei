@@ -17,6 +17,8 @@
  * alone and the reply is interrupted with Stop instead of a voice.
  */
 
+import { clientLogger } from '@/lib/client-logger';
+
 const storageKey = () => `renkei:voice:echo-cancellation`;
 
 export function getEchoCancellation(): boolean {
@@ -113,7 +115,8 @@ export async function listAudioDevices(): Promise<{
       microphones: named('audioinput', 'Microphone'),
       outputs: named('audiooutput', 'Speaker'),
     };
-  } catch {
+  } catch (error) {
+    clientLogger.warn('voice', 'could not list audio devices', error);
     return empty;
   }
 }

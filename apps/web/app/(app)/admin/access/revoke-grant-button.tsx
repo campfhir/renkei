@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The one interactive element on the Access page, split out because the
@@ -33,11 +34,25 @@ export default function RevokeGrantButton({ provider, providerLabel, accountId, 
       );
       const data: { success?: unknown; error?: unknown } = await response.json().catch(() => ({}));
       if (!response.ok || data.success !== true) {
-        setError(typeof data.error === 'string' ? data.error : 'Revoke failed');
+        const message = typeof data.error === 'string' ? data.error : 'Revoke failed';
+        reportFetchFailure(
+          'POST',
+          `/api/admin/grants/${accountId}/revoke`,
+          response.status,
+          message
+        );
+        setError(message);
         return;
       }
       refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'POST',
+        `/api/admin/grants/${accountId}/revoke`,
+        0,
+        'Could not reach the server',
+        error
+      );
       setError('Could not reach the server');
     } finally {
       setBusy(false);

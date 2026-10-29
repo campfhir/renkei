@@ -13,6 +13,7 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { getChatForOwner } from '@/lib/chat/store';
 import { recordWidgetModelContext } from '@/lib/chat/widget-tools';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -37,6 +38,13 @@ export async function POST(
     ...(stateKey ? { stateKey } : {}),
   });
   if (!recorded.ok) {
+    if (recorded.reason === 'failed') {
+      logger.error('The widget model context could not be recorded', {
+        component: 'api/chat/chats/widget/model-context',
+        subject: session.subject,
+        chatId,
+      });
+    }
     return recorded.reason === 'turn-running'
       ? jsonError(409, 'turn-running', 'Wait for the current reply to finish first.')
       : jsonError(500, 'failed', 'The note could not be written.');

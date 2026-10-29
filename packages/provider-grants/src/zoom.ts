@@ -12,6 +12,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 export const ZOOM = 'zoom';
 
@@ -51,7 +52,7 @@ export class ZoomAdapter implements ProviderAdapter {
       return err('REFRESH_FAILED' as const, {
         message: timedOut
           ? 'zoom.us token endpoint timed out after 15000ms'
-          : 'Could not reach zoom.us',
+          : `Could not reach zoom.us: ${causeOf(error)}`,
       });
     }
 
@@ -67,7 +68,7 @@ export class ZoomAdapter implements ProviderAdapter {
         return err('GRANT_REVOKED' as const);
       }
       return err('REFRESH_FAILED' as const, {
-        message: `Zoom token refresh failed (${response.status})`,
+        message: `Zoom token refresh failed (${response.status})${oauthErrorSuffix(record)}`,
       });
     }
 

@@ -159,7 +159,7 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
       return err('EMBEDDING_FAILED' as const, {
         message: timedOut
           ? `embeddings endpoint timed out after ${this.timeoutMs}ms`
-          : 'embeddings endpoint unreachable',
+          : `embeddings endpoint unreachable: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
 
@@ -169,8 +169,11 @@ export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {
       // handler, to tell a transient 429 from a broken endpoint — can
       // branch on the real code instead of parsing it back out of the
       // message.
+      const text = await response.text().catch(() => '');
       return err('EMBEDDING_FAILED' as const, {
-        message: `embeddings endpoint returned ${response.status}`,
+        message: `embeddings endpoint returned ${response.status}${
+          text.trim() ? `: ${text.trim().slice(0, 300)}` : ''
+        }`,
         cause: response.status,
       });
     }
@@ -237,10 +240,7 @@ export async function resolveKnowledge(): Promise<KnowledgeProvider | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
-  const configResult = await readConnectorConfigCached(
-    EMBEDDINGS_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(EMBEDDINGS_CONNECTOR, keyResult.val);
   if (!configResult.ok) return null;
   const config = configResult.val;
   if (!config || !config.enabled) return null;
@@ -262,8 +262,7 @@ export async function resolveKnowledge(): Promise<KnowledgeProvider | null> {
 }
 
 /** The embedder alone, for callers that only index. */
-export async function resolveEmbeddingProvider(
-): Promise<EmbeddingProvider | null> {
+export async function resolveEmbeddingProvider(): Promise<EmbeddingProvider | null> {
   const resolved = await resolveKnowledge();
   return resolved ? resolved.embedder : null;
 }

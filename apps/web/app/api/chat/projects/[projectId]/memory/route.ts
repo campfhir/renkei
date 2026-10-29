@@ -9,6 +9,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { resolveProjectAccess } from '@/lib/chat/access';
 import { appendProjectMemory, forgetProjectMemory, readProjectMemory } from '@/lib/chat/memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -58,7 +59,14 @@ export async function POST(
     chatId: null,
     cipher: access.cipher,
   });
-  if (!id) return jsonError(500, 'content-key', 'The note could not be saved.');
+  if (!id) {
+    logger.error('The note could not be saved', {
+      component: 'api/chat/projects/memory',
+      subject: session.subject,
+      projectId,
+    });
+    return jsonError(500, 'content-key', 'The note could not be saved.');
+  }
   return NextResponse.json({ id }, { status: 201 });
 }
 

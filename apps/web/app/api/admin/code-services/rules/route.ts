@@ -15,6 +15,7 @@ import {
 } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseImageRulePayload } from '@/lib/code/image-rules';
+import { logger } from '@/lib/logger';
 
 async function operatorGate(): Promise<NextResponse | null> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
@@ -37,6 +38,14 @@ export async function GET(
   const listed = await sbImageRulesList();
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/admin/code-services/rules',
+        operation: 'listed',
+        status: failure.status,
+        error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ rules: listed.val });
@@ -53,6 +62,14 @@ export async function POST(
   const set = await sbImageRuleSet(parsed);
   if (!set.ok) {
     const failure = clientFailure(set.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/admin/code-services/rules',
+        operation: 'set',
+        status: failure.status,
+        error: 'message' in set.err && set.err.message ? set.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ rule: set.val.rule, dropped: set.val.dropped }, { status: 201 });
