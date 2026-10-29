@@ -293,9 +293,9 @@ function rulesOf() {
 
 /** The worker's normalizeImageRule, in miniature: enough for what the page types. */
 function normalizeRule(raw) {
-  let value = String(raw ?? '')
-    .trim()
-    .replace(/\/+$/, '');
+  // A loop, not /\/+$/, which backtracks on long runs of slashes.
+  let value = String(raw ?? '').trim();
+  while (value.endsWith('/')) value = value.slice(0, -1);
   if (!value || /\s/.test(value)) return { error: 'A rule is required.' };
   if (value.includes('*') && !value.endsWith('/*')) {
     return {

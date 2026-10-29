@@ -232,7 +232,10 @@ export interface FakeAnswer {
  */
 export function fakeIdentityAnswer(provider: string, url: URL, consent: FakeConsent): FakeAnswer {
   const account = fakeAccount(consent.subject, provider);
-  const path = url.pathname.replace(/\/+$/, '');
+  // A loop, not /\/+$/, which backtracks on long runs of slashes.
+  let end = url.pathname.length;
+  while (end > 0 && url.pathname.charAt(end - 1) === '/') end -= 1;
+  const path = url.pathname.slice(0, end);
   const family = familyOf(provider);
   if (family === 'atlassian') {
     const site = fakeAtlassianSite(consent.organization ?? consent.subject);
