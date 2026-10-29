@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-29',
     entries: [
       {
+        kind: 'changed',
+        title: "A project's artifacts are listed a page at a time",
+        detail:
+          'A project holding many files shows ten at a time on its page, with a pager to move through the rest.',
+      },
+      {
+        kind: 'fixed',
+        title: "A chat's sandbox files stay in that chat",
+        detail:
+          "Files staged or made in the sandbox from one chat no longer show up for the assistant in your other chats. A code project's chats share one scratch space, kept apart from every other project's.",
+      },
+      {
         kind: 'fixed',
         title: 'Panning a mockup with the hand tool always moves it',
         detail:
