@@ -292,7 +292,9 @@ test.describe('chat compaction', () => {
       await expect(
         page.getByText('Compact this conversation').filter({ visible: true })
       ).toBeVisible();
-      await expect(page.getByText('queued', { exact: true })).toBeVisible();
+      await expect(
+        page.getByText('queued', { exact: true }).filter({ visible: true })
+      ).toBeVisible();
 
       // The model finishes its reply — nobody clicks anything, the queued
       // compaction pass sends itself the moment the model is free.

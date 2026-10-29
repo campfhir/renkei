@@ -231,8 +231,10 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({
     const work = page.locator('details.chat-fold', { hasText: 'Thought · 1 tool call' });
     await expect(work).toBeVisible();
     // Where the time went, from the rows' own timing: the model call
-    // apart from the tool it waited on.
-    await expect(work.locator('> summary')).toContainText(/2(\.\d)?s model, [\d.]+m?s tools/);
+    // apart from the tool it waited on. The memory tool can finish inside
+    // the millisecond it started in, and a tool time of 0 is left out
+    // (message-list.tsx), so its part is there only when it took time.
+    await expect(work.locator('> summary')).toContainText(/· 2(\.\d)?s model(, [\d.]+m?s tools)?/);
     await expect(work.getByText(/closed sprint is the one to search/)).toBeHidden();
     await work.locator('> summary').click();
     await expect(work.getByText(/closed sprint is the one to search/)).toBeVisible();

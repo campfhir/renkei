@@ -139,17 +139,21 @@ async function digestsReady(request: APIRequestContext): Promise<string> {
     const roster = await request.get('/api/admin/llm-models', { headers });
     const { models }: { models: { id: string; label: string; isDefault: boolean }[] } =
       await roster.json();
-    const ours = models.find((model) => model.label === DEFAULT_MODEL_LABEL);
-    // (The request context carries the operator's cookie too: signing in set it.)
-    if (ours && !ours.isDefault) await removeModel(request, ours.id);
-    // Another worker may be adding it this moment: then the next pass finds theirs.
+    const ours = models.filter((model) => model.label === DEFAULT_MODEL_LABEL);
+    const current = ours.find((model) => model.isDefault);
+    // A copy left behind when two workers added it at once: never the default,
+    // so taking it away moves nothing. (The request context carries the
+    // operator's cookie too: signing in set it.)
+    for (const stale of ours) if (!stale.isDefault) await removeModel(request, stale.id);
+    // Added only when no copy is the default: making another default would
+    // move the default under a digest another test is waiting on (the suite
+    // reads the roster afresh on every request).
     modelId =
-      ours?.isDefault === true
-        ? ours.id
-        : await addStubModel(request, 'default', {
-            label: DEFAULT_MODEL_LABEL,
-            isDefault: true,
-          });
+      current?.id ??
+      (await addStubModel(request, 'default', {
+        label: DEFAULT_MODEL_LABEL,
+        isDefault: true,
+      }));
     const probe = await upload(
       request,
       { name: 'probe.md', type: 'text/markdown', body: '# Probe\n\nA probe.\n' },
@@ -377,12 +381,14 @@ test('the library: filters, details, rename, share, delete with its impact', asy
     .getByRole('list', { name: 'Keywords' })
     .getByRole('button', { name: 'rounding' })
     .click();
-  await expect(page.getByLabel('Search artifacts')).toHaveValue('rounding');
+  await expect(page.getByLabel('Search artifacts').filter({ visible: true })).toHaveValue(
+    'rounding'
+  );
   await expect(list.getByText('rounding-analysis.md')).toBeVisible();
   await expect(list.getByText('schema-guide.md')).toBeVisible();
   await expect(list.getByText('march-invoices.csv')).toBeHidden();
   await expect(page).toHaveURL(/q=rounding/);
-  await page.getByLabel('Search artifacts').fill('');
+  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('');
   await expect(list.getByText('march-invoices.csv')).toBeVisible();
 
   await details.getByRole('button', { name: 'Rename' }).click();
@@ -473,7 +479,7 @@ test('the library: pages of 25, the list scrolling in its own box, a link openin
 
   // A search starts over on the first page of what it finds: a word in a
   // name (a substring), or in the summary and keywords the model wrote.
-  const search = page.getByLabel('Search artifacts');
+  const search = page.getByLabel('Search artifacts').filter({ visible: true });
   await search.fill('backlog-2');
   await expect(pager.getByText('1–10 of 10')).toBeVisible();
   await expect(pager.getByRole('button', { name: 'Next page' })).toHaveCount(0);
@@ -529,11 +535,14 @@ test('the library: a real upload lands, reads back, and is attached from the car
   // The bytes go to the blob store's local backend, the text is extracted,
   // the row appears, and the download serves the same bytes back.
   await page.goto('/chat/artifacts');
-  await page.getByLabel('Upload artifacts').setInputFiles({
-    name: 'api-style-guide.md',
-    mimeType: 'text/markdown',
-    buffer: Buffer.from('# API style guide\n\nMoney fields are snake_case and numeric.\n'),
-  });
+  await page
+    .getByRole('main')
+    .getByLabel('Upload artifacts')
+    .setInputFiles({
+      name: 'api-style-guide.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from('# API style guide\n\nMoney fields are snake_case and numeric.\n'),
+    });
   const list = page.getByRole('region', { name: 'Artifacts' });
   await expect(list.getByText('api-style-guide.md')).toBeVisible(COLD);
   // The upload stays on the table: the page does not turn to the file.
@@ -567,10 +576,10 @@ test('the library: a real upload lands, reads back, and is attached from the car
   await expect(
     about.getByRole('list', { name: 'Keywords' }).getByRole('button', { name: 'money' })
   ).toBeVisible();
-  await page.getByLabel('Search artifacts').fill('money fields');
+  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('money fields');
   await expect(list.getByText('api-style-guide.md')).toBeVisible();
   await expect(list.getByText('schema-guide.md')).toBeHidden();
-  await page.getByLabel('Search artifacts').fill('');
+  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('');
   await expect(list.getByText('schema-guide.md')).toBeVisible();
 
   // Hover: the controls explain themselves, in an element a screenshot keeps.
@@ -914,11 +923,14 @@ test('a project page: pressing remove again after the server has answered takes 
 
 /** A scan the library holds as needs_ocr. Its text says SLOW, so the stub holds the read for a few seconds. */
 async function uploadScan(page: Page, name: string): Promise<void> {
-  await page.getByLabel('Upload artifacts').setInputFiles({
-    name,
-    mimeType: 'image/png',
-    buffer: Buffer.from(`SLOW ${name} invoice\n`),
-  });
+  await page
+    .getByRole('main')
+    .getByLabel('Upload artifacts')
+    .setInputFiles({
+      name,
+      mimeType: 'image/png',
+      buffer: Buffer.from(`SLOW ${name} invoice\n`),
+    });
   await expect(page.getByRole('region', { name: 'Artifacts' }).getByText(name)).toBeVisible(COLD);
 }
 
@@ -976,7 +988,7 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   await expect(details.getByText(/Stub summary/)).toBeVisible(COLD);
   await shot(page, testInfo, 'ocr-02-done-with-summary');
 
-  await page.getByLabel('Search artifacts').fill('invoice');
+  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('invoice');
   await expect(list.locator('[data-artifact]', { hasText: 'scan-d.png' })).toBeVisible();
   // scan-e was never read, so nothing about it is in the index.
   await expect(list.locator('[data-artifact]', { hasText: 'scan-e.png' })).toHaveCount(0);
@@ -996,7 +1008,7 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   // Phone width: the offer opens over the list, and the page does not scroll sideways.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto('/chat/artifacts');
-  await page.getByLabel('Search artifacts').fill('');
+  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('');
   await page
     .locator('[data-artifact]', { hasText: 'scan-e.png' })
     .getByRole('button')
@@ -1021,11 +1033,14 @@ test('the library: a photo with no text is described from the picture, OCR finds
   await page.goto('/chat/artifacts');
   const list = page.getByRole('region', { name: 'Artifacts' });
   const details = page.getByRole('complementary', { name: 'Selected artifact' });
-  await page.getByLabel('Upload artifacts').setInputFiles({
-    name: 'car-street.png',
-    mimeType: 'image/png',
-    buffer: Buffer.from('NOTEXT a red car on a street\n'),
-  });
+  await page
+    .getByRole('main')
+    .getByLabel('Upload artifacts')
+    .setInputFiles({
+      name: 'car-street.png',
+      mimeType: 'image/png',
+      buffer: Buffer.from('NOTEXT a red car on a street\n'),
+    });
   await expect(list.getByText('car-street.png')).toBeVisible(COLD);
   await list.getByText('car-street.png').click();
 
