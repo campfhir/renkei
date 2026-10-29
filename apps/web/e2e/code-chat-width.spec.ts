@@ -89,7 +89,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`/chat/${chatId}`);
     await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible();
-    await expect(page.getByTestId('context-meter')).toBeVisible();
+    await expect(page.getByTestId('context-meter').filter({ visible: true })).toBeVisible();
     // The server-rendered page assumes a split; the real layout lands once the
     // client has measured the frame.
     await page.waitForLoadState('networkidle');
