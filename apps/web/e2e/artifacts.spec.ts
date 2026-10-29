@@ -885,7 +885,9 @@ test('the library: several files are ticked, deleted with the impact warned, or 
   await dialog.getByRole('button', { name: 'Add 1' }).click();
   await expect(dialog).toBeHidden();
   await page.reload();
-  const row = page.locator('[data-artifact]', { hasText: 'rounding-analysis.md' });
+  // Through the region: a reload streams the list, and until React swaps it
+  // in a hidden copy (div#S:1) holds the same rows.
+  const row = list.locator('[data-artifact]', { hasText: 'rounding-analysis.md' });
   await expect(row.getByText(f.projectName)).toBeVisible();
 });
 
