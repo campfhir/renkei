@@ -287,7 +287,23 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       }
 
       const read = await sbReadFile(target, str(args.fileId));
-      if (!read.ok) return errText(sandboxClientFailure(read.err).message);
+      if (!read.ok) {
+        // The answer is user-facing text; the log keeps what the sandbox said.
+        logger.warn('batch OCR could not read sandbox file {fileId}: {error}', {
+          component: 'mcp/batch-jobs',
+          subject: target.subject,
+          fileId: str(args.fileId),
+          kind: read.err.kind,
+          error:
+            read.err.kind === 'unconfigured'
+              ? 'unconfigured'
+              : read.err.kind === 'op'
+                ? (read.err.message ?? read.err.type)
+                : read.err.message,
+          status: read.err.kind === 'op' ? read.err.status : undefined,
+        });
+        return errText(sandboxClientFailure(read.err).message);
+      }
 
       const ocr = await callMistralOcr(
         mistralConfig.val,

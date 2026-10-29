@@ -332,7 +332,8 @@ async function ocrAttempt(
   const ocr = await callMistralOcr(
     config.val,
     { bytes: bytes.val, filename: row.filename, contentType: row.contentType },
-    { logger }
+    // Debug traces only: a failed read is logged once, by logOcrFailure, with its owner.
+    { logger: { debug: (message, attrs) => logger.debug(message, attrs) } }
   );
   const markdown = ocr.ok
     ? ocr.val.pages

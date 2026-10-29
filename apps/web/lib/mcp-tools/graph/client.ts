@@ -140,10 +140,11 @@ async function graphCall(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable', {
+    logger.warn('Graph API unreachable: {error}', {
       component: 'graph/fetch',
       subject: context.subject,
       path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
       timedOut: isTimeoutError(error),
       mailboxBusy: error instanceof GateTimeoutError,
     });

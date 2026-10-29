@@ -478,6 +478,7 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
     // is no bot. No grant → webex refs stay default-denied, which is the
     // gate's contract, not a failure.
     const searched = await searchKnowledge({
+      log: logger,
       userEmail: accessSubject,
       query,
       k: 3,
