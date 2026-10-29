@@ -16,6 +16,7 @@ import { NotificationCenter } from '@/components/notification-center';
 import NotificationCorner from '@/components/notification-corner';
 import DesktopNotifications from '@/components/desktop-notifications';
 import KeyGuard from '@/components/key-guard';
+import ClientErrorReporter from '@/components/client-error-reporter';
 import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
@@ -110,6 +111,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
     <CodeLineNumbersProvider value={theme.codeLineNumbers}>
       <ThemeScript />
       <ThemeSync mode={theme.mode} />
+      <ClientErrorReporter />
       <NotificationCenter>
         <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
           {/* The person's encryption key, kept connected from this browser

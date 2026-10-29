@@ -30,24 +30,30 @@ export function parseLogQueryExpr(query: string): FilterExpr | null {
   return result.ok ? result.val : null;
 }
 
-/** A single comparison, wrapped in the or-node form the parser emits. */
-function scopeLeaf(key: string, value: string): FilterExpr {
-  return {
-    type: 'or',
-    nodes: [{ type: 'filter', filter: { key, operator: 'contains', value } }],
-  };
+/**
+ * Whose lines a scoped caller may read: those tagged with their Jira account
+ * (connector traffic) or with their own subject (everything the app does on
+ * their behalf: uploads, OCR, chats). A bare string is an account id.
+ */
+export interface LogOwner {
+  accountId?: string | null;
+  subject?: string | null;
+}
+
+function ownerOf(owner: string | LogOwner | undefined): LogOwner {
+  return typeof owner === 'string' ? { accountId: owner } : (owner ?? {});
 }
 
 /**
- * Build a filter tree with the Jira account, when given, enforced:
- * `(whatever the caller asked for) && accountId`.
+ * Build a filter tree with the caller's scope, when given, enforced:
+ * `(whatever the caller asked for) && (accountId || subject)`.
  *
  * Accepts either a raw query string or an already-parsed tree, since the
  * `LogSearchBar` component hands back a tree directly.
  */
 export function buildEnforcedLogQuery(
   userQuery: string | FilterExpr | null,
-  accountId?: string
+  owner?: string | LogOwner
 ): FilterExpr {
   const parsed = typeof userQuery === 'string' ? parseLogQueryExpr(userQuery) : userQuery;
   const scrubbed = parsed ? removeRestrictedFields(parsed, RESTRICTED_KEYS) : null;
@@ -55,7 +61,16 @@ export function buildEnforcedLogQuery(
   // Splice the caller's own AND-ed branches in rather than nesting their whole
   // tree, so the result stays in the parser's normal form.
   const userNodes = scrubbed ? (scrubbed.type === 'and' ? scrubbed.nodes : [scrubbed]) : [];
-  const scope = accountId ? [scopeLeaf('accountId', accountId)] : [];
+  const { accountId, subject } = ownerOf(owner);
+  const leaves: FilterExpr[] = [
+    ...(accountId
+      ? [{ type: 'filter' as const, filter: { key: 'accountId', operator: 'contains' as const, value: accountId } }]
+      : []),
+    ...(subject
+      ? [{ type: 'filter' as const, filter: { key: 'subject', operator: '=' as const, value: subject } }]
+      : []),
+  ];
+  const scope: FilterExpr[] = leaves.length ? [{ type: 'or', nodes: leaves }] : [];
 
   return { type: 'and', nodes: [...userNodes, ...scope] };
 }
@@ -98,7 +113,7 @@ export interface LogQueryWindow {
  */
 export function buildLogQueryOptions(
   userQuery: string | FilterExpr | null,
-  accountId?: string,
+  owner?: string | LogOwner,
   window: LogQueryWindow = {}
 ): LogQueryOptions & { includeBinaryAttributes: boolean } {
   // Unknown names are dropped rather than passed through: the adapter rejects
@@ -106,7 +121,7 @@ export function buildLogQueryOptions(
   const levels = [...new Set((window.levels ?? []).filter(isKnownLevel))];
 
   return {
-    attributeFilter: buildEnforcedLogQuery(userQuery, accountId),
+    attributeFilter: buildEnforcedLogQuery(userQuery, owner),
     levels: levels.length ? levels : undefined,
     start: window.start ?? undefined,
     end: window.end ?? undefined,

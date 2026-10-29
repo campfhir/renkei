@@ -155,6 +155,13 @@ export function createBatchItemHandler(): EventHandler {
             error: 'worker restarted mid-item',
           })
         );
+        logger.warn('batch {batchJobId} item {itemId} failed: worker restarted mid-item', {
+          component: COMPONENT,
+          batchJobId: batch.id,
+          itemId: item.id,
+          kind: batch.kind,
+          subject: batch.subject,
+        });
       }
       return; // Terminal: a redelivery is an idempotent no-op.
     }
@@ -170,6 +177,12 @@ export function createBatchItemHandler(): EventHandler {
           error: `Unknown batch kind "${batch.kind}".`,
         })
       );
+      logger.error('batch {batchJobId}: unknown batch kind "{kind}"', {
+        component: COMPONENT,
+        batchJobId: batch.id,
+        kind: batch.kind,
+        subject: batch.subject,
+      });
       return;
     }
 
@@ -178,6 +191,26 @@ export function createBatchItemHandler(): EventHandler {
       outcome = await kind.runItem(batch, claimed);
     } catch (error) {
       outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      logger.error('batch {batchJobId} item {itemId} threw: {error}', {
+        component: COMPONENT,
+        batchJobId: batch.id,
+        itemId: claimed.id,
+        kind: batch.kind,
+        subject: batch.subject,
+        error: outcome.error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+    if (!outcome.ok) {
+      // The item row keeps the reason too, but only the log reaches Activity.
+      logger.warn('batch {batchJobId} item {itemId} failed: {error}', {
+        component: COMPONENT,
+        batchJobId: batch.id,
+        itemId: claimed.id,
+        kind: batch.kind,
+        subject: batch.subject,
+        error: outcome.error,
+      });
     }
     // Whichever item lands last finalizes the batch and announces it —
     // `finalize` is outside the try so an announcement problem is never

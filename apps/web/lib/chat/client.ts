@@ -5,7 +5,7 @@
  */
 
 import type { McpToolResult } from '@renkei/mcp-client';
-import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { getJson, reportFetchFailure, sendJsonFull } from '@/lib/fetch-json';
 import type { ChatSidebarData } from './sidebar';
 import type {
   AttachmentView,
@@ -245,14 +245,14 @@ export const chatClient = {
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        return {
-          data: null,
-          error:
-            typeof body?.error === 'string' ? body.error : `Upload failed (${response.status})`,
-        };
+        const error =
+          typeof body?.error === 'string' ? body.error : `Upload failed (${response.status})`;
+        reportFetchFailure('PUT', `${base()}/attachments`, response.status, error);
+        return { data: null, error };
       }
       return { data: body?.attachment ?? null, error: null };
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', `${base()}/attachments`, 0, 'Could not reach the server', error);
       return { data: null, error: 'Could not reach the server' };
     }
   },
@@ -269,8 +269,17 @@ export const chatClient = {
         body: JSON.stringify({ chatId, attachmentIds }),
       });
       const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        reportFetchFailure(
+          'POST',
+          `${base()}/attachments/ocr`,
+          response.status,
+          typeof body?.error === 'string' ? body.error : `OCR failed (${response.status})`
+        );
+      }
       return response.ok && Array.isArray(body?.results) ? body.results : [];
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', `${base()}/attachments/ocr`, 0, 'Could not reach the server', error);
       return [];
     }
   },
@@ -327,17 +336,17 @@ export const chatClient = {
       const response = await putFile(`${base()}/attachments?${query.toString()}`, file, onProgress);
       const body = await response.json().catch(() => null);
       if (!response.ok) {
-        return {
-          data: null,
-          error:
-            typeof body?.error === 'string' ? body.error : `Upload failed (${response.status})`,
-        };
+        const error =
+          typeof body?.error === 'string' ? body.error : `Upload failed (${response.status})`;
+        reportFetchFailure('PUT', `${base()}/attachments`, response.status, error);
+        return { data: null, error };
       }
       return {
         data: body?.attachment ? { ...body.attachment, attached: body.attached ?? null } : null,
         error: null,
       };
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', `${base()}/attachments`, 0, 'Could not reach the server', error);
       return { data: null, error: 'Could not reach the server' };
     }
   },
@@ -361,14 +370,13 @@ export const chatClient = {
         body: file,
       });
       const body = await response.json().catch(() => null);
-      return {
-        error: response.ok
-          ? null
-          : typeof body?.error === 'string'
-            ? body.error
-            : `Upload failed (${response.status})`,
-      };
-    } catch {
+      if (response.ok) return { error: null };
+      const error =
+        typeof body?.error === 'string' ? body.error : `Upload failed (${response.status})`;
+      reportFetchFailure('PUT', `${base()}/artifacts/${artifactId}`, response.status, error);
+      return { error };
+    } catch (error) {
+      reportFetchFailure('PUT', `${base()}/artifacts/${artifactId}`, 0, 'Could not reach the server', error);
       return { error: 'Could not reach the server' };
     }
   },
