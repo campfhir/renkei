@@ -56,6 +56,7 @@ import {
 } from './providers';
 
 /** Refresh ahead of expiry by this much, as every resolver did before. */
+const COMPONENT = 'worker-delegate/grants';
 const REFRESH_MARGIN_MS = 2 * 60_000;
 /** The most of a caller's request body the proxy will hold (so a 401 can be retried). */
 const MAX_REQUEST_BYTES = 64 * 1_048_576;
@@ -223,14 +224,25 @@ export class Grants {
       // The store names the key verdict in its message; the one a caller
       // can act on is "the owner must sign in", which travels as its own tag.
       const reason = read.err.message ?? '';
-      return {
-        ok: false,
-        error: /NEEDS_DELEGATION|NEEDS_SESSION|NOT_ENROLLED/.test(reason)
-          ? 'NEEDS_DELEGATION'
-          : 'GRANT_UNREADABLE',
-      };
+      if (/NEEDS_DELEGATION|NEEDS_SESSION|NOT_ENROLLED/.test(reason)) {
+        return { ok: false, error: 'NEEDS_DELEGATION' };
+      }
+      this.logger.error('{provider} grant {accountId} could not be read: {error}', {
+        component: COMPONENT,
+        provider,
+        accountId: row.accountId,
+        error: reason || read.err.type,
+      });
+      return { ok: false, error: 'GRANT_UNREADABLE' };
     }
-    if (!read.val) return { ok: false, error: 'GRANT_UNREADABLE' };
+    if (!read.val) {
+      this.logger.warn('{provider} grant {accountId} vanished while being read', {
+        component: COMPONENT,
+        provider,
+        accountId: row.accountId,
+      });
+      return { ok: false, error: 'GRANT_UNREADABLE' };
+    }
     let grant = read.val;
     const due = new Date(grant.expiresAt).getTime() - Date.now() < REFRESH_MARGIN_MS;
     if ((due || force) && grant.refreshToken) {
@@ -240,7 +252,17 @@ export class Grants {
         fakeOAuthFor(provider) && grant.subject
           ? new FakeOAuthAdapter(provider, grant.subject)
           : spec.adapter(config, grant);
-      if (!adapter) return { ok: false, error: 'NOT_CONFIGURED' };
+      if (!adapter) {
+        this.logger.warn(
+          '{provider} grant {accountId} is due a refresh but the provider is not configured',
+          {
+            component: COMPONENT,
+            provider,
+            accountId: grant.accountId,
+          }
+        );
+        return { ok: false, error: 'NOT_CONFIGURED' };
+      }
       const refreshed = await refreshGrantTokens(adapter, grant.accountId, this.logger);
       if (!refreshed.ok) {
         return {
@@ -438,6 +460,12 @@ export class Grants {
         current = next;
       }
     } catch (error) {
+      this.logger.warn('{provider} request to {host} failed: {error}', {
+        component: COMPONENT,
+        provider,
+        host: url.hostname,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return fail(
         isTimeout(error) ? 'timeout' : 'unreachable',
         error instanceof Error ? error.message : undefined
@@ -463,7 +491,13 @@ export class Grants {
         }
       }
       response.end();
-    } catch {
+    } catch (error) {
+      this.logger.warn('{provider} answer from {host} broke off mid-stream: {error}', {
+        component: COMPONENT,
+        provider,
+        host: url.hostname,
+        error: error instanceof Error ? error.message : String(error),
+      });
       response.destroy();
     }
   }
@@ -471,9 +505,18 @@ export class Grants {
   // ── oauth/exchange, grant/commit ───────────────────────────────────────
 
   async exchange(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const fail = (type: GrantError, message?: string): void =>
-      sendJson(response, statusForGrantError(type), { error: { type, message } });
     const provider = str(body.provider);
+    const fail = (type: GrantError, message?: string): void => {
+      if (statusForGrantError(type) >= 500) {
+        this.logger.warn('{provider} code exchange failed ({type}): {error}', {
+          component: COMPONENT,
+          provider,
+          type,
+          error: message ?? type,
+        });
+      }
+      sendJson(response, statusForGrantError(type), { error: { type, message } });
+    };
     const spec = await resolveProviderSpec(this.encryptionKey, provider);
     if (!spec || !isRecord(body.form)) return fail(spec ? 'bad_request' : 'unknown_provider');
     const form = new URLSearchParams();
@@ -552,7 +595,10 @@ export class Grants {
             signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
           });
         } catch (error) {
-          return fail(isTimeout(error) ? 'timeout' : 'unreachable');
+          return fail(
+            isTimeout(error) ? 'timeout' : 'unreachable',
+            error instanceof Error ? error.message : String(error)
+          );
         }
         const json: unknown = await upstream.json().catch(() => null);
         if (!upstream.ok || !isRecord(json)) {
@@ -640,7 +686,15 @@ export class Grants {
       metadata: isRecord(body.metadata) ? body.metadata : {},
       subject,
     });
-    if (!saved.ok) return fail('GRANT_UNREADABLE', 'the grant could not be stored');
+    if (!saved.ok) {
+      this.logger.error('{provider} grant {accountId} could not be stored: {error}', {
+        component: COMPONENT,
+        provider,
+        accountId,
+        error: saved.err.message ?? saved.err.type,
+      });
+      return fail('GRANT_UNREADABLE', 'the grant could not be stored');
+    }
     sendJson(response, 200, { ok: true, accountId });
   }
 
@@ -680,7 +734,15 @@ export class Grants {
       metadata,
       subject,
     });
-    if (!saved.ok) return fail('GRANT_UNREADABLE', 'the credential could not be stored');
+    if (!saved.ok) {
+      this.logger.error('{provider} credential {accountId} could not be stored: {error}', {
+        component: COMPONENT,
+        provider,
+        accountId,
+        error: saved.err.message ?? saved.err.type,
+      });
+      return fail('GRANT_UNREADABLE', 'the credential could not be stored');
+    }
     sendJson(response, 200, { ok: true, accountId });
   }
 
@@ -696,8 +758,15 @@ export class Grants {
     const row = await grantRow(provider, { subject, accountId });
     if (!row) return sendJson(response, 404, { error: { type: 'NO_GRANT' } });
     const read = await getGrant(provider, row.accountId);
-    if (!read.ok || !read.val)
+    if (!read.ok || !read.val) {
+      this.logger.warn('{provider} grant {accountId} could not be read for describe: {error}', {
+        component: COMPONENT,
+        provider,
+        accountId: row.accountId,
+        error: read.ok ? 'not found' : (read.err.message ?? read.err.type),
+      });
       return sendJson(response, 502, { error: { type: 'GRANT_UNREADABLE' } });
+    }
     sendJson(response, 200, describe(read.val));
   }
 
@@ -784,14 +853,22 @@ export class Grants {
         }
       } catch (error) {
         this.logger.warn('provider revocation failed; deleting the grant regardless', {
-          component: 'worker-delegate/grants',
+          component: COMPONENT,
           provider,
           error: error instanceof Error ? error.message : String(error),
         });
       }
     }
     const deleted = await deleteGrant(provider, accountId);
-    if (!deleted.ok) return sendJson(response, 500, { error: { type: 'internal' } });
+    if (!deleted.ok) {
+      this.logger.error('{provider} grant {accountId} could not be deleted: {error}', {
+        component: COMPONENT,
+        provider,
+        accountId,
+        error: deleted.err.message ?? deleted.err.type,
+      });
+      return sendJson(response, 500, { error: { type: 'internal' } });
+    }
     sendJson(response, 200, { ok: true, revokedAtProvider });
   }
 
@@ -800,7 +877,15 @@ export class Grants {
     const accountId = str(body.accountId);
     if (!provider || !accountId) return sendJson(response, 400, { error: { type: 'bad_request' } });
     const deleted = await deleteGrant(provider, accountId);
-    if (!deleted.ok) return sendJson(response, 500, { error: { type: 'internal' } });
+    if (!deleted.ok) {
+      this.logger.error('{provider} grant {accountId} could not be deleted: {error}', {
+        component: COMPONENT,
+        provider,
+        accountId,
+        error: deleted.err.message ?? deleted.err.type,
+      });
+      return sendJson(response, 500, { error: { type: 'internal' } });
+    }
     sendJson(response, 200, { ok: true });
   }
 

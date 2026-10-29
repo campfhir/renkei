@@ -159,6 +159,7 @@ export async function sweepContentWatches(): Promise<void> {
         component: COMPONENT,
         provider: watch.provider,
         scope: watch.scope_key,
+        accountId: watch.account_id,
         error: message,
       });
       // Record the failure ON THE ROW so it surfaces in the connectors UI
@@ -167,8 +168,14 @@ export async function sweepContentWatches(): Promise<void> {
       // watch is retried on the normal cadence instead of every pass.
       try {
         await store.contentWatches.recordSyncFailure(watch.id, message.slice(0, 500));
-      } catch {
+      } catch (recordError) {
         // The row update failing is not worth failing the sweep over.
+        logger.warn('watch {scope} sync failure could not be recorded: {error}', {
+          component: COMPONENT,
+          scope: watch.scope_key,
+          accountId: watch.account_id,
+          error: recordError instanceof Error ? recordError.message : String(recordError),
+        });
       }
     }
   }

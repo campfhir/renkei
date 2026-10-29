@@ -56,6 +56,13 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
         // A previous delivery died mid-discovery — do NOT re-run (would
         // create duplicate items). Finalize and let the caller start over.
         await finalize(store.failBatch(batch.id, 'worker restarted mid-discovery'));
+        logger.warn('batch {batchJobId} failed: {error}', {
+          component: COMPONENT,
+          batchJobId: batch.id,
+          kind: batch.kind,
+          subject: batch.subject,
+          error: 'worker restarted mid-discovery',
+        });
       }
       return; // Terminal, or just finalized: a redelivery is an idempotent no-op.
     }
@@ -69,6 +76,13 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     const kind = getBatchJobKind(claimed.kind);
     if (!kind) {
       await finalize(store.failBatch(claimed.id, `Unknown batch kind "${claimed.kind}".`));
+      logger.warn('batch {batchJobId} failed: {error}', {
+        component: COMPONENT,
+        batchJobId: claimed.id,
+        kind: claimed.kind,
+        subject: claimed.subject,
+        error: `Unknown batch kind "${claimed.kind}".`,
+      });
       return;
     }
 
@@ -76,12 +90,27 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     try {
       discovered = await kind.discover(claimed);
     } catch (error) {
+      logger.error('batch {batchJobId} discovery threw: {error}', {
+        component: COMPONENT,
+        batchJobId: claimed.id,
+        kind: claimed.kind,
+        subject: claimed.subject,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       await finalize(
         store.failBatch(claimed.id, error instanceof Error ? error.message : String(error))
       );
       return;
     }
     if (!discovered.ok) {
+      logger.warn('batch {batchJobId} failed: {error}', {
+        component: COMPONENT,
+        batchJobId: claimed.id,
+        kind: claimed.kind,
+        subject: claimed.subject,
+        error: discovered.error ?? 'Discovery failed.',
+      });
       await finalize(store.failBatch(claimed.id, discovered.error ?? 'Discovery failed.'));
       return;
     }

@@ -336,6 +336,7 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
         logger.warn('skipping {refId}: {reason}', {
           component: COMPONENT,
           refId,
+          accountId,
           reason: status === 403 ? 'no longer readable by the indexing account' : 'too large',
         });
         return;
@@ -361,9 +362,10 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       }
       // Every one of the rest is deterministic: retrying cannot change a
       // file's format, its password, or its corruption.
-      logger.debug('no text from {refId} ({reason})', {
+      logger.warn('could not extract text from {refId} ({reason})', {
         component: COMPONENT,
         refId,
+        accountId,
         reason: extracted.err.type,
       });
       return;

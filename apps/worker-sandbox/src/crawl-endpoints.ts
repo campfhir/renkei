@@ -21,6 +21,7 @@ import type { ServerResponse } from 'node:http';
 import { planCrawl, type CrawlRecipe } from '@renkei/connector-sandbox';
 import { CrawlError, type Crawler } from './crawler';
 import type { CrawlRow, CrawlStore, CrawlTarget, RecipeRow, StoredPage } from './crawl-store';
+import { logErrorResponse } from './request-log';
 
 /** Longest a status call may wait — inside an agent's 60 s tool-call limit. */
 export const CRAWL_STATUS_MAX_WAIT_MS = 45_000;
@@ -58,6 +59,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function sendError(response: ServerResponse, status: number, type: string, message?: string): void {
+  logErrorResponse(status, type, message);
   sendJson(response, status, { error: { type, message } });
 }
 

@@ -192,9 +192,9 @@ function targetOf(body: Record<string, unknown>): string | undefined {
 export function createDelegateServer(deps: DelegateServerDeps): Server {
   const logger = deps.logger ?? silentDelegateLogger;
   const grants = new Grants(deps.encryptionKey, logger, deps.fetchImpl);
-  const mcp = new McpPreparer(deps.encryptionKey, deps.fetchImpl);
-  const forwarder = new Forwarder(grants, deps.fetchImpl);
-  const git = new GitTickets(grants, deps.gitDialer);
+  const mcp = new McpPreparer(deps.encryptionKey, deps.fetchImpl, undefined, logger);
+  const forwarder = new Forwarder(grants, deps.fetchImpl, logger);
+  const git = new GitTickets(grants, deps.gitDialer, logger);
   const access = new AccessLog(logger);
   const apiKeys: NamedApiKey[] = deps.apiKeys.map((entry) =>
     typeof entry === 'string' ? { name: 'web', key: entry } : entry
@@ -582,6 +582,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
       logger.error('delegate op failed: {error}', {
         component: 'worker-delegate/server',
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     },
   });

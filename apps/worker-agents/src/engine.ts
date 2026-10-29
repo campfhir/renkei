@@ -2542,6 +2542,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.warn('run outcome not logged for run {runId}', {
         component: 'worker-agents/engine',
         runId: run.id,
+        subject: run.ownerSubject,
       });
     }
     if (deps.onFinalized) {

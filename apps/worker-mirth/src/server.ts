@@ -132,7 +132,38 @@ export function statusForError(type: WorkerErrorType): number {
   }
 }
 
-function sendError(response: ServerResponse, type: WorkerErrorType, message?: string): void {
+const COMPONENT = 'worker-mirth/server';
+
+/** Refusals of the request itself are the caller's mistake, not a failure to log. */
+const UNLOGGED_ERRORS: ReadonlySet<WorkerErrorType> = new Set([
+  'bad_request',
+  'unauthorized',
+  'forbidden',
+  'unknown_operation',
+  'method_not_allowed',
+  'not_connected',
+  'no_instance',
+  // Answered by worker-kit only after onUnhandledError has logged it.
+  'internal',
+]);
+
+function sendError(
+  response: ServerResponse,
+  type: WorkerErrorType,
+  message?: string,
+  context?: { op: string; instanceId?: string; subject?: string }
+): void {
+  if (!UNLOGGED_ERRORS.has(type)) {
+    const log = type === 'store' ? logger.error : logger.warn;
+    log('mirth {op} failed ({type}): {error}', {
+      component: COMPONENT,
+      op: context?.op ?? 'request',
+      type,
+      error: message ?? type,
+      instanceId: context?.instanceId,
+      subject: context?.subject,
+    });
+  }
   sendJson(response, statusForError(type), { error: { type, message } });
 }
 
@@ -277,8 +308,9 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         return sendError(response, 'bad_request', 'path is not a usable API path');
       }
 
+      const ctx = { op: 'api', instanceId: target.instanceId, subject: target.subject };
       const resolved = await resolve(target, parseMirthCredentials(body.credentials));
-      if (!resolved.ok) return sendError(response, resolved.err.type);
+      if (!resolved.ok) return sendError(response, resolved.err.type, undefined, ctx);
       const { instance, credentials } = resolved.val;
 
       // A held session first; a fresh login only when there is none or the
@@ -286,7 +318,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       let cookie = sessionCookie(target.instanceId, target.subject);
       if (!cookie) {
         const session = await login(instance, credentials);
-        if ('error' in session) return sendError(response, session.error, session.message);
+        if ('error' in session) return sendError(response, session.error, session.message, ctx);
         rememberSession(target.instanceId, target.subject, session.cookies);
         cookie = sessionCookie(target.instanceId, target.subject);
       }
@@ -297,7 +329,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         // once. A second 401 is then Mirth's answer, and is forwarded.
         forgetSession(target.instanceId, target.subject);
         const session = await login(instance, credentials);
-        if ('error' in session) return sendError(response, session.error, session.message);
+        if ('error' in session) return sendError(response, session.error, session.message, ctx);
         rememberSession(target.instanceId, target.subject, session.cookies);
         upstream = await forward(
           instance,
@@ -314,7 +346,7 @@ export function createMirthServer(deps: MirthServerDeps): Server {
             : upstream.failed === 'too_large'
               ? 'too_large'
               : 'unreachable';
-        return sendError(response, type, `The Mirth server ${upstream.detail}.`);
+        return sendError(response, type, `The Mirth server ${upstream.detail}.`, ctx);
       }
       if (upstream.status === 401) forgetSession(target.instanceId, target.subject);
       else rememberSession(target.instanceId, target.subject, setCookiesOf(upstream));
@@ -332,11 +364,12 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       if (!instanceId || !credentials) {
         return sendError(response, 'bad_request', 'instanceId and credentials are required');
       }
+      const ctx = { op: 'test-connection', instanceId, subject: str(body.subject) || undefined };
       const instance = await resolveOne(instanceId);
-      if (!instance.ok) return sendError(response, instance.err.type);
+      if (!instance.ok) return sendError(response, instance.err.type, undefined, ctx);
 
       const session = await login(instance.val, credentials);
-      if ('error' in session) return sendError(response, session.error, session.message);
+      if ('error' in session) return sendError(response, session.error, session.message, ctx);
       const cookie = session.cookies
         .map((header) => header.split(';', 1)[0])
         .filter(Boolean)
@@ -355,7 +388,8 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         return sendError(
           response,
           version.failed === 'timeout' ? 'timeout' : 'unreachable',
-          `The Mirth server ${version.detail}.`
+          `The Mirth server ${version.detail}.`,
+          ctx
         );
       }
       sendJson(response, 200, {
@@ -402,7 +436,8 @@ export function createMirthServer(deps: MirthServerDeps): Server {
         if (!instanceId)
           return sendError(response, 'bad_request', 'instanceId or unsaved is required');
         const stored = await resolveOne(instanceId);
-        if (!stored.ok) return sendError(response, stored.err.type);
+        if (!stored.ok)
+          return sendError(response, stored.err.type, undefined, { op: 'probe', instanceId });
         instance = stored.val;
       }
 
@@ -415,9 +450,23 @@ export function createMirthServer(deps: MirthServerDeps): Server {
       );
       if ('failed' in ping) {
         // A failed probe is a successful request.
+        logger.warn('mirth probe of {baseUrl} failed: {error}', {
+          component: COMPONENT,
+          baseUrl: instance.summary.baseUrl,
+          instanceId: instance.summary.id || undefined,
+          error: `The Mirth server ${ping.detail}.`,
+        });
         return sendJson(response, 200, { ok: false, error: `The Mirth server ${ping.detail}.` });
       }
       const reachable = ping.status === 401 || ping.status === 200;
+      if (!reachable) {
+        logger.warn('mirth probe of {baseUrl} failed: answered {status}', {
+          component: COMPONENT,
+          baseUrl: instance.summary.baseUrl,
+          instanceId: instance.summary.id || undefined,
+          status: ping.status,
+        });
+      }
       sendJson(response, 200, {
         ok: reachable,
         status: ping.status,
@@ -450,8 +499,9 @@ export function createMirthServer(deps: MirthServerDeps): Server {
     sendError,
     onUnhandledError: (error) => {
       logger.error('unhandled mirth op failure: {error}', {
-        component: 'worker-mirth/server',
+        component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     },
   });

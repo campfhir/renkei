@@ -57,6 +57,12 @@ export function createScheduleSweep(producer: QueueProducer) {
       const config = parseScheduleConfig(row.config);
       if (!config) {
         await agents.disableTrigger(row.triggerId, 'The schedule is malformed and was turned off.');
+        logger.warn('schedule {triggerId} of agent {agentId} is malformed and was turned off', {
+          component: 'worker-agents/schedule',
+          triggerId: row.triggerId,
+          agentId: row.agentId,
+          subject: row.ownerSubject,
+        });
         continue;
       }
 
@@ -72,6 +78,15 @@ export function createScheduleSweep(producer: QueueProducer) {
         await agents.disableTrigger(
           row.triggerId,
           'No next occurrence could be found (check blackout dates); turned off.'
+        );
+        logger.warn(
+          'schedule {triggerId} of agent {agentId} has no next occurrence and was turned off',
+          {
+            component: 'worker-agents/schedule',
+            triggerId: row.triggerId,
+            agentId: row.agentId,
+            subject: row.ownerSubject,
+          }
         );
         continue;
       }
@@ -90,10 +105,15 @@ export function createScheduleSweep(producer: QueueProducer) {
         initialState: { scheduledFor, timezone: config.timezone },
       });
       if (!result.ok) {
-        await agents.setTriggerError(
-          row.triggerId,
-          result.err.message ?? `The run could not be started (${result.err.type}).`
-        );
+        const error = result.err.message ?? `The run could not be started (${result.err.type}).`;
+        await agents.setTriggerError(row.triggerId, error);
+        logger.warn('schedule {triggerId} could not start agent {agentId}: {error}', {
+          component: 'worker-agents/schedule',
+          triggerId: row.triggerId,
+          agentId: row.agentId,
+          subject: row.ownerSubject,
+          error,
+        });
         continue;
       }
       await agents.setTriggerError(row.triggerId, null);
