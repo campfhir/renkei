@@ -340,7 +340,7 @@ test('builder — edit plain agent', async ({ page, sweep }, testInfo) => {
 test('run timeline with a staged batch', async ({ page, sweep }, testInfo) => {
   await page.goto(`/agents/${sweep.richId}/runs/${sweep.richRunId}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-  await expect(page.getByTestId('staged-batch')).toBeVisible();
+  await expect(page.getByRole('main').getByTestId('staged-batch')).toBeVisible();
   await expect(page.getByText('Accepted and carried out.')).toBeVisible();
   await shot(page, testInfo, 'run-timeline-batch');
 });

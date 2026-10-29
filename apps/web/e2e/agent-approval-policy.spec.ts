@@ -48,7 +48,7 @@ test('act-step approval policy: default, change, save, API clamp', async ({
     });
     expect(reset.ok()).toBe(true);
     const settingsUrl = `/admin/settings`;
-    const select = page.getByLabel('agentActStepsRequireApproval');
+    const select = page.getByRole('main').getByLabel('agentActStepsRequireApproval');
 
     // ── The default: runs an event or webhook started ──
     await page.goto(settingsUrl);
