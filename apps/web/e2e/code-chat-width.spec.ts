@@ -88,7 +88,7 @@ for (const width of [1024, 1280, 1440, 1920]) {
   }, testInfo) => {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`/chat/${chatId}`);
-    await expect(page.getByLabel('Message')).toBeVisible();
+    await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible();
     await expect(page.getByTestId('context-meter')).toBeVisible();
     // The server-rendered page assumes a split; the real layout lands once the
     // client has measured the frame.
@@ -151,11 +151,14 @@ test('the saved pane ratio cannot squeeze the chat below its minimum', async ({ 
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.addInitScript(() => localStorage.setItem('code-pane:ratio', '0.89'));
   await page.goto(`/chat/${chatId}`);
-  await expect(page.getByLabel('Message')).toBeVisible();
+  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible();
   await page.waitForLoadState('networkidle');
-  const width = await page.getByLabel('Message').evaluate((element) => {
-    const column = element.closest('.min-h-0.min-w-0.flex-1');
-    return column ? column.getBoundingClientRect().width : 0;
-  });
+  const width = await page
+    .getByLabel('Message')
+    .filter({ visible: true })
+    .evaluate((element) => {
+      const column = element.closest('.min-h-0.min-w-0.flex-1');
+      return column ? column.getBoundingClientRect().width : 0;
+    });
   expect(width).toBeGreaterThanOrEqual(400);
 });

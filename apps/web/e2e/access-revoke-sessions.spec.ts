@@ -71,7 +71,7 @@ test('admin access: sign a person out everywhere', async ({ page, request, brows
   await page.goto(`/admin/access`);
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
 
-  const button = page.getByTestId(`revoke-sessions-${target.subject}`);
+  const button = page.getByTestId(`revoke-sessions-${target.subject}`).filter({ visible: true });
   await expect(button).toBeVisible();
   // Never offered on the operator's own row.
   await expect(page.getByTestId(`revoke-sessions-${operator.subject}`)).toHaveCount(0);
@@ -106,6 +106,8 @@ test('admin access: sign a person out everywhere', async ({ page, request, brows
   await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByTestId(`revoke-sessions-${target.subject}`)).toBeVisible();
+  await expect(
+    page.getByTestId(`revoke-sessions-${target.subject}`).filter({ visible: true })
+  ).toBeVisible();
   await shot(page, testInfo, 'access-revoke-03-mobile');
 });
