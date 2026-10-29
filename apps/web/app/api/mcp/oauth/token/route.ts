@@ -72,15 +72,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // registration response tells clients to use client_secret_basic.
     const credentials = readClientCredentials(request.headers.get('authorization'), params);
 
-    const grantType = params.grant_type;
+    // The client authenticates before the grant type is even looked at:
+    // nothing the request names decides whether it is checked.
+    const authenticated = await authenticateClient(credentials);
+    if (authenticated instanceof NextResponse) return authenticated;
+    const clientId = authenticated.clientId;
 
-    // A token request names its own grant type by definition; each handler
-    // then authenticates the client and the grant it presents.
-    // codeql[js/user-controlled-bypass]
+    const grantType = params.grant_type;
     if (grantType === 'authorization_code') {
-      return handleAuthorizationCodeGrant(params, credentials, settings);
+      return exchangeAuthorizationCode(params, clientId, settings);
     } else if (grantType === 'refresh_token') {
-      return handleRefreshTokenGrant(params, credentials, settings);
+      return exchangeRefreshToken(params, clientId, settings);
     } else {
       return NextResponse.json(
         {
@@ -99,13 +101,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 }
 
-async function handleAuthorizationCodeGrant(
-  params: Record<string, string>,
-  credentials: ClientCredentials | null,
-  settings: OrgSettings
-): Promise<NextResponse> {
-  const { code, redirect_uri, code_verifier } = params;
-
+/** The client's own credentials, checked: its id, or the 401 to send. */
+async function authenticateClient(
+  credentials: ClientCredentials | null
+): Promise<{ clientId: string } | NextResponse> {
   if (!credentials) {
     return NextResponse.json(
       {
@@ -117,6 +116,45 @@ async function handleAuthorizationCodeGrant(
     );
   }
   const { clientId: client_id, clientSecret: client_secret } = credentials;
+
+  const client = await getDataStore().oauthConsents.getClientCredentials(client_id);
+
+  // Constant-time comparison of digests; the secret itself is not stored.
+  if (!client) {
+    return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
+  }
+
+  const secretCheck = verifyClientSecret(client.secretHash, client_secret, hashToken, digestsMatch);
+  if (secretCheck !== 'ok') {
+    if (secretCheck === 'unusable') {
+      // Not the client's fault, and not something it can act on: no digest is
+      // stored for this row, so nothing it presents can ever match.
+      logger.error('Client row has no usable secret digest', {
+        component: 'auth/oauth-token',
+        client_id,
+        hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
+      });
+    }
+    return NextResponse.json(
+      {
+        error: 'invalid_client',
+        error_description:
+          secretCheck === 'unusable'
+            ? 'This client cannot be authenticated on this server. Register again.'
+            : 'Client authentication failed',
+      },
+      { status: 401 }
+    );
+  }
+  return { clientId: client_id };
+}
+
+async function exchangeAuthorizationCode(
+  params: Record<string, string>,
+  client_id: string,
+  settings: OrgSettings
+): Promise<NextResponse> {
+  const { code, redirect_uri, code_verifier } = params;
 
   // Validate required parameters
   if (!code || !redirect_uri) {
@@ -130,42 +168,6 @@ async function handleAuthorizationCodeGrant(
   }
 
   try {
-    // Verify client credentials and tenant ownership
-    const client = await getDataStore().oauthConsents.getClientCredentials(client_id);
-
-    // Constant-time comparison of digests; the secret itself is not stored.
-    if (!client) {
-      return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
-    }
-
-    const secretCheck = verifyClientSecret(
-      client.secretHash,
-      client_secret,
-      hashToken,
-      digestsMatch
-    );
-    if (secretCheck !== 'ok') {
-      if (secretCheck === 'unusable') {
-        // Not the client's fault, and not something it can act on: no digest is
-        // stored for this row, so nothing it presents can ever match.
-        logger.error('Client row has no usable secret digest', {
-          component: 'auth/oauth-token',
-          client_id,
-          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
-        });
-      }
-      return NextResponse.json(
-        {
-          error: 'invalid_client',
-          error_description:
-            secretCheck === 'unusable'
-              ? 'This client cannot be authenticated on this server. Register again.'
-              : 'Client authentication failed',
-        },
-        { status: 401 }
-      );
-    }
-
     // Retrieve and validate authorization code
     const authCode = await getDataStore().oauthConsents.getAuthorizationCode(code);
 
@@ -285,24 +287,12 @@ async function handleAuthorizationCodeGrant(
   }
 }
 
-async function handleRefreshTokenGrant(
+async function exchangeRefreshToken(
   params: Record<string, string>,
-  credentials: ClientCredentials | null,
+  client_id: string,
   settings: OrgSettings
 ): Promise<NextResponse> {
   const { refresh_token } = params;
-
-  if (!credentials) {
-    return NextResponse.json(
-      {
-        error: 'invalid_client',
-        error_description:
-          'Client authentication required: send an Authorization: Basic header, or client_id and client_secret in the body',
-      },
-      { status: 401 }
-    );
-  }
-  const { clientId: client_id, clientSecret: client_secret } = credentials;
 
   if (!refresh_token) {
     return NextResponse.json(
@@ -312,42 +302,6 @@ async function handleRefreshTokenGrant(
   }
 
   try {
-    // Verify client credentials and tenant ownership
-    const client = await getDataStore().oauthConsents.getClientCredentials(client_id);
-
-    // Constant-time comparison of digests; the secret itself is not stored.
-    if (!client) {
-      return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
-    }
-
-    const secretCheck = verifyClientSecret(
-      client.secretHash,
-      client_secret,
-      hashToken,
-      digestsMatch
-    );
-    if (secretCheck !== 'ok') {
-      if (secretCheck === 'unusable') {
-        // Not the client's fault, and not something it can act on: no digest is
-        // stored for this row, so nothing it presents can ever match.
-        logger.error('Client row has no usable secret digest', {
-          component: 'auth/oauth-token',
-          client_id,
-          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
-        });
-      }
-      return NextResponse.json(
-        {
-          error: 'invalid_client',
-          error_description:
-            secretCheck === 'unusable'
-              ? 'This client cannot be authenticated on this server. Register again.'
-              : 'Client authentication failed',
-        },
-        { status: 401 }
-      );
-    }
-
     // Rotation with reuse detection (migration 147), in one transaction so
     // the presented token is retired exactly when its successor exists.
     // The row is locked for the duration: two concurrent refreshes with the
