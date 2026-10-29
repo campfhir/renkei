@@ -35,6 +35,15 @@ import { memoryServerEnv } from './e2e/server-env';
 // sandbox's preinstalled browser): name it, and every project uses it.
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 const launchOptions = executablePath ? { executablePath, args: ['--no-sandbox'] } : {};
+// Otherwise Playwright's own Chromium, and the full build, not the headless
+// shell it picks by default (CI installs that build alone). The shell is an
+// older headless that differs from Chrome where specs look: a navigation
+// that a form or link sends on to another origin by a redirect (the OAuth
+// consent page's answer to a client's loopback callback) never reaches
+// page.route there, and Notification.permission stays "denied" after
+// grantPermissions(['notifications']), so Preferences never subscribes.
+// The full build in headless mode behaves as the Chrome people run.
+const channel = executablePath ? undefined : 'chromium';
 
 const START = `pnpm start -p ${MEMORY_PORT} --keepAliveTimeout 120000`;
 
@@ -76,6 +85,7 @@ export default defineConfig({
     // them from a failed shard); a pass leaves nothing behind.
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
+    channel,
     launchOptions,
   },
   projects: [
