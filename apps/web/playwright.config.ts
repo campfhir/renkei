@@ -36,6 +36,8 @@ import { memoryServerEnv } from './e2e/server-env';
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE;
 const launchOptions = executablePath ? { executablePath, args: ['--no-sandbox'] } : {};
 
+const START = `pnpm start -p ${MEMORY_PORT} --keepAliveTimeout 120000`;
+
 // The specs desktop-dark runs. Every other spec runs once, in light: its
 // behaviour does not depend on the theme. These either look at the theme
 // (the screenshot gallery, GitHub's mark inverted on dark) or take their
@@ -118,10 +120,13 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
+      // A built server keeps idle connections well past Node's 5 seconds:
+      // otherwise one it closes just as a spec's request reuses it fails
+      // that request with ECONNRESET, which four busy workers hit now and then.
       command: process.env.E2E_PREBUILT
-        ? `pnpm start -p ${MEMORY_PORT}`
+        ? START
         : process.env.CI
-          ? `pnpm build && pnpm start -p ${MEMORY_PORT}`
+          ? `pnpm build && ${START}`
           : `pnpm dev -p ${MEMORY_PORT}`,
       url: `${MEMORY_BASE_URL}/api/health`,
       reuseExistingServer: !process.env.CI,
