@@ -16,11 +16,11 @@
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { Page, TestInfo } from '@playwright/test';
+import type { Locator, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { addStubModel, removeModel, scripted, type StubStep } from './support/stub-model';
 import { createChat, send } from './support/chat';
-import { pointerReaches } from './support/settle';
+import { pointerReaches, steady } from './support/settle';
 
 // Adding a model to the roster is an operator's.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -201,12 +201,26 @@ test('a reply’s mockups are drawn inline, each in its format, and a refused ca
   await shot(page, testInfo, 'mockups-inline.png');
 });
 
+/**
+ * Before pressing a card's opener: the thread has stopped moving and the
+ * button hears the pointer. As each card's frame reports its height the
+ * thread grows and keeps to its end, so a click aimed while it moves lands
+ * on whatever has slid under the point; and the opener is a transparent
+ * button over that frame, which has just loaded.
+ */
+async function openerSettled(page: Page, opener: Locator): Promise<void> {
+  await opener.scrollIntoViewIfNeeded();
+  await steady(page, async () => (await opener.boundingBox())?.y ?? null);
+  await pointerReaches(page, opener);
+}
+
 test('clicking a card opens it full screen, live, with zoom, widths, pan and a way back', async ({
   page,
 }, testInfo) => {
   await page.goto(`/chat/${ids.chatId}`);
   const opener = page.getByRole('button', { name: 'Open Settings page full screen' });
   await expect(opener).toBeVisible(COLD);
+  await openerSettled(page, opener);
   await opener.click();
 
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
@@ -301,7 +315,10 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
 
 test('Escape and zoom keys still work while the mockup itself has focus', async ({ page }) => {
   await page.goto(`/chat/${ids.chatId}`);
-  await page.getByRole('button', { name: 'Open Settings page full screen' }).click();
+  const opener = page.getByRole('button', { name: 'Open Settings page full screen' });
+  await expect(opener).toBeVisible(COLD);
+  await openerSettled(page, opener);
+  await opener.click();
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   const frame = dialog.frameLocator('iframe');
   const team = frame.getByRole('tab', { name: 'Team' });
@@ -396,7 +413,10 @@ test('at a phone’s width the cards fit the screen and the viewer stays reachab
   expect(settingsFrame?.width ?? 0).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'mockups-inline-mobile.png');
 
-  await page.getByRole('button', { name: 'Open Settings page full screen' }).click();
+  const opener = page.getByRole('button', { name: 'Open Settings page full screen' });
+  await expect(opener).toBeVisible(COLD);
+  await openerSettled(page, opener);
+  await opener.click();
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   await expect(dialog).toBeVisible();
   // Every control is on screen even with the toolbar wrapped.

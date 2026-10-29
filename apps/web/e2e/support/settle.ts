@@ -86,19 +86,19 @@ export async function pointerReaches(
       once: true,
     });
   });
-  let point = at;
-  if (!point) {
-    const box = await target.boundingBox();
-    if (!box) throw new Error('pointerReaches: the target is not on screen');
-    point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-  }
-  const { x, y } = point;
   let nudge = 0;
   await expect
     .poll(async () => {
-      // A move to a new point each time: the same point twice sends nothing.
+      // Where the target is now (it may have moved), and a new point each
+      // time: a move to the same point twice sends nothing.
+      let point = at;
+      if (!point) {
+        const box = await target.boundingBox();
+        if (!box) return false;
+        point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+      }
       nudge = nudge === 0 ? 1 : 0;
-      await page.mouse.move(x + nudge, y);
+      await page.mouse.move(point.x + nudge, point.y);
       return target.evaluate((element) => element.hasAttribute('data-e2e-pointer'));
     })
     .toBe(true);
