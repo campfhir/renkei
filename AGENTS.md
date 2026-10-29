@@ -28,9 +28,11 @@ shape: empty state, filling a form, a vendor call answered with
   once (`pnpm e2e:build`, with the server's environment from
   `e2e/server-env.ts`) and runs three `--shard=i/3` jobs on that build
   (`E2E_PREBUILT=1` starts `.next` as it is); `e2e (memory store)`
-  passes when every shard does. On a box
-  whose Chromium doesn't match Playwright's, set
-  `PLAYWRIGHT_CHROMIUM_EXECUTABLE`.
+  passes when every shard does. The suite runs Playwright's full
+  Chromium build headless (`channel: 'chromium'`), never its headless
+  shell, which routes a redirected navigation past `page.route` and
+  denies notifications. On a box whose Chromium doesn't match
+  Playwright's, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to a full Chrome.
 - **Every spec runs in `desktop-light`; `desktop-dark` runs only
   `DARK_SPECS`** in `playwright.config.ts`: specs that look at the theme
   (the screenshot gallery, a colour asserted on dark) or take their
@@ -85,7 +87,10 @@ shape: empty state, filling a form, a vendor call answered with
   test lets go with `releaseStub`, rather than a long `delayMs`.
 - **Pitfalls.** A built app can hold hidden copies of a page's
   pieces (a streamed render, a responsive twin): scope to
-  `getByRole('main')` or add `.filter({ visible: true })`. A dev server
+  `getByRole('main')` or add `.filter({ visible: true })`. Chrome routes
+  a press by what it last drew, not by the DOM: before pressing on
+  something that has just appeared over or inside an iframe, wait with
+  `pointerReaches` (`e2e/support/settle.ts`). A dev server
   whose pages reload in a loop (`page.goto` waiting on navigation after
   navigation, `✓ Compiled` over and over in its log) is running on a
   stale `.next/dev` — typically after files moved or dependencies changed
