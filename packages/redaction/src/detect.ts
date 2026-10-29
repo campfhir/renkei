@@ -295,12 +295,30 @@ function pushMatches(
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether the match sits inside a UUID. A UUID whose first three groups are
+ * all digits is sixteen hyphen-grouped digits, and about one in a hundred of
+ * those pass Luhn with an issuer prefix: left alone, a change request's link
+ * would come back with its id half replaced.
+ */
+function insideUuid(text: string, start: number, end: number): boolean {
+  const hex = /[0-9a-f-]/i;
+  let from = start;
+  let to = end;
+  while (from > 0 && hex.test(text.charAt(from - 1))) from -= 1;
+  while (to < text.length && hex.test(text.charAt(to))) to += 1;
+  return UUID.test(text.slice(from, to));
+}
+
 function detectCards(found: Candidate[], text: string): void {
   CARD_CANDIDATE.lastIndex = 0;
   for (let match = CARD_CANDIDATE.exec(text); match !== null; match = CARD_CANDIDATE.exec(text)) {
     const raw = match[0];
     const digits = raw.replace(/[ -]/g, '');
     if (!hasIssuerPrefix(digits) || !luhnValid(digits)) continue;
+    if (insideUuid(text, match.index, match.index + raw.length)) continue;
     found.push({
       start: match.index,
       end: match.index + raw.length,

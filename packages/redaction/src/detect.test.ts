@@ -61,6 +61,14 @@ describe('payment cards', () => {
     expect(labels('Zoom meeting 9999999999998')).toEqual([]);
     expect(labels('Tracking 1Z999AA10123456784')).toEqual([]);
   });
+
+  it('leaves a UUID alone when its leading groups read as a card', () => {
+    // 4111-1111-1111-1111 passes Luhn with a Visa prefix.
+    const link =
+      'Review: https://renkei.example/jira-admin/changes/41111111-1111-1111-b70d-87dc54bc4203';
+    expect(labels(link)).toEqual([]);
+    expect(labels('card 4111-1111-1111-1111 on file')).toEqual([LABEL_CARD]);
+  });
 });
 
 describe('medical record numbers', () => {
