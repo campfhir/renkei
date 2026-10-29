@@ -44,6 +44,8 @@ export type * from './store/types';
 // path and process.cwd, which poisons this barrel for Next's edge-runtime
 // analysis. The migrate CLI imports ./migrations/runner directly.
 export { getMigrationStatus, EXPECTED_MIGRATIONS, MIGRATION_COMMAND } from './migrations/status';
+// How long the configuration caches above the store hold a read.
+export { configCacheTtlMs } from './config-cache';
 // Boot and shutdown without the handle: the log table's adapter over this
 // package's own connection, the boot-time reachability check, the close.
 export {

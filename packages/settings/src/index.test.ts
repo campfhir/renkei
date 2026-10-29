@@ -19,6 +19,8 @@ import {
   invalidateSettingsCache,
   coerceStringListRecord,
   DEFAULT_ORG_SETTINGS,
+  DEFAULT_SETTINGS_CACHE_TTL_MS,
+  settingsCacheTtlMs,
 } from './index';
 
 /**
@@ -161,6 +163,29 @@ describe('org settings', () => {
     await setOrgSettings({ readOnly: true });
     const result = await getOrgSettings();
     if (result.ok) expect(result.val.readOnly).toBe(true);
+  });
+
+  it('keeps a minute-long cache unless RENKEI_CONFIG_CACHE_TTL_MS names another lifetime', () => {
+    expect(DEFAULT_SETTINGS_CACHE_TTL_MS).toBe(60_000);
+    expect(settingsCacheTtlMs({})).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '' })).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: 'soon' })).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '-5' })).toBe(60_000);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '0' })).toBe(0);
+    expect(settingsCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '5000' })).toBe(5_000);
+  });
+
+  it('asks the store on every read with a zero lifetime', async () => {
+    const store = stubStore();
+    process.env.RENKEI_CONFIG_CACHE_TTL_MS = '0';
+    try {
+      await getOrgSettings();
+      const afterFirst = store.reads();
+      await getOrgSettings();
+      expect(store.reads()).toBeGreaterThan(afterFirst);
+    } finally {
+      delete process.env.RENKEI_CONFIG_CACHE_TTL_MS;
+    }
   });
 });
 

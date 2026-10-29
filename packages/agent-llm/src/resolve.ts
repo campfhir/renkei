@@ -12,7 +12,7 @@
  * minute to bite.
  */
 
-import { getDataStore, type LlmModelConfigRecord } from '@renkei/db';
+import { configCacheTtlMs, getDataStore, type LlmModelConfigRecord } from '@renkei/db';
 import { decrypt, loadKeyring } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -57,7 +57,8 @@ export function isImageModelSettings(settings: unknown): boolean {
   return imageSurfaceOf(settings) !== null;
 }
 
-const CACHE_TTL_MS = 60_000;
+/** How long a resolved model is served from memory (RENKEI_CONFIG_CACHE_TTL_MS overrides it). */
+export const LLM_CACHE_TTL_MS = 60_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 4_096;
 
 interface CacheEntry {
@@ -223,7 +224,10 @@ export async function resolveAgentLlm(
     ...settingsOf(row),
     dataHandling: dataHandlingOf(row.settings),
   };
-  cache.set(cacheKey, { value: resolved, expiresAt: Date.now() + CACHE_TTL_MS });
+  cache.set(cacheKey, {
+    value: resolved,
+    expiresAt: Date.now() + configCacheTtlMs(LLM_CACHE_TTL_MS),
+  });
   return ok(resolved);
 }
 

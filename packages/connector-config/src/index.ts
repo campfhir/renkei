@@ -10,7 +10,7 @@
  * takes effect within the TTL, which beats a process restart.
  */
 
-import { getDataStore } from '@renkei/db';
+import { configCacheTtlMs as storeConfigCacheTtlMs, getDataStore } from '@renkei/db';
 import { encrypt, decrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -102,6 +102,14 @@ const configCache = new Map<string, CacheEntry>();
 export const CONFIG_CACHE_TTL_MS = 60_000;
 
 /**
+ * The cache's lifetime: CONFIG_CACHE_TTL_MS, unless RENKEI_CONFIG_CACHE_TTL_MS
+ * names another (the browser suite sets 0; see configCacheTtlMs).
+ */
+export function configCacheTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  return storeConfigCacheTtlMs(CONFIG_CACHE_TTL_MS, env);
+}
+
+/**
  * Cached read for hot paths (per-event, per-delivery). Only successful reads
  * are cached — an error must not be remembered as "not configured".
  */
@@ -114,7 +122,7 @@ export async function readConnectorConfigCached(
 
   const result = await getConnectorConfig(connector, encryptionKey);
   if (result.ok) {
-    configCache.set(connector, { value: result.val, expiresAt: Date.now() + CONFIG_CACHE_TTL_MS });
+    configCache.set(connector, { value: result.val, expiresAt: Date.now() + configCacheTtlMs() });
   }
   return result;
 }

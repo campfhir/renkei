@@ -16,6 +16,8 @@ import {
   setConnectorConfig,
   readConnectorConfigCached,
   invalidateConnectorConfigCache,
+  configCacheTtlMs,
+  CONFIG_CACHE_TTL_MS,
 } from './index';
 
 const KEY = randomBytes(32);
@@ -102,5 +104,31 @@ describe('connector config store', () => {
     await readConnectorConfigCached('webex', KEY);
 
     expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a minute-long cache unless RENKEI_CONFIG_CACHE_TTL_MS names another lifetime', () => {
+    expect(CONFIG_CACHE_TTL_MS).toBe(60_000);
+    expect(configCacheTtlMs({})).toBe(60_000);
+    expect(configCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: ' ' })).toBe(60_000);
+    expect(configCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: 'never' })).toBe(60_000);
+    expect(configCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '0' })).toBe(0);
+    expect(configCacheTtlMs({ RENKEI_CONFIG_CACHE_TTL_MS: '250' })).toBe(250);
+  });
+
+  it('asks the store on every read with a zero lifetime', async () => {
+    await setConnectorConfig(
+      'webex',
+      { enabled: true, settings: {}, secrets: { botToken: 't' } },
+      KEY
+    );
+    const reads = jest.spyOn(store.connectorConfigs, 'get');
+    process.env.RENKEI_CONFIG_CACHE_TTL_MS = '0';
+    try {
+      await readConnectorConfigCached('webex', KEY);
+      await readConnectorConfigCached('webex', KEY);
+      expect(reads).toHaveBeenCalledTimes(2);
+    } finally {
+      delete process.env.RENKEI_CONFIG_CACHE_TTL_MS;
+    }
   });
 });

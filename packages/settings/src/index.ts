@@ -9,7 +9,7 @@
  * defaults and a short cache.
  */
 
-import { getDataStore } from '@renkei/db';
+import { configCacheTtlMs, getDataStore } from '@renkei/db';
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -432,7 +432,16 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   admanagerProductName: 'Renkei',
 };
 
-const CACHE_TTL_MS = 60_000;
+/** How long a read of the org's settings is served from memory. */
+export const DEFAULT_SETTINGS_CACHE_TTL_MS = 60_000;
+
+/**
+ * The settings cache's lifetime: a minute, unless RENKEI_CONFIG_CACHE_TTL_MS
+ * names another (the browser suite sets 0; see configCacheTtlMs).
+ */
+export function settingsCacheTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  return configCacheTtlMs(DEFAULT_SETTINGS_CACHE_TTL_MS, env);
+}
 
 interface CacheEntry<T> {
   value: T;
@@ -617,7 +626,7 @@ export async function getOrgSettings(): Promise<Result<OrgSettings, 'DB_ERROR'>>
     ),
   };
 
-  orgCache = { value: settings, expiresAt: Date.now() + CACHE_TTL_MS };
+  orgCache = { value: settings, expiresAt: Date.now() + settingsCacheTtlMs() };
   return ok(settings);
 }
 
