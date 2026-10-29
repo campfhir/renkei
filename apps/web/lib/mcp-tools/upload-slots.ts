@@ -21,6 +21,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import { getDataStore, type UploadSlotRecord } from '@renkei/db';
 import { getPublicBaseUrl } from '@renkei/settings';
 import type { MCPToolContext } from './common';
+import { logger } from '@/lib/logger';
 
 export const UPLOAD_SLOT_TTL_MS = 15 * 60_000;
 export const DEFAULT_UPLOAD_MAX_BYTES = 20_971_520; // 20MB
@@ -77,7 +78,13 @@ export async function createUploadSlot(
       maxBytes,
       expiresAt: new Date(Date.now() + UPLOAD_SLOT_TTL_MS),
     });
-  } catch {
+  } catch (error) {
+    logger.error('upload slot could not be created: {error}', {
+      component: 'mcp/upload-slots',
+      subject: context.subject,
+      kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return { ok: false, error: 'Database unavailable.' };
   }
 

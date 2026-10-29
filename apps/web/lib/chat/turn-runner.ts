@@ -1548,15 +1548,20 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           'debug'
         );
         const logOutcome = (outcome: McpToolResult) => {
+          // An MCP tool's error is logged where it ran (usage-tracking.ts);
+          // a local tool's has no other line.
+          const localError = outcome.isError === true && deps.localTools.has(use.name);
           log(
-            'chat tool call outcome: {tool} {isError}',
+            localError
+              ? 'chat tool call failed: {tool} {result}'
+              : 'chat tool call outcome: {tool} {isError}',
             {
               tool: use.name,
               toolUseId: use.id,
               isError: outcome.isError === true,
-              result: textOfResult(outcome),
+              result: localError ? textOfResult(outcome).slice(0, 300) : textOfResult(outcome),
             },
-            'debug'
+            localError ? 'warn' : 'debug'
           );
           return outcome;
         };
@@ -1738,12 +1743,25 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       await startNextAssistant();
     }
   } catch (error) {
-    log('chat turn crashed: {message}', {
-      message: error instanceof Error ? error.message : String(error),
-    });
+    log(
+      'chat turn crashed: {message}',
+      {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
+      'error'
+    );
     try {
       return await finalize('failed', 'Something went wrong while answering.', 'failed');
-    } catch {
+    } catch (finalizeError) {
+      log(
+        'chat turn failure could not be recorded: {message}',
+        {
+          message: finalizeError instanceof Error ? finalizeError.message : String(finalizeError),
+          stack: finalizeError instanceof Error ? finalizeError.stack : undefined,
+        },
+        'error'
+      );
       clearInterval(timer);
       channel.close();
       return {

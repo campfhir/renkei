@@ -12,6 +12,7 @@
  */
 
 import { sanitizeBytes } from '@renkei/document-render';
+import { logger } from '@/lib/logger';
 import { fileCipherFor } from './artifact-access';
 import { listAttachments, readAttachmentBytes, type AttachmentRow } from './attachments';
 import type { ContentCipher } from './content-crypto';
@@ -88,7 +89,14 @@ export async function loadSourceImage(scope: SourceScope, wanted: string): Promi
   let rows: AttachmentRow[];
   try {
     rows = await listAttachments({ chatId: scope.chatId });
-  } catch {
+  } catch (error) {
+    logger.error('chat images could not be listed: {error}', {
+      component: 'chat/image-source',
+      subject: scope.subject,
+      chatId: scope.chatId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return { ok: false, reason: 'This chat’s files could not be read just now.' };
   }
   const picked = pickSourceImage(rows, wanted);

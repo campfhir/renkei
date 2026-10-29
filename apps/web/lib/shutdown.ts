@@ -17,7 +17,17 @@
  * separate module graphs, and there is exactly one process shutting down.
  */
 
+import { logger } from '@/lib/logger';
+
 type ShutdownListener = () => void | Promise<void>;
+
+function logListenerFailure(error: unknown): void {
+  logger.error('shutdown listener failed: {error}', {
+    component: 'web/shutdown',
+    error: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+  });
+}
 
 interface ShutdownState {
   shuttingDown: boolean;
@@ -52,9 +62,7 @@ export function isShuttingDown(): boolean {
 export function onShutdown(listener: ShutdownListener): () => void {
   const current = state();
   if (current.shuttingDown) {
-    void Promise.resolve()
-      .then(listener)
-      .catch(() => {});
+    void Promise.resolve().then(listener).catch(logListenerFailure);
     return () => {};
   }
   current.listeners.add(listener);
@@ -75,7 +83,9 @@ export async function beginShutdown(waitMs = 5_000): Promise<void> {
   current.shuttingDown = true;
   const listeners = [...current.listeners];
   current.listeners.clear();
-  const settled = Promise.allSettled(listeners.map((listener) => Promise.resolve().then(listener)));
+  const settled = Promise.allSettled(
+    listeners.map((listener) => Promise.resolve().then(listener).catch(logListenerFailure))
+  );
   await Promise.race([settled, new Promise<void>((resolve) => setTimeout(resolve, waitMs))]);
 }
 

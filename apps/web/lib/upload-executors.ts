@@ -378,6 +378,7 @@ async function webexNoteToSelfAttachment(
     }
     logger.warn('webex note-to-self upload: the bot could not deliver; posting to the solo space', {
       component: 'upload-executors',
+      subject: slot.subject,
       reason: viaBot.ok ? 'no roomId in the bot response' : viaBot.err.message,
     });
   }
@@ -524,6 +525,20 @@ export async function completeUploadSlot(
 }
 
 export async function executeUpload(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
+  const outcome = await dispatchUpload(slot, bytes);
+  if (!outcome.ok) {
+    logger.warn('upload to {kind} failed: {detail}', {
+      component: 'upload-executors',
+      subject: slot.subject,
+      slotId: slot.id,
+      kind: slot.kind,
+      detail: outcome.detail,
+    });
+  }
+  return outcome;
+}
+
+function dispatchUpload(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   switch (slot.kind) {
     case 'jira-attachment':
       return jiraAttachment(slot, bytes);
@@ -543,6 +558,6 @@ export async function executeUpload(slot: UploadSlotRow, bytes: Buffer): Promise
     case 'webex-attachment':
       return webexAttachment(slot, bytes);
     default:
-      return { ok: false, detail: `Unknown upload kind "${slot.kind}".` };
+      return Promise.resolve({ ok: false, detail: `Unknown upload kind "${slot.kind}".` });
   }
 }

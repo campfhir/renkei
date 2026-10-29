@@ -114,6 +114,7 @@ export async function saveAgent(
         triggers: normalized.triggers,
         llmModelId: parsed.input.llmModelId,
         guardrails: normalized.guardrails,
+        subject,
       })
     );
     return {
@@ -211,6 +212,7 @@ export async function saveAgent(
         triggers: normalized.triggers,
         llmModelId: parsed.input.llmModelId,
         guardrails: normalized.guardrails,
+        subject,
       })
     );
   }

@@ -47,6 +47,7 @@ export async function recordImageUsage(input: RecordImageUsageInput): Promise<vo
   } catch (error) {
     logger.warn('image usage not recorded', {
       component: 'web/image-usage',
+      subject: input.subject,
       error: error instanceof Error ? error.message : String(error),
     });
   }

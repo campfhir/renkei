@@ -108,6 +108,19 @@ function finishedWith(
   status: 'applied' | 'partial' | 'failed',
   results: OperationResult[]
 ): void {
+  if (status !== 'applied') {
+    const failed = results.filter((result) => result.outcome === 'failed');
+    logger.warn('jira admin change {status}: {detail}', {
+      component: COMPONENT,
+      subject: change.subject,
+      approver: change.approvedBy,
+      changeId: change.id,
+      kind: change.kind,
+      status,
+      step: failed[0]?.label ?? null,
+      detail: failed.map((result) => `${result.label}: ${result.detail ?? ''}`).join('; '),
+    });
+  }
   recordAuditEvent({
     actorSubject: change.approvedBy ?? change.subject,
     action: 'jira_admin.change_applied',
@@ -211,8 +224,10 @@ export async function runApplyJob(changeId: string): Promise<void> {
     if (heartbeat) clearInterval(heartbeat);
     logger.error('jira admin change job threw: {message}', {
       component: COMPONENT,
+      subject: change.subject,
       changeId: change.id,
       message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     await end(
       change,

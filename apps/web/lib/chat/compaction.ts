@@ -487,6 +487,15 @@ export async function startCompactionTurn(input: {
 
   const llmResult = await resolveAgentLlm(chat.llmModelId ?? null);
   if (!llmResult.ok) {
+    if (llmResult.err.type !== 'NO_MODEL') {
+      logger.warn('chat compaction model could not be resolved: {kind} {error}', {
+        component: 'chat/compaction',
+        subject: input.session.subject,
+        chatId: chat.id,
+        kind: llmResult.err.type,
+        error: llmResult.err.message ?? '',
+      });
+    }
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
       {
@@ -513,6 +522,7 @@ export async function startCompactionTurn(input: {
   const turnId = turn.val;
   defer(() =>
     runCompactionTurn({
+      subject: input.session.subject,
       chatId: chat.id,
       turnId,
       llm,
@@ -523,6 +533,7 @@ export async function startCompactionTurn(input: {
 }
 
 async function runCompactionTurn(input: {
+  subject: string;
   chatId: string;
   turnId: string;
   llm: ResolvedLlm;
@@ -545,6 +556,7 @@ async function runCompactionTurn(input: {
     error = caught instanceof Error ? caught.message : String(caught);
     logger.warn('chat compaction turn failed: {message}', {
       component: 'chat/compaction',
+      subject: input.subject,
       chatId: input.chatId,
       turnId: input.turnId,
       message: error,

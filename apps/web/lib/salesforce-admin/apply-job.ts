@@ -57,6 +57,20 @@ function failure(label: string, detail: string): ApplyResults {
 
 function finishedWith(change: ChangeRequest, status: ChangeRequestStatus, results: ApplyResults) {
   const outcome = status === 'applied' || status === 'partial' ? status : 'failed';
+  if (outcome !== 'applied') {
+    const failed = results.operations.filter((result) => result.outcome === 'failed');
+    logger.warn('salesforce admin change {status}: {detail}', {
+      component: COMPONENT,
+      subject: change.subject,
+      approver: change.approvedBy,
+      changeId: change.id,
+      kind: change.kind,
+      status,
+      deployId: results.deployId ?? null,
+      step: failed[0]?.label ?? null,
+      detail: failed.map((result) => `${result.label}: ${result.detail ?? ''}`).join('; '),
+    });
+  }
   recordAuditEvent({
     actorSubject: change.approvedBy ?? change.subject,
     action: 'salesforce_admin.change_applied',
@@ -175,8 +189,10 @@ export async function runApplyJob(changeId: string): Promise<void> {
     }
     logger.error('salesforce admin change job threw: {message}', {
       component: COMPONENT,
+      subject: change.subject,
       changeId: change.id,
       message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
     });
     const fresh = await getChangeRequestById(change.id);
     // A deploy that already started is followed up by the sweep; one that

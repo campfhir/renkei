@@ -81,6 +81,7 @@ export async function createSession(
   } catch (error) {
     logger.error('Failed to create session', {
       component: 'auth/session',
+      subject,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('SESSION_ERROR' as const);

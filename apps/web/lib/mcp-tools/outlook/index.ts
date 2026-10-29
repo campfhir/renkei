@@ -327,8 +327,14 @@ async function graphDelete(
         responseHeaders: headersForLog(response.headers),
       });
     }
-  } catch {
+  } catch (error) {
     // Best-effort only — the draft is left in the mailbox's Drafts folder.
+    logger.warn('Could not clean up an orphaned draft: {error}', {
+      component: 'outlook/fetch',
+      subject: context.subject,
+      path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

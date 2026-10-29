@@ -115,10 +115,13 @@ export async function generateAgentDescription(agent: {
   triggers: TriggerDraft[];
   llmModelId: string | null;
   guardrails?: string | null;
+  /** Whose save asked for it, so a failure shows in their Activity. */
+  subject?: string;
 }): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
   const failed = async (reason: string) => {
-    logger.debug('agent description generation skipped: {reason}', {
+    logger.warn('agent description generation failed: {reason}', {
       component: 'agents/describe',
+      ...(agent.subject ? { subject: agent.subject } : {}),
       agentId: agent.id,
       reason,
     });
