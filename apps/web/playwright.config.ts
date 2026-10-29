@@ -72,8 +72,10 @@ export default defineConfig({
     baseURL: MEMORY_BASE_URL,
     timezoneId: 'UTC',
     locale: 'en-US',
-    trace: 'off',
-    screenshot: 'off',
+    // A failure keeps its trace and a screenshot (test-results/; CI uploads
+    // them from a failed shard); a pass leaves nothing behind.
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
     launchOptions,
   },
   projects: [
