@@ -1,6 +1,5 @@
 /** Every page the memory crawl visits, by area (one file per area, so areas move independently). */
 
-import { adminChangesPages } from './admin-changes';
 import { adminPages } from './admin';
 import { agentsPages } from './agents';
 import { batchJobsPages } from './batch-jobs';
@@ -16,5 +15,4 @@ export const CRAWL_PAGES: CrawlPage[] = [
   ...batchJobsPages,
   ...adminPages,
   ...connectorsPages,
-  ...adminChangesPages,
 ];

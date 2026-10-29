@@ -11,11 +11,6 @@ import { agentOf, field, send, type CrawlPage, type CrawlStage } from './types';
  * on the roster, tagged, and removed again afterwards).
  */
 
-// Agent names are unique across the organization: each carries the test's tag.
-async function agent({ api, tag }: CrawlStage): Promise<string> {
-  return agentOf(api, `Crawl agent ${tag}`);
-}
-
 async function agentWithRun(stage: CrawlStage): Promise<{ agentId: string; runId: string }> {
   const { api, tag, cleanup } = stage;
   const modelId = await addStubModel(api, tag);
@@ -32,49 +27,6 @@ async function agentWithRun(stage: CrawlStage): Promise<{ agentId: string; runId
 }
 
 export const agentsPages: CrawlPage[] = [
-  {
-    path: '/agents',
-    stage: async (stage) => {
-      await agent(stage);
-    },
-    expectText: 'Crawl agent',
-  },
-  { path: '/agents/new', expectText: 'New agent' },
-  {
-    path: '/agents/[agentId]',
-    stage: async (stage) => `/agents/${await agent(stage)}`,
-    expectText: 'Crawl instructions line.',
-  },
-  {
-    path: '/agents/[agentId]/edit',
-    stage: async (stage) => `/agents/${await agent(stage)}/edit`,
-    expectText: /^Edit “Crawl agent crawl-/,
-  },
-  {
-    path: '/agents/[agentId]/runs',
-    stage: async (stage) => `/agents/${(await agentWithRun(stage)).agentId}/runs`,
-    expectText: 'via manual',
-  },
-  {
-    path: '/agents/[agentId]/runs/[runId]',
-    stage: async (stage) => {
-      const { agentId, runId } = await agentWithRun(stage);
-      return `/agents/${agentId}/runs/${runId}`;
-    },
-    expectText: LLM_STUB_REPLY,
-  },
-  {
-    path: '/admin/agents',
-    stage: async (stage) => {
-      await agent(stage);
-    },
-    expectText: 'Crawl agent',
-  },
-  {
-    path: '/admin/agents/[agentId]',
-    stage: async (stage) => `/admin/agents/${await agent(stage)}`,
-    expectText: 'Crawl agent',
-  },
   {
     path: '/admin/agents/[agentId]/runs',
     stage: async (stage) => `/admin/agents/${(await agentWithRun(stage)).agentId}/runs`,

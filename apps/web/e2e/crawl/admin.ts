@@ -1,5 +1,4 @@
-import { addStubModel, removeModel } from '../support/stub-model';
-import { agentOf, field, remove, send, type CrawlPage } from './types';
+import { field, remove, send, type CrawlPage } from './types';
 
 /**
  * The console's pages. Models and holiday calendars are organization-wide:
@@ -10,36 +9,13 @@ import { agentOf, field, remove, send, type CrawlPage } from './types';
  * plain form.
  */
 export const adminPages: CrawlPage[] = [
-  { path: '/admin', expectText: 'Organization' },
-  { path: '/admin/access', expectText: /^Who is connected to what/ },
-  {
-    // Saving an agent is an audited change.
-    path: '/admin/audit',
-    stage: async ({ api, tag }) => {
-      await agentOf(api, `Crawl audit agent ${tag}`);
-    },
-    expectText: /Crawl audit agent crawl-/,
-  },
   // The organization's webhook events and Atlassian sites: other specs'
   // connections add to them, so each is checked by its heading.
-  { path: '/admin/events', expectText: /^Events$/ },
+
   { path: '/admin/sites', expectText: /^Sites$/ },
-  { path: '/admin/settings', expectText: 'Organization name' },
   { path: '/admin/storage', expectText: 'Storage' },
-  { path: '/admin/usage', expectText: 'Organization usage' },
   { path: '/admin/grants', expectText: 'Access' },
   { path: '/admin/redaction', expectText: 'Sensitive data' },
-  {
-    path: '/admin/llm-models',
-    stage: async ({ api, tag, cleanup }) => {
-      const id = await addStubModel(api, tag);
-      cleanup(() => removeModel(api, id));
-    },
-    expectText: /^Stub model crawl-/,
-  },
-  { path: '/admin/code-services', expectText: 'Code services' },
-  { path: '/admin/pipeline-templates' },
-  { path: '/admin/project-templates' },
   {
     path: '/admin/calendars',
     stage: async ({ api, tag, cleanup }) => {

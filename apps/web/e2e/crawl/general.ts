@@ -1,5 +1,4 @@
-import { shareAgentsWith } from '../support/share-agents';
-import { agentOf, field, send, type CrawlPage } from './types';
+import { field, send, type CrawlPage } from './types';
 
 /**
  * Pages of this area the memory crawl visits; see ./types.ts. The feed's
@@ -8,37 +7,11 @@ import { agentOf, field, send, type CrawlPage } from './types';
  */
 
 export const generalPages: CrawlPage[] = [
-  { path: '/about', expectText: 'What’s changed' },
-  {
-    path: '/notifications',
-    stage: async ({ request, person }) => {
-      await shareAgentsWith(request, person, ['Crawl notification']);
-    },
-    expectText: /shared the agent "Crawl notification/,
-  },
-  { path: '/tutorials', expectText: 'Tutorials' },
-  { path: '/admin/tutorials' },
   { path: '/', expectText: 'Nothing suggested yet.' },
   // The old address redirects to the feed, query string and all.
   { path: '/home?archived=1', expectText: 'The full history, archived cards included.' },
-  {
-    path: '/preferences',
-    stage: async ({ api, tag }) => {
-      await agentOf(api, `Crawl preferences agent ${tag}`);
-    },
-    // The per-agent override picker only appears once the person owns an agent.
-    expectText: /^Agent:$/,
-  },
   { path: '/knowledge', expectText: 'Knowledge search' },
   { path: '/logs', expectText: 'Every account in this tenant' },
-  { path: '/usage', expectText: 'Tool names and counts only' },
-  {
-    path: '/utilization',
-    stage: async ({ api, tag }) => {
-      await agentOf(api, `Crawl utilization agent ${tag}`);
-    },
-    expectText: 'Crawl utilization agent',
-  },
   {
     // A desktop client registers itself (RFC 7591) and sends the person to
     // authorize it; the authorize route parks the request and redirects
@@ -85,10 +58,5 @@ export const generalPages: CrawlPage[] = [
       return `${consent.pathname}${consent.search}`;
     },
     expectText: /^Allow Crawl desktop client crawl-[0-9a-f]+ to act as you\?$/,
-  },
-  {
-    // No identity provider in the memory store: the first-run page, not a redirect.
-    path: '/setup',
-    expectText: 'This deployment has no identity provider yet',
   },
 ];

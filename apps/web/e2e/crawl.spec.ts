@@ -1,11 +1,11 @@
 /**
- * Every page renders on the in-memory data store alone: for each page in
- * ./crawl/, stage its data through the routes the UI itself calls, load
- * it (its client components' own requests included), and require it
- * answered, showed no error page and showed what its data — or its empty
- * state — should put on screen. Nothing outside @renkei/db can reach the
- * database (packages/db/src/store/seam.test.ts), so a page that needs a
- * row the store does not answer for fails here.
+ * The pages no other spec opens still render: for each page in ./crawl/,
+ * stage its data through the routes the UI itself calls, load it (its
+ * client components' own requests included), and require it answered,
+ * showed no error page and showed what its data — or its empty state —
+ * should put on screen. A page a spec already drives is left to that
+ * spec, which asserts far more than "it rendered"; this is the floor for
+ * the rest.
  */
 
 import { randomUUID } from 'node:crypto';

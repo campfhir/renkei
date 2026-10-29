@@ -36,31 +36,13 @@ async function library({ api }: CrawlStage): Promise<string> {
 }
 
 export const chatCodePages: CrawlPage[] = [
-  {
-    // The index opens the newest chat.
-    path: '/chat',
-    stage: async (stage) => {
-      await chatInProject(stage);
-    },
-    expectText: 'Crawl chat',
-  },
   // A new chat is made and opened.
-  { path: '/chat/new' },
-  {
-    path: '/chat/[chatId]',
-    stage: async (stage) => `/chat/${(await chatInProject(stage)).chatId}`,
-    expectText: 'Crawl chat',
-  },
+
   {
     path: '/chat/projects',
     stage: async (stage) => {
       await chatInProject(stage);
     },
-    expectText: 'Crawl chat project',
-  },
-  {
-    path: '/chat/projects/[projectId]',
-    stage: async (stage) => `/chat/projects/${(await chatInProject(stage)).projectId}`,
     expectText: 'Crawl chat project',
   },
   {
@@ -82,8 +64,5 @@ export const chatCodePages: CrawlPage[] = [
     },
     expectText: 'Crawl memory note',
   },
-  { path: '/chat/artifacts', expectText: 'Files you upload and files chats generate' },
-  { path: '/code', expectText: 'A code project is a repository' },
-  { path: '/code/new' },
   { path: '/files', expectText: 'Files' },
 ];

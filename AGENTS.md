@@ -92,7 +92,9 @@ shape: empty state, filling a form, a vendor call answered with
   under it: stop it, delete `apps/web/.next/dev`, start again. `next dev`
   also reloads every page when its environment changes, so a value the
   server needs is named in `playwright.config.ts`, never set at boot.
-- **A new page** gets a `CrawlPage` entry in `e2e/crawl/<area>.ts`.
+- **A new page** either gets a spec that opens and drives it, or a
+  `CrawlPage` entry in `e2e/crawl/<area>.ts` (the crawl is the floor for
+  pages no spec opens: it renders, no error page, its data shows).
 
 # The data store seam: pages read through `getDataStore()`
 
@@ -122,8 +124,8 @@ lines.
   fails any module that imports `kysely` or `pg`, builds a query, or
   deep-imports past `@renkei/db`; `e2e/` directories may not import
   `@renkei/db` or write SQL at all. The crawl spec
-  (`apps/web/e2e/crawl.spec.ts`) loads every page on the memory store
-  alone; a new page gets a `CrawlPage` entry in `e2e/crawl/<area>.ts`.
+  (`apps/web/e2e/crawl.spec.ts`) loads, on the memory store alone, the
+  pages no other spec opens.
 - **Tests seed with the application's own code**: a unit or database test
   creates a row the way the app creates it (`agents.create`,
   `chats.create`, `agentRuns.createQueued` then `updateExecution`, …),

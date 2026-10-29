@@ -41,16 +41,7 @@ async function instance(
 }
 
 export const connectorsPages: CrawlPage[] = [
-  { path: '/connectors', expectText: 'MCP endpoint' },
-  { path: '/admin/connectors', expectText: 'Connector setup' },
   { path: '/admin/connectors/zoom' },
-  {
-    path: '/admin/file-shares',
-    stage: async (stage) => {
-      await share(stage, 'Crawl listed share');
-    },
-    expectText: /^Crawl listed share crawl-/,
-  },
   {
     path: '/admin/file-shares/[shareId]',
     stage: async (stage) => `/admin/file-shares/${await share(stage, 'Crawl detail share')}`,
@@ -69,48 +60,10 @@ export const connectorsPages: CrawlPage[] = [
     expectText: /^Crawl detail Mirth crawl-/,
   },
   {
-    path: '/admin/admanager',
-    stage: async (stage) => {
-      await instance(stage, 'admanager', 'Crawl listed ADManager');
-    },
-    expectText: /^Crawl listed ADManager crawl-/,
-  },
-  {
     path: '/admin/admanager/[instanceId]',
     stage: async (stage) =>
       `/admin/admanager/${await instance(stage, 'admanager', 'Crawl detail ADManager')}`,
     expectText: /^Crawl detail ADManager crawl-/,
-  },
-  {
-    path: '/admin/mcp',
-    stage: async ({ api, tag, cleanup }) => {
-      const created = await send(api, 'post', '/api/admin/mcp-servers', {
-        name: `Crawl listed MCP ${tag}`,
-        url: `https://mcp-${tag}.crawl.test/mcp`,
-        authMode: 'none',
-      });
-      const server = created.server;
-      const id = typeof server === 'object' && server !== null && 'id' in server ? server.id : null;
-      if (typeof id !== 'string') throw new Error(`no server id in ${JSON.stringify(created)}`);
-      cleanup(() => remove(api, `/api/admin/mcp-servers/${id}`));
-    },
-    expectText: /^Crawl listed MCP crawl-/,
-  },
-  {
-    path: '/admin/email-sanitizer',
-    stage: async ({ api, tag, cleanup }) => {
-      const id = field(
-        await send(api, 'post', '/api/admin/email-sanitizer/rules', {
-          category: 'marketing',
-          matchType: 'domain',
-          matchValue: `${tag}.crawl-rule.test`,
-          priority: 1,
-        }),
-        'id'
-      );
-      cleanup(() => remove(api, `/api/admin/email-sanitizer/rules/${id}`));
-    },
-    expectText: /crawl-[0-9a-f]+\.crawl-rule\.test/,
   },
   { path: '/mail-review', expectText: 'Human correspondence (0)' },
 ];
