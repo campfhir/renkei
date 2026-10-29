@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { saveSvg, type SvgSaveFormat } from '@/lib/svg-image';
+import { clientLogger } from '@/lib/client-logger';
 
 type Status =
   | { kind: 'idle' }
@@ -39,6 +40,7 @@ export default function SvgSaveButtons({
       setStatus({ kind: 'saved', format });
       window.setTimeout(() => setStatus({ kind: 'idle' }), 2000);
     } catch (error) {
+      clientLogger.error('chat/svg-save', 'could not save the image', error, { format });
       setStatus({
         kind: 'error',
         message: error instanceof Error ? error.message : 'The image could not be saved.',

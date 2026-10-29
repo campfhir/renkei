@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { clientLogger } from '@/lib/client-logger';
 
 /**
  * The MCP endpoint URL with a copy button — the artifact a user pastes into
@@ -28,7 +29,8 @@ export default function McpEndpoint() {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch {
+    } catch (error) {
+      clientLogger.warn('connectors/mcp-endpoint', 'could not copy the endpoint', error);
       // Clipboard unavailable (http, permissions): the URL is selectable text.
     }
   }

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type AnchorHTMLAttributes, type MouseEvent } from 'react';
+import { clientLogger } from '@/lib/client-logger';
 
 /**
  * An <a> that downloads a file from this app — and doesn't strand the
@@ -66,7 +67,10 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
         fetched.delete(oldest);
       }
       return true;
-    } catch {
+    } catch (error) {
+      clientLogger.warn('download', 'could not fetch the file for the share sheet', error, {
+        path: href.split('?')[0],
+      });
       return false;
     } finally {
       inFlight.delete(href);
@@ -124,6 +128,9 @@ export default function DownloadLink({
       // Called synchronously in the tap: an await before it would cost the user gesture.
       navigator.share({ files: [file] }).catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
+        if (!(error instanceof DOMException && error.name === 'NotAllowedError')) {
+          clientLogger.warn('download', 'share sheet failed', error);
+        }
         window.open(href, '_blank', 'noopener');
       });
       return;

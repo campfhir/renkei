@@ -12,6 +12,8 @@
 
 import { useState } from 'react';
 import type { ImagePrefs } from '@renkei/user-prefs/prefs';
+import { reportFetchFailure } from '@/lib/fetch-json';
+import { logFailedResponse } from '@/lib/client-logger';
 
 export interface ImageModelOption {
   id: string;
@@ -44,9 +46,11 @@ export default function ImageModelForm({
         setSaved(modelId);
         setStatus('saved');
       } else {
+        await logFailedResponse('preferences', 'could not save the image model', response);
         setStatus('failed');
       }
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
       setStatus('failed');
     }
   }

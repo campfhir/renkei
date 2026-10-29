@@ -21,6 +21,7 @@ import WatchManager from './watch-manager';
 import OutlookIndexingPrefs from './outlook-indexing-prefs';
 import MicrosoftProductCard from './microsoft-product-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function MicrosoftConnectBody({
   connected,
@@ -98,12 +99,19 @@ export default function MicrosoftConnectBody({
       const response = await fetch(`/api/microsoft/grant`, { method: 'DELETE' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'DELETE',
+          '/api/microsoft/grant',
+          response.status,
+          data.error ?? 'Could not disconnect'
+        );
         setNotice(data.error ?? 'Could not disconnect');
         return;
       }
       setConfirming(false);
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('DELETE', '/api/microsoft/grant', 0, 'Could not reach the server', error);
       setNotice('Could not reach the server');
     } finally {
       setBusy(false);

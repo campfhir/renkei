@@ -20,6 +20,7 @@ import {
   SaveRow,
 } from './shared';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /* ----------------------------------------------------------------------- */
 
@@ -330,9 +331,14 @@ function ConnectorEditor({
     setBusy(true);
     const response = await fetch(`${kind.adminApi}?key=${encodeURIComponent(existing.key)}`, {
       method: 'DELETE',
-    }).catch(() => null);
+    }).catch((error: unknown) => {
+      reportFetchFailure('DELETE', kind.adminApi, 0, 'Could not reach the server', error);
+      return null;
+    });
     setBusy(false);
     if (!response?.ok) {
+      if (response)
+        reportFetchFailure('DELETE', kind.adminApi, response.status, 'Could not remove it');
       setError('Could not remove it');
       return;
     }

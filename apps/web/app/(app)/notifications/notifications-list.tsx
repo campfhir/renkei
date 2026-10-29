@@ -38,6 +38,7 @@ import {
   parseBatchNotificationMeta,
 } from '@/lib/notifications/batch-meta';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export interface NotificationCard {
   id: string;
@@ -252,14 +253,22 @@ export default function NotificationsList({
       return next;
     });
     try {
-      await fetch(`/api/notifications`, {
+      const response = await fetch(`/api/notifications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids, ...(read ? {} : { unread: true }) }),
       });
+      if (!response.ok)
+        reportFetchFailure(
+          'POST',
+          '/api/notifications',
+          response.status,
+          `Request failed (${response.status})`
+        );
       refresh();
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', '/api/notifications', 0, 'Could not reach the server', error);
       // The next poll or refresh reconciles; the optimistic state stands.
     }
   }
@@ -279,11 +288,18 @@ export default function NotificationsList({
   async function markAllRead() {
     setMarkingAll(true);
     try {
-      await fetch(`/api/notifications`, {
+      const response = await fetch(`/api/notifications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true }),
       });
+      if (!response.ok)
+        reportFetchFailure(
+          'POST',
+          '/api/notifications',
+          response.status,
+          `Request failed (${response.status})`
+        );
       setReadOverride((current) => {
         const next = new Map(current);
         for (const row of allRows) next.set(row.id, true);
@@ -292,7 +308,8 @@ export default function NotificationsList({
       setAllMarkedRead(true);
       refresh();
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', '/api/notifications', 0, 'Could not reach the server', error);
       // The next poll or refresh reconciles; the optimistic state stands.
     } finally {
       setMarkingAll(false);
@@ -317,7 +334,15 @@ export default function NotificationsList({
       url.searchParams.set('before', oldest.createdAt);
       url.searchParams.set('limit', '100');
       const response = await fetch(url.toString());
-      if (!response.ok) return;
+      if (!response.ok) {
+        reportFetchFailure(
+          'GET',
+          '/api/notifications',
+          response.status,
+          `Request failed (${response.status})`
+        );
+        return;
+      }
       const body: unknown = await response.json();
       const parsed: { notifications?: NotificationApiRow[] } =
         typeof body === 'object' && body !== null ? body : {};
@@ -326,7 +351,8 @@ export default function NotificationsList({
       setExtraRows((current) => [...current, ...mapped]);
       // Fewer than asked for means the table ran out, not the limit.
       if (mapped.length < 100) setHasMore(false);
-    } catch {
+    } catch (error) {
+      reportFetchFailure('GET', '/api/notifications', 0, 'Could not reach the server', error);
       // Leave hasMore as it was — the button stays up so the person can
       // just try again, same as any other network hiccup on this page.
     } finally {
@@ -337,17 +363,25 @@ export default function NotificationsList({
   async function deleteIds(ids: string[]) {
     setBusy(true);
     try {
-      await fetch(`/api/notifications`, {
+      const response = await fetch(`/api/notifications`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
       });
+      if (!response.ok)
+        reportFetchFailure(
+          'DELETE',
+          '/api/notifications',
+          response.status,
+          `Request failed (${response.status})`
+        );
       setRemoved((current) => new Set([...current, ...ids]));
       setSelected(new Set());
       setConfirming(null);
       refresh();
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('DELETE', '/api/notifications', 0, 'Could not reach the server', error);
       // Nothing was deleted; the dialog stays up so the person can retry.
     } finally {
       setBusy(false);

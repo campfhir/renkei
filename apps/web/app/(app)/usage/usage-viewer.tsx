@@ -30,6 +30,7 @@ import { friendlyToolName } from '@/lib/tool-name';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { LoadingLine, LoadingRegion, SkeletonText } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { clientLogger } from '@/lib/client-logger';
 
 const PERIODS = [
   { days: 1, label: '24 hours' },
@@ -270,6 +271,8 @@ function ToolDetailDialog({
     let stale = false;
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     getToolDetail(row.name, days, timeZone, scope).then((fetched) => {
+      if (fetched.error)
+        clientLogger.warn('usage', 'tool detail failed', fetched.error, { tool: row.name });
       if (!stale) setDetail(fetched);
     });
     return () => {
@@ -495,6 +498,8 @@ export default function UsageViewer({ initial, tools }: {
         window.location.href = signInUrl(`/usage`);
         return;
       }
+      if (next.error)
+        clientLogger.warn('usage', 'usage report failed', next.error, { days, scope });
       setReport(next);
     });
   }

@@ -17,6 +17,8 @@
  */
 
 import type { LspServerCapabilities } from './protocol';
+import { clientLogger } from '@/lib/client-logger';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export interface Cancellation {
   readonly isCancellationRequested: boolean;
@@ -88,13 +90,24 @@ export class LspClient {
     source.onerror = () => {
       if (this.disposed) return;
       // The browser reconnects on its own; the worker holds the backlog.
+      if (source.readyState === EventSource.CLOSED) {
+        clientLogger.warn(
+          'code/lsp',
+          'language server stream closed and will not reconnect',
+          undefined,
+          {
+            path: this.url.split('?')[0],
+          }
+        );
+      }
       this.setState(source.readyState === EventSource.CLOSED ? 'closed' : 'connecting');
     };
     source.onmessage = (event: MessageEvent<string>) => {
       let message: unknown;
       try {
         message = JSON.parse(event.data);
-      } catch {
+      } catch (error) {
+        clientLogger.warn('code/lsp', 'malformed language server message', error);
         return;
       }
       this.dispatch(message);
@@ -196,18 +209,27 @@ export class LspClient {
           // A 202 has no body; reading it anyway closes the request cleanly
           // rather than leaving the browser to abort an unread stream.
           await response.text().catch(() => '');
+        } else if (response.status !== 404 && response.status !== 409) {
+          reportFetchFailure(
+            'POST',
+            this.url,
+            response.status,
+            `Request failed (${response.status})`
+          );
         }
         if (response.status === 404 || response.status === 409) {
           // The session is gone from the worker: nothing else will land either.
           const said = await response.json().catch(() => null);
           const detail =
             typeof said?.error === 'string' ? said.error : 'The language server session is gone.';
+          reportFetchFailure('POST', this.url, response.status, detail);
           this.settleAll(new LspRequestError(-32000, detail));
           this.setState('exited');
           for (const listener of this.exitHandlers)
             listener({ code: null, signal: null, stderr: detail });
         }
-      } catch {
+      } catch (error) {
+        reportFetchFailure('POST', this.url, 0, 'Could not reach the server', error);
         // A network blip: the next message tries again; a request left
         // pending is settled when the server's exit is heard or on dispose.
       }

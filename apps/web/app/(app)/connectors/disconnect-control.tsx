@@ -16,6 +16,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function DisconnectControl({
   endpoint,
@@ -54,12 +55,14 @@ export default function DisconnectControl({
         const message = errorFields
           .map((field) => body[field])
           .find((value): value is string => typeof value === 'string' && value.length > 0);
+        reportFetchFailure('DELETE', endpoint, response.status, message ?? 'Could not disconnect');
         setNotice(message ?? 'Could not disconnect');
         return;
       }
       setConfirming(false);
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('DELETE', endpoint, 0, 'Could not reach the server', error);
       setNotice('Could not reach the server');
     } finally {
       setBusy(false);

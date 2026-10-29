@@ -46,6 +46,7 @@
 
 import { recordingSession } from './audio-session';
 import { concat, encodeWav, resample, rms, TARGET_SAMPLE_RATE } from './wav';
+import { clientLogger } from '@/lib/client-logger';
 
 export interface RecorderOptions {
   /**
@@ -230,6 +231,7 @@ export class UtteranceRecorder {
   async start(): Promise<boolean> {
     if (!this.stopped) return true;
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      clientLogger.warn('voice', 'this browser has no getUserMedia');
       this.options.onError('This browser cannot use the microphone.');
       return false;
     }
@@ -260,6 +262,8 @@ export class UtteranceRecorder {
     } catch (error) {
       releaseSession();
       const denied = error instanceof Error && error.name === 'NotAllowedError';
+      if (denied) clientLogger.warn('voice', 'microphone access was refused', error);
+      else clientLogger.error('voice', 'the microphone could not be opened', error);
       this.options.onError(
         denied
           ? 'Microphone access was refused. Allow it in the browser to use voice mode.'

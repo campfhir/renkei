@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The administrator's one irreversible act on the Access page: removing a
@@ -36,11 +37,20 @@ export default function ShredKeyButton({ subject, displayName }: {
       );
       const data: { success?: unknown; error?: unknown } = await response.json().catch(() => ({}));
       if (!response.ok || data.success !== true) {
-        setError(typeof data.error === 'string' ? data.error : 'Could not remove the key');
+        const message = typeof data.error === 'string' ? data.error : 'Could not remove the key';
+        reportFetchFailure('DELETE', `/api/admin/access/${subject}/keys`, response.status, message);
+        setError(message);
         return;
       }
       refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'DELETE',
+        `/api/admin/access/${subject}/keys`,
+        0,
+        'Could not reach the server',
+        error
+      );
       setError('Could not reach the server');
     } finally {
       setBusy(false);

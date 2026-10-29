@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import type { ChatArchivePrefs } from '@renkei/user-prefs/prefs';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function ChatArchiveForm({
   initial,
@@ -68,10 +69,17 @@ export default function ChatArchiveForm({
         const body: unknown = await response.json().catch(() => null);
         const message =
           typeof body === 'object' && body !== null ? Reflect.get(body, 'error') : undefined;
+        reportFetchFailure(
+          'PUT',
+          '/api/preferences',
+          response.status,
+          typeof message === 'string' ? message : 'Could not save.'
+        );
         setProblem(typeof message === 'string' ? message : 'Could not save.');
         setStatus('failed');
       }
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
       setProblem('Could not save.');
       setStatus('failed');
     }

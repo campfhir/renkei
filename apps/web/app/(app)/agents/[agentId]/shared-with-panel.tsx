@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { LoadingRegion, SkeletonList } from '@/components/skeleton';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 interface Grant {
   id: string;
@@ -24,12 +25,25 @@ export default function SharedWithPanel({
       try {
         const response = await fetch(`/api/agents/${agentId}/access`);
         if (!response.ok) {
+          reportFetchFailure(
+            'GET',
+            `/api/agents/${agentId}/access`,
+            response.status,
+            'Could not load access grants'
+          );
           setError('Could not load access grants');
           return;
         }
         const data: { grants?: Grant[] } = await response.json().catch(() => ({}));
         setGrants(data.grants ?? []);
-      } catch {
+      } catch (error) {
+        reportFetchFailure(
+          'GET',
+          `/api/agents/${agentId}/access`,
+          0,
+          'Could not reach the server',
+          error
+        );
         setError('Could not load access grants');
       }
     };

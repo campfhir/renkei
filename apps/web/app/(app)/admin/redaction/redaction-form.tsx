@@ -14,6 +14,7 @@ import { useEffect, useState } from 'react';
 import { formatIsGeneric } from '@renkei/redaction';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 interface DetectorInfo {
   key: string;
@@ -101,8 +102,19 @@ export default function RedactionForm() {
   useEffect(() => {
     let live = true;
     void (async () => {
-      const response = await fetch(`/api/admin/redaction`);
-      if (!response.ok || !live) return;
+      const response = await fetch(`/api/admin/redaction`).catch((error: unknown) => {
+        reportFetchFailure('GET', '/api/admin/redaction', 0, 'Could not reach the server', error);
+        return null;
+      });
+      if (response && !response.ok) {
+        reportFetchFailure(
+          'GET',
+          '/api/admin/redaction',
+          response.status,
+          `Request failed (${response.status})`
+        );
+      }
+      if (!response?.ok || !live) return;
       const next = asConfig(await response.json());
       if (!next) return;
       setConfig(next);
@@ -129,6 +141,7 @@ export default function RedactionForm() {
           typeof body === 'object' && body !== null && 'error' in body
             ? String(body.error)
             : 'Could not save';
+        reportFetchFailure('PUT', '/api/admin/redaction', response.status, message);
         setStatus(message);
         return;
       }

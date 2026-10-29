@@ -43,6 +43,7 @@ import { FADE_S, nextStart, soundBounds, soundEnd, soundStart, type SoundBounds 
 import { PcmSegmenter } from './pcm-stream';
 import { speakableText } from './speech-text';
 import { encodeWav } from './wav';
+import { clientLogger } from '@/lib/client-logger';
 
 export type SpeechQueueState = 'idle' | 'loading' | 'speaking' | 'paused';
 
@@ -367,6 +368,7 @@ export class SpeechQueue {
   private async decode(blob: Blob): Promise<DecodedPiece | null> {
     const context = this.ensureContext();
     if (!context) {
+      clientLogger.warn('voice', 'no audio context for speech playback');
       this.onError('This browser cannot play speech.');
       return null;
     }
@@ -377,7 +379,8 @@ export class SpeechQueue {
         buffer,
         bounds: soundBounds(buffer.getChannelData(0), buffer.sampleRate),
       };
-    } catch {
+    } catch (error) {
+      clientLogger.error('voice', 'speech audio could not be decoded', error);
       this.onError('The audio could not be decoded.');
       return null;
     }
@@ -494,6 +497,7 @@ export class SpeechQueue {
     const context = this.ensureContext();
     const reader = stream.getReader();
     if (!context || !this.master) {
+      clientLogger.warn('voice', 'no audio context for streamed speech');
       this.onError('This browser cannot play speech.');
       await reader.cancel().catch(() => undefined);
       return;
@@ -536,9 +540,11 @@ export class SpeechQueue {
         if (segment) place(segment);
         if (done) break;
       }
-    } catch {
+    } catch (error) {
       // Aborted by stop(), or the connection dropped: what was placed
       // plays out, and the next piece follows it.
+      if (generation === this.generation)
+        clientLogger.warn('voice', 'speech stream ended early', error);
     } finally {
       reader.releaseLock();
     }

@@ -20,7 +20,7 @@
 
 import { codeProjectUrl } from '@/lib/code/urls';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getJson } from '@/lib/fetch-json';
+import { getJson, reportFetchFailure } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
 import { useLanguageServers, type LanguageServersHandle } from './use-language-servers';
 
@@ -315,7 +315,10 @@ export function useCodePane({
         method: 'PUT',
         headers,
         body: text,
-      }).catch(() => null);
+      }).catch((cause: unknown) => {
+        reportFetchFailure('PUT', `${base}/files`, 0, 'Could not reach the server', cause);
+        return null;
+      });
       const body = response ? await response.json().catch(() => null) : null;
       if (response?.status === 409 && body?.code === 'conflict') {
         patch(path, (current) => ({
@@ -329,6 +332,14 @@ export function useCodePane({
         return false;
       }
       if (!response?.ok) {
+        if (response) {
+          reportFetchFailure(
+            'PUT',
+            `${base}/files`,
+            response.status,
+            typeof body?.error === 'string' ? body.error : 'The file could not be saved.'
+          );
+        }
         patch(path, (current) => ({
           ...current,
           saving: false,

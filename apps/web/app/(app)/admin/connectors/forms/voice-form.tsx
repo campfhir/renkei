@@ -12,6 +12,7 @@ import {
   SaveRow,
 } from './shared';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /* ----------------------------------------------------------------------- */
 
@@ -97,9 +98,10 @@ export function VoiceForm() {
       const record: Record<string, unknown> =
         typeof body === 'object' && body !== null ? { ...body } : {};
       if (!response.ok) {
-        setError(
-          typeof record.error === 'string' ? record.error : `Test failed (${response.status})`
-        );
+        const message =
+          typeof record.error === 'string' ? record.error : `Test failed (${response.status})`;
+        reportFetchFailure('POST', `${url}/test`, response.status, message);
+        setError(message);
         return;
       }
       const voices = typeof record.voices === 'number' ? record.voices : 0;
@@ -110,7 +112,8 @@ export function VoiceForm() {
             ? ' The default voice is not one of them — check its name.'
             : '')
       );
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', `${url}/test`, 0, 'Could not reach the server', error);
       setError('Could not reach the server');
     } finally {
       setTesting(false);

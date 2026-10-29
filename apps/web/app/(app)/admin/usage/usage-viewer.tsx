@@ -45,6 +45,7 @@ import { ActivityCalendar } from '@/components/activity-calendar';
 import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { clientLogger } from '@/lib/client-logger';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -321,6 +322,9 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const next = await getOrgUsageReport(periodKey, timeZone, nextIncludeAgents, subject);
+      if (next.error && !next.signedOut && !next.forbidden) {
+        clientLogger.warn('admin/usage', 'usage report failed', next.error, { periodKey });
+      }
       setReport(next);
       syncUrl(next.periodKey, next.subject);
     });

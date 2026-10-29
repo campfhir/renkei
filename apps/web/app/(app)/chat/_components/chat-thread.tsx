@@ -83,6 +83,7 @@ import { sendJsonFull } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
 import CodePane from '../../code/_components/code-pane';
 import { useCodePane } from '../../code/_components/use-code-pane';
+import { clientLogger } from '@/lib/client-logger';
 
 interface ThreadProps {
   subject: string;
@@ -119,7 +120,8 @@ function parseEvent(data: string): ChatStreamEvent | null {
       // dropped by the reducer's exhaustive switch returning state as-is.
       return JSON.parse(data);
     }
-  } catch {
+  } catch (error) {
+    clientLogger.warn('chat/stream', 'malformed stream frame', error);
     // Ignored: the next frame or the safety-net snapshot corrects the view.
   }
   return null;
@@ -415,7 +417,13 @@ export default function ChatThread({
       }
     });
     source.onerror = () => {
-      // The browser retries on its own; nothing to do but wait.
+      // The browser retries on its own; nothing to do but wait — unless it gave up.
+      if (source.readyState === EventSource.CLOSED) {
+        clientLogger.warn('chat/stream', 'stream closed and will not reconnect', undefined, {
+          chatId: chat.id,
+          turnId: activeTurnId,
+        });
+      }
     };
     return () => source.close();
   }, [chat, activeTurnId, router]);

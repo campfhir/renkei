@@ -16,6 +16,7 @@
 
 import type * as Monaco from 'monaco-editor';
 import { LspCancelled, type LspClient } from './client';
+import { clientLogger } from '@/lib/client-logger';
 import {
   capabilityOn,
   markdownOf,
@@ -135,9 +136,7 @@ export function attachLanguageServer(options: AttachOptions): LanguageServerAtta
       );
     } catch (error) {
       if (!(error instanceof LspCancelled)) {
-        console.warn(
-          `[lsp:${client.server}] ${method}: ${error instanceof Error ? error.message : String(error)}`
-        );
+        clientLogger.warn('code/lsp', `${method} failed`, error, { server: client.server });
       }
       return null;
     }

@@ -40,6 +40,8 @@ import {
 } from '@renkei/crypto/browser';
 import type { KeyStatusView } from '../shared';
 import { loadInstanceTrust, loadUserKey, saveUserKey, trustInstances } from './device-store';
+import { clientLogger } from '@/lib/client-logger';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export interface SealedDelegation {
   instanceId: string;
@@ -134,6 +136,12 @@ export async function confirmInstanceTrust(
   );
 }
 
+/** A flow refused in the browser, before any request: logged, then handed back to show. */
+function refused(code: string, error: string): FlowFailure {
+  clientLogger.warn('keys', error, undefined, { code });
+  return { code, error };
+}
+
 async function post(
   url: string,
   body: Record<string, unknown>,
@@ -149,16 +157,19 @@ async function post(
     const record: Record<string, unknown> =
       typeof json === 'object' && json !== null ? Object.fromEntries(Object.entries(json)) : {};
     if (!response.ok) {
+      const error = typeof record.error === 'string' ? record.error : 'The request failed.';
+      reportFetchFailure(method, url, response.status, error);
       return {
         ok: false,
         failure: {
           code: typeof record.code === 'string' ? record.code : `http_${response.status}`,
-          error: typeof record.error === 'string' ? record.error : 'The request failed.',
+          error,
         },
       };
     }
     return { ok: true, json: record };
-  } catch {
+  } catch (error) {
+    reportFetchFailure(method, url, 0, 'Could not reach the server', error);
     return { ok: false, failure: { code: 'network', error: 'Could not reach the server.' } };
   }
 }
@@ -214,7 +225,7 @@ export async function enrollInBrowser(
   if (body.session.length === 0) {
     return {
       ok: false,
-      failure: { code: 'no_instances', error: 'No key service is running to hold your key.' },
+      failure: refused('no_instances', 'No key service is running to hold your key.'),
     };
   }
   const answer = await post(`/api/keys/enroll`, body);
@@ -236,7 +247,7 @@ export async function delegateInBrowser(
   if (options.automation !== false && !automationKey) {
     return {
       ok: false,
-      failure: { code: 'wrong_key', error: 'This key does not fit your account.' },
+      failure: refused('wrong_key', 'This key does not fit your account.'),
     };
   }
   const session = await sealToInstances(status.instances, userKey);
@@ -245,7 +256,7 @@ export async function delegateInBrowser(
     // drop this session's rows, so say why here instead of asking.
     return {
       ok: false,
-      failure: { code: 'no_instances', error: 'No key service is running to hold your key.' },
+      failure: refused('no_instances', 'No key service is running to hold your key.'),
     };
   }
   const answer = await post(`/api/keys/delegate`, {
@@ -265,7 +276,7 @@ export async function rotateInBrowser(
   if (!current) {
     return {
       ok: false,
-      failure: { code: 'no_device_key', error: 'This device does not hold your key.' },
+      failure: refused('no_device_key', 'This device does not hold your key.'),
     };
   }
   const automationKey = await automationKeyOf(status, current);
@@ -275,7 +286,7 @@ export async function rotateInBrowser(
   if (!automationKey || !privateKey) {
     return {
       ok: false,
-      failure: { code: 'wrong_key', error: 'The key on this device does not fit your account.' },
+      failure: refused('wrong_key', 'The key on this device does not fit your account.'),
     };
   }
   const trusted = await checkInstanceTrust(status);
@@ -301,7 +312,7 @@ export async function adoptKeyInBrowser(
   if (!(await automationKeyOf(status, candidate))) {
     return {
       ok: false,
-      failure: { code: 'wrong_key', error: 'That is not the key for this account.' },
+      failure: refused('wrong_key', 'That is not the key for this account.'),
     };
   }
   await saveUserKey(candidate, { acknowledged: true });
@@ -393,10 +404,27 @@ export async function approveDeviceAsk(
   }
   const detail = await fetch(
     `/api/keys/devices/${requestId}?code=${encodeURIComponent(code)}`
-  ).catch(() => null);
+  ).catch((error: unknown) => {
+    reportFetchFailure(
+      'GET',
+      `/api/keys/devices/${requestId}`,
+      0,
+      'Could not reach the server',
+      error
+    );
+    return null;
+  });
   const json: unknown = detail ? await detail.json().catch(() => ({})) : {};
   const record: Record<string, unknown> =
     typeof json === 'object' && json !== null ? Object.fromEntries(Object.entries(json)) : {};
+  if (detail && !detail.ok) {
+    reportFetchFailure(
+      'GET',
+      `/api/keys/devices/${requestId}`,
+      detail.status,
+      typeof record.error === 'string' ? record.error : 'That request is gone.'
+    );
+  }
   if (!detail || !detail.ok) {
     return {
       ok: false,
@@ -491,9 +519,18 @@ export function parseKeyStatus(json: unknown): KeyStatusView | null {
 export async function fetchKeyStatus(): Promise<KeyStatusView | null> {
   try {
     const response = await fetch(`/api/keys`, { cache: 'no-store' });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      reportFetchFailure(
+        'GET',
+        '/api/keys',
+        response.status,
+        `Request failed (${response.status})`
+      );
+      return null;
+    }
     return parseKeyStatus(await response.json());
-  } catch {
+  } catch (error) {
+    reportFetchFailure('GET', '/api/keys', 0, 'Could not read the key status', error);
     return null;
   }
 }

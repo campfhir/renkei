@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import AddConnectorModal, { type CatalogItem } from './add-connector-modal';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export function AddConnectorButton({
   items,
@@ -89,11 +90,24 @@ export function RemovableProducts({
         body: JSON.stringify({ connector: capabilityKey }),
       });
       if (!response.ok) {
+        reportFetchFailure(
+          'DELETE',
+          '/api/connector-selections',
+          response.status,
+          'Could not remove'
+        );
         setError('Could not remove');
         return;
       }
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'DELETE',
+        '/api/connector-selections',
+        0,
+        'Could not reach the server',
+        error
+      );
       setError('Could not reach the server.');
     } finally {
       setBusy(null);

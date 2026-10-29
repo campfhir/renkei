@@ -1,6 +1,7 @@
 'use client';
 
 import { ReactNode, useEffect, useState } from 'react';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * What every connector form shares. The forms (one file each, beside this
@@ -34,12 +35,14 @@ export function useConnectorConfig<T>(url: string): [FetchState<T>, () => void] 
             typeof body === 'object' && body !== null && typeof body.error === 'string'
               ? body.error
               : `Request failed (${r.status})`;
+          reportFetchFailure('GET', url, r.status, message);
           setState({ loading: false, error: message, data: null });
           return;
         }
         setState({ loading: false, error: null, data: body });
       })
-      .catch(() => {
+      .catch((error: unknown) => {
+        reportFetchFailure('GET', url, 0, 'Could not reach the server', error);
         if (!cancelled)
           setState({ loading: false, error: 'Could not reach the server', data: null });
       });
@@ -60,12 +63,14 @@ export async function putJson(url: string, body: unknown): Promise<string | null
     });
     if (response.ok) return null;
     const data: unknown = await response.json().catch(() => null);
-    if (typeof data === 'object' && data !== null) {
-      const record: Record<string, unknown> = { ...data };
-      if (typeof record.error === 'string') return record.error;
-    }
-    return `Request failed (${response.status})`;
-  } catch {
+    const record: Record<string, unknown> =
+      typeof data === 'object' && data !== null ? { ...data } : {};
+    const message =
+      typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
+    reportFetchFailure('PUT', url, response.status, message);
+    return message;
+  } catch (error) {
+    reportFetchFailure('PUT', url, 0, 'Could not reach the server', error);
     return 'Could not reach the server';
   }
 }

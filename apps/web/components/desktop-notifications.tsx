@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { getDesktopNotificationsEnabled } from '@/lib/desktop-notifications-storage';
 import { ensurePushSubscription } from '@/lib/push-subscription';
+import { clientLogger } from '@/lib/client-logger';
 
 /**
  * Native browser notifications — the OS banner, not the corner toast.
@@ -33,7 +34,8 @@ export default function DesktopNotifications() {
     // register() of the same URL/scope — so there is no reason to gate it
     // on the preference: it costs nothing for someone who never opts in,
     // and it means the path is already warm for someone who opts in later.
-    navigator.serviceWorker.register('/sw.js').catch(() => {
+    navigator.serviceWorker.register('/sw.js').catch((error: unknown) => {
+      clientLogger.warn('push', 'service worker registration failed', error);
       // Nothing to recover: without a worker, push simply cannot show
       // anything in this browser.
     });
