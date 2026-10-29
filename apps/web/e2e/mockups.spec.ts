@@ -260,15 +260,21 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
   await expect(pan).toBeVisible();
   const stage = pan.locator('xpath=ancestor::div[contains(@class,"overflow-auto")][1]');
   const start = await stage.evaluate((el) => el.scrollLeft);
-  // Dragged again if the first drag lands before the hand tool has taken
-  // hold (a busy runner sees it now and then): the stage must end up moved.
-  await expect(async () => {
-    await page.mouse.move(400, 500);
-    await page.mouse.down();
-    await page.mouse.move(700, 500, { steps: 6 });
-    await page.mouse.up();
-    expect(await stage.evaluate((el) => el.scrollLeft)).toBeLessThan(start - 100);
-  }).toPass({ timeout: 10_000 });
+  // Dragged across the hand tool's own layer, wherever it is on screen: a
+  // fixed point can miss it while the document is still reporting its height.
+  const layer = await pan.boundingBox();
+  if (!layer) throw new Error('The pan layer is not on screen.');
+  const view = page.viewportSize() ?? { width: 1440, height: 900 };
+  const y = (Math.max(layer.y, 0) + Math.min(layer.y + layer.height, view.height)) / 2;
+  const x = (Math.max(layer.x, 0) + Math.min(layer.x + layer.width, view.width)) / 2 - 150;
+  // A click on the layer first: the frame had the pointer last, and the
+  // first press back in the page can go to waking it rather than to the layer.
+  await page.mouse.click(x, y);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 300, y, { steps: 6 });
+  await page.mouse.up();
+  expect(await stage.evaluate((el) => el.scrollLeft)).toBeLessThan(start - 100);
   await dialog.getByRole('button', { name: 'Drag to pan' }).click();
   await expect(pan).toHaveCount(0);
 
@@ -299,8 +305,11 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
   // Focus is now inside the frame; the frame's own key handler forwards these.
   await page.keyboard.press('Control+=');
   await expect.poll(() => zoomPercent(page)).toBe(125);
-  await page.keyboard.press('Escape');
+  // Down, then up once the dialog has gone: the key-up of a single press
+  // can be sent to the frame the key-down just removed, and wait on it.
+  await page.keyboard.down('Escape');
   await expect(dialog).toHaveCount(0);
+  await page.keyboard.up('Escape');
 });
 
 test('a mockup’s document can neither reach the network nor read cookies, and links go nowhere', async ({
