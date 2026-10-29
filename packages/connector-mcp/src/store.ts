@@ -108,7 +108,11 @@ export async function createServer(input: NewServer): Promise<Result<McpServer, 
   try {
     return ok(fromRecord(await getDataStore().mcpServers.create(input)));
   } catch (error) {
-    return err(isUniqueViolation(error) ? ('SLUG_TAKEN' as const) : ('DB_ERROR' as const));
+    if (isUniqueViolation(error)) return err('SLUG_TAKEN' as const);
+    return err('DB_ERROR' as const, {
+      message: error instanceof Error ? error.message : String(error),
+      cause: error,
+    });
   }
 }
 

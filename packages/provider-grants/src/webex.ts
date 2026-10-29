@@ -11,6 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 export const WEBEX_USER = 'webex';
 
@@ -41,8 +42,10 @@ export class WebexUserAdapter implements ProviderAdapter {
           refresh_token: refreshToken,
         }),
       });
-    } catch {
-      return err('REFRESH_FAILED' as const, { message: 'Could not reach webexapis.com' });
+    } catch (error) {
+      return err('REFRESH_FAILED' as const, {
+        message: `Could not reach webexapis.com: ${causeOf(error)}`,
+      });
     }
 
     if (!response.ok) {
@@ -53,7 +56,7 @@ export class WebexUserAdapter implements ProviderAdapter {
         return err('GRANT_REVOKED' as const);
       }
       return err('REFRESH_FAILED' as const, {
-        message: `WebEx token refresh failed (${response.status})`,
+        message: `WebEx token refresh failed (${response.status})${webexDetail(body)}`,
       });
     }
 
@@ -79,4 +82,16 @@ export class WebexUserAdapter implements ProviderAdapter {
       expiresAt: new Date(Date.now() + expiresIn * 1000),
     });
   }
+}
+
+function webexDetail(body: string): string {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return oauthErrorSuffix({ ...parsed });
+    }
+  } catch {
+    // Not JSON: no detail worth carrying.
+  }
+  return '';
 }

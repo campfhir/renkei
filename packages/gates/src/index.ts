@@ -7,7 +7,14 @@
  * contracts, because neither gate can be retrofitted.
  */
 
-export type { SourceRef, AccessVerifier, VerificationOutcome, VerifyOptions } from './acl';
+export type {
+  SourceRef,
+  AccessVerifier,
+  VerificationOutcome,
+  VerifyContext,
+  VerifierLogger,
+  VerifyOptions,
+} from './acl';
 export { verifyCandidates, withheldNote } from './acl';
 
 export type {

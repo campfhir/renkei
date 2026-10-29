@@ -90,7 +90,7 @@ export async function atlassianFetch(call: AtlassianCall): Promise<AtlassianResp
       status: 0,
       error: timedOut
         ? `api.atlassian.com timed out after ${REQUEST_TIMEOUT_MS}ms`
-        : 'could not reach api.atlassian.com',
+        : `could not reach api.atlassian.com: ${error instanceof Error ? error.message : String(error)}`,
     };
   }
 

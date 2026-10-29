@@ -12,7 +12,7 @@ import type { MetadataFilterExpr } from './metadata-filter';
 import { getDataStore, type ChunkCandidate, type ChunkFilters } from '@renkei/db';
 import { contentEncryptionKey, revealContent } from '@renkei/crypto';
 import { verifyCandidates } from '@renkei/gates';
-import type { AccessVerifier, SourceRef } from '@renkei/gates';
+import type { AccessVerifier, SourceRef, VerifierLogger } from '@renkei/gates';
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { EmbeddingProvider } from './embeddings';
@@ -167,6 +167,8 @@ export interface SearchOptions {
   verifiers: ReadonlyMap<string, AccessVerifier>;
   /** Verification time budget; expired = denied (gate semantics). */
   budgetMs?: number;
+  /** Where a verifier that failed is reported (its refs are withheld either way). */
+  log?: VerifierLogger;
   /** Refs to leave out (e.g. the object that triggered the search). */
   excludeRef?: SourceRef;
   /**
@@ -305,6 +307,7 @@ export interface RecentOptions extends CandidateFilters {
   k: number;
   verifiers: ReadonlyMap<string, AccessVerifier>;
   budgetMs?: number;
+  log?: VerifierLogger;
 }
 
 /** The source a row belongs to, for per-source quotas. */
@@ -363,7 +366,7 @@ export async function listRecentKnowledge(
     options.userEmail,
     rowsResult.val,
     (row) => ({ provider: row.provider, refId: row.refId }),
-    { budgetMs: options.budgetMs ?? 3_000 }
+    { budgetMs: options.budgetMs ?? 3_000, log: options.log }
   );
   const verifyMs = Date.now() - verifyStarted;
 
@@ -506,7 +509,7 @@ export async function searchKnowledge(
     options.userEmail,
     candidates,
     (row) => ({ provider: row.provider, refId: row.refId }),
-    { budgetMs: options.budgetMs ?? 3_000 }
+    { budgetMs: options.budgetMs ?? 3_000, log: options.log }
   );
   const verifyMs = Date.now() - verifyStarted;
 

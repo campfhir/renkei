@@ -13,7 +13,13 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import type { RequestLane } from '@renkei/rate-limit';
-import { GRAPH_BASE_URL, REQUEST_TIMEOUT_MS, GateTimeoutError, graphFetch } from './fetch';
+import {
+  GRAPH_BASE_URL,
+  REQUEST_TIMEOUT_MS,
+  GateTimeoutError,
+  graphErrorDetail,
+  graphFetch,
+} from './fetch';
 
 export { GRAPH_BASE_URL } from './fetch';
 
@@ -60,7 +66,7 @@ export async function graphRequest(
         ? `Graph API timed out after ${init?.timeoutMs ?? REQUEST_TIMEOUT_MS}ms for ${url}`
         : busy
           ? `Graph API busy: too many requests in flight for this mailbox (${url})`
-          : 'Graph API unreachable',
+          : `Graph API unreachable: ${error instanceof Error ? error.message : String(error)}`,
     });
   }
 
@@ -68,8 +74,9 @@ export async function graphRequest(
     // The status rides on `cause` so callers with status-specific semantics
     // (a DELETE finding the object already gone) can tell 404 from the rest
     // without parsing the message.
+    const detail = await graphErrorDetail(response);
     return err('GRAPH_API_ERROR' as const, {
-      message: `Graph API ${response.status} for ${url}`,
+      message: `Graph API ${response.status} for ${url}${detail ? `: ${detail}` : ''}`,
       cause: response.status,
     });
   }

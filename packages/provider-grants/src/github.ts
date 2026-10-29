@@ -20,6 +20,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 export const GITHUB = 'github';
 
@@ -63,7 +64,7 @@ export class GitHubAdapter implements ProviderAdapter {
       return err('REFRESH_FAILED' as const, {
         message: timedOut
           ? 'github.com token endpoint timed out after 15000ms'
-          : 'Could not reach github.com',
+          : `Could not reach github.com: ${causeOf(error)}`,
       });
     }
 
@@ -80,12 +81,12 @@ export class GitHubAdapter implements ProviderAdapter {
         return err('GRANT_REVOKED' as const);
       }
       return err('REFRESH_FAILED' as const, {
-        message: `GitHub token refresh failed: ${record.error}`,
+        message: `GitHub token refresh failed${oauthErrorSuffix(record)}`,
       });
     }
     if (!response.ok) {
       return err('REFRESH_FAILED' as const, {
-        message: `GitHub token refresh failed (${response.status})`,
+        message: `GitHub token refresh failed (${response.status})${oauthErrorSuffix(record)}`,
       });
     }
 

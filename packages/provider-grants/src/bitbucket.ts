@@ -15,6 +15,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 export const ATLASSIAN_BITBUCKET = 'atlassian-bitbucket';
 
@@ -56,7 +57,7 @@ export class BitbucketAdapter implements ProviderAdapter {
       return err('REFRESH_FAILED' as const, {
         message: timedOut
           ? 'bitbucket.org token endpoint timed out after 15000ms'
-          : 'Could not reach bitbucket.org',
+          : `Could not reach bitbucket.org: ${causeOf(error)}`,
       });
     }
 
@@ -70,7 +71,7 @@ export class BitbucketAdapter implements ProviderAdapter {
         return err('GRANT_REVOKED' as const);
       }
       return err('REFRESH_FAILED' as const, {
-        message: `Bitbucket token refresh failed (${response.status})`,
+        message: `Bitbucket token refresh failed (${response.status})${oauthErrorSuffix(record)}`,
       });
     }
 

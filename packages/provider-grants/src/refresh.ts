@@ -20,24 +20,46 @@ import type { GrantLogger, ProviderAdapter, RefreshedTokens, RefreshError } from
 /** A lock older than this belongs to a crashed process and is reclaimed. */
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
-async function acquireRefreshLock(provider: string, accountId: string): Promise<boolean> {
+async function acquireRefreshLock(
+  provider: string,
+  accountId: string,
+  logger: GrantLogger
+): Promise<boolean> {
   try {
     return await getDataStore().providerGrants.acquireRefreshLock(provider, accountId, new Date());
-  } catch {
+  } catch (error) {
+    logger.warn('[Refresh] Could not take the refresh lock: {error}', {
+      provider,
+      accountId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }
 
-async function releaseRefreshLock(provider: string, accountId: string): Promise<void> {
+async function releaseRefreshLock(
+  provider: string,
+  accountId: string,
+  logger: GrantLogger
+): Promise<void> {
   try {
     await getDataStore().providerGrants.releaseRefreshLock(provider, accountId);
-  } catch {
-    // Ignore errors on release
+  } catch (error) {
+    // Not fatal — a held lock goes stale and is reclaimed — but worth seeing.
+    logger.warn('[Refresh] Could not release the refresh lock: {error}', {
+      provider,
+      accountId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
 /** Poll with exponential backoff until the holder finishes, max ~10 seconds. */
-async function waitForRefreshLock(provider: string, accountId: string): Promise<void> {
+async function waitForRefreshLock(
+  provider: string,
+  accountId: string,
+  logger: GrantLogger
+): Promise<void> {
   let attempts = 0;
   const maxAttempts = 20;
 
@@ -47,7 +69,7 @@ async function waitForRefreshLock(provider: string, accountId: string): Promise<
     if (!lockedAt) return;
 
     if (Date.now() - lockedAt.getTime() > STALE_LOCK_MS) {
-      await releaseRefreshLock(provider, accountId);
+      await releaseRefreshLock(provider, accountId, logger);
       return;
     }
 
@@ -66,13 +88,13 @@ export async function refreshGrantTokens(
   logger.debug('[Refresh] Starting token refresh', { provider, accountId });
 
   try {
-    const lockAcquired = await acquireRefreshLock(provider, accountId);
+    const lockAcquired = await acquireRefreshLock(provider, accountId, logger);
     if (!lockAcquired) {
       logger.debug('[Refresh] Lock not acquired, waiting for other process', {
         provider,
         accountId,
       });
-      await waitForRefreshLock(provider, accountId);
+      await waitForRefreshLock(provider, accountId, logger);
       // The other process may have refreshed already — reuse its result.
       const refetch = await getGrant(provider, accountId);
       if (refetch.ok && refetch.val) {
@@ -94,7 +116,13 @@ export async function refreshGrantTokens(
 
     const grantResult = await getGrant(provider, accountId);
     if (!grantResult.ok || !grantResult.val) {
-      logger.error('[Refresh] No usable grant found', { provider, accountId });
+      logger.error('[Refresh] No usable grant found: {error}', {
+        provider,
+        accountId,
+        error: grantResult.ok
+          ? 'no grant stored'
+          : `${grantResult.err.type} ${grantResult.err.message ?? ''}`.trim(),
+      });
       return err('REFRESH_FAILED' as const);
     }
     const grant = grantResult.val;
@@ -132,11 +160,25 @@ export async function refreshGrantTokens(
 
     // Sealed under the owner's key (store.ts). A grant that opened has an
     // owner, so the subject is there to seal for.
-    if (!grant.subject) return err('REFRESH_FAILED' as const);
+    if (!grant.subject) {
+      logger.error('[Refresh] Grant has no owner to seal the refreshed tokens for', {
+        provider,
+        accountId,
+      });
+      return err('REFRESH_FAILED' as const);
+    }
     const sealedAccess = await sealGrantToken(grant.subject, accessToken);
     const sealedRefresh = await sealGrantToken(grant.subject, refreshToken);
     if (!sealedAccess.ok || !sealedRefresh.ok) {
-      logger.error('[Refresh] Could not seal refreshed tokens', { provider, accountId });
+      logger.error('[Refresh] Could not seal refreshed tokens: {error}', {
+        provider,
+        accountId,
+        error: !sealedAccess.ok
+          ? sealedAccess.err.message
+          : !sealedRefresh.ok
+            ? sealedRefresh.err.message
+            : '',
+      });
       return err('REFRESH_FAILED' as const);
     }
     const updateResult = await wrapAsync(
@@ -151,9 +193,10 @@ export async function refreshGrantTokens(
     );
 
     if (!updateResult.ok) {
-      logger.error('[Refresh] Failed to persist refreshed tokens', {
+      logger.error('[Refresh] Failed to persist refreshed tokens: {error}', {
         provider,
         accountId,
+        error: updateResult.err.message,
       });
       return updateResult;
     }
@@ -172,6 +215,6 @@ export async function refreshGrantTokens(
     });
     return err('REFRESH_FAILED' as const);
   } finally {
-    await releaseRefreshLock(provider, accountId);
+    await releaseRefreshLock(provider, accountId, logger);
   }
 }

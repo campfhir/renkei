@@ -24,7 +24,9 @@ export type LogAdapterOptions = Omit<PostgresAdapterOptions, 'db'>;
 export async function createLogAdapter(
   options: LogAdapterOptions
 ): Promise<Result<PostgresAdapter, 'DB_INIT_ERROR'>> {
-  if (memoryDataStoreRequested()) return err('DB_INIT_ERROR' as const);
+  if (memoryDataStoreRequested()) {
+    return err('DB_INIT_ERROR' as const, { message: 'the in-memory data store has no log table' });
+  }
   const db = getDatabase();
   if (!db.ok) return db;
   const { PostgresAdapter: Adapter } = await import('@campfhir/bored-logs/adapters/psql');

@@ -22,6 +22,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 /** The CRM connector's grant provider. */
 export const SALESFORCE = 'salesforce';
@@ -74,7 +75,7 @@ export class SalesforceAdapter implements ProviderAdapter {
       return err('REFRESH_FAILED' as const, {
         message: timedOut
           ? 'Salesforce token endpoint timed out after 15000ms'
-          : 'Could not reach the Salesforce token endpoint',
+          : `Could not reach the Salesforce token endpoint: ${causeOf(error)}`,
       });
     }
 
@@ -86,9 +87,7 @@ export class SalesforceAdapter implements ProviderAdapter {
       // the configuration's to fix, not the grant's.
       if (record.error === 'invalid_grant') return err('GRANT_REVOKED' as const);
       return err('REFRESH_FAILED' as const, {
-        message: `Salesforce token refresh failed (${response.status}${
-          typeof record.error === 'string' ? `: ${record.error}` : ''
-        })`,
+        message: `Salesforce token refresh failed (${response.status})${oauthErrorSuffix(record)}`,
       });
     }
 
