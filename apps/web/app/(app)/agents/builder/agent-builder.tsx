@@ -40,6 +40,7 @@ import type { CalendarOption } from './schedule-picker';
 import { SaveConfirmPanel } from './review-panel';
 import { ToolPicker } from './tool-picker';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { clientLogger } from '@/lib/client-logger';
 
 export interface AgentBuilderProps {
   tools: ToolDescriptor[];
@@ -183,11 +184,18 @@ export function AgentBuilder({
       setDrafting(false);
 
       if (draft.status === 'failed' || !draft.result) {
+        clientLogger.warn('agents/builder', 'drafting failed', draft.error ?? undefined, {
+          draftId,
+          status: draft.status,
+        });
         setDraftError(draft.error ?? 'Drafting failed — try again.');
         if (draft.errorDetail) setDraftDetail(draft.errorDetail);
         return;
       }
       if (!applyRef.current(draft.result)) {
+        clientLogger.error('agents/builder', 'draft result has an unrecognised shape', undefined, {
+          draftId,
+        });
         setDraftError('The draft came back in a shape this build does not understand.');
         return;
       }
@@ -282,6 +290,9 @@ export function AgentBuilder({
     );
     const draftResult = result.data?.draft?.result;
     if (!draftResult || !applyDraftResult(draftResult)) {
+      clientLogger.warn('agents/builder', 'pending draft could not be loaded', undefined, {
+        draftId: waiting.id,
+      });
       setDraftError('That draft could not be loaded.');
       setPendingDraft(null);
       return;

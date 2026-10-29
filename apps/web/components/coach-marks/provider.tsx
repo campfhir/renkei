@@ -49,6 +49,7 @@ import type { CoachMarkEvent, CoachMarkProgressView, CoachMarkTour } from '@/lib
 import { CoachAnchorContext, CoachMarkContext, type CoachMarkContextValue } from './context';
 import CoachMarkOverlay from './overlay';
 import { isVisible } from './visible';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export { useCoachMarks } from './context';
 
@@ -301,8 +302,12 @@ export default function CoachMarkProvider({ isOperator, enabled, autoStart: init
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ coachMarks: { autoStart: value } }),
         });
+        if (!response.ok) {
+          reportFetchFailure('PUT', '/api/preferences', response.status, `Request failed (${response.status})`);
+        }
         return response.ok;
-      } catch {
+      } catch (error) {
+        reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
         return false;
       }
     },

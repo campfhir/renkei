@@ -283,16 +283,16 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       // the module comment above for what can leave roles unset.
       const isOperator = (context.roles ?? []).includes(ROLE_OPERATOR);
 
-      // Operators search the whole organization, so they need no Jira account of
-      // their own; everyone else stays scoped to the account backing their
-      // own Jira grant, same as the web page's non-admin branch.
-      let accountId: string | undefined;
+      // Operators search the whole organization. Everyone else stays scoped to
+      // the account backing their own Jira grant and to the lines tagged with
+      // their own subject, same as the web page's non-admin branch.
+      let owner: { accountId?: string; subject?: string } | undefined;
       if (!isOperator) {
-        accountId = context.accountId;
-        if (!accountId) {
+        owner = { accountId: context.accountId, subject: context.subject };
+        if (!owner.accountId && !owner.subject) {
           return errText(
-            'No Jira account linked yet — MCP log access is scoped to your own Jira-linked ' +
-              'activity, the same as a non-admin sees on the Logs page. Connect Jira first.'
+            'No signed-in identity on this request — MCP log access is scoped to your own ' +
+              'activity, the same as a non-admin sees on the Logs page.'
           );
         }
       }
@@ -341,7 +341,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       let rows: LogRow[];
       try {
         rows = await getDataStore().activityLogs.search(
-          buildLogQueryOptions(combineExprs(filterExpr, queryExpr), accountId, {
+          buildLogQueryOptions(combineExprs(filterExpr, queryExpr), owner, {
             levels,
             start,
             end,

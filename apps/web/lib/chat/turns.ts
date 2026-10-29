@@ -12,6 +12,7 @@ import { getDataStore, type ChatTurnInsert, type ChatTurnRecord } from '@renkei/
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isUuid } from '@/lib/uuid';
+import { logger } from '@/lib/logger';
 import type {
   PendingToolPermission,
   ToolPermissionDecision,
@@ -227,6 +228,11 @@ export async function createTurn(input: {
     if (isUniqueViolation(error)) {
       return err('ALREADY_RUNNING' as const, { message: 'A reply is already in progress.' });
     }
+    logger.error('chat turn could not be created: {error}', {
+      component: 'chat/turns',
+      chatId: input.chatId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return err('DB_ERROR' as const, {
       message: error instanceof Error ? error.message : String(error),
     });

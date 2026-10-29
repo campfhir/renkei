@@ -143,7 +143,35 @@ function statusForError(type: WorkerErrorType): number {
   }
 }
 
-function sendError(response: ServerResponse, type: WorkerErrorType, message?: string): void {
+const COMPONENT = 'worker-onbase/server';
+
+/** Refusals of the request itself are the caller's mistake, not a failure to log. */
+const UNLOGGED_ERRORS: ReadonlySet<WorkerErrorType> = new Set([
+  'bad_request',
+  'unauthorized',
+  'forbidden',
+  'unknown_operation',
+  'method_not_allowed',
+  // Answered only after the unhandled-error handler below has logged it.
+  'internal',
+]);
+
+function sendError(
+  response: ServerResponse,
+  type: WorkerErrorType,
+  message?: string,
+  context?: { op: string; subject?: string; [key: string]: unknown }
+): void {
+  if (!UNLOGGED_ERRORS.has(type)) {
+    const log = type === 'store' ? logger.error : logger.warn;
+    log('onbase {op} failed ({type}): {error}', {
+      component: COMPONENT,
+      ...context,
+      op: context?.op ?? 'request',
+      type,
+      error: message ?? type,
+    });
+  }
   sendJson(response, statusForError(type), { error: { type, message } });
 }
 
@@ -237,7 +265,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         config.err.type,
         config.err.type === 'not_configured'
           ? `OnBase (${connector}) is not configured for this organization.`
-          : undefined
+          : undefined,
+        { op: 'config', connector, subject: str(body.subject) || undefined }
       );
       return null;
     }
@@ -318,7 +347,12 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       API_TIMEOUT_MS
     );
     if ('failed' in upstream) {
-      return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+      return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`, {
+        op: 'api',
+        method,
+        path,
+        subject: str(body.subject) || undefined,
+      });
     }
     if (withSession && subject) {
       // 401 is ambiguous between a dead token and a dead session; dropping
@@ -356,7 +390,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         issuer = config.idpIssuer;
       }
       const endpoints = await discoverIssuer(issuer);
-      if ('error' in endpoints) return sendError(response, endpoints.error, endpoints.message);
+      if ('error' in endpoints)
+        return sendError(response, endpoints.error, endpoints.message, { op: 'discover' });
       sendJson(response, 200, endpoints);
     },
 
@@ -402,7 +437,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       }
 
       const endpoints = await discoverIssuer(config.idpIssuer);
-      if ('error' in endpoints) return sendError(response, endpoints.error, endpoints.message);
+      if ('error' in endpoints)
+        return sendError(response, endpoints.error, endpoints.message, { op: 'discover' });
 
       const tokenResponse = await timedFetch(
         endpoints.tokenEndpoint,
@@ -420,7 +456,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         return sendError(
           response,
           'unreachable',
-          `The IdP token endpoint ${tokenResponse.failed}.`
+          `The IdP token endpoint ${tokenResponse.failed}.`,
+          { op: 'token' }
         );
       }
       const payload: unknown = await tokenResponse.json().catch(() => null);
@@ -433,18 +470,20 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
           return sendError(
             response,
             'invalid_grant',
-            'The IdP reports the grant is no longer valid.'
+            'The IdP reports the grant is no longer valid.',
+            { op: 'token' }
           );
         }
-        logger.warn('token exchange failed with {status}', {
-          component: 'worker-onbase/token',
+        return sendError(response, 'token_failed', `The IdP answered ${tokenResponse.status}.`, {
+          op: 'token',
           status: tokenResponse.status,
           idpError: errorTag || '(none)',
         });
-        return sendError(response, 'token_failed', `The IdP answered ${tokenResponse.status}.`);
       }
       if (!isRecord(payload) || typeof payload.access_token !== 'string') {
-        return sendError(response, 'token_failed', 'The IdP token response is malformed.');
+        return sendError(response, 'token_failed', 'The IdP token response is malformed.', {
+          op: 'token',
+        });
       }
       // Verbatim: the web side owns interpretation (id_token claims, expiry).
       sendJson(response, 200, payload);
@@ -457,7 +496,8 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       if (!token) return sendError(response, 'bad_request', 'token is required');
 
       const endpoints = await discoverIssuer(config.idpIssuer);
-      if ('error' in endpoints) return sendError(response, endpoints.error, endpoints.message);
+      if ('error' in endpoints)
+        return sendError(response, endpoints.error, endpoints.message, { op: 'discover' });
       if (!endpoints.revocationEndpoint) return sendJson(response, 200, { revoked: false });
 
       const revokeResponse = await timedFetch(
@@ -554,7 +594,11 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         CONTENT_TIMEOUT_MS
       );
       if ('failed' in upstream) {
-        return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+        return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`, {
+          op: 'content',
+          path,
+          subject: str(body.subject) || undefined,
+        });
       }
       if (contentSubject) {
         if (upstream.status === 401) forgetSession(contentSubject);
@@ -562,6 +606,15 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       }
       if (!upstream.ok) {
         const detail = await upstream.text().catch(() => '');
+        // 401 is the web side's cue to refresh and retry, not a failure yet.
+        if (upstream.status !== 401) {
+          logger.warn('onbase content {path} failed: the OnBase API server answered {status}', {
+            component: COMPONENT,
+            path,
+            status: upstream.status,
+            subject: str(body.subject) || undefined,
+          });
+        }
         // The upstream status is forwarded (a JSON body marks it as an
         // error); 401 in particular must reach the web side's refresh logic.
         return sendJson(response, upstream.status, {
@@ -571,7 +624,11 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       const limit = await transferLimit();
       const bytes = Buffer.from(await upstream.arrayBuffer());
       if (bytes.byteLength > limit) {
-        return sendError(response, 'too_large', `The content exceeds the ${limit}-byte limit.`);
+        return sendError(response, 'too_large', `The content exceeds the ${limit}-byte limit.`, {
+          op: 'content',
+          path,
+          subject: str(body.subject) || undefined,
+        });
       }
       const headers: Record<string, string> = {
         'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
@@ -630,6 +687,13 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
             ? { ok: true as const, status: ping.status }
             : { ok: false as const, error: `The OnBase API server answered ${ping.status}.` };
 
+      if (!idp.ok || !api.ok) {
+        logger.warn('onbase test-connection for {connector} failed: {error}', {
+          component: COMPONENT,
+          connector,
+          error: [idp.ok ? null : idp.error, api.ok ? null : api.error].filter(Boolean).join(' '),
+        });
+      }
       // A failed test is a successful request.
       sendJson(response, 200, { idp, api });
     },
@@ -661,12 +725,20 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     // Uploads exist only on the Document API — there is no admin-connector
     // upload path, so this always resolves the 'onbase' row.
     const config = await resolveConfig(ONBASE_CONNECTOR);
-    if (!config.ok) return sendError(response, config.err.type);
+    if (!config.ok)
+      return sendError(response, config.err.type, undefined, {
+        op: 'put-bytes',
+        subject: uploadSubject || undefined,
+      });
 
     const limit = await transferLimit();
     const bytes = await readBody(request, limit);
     if (bytes === null) {
-      return sendError(response, 'too_large', `The file part exceeds the ${limit}-byte limit.`);
+      return sendError(response, 'too_large', `The file part exceeds the ${limit}-byte limit.`, {
+        op: 'put-bytes',
+        uploadId,
+        subject: uploadSubject || undefined,
+      });
     }
     if (bytes.byteLength === 0)
       return sendError(response, 'bad_request', 'The file part is empty.');
@@ -688,7 +760,11 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
       CONTENT_TIMEOUT_MS
     );
     if ('failed' in upstream) {
-      return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`);
+      return sendError(response, 'unreachable', `The OnBase API server ${upstream.failed}.`, {
+        op: 'put-bytes',
+        uploadId,
+        subject: uploadSubject || undefined,
+      });
     }
     if (uploadSubject) {
       if (upstream.status === 401) forgetSession(uploadSubject);
@@ -743,8 +819,9 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
   return createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
       logger.error('unhandled onbase op failure: {error}', {
-        component: 'worker-onbase/server',
+        component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       if (!response.headersSent) {
         sendError(response, 'internal');

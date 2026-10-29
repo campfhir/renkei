@@ -742,6 +742,8 @@ export async function replaceArtifactBytes(input: {
   if (!dropped.ok) {
     logger.warn('replaced artifact bytes not deleted: {key}', {
       component: 'chat/artifact-library',
+      subject: row.ownerSubject,
+      artifactId: row.id,
       key: row.blobKey,
     });
   }

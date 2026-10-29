@@ -26,6 +26,7 @@ import {
   type Pseudonymizer,
   type DetectorKey,
 } from '@renkei/redaction';
+import { logger } from '@/lib/logger';
 
 export interface OutboundRedactor {
   apply(text: string): { text: string; counts: Record<string, number> };
@@ -50,10 +51,15 @@ export function createOutboundRedactor(
           detectors,
           mrnFormats: settings.redactionMrnFormats,
         });
-      } catch {
+      } catch (error) {
         // The gate's own rule: a redactor that throws must not swallow
         // the message. Returning the text unredacted mirrors what the MCP
         // gate does for a result it could not process.
+        logger.error('outbound redaction failed; text passed unredacted: {error}', {
+          component: 'chat/redaction',
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         return { text, counts: {} };
       }
     },

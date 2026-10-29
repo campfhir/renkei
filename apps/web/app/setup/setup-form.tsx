@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from 'react';
 import { SETUP_SECRET_HEADER } from '@/lib/setup-secret-header';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 interface Fields {
   discoveryEndpoint: string;
@@ -65,11 +66,13 @@ export default function SetupForm() {
           typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
             ? body.error
             : `Saving failed (${response.status})`;
+        reportFetchFailure('POST', '/api/oidc', response.status, message);
         setError(message);
         return;
       }
       setDone(true);
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', '/api/oidc', 0, 'Could not reach the server', error);
       setError('Saving failed. Check the server log and try again.');
     } finally {
       setSaving(false);

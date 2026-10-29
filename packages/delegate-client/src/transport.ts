@@ -223,18 +223,30 @@ export class DelegateTransport {
           await retryDelay(delay);
           continue;
         }
-        return err('DELEGATE_UNREACHABLE', { cause });
+        return err('DELEGATE_UNREACHABLE', {
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        });
       }
     }
     const json: unknown = await response.json().catch(() => null);
     if (!response.ok) {
       const error = isRecord(json) && isRecord(json.error) ? json.error : {};
       return err(typeof error.type === 'string' ? error.type : 'internal', {
-        message: typeof error.message === 'string' ? error.message : undefined,
+        message:
+          typeof error.message === 'string'
+            ? error.message
+            : json === null
+              ? `the delegate answered ${response.status} with no JSON body`
+              : undefined,
         cause: { status: response.status },
       });
     }
-    if (!isRecord(json)) return err('DELEGATE_UNREACHABLE');
+    if (!isRecord(json)) {
+      return err('DELEGATE_UNREACHABLE', {
+        message: `the delegate answered ${response.status} without a JSON object`,
+      });
+    }
     return ok(json);
   }
 }

@@ -193,9 +193,17 @@ export function createMailBulkJobHandler(): EventHandler {
         // A previous delivery died mid-job. Do NOT re-execute — /move
         // returns new ids, a re-run double-acts. Finalize and stop.
         const succeeded = Number(job.succeeded ?? 0);
+        const lastError = `worker restarted mid-job; ${succeeded} of ${job.total ?? '?'} had completed`;
         await jobs.finish(job.id, {
           status: succeeded > 0 ? 'partial' : 'failed',
-          lastError: `worker restarted mid-job; ${succeeded} of ${job.total ?? '?'} had completed`,
+          lastError,
+        });
+        logger.warn('mail bulk job {jobId} failed: {error}', {
+          component: COMPONENT,
+          jobId: job.id,
+          subject: job.subject,
+          accountId: job.accountId,
+          error: lastError,
         });
       }
       // Terminal (or just finalized): a redelivery is an idempotent no-op.
@@ -208,6 +216,13 @@ export function createMailBulkJobHandler(): EventHandler {
     // running-guard above (harmless but noisy). Every failure lands on the
     // row instead.
     const fail = async (message: string, counts?: { succeeded: number; total: number | null }) => {
+      logger.warn('mail bulk job {jobId} failed: {error}', {
+        component: COMPONENT,
+        jobId: job.id,
+        subject: job.subject,
+        accountId: job.accountId,
+        error: message,
+      });
       await jobs.finish(job.id, {
         status: counts && counts.succeeded > 0 ? 'partial' : 'failed',
         lastError: message,
@@ -317,6 +332,7 @@ export function createMailBulkJobHandler(): EventHandler {
       logger.info('mail bulk job {jobId} finished: {succeeded} ok, {failed} failed', {
         component: COMPONENT,
         jobId: job.id,
+        subject: job.subject,
         action,
         succeeded,
         failed,

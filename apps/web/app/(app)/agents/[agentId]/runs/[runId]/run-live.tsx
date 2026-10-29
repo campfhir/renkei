@@ -27,6 +27,7 @@ import CancelButton from './cancel-button';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import type { OwnerRunPageData } from '@/lib/agents/run-page-data';
+import { clientLogger } from '@/lib/client-logger';
 
 export default function RunLive({ agentId, runId, agentName, initialData }: {
   agentId: string;
@@ -60,7 +61,8 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
         // EventSource retries a server-closed connection by default —
         // closing it ourselves the moment we see why is what stops that.
         if (isRunSettled(parsed.run.status)) source.close();
-      } catch {
+      } catch (error) {
+        clientLogger.warn('agents/run-stream', 'malformed run event', error, { agentId, runId });
         // A malformed payload is not worth tearing the view down for —
         // the next event (or the server's own safety-net re-read) fixes it.
       }

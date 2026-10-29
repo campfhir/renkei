@@ -161,10 +161,11 @@ async function graphGet(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable', {
+    logger.warn('Graph API unreachable: {error}', {
       component: 'outlook/fetch',
       subject: context.subject,
       path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
       timedOut: isTimeoutError(error),
       mailboxBusy: error instanceof GateTimeoutError,
     });
@@ -218,10 +219,11 @@ async function graphPost(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable', {
+    logger.warn('Graph API unreachable: {error}', {
       component: 'outlook/fetch',
       subject: context.subject,
       path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
       timedOut: isTimeoutError(error),
       mailboxBusy: error instanceof GateTimeoutError,
     });
@@ -277,10 +279,11 @@ async function graphPatch(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable', {
+    logger.warn('Graph API unreachable: {error}', {
       component: 'outlook/fetch',
       subject: context.subject,
       path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
       timedOut: isTimeoutError(error),
       mailboxBusy: error instanceof GateTimeoutError,
     });
@@ -327,8 +330,14 @@ async function graphDelete(
         responseHeaders: headersForLog(response.headers),
       });
     }
-  } catch {
+  } catch (error) {
     // Best-effort only — the draft is left in the mailbox's Drafts folder.
+    logger.warn('Could not clean up an orphaned draft: {error}', {
+      component: 'outlook/fetch',
+      subject: context.subject,
+      path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -351,10 +360,11 @@ async function graphDeleteChecked(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable', {
+    logger.warn('Graph API unreachable: {error}', {
       component: 'outlook/fetch',
       subject: context.subject,
       path: pathAndQuery,
+      error: error instanceof Error ? error.message : String(error),
       timedOut: isTimeoutError(error),
       mailboxBusy: error instanceof GateTimeoutError,
     });

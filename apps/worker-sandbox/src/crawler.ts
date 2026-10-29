@@ -216,6 +216,7 @@ export class Crawler {
             component: 'worker-sandbox/crawler',
             crawlId: next,
             error: firstLine(error),
+            stack: error instanceof Error ? error.stack : undefined,
           });
           return this.store.transition(next, ['queued', 'running'], 'failed', firstLine(error));
         })
@@ -300,6 +301,13 @@ export class Crawler {
             }
           }
         } else {
+          logger.warn('crawl {crawlId} page {url} failed: {error}', {
+            component: 'worker-sandbox/crawler',
+            crawlId,
+            url: next.url,
+            subject: crawl.subject,
+            error: found.error,
+          });
           summary.status = 'failed';
           summary.error = found.error;
           await this.store.putPage(crawlId, summary, null, crawl.subject);

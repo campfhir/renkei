@@ -56,9 +56,10 @@ export async function resolveLinkedWebexUserAccess(
   let row: { accountId: string } | null;
   try {
     row = await getDataStore().providerGrants.findByHolderEmail(WEBEX_USER, email.toLowerCase());
-  } catch {
-    logger.warn('database unavailable; skipping cross-space search', {
+  } catch (error) {
+    logger.warn('database unavailable; skipping cross-space search: {error}', {
       component: 'webex/forward-context',
+      error: error instanceof Error ? error.message : String(error),
     });
     return null;
   }

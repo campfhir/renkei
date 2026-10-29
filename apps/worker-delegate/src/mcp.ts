@@ -37,7 +37,9 @@ import {
 } from '@renkei/connector-mcp';
 import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
 import { isRecord, sendJson, str } from '@renkei/worker-kit';
+import { silentDelegateLogger, type DelegateLogger } from './grants';
 
+const COMPONENT = 'worker-delegate/mcp';
 const TIMEOUT_MS = 15_000;
 
 export type McpPrepareError =
@@ -61,13 +63,23 @@ export class McpPreparer {
     private readonly encryptionKey: Buffer,
     private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
     /** Tests replace the DNS-resolving guard. */
-    private readonly assertPublic: (url: string) => Promise<unknown> = assertPublicHttpsUrl
+    private readonly assertPublic: (url: string) => Promise<unknown> = assertPublicHttpsUrl,
+    private readonly logger: DelegateLogger = silentDelegateLogger
   ) {}
 
   async prepare(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
-    const fail = (type: McpPrepareError, message?: string): void =>
-      sendJson(response, statusFor(type), { error: { type, message } });
     const serverId = str(body.serverId);
+    const fail = (type: McpPrepareError, message?: string): void => {
+      if (statusFor(type) >= 500) {
+        this.logger.warn('MCP server {serverId} sign-in preparation failed ({type}): {error}', {
+          component: COMPONENT,
+          serverId,
+          type,
+          error: message ?? type,
+        });
+      }
+      sendJson(response, statusFor(type), { error: { type, message } });
+    };
     const redirectUri = str(body.redirectUri);
     if (!serverId || !redirectUri) return fail('bad_request', 'serverId and redirectUri');
     const read = await getServer(serverId);

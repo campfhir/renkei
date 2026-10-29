@@ -27,6 +27,7 @@ import {
 } from '@renkei/knowledge';
 import { parseLogQueryExpr } from '@campfhir/bored-logs';
 import { buildKnowledgeVerifiers, sourceFiltersFor } from '@/lib/mcp-tools/knowledge';
+import { logger } from '@/lib/logger';
 
 const MIN_K = 1;
 const MAX_K = 30;
@@ -149,6 +150,7 @@ export async function searchMyKnowledge(
   // has not configured one.
   if (!semanticQuery) {
     const recent = await listRecentKnowledge({
+      log: logger,
       userEmail,
       k: clampedK,
       verifiers,
@@ -158,6 +160,11 @@ export async function searchMyKnowledge(
       ...(metadataFilter ? { metadata: metadataFilter } : {}),
     });
     if (!recent.ok) {
+      logger.error('The knowledge store could not be read: {error}', {
+        component: 'actions/knowledge',
+        subject: session.subject,
+        error: recent.err.message ?? recent.err.type,
+      });
       return { hits: [], elided: 0, error: 'The knowledge store could not be read.' };
     }
     return {
@@ -181,6 +188,7 @@ export async function searchMyKnowledge(
   }
 
   const searched = await searchKnowledge({
+    log: logger,
     userEmail,
     query: semanticQuery,
     k: clampedK,
@@ -193,6 +201,15 @@ export async function searchMyKnowledge(
     ...(metadataFilter ? { metadata: metadataFilter } : {}),
   });
   if (!searched.ok) {
+    logger[searched.err.type === 'EMBEDDING_FAILED' ? 'warn' : 'error'](
+      'Knowledge search failed ({kind}): {error}',
+      {
+        component: 'actions/knowledge',
+        subject: session.subject,
+        kind: searched.err.type,
+        error: searched.err.message ?? searched.err.type,
+      }
+    );
     return {
       hits: [],
       elided: 0,

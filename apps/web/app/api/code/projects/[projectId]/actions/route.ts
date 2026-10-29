@@ -14,6 +14,7 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { hostAdapterFor } from '@/lib/code/repo-host';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -37,7 +38,15 @@ export async function GET(
     branch: project.repo!.branch || undefined,
     max: summary ? 1 : 25,
   });
-  if (!listed.ok) return jsonError(502, 'host', listed.error);
+  if (!listed.ok) {
+    logger.warn('Could not list pipeline runs from the code host: {error}', {
+      component: 'api/code/projects/actions',
+      subject: session.subject,
+      projectId,
+      error: listed.error,
+    });
+    return jsonError(502, 'host', listed.error);
+  }
   if (summary) return NextResponse.json({ lastRun: listed.runs[0] ?? null });
   return NextResponse.json({ runs: listed.runs });
 }

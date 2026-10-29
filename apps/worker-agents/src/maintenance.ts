@@ -116,6 +116,8 @@ export function createStuckRunJanitor() {
       logger.warn('janitor closed abandoned run {runId}', {
         component: 'worker-agents/janitor',
         runId: run.id,
+        agentId: run.agentId,
+        subject: run.ownerSubject,
       });
     }
   };

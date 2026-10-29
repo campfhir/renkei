@@ -30,8 +30,8 @@ import type { Readable } from 'node:stream';
 import { getDataStore } from '@renkei/db';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { sendJson, str } from '@renkei/worker-kit';
-import type { Grants } from './grants';
-import { statusForGrantError } from './grants';
+import type { DelegateLogger, Grants } from './grants';
+import { silentDelegateLogger, statusForGrantError } from './grants';
 
 /** How long a ticket may start requests; a clone already under way runs to its end. */
 export const GIT_TICKET_TTL_MS = 15 * 60_000;
@@ -99,7 +99,8 @@ function sameHash(a: string, b: string): boolean {
 export class GitTickets {
   constructor(
     private readonly grants: Grants,
-    private readonly dial: GitDialer = nodeGitDialer
+    private readonly dial: GitDialer = nodeGitDialer,
+    private readonly logger: DelegateLogger = silentDelegateLogger
   ) {}
 
   /** `grant/git-ticket` */
@@ -202,6 +203,13 @@ export class GitTickets {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.message === 'timeout';
+      this.logger.warn('git {verb} to {host} for {provider} failed: {error}', {
+        component: 'worker-delegate/git',
+        verb,
+        host,
+        provider: ticket.provider,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return refuse(response, timedOut ? 504 : 502, timedOut ? 'timeout' : 'unreachable');
     }
     response.statusCode = upstream.status;
@@ -209,7 +217,16 @@ export class GitTickets {
       if (HOP_BY_HOP.has(name) || name === 'content-length' || value === undefined) continue;
       response.setHeader(name, value);
     }
-    upstream.body.on('error', () => response.destroy());
+    upstream.body.on('error', (error) => {
+      this.logger.warn('git {verb} from {host} broke off mid-stream: {error}', {
+        component: 'worker-delegate/git',
+        verb,
+        host,
+        provider: ticket.provider,
+        error: error.message,
+      });
+      response.destroy();
+    });
     upstream.body.pipe(response);
   }
 

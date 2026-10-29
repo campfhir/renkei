@@ -29,6 +29,7 @@ import { isMarkdown, previewKind, type PreviewKind } from '@/lib/chat/preview-ki
 import type { AttachmentView } from '@/lib/chat/views';
 import FileCaption from './file-caption';
 import Markdown from './markdown';
+import { clientLogger } from '@/lib/client-logger';
 
 /** A US Letter page at 96 dpi, the size docx-preview lays a page out at. */
 const PAGE = { width: 816, height: 1056 };
@@ -233,8 +234,13 @@ function PdfFirstPage({ url }: { url: string }) {
         });
         await page.render({ canvas: target, viewport }).promise;
         if (!cancelled) setState('done');
-      } catch {
-        if (!cancelled) setState('failed');
+      } catch (error) {
+        if (cancelled) return;
+        clientLogger.warn('chat/artifact-preview', 'preview failed', error, {
+          kind: 'pdf',
+          path: url.split('?')[0],
+        });
+        setState('failed');
       }
     })();
     return () => {
@@ -283,8 +289,13 @@ function useFrame(
         if (cancelled || !doc) return;
         await drawRef.current(bytes, doc);
         if (!cancelled) setState('done');
-      } catch {
-        if (!cancelled) setState('failed');
+      } catch (error) {
+        if (cancelled) return;
+        clientLogger.warn('chat/artifact-preview', 'preview failed', error, {
+          kind: 'document',
+          path: url.split('?')[0],
+        });
+        setState('failed');
       }
     })();
     return () => {
@@ -415,8 +426,13 @@ function SheetCorner({ url }: { url: string }) {
         setSheet(sheetOf(body));
         setState('done');
       })
-      .catch(() => {
-        if (!cancelled) setState('failed');
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        clientLogger.warn('chat/artifact-preview', 'preview failed', error, {
+          kind: 'sheet',
+          path: url.split('?')[0],
+        });
+        setState('failed');
       });
     return () => {
       cancelled = true;
@@ -505,8 +521,13 @@ function TextPage({
         setText(value.slice(0, TEXT_CHARS));
         setState('done');
       })
-      .catch(() => {
-        if (!cancelled) setState('failed');
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        clientLogger.warn('chat/artifact-preview', 'preview failed', error, {
+          kind: 'text',
+          path: url.split('?')[0],
+        });
+        setState('failed');
       });
     return () => {
       cancelled = true;

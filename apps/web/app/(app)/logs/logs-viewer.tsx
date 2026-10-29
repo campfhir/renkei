@@ -20,6 +20,7 @@ import { searchLogs, type LogSearchResult } from './actions';
 import { describeWindow, DEFAULT_WINDOW_DAYS, DEFAULT_LOG_LEVELS, type LogWindow } from './window';
 import { Spinner } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { clientLogger } from '@/lib/client-logger';
 
 /** The levels this gateway actually writes, in severity order. */
 const LEVELS = ['debug', 'info', 'warn', 'error', 'critical'];
@@ -104,6 +105,7 @@ export default function LogsViewer({ accountId, initial, initialWindow }: {
         window.location.href = signInUrl(`/logs`);
         return;
       }
+      if (result.error) clientLogger.warn('logs', 'activity search failed', result.error);
       setResult(result);
       setPage(1);
     });

@@ -38,8 +38,9 @@ import {
 } from '@renkei/connector-fileshares';
 import { openForSubject } from '@renkei/user-keys';
 import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
-import type { Grants } from './grants';
+import { silentDelegateLogger, type DelegateLogger, type Grants } from './grants';
 
+const COMPONENT = 'worker-delegate/forward';
 const MAX_JSON_BYTES = 16 * 1_048_576;
 /** A file written to a share; the worker applies the org's own transfer cap after this one. */
 const MAX_RAW_BYTES = 512 * 1_048_576;
@@ -139,7 +140,8 @@ export class Forwarder {
   constructor(
     private readonly grants: Grants,
     /** Injected in tests; production dials the worker. */
-    private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init)
+    private readonly fetchImpl: typeof fetch = (input, init) => fetch(input, init),
+    private readonly logger: DelegateLogger = silentDelegateLogger
   ) {}
 
   /** `forward/<connector>/<op>`; anything else is not this module's. */
@@ -156,6 +158,15 @@ export class Forwarder {
     }
     const worker = workerConfig(spec.envPrefix);
     if (!worker) {
+      this.logger.error(
+        '{connector} {op} not forwarded: {envPrefix}_URL and _API_KEY are not set',
+        {
+          component: COMPONENT,
+          connector,
+          op: workerOp,
+          envPrefix: spec.envPrefix,
+        }
+      );
       fail(
         response,
         503,
@@ -248,9 +259,17 @@ export class Forwarder {
         : connector === 'admanager'
           ? await readAdManagerCiphertext(id, subject)
           : await readShareCiphertext(id, subject);
-    if (!ciphertext.ok) return { ok: false, status: 500, type: 'store' };
+    if (!ciphertext.ok) {
+      this.logger.error('{connector} credential for {id} could not be read: {error}', {
+        component: COMPONENT,
+        connector,
+        id,
+        error: ciphertext.err.message ?? ciphertext.err.type,
+      });
+      return { ok: false, status: 500, type: 'store' };
+    }
     if (ciphertext.val === null) return { ok: false, status: 403, type: 'not_connected' };
-    const opened = await this.open(subject, ciphertext.val);
+    const opened = await this.open(subject, ciphertext.val, connector);
     if (!opened.ok) return opened;
     const credentials =
       connector === 'mirth'
@@ -258,7 +277,14 @@ export class Forwarder {
         : connector === 'admanager'
           ? parseAdManagerCredentials(opened.value)
           : parseShareCredentials(opened.value);
-    if (!credentials) return { ok: false, status: 503, type: 'bad_credentials' };
+    if (!credentials) {
+      this.logger.warn('{connector} credential for {id} is not a usable credential', {
+        component: COMPONENT,
+        connector,
+        id,
+      });
+      return { ok: false, status: 503, type: 'bad_credentials' };
+    }
     body.credentials = credentials;
     return { ok: true };
   }
@@ -266,7 +292,8 @@ export class Forwarder {
   /** The person's sealed value opened and parsed as JSON; locked and unreadable keys told apart. */
   private async open(
     subject: string,
-    ciphertext: string
+    ciphertext: string,
+    connector: Connector
   ): Promise<
     { ok: true; value: unknown } | { ok: false; status: number; type: string; message?: string }
   > {
@@ -284,11 +311,20 @@ export class Forwarder {
           message: 'Your key is not available to Renkei right now; sign in again to continue.',
         };
       }
+      this.logger.warn('{connector} credential could not be opened: {error}', {
+        component: COMPONENT,
+        connector,
+        error: opened.err.type,
+      });
       return { ok: false, status: 503, type: 'bad_credentials' };
     }
     try {
       return { ok: true, value: JSON.parse(opened.val) };
     } catch {
+      this.logger.warn('{connector} credential opened but is not JSON', {
+        component: COMPONENT,
+        connector,
+      });
       return { ok: false, status: 503, type: 'bad_credentials' };
     }
   }
@@ -303,12 +339,26 @@ export class Forwarder {
     const subject = url.searchParams.get('subject') ?? '';
     if (!shareId || !subject) return fail(response, 400, 'bad_request');
     const ciphertext = await readShareCiphertext(shareId, subject);
-    if (!ciphertext.ok) return fail(response, 500, 'store');
+    if (!ciphertext.ok) {
+      this.logger.error('fileshares credential for {id} could not be read: {error}', {
+        component: COMPONENT,
+        id: shareId,
+        error: ciphertext.err.message ?? ciphertext.err.type,
+      });
+      return fail(response, 500, 'store');
+    }
     if (ciphertext.val === null) return fail(response, 403, 'not_connected');
-    const opened = await this.open(subject, ciphertext.val);
+    const opened = await this.open(subject, ciphertext.val, 'fileshares');
     if (!opened.ok) return fail(response, opened.status, opened.type, opened.message);
     const credentials: ShareCredentials | null = parseShareCredentials(opened.value);
-    if (!credentials) return fail(response, 503, 'bad_credentials');
+    if (!credentials) {
+      this.logger.warn('{connector} credential for {id} is not a usable credential', {
+        component: COMPONENT,
+        connector: 'fileshares',
+        id: shareId,
+      });
+      return fail(response, 503, 'bad_credentials');
+    }
     const bytes = await readBody(request, MAX_RAW_BYTES);
     if (bytes === null) return fail(response, 413, 'too_large');
     await this.send(worker, `write${url.search}`, response, {
@@ -372,6 +422,11 @@ export class Forwarder {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
+      this.logger.error('connector worker {op} failed: {error}', {
+        component: COMPONENT,
+        op: opAndQuery.split('?', 1)[0],
+        error: error instanceof Error ? error.message : String(error),
+      });
       return fail(
         response,
         timedOut ? 504 : 502,

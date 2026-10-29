@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listInstancesWithConnection } from '@renkei/connector-admanager';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -16,6 +17,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const instances = await listInstancesWithConnection(session.subject);
   if (!instances.ok) {
+    logger.error('Could not read the instances: {error}', {
+      component: 'api/admanager',
+      subject: session.subject,
+      error: instances.err.message ?? instances.err.type,
+    });
     return NextResponse.json({ error: 'Could not read the instances' }, { status: 500 });
   }
 

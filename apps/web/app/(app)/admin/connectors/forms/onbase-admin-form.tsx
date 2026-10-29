@@ -13,6 +13,8 @@ import {
 } from './shared';
 import type { OnBaseConfig, OnBaseTestResult } from './onbase-form';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import { reportFetchFailure } from '@/lib/fetch-json';
+import { clientLogger } from '@/lib/client-logger';
 
 /* ----------------------------------------------------------------------- */
 
@@ -97,9 +99,10 @@ export function OnBaseAdminForm({ origin }: { origin: string | null }) {
       const record: Record<string, unknown> =
         typeof data === 'object' && data !== null ? { ...data } : {};
       if (!response.ok) {
-        setTestResult(
-          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`
-        );
+        const message =
+          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
+        reportFetchFailure('POST', `${url}/test-connection`, response.status, message);
+        setTestResult(message);
         return;
       }
       const side = (
@@ -114,8 +117,21 @@ export function OnBaseAdminForm({ origin }: { origin: string | null }) {
           ...(typeof raw.tokenEndpoint === 'string' ? { tokenEndpoint: raw.tokenEndpoint } : {}),
         };
       };
-      setTestResult({ idp: side(record.idp), api: side(record.api) });
-    } catch {
+      const idp = side(record.idp);
+      const api = side(record.api);
+      if (!idp.ok || !api.ok) {
+        clientLogger.warn('admin/onbase-admin', 'test connection failed', undefined, {
+          idpOk: idp.ok,
+          idpError: idp.error,
+          idpStatus: idp.status,
+          apiOk: api.ok,
+          apiError: api.error,
+          apiStatus: api.status,
+        });
+      }
+      setTestResult({ idp, api });
+    } catch (error) {
+      reportFetchFailure('POST', `${url}/test-connection`, 0, 'Could not reach the server', error);
       setTestResult('Could not reach the server');
     } finally {
       setTesting(false);

@@ -16,6 +16,7 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { MISTRAL_OCR_CONNECTOR, DEFAULT_MISTRAL_OCR_MODEL } from '@renkei/connector-mistral-ocr';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -31,11 +32,21 @@ export async function GET(
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
+    logger.error('Could not load the token encryption key: {error}', {
+      component: 'api/admin/connectors/mistral-ocr',
+      subject: access.subject,
+      error: keyResult.err.message ?? keyResult.err.type,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const configResult = await getConnectorConfig(MISTRAL_OCR_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
+    logger.error('Could not read connector config: {error}', {
+      component: 'api/admin/connectors/mistral-ocr',
+      subject: access.subject,
+      error: configResult.err.message ?? configResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
 
@@ -70,6 +81,11 @@ export async function PUT(
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
+    logger.error('Could not load the token encryption key: {error}', {
+      component: 'api/admin/connectors/mistral-ocr',
+      subject: access.subject,
+      error: keyResult.err.message ?? keyResult.err.type,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
@@ -96,6 +112,11 @@ export async function PUT(
     keyResult.val
   );
   if (!writeResult.ok) {
+    logger.error('Could not store connector config: {error}', {
+      component: 'api/admin/connectors/mistral-ocr',
+      subject: access.subject,
+      error: writeResult.err.message ?? writeResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 

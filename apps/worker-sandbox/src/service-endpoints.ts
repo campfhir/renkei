@@ -43,6 +43,7 @@ import {
 import * as rules from './image-rules-store';
 import { ServiceOpError, type ServiceManager } from './services';
 import type { ServiceTarget } from './service-store';
+import { logErrorResponse } from './request-log';
 
 export interface ServiceHandlerDeps {
   /** The manager, when the engine answered at boot; null answers every verb 503. */
@@ -67,6 +68,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function sendError(response: ServerResponse, status: number, type: string, message?: string): void {
+  logErrorResponse(status, type, message);
   sendJson(response, status, { error: { type, message } });
 }
 

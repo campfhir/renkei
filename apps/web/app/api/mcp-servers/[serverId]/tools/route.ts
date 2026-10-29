@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServer, getToolLists } from '@renkei/connector-mcp';
 import { getSessionFromRequest } from '@/lib/session';
 import { refreshToolList } from '@/lib/mcp-servers/remote';
+import { logger } from '@/lib/logger';
 
 type Params = { params: Promise<{ serverId: string }> };
 
@@ -17,7 +18,15 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Nex
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const lists = await getToolLists(session.subject);
-  if (!lists.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  if (!lists.ok) {
+    logger.error('Database error: {error}', {
+      component: 'api/mcp-servers/tools',
+      subject: session.subject,
+      serverId,
+      error: lists.err.message ?? lists.err.type,
+    });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
   const cached = lists.val.get(serverId);
   return NextResponse.json({
     tools: (cached?.tools ?? []).map((tool) => ({
@@ -34,7 +43,15 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const server = await getServer(serverId);
-  if (!server.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  if (!server.ok) {
+    logger.error('Database error: {error}', {
+      component: 'api/mcp-servers/tools',
+      subject: session.subject,
+      serverId,
+      error: server.err.message ?? server.err.type,
+    });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
   if (!server.val || !server.val.enabled) {
     return NextResponse.json({ error: 'No such MCP server' }, { status: 404 });
   }

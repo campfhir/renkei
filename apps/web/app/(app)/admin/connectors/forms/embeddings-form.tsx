@@ -12,6 +12,7 @@ import {
   SaveRow,
 } from './shared';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /* ----------------------------------------------------------------------- */
 
@@ -354,8 +355,13 @@ function ReindexPanel() {
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const response = await fetch(url).catch(() => null);
+      const response = await fetch(url).catch((error: unknown) => {
+        reportFetchFailure('GET', url, 0, 'Could not reach the server', error);
+        return null;
+      });
       const body: unknown = response ? await response.json().catch(() => null) : null;
+      if (response && !response.ok)
+        reportFetchFailure('GET', url, response.status, `Request failed (${response.status})`);
       if (cancelled) return;
       setRuns(readRuns(body));
     }
@@ -384,13 +390,15 @@ function ReindexPanel() {
       const record: Record<string, unknown> =
         typeof body === 'object' && body !== null ? { ...body } : {};
       if (!response.ok) {
-        setError(
-          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`
-        );
+        const message =
+          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
+        reportFetchFailure('POST', url, response.status, message);
+        setError(message);
         return;
       }
       if (Array.isArray(record.runs)) setRuns(readRuns(body));
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', url, 0, 'Could not reach the server', error);
       setError('Could not reach the server');
     } finally {
       setBusy(null);

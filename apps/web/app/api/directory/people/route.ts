@@ -21,6 +21,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveGraphAccess, str } from '@/lib/mcp-tools/graph/client';
 import { addressOf, searchDirectoryUsers } from '@/lib/mcp-tools/graph/directory';
+import { logger } from '@/lib/logger';
 
 const RESULT_MAX = 25;
 
@@ -45,6 +46,11 @@ export async function GET(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'api/directory/people',
+      subject: session.subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 

@@ -5,6 +5,7 @@ import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-gu
 import { humanizeSystemName } from '@/lib/email-sanitizer-display';
 import CoachTarget from '@/components/coach-marks/anchor';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
+import { getJson, sendJson } from '@/lib/fetch-json';
 
 /**
  * Content-free admin surface: a rule is a sender/domain/subject pattern
@@ -71,41 +72,6 @@ function Card({
   ) : (
     <div className={className}>{body}</div>
   );
-}
-
-async function getJson<T>(url: string): Promise<{ data: T | null; error: string | null }> {
-  try {
-    const response = await fetch(url);
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        typeof body?.error === 'string' ? body.error : `Request failed (${response.status})`;
-      return { data: null, error: message };
-    }
-    return { data: body, error: null };
-  } catch {
-    return { data: null, error: 'Could not reach the server' };
-  }
-}
-
-async function sendJson(
-  url: string,
-  method: 'POST' | 'PUT' | 'DELETE',
-  body?: unknown
-): Promise<string | null> {
-  try {
-    const response = await fetch(url, {
-      method,
-      headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (response.ok) return null;
-    const data = await response.json().catch(() => null);
-    if (typeof data?.error === 'string') return data.error;
-    return `Request failed (${response.status})`;
-  } catch {
-    return 'Could not reach the server';
-  }
 }
 
 interface RuleDraft {

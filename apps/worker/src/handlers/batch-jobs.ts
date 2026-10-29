@@ -56,6 +56,13 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
         // A previous delivery died mid-discovery — do NOT re-run (would
         // create duplicate items). Finalize and let the caller start over.
         await finalize(store.failBatch(batch.id, 'worker restarted mid-discovery'));
+        logger.warn('batch {batchJobId} failed: {error}', {
+          component: COMPONENT,
+          batchJobId: batch.id,
+          kind: batch.kind,
+          subject: batch.subject,
+          error: 'worker restarted mid-discovery',
+        });
       }
       return; // Terminal, or just finalized: a redelivery is an idempotent no-op.
     }
@@ -69,6 +76,13 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     const kind = getBatchJobKind(claimed.kind);
     if (!kind) {
       await finalize(store.failBatch(claimed.id, `Unknown batch kind "${claimed.kind}".`));
+      logger.warn('batch {batchJobId} failed: {error}', {
+        component: COMPONENT,
+        batchJobId: claimed.id,
+        kind: claimed.kind,
+        subject: claimed.subject,
+        error: `Unknown batch kind "${claimed.kind}".`,
+      });
       return;
     }
 
@@ -76,12 +90,27 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     try {
       discovered = await kind.discover(claimed);
     } catch (error) {
+      logger.error('batch {batchJobId} discovery threw: {error}', {
+        component: COMPONENT,
+        batchJobId: claimed.id,
+        kind: claimed.kind,
+        subject: claimed.subject,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       await finalize(
         store.failBatch(claimed.id, error instanceof Error ? error.message : String(error))
       );
       return;
     }
     if (!discovered.ok) {
+      logger.warn('batch {batchJobId} failed: {error}', {
+        component: COMPONENT,
+        batchJobId: claimed.id,
+        kind: claimed.kind,
+        subject: claimed.subject,
+        error: discovered.error ?? 'Discovery failed.',
+      });
       await finalize(store.failBatch(claimed.id, discovered.error ?? 'Discovery failed.'));
       return;
     }
@@ -155,6 +184,13 @@ export function createBatchItemHandler(): EventHandler {
             error: 'worker restarted mid-item',
           })
         );
+        logger.warn('batch {batchJobId} item {itemId} failed: worker restarted mid-item', {
+          component: COMPONENT,
+          batchJobId: batch.id,
+          itemId: item.id,
+          kind: batch.kind,
+          subject: batch.subject,
+        });
       }
       return; // Terminal: a redelivery is an idempotent no-op.
     }
@@ -170,6 +206,12 @@ export function createBatchItemHandler(): EventHandler {
           error: `Unknown batch kind "${batch.kind}".`,
         })
       );
+      logger.error('batch {batchJobId}: unknown batch kind "{kind}"', {
+        component: COMPONENT,
+        batchJobId: batch.id,
+        kind: batch.kind,
+        subject: batch.subject,
+      });
       return;
     }
 
@@ -178,6 +220,26 @@ export function createBatchItemHandler(): EventHandler {
       outcome = await kind.runItem(batch, claimed);
     } catch (error) {
       outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
+      logger.error('batch {batchJobId} item {itemId} threw: {error}', {
+        component: COMPONENT,
+        batchJobId: batch.id,
+        itemId: claimed.id,
+        kind: batch.kind,
+        subject: batch.subject,
+        error: outcome.error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    }
+    if (!outcome.ok) {
+      // The item row keeps the reason too, but only the log reaches Activity.
+      logger.warn('batch {batchJobId} item {itemId} failed: {error}', {
+        component: COMPONENT,
+        batchJobId: batch.id,
+        itemId: claimed.id,
+        kind: batch.kind,
+        subject: batch.subject,
+        error: outcome.error,
+      });
     }
     // Whichever item lands last finalizes the batch and announces it —
     // `finalize` is outside the try so an announcement problem is never

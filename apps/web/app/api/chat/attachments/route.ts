@@ -31,11 +31,23 @@ import {
 import { attachToProject, createOwnedArtifact } from '@/lib/chat/artifact-library';
 import { deferDigest } from '@/lib/chat/artifact-digest';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { logger } from '@/lib/logger';
 
 export const runtime = 'nodejs';
 
-function uploadError(error: AttachmentError): Response {
-  switch (error) {
+function uploadError(
+  error: { type: AttachmentError; message?: string },
+  where: { subject: string; chatId: string | null; filename: string }
+): Response {
+  if (error.type !== 'TOO_LARGE' && error.type !== 'UNCONFIGURED') {
+    logger.error('Upload of {filename} failed ({kind}): {error}', {
+      component: 'api/chat/attachments',
+      ...where,
+      kind: error.type,
+      error: error.message ?? error.type,
+    });
+  }
+  switch (error.type) {
     case 'TOO_LARGE':
       return jsonError(413, 'too-large', 'The file is too large.');
     case 'UNCONFIGURED':
@@ -126,7 +138,13 @@ export async function PUT(request: NextRequest): Promise<Response> {
       cipher: chat.cipher,
       key: { kind: 'chat', ref: chat.chat.id },
     });
-    if (!created.ok) return uploadError(created.err.type);
+    if (!created.ok) {
+      return uploadError(created.err, {
+        subject: session.subject,
+        chatId: chat.chat.id,
+        filename,
+      });
+    }
     deferDigest(session.subject, [created.val], after);
     return NextResponse.json({ attachment: toAttachmentView(created.val) }, { status: 201 });
   }
@@ -140,7 +158,13 @@ export async function PUT(request: NextRequest): Promise<Response> {
     maxBytes,
     redactor,
   });
-  if (!created.ok) return uploadError(created.err.type);
+  if (!created.ok) {
+    return uploadError(created.err, {
+      subject: session.subject,
+      chatId: chat?.chat.id ?? null,
+      filename,
+    });
+  }
   // The summary and keywords for the search index, asked for after the reply.
   deferDigest(session.subject, [created.val], after);
   let attached: { mode: ReferenceMode } | null = null;

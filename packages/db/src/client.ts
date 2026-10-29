@@ -28,7 +28,7 @@ function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   // A process on the in-memory data store (store/registry.ts) has no
   // database by design, never a real database the env happens to name.
   if (memoryDataStoreRequested()) {
-    return err('DB_INIT_ERROR' as const);
+    return err('DB_INIT_ERROR' as const, { message: 'the in-memory data store is active' });
   }
 
   // Deliberately raw process.env, not a package-level config module: this
@@ -36,7 +36,7 @@ function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   // the only setting it needs. Each app validates its own fuller config.
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
-    return err('DB_INIT_ERROR' as const);
+    return err('DB_INIT_ERROR' as const, { message: 'DATABASE_URL is not set' });
   }
 
   try {
@@ -56,8 +56,10 @@ function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
       );
     });
     return ok(state.pool);
-  } catch {
-    return err('DB_INIT_ERROR' as const);
+  } catch (error) {
+    return err('DB_INIT_ERROR' as const, {
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -74,8 +76,10 @@ export function getDatabase(): Result<Kysely<DB>, 'DB_INIT_ERROR'> {
       dialect: new PostgresDialect({ pool: poolResult.val }),
     });
     return ok(state.db);
-  } catch {
-    return err('DB_INIT_ERROR' as const);
+  } catch (error) {
+    return err('DB_INIT_ERROR' as const, {
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

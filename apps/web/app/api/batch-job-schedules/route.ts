@@ -29,6 +29,7 @@ import {
 } from '@/lib/batch-jobs/pipeline-options';
 import { documentPipelineConfig } from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import { nextRunAtFor } from '@/lib/batch-jobs/schedule-next-run';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -99,8 +100,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // credentials to it, and moving/deleting there must be within what they
   // allowed on the Connectors page — same check the one-off start route makes.
   const shares = await listConnectedShares(session.subject);
-  if (!shares.ok)
+  if (!shares.ok) {
+    logger.error('Could not read your file shares: {error}', {
+      component: 'api/batch-job-schedules',
+      subject: session.subject,
+      error: shares.err.message ?? shares.err.type,
+    });
     return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
+  }
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
   if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 

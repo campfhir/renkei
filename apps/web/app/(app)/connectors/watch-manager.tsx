@@ -3,6 +3,7 @@
 import RemoveButton from '@/components/remove-button';
 import { BackButton } from '@/components/back-link';
 import { useCallback, useEffect, useState } from 'react';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * Add and remove the Jira projects / Confluence spaces / SharePoint document
@@ -138,11 +139,18 @@ export default function WatchManager({
       const response = await fetch(`/api/watches/options?provider=${provider}`);
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'GET',
+          '/api/watches/options',
+          response.status,
+          data.error ?? `Could not list ${noun}s.`
+        );
         setOptionsError(data.error ?? `Could not list ${noun}s.`);
         return;
       }
       setOptions(Array.isArray(data.options) ? data.options : []);
-    } catch {
+    } catch (error) {
+      reportFetchFailure('GET', '/api/watches/options', 0, 'Could not reach the server', error);
       setOptionsError('Could not reach the server.');
     }
   }
@@ -164,6 +172,12 @@ export default function WatchManager({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'POST',
+          '/api/watches',
+          response.status,
+          data.error ?? 'Could not start watching.'
+        );
         setNotice(data.error ?? 'Could not start watching.');
         return;
       }
@@ -176,7 +190,8 @@ export default function WatchManager({
       setChoice('');
       setManualKey('');
       await loadWatches();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', '/api/watches', 0, 'Could not reach the server', error);
       setNotice('Could not reach the server.');
     } finally {
       setBusy(false);
@@ -199,6 +214,12 @@ export default function WatchManager({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'POST',
+          '/api/watches/reindex',
+          response.status,
+          data.error ?? 'Could not start the rebuild.'
+        );
         setNotice(data.error ?? 'Could not start the rebuild.');
         return;
       }
@@ -211,7 +232,8 @@ export default function WatchManager({
           `. Re-reading this ${noun} from scratch; nothing was changed in the source.`
       );
       await loadWatches();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', '/api/watches/reindex', 0, 'Could not reach the server', error);
       setNotice('Could not reach the server.');
     } finally {
       setBusy(false);
@@ -235,6 +257,12 @@ export default function WatchManager({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'POST',
+          '/api/watches/repair',
+          response.status,
+          data.error ?? 'Could not repair the watch.'
+        );
         setNotice(data.error ?? 'Could not repair the watch.');
         return;
       }
@@ -243,7 +271,8 @@ export default function WatchManager({
           `stopped — nothing is re-fetched.`
       );
       await loadWatches();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('POST', '/api/watches/repair', 0, 'Could not reach the server', error);
       setNotice('Could not reach the server.');
     } finally {
       setBusy(false);
@@ -262,6 +291,12 @@ export default function WatchManager({
       );
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
+        reportFetchFailure(
+          'DELETE',
+          '/api/watches',
+          response.status,
+          data.error ?? 'Could not stop watching.'
+        );
         setNotice(data.error ?? 'Could not stop watching.');
         return;
       }
@@ -269,7 +304,8 @@ export default function WatchManager({
       // the polling stops. Say so, or removing looks like a delete.
       setNotice(`Stopped indexing. What was already indexed stays searchable.`);
       await loadWatches();
-    } catch {
+    } catch (error) {
+      reportFetchFailure('DELETE', '/api/watches', 0, 'Could not reach the server', error);
       setNotice('Could not reach the server.');
     } finally {
       setBusy(false);
@@ -505,11 +541,13 @@ function SitePicker({
         );
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
+          reportFetchFailure('GET', '/api/watches/options', response.status, data.error ?? 'Could not list sites.');
           setError(data.error ?? 'Could not list sites.');
           return;
         }
         setSites(Array.isArray(data.sites) ? data.sites : []);
-      } catch {
+      } catch (error) {
+        reportFetchFailure('GET', '/api/watches/options', 0, 'Could not reach the server', error);
         setError('Could not reach the server.');
       } finally {
         setLoading(false);
@@ -537,11 +575,18 @@ function SitePicker({
       );
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
+        reportFetchFailure(
+          'GET',
+          '/api/watches/options',
+          response.status,
+          data.error ?? 'Could not list libraries.'
+        );
         setError(data.error ?? 'Could not list libraries.');
         return;
       }
       setLibraries(Array.isArray(data.options) ? data.options : []);
-    } catch {
+    } catch (error) {
+      reportFetchFailure('GET', '/api/watches/options', 0, 'Could not reach the server', error);
       setError('Could not reach the server.');
     } finally {
       setLoading(false);

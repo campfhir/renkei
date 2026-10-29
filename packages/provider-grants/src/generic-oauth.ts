@@ -11,6 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 export class GenericOAuthAdapter implements ProviderAdapter {
   constructor(
@@ -49,8 +50,10 @@ export class GenericOAuthAdapter implements ProviderAdapter {
         body: form.toString(),
         signal: AbortSignal.timeout(15_000),
       });
-    } catch {
-      return err('REFRESH_FAILED' as const, { message: 'Could not reach the token endpoint' });
+    } catch (error) {
+      return err('REFRESH_FAILED' as const, {
+        message: `Could not reach the token endpoint: ${causeOf(error)}`,
+      });
     }
 
     const data: unknown = await response.json().catch(() => null);
@@ -59,7 +62,7 @@ export class GenericOAuthAdapter implements ProviderAdapter {
     if (!response.ok) {
       if (record.error === 'invalid_grant') return err('GRANT_REVOKED' as const);
       return err('REFRESH_FAILED' as const, {
-        message: `Token refresh failed (${response.status})`,
+        message: `Token refresh failed (${response.status})${oauthErrorSuffix(record)}`,
       });
     }
     if (typeof record.access_token !== 'string' || !record.access_token) {

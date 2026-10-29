@@ -152,6 +152,11 @@ export function createTurnStore(scope: {
           else deferDigest(scope.subject, [created.val], after);
         } else if (created.err.type !== 'UNCONFIGURED') {
           logger.warn('chat artifact not stored: {reason} {message}', {
+            component: 'chat/turn',
+            subject: scope.subject,
+            chatId: scope.chatId,
+            turnId: scope.turnId,
+            filename: file.filename,
             reason: created.err.type,
             message: created.err.message ?? '',
           });

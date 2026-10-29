@@ -84,8 +84,10 @@ async function run(server: McpServer, subject: string, watch: Watch) {
               if (!listed.ok) {
                 logger.warn('MCP tool list refresh after a change notice failed: {reason}', {
                   component: 'mcp-servers',
+                  subject,
                   server: current.slug,
                   reason: listed.reason,
+                  message: listed.message,
                 });
               }
             });

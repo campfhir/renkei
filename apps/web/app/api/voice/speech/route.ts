@@ -24,6 +24,7 @@ import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { voiceForLocale } from '@/lib/voice/catalog';
 import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 import { encodedDurationMs, recordVoiceUsage } from '@/lib/voice/usage';
+import { logger } from '@/lib/logger';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
 export const SPEECH_MAX_CHARS = 3_000;
@@ -88,6 +89,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     signal: request.signal,
   });
   if (!result.ok) {
+    logger.warn('Speech synthesis failed ({kind}): {error}', {
+      component: 'api/voice/speech',
+      subject: session.subject,
+      provider: resolved.provider.kind,
+      kind: result.error.kind,
+      error: result.error.message,
+    });
     const status =
       result.error.kind === 'rate_limit' ? 429 : result.error.kind === 'timeout' ? 504 : 502;
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });

@@ -8,6 +8,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
+import { causeOf, oauthErrorSuffix } from './oauth-error';
 
 export const ATLASSIAN = 'atlassian';
 /**
@@ -110,7 +111,9 @@ export class AtlassianAdapter implements ProviderAdapter {
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
       return err('REFRESH_FAILED' as const, {
-        message: timedOut ? 'token endpoint timed out after 15000ms' : 'token endpoint unreachable',
+        message: timedOut
+          ? 'token endpoint timed out after 15000ms'
+          : `token endpoint unreachable: ${causeOf(error)}`,
       });
     }
 
@@ -124,7 +127,7 @@ export class AtlassianAdapter implements ProviderAdapter {
         return err('GRANT_REVOKED' as const);
       }
       return err('REFRESH_FAILED' as const, {
-        message: `token endpoint returned ${response.status}`,
+        message: `token endpoint returned ${response.status}${oauthErrorSuffix(record)}`,
       });
     }
 

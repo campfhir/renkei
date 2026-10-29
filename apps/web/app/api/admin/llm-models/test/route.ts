@@ -19,6 +19,7 @@ import { decrypt, loadKeyring } from '@renkei/crypto';
 import { testLlmConnection, type TestConnectionError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { API_SURFACES, SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
+import { logger } from '@/lib/logger';
 
 /** The taxonomy, translated for the person watching the button spinner. */
 function messageFor(kind: TestConnectionError): { message: string; status: number } {
@@ -84,17 +85,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!keyResult.ok) {
+      logger.error('Could not load the token encryption key: {error}', {
+        component: 'api/admin/llm-models/test',
+        error: keyResult.err.message ?? keyResult.err.type,
+      });
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     const secretsResult = row.encryptedSecrets
       ? decrypt(row.encryptedSecrets, keyResult.val)
       : null;
+    if (secretsResult && !secretsResult.ok) {
+      logger.warn('Could not decrypt the stored API key for model config {modelConfigId}: {error}', {
+        component: 'api/admin/llm-models/test',
+        modelConfigId: payload.modelConfigId,
+        error: secretsResult.err.message ?? secretsResult.err.type,
+      });
+    }
     if (secretsResult?.ok) {
       try {
         const secrets: { apiKey?: unknown } = JSON.parse(secretsResult.val);
         if (typeof secrets.apiKey === 'string') apiKey = secrets.apiKey;
-      } catch {
+      } catch (error) {
         // Malformed secrets fall through to the no-key answer below.
+        logger.warn('Stored secrets for model config {modelConfigId} are malformed: {error}', {
+          component: 'api/admin/llm-models/test',
+          modelConfigId: payload.modelConfigId,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
   }
@@ -126,6 +143,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : null,
   });
   if (!result.ok) {
+    logger.warn('Model connection test failed for {provider} ({kind}): {error}', {
+      component: 'api/admin/llm-models/test',
+      provider: payload.provider,
+      kind: result.err.type,
+      error: result.err.message ?? result.err.type,
+    });
     const { message, status } = messageFor(result.err.type);
     return NextResponse.json({ error: message }, { status });
   }

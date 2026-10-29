@@ -25,6 +25,7 @@ import type * as store from './store';
 import { ScriptRunError, type ScriptRunner } from './scripts';
 import { decideScriptsFor, type OrgFeaturesLookup, type SandboxCapabilities } from './features';
 import type { NetworkIsolation } from './workspaces';
+import { logErrorResponse } from './request-log';
 
 export interface ScriptHandlerDeps {
   /** The runner, or null when this worker has no interpreter. */
@@ -53,6 +54,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
 }
 
 function sendError(response: ServerResponse, status: number, type: string, message?: string): void {
+  logErrorResponse(status, type, message);
   sendJson(response, status, { error: { type, message } });
 }
 

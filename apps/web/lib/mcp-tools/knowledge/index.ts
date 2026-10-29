@@ -409,6 +409,7 @@ export async function registerKnowledgeTools(
       // org configures one.
       if (!query.trim()) {
         const recent = await listRecentKnowledge({
+          log: logger,
           userEmail,
           k,
           verifiers,
@@ -439,6 +440,7 @@ export async function registerKnowledgeTools(
       }
 
       const searched = await searchKnowledge({
+        log: logger,
         userEmail,
         query,
         k,

@@ -14,6 +14,7 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { ATLASSIAN_JSM_CONNECTOR, DEFAULT_ATLASSIAN_JSM_SCOPES } from '@/lib/atlassian-app';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest
@@ -25,11 +26,21 @@ export async function GET(
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
+    logger.error('Could not load the token encryption key: {error}', {
+      component: 'api/admin/connectors/atlassian-jsm',
+      subject: access.subject,
+      error: keyResult.err.message ?? keyResult.err.type,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const configResult = await getConnectorConfig(ATLASSIAN_JSM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
+    logger.error('Could not read connector config: {error}', {
+      component: 'api/admin/connectors/atlassian-jsm',
+      subject: access.subject,
+      error: configResult.err.message ?? configResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
 
@@ -74,6 +85,11 @@ export async function PUT(
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
+    logger.error('Could not load the token encryption key: {error}', {
+      component: 'api/admin/connectors/atlassian-jsm',
+      subject: access.subject,
+      error: keyResult.err.message ?? keyResult.err.type,
+    });
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
@@ -102,6 +118,11 @@ export async function PUT(
     keyResult.val
   );
   if (!writeResult.ok) {
+    logger.error('Could not store connector config: {error}', {
+      component: 'api/admin/connectors/atlassian-jsm',
+      subject: access.subject,
+      error: writeResult.err.message ?? writeResult.err.type,
+    });
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 

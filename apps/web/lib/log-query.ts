@@ -5,13 +5,14 @@ import {
   type LogLevel,
   type LogQueryOptions,
 } from '@campfhir/bored-logs';
+import { createHash } from 'node:crypto';
 
 /**
  * Keys that define a query's scope rather than narrowing it. A caller typing
  * `accountId:someone-else` is asking to read someone else's logs, so these are
  * stripped from whatever they typed and re-applied from the session.
  */
-const RESTRICTED_KEYS = ['accountId', 'userId'];
+const RESTRICTED_KEYS = ['accountId', 'userId', 'subjectHash'];
 
 /** Level names are the keys of the level-rank map, so membership is the check. */
 const isKnownLevel = (level: string): level is LogLevel => level in LOG_LEVELS;
@@ -30,24 +31,41 @@ export function parseLogQueryExpr(query: string): FilterExpr | null {
   return result.ok ? result.val : null;
 }
 
-/** A single comparison, wrapped in the or-node form the parser emits. */
-function scopeLeaf(key: string, value: string): FilterExpr {
-  return {
-    type: 'or',
-    nodes: [{ type: 'filter', filter: { key, operator: 'contains', value } }],
-  };
+/**
+ * Whose lines a scoped caller may read: those tagged with their Jira account
+ * (connector traffic), with their own subject (everything the app does on
+ * their behalf: uploads, OCR, chats), or with their subject's hash (the
+ * delegate, which never logs a subject in the clear). A bare string is an
+ * account id.
+ */
+export interface LogOwner {
+  accountId?: string | null;
+  subject?: string | null;
 }
 
 /**
- * Build a filter tree with the Jira account, when given, enforced:
- * `(whatever the caller asked for) && accountId`.
+ * The delegate's stand-in for a subject: the first sixteen hex characters of
+ * its SHA-256 (apps/worker-delegate/src/access-log.ts). Worked out here,
+ * from the session, so the caller's own delegate lines are theirs too.
+ */
+export function subjectHash(subject: string): string {
+  return createHash('sha256').update(subject).digest('hex').slice(0, 16);
+}
+
+function ownerOf(owner: string | LogOwner | undefined): LogOwner {
+  return typeof owner === 'string' ? { accountId: owner } : (owner ?? {});
+}
+
+/**
+ * Build a filter tree with the caller's scope, when given, enforced:
+ * `(whatever the caller asked for) && (accountId || subject || subjectHash)`.
  *
  * Accepts either a raw query string or an already-parsed tree, since the
  * `LogSearchBar` component hands back a tree directly.
  */
 export function buildEnforcedLogQuery(
   userQuery: string | FilterExpr | null,
-  accountId?: string
+  owner?: string | LogOwner
 ): FilterExpr {
   const parsed = typeof userQuery === 'string' ? parseLogQueryExpr(userQuery) : userQuery;
   const scrubbed = parsed ? removeRestrictedFields(parsed, RESTRICTED_KEYS) : null;
@@ -55,7 +73,30 @@ export function buildEnforcedLogQuery(
   // Splice the caller's own AND-ed branches in rather than nesting their whole
   // tree, so the result stays in the parser's normal form.
   const userNodes = scrubbed ? (scrubbed.type === 'and' ? scrubbed.nodes : [scrubbed]) : [];
-  const scope = accountId ? [scopeLeaf('accountId', accountId)] : [];
+  const { accountId, subject } = ownerOf(owner);
+  const leaves: FilterExpr[] = [
+    ...(accountId
+      ? [
+          {
+            type: 'filter' as const,
+            filter: { key: 'accountId', operator: 'contains' as const, value: accountId },
+          },
+        ]
+      : []),
+    ...(subject
+      ? [
+          {
+            type: 'filter' as const,
+            filter: { key: 'subject', operator: '=' as const, value: subject },
+          },
+          {
+            type: 'filter' as const,
+            filter: { key: 'subjectHash', operator: '=' as const, value: subjectHash(subject) },
+          },
+        ]
+      : []),
+  ];
+  const scope: FilterExpr[] = leaves.length ? [{ type: 'or', nodes: leaves }] : [];
 
   return { type: 'and', nodes: [...userNodes, ...scope] };
 }
@@ -98,7 +139,7 @@ export interface LogQueryWindow {
  */
 export function buildLogQueryOptions(
   userQuery: string | FilterExpr | null,
-  accountId?: string,
+  owner?: string | LogOwner,
   window: LogQueryWindow = {}
 ): LogQueryOptions & { includeBinaryAttributes: boolean } {
   // Unknown names are dropped rather than passed through: the adapter rejects
@@ -106,7 +147,7 @@ export function buildLogQueryOptions(
   const levels = [...new Set((window.levels ?? []).filter(isKnownLevel))];
 
   return {
-    attributeFilter: buildEnforcedLogQuery(userQuery, accountId),
+    attributeFilter: buildEnforcedLogQuery(userQuery, owner),
     levels: levels.length ? levels : undefined,
     start: window.start ?? undefined,
     end: window.end ?? undefined,

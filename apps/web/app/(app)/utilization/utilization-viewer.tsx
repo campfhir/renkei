@@ -32,6 +32,7 @@ import type { EfficientAgentRow } from '@/lib/usage/org-usage';
 import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { clientLogger } from '@/lib/client-logger';
 
 type Series = 'tokens' | 'runs' | 'tools';
 
@@ -249,6 +250,8 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
         window.location.href = signInUrl(`/utilization`);
         return;
       }
+      if (next.error)
+        clientLogger.warn('utilization', 'utilization report failed', next.error, { periodKey });
       setReport(next);
     });
   }

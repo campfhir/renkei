@@ -13,6 +13,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { ENTRA_DEVELOPER } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
+import { logger } from '@/lib/logger';
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -32,6 +33,11 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     accountId: grantRow.accountId,
   });
   if (!deleted.ok) {
+    logger.error('Could not disconnect: {error}', {
+      component: 'api/entra-developer/grant',
+      subject: session.subject,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({

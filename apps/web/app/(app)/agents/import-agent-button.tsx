@@ -10,6 +10,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export default function ImportAgentButton() {
   const router = useRouter();
@@ -31,6 +32,12 @@ export default function ImportAgentButton() {
       const body: { agentId?: string; error?: string; issues?: { message: string }[] } =
         await response.json().catch(() => ({}));
       if (!response.ok || !body.agentId) {
+        reportFetchFailure(
+          'POST',
+          '/api/agents/import',
+          response.status,
+          body.error ?? 'Import failed.'
+        );
         setError(
           body.issues?.length
             ? `${body.error ?? 'Invalid definition.'} ${body.issues.map((issue) => issue.message).join(' ')}`

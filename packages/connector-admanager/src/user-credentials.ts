@@ -36,7 +36,11 @@ export async function openCredentialsForSubject(
   stored: string
 ): Promise<Result<AdManagerCredentials, CredentialError>> {
   const opened = await openForSubject(subject, stored);
-  if (!opened.ok) return err('DECRYPTION_ERROR' as const);
+  if (!opened.ok) {
+    return err('DECRYPTION_ERROR' as const, {
+      message: opened.err.message ? `${opened.err.type}: ${opened.err.message}` : opened.err.type,
+    });
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(opened.val);

@@ -1,5 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/consistent-type-assertions */
-import { buildEnforcedLogQuery, buildLogQueryOptions, parseLogQueryExpr } from './log-query';
+import {
+  buildEnforcedLogQuery,
+  buildLogQueryOptions,
+  parseLogQueryExpr,
+  subjectHash,
+} from './log-query';
 
 describe('parseLogQueryExpr', () => {
   it('should parse simple key:value', () => {
@@ -68,6 +73,51 @@ describe('parseLogQueryExpr', () => {
   });
 });
 
+describe('buildEnforcedLogQuery with an owner', () => {
+  it('scopes to the account OR the subject', () => {
+    const result = buildEnforcedLogQuery('level:error', {
+      accountId: 'acct-1',
+      subject: 'sub-1',
+    }) as any;
+    const scope = result.nodes[result.nodes.length - 1];
+    expect(scope.type).toBe('or');
+    expect(scope.nodes.map((n: any) => [n.filter.key, n.filter.operator, n.filter.value])).toEqual([
+      ['accountId', 'contains', 'acct-1'],
+      ['subject', '=', 'sub-1'],
+      ['subjectHash', '=', subjectHash('sub-1')],
+    ]);
+  });
+
+  it('scopes to the subject alone without a Jira account', () => {
+    const result = buildEnforcedLogQuery(null, { accountId: null, subject: 'sub-1' }) as any;
+    expect(result.nodes).toHaveLength(1);
+    expect(result.nodes[0].nodes).toEqual([
+      { type: 'filter', filter: { key: 'subject', operator: '=', value: 'sub-1' } },
+      {
+        type: 'filter',
+        filter: { key: 'subjectHash', operator: '=', value: subjectHash('sub-1') },
+      },
+    ]);
+  });
+
+  it('hashes the subject the way the delegate does', () => {
+    // apps/worker-delegate/src/access-log.ts: sha256, first sixteen hex characters.
+    expect(subjectHash('sub-1')).toBe('0a80627d4936eb43');
+  });
+
+  it('cannot be widened by the caller naming another hash', () => {
+    const result = buildEnforcedLogQuery("subjectHash:'deadbeefdeadbeef'", {
+      subject: 'sub-1',
+    }) as any;
+    expect(JSON.stringify(result)).not.toContain('deadbeefdeadbeef');
+  });
+
+  it('cannot be widened by the caller naming another account', () => {
+    const result = buildEnforcedLogQuery('accountId:someone-else', { subject: 'sub-1' }) as any;
+    expect(JSON.stringify(result)).not.toContain('someone-else');
+  });
+});
+
 describe('buildEnforcedLogQuery', () => {
   const accountId = 'user-456';
 
@@ -99,10 +149,7 @@ describe('buildEnforcedLogQuery', () => {
 
   describe('restricted field removal', () => {
     it('should remove user-provided accountId', () => {
-      const result = buildEnforcedLogQuery(
-        'level:error && accountId:wrong-user',
-        accountId
-      );
+      const result = buildEnforcedLogQuery('level:error && accountId:wrong-user', accountId);
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should not contain "wrong-user"
@@ -154,10 +201,7 @@ describe('buildEnforcedLogQuery', () => {
 
     it('should collapse empty queries after field removal', () => {
       // If user only queries restricted fields, should become just enforced filters
-      const result = buildEnforcedLogQuery(
-        'userId:wrong && accountId:wrong',
-        accountId
-      );
+      const result = buildEnforcedLogQuery('userId:wrong && accountId:wrong', accountId);
       expect(result).toBeTruthy();
       const tree = JSON.stringify(result);
       // Should only have enforced values

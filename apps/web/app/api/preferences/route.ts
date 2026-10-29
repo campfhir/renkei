@@ -37,6 +37,7 @@ import {
   setVoicePrefs,
 } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest
@@ -86,35 +87,70 @@ export async function PUT(
   if ('notifications' in payload) {
     notifications = parseNotificationPrefs(payload.notifications);
     const written = await setNotificationPrefs(session.subject, notifications);
-    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
   }
 
   let theme = await getThemePrefs(session.subject, { fresh: true });
   if ('theme' in payload) {
     theme = parseThemePrefs(payload.theme);
     const written = await setThemePrefs(session.subject, theme);
-    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
   }
 
   let voice = await getVoicePrefs(session.subject, { fresh: true });
   if ('voice' in payload) {
     voice = parseVoicePrefs(payload.voice);
     const written = await setVoicePrefs(session.subject, voice);
-    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
   }
 
   let image = await getImagePrefs(session.subject, { fresh: true });
   if ('image' in payload) {
     image = parseImagePrefs(payload.image);
     const written = await setImagePrefs(session.subject, image);
-    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
   }
 
   let coachMarks = await getCoachMarkPrefs(session.subject, { fresh: true });
   if ('coachMarks' in payload) {
     coachMarks = parseCoachMarkPrefs(payload.coachMarks);
     const written = await setCoachMarkPrefs(session.subject, coachMarks);
-    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
   }
 
   // Unlike the others this one is refused rather than parsed down: a window
@@ -145,7 +181,14 @@ export async function PUT(
     }
     chatArchive = parseChatArchivePrefs(requested);
     const written = await setChatArchivePrefs(session.subject, chatArchive);
-    if (!written.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    if (!written.ok) {
+      logger.error('Could not save: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });

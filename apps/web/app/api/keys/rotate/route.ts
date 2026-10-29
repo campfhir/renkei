@@ -10,6 +10,7 @@ import { delegateClient } from '@renkei/delegate-client';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, keyMaterialOf, sealedDelegationsOf } from '@/lib/keys/status';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest
@@ -51,6 +52,11 @@ export async function POST(
       case 'KEY_MISMATCH':
         return jsonError(400, 'bad_request', 'The keys this browser sent do not fit together.');
       default:
+        logger.error('The key service could not be reached: {error}', {
+          component: 'api/keys/rotate',
+          subject: session.subject,
+          error: rotated.err.message ?? rotated.err.type,
+        });
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }

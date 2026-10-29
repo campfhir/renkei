@@ -16,6 +16,7 @@ import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-ca
 import { listAgents } from '@/lib/agents/store';
 import { listChatModels } from '@/lib/chat/models';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
+import { logger } from '@/lib/logger';
 
 export interface BuilderData {
   tools: ToolDescriptor[];
@@ -44,9 +45,23 @@ export async function loadBuilderData(
     listAvailableTools(subject),
     listAgents(subject),
     // An agent runs on a chat model; an image generation model cannot answer.
-    listChatModels().catch(() => []),
+    listChatModels().catch((error: unknown) => {
+      logger.error('agent builder could not list chat models: {error}', {
+        component: 'web/agents',
+        subject,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }),
     getOrgSettings(),
-    loadCalendarOptions().catch(() => []),
+    loadCalendarOptions().catch((error: unknown) => {
+      logger.error('agent builder could not list holiday calendars: {error}', {
+        component: 'web/agents',
+        subject,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }),
   ]);
   const org = settings.ok ? settings.val : DEFAULT_ORG_SETTINGS;
   return {

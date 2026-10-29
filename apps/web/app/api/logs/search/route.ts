@@ -84,9 +84,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         'atlassian'
       );
 
-      if (!accountId) {
-        return NextResponse.json({ error: 'No Jira grant for this user' }, { status: 403 });
-      }
 
       // A caller may still name an account, but only their own: serving their
       // own logs under someone else's id would misreport whose activity these are.
@@ -95,7 +92,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       // User can view only their own logs
-      const result = await runQuery(buildLogQueryOptions(userQuery, accountId));
+      const result = await runQuery(
+        buildLogQueryOptions(userQuery, { accountId, subject: session.subject })
+      );
 
       if (!result.ok) {
         return NextResponse.json({ error: result.message }, { status: 500 });

@@ -274,3 +274,22 @@ export async function graphFetch(
 }
 
 export { GateTimeoutError };
+
+/** Graph's `{error: {code, message}}` refusal, bounded — what said no and why. */
+export async function graphErrorDetail(response: Response): Promise<string> {
+  if (typeof response.text !== 'function') return '';
+  const text = await response.text().catch(() => '');
+  try {
+    const parsed: unknown = JSON.parse(text);
+    const error =
+      typeof parsed === 'object' && parsed !== null && 'error' in parsed ? parsed.error : null;
+    if (typeof error === 'object' && error !== null) {
+      const code = 'code' in error && typeof error.code === 'string' ? error.code : '';
+      const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+      return [code, message].filter(Boolean).join(' — ').slice(0, 300);
+    }
+  } catch {
+    // Not JSON: the raw excerpt below.
+  }
+  return text.trim().slice(0, 300);
+}

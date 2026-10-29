@@ -13,6 +13,7 @@
 import { WEBEX_USER } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { getDataStore } from '@renkei/db';
+import { logger } from '@/lib/logger';
 
 export interface WebexUserAccess {
   accountId: string;
@@ -41,7 +42,13 @@ export async function resolveWebexUserAccessByEmail(
 ): Promise<WebexUserAccess | null> {
   const identity = await getDataStore()
     .identities.findByEmail(email.toLowerCase())
-    .catch(() => null);
+    .catch((error: unknown) => {
+      logger.error('identity lookup by email failed for WebEx access: {error}', {
+        component: 'webex/user-access',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
   const subject = identity?.subject ?? null;
   if (!subject) return null;
   return resolveWebexUserAccess(subject);

@@ -25,6 +25,8 @@ import {
   ensurePushSubscription,
 } from '@/lib/push-subscription';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { reportFetchFailure } from '@/lib/fetch-json';
+import { clientLogger } from '@/lib/client-logger';
 
 /**
  * What to be told about, and where.
@@ -298,7 +300,8 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
       let current: NotificationPermission;
       try {
         current = await Notification.requestPermission();
-      } catch {
+      } catch (error) {
+        clientLogger.warn('preferences', 'notification permission request failed', error);
         current = 'denied';
       }
       setPermission(current);
@@ -459,8 +462,16 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ notifications: prefs }),
       });
+      if (!response.ok)
+        reportFetchFailure(
+          'PUT',
+          '/api/preferences',
+          response.status,
+          `Request failed (${response.status})`
+        );
       setStatus(response.ok ? 'saved' : 'failed');
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
       setStatus('failed');
     }
   }

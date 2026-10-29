@@ -37,6 +37,8 @@ export async function recordDocumentUsage(input: RecordDocumentUsageInput): Prom
   } catch (error) {
     logger.warn('document usage not recorded', {
       component: 'web/document-usage',
+      subject: input.subject,
+      artifactId: input.artifactId,
       error: error instanceof Error ? error.message : String(error),
     });
   }

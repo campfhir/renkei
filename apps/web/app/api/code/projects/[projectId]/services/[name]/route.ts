@@ -18,6 +18,7 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -42,6 +43,16 @@ export async function GET(
   });
   if (!got.ok) {
     const failure = clientFailure(got.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/services',
+        subject: ready.context.session.subject,
+        projectId,
+        operation: 'got',
+        status: failure.status,
+        error: 'message' in got.err && got.err.message ? got.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   return NextResponse.json(got.val);
@@ -66,6 +77,16 @@ export async function DELETE(
   const stopped = await sbServiceStop(codeProjectTarget(projectId), name.name);
   if (!stopped.ok) {
     const failure = clientFailure(stopped.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/services',
+        subject: ready.context.session.subject,
+        projectId,
+        operation: 'stopped',
+        status: failure.status,
+        error: 'message' in stopped.err && stopped.err.message ? stopped.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   recordAuditEvent({

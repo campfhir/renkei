@@ -13,6 +13,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner } from '@/lib/chat/store';
 import { appendChatNote, noteFromInput } from '@/lib/code/notes';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -32,6 +33,13 @@ export async function POST(
   if (!note) return jsonError(400, 'invalid', 'That is not a note the pane writes.');
   const appended = await appendChatNote({ chatId: chat.id, note });
   if (!appended.ok) {
+    if (appended.reason === 'failed') {
+      logger.error('The note could not be written', {
+        component: 'api/chat/chats/notes',
+        subject: session.subject,
+        chatId,
+      });
+    }
     return appended.reason === 'turn-running'
       ? jsonError(409, 'turn-running', 'Wait for the current reply to finish first.')
       : jsonError(500, 'failed', 'The note could not be written.');

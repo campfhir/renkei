@@ -17,7 +17,7 @@
  * atlassianFetch surfaces the status.
  */
 
-import type { AccessVerifier, SourceRef } from '@renkei/gates';
+import type { AccessVerifier, SourceRef, VerifyContext } from '@renkei/gates';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
@@ -77,12 +77,18 @@ export function createJiraAccessVerifier(lookup: AtlassianCredentialLookup): Acc
     provider: 'jira',
     async verifyAccess(
       userEmail: string,
-      refs: readonly SourceRef[]
+      refs: readonly SourceRef[],
+      context?: VerifyContext
     ): Promise<Result<SourceRef[], 'VERIFICATION_FAILED'>> {
       const keys = distinctIds(refs);
       if (keys.length === 0) return ok([]);
 
-      const credential = await lookup(userEmail).catch(() => null);
+      const credential = await lookup(userEmail).catch((error: unknown) => {
+        context?.log?.warn('jira access check could not resolve a credential: {error}', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
       if (!credential) return ok([]);
 
       const visible = new Set<string>();
@@ -105,7 +111,14 @@ export function createJiraAccessVerifier(lookup: AtlassianCredentialLookup): Acc
         // A failed batch leaves its ids unverified, hence denied. Deliberately
         // not `return err(...)`: one broken batch must not deny the batches
         // that did answer.
-        if (!response.ok) continue;
+        if (!response.ok) {
+          context?.log?.warn('jira access check batch failed ({status}): {error}', {
+            status: response.status,
+            error: response.error.slice(0, 300),
+            refs: batch.length,
+          });
+          continue;
+        }
         for (const issue of listOf(response.body, 'issues')) {
           const key = str(issue.key);
           if (key) visible.add(key);
@@ -122,12 +135,18 @@ export function createConfluenceAccessVerifier(lookup: AtlassianCredentialLookup
     provider: 'confluence',
     async verifyAccess(
       userEmail: string,
-      refs: readonly SourceRef[]
+      refs: readonly SourceRef[],
+      context?: VerifyContext
     ): Promise<Result<SourceRef[], 'VERIFICATION_FAILED'>> {
       const ids = distinctIds(refs);
       if (ids.length === 0) return ok([]);
 
-      const credential = await lookup(userEmail).catch(() => null);
+      const credential = await lookup(userEmail).catch((error: unknown) => {
+        context?.log?.warn('confluence access check could not resolve a credential: {error}', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return null;
+      });
       if (!credential) return ok([]);
 
       const visible = new Set<string>();
@@ -142,7 +161,14 @@ export function createConfluenceAccessVerifier(lookup: AtlassianCredentialLookup
           path: `/wiki/api/v2/pages?${query}&limit=${batch.length}`,
           lane: 'interactive',
         });
-        if (!response.ok) continue;
+        if (!response.ok) {
+          context?.log?.warn('confluence access check batch failed ({status}): {error}', {
+            status: response.status,
+            error: response.error.slice(0, 300),
+            refs: batch.length,
+          });
+          continue;
+        }
         for (const page of listOf(response.body, 'results')) {
           const id = str(page.id) || String(rec(page).id ?? '');
           if (id) visible.add(id);

@@ -17,6 +17,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { resumeRunsNeedingSignIn } from '@/lib/agents/needs-sign-in';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, sealedDelegationsOf, setAutomationDays } from '@/lib/keys/status';
+import { logger } from '@/lib/logger';
 
 export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -52,6 +53,11 @@ export async function POST(request: NextRequest): Promise<Response> {
       case 'SESSION_MISMATCH':
         return jsonError(403, 'session', 'This session cannot hold your key.');
       default:
+        logger.error('The key service could not be reached: {error}', {
+          component: 'api/keys/delegate',
+          subject: session.subject,
+          error: delegated.err.message ?? delegated.err.type,
+        });
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }

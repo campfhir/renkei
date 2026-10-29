@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { getDesktopNotificationsEnabled } from '@/lib/desktop-notifications-storage';
 import { ensurePushSubscription } from '@/lib/push-subscription';
+import { clientLogger } from '@/lib/client-logger';
 
 /**
  * A card in the same corner pile as the arrival toasts, nudging someone to
@@ -70,7 +71,8 @@ export default function NotificationPermissionNudge() {
     if (current === 'default') {
       try {
         current = await Notification.requestPermission();
-      } catch {
+      } catch (error) {
+        clientLogger.warn('push', 'notification permission request failed', error);
         current = 'denied';
       }
     }

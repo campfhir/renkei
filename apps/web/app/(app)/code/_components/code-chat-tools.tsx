@@ -32,7 +32,7 @@ import {
 } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
-import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { getJson, reportFetchFailure, sendJsonFull } from '@/lib/fetch-json';
 import type { ChatMessageView } from '@/lib/chat/views';
 import { commitsInTranscript, type ChatCommit } from '@/lib/code/chat-commits';
 import LocalTime from '@/components/local-time';
@@ -333,10 +333,15 @@ function AddFilesModal({ base, onClose }: { base: string; onClose: () => void })
       const response = await fetch(`${base}/files?path=${encodeURIComponent(path)}`, {
         method: 'PUT',
         body: file,
-      }).catch(() => null);
+      }).catch((cause: unknown) => {
+        reportFetchFailure('PUT', `${base}/files`, 0, 'Could not reach the server', cause);
+        return null;
+      });
       const body = response ? await response.json().catch(() => null) : null;
       if (!response?.ok) {
-        setError(`${path}: ${typeof body?.error === 'string' ? body.error : 'not added'}`);
+        const message = typeof body?.error === 'string' ? body.error : 'not added';
+        if (response) reportFetchFailure('PUT', `${base}/files`, response.status, message);
+        setError(`${path}: ${message}`);
         break;
       }
       done.push(path);

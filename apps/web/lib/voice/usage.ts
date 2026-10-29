@@ -56,6 +56,7 @@ export async function recordVoiceUsage(input: RecordVoiceUsageInput): Promise<vo
   } catch (error) {
     logger.warn('voice usage not recorded', {
       component: 'web/voice-usage',
+      subject: input.subject,
       kind: input.kind,
       error: error instanceof Error ? error.message : String(error),
     });

@@ -299,13 +299,13 @@ export class WebexClient {
       return err('WEBEX_API_ERROR' as const, {
         message: timedOut
           ? `WebEx API timed out after ${REQUEST_TIMEOUT_MS}ms for ${path}`
-          : 'WebEx API unreachable',
+          : `WebEx API unreachable: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
 
     if (!response.ok) {
       return err('WEBEX_API_ERROR' as const, {
-        message: `WebEx API ${response.status} for ${path}`,
+        message: `WebEx API ${response.status} for ${path}${await webexErrorDetail(response)}`,
       });
     }
 
@@ -359,12 +359,12 @@ export class WebexClient {
       return err('WEBEX_API_ERROR' as const, {
         message: timedOut
           ? `WebEx API timed out after ${UPLOAD_TIMEOUT_MS}ms for ${path}`
-          : 'WebEx API unreachable',
+          : `WebEx API unreachable: ${error instanceof Error ? error.message : String(error)}`,
       });
     }
     if (!response.ok) {
       return err('WEBEX_API_ERROR' as const, {
-        message: `WebEx API ${response.status} for ${path}`,
+        message: `WebEx API ${response.status} for ${path}${await webexErrorDetail(response)}`,
       });
     }
     const parsed: unknown = await response.json().catch(() => null);
@@ -768,4 +768,14 @@ export async function sendNoteToPerson(
   const sent = await note.user.sendNoteToSelf(note.markdown);
   if (!sent.ok) return sent;
   return ok({ ...sent.val, via: 'self' as const });
+}
+
+/** WebEx's `{message, trackingId}` refusal, bounded — the tracking id is what WebEx support asks for. */
+async function webexErrorDetail(response: Response): Promise<string> {
+  const parsed: unknown = await response.json().catch(() => null);
+  if (!isRecord(parsed)) return '';
+  const message = typeof parsed.message === 'string' ? parsed.message.slice(0, 300) : '';
+  const tracking = typeof parsed.trackingId === 'string' ? parsed.trackingId : '';
+  if (!message && !tracking) return '';
+  return `: ${message}${tracking ? ` (trackingId ${tracking})` : ''}`;
 }

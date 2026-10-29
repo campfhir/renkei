@@ -18,6 +18,7 @@ import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { getActiveTurn } from '@/lib/chat/turns';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -45,6 +46,17 @@ export async function POST(
   const discarded = await sbWorkspaceGitDiscard(target, { id: workspaceId });
   if (!discarded.ok) {
     const failure = clientFailure(discarded.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/discard',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'discarded',
+        status: failure.status,
+        error: 'message' in discarded.err && discarded.err.message ? discarded.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'discard', failure.message);
   }
   recordAuditEvent({

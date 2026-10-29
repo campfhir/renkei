@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { clientFailure, sandboxServicesEnabled, sbImageRulesRestore } from '@renkei/sandbox-client';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   _request: NextRequest
@@ -22,6 +23,14 @@ export async function POST(
   const restored = await sbImageRulesRestore();
   if (!restored.ok) {
     const failure = clientFailure(restored.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/admin/code-services/rules/restore',
+        operation: 'restored',
+        status: failure.status,
+        error: 'message' in restored.err && restored.err.message ? restored.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ added: restored.val.added, rules: restored.val.rules });

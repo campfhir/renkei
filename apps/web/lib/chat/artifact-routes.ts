@@ -13,6 +13,7 @@ import { NextResponse, after } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
+import { logger } from '@/lib/logger';
 import { isGrantRole } from './access';
 import { isReferenceMode, listProjectArtifacts, type ReferenceMode } from './attachments';
 import { resolveArtifactAccess } from './artifact-access';
@@ -45,7 +46,22 @@ import { parseExpiry } from './grant-input';
 import { resolveProjectAccess } from './access';
 import { chatRequestContext, jsonError, readJsonBody } from './route-support';
 
-function actError(error: ArtifactActError): Response {
+/** What a failed act was, so a store or key failure reaches the log with its owner. */
+interface ActFailure {
+  action: string;
+  subject: string;
+  artifactId: string;
+  projectId?: string;
+}
+
+function actError(error: ArtifactActError, failure?: ActFailure): Response {
+  if (failure && (error === 'CONTENT_KEY' || error === 'STORE' || error === 'UNCONFIGURED')) {
+    logger.warn('artifact {action} failed: {error}', {
+      component: 'chat/artifacts',
+      ...failure,
+      error,
+    });
+  }
   switch (error) {
     case 'NOT_FOUND':
       return jsonError(404, 'not-found', 'No such file');
@@ -166,7 +182,9 @@ export async function replaceArtifactRoute(
     maxBytes,
     redactor: settings ? createOutboundRedactor(settings) : null,
   });
-  if (!replaced.ok) return actError(replaced.err.type);
+  if (!replaced.ok) {
+    return actError(replaced.err.type, { action: 'replace', subject: session.subject, artifactId });
+  }
   deferDigest(session.subject, [replaced.val], after);
   return NextResponse.json({ ok: true, extractStatus: replaced.val.extractStatus });
 }
@@ -239,7 +257,9 @@ export async function transferRoute(request: NextRequest, artifactId: string): P
     artifactId,
     newOwnerSubject,
   });
-  if (!result.ok) return actError(result.err.type);
+  if (!result.ok) {
+    return actError(result.err.type, { action: 'transfer', subject: session.subject, artifactId });
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -266,7 +286,7 @@ export async function copyRoute(request: NextRequest, artifactId: string): Promi
   if (!result.ok) {
     return result.err.type === 'SELF'
       ? jsonError(400, 'self', 'It is yours already; a copy is for a file someone shared with you.')
-      : actError(result.err.type);
+      : actError(result.err.type, { action: 'copy', subject: session.subject, artifactId });
   }
   // A copy of an undigested file is digested as the copier's own.
   deferDigest(session.subject, [result.val], after);
@@ -305,7 +325,9 @@ export async function addArtifactGrantRoute(
     granteeSubject,
     expiresAt,
   });
-  if (!result.ok) return actError(result.err.type);
+  if (!result.ok) {
+    return actError(result.err.type, { action: 'share', subject: session.subject, artifactId });
+  }
   return NextResponse.json({ ok: true });
 }
 
@@ -371,7 +393,14 @@ export async function attachArtifactRoute(
     projectId,
     mode: modeOf(body.mode),
   });
-  if (!result.ok) return actError(result.err.type);
+  if (!result.ok) {
+    return actError(result.err.type, {
+      action: 'attach',
+      subject: session.subject,
+      artifactId,
+      projectId,
+    });
+  }
   return NextResponse.json({ ok: true, mode: result.val.mode });
 }
 
@@ -392,7 +421,14 @@ export async function setArtifactModeRoute(
     projectId,
     mode: body.mode,
   });
-  if (!result.ok) return actError(result.err.type);
+  if (!result.ok) {
+    return actError(result.err.type, {
+      action: 'set mode',
+      subject: session.subject,
+      artifactId,
+      projectId,
+    });
+  }
   return NextResponse.json({ ok: true, alwaysTokens: await alwaysTokensOf(projectId) });
 }
 
@@ -410,6 +446,13 @@ export async function detachArtifactRoute(
     artifactId,
     projectId,
   });
-  if (!result.ok) return actError(result.err.type);
+  if (!result.ok) {
+    return actError(result.err.type, {
+      action: 'detach',
+      subject: session.subject,
+      artifactId,
+      projectId,
+    });
+  }
   return NextResponse.json({ ok: true });
 }

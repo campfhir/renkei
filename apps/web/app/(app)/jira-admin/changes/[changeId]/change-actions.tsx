@@ -16,6 +16,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export function RefreshWhileRunning({ running }: { running: boolean }) {
   const router = useRouter();
@@ -69,18 +70,31 @@ export default function ChangeActions({
       if (!response.ok) {
         const body: Record<string, unknown> =
           typeof data === 'object' && data !== null ? Object.fromEntries(Object.entries(data)) : {};
-        setNotice(
+        const message =
           typeof body.error === 'string' && body.error
             ? body.error
             : action === 'apply'
               ? 'Could not approve the change'
-              : 'Could not cancel the change'
+              : 'Could not cancel the change';
+        reportFetchFailure(
+          'POST',
+          `/api/jira-admin/changes/${changeId}/${action}`,
+          response.status,
+          message
         );
+        setNotice(message);
         return;
       }
       if (action === 'apply') setQueued(true);
       router.refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'POST',
+        `/api/jira-admin/changes/${changeId}/${action}`,
+        0,
+        'Could not reach the server',
+        error
+      );
       setNotice('Could not reach the server');
     } finally {
       setBusy(null);

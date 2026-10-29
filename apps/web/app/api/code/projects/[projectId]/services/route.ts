@@ -33,6 +33,7 @@ import {
   type ServicesView,
 } from '@/lib/code/services';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -50,6 +51,16 @@ export async function GET(
   const [listed, rules] = await Promise.all([sbServiceList(target), sbImageRulesList()]);
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/services',
+        subject: ready.context.session.subject,
+        projectId,
+        operation: 'listed',
+        status: failure.status,
+        error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   const view: ServicesView = {
@@ -79,6 +90,16 @@ export async function POST(
   const started = await sbServiceStart(codeProjectTarget(projectId), input);
   if (!started.ok) {
     const failure = clientFailure(started.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/services',
+        subject: ready.context.session.subject,
+        projectId,
+        operation: 'started',
+        status: failure.status,
+        error: 'message' in started.err && started.err.message ? started.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   recordAuditEvent({

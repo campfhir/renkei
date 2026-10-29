@@ -36,6 +36,7 @@ import { codeProjectAccess, codeProjectAccessMessage } from '@/lib/code/access';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { replaceProjectEnv } from '@/lib/code/projects';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 const DOTENV_MAX_CHARS = 200_000;
 
@@ -115,10 +116,21 @@ export async function POST(request: NextRequest): Promise<Response> {
     toolConfig,
     repo: { provider, fullName: repo.fullName, branch },
   });
-  if (!projectId)
+  if (!projectId) {
+    logger.error('The content encryption key is not configured', {
+      component: 'api/code/projects',
+      subject: session.subject,
+    });
     return jsonError(500, 'content-key', 'The content encryption key is not configured.');
+  }
   const project = await getProjectRow(projectId);
-  if (!project) return jsonError(500, 'internal', 'The project could not be read back.');
+  if (!project) {
+    logger.error('The project could not be read back', {
+      component: 'api/code/projects',
+      subject: session.subject,
+    });
+    return jsonError(500, 'internal', 'The project could not be read back.');
+  }
 
   const problems: string[] = [];
   if (dotenv.trim()) {

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * The administrator's non-destructive containment on the Access page: end
@@ -38,10 +39,14 @@ export default function RevokeSessionsButton({ subject, displayName }: {
         revoked?: { sessions?: number; accessTokens?: number; refreshTokens?: number };
       } = await response.json().catch(() => ({}));
       if (!response.ok || data.success !== true) {
-        setOutcome({
-          kind: 'error',
-          text: typeof data.error === 'string' ? data.error : 'Could not sign them out',
-        });
+        const text = typeof data.error === 'string' ? data.error : 'Could not sign them out';
+        reportFetchFailure(
+          'POST',
+          `/api/admin/access/${subject}/revoke-sessions`,
+          response.status,
+          text
+        );
+        setOutcome({ kind: 'error', text });
         return;
       }
       const sessions = data.revoked?.sessions ?? 0;
@@ -51,7 +56,14 @@ export default function RevokeSessionsButton({ subject, displayName }: {
         text: `Signed out: ${sessions} session${sessions === 1 ? '' : 's'}, ${tokens} token${tokens === 1 ? '' : 's'}`,
       });
       refresh();
-    } catch {
+    } catch (error) {
+      reportFetchFailure(
+        'POST',
+        `/api/admin/access/${subject}/revoke-sessions`,
+        0,
+        'Could not reach the server',
+        error
+      );
       setOutcome({ kind: 'error', text: 'Could not reach the server' });
     } finally {
       setBusy(false);

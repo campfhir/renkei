@@ -13,7 +13,7 @@
  * the gate's default-deny contract.
  */
 
-import type { AccessVerifier, SourceRef } from '@renkei/gates';
+import type { AccessVerifier, SourceRef, VerifyContext } from '@renkei/gates';
 import { ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { WebexClient } from './client';
@@ -34,7 +34,8 @@ export function createWebexAccessVerifier(
     provider: 'webex',
     async verifyAccess(
       userEmail: string,
-      refs: readonly SourceRef[]
+      refs: readonly SourceRef[],
+      context?: VerifyContext
     ): Promise<Result<SourceRef[], 'VERIFICATION_FAILED'>> {
       const rooms = new Set<string>();
       for (const ref of refs) {
@@ -45,11 +46,21 @@ export function createWebexAccessVerifier(
       const allowedRooms = new Set<string>();
       await Promise.all(
         [...rooms].map(async (roomId) => {
+          // Unverifiable room → its messages stay denied.
           try {
             const member = await client.isRoomMember(roomId, userEmail);
             if (member.ok && member.val) allowedRooms.add(roomId);
-          } catch {
-            // Unverifiable room → its messages stay denied.
+            else if (!member.ok) {
+              context?.log?.warn('webex access check failed for a room: {error}', {
+                roomId,
+                error: member.err.message ?? member.err.type,
+              });
+            }
+          } catch (error) {
+            context?.log?.warn('webex access check threw for a room: {error}', {
+              roomId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
         })
       );
@@ -75,11 +86,12 @@ export function createWebexUserAccessVerifier(
     provider: 'webex',
     async verifyAccess(
       userEmail: string,
-      refs: readonly SourceRef[]
+      refs: readonly SourceRef[],
+      context?: VerifyContext
     ): Promise<Result<SourceRef[], 'VERIFICATION_FAILED'>> {
       const client = await clientFor(userEmail);
       if (!client) return ok([]);
-      return createWebexAccessVerifier(client).verifyAccess(userEmail, refs);
+      return createWebexAccessVerifier(client).verifyAccess(userEmail, refs, context);
     },
   };
 }

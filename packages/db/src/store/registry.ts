@@ -34,7 +34,8 @@ export function getDataStore(): DataStore {
     : createPostgresDataStore(() => {
         const db = getDatabase();
         // Rejects the call that needed it, as a failed query would.
-        if (!db.ok) throw new Error(db.err.type);
+        if (!db.ok)
+          throw new Error(db.err.message ? `${db.err.type}: ${db.err.message}` : db.err.type);
         return db.val;
       });
   return state.store;

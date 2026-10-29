@@ -15,6 +15,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oauth-metadata',
+        error: originResult.err.message ?? originResult.err.type,
+      });
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const issuer = `${originResult.val}/api/mcp`;

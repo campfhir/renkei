@@ -25,6 +25,7 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { isUuid } from '@/lib/uuid';
 import { notificationTarget } from '@/lib/notifications/targets';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -41,7 +42,14 @@ export async function GET(
   // sign-in bounce, and any notification whose row resolves in-app rather
   // than to the provider's own link — to that unreachable internal address.
   const originResult = await getOrigin(request);
-  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'api/notifications/open',
+      notificationId,
+      error: originResult.err.message ?? originResult.err.type,
+    });
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
   const origin = originResult.val;
 
   const session = await getSessionFromRequest(request);

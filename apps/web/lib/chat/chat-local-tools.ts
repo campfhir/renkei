@@ -34,6 +34,7 @@ import { getImagePrefs } from '@renkei/user-prefs';
 import { imageGenerationTool } from './image-tools';
 import { listImageModels } from './models';
 import { widgetStateTools } from './widget-state-tools';
+import { logger } from '@/lib/logger';
 
 export async function chatLocalTools(
   context: LocalToolContext,
@@ -78,7 +79,14 @@ export async function chatLocalTools(
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.
     const [imageModels, imagePrefs] = await Promise.all([
-      listImageModels().catch(() => []),
+      listImageModels().catch((error: unknown) => {
+        logger.warn('image models could not be listed; image tool not offered: {error}', {
+          component: 'chat/tools',
+          subject: context.subject,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return [];
+      }),
       getImagePrefs(context.subject),
     ]);
     const imageTool = imageGenerationTool({

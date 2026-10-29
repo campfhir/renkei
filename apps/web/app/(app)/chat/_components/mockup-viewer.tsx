@@ -25,6 +25,7 @@ import { Icon, ICONS } from '@/components/icons';
 import type { MockupRequest } from '@/lib/mockups/request';
 import { clampFrameHeight, useFrameMessages, type FrameMessage } from './mockup-frame';
 import SvgSaveButtons from './svg-save-buttons';
+import { clientLogger } from '@/lib/client-logger';
 
 const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3, 4];
 const ZOOM_MIN = ZOOM_STEPS[0];
@@ -231,7 +232,7 @@ export default function MockupViewer({
         setCopied(true);
         window.setTimeout(() => setCopied(false), 1500);
       },
-      () => undefined
+      (error: unknown) => clientLogger.warn('chat/mockup', 'could not copy the source', error)
     );
   };
 

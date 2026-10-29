@@ -16,6 +16,7 @@
  */
 
 import { getDataStore } from '@renkei/db';
+import { logger } from '@/lib/logger';
 import { MICROSOFT, WEBEX_USER } from '@renkei/provider-grants';
 import { outlookScopeFor } from '@/lib/mcp-tools/outlook';
 import { webexScopeFor } from '@/lib/mcp-tools/webex';
@@ -31,7 +32,14 @@ const WEBEX_REQUIRED = webexScopeFor('webex_note_to_self');
 export async function getChannelAvailability(subject: string): Promise<ChannelAvailability> {
   const rows = await getDataStore()
     .personalAccount.grantScopes(subject, [MICROSOFT, WEBEX_USER])
-    .catch(() => []);
+    .catch((error: unknown) => {
+      logger.error('notification channel grants could not be read: {error}', {
+        component: 'notifications/channels',
+        subject,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    });
 
   const hasScopes = (provider: string, required: string[]) => {
     const row = rows.find((r) => r.provider === provider);

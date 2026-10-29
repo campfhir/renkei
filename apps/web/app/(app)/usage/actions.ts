@@ -32,6 +32,7 @@ import {
   TOP_TOOLS,
   type UsagePoint,
 } from './window';
+import { logger } from '@/lib/logger';
 
 export interface ToolUsageRow {
   tool: string;
@@ -235,6 +236,12 @@ export async function getUsageReport(
       byUser,
     };
   } catch (error) {
+    logger.error('Could not read the tool usage report: {error}', {
+      component: 'actions/usage',
+      subject: ownSubject,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return {
       ...EMPTY,
       scope,
@@ -349,6 +356,13 @@ export async function getToolDetail(
       })),
     };
   } catch (error) {
+    logger.error('Could not read the tool usage detail: {error}', {
+      component: 'actions/usage',
+      subject: ownSubject,
+      tool,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return { ...empty, scope, error: error instanceof Error ? error.message : 'Could not read' };
   }
 }

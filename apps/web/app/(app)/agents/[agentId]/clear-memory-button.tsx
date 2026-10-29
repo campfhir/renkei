@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 /**
  * "Start fresh": wipe this agent's memory (summary + entries). Two-click —
@@ -20,7 +21,15 @@ export default function ClearMemoryButton({
   const clear = async () => {
     setBusy(true);
     try {
-      await fetch(`/api/agents/${agentId}/memory`, { method: 'DELETE' });
+      const response = await fetch(`/api/agents/${agentId}/memory`, { method: 'DELETE' });
+      if (!response.ok) {
+        reportFetchFailure(
+          'DELETE',
+          `/api/agents/${agentId}/memory`,
+          response.status,
+          `Request failed (${response.status})`
+        );
+      }
       setArmed(false);
       refresh();
     } finally {

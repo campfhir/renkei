@@ -5,7 +5,7 @@
  * a message the UI shows, never a throw.
  */
 
-import { getJson, sendJsonFull } from '@/lib/fetch-json';
+import { getJson, reportFetchFailure, sendJsonFull } from '@/lib/fetch-json';
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
 import type { VoiceInfo } from '@renkei/voice';
 
@@ -30,13 +30,20 @@ export type SpeechStream = ReadableStream<Uint8Array>;
 
 const base = () => `/api/voice`;
 
-async function errorOf(response: Response, fallback: string): Promise<string> {
+async function errorOf(response: Response, url: string, fallback: string): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
-  if (typeof body === 'object' && body !== null) {
-    const record: Record<string, unknown> = { ...body };
-    if (typeof record.error === 'string') return record.error;
-  }
-  return `${fallback} (${response.status})`;
+  const record: Record<string, unknown> =
+    typeof body === 'object' && body !== null ? { ...body } : {};
+  const message =
+    typeof record.error === 'string' ? record.error : `${fallback} (${response.status})`;
+  reportFetchFailure('POST', url, response.status, message);
+  return message;
+}
+
+function unreachable(url: string, error: unknown): { data: null; error: string | null } {
+  if (error instanceof Error && error.name === 'AbortError') return { data: null, error: null };
+  reportFetchFailure('POST', url, 0, 'Could not reach the server', error);
+  return { data: null, error: 'Could not reach the server' };
 }
 
 export const voiceClient = {
@@ -55,14 +62,11 @@ export const voiceClient = {
         signal,
       });
       if (!response.ok) {
-        return { data: null, error: await errorOf(response, 'Speech failed') };
+        return { data: null, error: await errorOf(response, `${base()}/speech`, 'Speech failed') };
       }
       return { data: await response.blob(), error: null };
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { data: null, error: null };
-      }
-      return { data: null, error: 'Could not reach the server' };
+      return unreachable(`${base()}/speech`, error);
     }
   },
 
@@ -84,15 +88,20 @@ export const voiceClient = {
         signal,
       });
       if (!response.ok) {
-        return { data: null, error: await errorOf(response, 'Speech failed') };
+        return { data: null, error: await errorOf(response, `${base()}/speech`, 'Speech failed') };
       }
-      if (!response.body) return { data: null, error: 'The voice service sent no audio' };
+      if (!response.body) {
+        reportFetchFailure(
+          'POST',
+          `${base()}/speech`,
+          response.status,
+          'The voice service sent no audio'
+        );
+        return { data: null, error: 'The voice service sent no audio' };
+      }
       return { data: response.body, error: null };
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { data: null, error: null };
-      }
-      return { data: null, error: 'Could not reach the server' };
+      return unreachable(`${base()}/speech`, error);
     }
   },
 
@@ -123,7 +132,10 @@ export const voiceClient = {
         signal,
       });
       if (!response.ok) {
-        return { data: null, error: await errorOf(response, 'Transcription failed') };
+        return {
+          data: null,
+          error: await errorOf(response, `${base()}/transcribe`, 'Transcription failed'),
+        };
       }
       const body: unknown = await response.json().catch(() => null);
       const record: Record<string, unknown> =
@@ -132,10 +144,7 @@ export const voiceClient = {
       const locale = typeof record.locale === 'string' && record.locale ? record.locale : null;
       return { data: { text, locale }, error: null };
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') {
-        return { data: null, error: null };
-      }
-      return { data: null, error: 'Could not reach the server' };
+      return unreachable(`${base()}/transcribe`, error);
     }
   },
 

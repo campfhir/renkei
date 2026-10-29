@@ -14,6 +14,7 @@ import {
   isProductionLabel,
 } from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/mirth/parse';
+import { logger } from '@/lib/logger';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
@@ -22,6 +23,10 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 
   const instances = await listInstances();
   if (!instances.ok) {
+    logger.error('Could not read instances: {error}', {
+      component: 'api/admin/mirth',
+      error: instances.err.message ?? instances.err.type,
+    });
     return NextResponse.json({ error: 'Could not read instances' }, { status: 500 });
   }
 
@@ -57,6 +62,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });
     }
+    logger.error('Could not create the instance: {error}', {
+      component: 'api/admin/mirth',
+      subject: session.subject,
+      error: created.err.message ?? created.err.type,
+    });
     return NextResponse.json({ error: 'Could not create the instance' }, { status: 500 });
   }
 

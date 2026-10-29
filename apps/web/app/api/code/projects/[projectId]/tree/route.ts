@@ -22,6 +22,7 @@ import { githubAuthFor, listSource as listGitHubSource } from '@/lib/code/github
 import { resolveChatScope } from '@/lib/code/route-access';
 import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -50,6 +51,17 @@ export async function GET(
     });
     if (!listed.ok) {
       const failure = clientFailure(listed.err);
+      if (failure.status !== 400 && failure.status !== 404) {
+        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+          component: 'api/code/projects/tree',
+          subject: session.subject,
+          projectId,
+          chatId,
+          operation: 'listed',
+          status: failure.status,
+          error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
+        });
+      }
       return jsonError(failure.status, 'tree', failure.message);
     }
     const entries = [...listed.val.entries].sort((a, b) => {

@@ -13,6 +13,7 @@ import {
   parseChatToolPermissionPrefs,
   setChatToolPermissionPrefs,
 } from '@/lib/chat/permission-prefs';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest
@@ -43,6 +44,12 @@ export async function PUT(
     alwaysDeny: body.alwaysDeny,
   });
   const written = await setChatToolPermissionPrefs(ready.context.session.subject, prefs);
-  if (!written.ok) return jsonError(500, 'save-failed', 'Could not save');
+  if (!written.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/chat/tool-permissions',
+      error: written.err.message ?? written.err.type,
+    });
+    return jsonError(500, 'save-failed', 'Could not save');
+  }
   return NextResponse.json(prefs);
 }

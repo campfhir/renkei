@@ -8,6 +8,7 @@
  */
 
 import { useState, type FormEvent } from 'react';
+import { reportFetchFailure } from '@/lib/fetch-json';
 
 export interface IdentityClaimsValues {
   roleClaim: string;
@@ -48,15 +49,17 @@ export default function IdentityForm({ initial, observedGroups }: {
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        setError(
+        const message =
           typeof body === 'object' && body !== null && 'error' in body
             ? String(body.error)
-            : 'Could not save'
-        );
+            : 'Could not save';
+        reportFetchFailure('PUT', '/api/admin/oidc-claims', response.status, message);
+        setError(message);
         return;
       }
       setNotice('Saved. Applies at each person’s next sign-in.');
-    } catch {
+    } catch (error) {
+      reportFetchFailure('PUT', '/api/admin/oidc-claims', 0, 'Could not reach the server', error);
       setError('Could not reach the server.');
     } finally {
       setBusy(false);

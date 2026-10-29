@@ -77,6 +77,11 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
 
   const deleted = await delegateGrants().delete({ provider: MICROSOFT, accountId });
   if (!deleted.ok) {
+    logger.error('Could not disconnect: {error}', {
+      component: 'connectors/microsoft',
+      subject: session.subject,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({

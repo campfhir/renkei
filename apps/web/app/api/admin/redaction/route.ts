@@ -17,6 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest
@@ -27,6 +28,10 @@ export async function GET(
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/admin/redaction',
+      error: settings.err.message ?? settings.err.type,
+    });
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({
@@ -99,6 +104,10 @@ export async function PUT(
 
   const saved = await setOrgSettings(updates);
   if (!saved.ok) {
+    logger.error('Could not save settings: {error}', {
+      component: 'api/admin/redaction',
+      error: saved.err.message ?? saved.err.type,
+    });
     return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
   }
   return NextResponse.json({ ok: true });

@@ -42,6 +42,7 @@ import {
   seriesGranularity,
   type UtilizationBucket,
 } from './window';
+import { logger } from '@/lib/logger';
 
 export interface UtilizationReport {
   periodKey: string;
@@ -167,6 +168,12 @@ export async function getUtilizationReport(
       document,
     };
   } catch (error) {
+    logger.error('Could not read the utilization report: {error}', {
+      component: 'actions/utilization',
+      subject,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };
   }
 }

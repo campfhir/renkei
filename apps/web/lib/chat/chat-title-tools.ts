@@ -118,6 +118,7 @@ export async function autoTitleChat(input: {
   } catch (error) {
     logger.warn('chat auto title failed: {message}', {
       component: 'chat/title',
+      subject: input.subject,
       chatId: input.chatId,
       message: error instanceof Error ? error.message : String(error),
     });

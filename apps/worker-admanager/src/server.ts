@@ -143,7 +143,38 @@ export function statusForError(type: WorkerErrorType): number {
   }
 }
 
-function sendError(response: ServerResponse, type: WorkerErrorType, message?: string): void {
+const COMPONENT = 'worker-admanager/server';
+
+/** Refusals of the request itself are the caller's mistake, not a failure to log. */
+const UNLOGGED_ERRORS: ReadonlySet<WorkerErrorType> = new Set([
+  'bad_request',
+  'unauthorized',
+  'forbidden',
+  'unknown_operation',
+  'method_not_allowed',
+  'not_connected',
+  'no_instance',
+  // Answered by worker-kit only after onUnhandledError has logged it.
+  'internal',
+]);
+
+function sendError(
+  response: ServerResponse,
+  type: WorkerErrorType,
+  message?: string,
+  context?: { op: string; instanceId?: string; subject?: string }
+): void {
+  if (!UNLOGGED_ERRORS.has(type)) {
+    const log = type === 'store' ? logger.error : logger.warn;
+    log('admanager {op} failed ({type}): {error}', {
+      component: COMPONENT,
+      op: context?.op ?? 'request',
+      type,
+      error: message ?? type,
+      instanceId: context?.instanceId,
+      subject: context?.subject,
+    });
+  }
   sendJson(response, statusForError(type), { error: { type, message } });
 }
 
@@ -298,8 +329,9 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         return sendError(response, 'bad_request', 'path is not a usable API path');
       }
 
+      const ctx = { op: 'api', instanceId: target.instanceId, subject: target.subject };
       const resolved = await resolve(target, parseAdManagerCredentials(body.credentials));
-      if (!resolved.ok) return sendError(response, resolved.err.type);
+      if (!resolved.ok) return sendError(response, resolved.err.type, undefined, ctx);
       const { instance, credentials } = resolved.val;
 
       const upstream = await forward(instance, credentials.authToken, body, method, path);
@@ -310,7 +342,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
             : upstream.failed === 'too_large'
               ? 'too_large'
               : 'unreachable';
-        return sendError(response, type, `The ADManager Plus server ${upstream.detail}.`);
+        return sendError(response, type, `The ADManager Plus server ${upstream.detail}.`, ctx);
       }
       envelope(response, upstream);
     },
@@ -325,8 +357,9 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       if (!instanceId || !credentials) {
         return sendError(response, 'bad_request', 'instanceId and credentials are required');
       }
+      const ctx = { op: 'test-connection', instanceId, subject: str(body.subject) || undefined };
       const instance = await resolveOne(instanceId);
-      if (!instance.ok) return sendError(response, instance.err.type);
+      if (!instance.ok) return sendError(response, instance.err.type, undefined, ctx);
 
       const answer = await forward(
         instance.val,
@@ -340,21 +373,24 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         return sendError(
           response,
           answer.failed === 'timeout' ? 'timeout' : 'unreachable',
-          `The ADManager Plus server ${answer.detail}.`
+          `The ADManager Plus server ${answer.detail}.`,
+          ctx
         );
       }
       if (answer.status === 401 || answer.status === 403) {
         return sendError(
           response,
           'bad_credentials',
-          'The ADManager Plus server rejected this authtoken.'
+          'The ADManager Plus server rejected this authtoken.',
+          ctx
         );
       }
       if (answer.status < 200 || answer.status >= 300) {
         return sendError(
           response,
           'unreachable',
-          `The ADManager Plus server answered ${answer.status} to the validation request.`
+          `The ADManager Plus server answered ${answer.status} to the validation request.`,
+          ctx
         );
       }
       sendJson(response, 200, { ok: true });
@@ -401,7 +437,8 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
         if (!instanceId)
           return sendError(response, 'bad_request', 'instanceId or unsaved is required');
         const stored = await resolveOne(instanceId);
-        if (!stored.ok) return sendError(response, stored.err.type);
+        if (!stored.ok)
+          return sendError(response, stored.err.type, undefined, { op: 'probe', instanceId });
         instance = stored.val;
       }
 
@@ -415,12 +452,26 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       );
       if ('failed' in ping) {
         // A failed probe is a successful request.
+        logger.warn('admanager probe of {baseUrl} failed: {error}', {
+          component: COMPONENT,
+          baseUrl: instance.summary.baseUrl,
+          instanceId: instance.summary.id || undefined,
+          error: `The ADManager Plus server ${ping.detail}.`,
+        });
         return sendJson(response, 200, {
           ok: false,
           error: `The ADManager Plus server ${ping.detail}.`,
         });
       }
       const reachable = ping.status === 401 || ping.status === 200;
+      if (!reachable) {
+        logger.warn('admanager probe of {baseUrl} failed: answered {status}', {
+          component: COMPONENT,
+          baseUrl: instance.summary.baseUrl,
+          instanceId: instance.summary.id || undefined,
+          status: ping.status,
+        });
+      }
       sendJson(response, 200, {
         ok: reachable,
         status: ping.status,
@@ -436,8 +487,9 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     sendError,
     onUnhandledError: (error) => {
       logger.error('unhandled admanager op failure: {error}', {
-        component: 'worker-admanager/server',
+        component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
     },
   });

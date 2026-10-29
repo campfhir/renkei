@@ -158,6 +158,7 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
     logger.warn('batch {batchJobId} {phase} event not published: {error}', {
       component: COMPONENT,
       batchJobId: batch.id,
+      subject: batch.subject,
       phase,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -216,6 +217,7 @@ async function notifyOwner(batch: BatchJobRow, phase: BatchPhase): Promise<void>
       logger.warn('could not record a notification for batch {batchJobId}: {error}', {
         component: COMPONENT,
         batchJobId: batch.id,
+        subject: batch.subject,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -234,7 +236,7 @@ async function notifyOwner(batch: BatchJobRow, phase: BatchPhase): Promise<void>
       webex: wanted.webex,
       heading: headline,
       body,
-      log: { component: COMPONENT, batchJobId: batch.id },
+      log: { component: COMPONENT, batchJobId: batch.id, subject: batch.subject },
     });
   }
 }
@@ -249,6 +251,7 @@ async function announce(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
     logger.warn('could not notify the owner of batch {batchJobId}: {error}', {
       component: COMPONENT,
       batchJobId: batch.id,
+      subject: batch.subject,
       error: error instanceof Error ? error.message : String(error),
     });
   }

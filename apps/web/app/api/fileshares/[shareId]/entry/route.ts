@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsStatEntry } from '@/lib/file-shares/service-client';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -23,6 +24,16 @@ export async function GET(
   );
   if (!stats.ok) {
     const failure = clientFailure(stats.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('File share request failed ({status}): {error}', {
+        component: 'api/fileshares/entry',
+        subject: session.subject,
+        shareId,
+        operation: 'stats',
+        status: failure.status,
+        error: 'message' in stats.err && stats.err.message ? stats.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
 

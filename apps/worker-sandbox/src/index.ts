@@ -457,8 +457,15 @@ async function main(): Promise<void> {
       await crawlStore.releaseStale(new Date(Date.now() - CRAWL_STALE_MS));
       await crawlStore.sweepExpired(new Date());
     };
-    void sweepCrawls().catch(() => undefined);
-    setInterval(() => void sweepCrawls().catch(() => undefined), 60_000).unref();
+    const sweepSafely = () =>
+      sweepCrawls().catch((error: unknown) => {
+        logger.warn('crawl sweep failed: {error}', {
+          component: 'worker-sandbox/crawler',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    void sweepSafely();
+    setInterval(() => void sweepSafely(), 60_000).unref();
   } else {
     logger.warn(
       'web crawls are unavailable (no SANDBOX_ENV_SECRETS_KEY or TOKEN_ENCRYPTION_KEY to seal crawled pages)',

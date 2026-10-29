@@ -23,6 +23,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest
@@ -33,6 +34,10 @@ export async function GET(
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/admin/connector-availability',
+      error: settings.err.message ?? settings.err.type,
+    });
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({ disabledConnectors: settings.val.disabledConnectors });
@@ -66,6 +71,10 @@ export async function PUT(
 
   const saved = await setOrgSettings({ disabledConnectors });
   if (!saved.ok) {
+    logger.error('Could not save org settings: {error}', {
+      component: 'api/admin/connector-availability',
+      error: saved.err.message ?? saved.err.type,
+    });
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
   // Org-wide, not one caller's own — every cached catalog in this tenant

@@ -22,6 +22,7 @@ import {
 } from '@renkei/agents';
 import { logger } from '../logger';
 
+const COMPONENT = 'worker/batch-jobs-schedule';
 const MAX_PER_PASS = 25;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,6 +53,11 @@ export function createBatchScheduleSweep(producer: QueueProducer) {
         await schedules.recordError(row.id, 'The schedule is malformed and was turned off.', {
           disable: true,
         });
+        logger.warn('batch schedule {scheduleId} is malformed and was turned off', {
+          component: COMPONENT,
+          scheduleId: row.id,
+          subject: row.subject,
+        });
         continue;
       }
 
@@ -67,6 +73,11 @@ export function createBatchScheduleSweep(producer: QueueProducer) {
           'No next occurrence could be found (check blackout dates); turned off.',
           { disable: true }
         );
+        logger.warn('batch schedule {scheduleId} has no next occurrence and was turned off', {
+          component: COMPONENT,
+          scheduleId: row.id,
+          subject: row.subject,
+        });
         continue;
       }
 
@@ -84,12 +95,19 @@ export function createBatchScheduleSweep(producer: QueueProducer) {
         await enqueueDiscover(producer, batch.id);
         await schedules.clearError(row.id);
         logger.debug('schedule fired: batch {batchId} for schedule {scheduleId}', {
-          component: 'worker/batch-jobs-schedule',
+          component: COMPONENT,
           batchId: batch.id,
           scheduleId: row.id,
           subject: row.subject,
         });
       } catch (error) {
+        logger.error('batch schedule {scheduleId} could not start a batch: {error}', {
+          component: COMPONENT,
+          scheduleId: row.id,
+          subject: row.subject,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
         await schedules.recordError(
           row.id,
           error instanceof Error ? error.message : 'The batch could not be started.'

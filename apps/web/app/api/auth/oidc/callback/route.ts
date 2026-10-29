@@ -105,6 +105,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Get OIDC config
     const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
+      logger.error('Failed to retrieve OIDC configuration: {error}', {
+        component: 'auth/oidc',
+        error: oidcResult.err.message ?? oidcResult.err.type,
+      });
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
     const oidc = oidcResult.val;
@@ -149,6 +153,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Exchange code for token
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oidc',
+        error: originResult.err.message ?? originResult.err.type,
+      });
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
@@ -199,7 +207,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      console.error('OIDC token exchange failed:', errorText);
+      logger.warn('OIDC token exchange failed ({status}): {detail}', {
+        component: 'auth/oidc',
+        status: tokenResponse.status,
+        detail: errorText.slice(0, 500),
+      });
       return NextResponse.json({ error: 'Failed to exchange code for token' }, { status: 400 });
     }
 
@@ -272,10 +284,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (identityClaims) {
       const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
-        console.warn(`[OIDC] could not record identity for subject; gates will fail closed`);
+        logger.warn('Could not record identity for subject; gates will fail closed: {error}', {
+          component: 'auth/oidc',
+          subject,
+          error: recorded.err.message ?? recorded.err.type,
+        });
       }
     } else {
-      console.warn(`[OIDC] id_token carries no email claim; gates will fail closed for this user`);
+      logger.warn('id_token carries no email claim; gates will fail closed for this user', {
+        component: 'auth/oidc',
+        subject,
+      });
       const forgotten = await clearIdpGroups(subject);
       if (!forgotten.ok) {
         logger.warn('could not clear recorded groups for a subject whose claims were unreadable', {
@@ -305,9 +324,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         // Require user to have at least one renkei role
         if (userRoles.size === 0) {
-          console.error(
-            `[OIDC] User has no authorized roles. IDP claim "${oidc.roleClaim}": ${JSON.stringify(idpClaim)}`
-          );
+          logger.warn('Sign-in refused: no authorized roles in IdP claim {roleClaim}: {claim}', {
+            component: 'auth/oidc',
+            subject,
+            roleClaim: oidc.roleClaim,
+            claim: JSON.stringify(idpClaim),
+          });
           return NextResponse.json({ error: 'User role not authorized' }, { status: 403 });
         }
       }
@@ -329,6 +351,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // sign-in expire far sooner than anyone signing in expects.
     const sessionResult = await createSession(subject, Array.from(userRoles), SESSION_TTL_SECONDS);
     if (!sessionResult.ok) {
+      logger.error('Failed to establish session: {error}', {
+        component: 'auth/oidc',
+        error: sessionResult.err.message ?? sessionResult.err.type,
+      });
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
     recordAuditEvent({ actorSubject: subject, action: 'user.signed_in' });
@@ -349,10 +375,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return response;
   } catch (error) {
-    console.error(
-      'OIDC callback error:',
-      JSON.stringify(error instanceof Error ? error.message : String(error))
-    );
+    logger.error('OIDC callback failed: {error}', {
+      component: 'auth/oidc',
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }

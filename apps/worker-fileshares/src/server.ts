@@ -91,10 +91,25 @@ export function statusForServiceError(tag: ServiceError): number {
   }
 }
 
+const COMPONENT = 'worker-fileshares/server';
+
+/** A malformed path or a person not yet connected is no failure of the share. */
+const UNLOGGED_SERVICE_ERRORS: ReadonlySet<ServiceError> = new Set(['bad_path', 'not_connected']);
+
 function sendServiceError(
   response: ServerResponse,
-  error: { type: ServiceError; message?: string }
+  error: { type: ServiceError; message?: string },
+  context: { op: string; shareId: string; subject?: string; path?: string }
 ): void {
+  if (!UNLOGGED_SERVICE_ERRORS.has(error.type)) {
+    const log = error.type === 'store' ? logger.error : logger.warn;
+    log('fileshare {op} failed ({type}): {error}', {
+      component: COMPONENT,
+      ...context,
+      type: error.type,
+      error: error.message ?? error.type,
+    });
+  }
   sendJson(response, statusForServiceError(error.type), {
     error: { type: error.type, message: error.message },
   });
@@ -141,7 +156,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const listed = await serviceListFolder(deps, target, str(body.path) || '/');
-      if (!listed.ok) return sendServiceError(response, listed.err);
+      if (!listed.ok)
+        return sendServiceError(response, listed.err, {
+          op: 'list',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, {
         share: listed.val.share,
         path: listed.val.path,
@@ -159,7 +180,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const stats = await serviceStatEntry(deps, target, str(body.path));
-      if (!stats.ok) return sendServiceError(response, stats.err);
+      if (!stats.ok)
+        return sendServiceError(response, stats.err, {
+          op: 'stat',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, {
         share: stats.val.share,
         path: stats.val.path,
@@ -184,7 +211,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
         str(body.path),
         Math.min(requested, limit)
       );
-      if (!content.ok) return sendServiceError(response, content.err);
+      if (!content.ok)
+        return sendServiceError(response, content.err, {
+          op: 'read',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       response.writeHead(200, {
         'content-type': 'application/octet-stream',
         'content-length': content.val.bytes.byteLength,
@@ -197,7 +230,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const made = await serviceMakeFolder(deps, target, str(body.path));
-      if (!made.ok) return sendServiceError(response, made.err);
+      if (!made.ok)
+        return sendServiceError(response, made.err, {
+          op: 'mkdir',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, { share: made.val.share, path: made.val.path });
     },
 
@@ -205,7 +244,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const removed = await serviceRemoveEntry(deps, target, str(body.path));
-      if (!removed.ok) return sendServiceError(response, removed.err);
+      if (!removed.ok)
+        return sendServiceError(response, removed.err, {
+          op: 'remove',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, { share: removed.val.share, path: removed.val.path });
     },
 
@@ -213,7 +258,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const preview = await servicePreviewRemove(deps, target, str(body.path));
-      if (!preview.ok) return sendServiceError(response, preview.err);
+      if (!preview.ok)
+        return sendServiceError(response, preview.err, {
+          op: 'remove-preview',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, {
         share: preview.val.share,
         path: preview.val.path,
@@ -227,7 +278,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const moved = await serviceMoveEntry(deps, target, str(body.path), str(body.toFolder) || '/');
-      if (!moved.ok) return sendServiceError(response, moved.err);
+      if (!moved.ok)
+        return sendServiceError(response, moved.err, {
+          op: 'move',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, {
         share: moved.val.share,
         path: moved.val.path,
@@ -239,7 +296,13 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
       const target = targetOf(body);
       if (!target) return sendJson(response, 400, { error: { type: 'bad_request' } });
       const renamed = await serviceRenameEntry(deps, target, str(body.path), str(body.newName));
-      if (!renamed.ok) return sendServiceError(response, renamed.err);
+      if (!renamed.ok)
+        return sendServiceError(response, renamed.err, {
+          op: 'rename',
+          shareId: target.shareId,
+          subject: target.subject,
+          path: str(body.path),
+        });
       sendJson(response, 200, {
         share: renamed.val.share,
         path: renamed.val.path,
@@ -258,7 +321,8 @@ function makeJsonHandlers(transferLimit: () => Promise<number>): Record<string, 
         return sendJson(response, 400, { error: { type: 'bad_request' } });
       }
       const tested = await serviceTestConnection(deps, shareId, credentials);
-      if (!tested.ok) return sendServiceError(response, tested.err);
+      if (!tested.ok)
+        return sendServiceError(response, tested.err, { op: 'test-connection', shareId });
       sendJson(response, 200, {
         entries: tested.val.entries,
         ...(tested.val.hostKey ? { hostKey: tested.val.hostKey } : {}),
@@ -314,7 +378,14 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
         new Uint8Array(body),
         limit
       );
-      if (!written.ok) return sendServiceError(response, written.err);
+      if (!written.ok) {
+        return sendServiceError(response, written.err, {
+          op: 'write',
+          shareId: target.shareId,
+          subject: target.subject,
+          path,
+        });
+      }
       return sendJson(response, 200, { share: written.val.share, path: written.val.path });
     }
 
@@ -342,8 +413,9 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
   return createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
       logger.error('unhandled fileshare op failure: {error}', {
-        component: 'worker-fileshares/server',
+        component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
       });
       if (!response.headersSent) {
         sendJson(response, 500, { error: { type: 'internal' } });
