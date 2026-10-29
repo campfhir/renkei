@@ -169,13 +169,25 @@ export default function ArtifactsIndex({
     startTransition(() => router.refresh());
   }, [router]);
   // While a read is in flight the page is read again, so its progress and
-  // estimate move; it stops once nothing on the page is being read.
+  // estimate move. A finished read is digested after it (artifact-ocr.ts),
+  // so a file seen being read here keeps the page reading until its summary
+  // lands; it stops once nothing on the page is being read or summarized.
+  const readHere = useRef(new Set<string>());
+  for (const item of items) if (item.ocr !== null) readHere.current.add(item.id);
   const ocrRunning = items.some((item) => item.ocr !== null);
+  const summaryAwaited =
+    digests &&
+    items.some(
+      (item) =>
+        readHere.current.has(item.id) &&
+        (item.digestStatus === 'pending' || item.digestStatus === 'running')
+    );
+  const polling = ocrRunning || summaryAwaited;
   useEffect(() => {
-    if (!ocrRunning) return;
+    if (!polling) return;
     const timer = setInterval(reload, OCR_POLL_MS);
     return () => clearInterval(timer);
-  }, [ocrRunning, reload]);
+  }, [polling, reload]);
   // A new page of the library is the server's answer to a detach, so the
   // one in flight is over.
   useEffect(() => {
