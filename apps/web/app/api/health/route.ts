@@ -14,6 +14,8 @@ import { getMigrationStatus, memoryDataStoreRequested, MIGRATION_COMMAND } from 
  * On the in-memory data store (RENKEI_DATA_STORE=memory, the UI suite's
  * server) there is no schema to be behind: it is healthy once it answers.
  */
+let lastLoggedError: string | null = null;
+
 export async function GET(): Promise<NextResponse> {
   logger.debug('Ping', { component: 'web/health' });
 
@@ -24,11 +26,22 @@ export async function GET(): Promise<NextResponse> {
   const status = await getMigrationStatus();
 
   if (status.error) {
+    // The probe arrives every ~30 seconds: log a failure when it first
+    // appears or changes, not on every probe.
+    if (status.error !== lastLoggedError) {
+      lastLoggedError = status.error;
+      logger.error('Migration check failed: {error}', {
+        component: 'web/health',
+        error: status.error,
+      });
+    }
     return NextResponse.json(
       { status: 'degraded', reason: 'migration check failed', detail: status.error },
       { status: 503 }
     );
   }
+
+  lastLoggedError = null;
 
   if (status.pending.length > 0) {
     return NextResponse.json(

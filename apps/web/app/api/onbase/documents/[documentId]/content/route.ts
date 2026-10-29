@@ -16,6 +16,7 @@ import {
   ONBASE_LABEL,
 } from '@/lib/mcp-tools/onbase/onbase-auth';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -42,6 +43,16 @@ export async function GET(
       );
     }
     const failure = onbaseClientFailure(content.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('OnBase request failed ({status}): {error}', {
+        component: 'api/onbase/documents/content',
+        subject: session.subject,
+        documentId,
+        operation: 'content',
+        status: failure.status,
+        error: 'message' in content.err && content.err.message ? content.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
 

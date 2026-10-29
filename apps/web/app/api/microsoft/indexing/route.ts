@@ -64,7 +64,14 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     () => getDataStore().providerGrants.mergeMetadata(MICROSOFT, grant.accountId, { indexing }),
     'DB_ERROR' as const
   );
-  if (!saved.ok) return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  if (!saved.ok) {
+    logger.error('Database unavailable: {error}', {
+      component: 'microsoft/indexing',
+      subject: session.subject,
+      error: saved.err.message ?? saved.err.type,
+    });
+    return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
+  }
 
   // The same bootstrap a fresh connect enqueues: it reconciles subscriptions
   // to the new preference and runs the initial backfill for anything just

@@ -72,6 +72,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     keyResult.val
   );
   if (!configResult.ok) {
+    logger.error('Connector configuration unavailable: {error}', {
+      component: 'bitbucket/webhook',
+      error: configResult.err.message ?? configResult.err.type,
+    });
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
   const config = configResult.val;

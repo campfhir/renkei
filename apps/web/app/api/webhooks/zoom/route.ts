@@ -70,6 +70,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const configResult = await readConnectorConfigCached(ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
+    logger.error('Connector configuration unavailable: {error}', {
+      component: 'zoom/webhook',
+      error: configResult.err.message ?? configResult.err.type,
+    });
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
   const config = configResult.val;

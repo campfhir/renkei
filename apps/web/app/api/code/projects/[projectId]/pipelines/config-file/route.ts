@@ -18,6 +18,7 @@ import {
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
+import { logger } from '@/lib/logger';
 
 const FILE_MAX_CHARS = 200_000;
 const MESSAGE_MAX_CHARS = 500;
@@ -32,7 +33,15 @@ export async function GET(
   const { project, subject } = found.context;
   const auth = await bitbucketAuthFor(request, subject);
   const file = await readPipelineConfigFile(auth, project.repo.fullName, project.repo.branch);
-  if (!file.ok) return jsonError(502, 'bitbucket', file.error);
+  if (!file.ok) {
+    logger.warn('Could not read the Bitbucket pipeline file: {error}', {
+      component: 'api/code/projects/pipelines/config-file',
+      subject,
+      projectId,
+      error: file.error,
+    });
+    return jsonError(502, 'bitbucket', file.error);
+  }
   return NextResponse.json({ ref: file.ref, text: file.text });
 }
 
@@ -61,7 +70,15 @@ export async function PUT(
     text,
     message
   );
-  if (!committed.ok) return jsonError(502, 'bitbucket', committed.error);
+  if (!committed.ok) {
+    logger.warn('Could not commit the Bitbucket pipeline file: {error}', {
+      component: 'api/code/projects/pipelines/config-file',
+      subject,
+      projectId,
+      error: committed.error,
+    });
+    return jsonError(502, 'bitbucket', committed.error);
+  }
   recordAuditEvent({
     actorSubject: subject,
     action: 'code.pipelines.file.committed',

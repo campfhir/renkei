@@ -24,6 +24,7 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { resolveChatScope } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { logger } from '@/lib/logger';
 
 /** A commit is asked for by its hash, or a prefix of it — never a ref. */
 const COMMIT_SHA = /^[0-9a-f]{4,40}$/i;
@@ -72,6 +73,17 @@ export async function GET(
     });
     if (!shown.ok) {
       const failure = clientFailure(shown.err);
+      if (failure.status !== 400 && failure.status !== 404 && failure.status !== 409) {
+        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+          component: 'api/code/projects/diff',
+          subject: session.subject,
+          projectId,
+          chatId,
+          operation: 'shown',
+          status: failure.status,
+          error: 'message' in shown.err && shown.err.message ? shown.err.message : failure.message,
+        });
+      }
       if (failure.status === 404 || failure.status === 409) {
         // The checkout is not there, or no longer has the commit (cloned
         // again since): nothing to show, and the panel says so.
@@ -98,6 +110,17 @@ export async function GET(
     // A checkout still cloning, failed or gone answers "nothing to show"
     // rather than an error: the page's Changes button is best-effort.
     const failure = clientFailure(result.err);
+    if (failure.status !== 400 && failure.status !== 404 && failure.status !== 409) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/diff',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'result',
+        status: failure.status,
+        error: 'message' in result.err && result.err.message ? result.err.message : failure.message,
+      });
+    }
     if (failure.status === 404 || failure.status === 409) {
       return NextResponse.json({
         branch: project.repo?.branch ?? '',

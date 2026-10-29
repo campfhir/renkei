@@ -67,6 +67,7 @@ import { projectWorkspace } from '@/lib/code/projects';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -96,6 +97,17 @@ export async function GET(
     });
     if (!read.ok) {
       const failure = clientFailure(read.err);
+      if (failure.status !== 400 && failure.status !== 404) {
+        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+          component: 'api/code/projects/files',
+          subject: session.subject,
+          projectId,
+          chatId,
+          operation: 'read',
+          status: failure.status,
+          error: 'message' in read.err && read.err.message ? read.err.message : failure.message,
+        });
+      }
       if (failure.status === 415) {
         return NextResponse.json({
           path: path.path,
@@ -206,6 +218,17 @@ export async function PUT(
   });
   if (!written.ok) {
     const failure = clientFailure(written.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/files',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'written',
+        status: failure.status,
+        error: 'message' in written.err && written.err.message ? written.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'upload', failure.message);
   }
   recordAuditEvent({
@@ -255,6 +278,17 @@ export async function POST(
     const made = await sbWorkspaceMkdir(target, { id: workspaceId, path: path.path });
     if (!made.ok) {
       const failure = clientFailure(made.err);
+      if (failure.status !== 400 && failure.status !== 404) {
+        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+          component: 'api/code/projects/files',
+          subject: session.subject,
+          projectId,
+          chatId,
+          operation: 'made',
+          status: failure.status,
+          error: 'message' in made.err && made.err.message ? made.err.message : failure.message,
+        });
+      }
       return jsonError(failure.status, 'create', failure.message);
     }
     if (!made.val.created) return jsonError(409, 'exists', `${path.path} already exists.`);
@@ -279,6 +313,17 @@ export async function POST(
   });
   if (!written.ok) {
     const failure = clientFailure(written.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/files',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'written',
+        status: failure.status,
+        error: 'message' in written.err && written.err.message ? written.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'create', failure.message);
   }
   recordAuditEvent({
@@ -316,6 +361,17 @@ export async function DELETE(
   const removed = await sbWorkspaceRemove(target, { id: workspaceId, path: path.path });
   if (!removed.ok) {
     const failure = clientFailure(removed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/files',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'removed',
+        status: failure.status,
+        error: 'message' in removed.err && removed.err.message ? removed.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'remove', failure.message);
   }
   if (!removed.val.deleted)
@@ -360,6 +416,17 @@ export async function PATCH(
   });
   if (!moved.ok) {
     const failure = clientFailure(moved.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/files',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'moved',
+        status: failure.status,
+        error: 'message' in moved.err && moved.err.message ? moved.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'move', failure.message);
   }
   recordAuditEvent({

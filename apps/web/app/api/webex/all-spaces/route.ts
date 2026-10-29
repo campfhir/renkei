@@ -44,6 +44,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'webex/all-spaces',
+      subject: session.subject,
+      error: originResult.err.message ?? originResult.err.type,
+    });
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const targetUrl = webexUserWebhookTargetUrl(originResult.val, access.accountId);
@@ -71,6 +76,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } else {
     const deleted = await deleteWebexWebhooksFor(client, targetUrl);
     if (!deleted.ok) {
+      logger.warn('WebEx rejected the webhook removal — try again: {error}', {
+        component: 'webex/all-spaces',
+        subject: session.subject,
+        error: deleted.err.message ?? deleted.err.type,
+      });
       return NextResponse.json(
         { error: 'WebEx rejected the webhook removal — try again.' },
         { status: 502 }

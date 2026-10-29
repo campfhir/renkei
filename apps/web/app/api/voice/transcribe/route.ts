@@ -18,6 +18,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { resolveVoiceProvider } from '@/lib/voice/config';
 import { recordVoiceUsage, wavDurationMs } from '@/lib/voice/usage';
+import { logger } from '@/lib/logger';
 
 /** 16 kHz × 16-bit × mono × 60 s, plus the header, rounded up. */
 export const TRANSCRIBE_MAX_BYTES = 2 * 1024 * 1024;
@@ -74,6 +75,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     signal: request.signal,
   });
   if (!result.ok) {
+    logger.warn('Transcription failed ({kind}): {error}', {
+      component: 'api/voice/transcribe',
+      subject: session.subject,
+      provider: resolved.provider.kind,
+      kind: result.error.kind,
+      error: result.error.message,
+    });
     const status =
       result.error.kind === 'rate_limit' ? 429 : result.error.kind === 'timeout' ? 504 : 502;
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });

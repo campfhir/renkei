@@ -19,6 +19,7 @@ import {
 } from '@renkei/email-sanitizer';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { describeKinds, parseContentKinds } from '@/lib/email-sanitizer/content-kinds';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest
@@ -29,6 +30,10 @@ export async function GET(
 
   const scripts = await listCleanerScripts();
   if (!scripts.ok) {
+    logger.error('Could not read scripts: {error}', {
+      component: 'api/admin/email-sanitizer/scripts',
+      error: scripts.err.message ?? scripts.err.type,
+    });
     return NextResponse.json({ error: 'Could not read scripts' }, { status: 500 });
   }
   return NextResponse.json({ scripts: scripts.val });
@@ -90,7 +95,14 @@ export async function POST(
     enabled: payload.enabled !== false,
     appliesTo,
   });
-  if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  if (!saved.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/admin/email-sanitizer/scripts',
+      subject: access.subject,
+      error: saved.err.message ?? saved.err.type,
+    });
+    return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
 
   recordAuditEvent({
     actorSubject: access.subject,

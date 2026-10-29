@@ -16,6 +16,7 @@ import {
   readUserMemory,
 } from '@/lib/chat/user-memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -47,7 +48,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     content: redactor ? redactor.apply(content).text : content,
     chatId: null,
   });
-  if (!id) return jsonError(500, 'content-key', 'The note could not be saved.');
+  if (!id) {
+    logger.error('The note could not be saved', {
+      component: 'api/chat/memory',
+      subject: session.subject,
+    });
+    return jsonError(500, 'content-key', 'The note could not be saved.');
+  }
   return NextResponse.json({ id }, { status: 201 });
 }
 

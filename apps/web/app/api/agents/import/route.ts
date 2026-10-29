@@ -20,6 +20,7 @@ import { extractAgentDefinition } from '@/lib/agents/import-markdown';
 import { parseAgentPayload } from '@/lib/agents/payload';
 import { saveAgent } from '@/lib/agents/save';
 import { agentNamesLike } from '@/lib/agents/store';
+import { logger } from '@/lib/logger';
 
 /** The exported name, or the first "(imported)"-suffixed variant free. */
 async function availableName(wanted: string): Promise<string> {
@@ -72,6 +73,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
   }
   if (result.outcome !== 'saved') {
+    logger.error('Could not import the agent: {outcome}', {
+      component: 'api/agents/import',
+      subject: session.subject,
+      outcome: result.outcome,
+    });
     return NextResponse.json({ error: 'Could not import the agent.' }, { status: 500 });
   }
   return NextResponse.json(

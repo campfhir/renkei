@@ -22,6 +22,7 @@ import { resolveAtlassianUserAccess } from '@/lib/atlassian-user-access';
 import { jiraFetch } from '@/lib/mcp-tools/common';
 import { githubAuthOf } from '@/lib/code/github-browse';
 import { ghJson, rec, str } from '@/lib/mcp-tools/github/client';
+import { logger } from '@/lib/logger';
 
 interface JiraCard {
   key: string;
@@ -54,7 +55,13 @@ async function lookupJira(subject: string, key: string): Promise<JiraCard | null
       status: str(rec(fields.status).name),
       url: `https://${access.cloudId}.atlassian.net/browse/${key}`,
     };
-  } catch {
+  } catch (error) {
+    logger.warn('Could not look up Jira issue {key}: {error}', {
+      component: 'api/code/projects/chats/issues',
+      subject,
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }

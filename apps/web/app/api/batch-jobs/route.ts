@@ -19,6 +19,7 @@ import {
   parseAfterProcessing,
   parseSkipProcessed,
 } from '@/lib/batch-jobs/pipeline-options';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -62,8 +63,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // less helpful error once the batch is already running — and moving or
   // deleting on it must be within what they allowed on the Connectors page.
   const shares = await listConnectedShares(session.subject);
-  if (!shares.ok)
+  if (!shares.ok) {
+    logger.error('Could not read your file shares: {error}', {
+      component: 'api/batch-jobs',
+      subject: session.subject,
+      error: shares.err.message ?? shares.err.type,
+    });
     return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
+  }
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);
   if (refusal) return NextResponse.json({ error: refusal }, { status: 400 });
 

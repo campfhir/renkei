@@ -21,6 +21,7 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { projectEnv, replaceProjectEnv } from '@/lib/code/projects';
 import { codeProjectTarget } from '@/lib/code/scope';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 const DOTENV_MAX_CHARS = 200_000;
 
@@ -92,6 +93,16 @@ export async function DELETE(
   const deleted = await sbEnvDelete(codeProjectTarget(projectId), name.name);
   if (!deleted.ok) {
     const failure = clientFailure(deleted.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/env',
+        subject: found.session.subject,
+        projectId,
+        operation: 'deleted',
+        status: failure.status,
+        error: 'message' in deleted.err && deleted.err.message ? deleted.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'env', failure.message);
   }
   recordAuditEvent({

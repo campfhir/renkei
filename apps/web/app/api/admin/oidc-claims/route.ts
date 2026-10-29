@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getTenantOidcClaims, setTenantOidcClaims } from '@/lib/tenant-operations';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 const CLAIM_NAME = /^[A-Za-z0-9_.:/-]{1,128}$/;
 
@@ -32,7 +33,13 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const claims = await getTenantOidcClaims();
-  if (!claims.ok) return NextResponse.json({ error: 'Could not read' }, { status: 500 });
+  if (!claims.ok) {
+    logger.error('Could not read: {error}', {
+      component: 'api/admin/oidc-claims',
+      error: claims.err.message ?? claims.err.type,
+    });
+    return NextResponse.json({ error: 'Could not read' }, { status: 500 });
+  }
   return NextResponse.json({ configured: claims.val !== null, ...(claims.val ?? {}) });
 }
 
@@ -71,7 +78,14 @@ export async function PUT(
   }
 
   const saved = await setTenantOidcClaims(claims);
-  if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  if (!saved.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/admin/oidc-claims',
+      subject: session.subject,
+      error: saved.err.message ?? saved.err.type,
+    });
+    return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
   if (!saved.val) {
     return NextResponse.json({ error: 'Sign-in is not configured yet' }, { status: 409 });
   }

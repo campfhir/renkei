@@ -12,6 +12,7 @@ import { clientFailure, sandboxServicesEnabled, sbServicesTail } from '@renkei/s
 import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -35,6 +36,16 @@ export async function GET(
   });
   if (!tailed.ok) {
     const failure = clientFailure(tailed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/services/tail',
+        subject: ready.context.session.subject,
+        projectId,
+        operation: 'tailed',
+        status: failure.status,
+        error: 'message' in tailed.err && tailed.err.message ? tailed.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   return NextResponse.json(tailed.val);

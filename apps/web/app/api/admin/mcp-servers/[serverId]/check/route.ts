@@ -12,6 +12,7 @@ import { getServer } from '@renkei/connector-mcp';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrigin } from '@/lib/get-origin';
 import { serverSummary } from '@/lib/mcp-servers/parse';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -22,7 +23,14 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const origin = await getOrigin(request);
-  if (!origin.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!origin.ok) {
+    logger.error('Could not resolve the app origin: {error}', {
+      component: 'api/admin/mcp-servers/check',
+      serverId,
+      error: origin.err.message ?? origin.err.type,
+    });
+    return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  }
 
   const prepared = await delegateGrants().mcpPrepare({
     serverId,

@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import { logger } from '@/lib/logger';
 
 const ALLOWED_DAYS = [7, 14, 30, 90];
 
@@ -17,7 +18,13 @@ export async function GET(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const settings = await getOrgSettings();
-  if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
+  if (!settings.ok) {
+    logger.error('Settings unavailable: {error}', {
+      component: 'api/admin/agents/retention',
+      error: settings.err.message ?? settings.err.type,
+    });
+    return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
+  }
   return NextResponse.json({ agentRunRetentionDays: settings.val.agentRunRetentionDays });
 }
 
@@ -40,6 +47,12 @@ export async function PUT(
   }
 
   const saved = await setOrgSettings({ agentRunRetentionDays: days });
-  if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  if (!saved.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/admin/agents/retention',
+      error: saved.err.message ?? saved.err.type,
+    });
+    return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
   return NextResponse.json({ agentRunRetentionDays: days });
 }

@@ -11,6 +11,7 @@ import { getDataStore } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
 import { executeCreateIssue, readCreateIssueAction } from '@/lib/actionable-items';
+import { logger } from '@/lib/logger';
 
 const PROJECT_KEY_SHAPE = /^[A-Z][A-Z0-9_]*$/;
 
@@ -45,6 +46,12 @@ export async function POST(
     'DB_ERROR' as const
   );
   if (!found.ok) {
+    logger.error('Database error: {error}', {
+      component: 'api/actionable-items/decision',
+      subject: session.subject,
+      itemId,
+      error: found.err.message ?? found.err.type,
+    });
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const item = found.val;
@@ -117,6 +124,12 @@ export async function POST(
   );
 
   if (!outcome.ok) {
+    logger.warn('Could not create the approved issue: {error}', {
+      component: 'api/actionable-items/decision',
+      subject: session.subject,
+      itemId,
+      error: outcome.error,
+    });
     return NextResponse.json({ status: 'failed', error: outcome.error }, { status: 502 });
   }
   return NextResponse.json({ status: 'executed', issueKey: outcome.issueKey, url: outcome.url });

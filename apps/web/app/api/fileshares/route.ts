@@ -9,6 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { listSharesWithConnection } from '@renkei/connector-fileshares';
 import { getSessionFromRequest } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -16,6 +17,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const shares = await listSharesWithConnection(session.subject);
   if (!shares.ok) {
+    logger.error('Could not read the shares: {error}', {
+      component: 'api/fileshares',
+      subject: session.subject,
+      error: shares.err.message ?? shares.err.type,
+    });
     return NextResponse.json({ error: 'Could not read the shares' }, { status: 500 });
   }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { deleteCleanerScript, listCleanerScripts } from '@renkei/email-sanitizer';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 /** Delete a cleaner script. Edits go through POST on the collection. */
 export async function DELETE(
@@ -19,7 +20,14 @@ export async function DELETE(
   const name = existing.ok ? existing.val.find((script) => script.id === id)?.name : undefined;
 
   const deleted = await deleteCleanerScript(id);
-  if (!deleted.ok) return NextResponse.json({ error: 'Could not delete' }, { status: 500 });
+  if (!deleted.ok) {
+    logger.error('Could not delete: {error}', {
+      component: 'api/admin/email-sanitizer/scripts',
+      subject: access.subject,
+      error: deleted.err.message ?? deleted.err.type,
+    });
+    return NextResponse.json({ error: 'Could not delete' }, { status: 500 });
+  }
 
   recordAuditEvent({
     actorSubject: access.subject,

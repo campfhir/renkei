@@ -17,6 +17,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
 import { deriveTemplate, saveTemplateVersion } from '@renkei/email-sanitizer';
 import type { MarkedField } from '@renkei/email-sanitizer';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -91,6 +92,11 @@ export async function POST(
     derivedByUpn: userEmail,
   });
   if (!result.ok) {
+    logger.error('Could not save the template: {error}', {
+      component: 'api/mail-review/templates',
+      subject: session.subject,
+      error: result.err.message ?? result.err.type,
+    });
     return NextResponse.json({ error: 'Could not save the template' }, { status: 500 });
   }
   return NextResponse.json({ template: result.val });

@@ -32,6 +32,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
+      logger.error('Could not resolve the app origin: {error}', {
+        component: 'auth/oauth',
+        subject: session.subject,
+        error: originResult.err.message ?? originResult.err.type,
+      });
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const app = await getGitHubApp(originResult.val);

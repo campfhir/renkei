@@ -23,6 +23,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { jiraAdminGet } from '@/lib/mcp-tools/jira-admin/client';
 import { resolveAutomationAccess } from '@/lib/mcp-tools/jira-admin/automation-client';
+import { logger } from '@/lib/logger';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TOKEN_MAX = 1024;
@@ -70,12 +71,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     metadata: { email, cloudId: site.cloudId, siteUrl: site.siteUrl },
   });
   if (!stored.ok) {
+    logger.error('Could not store the token: {error}', {
+      component: 'api/atlassian-admin/token',
+      subject: session.subject,
+      error: stored.err.message ?? stored.err.type,
+    });
     return NextResponse.json({ error: 'Could not store the token.' }, { status: 500 });
   }
 
   // Checked the only way the token may be used: a call through the delegate.
   const access = await resolveAutomationAccess({ subject: session.subject });
   if (typeof access === 'string') {
+    logger.error('Could not resolve Jira automation access for the stored token: {error}', {
+      component: 'api/atlassian-admin/token',
+      subject: session.subject,
+      error: access,
+    });
     return NextResponse.json({ error: access }, { status: 500 });
   }
   const probe = await jiraAdminGet(
@@ -83,6 +94,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     access,
     '/rest/v1/rule/summary?limit=1'
   );
+  if (!probe.ok) {
+    logger.warn('Checking the Jira admin API token failed ({status}): {error}', {
+      component: 'api/atlassian-admin/token',
+      subject: session.subject,
+      status: probe.status,
+      error: probe.error,
+    });
+  }
   if (!probe.ok && probe.status === 401) {
     await delegateGrants().delete({
       provider: ATLASSIAN_ADMIN_TOKEN,
@@ -127,8 +146,14 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     provider: ATLASSIAN_ADMIN_TOKEN,
     accountId: grant.accountId,
   });
-  if (!deleted.ok)
+  if (!deleted.ok) {
+    logger.error('Could not remove the token: {error}', {
+      component: 'api/atlassian-admin/token',
+      subject: session.subject,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not remove the token' }, { status: 500 });
+  }
   recordAuditEvent({
     actorSubject: session.subject,
     action: 'connector.disconnected',

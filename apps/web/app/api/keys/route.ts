@@ -11,6 +11,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { keyStatusView } from '@/lib/keys/status';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest
@@ -18,6 +19,12 @@ export async function GET(
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const view = await keyStatusView(ready.context.session);
-  if (!view) return jsonError(500, 'database', 'Database unavailable');
+  if (!view) {
+    logger.error('Could not read the key status', {
+      component: 'api/keys',
+      subject: ready.context.session.subject,
+    });
+    return jsonError(500, 'database', 'Database unavailable');
+  }
   return NextResponse.json(view, { headers: { 'cache-control': 'no-store' } });
 }

@@ -29,6 +29,7 @@ import {
   resolveSharePointSite,
   sharePointGet,
 } from './sharepoint-access';
+import { logger } from '@/lib/logger';
 
 type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
 type AtlassianWatchProvider = 'jira' | 'confluence';
@@ -65,7 +66,14 @@ export async function GET(
   }
 
   const result = await listWatches({ subject: session.subject, accountId: '' }, provider);
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+  if (!result.ok) {
+    logger.error('Could not list watches: {error}', {
+      component: 'api/watches',
+      subject: session.subject,
+      error: result.error,
+    });
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
   return NextResponse.json({ watches: result.watches });
 }
 
@@ -113,7 +121,14 @@ export async function POST(
     resolved.key,
     resolved.label
   );
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+  if (!result.ok) {
+    logger.error('Could not create the watch: {error}', {
+      component: 'api/watches',
+      subject: session.subject,
+      error: result.error,
+    });
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
   return NextResponse.json({ created: result.created, scopeKey: resolved.key });
 }
 
@@ -136,7 +151,14 @@ export async function DELETE(
     SCOPE_TYPE[provider],
     scopeKey
   );
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+  if (!result.ok) {
+    logger.error('Could not stop the watch: {error}', {
+      component: 'api/watches',
+      subject: session.subject,
+      error: result.error,
+    });
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
   return NextResponse.json({ found: result.found });
 }
 
@@ -193,7 +215,15 @@ async function watchLibrary(
     driveId,
     label
   );
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+  if (!result.ok) {
+    logger.error('Could not watch the SharePoint library: {error}', {
+      component: 'api/watches',
+      subject: owner.subject,
+      driveId,
+      error: result.error,
+    });
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
   return NextResponse.json({ created: result.created, scopeKey: driveId, label });
 }
 

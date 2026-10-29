@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseStorageInput, readStorage, saveStorage } from '@/lib/storage-admin';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   _request: NextRequest
@@ -15,6 +16,10 @@ export async function GET(
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const view = await readStorage();
   if (view === 'ERROR') {
+    logger.error('Could not read the storage configuration', {
+      component: 'api/admin/storage',
+      subject: access.subject,
+    });
     return NextResponse.json(
       { error: 'Could not read the storage configuration' },
       { status: 500 }
@@ -32,6 +37,13 @@ export async function PUT(
   if (typeof input === 'string') return NextResponse.json({ error: input }, { status: 400 });
   const saved = await saveStorage(input);
   if (typeof saved === 'string') {
+    if (!saved.startsWith('The ')) {
+      logger.error('Could not save the storage configuration: {error}', {
+        component: 'api/admin/storage',
+        subject: access.subject,
+        error: saved,
+      });
+    }
     return NextResponse.json({ error: saved }, { status: saved.startsWith('The ') ? 400 : 500 });
   }
   return NextResponse.json(saved);

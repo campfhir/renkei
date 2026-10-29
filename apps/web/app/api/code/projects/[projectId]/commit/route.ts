@@ -23,6 +23,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { getIdentityDisplay } from '@/lib/identity';
 import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 const MAX_PATHS = 200;
 
@@ -89,6 +90,17 @@ export async function POST(
   });
   if (!committed.ok) {
     const failure = clientFailure(committed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/commit',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'committed',
+        status: failure.status,
+        error: 'message' in committed.err && committed.err.message ? committed.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'commit', failure.message);
   }
   recordAuditEvent({

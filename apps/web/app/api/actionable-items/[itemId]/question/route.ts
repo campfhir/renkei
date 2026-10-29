@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { agentJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { answerQuestion } from '@/lib/agents/approvals';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -65,6 +66,14 @@ export async function POST(
         { status: 409 }
       );
     case 'answered':
+      if (!result.resumed) {
+        logger.warn('Answer saved but run {runId} could not be woken; the sweep will resume it', {
+          component: 'api/actionable-items/question',
+          subject: session.subject,
+          itemId,
+          runId: result.runId,
+        });
+      }
       return result.resumed
         ? NextResponse.json({ status: 'answered' })
         : NextResponse.json(

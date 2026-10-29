@@ -28,6 +28,7 @@ import {
   summarize,
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -43,7 +44,15 @@ export async function GET(
   const read = await readPipelineSetup(auth, project.repo.fullName, project.repo.branch, {
     readSwitch: configureNeeds === null,
   });
-  if (!read.ok) return jsonError(502, 'bitbucket', read.error);
+  if (!read.ok) {
+    logger.warn('Could not read the Bitbucket pipeline setup: {error}', {
+      component: 'api/code/projects/pipelines',
+      subject,
+      projectId,
+      error: read.error,
+    });
+    return jsonError(502, 'bitbucket', read.error);
+  }
   const setup = configureNeeds ? { ...read.setup, enabledError: configureNeeds } : read.setup;
   const access = { configureNeeds, variablesNeeds };
   if (request.nextUrl.searchParams.get('view') === 'summary') {
@@ -66,7 +75,15 @@ export async function PUT(
   if (typeof body.enabled !== 'boolean') return jsonError(400, 'invalid', 'On or off?');
   const auth = await bitbucketAuthFor(request, subject);
   const set = await setPipelinesEnabled(auth, project.repo.fullName, body.enabled);
-  if (!set.ok) return jsonError(502, 'bitbucket', set.error);
+  if (!set.ok) {
+    logger.warn('Could not switch Bitbucket pipelines: {error}', {
+      component: 'api/code/projects/pipelines',
+      subject,
+      projectId,
+      error: set.error,
+    });
+    return jsonError(502, 'bitbucket', set.error);
+  }
   recordAuditEvent({
     actorSubject: subject,
     action: set.enabled ? 'code.pipelines.enabled' : 'code.pipelines.disabled',

@@ -25,6 +25,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { mirthClientFailure, mirthLogout, mirthTestConnection } from '@/lib/mirth/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/mirth/parse';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -47,6 +48,12 @@ export async function POST(
 
   const instance = await getInstance(instanceId);
   if (!instance.ok) {
+    logger.error('Could not read the instance: {error}', {
+      component: 'api/mirth/connection',
+      subject: session.subject,
+      instanceId,
+      error: instance.err.message ?? instance.err.type,
+    });
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
   if (!instance.val || !instance.val.summary.enabled) {
@@ -70,6 +77,12 @@ export async function POST(
       exposure.permissions
     );
     if (!updated.ok) {
+      logger.error('Could not update the connection: {error}', {
+        component: 'api/mirth/connection',
+        subject: session.subject,
+        instanceId,
+        error: updated.err.message ?? updated.err.type,
+      });
       return NextResponse.json({ error: 'Could not update the connection' }, { status: 500 });
     }
     if (!updated.val) {
@@ -93,6 +106,13 @@ export async function POST(
       tested.err.kind === 'op' && tested.err.type === 'login_failed'
         ? 'The Mirth server did not accept these credentials.'
         : failure.message;
+    logger.warn('Mirth connection test failed ({status}): {error}', {
+      component: 'api/mirth/connection',
+      subject: session.subject,
+      instanceId,
+      status: failure.status,
+      error: failure.message,
+    });
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
@@ -102,6 +122,12 @@ export async function POST(
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
+    logger.warn('Could not seal the Mirth credentials: {error}', {
+      component: 'api/mirth/connection',
+      subject: session.subject,
+      instanceId,
+      error: sealed.err.message ?? sealed.err.type,
+    });
     return sealed.err.type === 'NEEDS_DELEGATION' ||
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
@@ -120,6 +146,12 @@ export async function POST(
     permissions: parsed.permissions,
   });
   if (!stored.ok) {
+    logger.error('Could not store the connection: {error}', {
+      component: 'api/mirth/connection',
+      subject: session.subject,
+      instanceId,
+      error: stored.err.message ?? stored.err.type,
+    });
     return NextResponse.json({ error: 'Could not store the connection' }, { status: 500 });
   }
 
@@ -143,6 +175,12 @@ export async function DELETE(
 
   const existing = await getConnection(instanceId, session.subject);
   if (!existing.ok) {
+    logger.error('Could not read the connection: {error}', {
+      component: 'api/mirth/connection',
+      subject: session.subject,
+      instanceId,
+      error: existing.err.message ?? existing.err.type,
+    });
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
@@ -153,6 +191,12 @@ export async function DELETE(
 
   const deleted = await deleteConnection(instanceId, session.subject);
   if (!deleted.ok) {
+    logger.error('Could not disconnect: {error}', {
+      component: 'api/mirth/connection',
+      subject: session.subject,
+      instanceId,
+      error: deleted.err.message ?? deleted.err.type,
+    });
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 

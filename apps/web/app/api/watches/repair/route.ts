@@ -24,6 +24,7 @@ import {
   type AtlassianUserProvider,
 } from '@/lib/atlassian-user-access';
 import { repairWatch } from '@/lib/mcp-tools/content-watches';
+import { logger } from '@/lib/logger';
 
 type AtlassianWatchProvider = 'jira' | 'confluence';
 
@@ -70,7 +71,14 @@ export async function POST(
     SCOPE_TYPE[provider],
     scopeKey
   );
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
+  if (!result.ok) {
+    logger.error('Could not repair the watch: {error}', {
+      component: 'api/watches/repair',
+      subject: session.subject,
+      error: result.error,
+    });
+    return NextResponse.json({ error: result.error }, { status: 500 });
+  }
   if (result.repaired === 0) {
     return NextResponse.json(
       { error: `No watch exists for that ${provider} scope in this organization.` },

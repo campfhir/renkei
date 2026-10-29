@@ -29,7 +29,15 @@ export async function DELETE(
     () => getDataStore().providerGrants.listForSubject(session.subject, { provider }),
     'DB_ERROR' as const
   );
-  if (!grants.ok) return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  if (!grants.ok) {
+    logger.error('Database error: {error}', {
+      component: 'mcp-servers',
+      subject: session.subject,
+      serverId,
+      error: grants.err.message ?? grants.err.type,
+    });
+    return NextResponse.json({ error: 'Database error' }, { status: 500 });
+  }
   const grantRow = grants.val[0];
   if (!grantRow) return NextResponse.json({ message: 'Nothing to disconnect' });
 

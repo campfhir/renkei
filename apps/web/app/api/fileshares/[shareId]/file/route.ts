@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsReadFile, fsWriteFile } from '@/lib/file-shares/service-client';
+import { logger } from '@/lib/logger';
 
 async function maxTransferBytes(): Promise<number> {
   const settings = await getOrgSettings();
@@ -40,6 +41,16 @@ export async function GET(
   const content = await fsReadFile({ shareId, subject: session.subject }, path);
   if (!content.ok) {
     const failure = clientFailure(content.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('File share request failed ({status}): {error}', {
+        component: 'api/fileshares/file',
+        subject: session.subject,
+        shareId,
+        operation: 'content',
+        status: failure.status,
+        error: 'message' in content.err && content.err.message ? content.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
 
@@ -82,6 +93,16 @@ export async function PUT(
   );
   if (!written.ok) {
     const failure = clientFailure(written.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('File share request failed ({status}): {error}', {
+        component: 'api/fileshares/file',
+        subject: session.subject,
+        shareId,
+        operation: 'written',
+        status: failure.status,
+        error: 'message' in written.err && written.err.message ? written.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ ok: true, path: written.val.path });

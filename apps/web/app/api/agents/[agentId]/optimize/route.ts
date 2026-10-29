@@ -44,7 +44,15 @@ export async function POST(
   // The org's window, frozen onto the row: the report says what it looked
   // at even if the setting changes afterwards.
   const settings = await getOrgSettings();
-  if (!settings.ok) return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
+  if (!settings.ok) {
+    logger.error('Settings unavailable: {error}', {
+      component: 'api/agents-optimize',
+      subject: session.subject,
+      agentId,
+      error: settings.err.message ?? settings.err.type,
+    });
+    return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
+  }
   const optimizationId = await createOptimization({
     ownerSubject: session.subject,
     agentId,

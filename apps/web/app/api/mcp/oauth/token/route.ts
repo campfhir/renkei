@@ -39,6 +39,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'auth/oauth-token',
+      error: settingsResult.err.message ?? settingsResult.err.type,
+    });
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
   const settings = settingsResult.val;

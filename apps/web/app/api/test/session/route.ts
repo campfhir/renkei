@@ -27,6 +27,7 @@ import {
   sessionCookieName,
   sessionCookieOptions,
 } from '@/lib/session';
+import { logger } from '@/lib/logger';
 
 const TOKEN_HEADER = 'x-renkei-seed-token';
 const MAX_ROLES = 16;
@@ -57,9 +58,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const displayName = stringOf(input.displayName);
 
   const recorded = await upsertIdentity(subject, { email, displayName, idpGroups: [] });
-  if (!recorded.ok) return NextResponse.json({ error: 'Could not record' }, { status: 500 });
+  if (!recorded.ok) {
+    logger.error('Could not record: {error}', {
+      component: 'api/test/session',
+      error: recorded.err.message ?? recorded.err.type,
+    });
+    return NextResponse.json({ error: 'Could not record' }, { status: 500 });
+  }
   const session = await createSession(subject, roles, SESSION_TTL_SECONDS);
-  if (!session.ok) return NextResponse.json({ error: 'Could not sign in' }, { status: 500 });
+  if (!session.ok) {
+    logger.error('Could not sign in: {error}', {
+      component: 'api/test/session',
+      error: session.err.message ?? session.err.type,
+    });
+    return NextResponse.json({ error: 'Could not sign in' }, { status: 500 });
+  }
 
   const response = NextResponse.json({ subject, sessionId: session.val.id });
   response.cookies.set(

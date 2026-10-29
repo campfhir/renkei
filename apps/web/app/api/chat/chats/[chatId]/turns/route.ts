@@ -9,6 +9,7 @@ import { isUuid } from '@/lib/uuid';
 import { timeZoneOf } from '@/lib/chat/time-zone';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { startChatTurn, USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -64,8 +65,20 @@ export async function POST(
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', started.err.message ?? 'The model is not usable.');
       case 'CONTENT_KEY':
+        logger.error('The content encryption key is not configured: {error}', {
+          component: 'api/chat/chats/turns',
+          subject: session.subject,
+          chatId,
+          error: started.err.message ?? started.err.type,
+        });
         return jsonError(500, 'content-key', 'The content encryption key is not configured.');
       default:
+        logger.error('The message could not be saved: {error}', {
+          component: 'api/chat/chats/turns',
+          subject: session.subject,
+          chatId,
+          error: started.err.message ?? started.err.type,
+        });
         return jsonError(500, 'database', 'The message could not be saved.');
     }
   }

@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { parseBaseUrl } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { mirthClientFailure, mirthProbe } from '@/lib/mirth/service-client';
+import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -47,6 +48,14 @@ export async function POST(
   const probed = await mirthProbe(target);
   if (!probed.ok) {
     const failure = mirthClientFailure(probed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Mirth request failed ({status}): {error}', {
+        component: 'api/admin/mirth/probe',
+        operation: 'probed',
+        status: failure.status,
+        error: 'message' in probed.err && probed.err.message ? probed.err.message : failure.message,
+      });
+    }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json(probed.val);

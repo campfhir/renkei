@@ -24,6 +24,7 @@ import {
 } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { logger } from '@/lib/logger';
 
 /** key → [min, max]; the UI states the same ranges. */
 const NUMERIC_BOUNDS = {
@@ -198,6 +199,10 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/admin/org-settings',
+      error: settings.err.message ?? settings.err.type,
+    });
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({ settings: editable(settings.val) });
@@ -217,6 +222,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
   const current = await getOrgSettings();
   if (!current.ok) {
+    logger.error('Could not read org settings: {error}', {
+      component: 'api/admin/org-settings',
+      subject: access.subject,
+      error: current.err.message ?? current.err.type,
+    });
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   const before = editable(current.val);
@@ -309,6 +319,11 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (Object.keys(updates).length > 0) {
     const saved = await setOrgSettings(updates);
     if (!saved.ok) {
+      logger.error('Could not save settings: {error}', {
+        component: 'api/admin/org-settings',
+        subject: access.subject,
+        error: saved.err.message ?? saved.err.type,
+      });
       return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
     }
     recordAuditEvent({

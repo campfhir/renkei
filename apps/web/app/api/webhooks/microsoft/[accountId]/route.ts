@@ -81,7 +81,13 @@ export async function POST(
       MICROSOFT_SOURCE,
       accountId
     );
-  } catch {
+  } catch (error) {
+    logger.error('Could not read webhook subscriptions for account {accountId}: {error}', {
+      component: 'microsoft/webhook',
+      accountId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     // 500 so Graph retries the delivery instead of dropping it.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }

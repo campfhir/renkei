@@ -16,6 +16,7 @@ import { codeProjectTarget } from '@/lib/code/scope';
 import { getOrigin } from '@/lib/get-origin';
 import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
+import { logger } from '@/lib/logger';
 
 export async function POST(
   request: NextRequest,
@@ -51,6 +52,17 @@ export async function POST(
   });
   if (!pushed.ok) {
     const failure = clientFailure(pushed.err);
+    if (failure.status !== 400 && failure.status !== 404) {
+      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
+        component: 'api/code/projects/push',
+        subject: session.subject,
+        projectId,
+        chatId,
+        operation: 'pushed',
+        status: failure.status,
+        error: 'message' in pushed.err && pushed.err.message ? pushed.err.message : failure.message,
+      });
+    }
     return jsonError(failure.status, 'push', failure.message);
   }
   recordAuditEvent({

@@ -45,7 +45,13 @@ export async function POST(
   let grant: { metadata: unknown } | null;
   try {
     grant = await getDataStore().providerGrants.find(WEBEX_USER, accountId);
-  } catch {
+  } catch (error) {
+    logger.error('Could not read the WebEx grant for account {accountId}: {error}', {
+      component: 'webex/webhook',
+      accountId,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     // 500 so WebEx retries instead of dropping the delivery.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }

@@ -12,6 +12,7 @@ import { jsonError } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { hostAdapterFor } from '@/lib/code/repo-host';
 import { getOrigin } from '@/lib/get-origin';
+import { logger } from '@/lib/logger';
 
 export async function GET(
   request: NextRequest,
@@ -31,7 +32,15 @@ export async function GET(
     state: 'open',
     max: 25,
   });
-  if (!listed.ok) return jsonError(502, 'host', listed.error);
+  if (!listed.ok) {
+    logger.warn('Could not list pull requests from the code host: {error}', {
+      component: 'api/code/projects/pulls',
+      subject: session.subject,
+      projectId,
+      error: listed.error,
+    });
+    return jsonError(502, 'host', listed.error);
+  }
   if (request.nextUrl.searchParams.get('view') === 'summary') {
     return NextResponse.json({
       openCount: listed.pullRequests.length,

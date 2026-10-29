@@ -13,6 +13,7 @@ import { decrypt, encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
+import { logger } from '@/lib/logger';
 
 export async function PUT(
   request: NextRequest,
@@ -28,7 +29,14 @@ export async function PUT(
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
-  if (!keyResult.ok) return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  if (!keyResult.ok) {
+    logger.error('Could not load the token encryption key: {error}', {
+      component: 'api/admin/llm-models',
+      modelId,
+      error: keyResult.err.message ?? keyResult.err.type,
+    });
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
 
   const models = getDataStore().llmModels;
 

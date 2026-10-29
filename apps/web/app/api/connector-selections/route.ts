@@ -16,6 +16,7 @@ import { getConnectorPrefs, setConnectorPrefs } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveUserCatalog } from '@/lib/connectors/user-catalog';
 import { resolveAudienceAllows } from '@/lib/connectors/audience';
+import { logger } from '@/lib/logger';
 
 async function connectorFrom(request: NextRequest): Promise<string | null> {
   const body: unknown = await request.json().catch(() => null);
@@ -47,7 +48,14 @@ async function change(
   const current = await getConnectorPrefs(session.subject, { fresh: true });
   const added = apply(current.added, connector);
   const saved = await setConnectorPrefs(session.subject, { added });
-  if (!saved.ok) return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  if (!saved.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/connector-selections',
+      subject: session.subject,
+      error: saved.err.message ?? saved.err.type,
+    });
+    return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
   return NextResponse.json({ added });
 }
 

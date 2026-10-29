@@ -27,6 +27,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
 import { hasActiveGrant } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
+import { logger } from '@/lib/logger';
 
 const MAX_STATE_BYTES = 64 * 1024;
 /** Small in-memory burst brake; the daily cap in createAgentRun is the law. */
@@ -167,6 +168,14 @@ export async function POST(
     initialState: state,
   });
   if (!result.ok) {
+    if (result.err.type === 'DB_ERROR') {
+      logger.error('The run could not be started: {error}', {
+        component: 'api/agents/invoke',
+        subject: triggeredBy ?? agent.ownerSubject,
+        agentId,
+        error: result.err.message ?? result.err.type,
+      });
+    }
     const status =
       result.err.type === 'DAILY_RUN_CAP' ? 429 : result.err.type === 'DB_ERROR' ? 500 : 409;
     return NextResponse.json(
