@@ -63,7 +63,7 @@
     "@tailwindcss/browser": "^4.3.3",
     "@tryjsky/v9u-smb2": "^1.1.0",
     "docx-preview": "0.4.1",
-    "dotenv": "^18.0.8",
+    "dotenv": "^18.0.9",
     "esbuild": "^0.28.2",
     "exceljs": "^4.4.0",
     "highlight.js": "^11.12.0",
