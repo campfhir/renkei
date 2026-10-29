@@ -20,6 +20,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { addStubModel, removeModel, scripted, type StubStep } from './support/stub-model';
 import { createChat, send } from './support/chat';
+import { pointerReaches } from './support/settle';
 
 // Adding a model to the roster is an operator's.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -214,6 +215,7 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
 
   // Live: the tabs really work — a click in the frame runs the component's own state.
   await expect(frame.getByTestId('panel')).toContainText('Profile preferences', COLD);
+  await pointerReaches(page, frame.getByRole('tab', { name: 'Billing' }));
   await frame.getByRole('tab', { name: 'Billing' }).click();
   await expect(frame.getByTestId('panel')).toContainText('Billing preferences');
   await expect(frame.getByRole('tab', { name: 'Billing' })).toHaveAttribute(
@@ -267,9 +269,10 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
   const view = page.viewportSize() ?? { width: 1440, height: 900 };
   const y = (Math.max(layer.y, 0) + Math.min(layer.y + layer.height, view.height)) / 2;
   const x = (Math.max(layer.x, 0) + Math.min(layer.x + layer.width, view.width)) / 2 - 150;
-  // A click on the layer first: the frame had the pointer last, and the
-  // first press back in the page can go to waking it rather than to the layer.
-  await page.mouse.click(x, y);
+  // The layer has just been drawn over the frame, which had the pointer
+  // last: until the browser routes the pointer to the layer, a drag goes to
+  // the frame and scrolls nothing.
+  await pointerReaches(page, pan, { x, y });
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + 300, y, { steps: 6 });
@@ -301,7 +304,13 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
   await page.getByRole('button', { name: 'Open Settings page full screen' }).click();
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   const frame = dialog.frameLocator('iframe');
-  await frame.getByRole('tab', { name: 'Team' }).click(COLD);
+  const team = frame.getByRole('tab', { name: 'Team' });
+  await expect(team).toBeVisible(COLD);
+  // The frame has just opened: until the browser routes the pointer into
+  // it, the click lands on the page, and focus never goes into the frame.
+  await pointerReaches(page, team);
+  await team.click();
+  await expect(team).toHaveAttribute('aria-selected', 'true');
   // Focus is now inside the frame; the frame's own key handler forwards these.
   await page.keyboard.press('Control+=');
   await expect.poll(() => zoomPercent(page)).toBe(125);
