@@ -154,6 +154,13 @@ export interface MCPToolContext {
    */
   agent?: { agentId: string };
   /**
+   * The sandbox scratch space this caller stages in and reads from
+   * (migration 169): a chat turn's token names its chat (`chat:<id>`) or
+   * its code project (`project:<id>`), so one chat never lists another's
+   * files. Absent = the person's own scratch space ('').
+   */
+  sandboxScope?: string;
+  /**
    * The caller's renkei roles (migration 091), carried onto their MCP
    * token from the browser session that authorized it — see
    * lib/mcp-token.ts's AccessTokenRecord. Registration-time role gating

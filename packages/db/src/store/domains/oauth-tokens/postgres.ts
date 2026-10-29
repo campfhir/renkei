@@ -12,6 +12,7 @@ export function accessTokenFromRow(row: Selectable<OauthAccessTokens>): OAuthAcc
     agentId: row.agent_id,
     roles: row.roles ?? [],
     toolNames: row.tool_names ?? null,
+    sandboxScope: row.sandbox_scope ?? null,
     expiresAt: new Date(row.expires_at),
   };
 }

@@ -25,7 +25,7 @@
  * verb that can only fail.
  */
 
-import { sbReadFile, sbWriteFile } from '@renkei/sandbox-client';
+import { sbReadFile, sbWriteFile, type SandboxTarget } from '@renkei/sandbox-client';
 import { outputMediaType } from '@renkei/connector-sandbox';
 import { findAttachment } from './attachment-tools';
 import { fileCipherFor } from './artifact-access';
@@ -88,6 +88,13 @@ export function pickByName<T extends NamedFile>(files: readonly T[], wanted: str
     ok: false,
     reason: `No file called "${wanted}" in this chat. Its files, newest first: ${names}. Use one of those names, or "last".`,
   };
+}
+
+/** The chat's sandbox scratch space: its own, or its code project's (sandbox-scope.ts). */
+function sandboxTargetOf(context: LocalToolContext): SandboxTarget {
+  return context.sandboxScope
+    ? { subject: context.subject, scope: context.sandboxScope }
+    : { subject: context.subject };
 }
 
 /** The chat's own files, then its project's, oldest first within each. */
@@ -165,7 +172,7 @@ export function sandboxFileTools(): LocalTool[] {
           );
         }
         const staged = await sbWriteFile(
-          { subject: context.subject },
+          sandboxTargetOf(context),
           { filename: file.filename, contentType: file.contentType, source: 'chat' },
           object.val
         );
@@ -208,7 +215,7 @@ export function sandboxFileTools(): LocalTool[] {
         if (!/^[0-9a-f-]{36}$/i.test(fileId)) {
           return errorResult('fileId must be a staged file’s id (sandbox_list_files shows them).');
         }
-        const read = await sbReadFile({ subject: context.subject }, fileId);
+        const read = await sbReadFile(sandboxTargetOf(context), fileId);
         if (!read.ok) {
           return errorResult(
             read.err.kind === 'op' && read.err.status === 404

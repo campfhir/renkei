@@ -120,6 +120,8 @@ export interface AccessTokenRecord {
    * MCP-client token and every person-minted run token is.
    */
   toolNames: string[] | null;
+  /** The sandbox scratch space a chat turn's run token stages in (migration 169); null otherwise. */
+  sandboxScope: string | null;
 }
 
 export async function storeAccessToken(params: {
@@ -174,6 +176,7 @@ export async function resolveAccessToken(
     agentId: row.agentId,
     roles: row.roles,
     toolNames: row.toolNames,
+    sandboxScope: row.sandboxScope,
   };
 }
 

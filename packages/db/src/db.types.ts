@@ -1116,6 +1116,7 @@ export interface OauthAccessTokens {
   created_at: Generated<Timestamp>;
   expires_at: Timestamp;
   roles: Generated<string[]>;
+  sandbox_scope: string | null;
   scope: string | null;
   subject: string;
   token_hash: string;
@@ -1410,6 +1411,7 @@ export interface SandboxFiles {
   expires_at: Timestamp;
   filename: string;
   id: string;
+  scope: Generated<string>;
   size_bytes: number;
   source: string;
   storage_key: string;

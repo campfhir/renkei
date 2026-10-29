@@ -21,6 +21,11 @@ export interface LocalToolContext {
   /** How this chat's rows are sealed and opened (access.cipher). */
   cipher: ContentCipher;
   projectId: string | null;
+  /**
+   * The sandbox scratch space this chat stages in (sandbox-scope.ts), the
+   * same one its token gives the sandbox_* tools; absent, the person's own.
+   */
+  sandboxScope?: string;
   /** The project's cipher (its memory and files), when the chat is in one. */
   projectCipher?: ContentCipher;
   /** The person's email from the identity spine, when known — a commit author needs one. */

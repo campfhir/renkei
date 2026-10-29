@@ -1,11 +1,11 @@
 /**
  * Helpers the sandbox_* and sandbox_browser_* tool modules share: result
- * shaping, the caller's (tenantId, subject) target, and the one-line
+ * shaping, the caller's (subject, scope) target, and the one-line
  * description of a staged file every stage tool answers with.
  */
 
 import type { MCPToolContext } from '../common';
-import type { WireSandboxFile } from '@/lib/sandbox/service-client';
+import type { SandboxTarget, WireSandboxFile } from '@/lib/sandbox/service-client';
 
 export function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
@@ -19,9 +19,12 @@ export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-export function targetOf(context: MCPToolContext): { subject: string } | string {
+/** The caller's scratch space: their subject, in the chat or project their token names (migration 169). */
+export function targetOf(context: MCPToolContext): SandboxTarget | string {
   if (!context.subject) return 'No signed-in identity on this request.';
-  return { subject: context.subject };
+  return context.sandboxScope
+    ? { subject: context.subject, scope: context.sandboxScope }
+    : { subject: context.subject };
 }
 
 export function fileLine(file: WireSandboxFile): string {

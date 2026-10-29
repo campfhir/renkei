@@ -27,7 +27,7 @@ import {
 } from '@/lib/sandbox/service-client';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
-import { fileLine } from '../sandbox/shared';
+import { fileLine, targetOf } from '../sandbox/shared';
 import type { SalesforceAuth } from './salesforce-auth';
 import {
   errText,
@@ -165,8 +165,8 @@ export function registerFileTools(
     async (args) => {
       const access = await readAccess(auth);
       if (typeof access === 'string') return errText(access);
-      if (!context.subject) return errText('No signed-in identity on this request.');
-      const target = { subject: context.subject };
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
 
       let versions: FileVersion[];
       let from: string;
@@ -298,7 +298,9 @@ export function registerFileTools(
         }
       }
 
-      const read = await sbReadFile({ subject: context.subject }, args.fileId);
+      const target = targetOf(context);
+      if (typeof target === 'string') return errText(target);
+      const read = await sbReadFile(target, args.fileId);
       if (!read.ok) return errText(clientFailure(read.err).message);
       const limit = Math.min(
         context.maxAttachmentBytes ?? DEFAULT_MAX_FILE_BYTES,

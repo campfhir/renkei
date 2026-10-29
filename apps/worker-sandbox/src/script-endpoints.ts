@@ -22,6 +22,7 @@ import {
   type SandboxFileSummary,
 } from '@renkei/connector-sandbox';
 import type * as store from './store';
+import { scopeOf } from './scope';
 import { ScriptRunError, type ScriptRunner } from './scripts';
 import { decideScriptsFor, type OrgFeaturesLookup, type SandboxCapabilities } from './features';
 import type { NetworkIsolation } from './workspaces';
@@ -58,8 +59,9 @@ function sendError(response: ServerResponse, status: number, type: string, messa
 
 function targetOf(body: Body): store.SandboxTarget | null {
   const subject = str(body.subject);
-  if (!subject) return null;
-  return { subject };
+  const scope = scopeOf(body.scope);
+  if (!subject || scope === null) return null;
+  return scope ? { subject, scope } : { subject };
 }
 
 function fileWire(summary: SandboxFileSummary) {

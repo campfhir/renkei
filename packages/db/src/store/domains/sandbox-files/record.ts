@@ -6,6 +6,7 @@ export function sandboxFileFromRow(row: Selectable<SandboxFiles>): SandboxFileRe
   return {
     id: row.id,
     subject: row.subject,
+    scope: row.scope,
     filename: row.filename,
     contentType: row.content_type,
     sizeBytes: Number(row.size_bytes),
@@ -21,6 +22,7 @@ export function sandboxFileValues(file: Omit<SandboxFileRecord, 'createdAt'>) {
   return {
     id: file.id,
     subject: file.subject,
+    scope: file.scope,
     filename: file.filename,
     content_type: file.contentType,
     size_bytes: file.sizeBytes,

@@ -69,6 +69,7 @@ import { getProjectRow } from './projects';
 import { deriveTitle } from './titles';
 import { createOutboundRedactor } from './outbound-redaction';
 import { buildHistory, buildSystemPrompt } from './request-builder';
+import { sandboxScopeOf } from './sandbox-scope';
 import {
   AUTO_DIRECT_CONNECTORS,
   CODE_PROJECT_EAGER_TOOLS,
@@ -524,6 +525,9 @@ async function executeTurnBody(
     // The project's content — instructions, memory, files — under its own key.
     const projectCipher = project ? await projectCipherById(project.id) : null;
     const defaultsKind = project?.kind === 'code' ? 'code' : 'chat';
+    // Where this chat's sandbox tools stage: its code project's scratch
+    // space, else its own — never another chat's (sandbox-scope.ts).
+    const sandboxScope = sandboxScopeOf(input.chat, project);
     // Only consulted when neither the chat nor the project has its own
     // toolset, so a cache miss here never costs a chat that already has
     // one. A code project's chat reads the person's code-project default,
@@ -567,6 +571,7 @@ async function executeTurnBody(
       config: toolConfig,
       ttlSeconds: Math.ceil((wallClockMs + permissionWaitMs) / 1000) + 15 * 60,
       excluded: denied,
+      sandboxScope,
       // Acts go through preview cards, except a code project's code-work
       // connectors when the chat is in auto mode (tool-surface.ts).
       ...(project?.kind === 'code' && input.chat.autoMode && !(input.settings?.readOnly ?? false)
@@ -685,6 +690,7 @@ async function executeTurnBody(
       cipher: input.cipher,
       ...(projectCipher ? { projectCipher } : {}),
       projectId: input.chat.projectId,
+      sandboxScope,
       userEmail: person?.email ?? null,
       readOnly,
       llm: input.llm,

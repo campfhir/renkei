@@ -214,7 +214,10 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // The token class rides in the key too: a widget token and a run token
     // naming the same one tool must not share a handler, since only the
     // first may have that tool registered at all.
-    const cacheKey = `${subject}:${tokenRecord.application}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${surfaceVersion}`;
+    // The sandbox scope (migration 169) is baked into every sandbox tool's
+    // context, so two chats of one person never share a handler either.
+    const sandboxScope = tokenRecord.sandboxScope ?? '';
+    const cacheKey = `${subject}:${tokenRecord.application}:${agentId ?? 'none'}:${roles.join(',')}:${allowListKey}:${sandboxScope}:${surfaceVersion}`;
 
     // This caller's own Jira grant. A grant with a NULL subject predates per-user
     // ownership and is deliberately not matched: we cannot prove it belongs to
@@ -451,6 +454,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
               salesforceAdminScopes: salesforceAdminAvailable ? salesforceAdminScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
+              sandboxScope: sandboxScope || undefined,
               roles,
             };
 

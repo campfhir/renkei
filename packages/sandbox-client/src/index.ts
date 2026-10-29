@@ -47,6 +47,12 @@ export type ClientResult<T> = { ok: true; val: T } | { ok: false; err: SandboxCl
 
 export interface SandboxTarget {
   subject: string;
+  /**
+   * The scratch space within the subject's (migration 169): `chat:<id>`,
+   * `project:<id>`, or '' / absent for the person's own. Staged files are
+   * listed and read back only in the scope they were staged in.
+   */
+  scope?: string;
 }
 
 const REQUEST_TIMEOUT_MS = 90_000;
@@ -436,6 +442,7 @@ export async function sbWriteFile(
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   const query = new URLSearchParams({
     subject: target.subject,
+    ...(target.scope ? { scope: target.scope } : {}),
     filename: input.filename,
     ...(input.contentType ? { contentType: input.contentType } : {}),
     ...(input.source ? { source: input.source } : {}),

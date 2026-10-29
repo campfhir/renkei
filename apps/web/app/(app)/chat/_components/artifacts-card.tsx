@@ -6,7 +6,8 @@
  * and read when asked), where else each lives, and the three ways in —
  * attach from the library, upload, drop. Owners and editors change it;
  * viewers read it. The data is the page's (project-view.ts); every change
- * goes through the API and refreshes the page.
+ * goes through the API and refreshes the page. A project can hold hundreds
+ * (a batch dropped in at once), so the list shows them a page at a time.
  */
 
 import { useEffect, useRef, useState, type DragEvent } from 'react';
@@ -18,6 +19,12 @@ import { chatClient } from '@/lib/chat/client';
 import type { ProjectArtifactView } from '@/lib/chat/views';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import AttachArtifactsModal from './attach-artifacts-modal';
+
+/** Rows the list shows at once. */
+export const ARTIFACTS_PAGE_SIZE = 10;
+
+const pagerButton =
+  'flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
 import { ModeToggle, sizeOf, statusLabel, tokensLabel, TypeBadge } from './artifact-bits';
 
 export default function ArtifactsCard({
@@ -52,6 +59,12 @@ export default function ArtifactsCard({
   useEffect(() => {
     setRemoving([]);
   }, [serverFiles]);
+  // 1-based; held inside the list as it shrinks (a detach on the last page).
+  const [pageAsked, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(files.length / ARTIFACTS_PAGE_SIZE));
+  const page = Math.min(pageAsked, pageCount);
+  const firstIndex = (page - 1) * ARTIFACTS_PAGE_SIZE;
+  const shown = files.slice(firstIndex, firstIndex + ARTIFACTS_PAGE_SIZE);
 
   const upload = async (list: FileList | File[] | null) => {
     const items = list ? [...list] : [];
@@ -165,7 +178,7 @@ export default function ArtifactsCard({
         </p>
       ) : (
         <ul className="divide-y divide-gray-100 dark:divide-gray-900">
-          {files.map((file) => {
+          {shown.map((file) => {
             const status = statusLabel(file.extractStatus);
             const mine = file.ownerSubject === viewerSubject;
             return (
@@ -223,6 +236,37 @@ export default function ArtifactsCard({
           })}
         </ul>
       )}
+      {pageCount > 1 ? (
+        <nav
+          aria-label="Artifact pages"
+          className="mt-2 flex items-center justify-end gap-2 text-xs text-gray-500"
+        >
+          <span>
+            {firstIndex + 1}–{firstIndex + shown.length} of {files.length}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage(page - 1)}
+            disabled={page <= 1}
+            aria-label="Previous page"
+            className={pagerButton}
+          >
+            <Icon path={ICONS.chevronLeft} className="h-4 w-4" />
+          </button>
+          <span>
+            Page {page} of {pageCount}
+          </span>
+          <button
+            type="button"
+            onClick={() => setPage(page + 1)}
+            disabled={page >= pageCount}
+            aria-label="Next page"
+            className={pagerButton}
+          >
+            <Icon path={ICONS.chevron} className="h-4 w-4" />
+          </button>
+        </nav>
+      ) : null}
 
       {files.length > 0 ? (
         <div className="mt-3 border-t border-gray-100 pt-2.5 dark:border-gray-900">

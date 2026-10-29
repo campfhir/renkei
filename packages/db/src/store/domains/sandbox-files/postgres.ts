@@ -13,9 +13,9 @@ export function postgresSandboxFiles(db: () => Kysely<DB>): SandboxFileStore {
         .executeTakeFirstOrThrow();
       return sandboxFileFromRow(row);
     },
-    async list(subject, batchId) {
+    async list(subject, scope, batchId) {
       let query = db().selectFrom('sandbox_files').selectAll().where('subject', '=', subject);
-      if (batchId) query = query.where('batch_id', '=', batchId);
+      query = batchId ? query.where('batch_id', '=', batchId) : query.where('scope', '=', scope);
       const rows = await query.orderBy('created_at', 'desc').orderBy('id').execute();
       return rows.map(sandboxFileFromRow);
     },
@@ -51,20 +51,22 @@ export function postgresSandboxFiles(db: () => Kysely<DB>): SandboxFileStore {
         .executeTakeFirst();
       return row?.total ? Number(row.total) : 0;
     },
-    async get(subject, id) {
+    async get(subject, scope, id) {
       const row = await db()
         .selectFrom('sandbox_files')
         .selectAll()
         .where('subject', '=', subject)
         .where('id', '=', id)
+        .where((eb) => eb.or([eb('scope', '=', scope), eb('batch_id', 'is not', null)]))
         .executeTakeFirst();
       return row ? sandboxFileFromRow(row) : null;
     },
-    async delete(subject, id) {
+    async delete(subject, scope, id) {
       const row = await db()
         .deleteFrom('sandbox_files')
         .where('subject', '=', subject)
         .where('id', '=', id)
+        .where((eb) => eb.or([eb('scope', '=', scope), eb('batch_id', 'is not', null)]))
         .returningAll()
         .executeTakeFirst();
       return row ? sandboxFileFromRow(row) : null;

@@ -2,7 +2,7 @@
  * Sandbox file metadata, through the data store (`sandboxFiles`). Bytes
  * never pass through here — see server.ts for the disk side — this is
  * purely the `sandbox_files` row:
- * insert on stage, list/get/delete by (tenantId, subject), and the sweep's
+ * insert on stage, list/get/delete by (subject, scope), and the sweep's
  * expiry walk. Every function takes tenantId + subject explicitly and
  * filters on both, the same no-cross-caller-reads discipline upload_slots
  * and the fileshare store already keep.
@@ -21,6 +21,13 @@ import type { SandboxFileSummary } from '@renkei/connector-sandbox';
 
 export interface SandboxTarget {
   subject: string;
+  /**
+   * The scratch space within the subject's (migration 169): `chat:<id>`,
+   * `project:<id>`, or '' / absent for the person's own. A file is listed,
+   * read and deleted only from the scope it was staged in (or, for a
+   * batch's file, by its batch).
+   */
+  scope?: string;
 }
 
 export interface StageFileInput extends SandboxTarget {
@@ -66,6 +73,7 @@ export async function insertFile(input: StageFileInput): Promise<SandboxFileSumm
   const record = await getDataStore().sandboxFiles.insert({
     id: randomUUID(),
     subject: input.subject,
+    scope: input.scope ?? '',
     filename: input.filename,
     contentType: input.contentType,
     sizeBytes: input.sizeBytes,
@@ -81,7 +89,9 @@ export async function listFiles(
   target: SandboxTarget,
   batchId?: string
 ): Promise<SandboxFileSummary[]> {
-  return (await getDataStore().sandboxFiles.list(target.subject, batchId)).map(toSummary);
+  return (await getDataStore().sandboxFiles.list(target.subject, target.scope ?? '', batchId)).map(
+    toSummary
+  );
 }
 
 /** Current total staged bytes for a caller — the quota check reads this before staging a new file. */
@@ -111,7 +121,7 @@ export async function getFile(
   target: SandboxTarget,
   fileId: string
 ): Promise<StoredFile | undefined> {
-  const record = await getDataStore().sandboxFiles.get(target.subject, fileId);
+  const record = await getDataStore().sandboxFiles.get(target.subject, target.scope ?? '', fileId);
   return record ? toStored(record) : undefined;
 }
 
@@ -119,7 +129,11 @@ export async function deleteFile(
   target: SandboxTarget,
   fileId: string
 ): Promise<StoredFile | undefined> {
-  const record = await getDataStore().sandboxFiles.delete(target.subject, fileId);
+  const record = await getDataStore().sandboxFiles.delete(
+    target.subject,
+    target.scope ?? '',
+    fileId
+  );
   return record ? toStored(record) : undefined;
 }
 
