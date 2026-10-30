@@ -46,6 +46,53 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-30',
+    entries: [
+      {
+        kind: 'fixed',
+        title: "The file tree's row menu is easier to see, and dialogs are centred on a phone",
+        detail:
+          "The tree's per-row menu no longer looks washed out or gets cut off by the panel's edge, and dialogs open in the middle of the screen on a phone as they do on a desktop.",
+      },
+      {
+        kind: 'changed',
+        title: 'Tools, Download and Share sit behind one menu on a project page',
+        detail:
+          'The project header keeps the name and New chat; the rest is under its menu button.',
+      },
+      {
+        kind: 'added',
+        title: 'Download a file, a folder or the whole checkout',
+        detail:
+          "The file tree's menu downloads a file as itself or a folder as a zip, and the project page's menu downloads the whole checkout as a zip, ignored files such as node_modules included.",
+      },
+      {
+        kind: 'added',
+        title: 'Type @ in a code chat to complete a file path',
+        detail:
+          "Typing @ in a code project's chat lists matching paths from the checkout as you type, with the match highlighted; arrows and Enter take one.",
+      },
+      {
+        kind: 'added',
+        title: 'Drag files into and around the code file tree',
+        detail:
+          'Drop files from your desktop on a folder or on the tree to upload them there, and drag a file or folder onto another folder, or onto the tree, to move it.',
+      },
+      {
+        kind: 'added',
+        title: "Add files shows each file's progress, and keeps uploading if you close it",
+        detail:
+          "Add files in a code chat can put files in the checkout or among the project's artifacts, lists each file with its own progress and result, filters to the failures, and goes on uploading after the dialog closes: the title bar shows an indicator, and the file tree picks the files up as they land.",
+      },
+      {
+        kind: 'changed',
+        title: 'Code project pages open faster',
+        detail:
+          "A code project's page shows its chats and details as soon as they are read, and fills in the checkout's state, the environment and the README as the sandbox and the git host answer, instead of waiting for all of them.",
+      },
+    ],
+  },
+  {
     date: '2026-10-29',
     entries: [
       {
