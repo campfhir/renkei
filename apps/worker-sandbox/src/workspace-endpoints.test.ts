@@ -686,6 +686,19 @@ describe('uploading', () => {
 });
 
 describe('downloading', () => {
+  // Its own files: the git tests above commit, clean and discard in this
+  // checkout, so what beforeAll wrote at the top is not relied on here.
+  beforeAll(async () => {
+    const dir = workspaceDir(STORAGE_KEY);
+    await mkdir(join(dir, 'pack', 'sub'), { recursive: true });
+    await writeFile(join(dir, 'pack', 'one.txt'), 'one\n');
+    await writeFile(join(dir, 'pack', 'sub', 'two.txt'), 'two\n');
+    await mkdir(join(dir, 'node_modules', 'left-pad'), { recursive: true });
+    await writeFile(join(dir, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
+    // A .git (the git tests' real one, or a stand-in) with something in it.
+    await mkdir(join(dir, '.git'), { recursive: true });
+    await writeFile(join(dir, '.git', 'download-marker'), 'x\n');
+  });
   async function download(body: unknown): Promise<Response> {
     return fetch(`${enabledBase}/v1/workspaces/download`, {
       method: 'POST',
@@ -700,35 +713,32 @@ describe('downloading', () => {
   }
 
   it('answers a file as its bytes', async () => {
-    const response = await download({ ...TARGET, id: 'ws-1', path: 'src/config.ts' });
+    const response = await download({ ...TARGET, id: 'ws-1', path: 'pack/one.txt' });
     expect(response.status).toBe(200);
     expect(response.headers.get('x-sandbox-kind')).toBe('file');
     expect(response.headers.get('content-type')).toBe('application/octet-stream');
-    expect(await response.text()).toContain('export const token');
+    expect(await response.text()).toBe('one\n');
   });
 
   it('zips a folder under its name, and the root as its contents, ignored files in and .git out', async () => {
-    const dir = workspaceDir(STORAGE_KEY);
-    await mkdir(join(dir, 'node_modules', 'left-pad'), { recursive: true });
-    await writeFile(join(dir, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
-    await mkdir(join(dir, '.git'), { recursive: true });
-    await writeFile(join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-    await writeFile(join(dir, '.gitignore'), 'node_modules\n');
-
-    const folder = await download({ ...TARGET, id: 'ws-1', path: 'src' });
+    const folder = await download({ ...TARGET, id: 'ws-1', path: 'pack' });
     expect(folder.status).toBe(200);
     expect(folder.headers.get('x-sandbox-kind')).toBe('dir');
     expect(folder.headers.get('content-type')).toBe('application/zip');
     expect(await namesIn(Buffer.from(await folder.arrayBuffer()))).toEqual([
-      'src/',
-      'src/config.ts',
+      'pack/',
+      'pack/one.txt',
+      'pack/sub/',
+      'pack/sub/two.txt',
     ]);
 
     const whole = await download({ ...TARGET, id: 'ws-1', path: '' });
     expect(whole.status).toBe(200);
     const names = await namesIn(Buffer.from(await whole.arrayBuffer()));
-    expect(names).toEqual(expect.arrayContaining(['.gitignore', 'src/config.ts', 'node_modules/left-pad/index.js']));
-    expect(names.some((name) => name.startsWith('.git/'))).toBe(false);
+    expect(names).toEqual(
+      expect.arrayContaining(['pack/one.txt', 'pack/sub/two.txt', 'node_modules/left-pad/index.js'])
+    );
+    expect(names.some((name) => name === '.git/' || name.startsWith('.git/'))).toBe(false);
   });
 
   it('refuses a path outside the checkout and 404s a missing one', async () => {
