@@ -105,6 +105,8 @@ export function usePathCompletions({
   const [width, setWidth] = useState<number | null>(null);
   const requests = useRef(0);
   const caretAfter = useRef<number | null>(null);
+  /** Where the pointer last was: a row goes active when the pointer moves onto it, not when the list opens under an idle pointer. */
+  const pointer = useRef<{ x: number; y: number } | null>(null);
 
   const detect = useCallback(() => {
     const element = textareaRef.current;
@@ -252,7 +254,15 @@ export function usePathCompletions({
                     aria-selected={isActive}
                     // mousedown would take the focus (and the caret) from the box.
                     onMouseDown={(event) => event.preventDefault()}
-                    onMouseEnter={() => setActive(index)}
+                    onMouseMove={(event) => {
+                      // Chrome replays a move when the list appears under
+                      // a resting pointer; only a pointer that moved picks.
+                      const last = pointer.current;
+                      pointer.current = { x: event.clientX, y: event.clientY };
+                      if (last && (last.x !== event.clientX || last.y !== event.clientY)) {
+                        setActive(index);
+                      }
+                    }}
                     onClick={() => accept(path)}
                     className={`flex cursor-pointer items-center gap-2 px-3 py-1 font-mono text-xs ${
                       isActive

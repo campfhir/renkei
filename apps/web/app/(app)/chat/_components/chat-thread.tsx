@@ -1182,7 +1182,7 @@ export default function ChatThread({
           <ArtifactsMenu artifacts={state.artifacts} />
           {/* Uploads running from Add files (or a drop on the tree): shown
               at every width, since the sends outlive the dialog. */}
-          <UploadIndicator />
+          <UploadIndicator compact={compact} />
           {compact ? (
             isOwner ? (
               <ToolsPopover

@@ -164,12 +164,13 @@ export default function AddFilesModal({
               <p className="text-sm text-gray-500">Done — every file was added.</p>
             )}
           </div>
-          <div className="mt-3 flex shrink-0 items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-            <p className="mr-auto text-xs text-gray-500">
-              {queue.active > 0
-                ? 'Closing this keeps the upload going; the title bar shows it.'
-                : null}
-            </p>
+          <div className="mt-3 flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
+            {queue.active > 0 ? (
+              // Its own line on a phone, beside the buttons where there is room.
+              <p className="basis-full text-xs text-gray-500 sm:mr-auto sm:basis-auto">
+                Closing this keeps the upload going; the title bar shows it.
+              </p>
+            ) : null}
             <button
               type="button"
               onClick={() => {

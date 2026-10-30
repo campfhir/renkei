@@ -195,7 +195,9 @@ test.describe('code uploads and the tree', () => {
     //    its files failed, so it stays until dismissed (a batch with
     //    nothing failed clears itself). Its dialog lists every batch ──
     const indicator = main.getByTestId('upload-indicator');
-    await expect(indicator).toContainText('1 upload failed');
+    // Beside a wide pane the chat's title bar is compact: the pill shows the
+    // count alone and keeps the words as its name.
+    await expect(indicator).toHaveAccessibleName(/1 upload failed/);
     await indicator.click();
     const uploads = page.getByRole('dialog', { name: 'Uploads' });
     await expect(uploads.getByText('docs/empty.md')).toBeVisible();
@@ -225,7 +227,7 @@ test.describe('code uploads and the tree', () => {
     await dialog.getByRole('button', { name: 'Add to repository' }).click();
     await expect(dialog.getByText('Closing this keeps the upload going')).toBeVisible();
     await dialog.getByRole('button', { name: 'Done' }).click();
-    await expect(indicator).toContainText('Uploading 1 of 1');
+    await expect(indicator).toHaveAccessibleName(/Uploading 1 of 1/);
     await shot(page, testInfo, 'code-upload-indicator.png');
     // Its dialog shows the same table, with Stop while it runs.
     await indicator.click();
@@ -233,7 +235,7 @@ test.describe('code uploads and the tree', () => {
     await expect(uploads.getByRole('button', { name: 'Stop' })).toBeVisible();
     await uploads.getByRole('button', { name: 'Done' }).click();
     release();
-    await expect(indicator).toContainText('Uploaded 1');
+    await expect(indicator).toHaveAccessibleName(/Uploaded 1/);
     await expect(tree.getByRole('button', { name: /^slow\.txt/ })).toBeVisible();
     // Done with nothing failed, the indicator clears itself.
     await expect(indicator).toHaveCount(0, { timeout: 10_000 });

@@ -23,7 +23,14 @@ import {
   type UploadBatch,
 } from './upload-queue';
 
-export default function UploadIndicator({ className = '' }: { className?: string }) {
+export default function UploadIndicator({
+  className = '',
+  compact = false,
+}: {
+  className?: string;
+  /** A phone's title bar: the count alone ("3/8"), the words in the tooltip. */
+  compact?: boolean;
+}) {
   const queue = useOptionalUploadQueue();
   const [open, setOpen] = useState(false);
   const empty = !queue || queue.batches.length === 0;
@@ -45,11 +52,19 @@ export default function UploadIndicator({ className = '' }: { className?: string
   );
   const running = queue.active > 0;
   const percent = totals.bytes > 0 ? Math.min(100, (totals.loaded / totals.bytes) * 100) : 0;
+  const current = Math.min(totals.done + 1, totals.total);
   const label = running
-    ? `Uploading ${totals.done + 1 > totals.total ? totals.total : totals.done + 1} of ${totals.total}`
+    ? `Uploading ${current} of ${totals.total}`
     : totals.failed > 0
       ? `${totals.failed} upload${totals.failed === 1 ? '' : 's'} failed`
       : `Uploaded ${totals.total}`;
+  const shown = compact
+    ? running
+      ? `${current}/${totals.total}`
+      : totals.failed > 0
+        ? `${totals.failed} failed`
+        : `${totals.total}`
+    : label;
   return (
     <>
       <button
@@ -73,7 +88,7 @@ export default function UploadIndicator({ className = '' }: { className?: string
           />
         )}
         <span className="flex flex-col items-start leading-none">
-          <span>{label}</span>
+          <span>{shown}</span>
           {running ? (
             <span
               role="progressbar"
@@ -81,7 +96,7 @@ export default function UploadIndicator({ className = '' }: { className?: string
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(percent)}
-              className="mt-1 block h-0.5 w-full min-w-16 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800"
+              className={`mt-1 block h-0.5 w-full overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800 ${compact ? 'min-w-6' : 'min-w-16'}`}
             >
               <span
                 className="block h-full bg-blue-600 transition-[width]"
