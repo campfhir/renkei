@@ -16,8 +16,8 @@
  * popover can show without running off the screen, so the list scrolls
  * in a box of its own under the explanation, and the actions — Reset to
  * defaults, Save as my default, Clear my default, Done — stay put in a
- * footer whatever the list's length or the screen's height. A filter
- * box narrows the list by name.
+ * footer whatever the list's length or the screen's height. A search
+ * box above the list narrows it by name as you type.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -128,7 +128,7 @@ export default function ToolsDialog({
     });
   }, [open, options]);
 
-  // A fresh look each time: the filter and the "Saved" word are for one opening.
+  // The search and the "Saved" word are for one opening of the dialog.
   useEffect(() => {
     if (!open) {
       setFilter('');
@@ -153,7 +153,11 @@ export default function ToolsDialog({
     if (!options) return null;
     const needle = filter.trim().toLowerCase();
     if (!needle) return options;
-    return options.filter((option) => connectorLabel(option.key).toLowerCase().includes(needle));
+    return options.filter(
+      (option) =>
+        connectorLabel(option.key).toLowerCase().includes(needle) ||
+        option.key.toLowerCase().includes(needle)
+    );
   }, [options, filter]);
 
   const explanation =
@@ -210,14 +214,16 @@ export default function ToolsDialog({
         <Modal title="Tools" onClose={() => setOpen(false)}>
           <div className="flex max-h-[75vh] flex-col text-sm" data-testid="tools-dialog">
             <p className="mb-2 text-xs text-gray-500">{explanation}</p>
-            {options !== null && options.length > 8 ? (
+            {/* A fresh look each time: the box empties when the dialog closes. */}
+            {options !== null && options.length > 0 ? (
               <input
                 type="search"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
-                placeholder="Filter connectors"
-                aria-label="Filter connectors"
+                placeholder="Search connectors"
+                aria-label="Search connectors"
                 autoComplete="off"
+                autoFocus
                 className="mb-2 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
               />
             ) : null}
@@ -233,7 +239,7 @@ export default function ToolsDialog({
                 </p>
               ) : shown && shown.length === 0 ? (
                 <p className="px-1 py-1 text-xs text-gray-500">
-                  No connector is called “{filter.trim()}”.
+                  No connector matches “{filter.trim()}”.
                 </p>
               ) : (
                 (shown ?? []).map((option) => {

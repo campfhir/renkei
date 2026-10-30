@@ -72,6 +72,20 @@ test('a new chat in a project starts from the project’s toolset, not the perso
     fullPage: false,
   });
 
+  // Search narrows the list as you type; emptied, everything is back.
+  const search = dialog.getByRole('searchbox', { name: 'Search connectors' });
+  await search.fill('sand');
+  await expect(dialog.getByRole('checkbox')).toHaveCount(1);
+  await expect(dialog.getByRole('checkbox', { name: /Renkei sandbox/ })).toBeVisible();
+  await page.screenshot({
+    path: path.join(SCREENS, testInfo.project.name, 'project-tools-popover-03-search.png'),
+    fullPage: false,
+  });
+  await search.fill('zzz');
+  await expect(dialog.getByText('No connector matches “zzz”.')).toBeVisible();
+  await search.fill('');
+  await expect(dialog.getByRole('checkbox', { name: /Renkei agents/ })).toBeChecked();
+
   // The dialog keeps its actions in a footer under the list, which
   // scrolls in a box of its own when the catalog outgrows the screen.
   const footer = dialog.getByTestId('tools-dialog-footer');
