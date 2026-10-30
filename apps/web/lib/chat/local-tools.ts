@@ -22,6 +22,8 @@ export interface LocalToolContext {
   /** How this chat's rows are sealed and opened (access.cipher). */
   cipher: ContentCipher;
   projectId: string | null;
+  /** A temporary chat (temporary.ts): no memory or recall tools. */
+  temporary?: boolean;
   /**
    * The sandbox scratch space this chat stages in (sandbox-scope.ts), the
    * same one its token gives the sandbox_* tools; absent, the person's own.

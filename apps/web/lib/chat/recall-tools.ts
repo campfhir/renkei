@@ -107,8 +107,9 @@ async function listOthers(context: LocalToolContext): Promise<ChatRow[]> {
     const inProject = await listProjectChats([context.projectId], null);
     return inProject.filter((chat) => chat.id !== context.chatId && chat.lastMessageAt !== null);
   }
+  // A temporary chat is nobody's memory (temporary.ts).
   const owned = await listOwnedChats(context.subject);
-  return owned.filter((chat) => chat.id !== context.chatId);
+  return owned.filter((chat) => chat.id !== context.chatId && !chat.temporary);
 }
 
 /**
@@ -121,7 +122,8 @@ async function readable(context: LocalToolContext, chatId: string): Promise<Chat
     const chat = await getChatRow(chatId);
     return chat && chat.projectId === context.projectId ? chat : null;
   }
-  return getChatForOwner(context.subject, chatId);
+  const chat = await getChatForOwner(context.subject, chatId);
+  return chat && !chat.temporary ? chat : null;
 }
 
 async function readOne(context: LocalToolContext, chatId: string) {

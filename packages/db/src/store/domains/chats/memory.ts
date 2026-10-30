@@ -217,6 +217,22 @@ export function memoryChats(tables: MemoryTables): ChatStore {
         .map((row) => row.id)
         .sort();
     },
+    async listTemporaryIdleIds(before, limit) {
+      const running = new Set(
+        tables.select('chat_turns', (t) => t.status === 'running').map((t) => t.chat_id)
+      );
+      return page(
+        orderBy(
+          tables.select(
+            'chats',
+            (r) => r.temporary && r.updated_at.getTime() < before.getTime() && !running.has(r.id)
+          ),
+          [(r) => r.updated_at],
+          [(r) => r.id]
+        ),
+        limit
+      ).map((row) => row.id);
+    },
     async listIdsUpdatedBefore(before, limit) {
       return page(
         orderBy(

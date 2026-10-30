@@ -40,9 +40,7 @@ const rowClass =
   'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-900';
 const activeClass = 'bg-gray-100 font-medium dark:bg-gray-900';
 
-export function ChatList({ data }: {
-  data: ChatSidebarData;
-}) {
+export function ChatList({ data }: { data: ChatSidebarData }) {
   const currentPath = usePathname();
   // Which states the list shows; active only, until the funnel says otherwise.
   const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
@@ -266,7 +264,12 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ChatRow({ chat, projects, active, onDeleted }: {
+function ChatRow({
+  chat,
+  projects,
+  active,
+  onDeleted,
+}: {
   chat: ChatListItem;
   projects: ProjectListItem[];
   active: boolean;
@@ -300,7 +303,8 @@ function ChatRow({ chat, projects, active, onDeleted }: {
   // A chat in a code project belongs to its repository: it is not moved
   // into a chat project from here.
   const actions: ('rename' | 'move' | 'share' | 'archive' | 'delete')[] =
-    mark.kind === 'code'
+    // A temporary chat stands outside projects (lib/chat/temporary.ts).
+    mark.kind === 'code' || chat.temporary
       ? ['rename', 'share', 'archive', 'delete']
       : ['rename', 'move', 'share', 'archive', 'delete'];
 
@@ -336,6 +340,14 @@ function ChatRow({ chat, projects, active, onDeleted }: {
             {chat.archived ? (
               <span className="shrink-0 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                 archived
+              </span>
+            ) : null}
+            {chat.temporary ? (
+              <span
+                title="Temporary chat: no memories, deleted 24 hours after its last activity"
+                className="shrink-0 rounded bg-amber-100 px-1 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+              >
+                temporary
               </span>
             ) : null}
           </span>
@@ -379,9 +391,7 @@ function ChatRow({ chat, projects, active, onDeleted }: {
                   onClick={() => {
                     setMenuOpen(false);
                     if (item === 'archive') {
-                      void run(() =>
-                        chatClient.updateChat(chat.id, { archived: !chat.archived })
-                      );
+                      void run(() => chatClient.updateChat(chat.id, { archived: !chat.archived }));
                       return;
                     }
                     setDialog(item);

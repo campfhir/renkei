@@ -25,6 +25,8 @@ export interface ChatRow {
   autoMode: boolean;
   /** The model's one automatic title has been attempted (chat-title-tools.ts). */
   autoTitleAsked: boolean;
+  /** See ChatView.temporary. */
+  temporary: boolean;
   /** A code chat's worktree on the sandbox worker (lib/code/projects.ts); null until its first turn makes one. */
   workspaceId: string | null;
   lastMessageAt: Date | null;
@@ -107,6 +109,8 @@ export async function createChat(input: {
   thinkingEnabled: boolean;
   /** See ChatRow.autoMode. Defaults to off — callers opt in. */
   autoMode?: boolean;
+  /** See ChatView.temporary; never in a project (the caller checks). */
+  temporary?: boolean;
 }): Promise<string> {
   const id = await getDataStore().chats.create({
     ownerSubject: input.ownerSubject,
@@ -115,6 +119,7 @@ export async function createChat(input: {
     toolConfig: input.toolConfig ? toolConfigJson(input.toolConfig) : null,
     thinkingEnabled: input.thinkingEnabled,
     autoMode: input.autoMode ?? false,
+    temporary: input.temporary ?? false,
   });
   // The chat's own key, wrapped for its owner (chat-keys.ts): every row
   // the chat will hold is sealed under it. In a project, also under the
@@ -131,6 +136,8 @@ export interface ChatPatch {
   toolConfig?: ChatToolConfig | null;
   thinkingEnabled?: boolean;
   autoMode?: boolean;
+  /** Only while the chat has no message yet and is in no project (the route checks). */
+  temporary?: boolean;
   archived?: boolean;
 }
 

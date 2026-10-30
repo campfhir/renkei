@@ -65,6 +65,7 @@ export function chatRow(
     last_message_at: null,
     auto_title_asked: false,
     auto_mode: false,
+    temporary: false,
     thinking_enabled: false,
     request_overhead_tokens: null,
     workspace_id: null,

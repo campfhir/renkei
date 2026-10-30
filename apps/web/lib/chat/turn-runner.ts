@@ -291,6 +291,12 @@ export interface TurnPermissions {
    * preview to call, so the card is never skipped.
    */
   previewOnly?: ReadonlyMap<string, string>;
+  /**
+   * Tools this chat goes without, with what the model is told instead — a
+   * temporary chat's memory tools (temporary.ts). Never offered, so a call
+   * is a guess or a memory of another chat: refused without asking.
+   */
+  unavailable?: ReadonlyMap<string, string>;
 }
 
 /** What the model is told in place of a result for a call that was not made. */
@@ -700,10 +706,12 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
   const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
   const denied = deps.permissions?.denied ?? new Set<string>();
   const previewOnly = deps.permissions?.previewOnly ?? new Map<string, string>();
+  const unavailable = deps.permissions?.unavailable ?? new Map<string, string>();
   const needsPermission = (name: string) =>
     deps.permissions !== undefined &&
     deps.permissions.allowAll !== true &&
     !denied.has(name) &&
+    !unavailable.has(name) &&
     !readOnlyTools.has(name) &&
     !alwaysAllowed.has(name);
   let permissionWaited = 0;
@@ -1494,9 +1502,13 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const produced: ArtifactFile[] = [];
       // Calls the person did not allow, or whose own arguments never
       // finished streaming: answered with a refusal, never run.
-      const refused = new Map<string, 'deny' | 'timeout' | 'blocked' | 'truncated' | 'preview'>();
+      const refused = new Map<
+        string,
+        'deny' | 'timeout' | 'blocked' | 'truncated' | 'preview' | 'unavailable'
+      >();
       for (const use of toolUses) {
         if (denied.has(use.name)) refused.set(use.id, 'blocked');
+        else if (unavailable.has(use.name)) refused.set(use.id, 'unavailable');
         else if (previewOnly.has(use.name)) refused.set(use.id, 'preview');
         else if (truncatedToolIds.has(use.id)) refused.set(use.id, 'truncated');
       }
@@ -1521,11 +1533,13 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
                     ? PERMISSION_DENIED_RESULT
                     : refusal === 'blocked'
                       ? PERMISSION_BLOCKED_RESULT
-                      : refusal === 'preview'
-                        ? previewOnlyResult(previewOnly.get(use.name) ?? 'its preview tool')
-                        : refusal === 'truncated'
-                          ? TOOL_CALL_TRUNCATED_RESULT
-                          : PERMISSION_TIMEOUT_RESULT,
+                      : refusal === 'unavailable'
+                        ? (unavailable.get(use.name) ?? PERMISSION_BLOCKED_RESULT)
+                        : refusal === 'preview'
+                          ? previewOnlyResult(previewOnly.get(use.name) ?? 'its preview tool')
+                          : refusal === 'truncated'
+                            ? TOOL_CALL_TRUNCATED_RESULT
+                            : PERMISSION_TIMEOUT_RESULT,
               },
             ],
             isError: true,

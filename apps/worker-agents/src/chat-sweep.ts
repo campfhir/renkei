@@ -1,5 +1,5 @@
 /**
- * Chat hygiene, four sweeps in one module.
+ * Chat hygiene, five sweeps in one module.
  *
  * The janitor: a turn's runner heartbeats its row every few hundred
  * milliseconds while it works, so a `running` turn whose heartbeat is
@@ -13,6 +13,12 @@
  * goes only if there is nothing in it at all — no message, no attachment
  * — which is why this never touches a blob; an empty chat someone
  * uploaded into waits for the org's retention like any other.
+ *
+ * Temporary chats: one started as temporary (apps/web/lib/chat/temporary.ts)
+ * is deleted — not archived — once it has sat untouched for a day, with
+ * its attachments' bytes first, the way retention deletes. It runs ahead
+ * of auto-archive, so a temporary chat is never archived instead. Skipped
+ * while the chat has a reply running.
  *
  * Auto-archive: a person's chat_archive preference archives their chats
  * once they have sat untouched for that long. It runs ahead of retention
@@ -47,6 +53,8 @@ const STALE_MINUTES = 15;
 const RETENTION_BATCH = 500;
 /** Long enough for anyone to come back to a chat they opened and left. */
 const ABANDONED_CHAT_HOURS = 24;
+/** apps/web/lib/chat/temporary.ts TEMPORARY_CHAT_IDLE_HOURS, which the chat says. */
+const TEMPORARY_CHAT_HOURS = 24;
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
@@ -75,6 +83,8 @@ export function createChatTurnJanitor() {
 export function createChatRetentionSweep(store: () => Promise<BlobStore | null> = blobStore) {
   return async function sweep(): Promise<void> {
     await deleteAbandonedChats();
+    // Before archiving: a temporary chat goes, it is never archived.
+    await deleteTemporaryChats(store);
     const settings = await getOrgSettings();
     // Archiving runs ahead of pruning: a chat a person has set to archive
     // is archived before retention can delete it.
@@ -109,6 +119,23 @@ async function deleteAbandonedChats(): Promise<void> {
   logger.info('removed {count} abandoned empty chat(s)', {
     component: 'worker-agents/chat-retention',
     count: deleted.length,
+  });
+}
+
+/** Temporary chats idle past their day, bytes before rows; their keys go with the orphan prune. */
+async function deleteTemporaryChats(store: () => Promise<BlobStore | null>): Promise<void> {
+  const chatIds = await getDataStore().chats.listTemporaryIdleIds(
+    new Date(Date.now() - TEMPORARY_CHAT_HOURS * HOUR_MS),
+    RETENTION_BATCH
+  );
+  if (chatIds.length === 0) return;
+  const deletable = await deleteAttachmentBlobs(chatIds, await store());
+  if (deletable.length === 0) return;
+  await getDataStore().chats.deleteMany(deletable);
+  await getDataStore().resourceGrants.deleteForResources('chat', deletable);
+  logger.info('removed {count} idle temporary chat(s)', {
+    component: 'worker-agents/chat-retention',
+    count: deletable.length,
   });
 }
 

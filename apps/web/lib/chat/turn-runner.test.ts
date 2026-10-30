@@ -1055,6 +1055,33 @@ describe('runChatTurn permissions', () => {
     expect(watched.events.some((event) => event.type === 'tool_permission_request')).toBe(false);
   });
 
+  it('refuses a tool the chat goes without, with its own words and no ask', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-p2t');
+    const watched = watch(channel);
+    const calls: string[] = [];
+    const outcome = await runChatTurn(
+      deps(fake, channel, [act('tu_1', 'chat_memory_remember'), text('Understood')], calls, {
+        permissions: {
+          alwaysAllowed: new Set(),
+          unavailable: new Map([['chat_memory_remember', 'This is a temporary chat.']]),
+        },
+      }),
+      inputFor('turn-p2t')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(fake.asks).toEqual([]);
+    expect(calls).toEqual([]);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows[1].blocks[0]).toMatchObject({
+      type: 'tool_result',
+      toolUseId: 'tu_1',
+      isError: true,
+      content: 'This is a temporary chat.',
+    });
+    expect(watched.events.some((event) => event.type === 'tool_permission_request')).toBe(false);
+  });
+
   it('refuses the plain tool a preview stands in front of — even an always-allowed one — and names the preview', async () => {
     const fake = fakeStore();
     const channel = openTurnChannel('turn-p2c');

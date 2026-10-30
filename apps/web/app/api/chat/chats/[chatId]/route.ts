@@ -1,5 +1,6 @@
 /**
  * One chat: read (owner or viewer), settings (owner), delete (owner).
+ * `temporary` changes only while the chat is empty (lib/chat/temporary.ts).
  */
 
 import type { NextRequest } from 'next/server';
@@ -16,6 +17,7 @@ import { loadChatView } from '@/lib/chat/chat-view';
 import { deleteChat, getChatForOwner, updateChat, type ChatPatch } from '@/lib/chat/store';
 import { deleteChatWorktree } from '@/lib/code/projects';
 import { parseToolConfig } from '@/lib/chat/tool-config';
+import { TEMPORARY_ONLY_WHEN_EMPTY, TEMPORARY_OUTSIDE_PROJECTS } from '@/lib/chat/temporary';
 
 const TITLE_MAX_CHARS = 200;
 
@@ -59,6 +61,19 @@ export async function PATCH(
   if (typeof body.thinkingEnabled === 'boolean') patch.thinkingEnabled = body.thinkingEnabled;
   if (typeof body.autoMode === 'boolean') patch.autoMode = body.autoMode;
   if (typeof body.archived === 'boolean') patch.archived = body.archived;
+  if (typeof body.temporary === 'boolean') {
+    const chat = await getChatForOwner(session.subject, chatId);
+    if (!chat) return jsonError(404, 'not-found', 'No such chat');
+    if (chat.temporary !== body.temporary) {
+      if (chat.lastMessageAt !== null) {
+        return jsonError(409, 'not-empty', TEMPORARY_ONLY_WHEN_EMPTY);
+      }
+      if (body.temporary && chat.projectId) {
+        return jsonError(400, 'temporary-project', TEMPORARY_OUTSIDE_PROJECTS);
+      }
+      patch.temporary = body.temporary;
+    }
+  }
 
   const updated = await updateChat(session.subject, chatId, patch);
   if (!updated) return jsonError(404, 'not-found', 'No such chat');
