@@ -1,4 +1,4 @@
-import { readMetadataRecords } from './xml';
+import { parseXml, readMetadataRecords, xmlToJson } from './xml';
 
 const REFERRALS_ANSWER = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -84,5 +84,24 @@ describe('readMetadataRecords', () => {
     expect(readMetadataRecords('not xml')).toEqual({
       fault: 'The answer was not a SOAP envelope.',
     });
+  });
+});
+
+describe('parseXml on crafted input', () => {
+  it('reads unclosed tags and long runs of attribute-like text in linear time', () => {
+    const crafted = [
+      `<a${' '.repeat(100_000)}`,
+      `<a ${'b="1" '.repeat(20_000)}`,
+      `<${'a'.repeat(100_000)}`,
+      `<a${' x'.repeat(50_000)}/`,
+    ];
+    const started = Date.now();
+    for (const xml of crafted) parseXml(xml);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('still reads attributes, self-closing tags and nil', () => {
+    const root = parseXml('<r xmlns:xsi="x"><a xsi:nil="true"/><b attr="1" >v</b><c/></r>');
+    expect(root && xmlToJson(root)).toEqual({ a: null, b: 'v', c: '' });
   });
 });

@@ -33,8 +33,15 @@ function decode(text: string): string {
 
 const localName = (name: string) => name.slice(name.indexOf(':') + 1);
 
+/**
+ * One token: CDATA, a comment, a processing instruction, a tag, or text. A
+ * tag is its name, then — after whitespace or a `/`, which a name cannot
+ * hold — anything up to `>`, read for `/` and `xsi:nil` afterwards: no two
+ * quantifiers can claim the same characters, so a crafted answer cannot
+ * make matching backtrack.
+ */
 const TOKEN =
-  /<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<(\/?)([A-Za-z_][\w:.-]*)((?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>|([^<]+)/g;
+  /<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<(\/?)([A-Za-z_][\w:.-]*)((?:[\s/][^>]*)?)>|([^<]+)/g;
 
 /** The document's root element, or null when there is none. */
 export function parseXml(xml: string): XmlNode | null {
@@ -42,7 +49,8 @@ export function parseXml(xml: string): XmlNode | null {
   const stack: XmlNode[] = [root];
   for (const match of xml.matchAll(TOKEN)) {
     const top = stack[stack.length - 1];
-    const [, cdata, closing, name, attributes, selfClosing, text] = match;
+    const [, cdata, closing, name, attributes = '', text] = match;
+    const selfClosing = attributes.trimEnd().endsWith('/');
     if (cdata !== undefined) top.text += cdata;
     else if (text !== undefined) top.text += decode(text);
     else if (name === undefined) continue;
@@ -53,7 +61,7 @@ export function parseXml(xml: string): XmlNode | null {
     } else {
       const node: XmlNode = {
         name,
-        nil: /\bnil\s*=\s*["']true["']/.test(attributes ?? ''),
+        nil: /\bnil\s*=\s*["']true["']/.test(attributes),
         children: [],
         text: '',
       };

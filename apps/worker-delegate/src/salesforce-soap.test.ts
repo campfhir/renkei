@@ -77,6 +77,41 @@ describe('salesforceSoapRequest', () => {
   });
 });
 
+describe('salesforceSoapRequest on crafted bodies', () => {
+  const at = new URL(`${ORG}/services/Soap/m/68.0`);
+  it('refuses a body past its size before reading it, and reads a crafted one in linear time', () => {
+    expect(salesforceSoapRequest(true, at, 'POST', Buffer.alloc(8_193, ' '))).toMatchObject({
+      ok: false,
+    });
+    const open =
+      '<readMetadata xmlns="http://soap.sforce.com/2006/04/metadata"><type>ReportType</type>';
+    const crafted = [
+      `${open}${' '.repeat(8_000)}`,
+      `${open}${'<fullNames>a</fullNames> '.repeat(300)}</readMetadata>`,
+      `${open}<fullNames>${' '.repeat(7_900)}`,
+    ];
+    const started = Date.now();
+    for (const body of crafted) {
+      expect(salesforceSoapRequest(true, at, 'POST', Buffer.from(body))).toMatchObject({
+        ok: false,
+      });
+    }
+    expect(Date.now() - started).toBeLessThan(100);
+  });
+
+  it('still takes whitespace between the pieces, and names with spaces', () => {
+    const soap = salesforceSoapRequest(
+      true,
+      at,
+      'POST',
+      read('\n  <type>Layout</type>\n  <fullNames>Account-Account Layout</fullNames>\n')
+    );
+    expect(soap?.ok && soap.envelope('t').toString()).toContain(
+      '<met:fullNames>Account-Account Layout</met:fullNames>'
+    );
+  });
+});
+
 describe('isExpiredSession', () => {
   it('reads Salesforce’s INVALID_SESSION_ID fault, and nothing else', () => {
     expect(isExpiredSession(500, '<faultcode>sf:INVALID_SESSION_ID</faultcode>')).toBe(true);

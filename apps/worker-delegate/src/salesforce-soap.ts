@@ -22,16 +22,36 @@ const METADATA_NAMESPACE = 'http://soap.sforce.com/2006/04/metadata';
 /**
  * The body a caller sends: one readMetadata in the metadata namespace,
  * holding a type and its full names — names a deploy could take, so no
- * markup, quotes or entities.
+ * markup, quotes or entities. Read piece by piece, never with one pattern
+ * over the whole body: the opening and closing tags are fixed strings, and
+ * each piece is optional whitespace then a literal `<`, which no quantifier
+ * can share, so reading it is linear in the body however it is crafted.
  */
-const READ_METADATA = new RegExp(
-  `^\\s*<readMetadata xmlns="${METADATA_NAMESPACE.replace(/[.]/g, '\\.')}">` +
-    '\\s*<type>([A-Za-z][A-Za-z0-9]{0,79})</type>' +
-    '((?:\\s*<fullNames>[A-Za-z0-9_.$/ -]{1,255}</fullNames>){1,10})' +
-    '\\s*</readMetadata>\\s*$'
-);
+const OPEN = `<readMetadata xmlns="${METADATA_NAMESPACE}">`;
+const CLOSE = '</readMetadata>';
+const TYPE = /^\s*<type>([A-Za-z][A-Za-z0-9]{0,79})<\/type>/;
+const FULL_NAME = /^\s*<fullNames>([A-Za-z0-9_.$/ -]{1,255})<\/fullNames>/;
+const MAX_NAMES = 10;
+/** Ten names of 255 characters and their tags fit with room to spare. */
+const MAX_BODY_BYTES = 8_192;
 
-const FULL_NAME = /<fullNames>([^<]*)<\/fullNames>/g;
+/** The type and full names of a readMetadata body, or null when it is anything else. */
+function readMetadataBody(body: Buffer): { type: string; names: string[] } | null {
+  if (body.byteLength > MAX_BODY_BYTES) return null;
+  const text = body.toString('utf8').trim();
+  if (!text.startsWith(OPEN) || !text.endsWith(CLOSE)) return null;
+  let rest = text.slice(OPEN.length, text.length - CLOSE.length);
+  const type = TYPE.exec(rest);
+  if (!type) return null;
+  rest = rest.slice(type[0].length);
+  const names: string[] = [];
+  for (let name = FULL_NAME.exec(rest); name; name = FULL_NAME.exec(rest)) {
+    if (names.length === MAX_NAMES) return null;
+    names.push(name[1].trim());
+    rest = rest.slice(name[0].length);
+  }
+  return names.length > 0 && rest.trim() === '' ? { type: type[1], names } : null;
+}
 
 function xmlEscape(value: string): string {
   return value
@@ -67,15 +87,14 @@ export function salesforceSoapRequest(
     return { ok: false, message: 'Only the Metadata API’s SOAP endpoint is reachable.' };
   }
   if (method !== 'POST') return { ok: false, message: 'The Metadata SOAP endpoint takes POST.' };
-  const match = READ_METADATA.exec(body.toString('utf8'));
-  if (!match) {
+  const read = readMetadataBody(body);
+  if (!read) {
     return {
       ok: false,
       message: 'The body must be one readMetadata naming a type and up to ten full names.',
     };
   }
-  const type = match[1];
-  const names = [...match[2].matchAll(FULL_NAME)].map((m) => m[1].trim());
+  const { type, names } = read;
   const inner =
     `<met:readMetadata><met:type>${type}</met:type>` +
     names.map((name) => `<met:fullNames>${xmlEscape(name)}</met:fullNames>`).join('') +
