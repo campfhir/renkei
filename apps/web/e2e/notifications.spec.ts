@@ -32,9 +32,12 @@ test('the feed, newest first, marked read and unread again', async ({
   expect(markedRead.ok()).toBe(true);
 
   await page.goto('/notifications');
+  // A reload can leave a streamed copy of the count in the page for a
+  // moment, hidden (AGENTS.md, "Pitfalls"): only the one shown counts.
+  const unread = (text: string) => page.getByText(text, { exact: true }).filter({ visible: true });
   const headlines = page.getByText(/shared the agent "(Oldest|Middle|Newest):/);
   await expect(headlines).toHaveText([newest.headline, middle.headline, oldest.headline]);
-  await expect(page.getByText('2 unread', { exact: true })).toBeVisible();
+  await expect(unread('2 unread')).toBeVisible();
   await page.screenshot({
     path: path.join(RESULTS, 'screens', testInfo.project.name, 'notifications-01-feed.png'),
     fullPage: true,
@@ -55,14 +58,14 @@ test('the feed, newest first, marked read and unread again', async ({
     expect((await marked).ok()).toBe(true);
   }).toPass({ timeout: 30_000 });
   await page.reload();
-  await expect(page.getByText('2 unread', { exact: true })).toHaveCount(0);
+  await expect(unread('2 unread')).toHaveCount(0);
   await expect(page.getByLabel(/unread notification/)).toHaveCount(0);
 
   await page.getByRole('button', { name: `Actions for "${middle.headline}"` }).click();
   await page.getByRole('menuitem', { name: 'Mark as unread' }).click();
-  await expect(page.getByText('1 unread', { exact: true })).toBeVisible();
+  await expect(unread('1 unread')).toBeVisible();
   await page.reload();
-  await expect(page.getByText('1 unread', { exact: true })).toBeVisible();
+  await expect(unread('1 unread')).toBeVisible();
 });
 
 test('somebody with no notifications sees none, and no one else’s', async ({
