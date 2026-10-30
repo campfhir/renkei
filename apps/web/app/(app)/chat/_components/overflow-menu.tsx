@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink from '@/components/download-link';
 import { useDismiss } from '@/lib/use-dismiss';
 import { useFloating } from '@/lib/floating';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -27,7 +28,16 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 export interface OverflowItem {
   label: string;
   icon: string;
-  onSelect: () => void;
+  /** What the item does — or nothing of its own when it is a download (`href`). */
+  onSelect?: () => void;
+  /**
+   * A download instead of an action: the item is a DownloadLink
+   * (components/download-link.tsx) to this URL — a real link, so the
+   * browser's download manager and the iOS home-screen app's share
+   * sheet both get it — saved as `filename`.
+   */
+  href?: string;
+  filename?: string;
   /** Something beside the label — a diff's +added −deleted. */
   extra?: ReactNode;
   /** A destructive action (delete): rendered in red, like the sidebar's. */
@@ -86,25 +96,48 @@ export default function OverflowMenu({
   const box = useFloating(open && compact, buttonRef, menuRef, { align: 'end' });
   if (items.length === 0) return null;
 
-  const list = items.map((item) => (
-    <button
-      key={item.label}
-      type="button"
-      role="menuitem"
-      onClick={() => {
-        setOpen(false);
-        item.onSelect();
-      }}
-      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${item.danger ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}
-    >
+  const itemClass = (item: OverflowItem) =>
+    `flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${item.danger ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`;
+  const itemBody = (item: OverflowItem) => (
+    <>
       <Icon
         path={item.icon}
         className={`h-4 w-4 shrink-0 ${item.danger ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`}
       />
       <span className="flex-1">{item.label}</span>
       {item.extra}
-    </button>
-  ));
+    </>
+  );
+  const list = items.map((item) =>
+    item.href ? (
+      <DownloadLink
+        key={item.label}
+        role="menuitem"
+        href={item.href}
+        filename={item.filename}
+        onClick={() => {
+          setOpen(false);
+          item.onSelect?.();
+        }}
+        className={itemClass(item)}
+      >
+        {itemBody(item)}
+      </DownloadLink>
+    ) : (
+      <button
+        key={item.label}
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          setOpen(false);
+          item.onSelect?.();
+        }}
+        className={itemClass(item)}
+      >
+        {itemBody(item)}
+      </button>
+    )
+  );
 
   return (
     <div ref={ref} className="relative">
