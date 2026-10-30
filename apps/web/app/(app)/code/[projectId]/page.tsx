@@ -8,7 +8,6 @@ import ProjectView from '../../chat/_components/project-view';
 import { CodeRail, EnvironmentCardSkeleton } from '../_components/code-sections';
 import { CheckoutStrip, CheckoutStripSkeleton, Environment, Readme } from '../_components/code-islands';
 import ReadmeSection from '../_components/readme-section';
-import DownloadProjectButton from '../_components/download-project';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 
 /**
@@ -59,13 +58,7 @@ export default async function CodeProjectPage({
         </Suspense>
       }
       usage={core.usage}
-      headerActions={
-        <DownloadProjectButton
-          key="download"
-          projectId={projectId}
-          repoFullName={core.repoFullName}
-        />
-      }
+      download={{ repoFullName: core.repoFullName }}
       strip={
         <Suspense key="strip" fallback={<CheckoutStripSkeleton repoFullName={core.repoFullName} />}>
           <CheckoutStrip projectId={projectId} core={core} />

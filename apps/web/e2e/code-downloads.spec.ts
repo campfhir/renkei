@@ -68,7 +68,8 @@ test('a project, a folder and a file download as a zip, a zip and itself', async
     await expect(page.getByRole('heading', { level: 1, name: projectName })).toBeVisible({
       timeout: 30_000,
     });
-    await main.getByRole('button', { name: 'Download project' }).click();
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await main.getByRole('menuitem', { name: 'Download offline copy' }).click();
     const dialog = page.getByRole('dialog', { name: 'Download an offline copy' });
     await expect(dialog.getByText(/node_modules/)).toBeVisible();
     const link = dialog.getByRole('link', { name: 'Download zip' });
@@ -127,7 +128,8 @@ test('a project, a folder and a file download as a zip, a zip and itself', async
       llmModelId: modelId,
     });
     await page.goto(`/code/${bare}`);
-    await main.getByRole('button', { name: 'Download project' }).click();
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await main.getByRole('menuitem', { name: 'Download offline copy' }).click();
     await expect(dialog.getByTestId('download-not-cloned')).toBeVisible();
     await expect(dialog.getByRole('link', { name: 'Download zip' })).toHaveCount(0);
   } finally {

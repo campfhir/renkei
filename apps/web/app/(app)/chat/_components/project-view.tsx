@@ -31,6 +31,8 @@ import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import { formatTokens } from '@/lib/format-tokens';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import ChatPrBadge from '../../code/_components/chat-pr-badge';
+import DownloadProjectModal from '../../code/_components/download-project';
+import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import IssueCards from '../../code/_components/issue-cards';
 
 /** Chats a row bothers asking for a PR badge — the rest just don't show one. */
@@ -60,7 +62,7 @@ export default function ProjectView({
   defaultInstructions = null,
   readme = null,
   usage = null,
-  headerActions = null,
+  download = null,
 }: {
   initial: ProjectViewData;
   /**
@@ -90,8 +92,11 @@ export default function ProjectView({
    * beside the chats list.
    */
   usage?: ProjectTokenUsage | null;
-  /** More buttons for the header, before Share — a code project's Download. */
-  headerActions?: ReactNode;
+  /**
+   * A code project's checkout can be downloaded as a zip (download-project.tsx):
+   * "Download offline copy" in the header's menu, named after the repository.
+   */
+  download?: { repoFullName: string } | null;
 }) {
   const router = useRouter();
   const { project, role, files, alwaysTokens, viewerSubject, memory, chats } = initial;
@@ -111,6 +116,8 @@ export default function ProjectView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [share, setShare] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
@@ -372,32 +379,49 @@ export default function ProjectView({
               : `Shared by ${project.ownerName ?? 'its owner'} · you can ${canEdit ? 'edit' : 'view'}`}
           </p>
         </div>
+        {/* Tools, Download and Share behind one "⋯" (overflow-menu.tsx):
+            the header keeps the name and New chat; the popover and
+            dialogs open from the items and outlive the menu. */}
         {canEdit ? (
-          <ToolsPopover
-            selected={project.toolConfig?.connectors ?? null}
-            onChange={async (next) => {
-              await sendJsonFull(base, 'PATCH', {
-                toolConfig: next ? { connectors: next } : null,
-              });
-              router.refresh();
-            }}
-            context="project"
-            kind={variant === 'code' ? 'code' : 'chat'}
-            locked={variant === 'code' ? CODE_PROJECT_CONNECTORS : undefined}
-          />
+          <span className="relative">
+            <ToolsPopover
+              selected={project.toolConfig?.connectors ?? null}
+              onChange={async (next) => {
+                await sendJsonFull(base, 'PATCH', {
+                  toolConfig: next ? { connectors: next } : null,
+                });
+                router.refresh();
+              }}
+              context="project"
+              kind={variant === 'code' ? 'code' : 'chat'}
+              locked={variant === 'code' ? CODE_PROJECT_CONNECTORS : undefined}
+              open={toolsOpen}
+              onOpenChange={setToolsOpen}
+              trigger={false}
+            />
+          </span>
         ) : null}
-        {headerActions}
-        {role === 'owner' ? (
-          <button
-            type="button"
-            onClick={() => setShare(true)}
-            aria-label="Share project"
-            title="Share"
-            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
-          >
-            <Icon path={ICONS.share} className="h-5 w-5" />
-          </button>
-        ) : null}
+        <OverflowMenu
+          label="More"
+          anchored={false}
+          items={[
+            ...(canEdit
+              ? [{ label: 'Tools', icon: ICONS.tool, onSelect: () => setToolsOpen(true) }]
+              : []),
+            ...(download
+              ? [
+                  {
+                    label: 'Download offline copy',
+                    icon: ICONS.download,
+                    onSelect: () => setDownloadOpen(true),
+                  },
+                ]
+              : []),
+            ...(role === 'owner'
+              ? [{ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) }]
+              : []),
+          ] satisfies OverflowItem[]}
+        />
         {variant === 'code' ? (
           <button
             type="button"
@@ -626,6 +650,13 @@ export default function ProjectView({
         </div>
       </div>
 
+      {downloadOpen && download ? (
+        <DownloadProjectModal
+          projectId={project.id}
+          repoFullName={download.repoFullName}
+          onClose={() => setDownloadOpen(false)}
+        />
+      ) : null}
       {share ? (
         <ShareModal
           kind="chat_project"

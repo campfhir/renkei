@@ -176,7 +176,13 @@ test.describe('code projects', () => {
     // (the picker in its header, which its chats start from), and
     // describes itself through its README; its chats are listed here.
     await expect(main.getByRole('button', { name: 'Add files' })).toHaveCount(0);
-    await expect(main.getByRole('button', { name: 'Tools' })).toBeVisible();
+    // Tools, Download and Share sit behind the header's "⋯".
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(main.getByRole('menuitem', { name: 'Tools' })).toBeVisible();
+    await expect(main.getByRole('menuitem', { name: 'Download offline copy' })).toBeVisible();
+    await expect(main.getByRole('menuitem', { name: 'Share' })).toBeVisible();
+    await shot('code-project-menu.png');
+    await page.keyboard.press('Escape');
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })

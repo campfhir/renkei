@@ -1,9 +1,9 @@
 'use client';
 
 /**
- * An offline copy of a code project: a button beside Share in the
- * project's header that opens a small dialog and, once the dialog has
- * looked at the checkout, downloads it as a zip
+ * An offline copy of a code project: a dialog opened from the project
+ * header's "⋯" menu (Download offline copy) that, once it has looked at
+ * the checkout, downloads it as a zip
  * (`…/code/projects/[id]/archive`) — the project's base clone as it is
  * on the sandbox, ignored files such as node_modules included, `.git`
  * left out. Before any chat has cloned the repository there is nothing
@@ -23,37 +23,7 @@ function bytes(value: number): string {
   return `${(value / 1_073_741_824).toFixed(2)} GB`;
 }
 
-export default function DownloadProjectButton({
-  projectId,
-  repoFullName,
-}: {
-  projectId: string;
-  repoFullName: string;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        aria-label="Download project"
-        title="Download an offline copy"
-        className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
-      >
-        <Icon path={ICONS.download} className="h-5 w-5" />
-      </button>
-      {open ? (
-        <DownloadProjectModal
-          projectId={projectId}
-          repoFullName={repoFullName}
-          onClose={() => setOpen(false)}
-        />
-      ) : null}
-    </>
-  );
-}
-
-function DownloadProjectModal({
+export default function DownloadProjectModal({
   projectId,
   repoFullName,
   onClose,

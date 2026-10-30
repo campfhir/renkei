@@ -73,7 +73,9 @@ test('a phone: Download, Add files, the indicator, the tree menu and @ completio
     await expect(main.getByRole('heading', { level: 2, name: 'Environment' })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot(page, testInfo, 'phone-code-project.png');
-    await main.getByRole('button', { name: 'Download project' }).click();
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await shot(page, testInfo, 'phone-code-project-menu.png');
+    await main.getByRole('menuitem', { name: 'Download offline copy' }).click();
     const downloadDialog = page.getByRole('dialog', { name: 'Download an offline copy' });
     await expect(downloadDialog.getByRole('link', { name: 'Download zip' })).toBeVisible({
       timeout: 30_000,
