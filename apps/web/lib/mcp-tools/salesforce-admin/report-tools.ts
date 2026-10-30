@@ -44,6 +44,7 @@ import {
 } from '../salesforce/client';
 import { describeObject, resolveObject } from '../salesforce/schema';
 import {
+  isMissingReportType,
   listReportFolders,
   reportExists,
   reportTypeExists,
@@ -75,7 +76,7 @@ async function describeReportType(
 ): Promise<ReportTypeDescribe | string> {
   const answer = await sfGet(context, access, `/analytics/reportTypes/${encodeURIComponent(type)}`);
   if (!answer.ok) {
-    return answer.status === 404
+    return isMissingReportType(answer)
       ? `There is no report type ${type} (salesforce_admin_list_report_types lists them).`
       : answer.error;
   }
