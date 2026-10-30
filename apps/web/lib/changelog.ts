@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-29',
     entries: [
       {
+        kind: 'fixed',
+        title: "The menu's chat list refreshes when you come back to the tab",
+        detail:
+          'A chat that finished while the tab was in the background, as on a phone, now shows in the menu once you return to it, instead of waiting for a page reload.',
+      },
+      {
         kind: 'added',
         title: 'Microsoft Teams, on your Microsoft 365 connection',
         detail:
