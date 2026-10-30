@@ -33,41 +33,69 @@ function decode(text: string): string {
 
 const localName = (name: string) => name.slice(name.indexOf(':') + 1);
 
-/**
- * One token: CDATA, a comment, a processing instruction, a tag, or text. A
- * tag is its name, then — after whitespace or a `/`, which a name cannot
- * hold — anything up to `>`, read for `/` and `xsi:nil` afterwards: no two
- * quantifiers can claim the same characters, so a crafted answer cannot
- * make matching backtrack.
- */
-const TOKEN =
-  /<!\[CDATA\[([\s\S]*?)\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<(\/?)([A-Za-z_][\w:.-]*)((?:[\s/][^>]*)?)>|([^<]+)/g;
+const NAME = /^[A-Za-z_][\w:.-]*/;
 
-/** The document's root element, or null when there is none. */
+/**
+ * The document's root element, or null when there is none. Read with a
+ * scanner, not a pattern over the whole text: each step finds the next `<`
+ * and then its closer with indexOf, and stops reading at a construct that
+ * never closes, so a crafted answer costs time in proportion to its length.
+ */
 export function parseXml(xml: string): XmlNode | null {
   const root: XmlNode = { name: '', nil: false, children: [], text: '' };
   const stack: XmlNode[] = [root];
-  for (const match of xml.matchAll(TOKEN)) {
-    const top = stack[stack.length - 1];
-    const [, cdata, closing, name, attributes = '', text] = match;
-    const selfClosing = attributes.trimEnd().endsWith('/');
-    if (cdata !== undefined) top.text += cdata;
-    else if (text !== undefined) top.text += decode(text);
-    else if (name === undefined) continue;
-    else if (closing) {
-      if (stack.length > 1 && localName(stack[stack.length - 1].name) === localName(name)) {
-        stack.pop();
-      }
-    } else {
-      const node: XmlNode = {
-        name,
-        nil: /\bnil\s*=\s*["']true["']/.test(attributes),
-        children: [],
-        text: '',
-      };
-      top.children.push(node);
-      if (!selfClosing) stack.push(node);
+  const top = () => stack[stack.length - 1];
+  let at = 0;
+  while (at < xml.length) {
+    const open = xml.indexOf('<', at);
+    if (open === -1) {
+      top().text += decode(xml.slice(at));
+      break;
     }
+    if (open > at) top().text += decode(xml.slice(at, open));
+    // CDATA keeps its text as is; comments, processing instructions and
+    // declarations are skipped. One that never closes ends the document.
+    const skip = (opener: string, closer: string): number | null => {
+      if (!xml.startsWith(opener, open)) return null;
+      const close = xml.indexOf(closer, open + opener.length);
+      return close === -1 ? -1 : close;
+    };
+    const cdata = skip('<![CDATA[', ']]>');
+    if (cdata !== null) {
+      if (cdata === -1) break;
+      top().text += xml.slice(open + 9, cdata);
+      at = cdata + 3;
+      continue;
+    }
+    const comment = skip('<!--', '-->');
+    const instruction = comment === null ? skip('<?', '?>') : null;
+    const declaration = comment === null && instruction === null ? skip('<!', '>') : null;
+    const skipped = comment ?? instruction ?? declaration;
+    if (skipped !== null) {
+      if (skipped === -1) break;
+      at = skipped + (comment !== null ? 3 : instruction !== null ? 2 : 1);
+      continue;
+    }
+    const close = xml.indexOf('>', open);
+    if (close === -1) break;
+    at = close + 1;
+    const inside = xml.slice(open + 1, close);
+    const closing = inside.startsWith('/');
+    const name = NAME.exec(closing ? inside.slice(1) : inside)?.[0];
+    if (!name) continue;
+    if (closing) {
+      if (stack.length > 1 && localName(top().name) === localName(name)) stack.pop();
+      continue;
+    }
+    const attributes = inside.slice(name.length);
+    const node: XmlNode = {
+      name,
+      nil: /\bnil\s*=\s*["']true["']/.test(attributes),
+      children: [],
+      text: '',
+    };
+    top().children.push(node);
+    if (!attributes.trimEnd().endsWith('/')) stack.push(node);
   }
   return root.children[0] ?? null;
 }

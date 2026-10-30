@@ -94,10 +94,22 @@ describe('parseXml on crafted input', () => {
       `<a ${'b="1" '.repeat(20_000)}`,
       `<${'a'.repeat(100_000)}`,
       `<a${' x'.repeat(50_000)}/`,
+      // CodeQL's cases: many openers that never close.
+      `<r>${'<![CDATA[a'.repeat(30_000)}`,
+      `<r>${'<!--'.repeat(30_000)}`,
+      `<r>${'<?'.repeat(30_000)}`,
+      `<r>${'<'.repeat(100_000)}`,
     ];
     const started = Date.now();
     for (const xml of crafted) parseXml(xml);
     expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('keeps CDATA as text, and skips comments, instructions and declarations', () => {
+    const root = parseXml(
+      '<?xml version="1.0"?><!DOCTYPE r><r><!-- note --><a><![CDATA[x < y & z]]></a><b>1 &lt; 2</b></r>'
+    );
+    expect(root && xmlToJson(root)).toEqual({ a: 'x < y & z', b: '1 < 2' });
   });
 
   it('still reads attributes, self-closing tags and nil', () => {
