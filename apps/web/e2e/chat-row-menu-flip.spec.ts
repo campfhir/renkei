@@ -46,6 +46,10 @@ test('a row menu opens above its row when there is no room below', async ({
 
     await page.setViewportSize({ width: 1280, height: 480 });
     await page.goto('/chat');
+    // /chat streams its loading shell and then redirects to the newest chat
+    // in the browser, after goto has returned: touching the page before that
+    // lands has it destroyed under the call.
+    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
     const list = page.getByRole('navigation', { name: 'Chats' });
     const row = list.getByRole('link', { name: new RegExp(`^${target}`) });
     await expect(row).toBeAttached();
