@@ -21,6 +21,7 @@ import { test, expect } from './fixtures';
 import { connectJira } from './support/connectors';
 import { addStubModel, removeModel, type StubStep } from './support/stub-model';
 import { ISSUE_INPUT, preview, previewChat, turnsOf } from './support/preview-cards';
+import { pointerReaches } from './support/settle';
 
 // The stand-in model is an operator's to put on the roster.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -259,10 +260,15 @@ test('a stale card refuses to re-run a confirm tool another device already decid
   });
   expect(other.ok(), await other.text()).toBe(true);
 
+  // The card has only just been drawn inside its frame: the pointer has to
+  // reach the button before the press, or Chrome can drop it (AGENTS.md,
+  // "Pitfalls").
+  await confirmButton.scrollIntoViewIfNeeded();
+  await pointerReaches(page, confirmButton);
   await confirmButton.click();
   await expect(
     frame.getByText('This was already decided on another device — reload to see it.')
-  ).toBeVisible();
+  ).toBeVisible(COLD);
   expect(toolCallRequests).toHaveLength(1);
 
   await page.reload();
