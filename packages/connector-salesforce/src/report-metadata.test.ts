@@ -5,6 +5,7 @@ import {
   checkReportSpec,
   checkReportTypeSpec,
   reportableFields,
+  reportFileColumn,
   type ReportObjectInfo,
 } from './report-metadata';
 
@@ -250,5 +251,43 @@ describe('checkReportSpec', () => {
     expect(matrix.ok === false && matrix.errors).toEqual([
       'A matrix report groups both rows and columns, by at least one field each.',
     ]);
+  });
+});
+
+describe('reportFileColumn', () => {
+  const children: Record<string, Record<string, string>> = {
+    Referral: {},
+    Site_Visit__c: { Visit_Notes__r: 'Visit_Note__c' },
+    Visit_Note__c: { Replies__r: 'Reply__c' },
+  };
+  const childrenOf = (object: string) => children[object];
+
+  it('puts the $ after the table, keeping a lookup path in the field', () => {
+    expect(reportFileColumn('Referral.Name', childrenOf)).toBe('Referral$Name');
+    expect(reportFileColumn('Referral.Client.Name', childrenOf)).toBe('Referral$Client.Name');
+    expect(reportFileColumn('Referral.Client.Medicare__pc', childrenOf)).toBe(
+      'Referral$Client.Medicare__pc'
+    );
+    expect(reportFileColumn('Referral.Client__c.Name', childrenOf)).toBe('Referral$Client__c.Name');
+  });
+
+  it('follows child relationships down into the table, but never into the last part', () => {
+    expect(reportFileColumn('Site_Visit__c.Visit_Notes__r.Name', childrenOf)).toBe(
+      'Site_Visit__c.Visit_Notes__r$Name'
+    );
+    expect(reportFileColumn('Site_Visit__c.visit_notes__r.Owner.Email', childrenOf)).toBe(
+      'Site_Visit__c.Visit_Notes__r$Owner.Email'
+    );
+    expect(reportFileColumn('Site_Visit__c.Visit_Notes__r.Replies__r.Body__c', childrenOf)).toBe(
+      'Site_Visit__c.Visit_Notes__r.Replies__r$Body__c'
+    );
+    expect(reportFileColumn('Site_Visit__c.Visit_Notes__r', childrenOf)).toBe(
+      'Site_Visit__c$Visit_Notes__r'
+    );
+  });
+
+  it('leaves a name already in the file’s form, and an unknown object’s table at its first part', () => {
+    expect(reportFileColumn('Referral$Client.Name', childrenOf)).toBe('Referral$Client.Name');
+    expect(reportFileColumn('Unknown__c.Owner.Email', childrenOf)).toBe('Unknown__c$Owner.Email');
   });
 });

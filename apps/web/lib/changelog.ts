@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Salesforce Admin names custom report type columns correctly',
+        detail:
+          "Reports proposed on a custom report type now use the column names Salesforce expects, including fields reached through a lookup such as the client's account, and a column the report type does not have is refused before the request reaches operators.",
+      },
+      {
+        kind: 'fixed',
         title: 'Salesforce Admin can propose new report types',
         detail:
           'Proposing a custom report type no longer fails with "Specify a valid report type": a report type that does not exist yet is now recognised as new.',
