@@ -7,11 +7,21 @@
  * wide screen instead — or apply to the chat itself and always live here —
  * Rename, Archive and Delete. Picking an item closes the menu; the item's
  * own dialog, if any, is the caller's and outlives the menu.
+ *
+ * The compact variant — a file tree's per-row "⋯" — opens inside a
+ * narrow, scrolling, sometimes dimmed column, where a menu rendered in
+ * place inherits the row's opacity (an ignored entry is drawn at half),
+ * is clipped by the column's overflow and fades into a same-coloured page
+ * on dark. So that one is portalled to <body>, placed with
+ * `position: fixed` beside its button (below it, or above when the button
+ * is near the bottom edge), on a surface of its own with a visible ring.
  */
 
-import { useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
+import { useFloating } from '@/lib/floating';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 export interface OverflowItem {
@@ -23,6 +33,9 @@ export interface OverflowItem {
   /** A destructive action (delete): rendered in red, like the sidebar's. */
   danger?: boolean;
 }
+
+const MENU_CLASS =
+  'w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg ring-1 ring-black/5 dark:border-gray-700 dark:bg-gray-900 dark:ring-white/10';
 
 export default function OverflowMenu({
   items,
@@ -42,17 +55,61 @@ export default function OverflowMenu({
   anchored?: boolean;
   /** A borderless, icon-sized button that fits inline with a line of
    * text without stretching the row to its own height — a file tree's
-   * per-row menu, say, beside a name at text-xs. */
+   * per-row menu, say, beside a name at text-xs. Its menu is portalled. */
   compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const moreAnchor = useCoachAnchor('chat-more');
-  useDismiss(open, ref, () => setOpen(false));
+  useDismiss(open && !compact, ref, () => setOpen(false));
+  // The portalled menu is outside `ref`: a press inside it is the menu's own.
+  useEffect(() => {
+    if (!open || !compact) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    const onMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (ref.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onMouseDown);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onMouseDown);
+    };
+  }, [open, compact]);
+  const box = useFloating(open && compact, buttonRef, menuRef, { align: 'end' });
   if (items.length === 0) return null;
+
+  const list = items.map((item) => (
+    <button
+      key={item.label}
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        setOpen(false);
+        item.onSelect();
+      }}
+      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${item.danger ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}
+    >
+      <Icon
+        path={item.icon}
+        className={`h-4 w-4 shrink-0 ${item.danger ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`}
+      />
+      <span className="flex-1">{item.label}</span>
+      {item.extra}
+    </button>
+  ));
+
   return (
     <div ref={ref} className="relative">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-label={label}
@@ -68,32 +125,33 @@ export default function OverflowMenu({
       >
         <Icon path={ICONS.moreHorizontal} className={compact ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
       </button>
-      {open ? (
-        <div
-          role="menu"
-          className="absolute right-0 z-40 mt-1 w-52 rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-800 dark:bg-gray-950"
-        >
-          {items.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false);
-                item.onSelect();
-              }}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-900 ${item.danger ? 'text-red-600 dark:text-red-400' : ''}`}
-            >
-              <Icon
-                path={item.icon}
-                className={`h-4 w-4 shrink-0 ${item.danger ? 'text-red-500' : 'text-gray-500'}`}
-              />
-              <span className="flex-1">{item.label}</span>
-              {item.extra}
-            </button>
-          ))}
+      {open && !compact ? (
+        <div role="menu" aria-label={label} className={`absolute right-0 z-40 mt-1 ${MENU_CLASS}`}>
+          {list}
         </div>
       ) : null}
+      {open && compact && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={menuRef}
+              role="menu"
+              aria-label={label}
+              data-placement={box?.placement}
+              // Above the dialogs' z-50 would cover a dialog opened from a
+              // row; z-40 keeps it under them and over the page.
+              style={{
+                position: 'fixed',
+                top: box?.top ?? 0,
+                left: box?.left ?? 0,
+                visibility: box ? 'visible' : 'hidden',
+              }}
+              className={`z-40 ${MENU_CLASS}`}
+            >
+              {list}
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 }

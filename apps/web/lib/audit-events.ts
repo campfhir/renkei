@@ -118,6 +118,8 @@ export type AuditAction =
   | 'code.services.started'
   | 'code.services.stopped'
   | 'code.files.uploaded'
+  /** A file or folder of a checkout, or the whole checkout, downloaded as the person's offline copy. */
+  | 'code.files.downloaded'
   /** A file saved from the code pane into the checkout, uncommitted. */
   | 'code.files.saved'
   /** An empty file created from the tree's "New file", uncommitted. */

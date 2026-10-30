@@ -384,7 +384,10 @@ test.describe('code projects', () => {
     await expect(filesDialog.getByText('notes.md')).toBeVisible();
     await shot('code-chat-add-files.png');
     await filesDialog.getByRole('button', { name: 'Add to repository' }).click();
-    await expect(filesDialog.getByText('Added to the checkout: docs/notes.md.')).toBeVisible();
+    // The row itself says it landed; the footer carries no report.
+    await expect(
+      filesDialog.getByTestId('upload-table').getByRole('listitem').filter({ hasText: 'docs/notes.md' })
+    ).toContainText('Added');
     await filesDialog.getByRole('button', { name: 'Done' }).click();
 
     // ── Changes carries the checkout's +added −deleted and opens every

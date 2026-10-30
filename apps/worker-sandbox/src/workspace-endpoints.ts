@@ -22,6 +22,8 @@
  * takes longer than any one tool call should wait.
  */
 
+import { createReadStream } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import type { ServerResponse } from 'node:http';
 import { getWorkspaceLimitBytes } from '@renkei/settings';
 import {
@@ -100,6 +102,8 @@ import {
   type RunInput,
   type RunResult,
   parseGitProxy,
+  ARCHIVE_TIMEOUT_MS,
+  spawnArchive,
 } from './workspaces';
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { logger } from './logger';
@@ -705,6 +709,97 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       totalLines,
       startLine,
       endLine: startLine - 1 + slice.length,
+    });
+  }
+
+  /**
+   * `download`: a file of the checkout as its bytes, or a folder (the
+   * root included) as a zip — an offline copy, ignored files and all,
+   * `.git` left out (spawnArchive). The bytes go as they are: unlike
+   * `read`, nothing here is scrubbed, so a file a command wrote a
+   * secret's value into leaves as written. The zip streams as it is
+   * made; a folder with nothing in it is a 404, a zip that fails before
+   * its first byte an error, and one that fails mid-way a cut stream.
+   * `x-sandbox-kind` says which of the two the caller got.
+   */
+  async function download(
+    workspace: store.StoredWorkspace,
+    _env: OpenedEnv,
+    body: Body,
+    response: ServerResponse
+  ) {
+    const path = validateWorkspacePath(body.path);
+    if (!path.ok) return sendError(response, 400, 'bad_path', path.message);
+    const dir = workspaceDir(workspace.storageKey);
+    const real = await containedPath(dir, path.path);
+    let info;
+    try {
+      info = await stat(real);
+    } catch {
+      return sendError(response, 404, 'not_found', `No such file or folder: ${path.path || '.'}`);
+    }
+    if (info.isFile()) {
+      response.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        'content-length': String(info.size),
+        'x-sandbox-kind': 'file',
+      });
+      const stream = createReadStream(real);
+      stream.on('error', () => response.destroy());
+      stream.pipe(response);
+      return;
+    }
+    if (!info.isDirectory()) {
+      return sendError(response, 400, 'bad_path', `${path.path} is not a file or folder.`);
+    }
+    const { child, kill } = await spawnArchive({
+      dir,
+      home: homeDir(workspace.storageKey),
+      identity: identityFor(workspace),
+      relativePath: path.path,
+    });
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      if (stderr.length < 4_000) stderr += chunk.toString('utf8');
+    });
+    const timer = setTimeout(kill, ARCHIVE_TIMEOUT_MS);
+    response.on('close', () => {
+      clearTimeout(timer);
+      kill();
+    });
+    await new Promise<void>((resolve) => {
+      child.stdout?.on('data', (chunk: Buffer) => {
+        if (!response.headersSent) {
+          response.writeHead(200, { 'content-type': 'application/zip', 'x-sandbox-kind': 'dir' });
+        }
+        if (!response.write(chunk)) {
+          child.stdout?.pause();
+          response.once('drain', () => child.stdout?.resume());
+        }
+      });
+      child.on('error', (error) => {
+        clearTimeout(timer);
+        if (!response.headersSent) sendError(response, 500, 'archive_failed', error.message);
+        else response.destroy();
+        resolve();
+      });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (response.headersSent) {
+          if (code === 0) response.end();
+          else response.destroy();
+        } else if (code === 12) {
+          sendError(response, 404, 'not_found', `${path.path || 'The checkout'} has no files to download.`);
+        } else {
+          sendError(
+            response,
+            500,
+            'archive_failed',
+            stderr.trim() || `zip exited with ${code ?? 'a signal'}.`
+          );
+        }
+        resolve();
+      });
     });
   }
 
@@ -1468,6 +1563,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     find,
     grep,
     read,
+    download,
     write,
     mkdir: mkdirFile,
     edit,

@@ -23,7 +23,10 @@
  * entry the host reports as gitignored is drawn dimmed for the same
  * reason: still there, never hidden, but visually out of the way.
  *
- * `canEdit` adds a per-row "⋯" for New file (folders)/Rename/Delete
+ * Every row has a "⋯" once there is a checkout: Download (a file as
+ * itself, a folder as a zip of everything in it, ignored files too,
+ * from …/code/projects/[id]/archive) for anyone who can see the tree;
+ * `canEdit` adds New file (folders)/Rename/Delete
  * against …/code/projects/[id]/files (POST create, PATCH rename, DELETE
  * remove) — only once there is a checkout to edit (`source ===
  * 'checkout'`; before a clone the tree is the git host's own read-only
@@ -33,16 +36,38 @@
  * here alone. The root-level "New file" action has no button of its
  * own here — the pane puts one inline with its "Files" heading instead
  * — so it rides a ref handle (`newFile()`) rather than a prop.
+ *
+ * With a checkout to edit the tree also takes drops. Files from the
+ * desktop dropped on a folder (or on a file: its folder) land there,
+ * sent through the app's upload queue (components/uploads) so the
+ * title bar shows their progress; dropped anywhere else in the tree
+ * they land at the root. A row dragged inside the tree moves: onto a
+ * folder puts the file or folder in it, onto the root area puts it at
+ * the top (PATCH …/files, the same move a rename is). Each lands as
+ * the checkout's uncommitted change, like everything else here; the
+ * folders concerned are read again and `onChanged` tells the pane to
+ * refresh its marks.
  */
 
 import { codeProjectUrl } from '@/lib/code/urls';
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type DragEvent,
+} from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingLine } from '@/components/skeleton';
 import Modal from '@/components/modal';
+import { useOptionalUploadQueue } from '@/components/uploads/upload-queue';
 import { DialogFooter } from '../../chat/_components/chat-nav';
 import OverflowMenu from '../../chat/_components/overflow-menu';
+import { checkoutSender } from './add-files-modal';
+import { startDownload } from '@/lib/download';
 
 interface Entry {
   path: string;
@@ -69,6 +94,9 @@ type Dialog =
   | { kind: 'new-file'; folder: string; name: string }
   | { kind: 'rename'; path: string; name: string };
 
+/** The drag's own data type: a path inside this tree. */
+const TREE_PATH_TYPE = 'application/x-renkei-tree-path';
+
 function nameOf(path: string): string {
   const index = path.lastIndexOf('/');
   return index < 0 ? path : path.slice(index + 1);
@@ -83,6 +111,23 @@ function size(value: number): string {
   if (value < 1024) return `${value} B`;
   if (value < 1_048_576) return `${Math.round(value / 1024)} KB`;
   return `${(value / 1_048_576).toFixed(1)} MB`;
+}
+
+/** The drag carries files from outside the page (the desktop, another app). */
+function carriesFiles(transfer: DataTransfer): boolean {
+  return Array.from(transfer.types).includes('Files');
+}
+
+/** The drag carries a row of this tree. */
+function carriesTreePath(transfer: DataTransfer): boolean {
+  return Array.from(transfer.types).includes(TREE_PATH_TYPE);
+}
+
+/** `path` may move into `folder`: not into itself, under itself, or where it already is. */
+export function canMoveInto(path: string, folder: string): boolean {
+  if (folderOf(path) === folder) return false;
+  if (folder === path || folder.startsWith(`${path}/`)) return false;
+  return true;
 }
 
 const RepoTree = forwardRef<
@@ -101,15 +146,19 @@ const RepoTree = forwardRef<
     refreshKey?: number;
     /** Taller rows for a finger. */
     touch?: boolean;
-    /** New file / rename / delete, once there is a checkout to edit. */
+    /** New file / rename / delete / drops, once there is a checkout to edit. */
     canEdit?: boolean;
-    /** The open file was renamed — old path, new path. */
+    /** The open file was renamed — old path, new path. A folder's move
+     * comes through too, with the folder's paths; the pane re-points
+     * tabs under it. */
     onRenamed?: (from: string, to: string) => void;
     /** The open file was deleted. */
     onDeleted?: (path: string) => void;
     /** A ghost (deleted, uncommitted) row was clicked — there is nothing
      * left to open, so the pane shows its diff instead. */
     onDeletedClick?: (path: string) => void;
+    /** The checkout changed from here (a drop, a move): the pane reads its marks again. */
+    onChanged?: () => void;
   }
 >(function RepoTree(
   {
@@ -124,17 +173,25 @@ const RepoTree = forwardRef<
     onRenamed,
     onDeleted,
     onDeletedClick,
+    onChanged,
   },
   ref
 ) {
   const base = `${codeProjectUrl(projectId, chatId)}/tree`;
   const filesBase = `${codeProjectUrl(projectId, chatId)}/files`;
+  const archiveBase = `${codeProjectUrl(projectId, chatId)}/archive`;
+  const queue = useOptionalUploadQueue();
   const [listings, setListings] = useState<Record<string, Listing>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [source, setSource] = useState<Source | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string | null>(null);
+  /** The folder a drag is over ('' for the root), highlighted. */
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  /** The row being dragged inside the tree, while it is. */
+  const [dragging, setDragging] = useState<{ path: string; kind: Entry['kind'] } | null>(null);
+  const [moveError, setMoveError] = useState<string | null>(null);
   const openRef = useRef(open);
   openRef.current = open;
 
@@ -182,7 +239,25 @@ const RepoTree = forwardRef<
     if (next && !listings[path]) void load(path);
   };
 
+  /** Shows a folder's contents, reading them if they were never read. */
+  const reveal = useCallback(
+    (folder: string) => {
+      if (!folder) return;
+      if (!openRef.current[folder]) setOpen((current) => ({ ...current, [folder]: true }));
+      void load(folder, true);
+    },
+    [load]
+  );
+
   const canWrite = canEdit && source === 'checkout';
+  // A download is a read of the checkout: anyone who can see the tree may,
+  // once there is a checkout (the git host's own view has no zip to give).
+  const canDownload = source === 'checkout';
+  const downloadItem = (path: string, kind: 'file' | 'dir') => ({
+    label: kind === 'dir' ? 'Download as zip' : 'Download',
+    icon: ICONS.download,
+    onSelect: () => startDownload(`${archiveBase}?path=${encodeURIComponent(path)}`),
+  });
 
   const ghostsFor = (path: string): string[] => {
     if (!marks) return [];
@@ -267,7 +342,107 @@ const RepoTree = forwardRef<
     if (kind === 'file') onDeleted?.(path);
   };
 
+  /** Files from outside the page, dropped on `folder`: each lands at its name there. */
+  const uploadInto = (folder: string, files: File[]) => {
+    if (!queue || files.length === 0) return;
+    queue.enqueue({
+      title: `Add files to ${folder || 'the repository root'}`,
+      destination: 'checkout',
+      items: files.map((file) => {
+        const path = folder ? `${folder}/${file.name}` : file.name;
+        return { file, label: path, send: checkoutSender(filesBase, path) };
+      }),
+      onItem: (job) => {
+        if (job.status !== 'done') return;
+        if (folder) reveal(folder);
+        else void load('', true);
+        onChanged?.();
+      },
+    });
+  };
+
+  /** A row of the tree dropped on `folder`: moved there, under its own name. */
+  const moveInto = async (path: string, kind: Entry['kind'], folder: string) => {
+    if (!canMoveInto(path, folder)) return;
+    const to = folder ? `${folder}/${nameOf(path)}` : nameOf(path);
+    setMoveError(null);
+    const result = await sendJsonFull<{ from: string; to: string }>(filesBase, 'PATCH', {
+      from: path,
+      to,
+    });
+    if (result.error) {
+      setMoveError(`${nameOf(path)}: ${result.error}`);
+      return;
+    }
+    void load(folderOf(path), true);
+    if (folder) reveal(folder);
+    else void load('', true);
+    onRenamed?.(path, to);
+    onChanged?.();
+    void kind;
+  };
+
+  /** The drop handlers for a target folder ('' is the root). */
+  const dropProps = (folder: string) => {
+    if (!canWrite) return {};
+    const accepts = (transfer: DataTransfer) =>
+      carriesFiles(transfer) ||
+      (carriesTreePath(transfer) && dragging !== null && canMoveInto(dragging.path, folder));
+    return {
+      onDragOver: (event: DragEvent<HTMLElement>) => {
+        if (!accepts(event.dataTransfer)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.dataTransfer.dropEffect = carriesFiles(event.dataTransfer) ? 'copy' : 'move';
+        if (dropTarget !== folder) setDropTarget(folder);
+      },
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
+        // Leaving for a child element is not leaving the target.
+        const related = event.relatedTarget;
+        if (related instanceof Node && event.currentTarget.contains(related)) return;
+        if (dropTarget === folder) setDropTarget(null);
+      },
+      onDrop: (event: DragEvent<HTMLElement>) => {
+        const files = Array.from(event.dataTransfer.files);
+        const path = event.dataTransfer.getData(TREE_PATH_TYPE) || dragging?.path || '';
+        // A row let go over where it already is (or over itself) is not
+        // this folder's drop: left alone, it reaches the box around the
+        // tree, whose target is the root.
+        if (files.length === 0 && (!path || !canMoveInto(path, folder))) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setDropTarget(null);
+        if (files.length > 0) {
+          uploadInto(folder, files);
+          return;
+        }
+        const kind = dragging?.kind ?? 'file';
+        setDragging(null);
+        void moveInto(path, kind, folder);
+      },
+    };
+  };
+
+  /** What makes a row draggable inside the tree. */
+  const dragProps = (entry: Entry) => {
+    if (!canWrite || (entry.kind !== 'file' && entry.kind !== 'dir')) return {};
+    return {
+      draggable: true,
+      onDragStart: (event: DragEvent<HTMLElement>) => {
+        event.dataTransfer.setData(TREE_PATH_TYPE, entry.path);
+        event.dataTransfer.setData('text/plain', entry.path);
+        event.dataTransfer.effectAllowed = 'move';
+        setDragging({ path: entry.path, kind: entry.kind });
+      },
+      onDragEnd: () => {
+        setDragging(null);
+        setDropTarget(null);
+      },
+    };
+  };
+
   const rowClass = touch ? 'min-h-10 py-1.5' : 'py-0.5';
+  const dropHighlight = 'bg-blue-50 ring-1 ring-inset ring-blue-500 dark:bg-blue-950/40';
 
   const renderGhost = (path: string, depth: number) => {
     const indent = { paddingLeft: `${depth * 12 + 4}px` };
@@ -321,38 +496,52 @@ const RepoTree = forwardRef<
     // subtree read as ghosted, regardless of that per-directory quirk.
     const ignored = inheritedIgnored || entry.ignored === true;
     const dimmed = ignored ? 'opacity-50' : '';
+    const beingDragged = dragging?.path === entry.path ? 'opacity-40' : '';
 
     if (entry.kind === 'dir') {
       const expanded = open[entry.path] === true;
-      const menu = canWrite ? (
+      const isTarget = dropTarget === entry.path;
+      const menu = canDownload ? (
         <OverflowMenu
           label={`More for ${name}`}
           anchored={false}
           compact
           items={[
-            {
-              label: 'New file',
-              icon: ICONS.folderPlus,
-              onSelect: () => openNewFileDialog(entry.path),
-            },
-            {
-              label: 'Rename',
-              icon: ICONS.pencil,
-              onSelect: () => openRenameDialog(entry.path),
-            },
-            {
-              label: 'Delete',
-              icon: ICONS.trash,
-              danger: true,
-              onSelect: () => void deleteEntry(entry.path, 'dir'),
-            },
+            ...(canWrite
+              ? [
+                  {
+                    label: 'New file',
+                    icon: ICONS.folderPlus,
+                    onSelect: () => openNewFileDialog(entry.path),
+                  },
+                  {
+                    label: 'Rename',
+                    icon: ICONS.pencil,
+                    onSelect: () => openRenameDialog(entry.path),
+                  },
+                ]
+              : []),
+            downloadItem(entry.path, 'dir'),
+            ...(canWrite
+              ? [
+                  {
+                    label: 'Delete',
+                    icon: ICONS.trash,
+                    danger: true,
+                    onSelect: () => void deleteEntry(entry.path, 'dir'),
+                  },
+                ]
+              : []),
           ]}
         />
       ) : null;
       return (
         <li key={entry.path}>
           <div
-            className={`flex w-full items-center gap-0.5 rounded pr-1 hover:bg-gray-100 dark:hover:bg-gray-900 ${rowClass} ${dimmed}`}
+            {...dropProps(entry.path)}
+            {...dragProps(entry)}
+            data-drop-target={isTarget ? 'true' : undefined}
+            className={`flex w-full items-center gap-0.5 rounded pr-1 hover:bg-gray-100 dark:hover:bg-gray-900 ${rowClass} ${dimmed} ${beingDragged} ${isTarget ? dropHighlight : ''}`}
           >
             <button
               type="button"
@@ -409,31 +598,47 @@ const RepoTree = forwardRef<
         ) : null}
       </>
     );
-    const menu = canWrite ? (
-      <OverflowMenu
-        label={`More for ${name}`}
-        anchored={false}
-        compact
-        items={[
-          {
-            label: 'Rename',
-            icon: ICONS.pencil,
-            onSelect: () => openRenameDialog(entry.path),
-          },
-          {
-            label: 'Delete',
-            icon: ICONS.trash,
-            danger: true,
-            onSelect: () => void deleteEntry(entry.path, 'file'),
-          },
-        ]}
-      />
-    ) : null;
+    const menu =
+      canDownload && entry.kind === 'file' ? (
+        <OverflowMenu
+          label={`More for ${name}`}
+          anchored={false}
+          compact
+          items={[
+            ...(canWrite
+              ? [
+                  {
+                    label: 'Rename',
+                    icon: ICONS.pencil,
+                    onSelect: () => openRenameDialog(entry.path),
+                  },
+                ]
+              : []),
+            downloadItem(entry.path, 'file'),
+            ...(canWrite
+              ? [
+                  {
+                    label: 'Delete',
+                    icon: ICONS.trash,
+                    danger: true,
+                    onSelect: () => void deleteEntry(entry.path, 'file'),
+                  },
+                ]
+              : []),
+          ]}
+        />
+      ) : null;
+    // A drop on a file goes to the folder the file is in.
+    const fileDrop = dropProps(folderOf(entry.path));
 
     if (onOpen && entry.kind === 'file') {
       return (
         <li key={entry.path}>
-          <div className={`flex w-full items-center gap-0.5 rounded pr-1 ${dimmed}`}>
+          <div
+            {...fileDrop}
+            {...dragProps(entry)}
+            className={`flex w-full items-center gap-0.5 rounded pr-1 ${dimmed} ${beingDragged}`}
+          >
             <button
               type="button"
               onClick={() => onOpen(entry.path)}
@@ -456,7 +661,9 @@ const RepoTree = forwardRef<
     return (
       <li
         key={entry.path}
-        className={`flex items-center gap-0.5 pr-1 text-xs text-gray-700 dark:text-gray-300 ${dimmed}`}
+        {...fileDrop}
+        {...dragProps(entry)}
+        className={`flex items-center gap-0.5 pr-1 text-xs text-gray-700 dark:text-gray-300 ${dimmed} ${beingDragged}`}
       >
         <span style={indent} className={`flex min-w-0 flex-1 items-center gap-1.5 ${rowClass}`} title={entry.path}>
           {body}
@@ -495,11 +702,29 @@ const RepoTree = forwardRef<
     );
   };
 
+  const rootIsTarget = dropTarget === '';
+
   return (
-    <div>
+    <div
+      {...dropProps('')}
+      data-drop-target={rootIsTarget ? 'true' : undefined}
+      // The root takes drops anywhere in the tree's box, including the
+      // empty space under the last row.
+      className={`min-h-16 rounded pb-4 ${rootIsTarget ? dropHighlight : ''}`}
+    >
       <ul role="tree" aria-label="Files" className="font-mono">
         {renderDir('', 0)}
       </ul>
+      {canWrite && dragging ? (
+        <p className="px-2 pt-1 text-[11px] text-gray-500" role="status">
+          Drop on a folder to move it there, or here for the top level.
+        </p>
+      ) : null}
+      {moveError ? (
+        <p role="alert" className="px-2 pt-1 text-xs text-red-600 dark:text-red-400">
+          {moveError}
+        </p>
+      ) : null}
       {dialog ? (
         <Modal
           title={dialog.kind === 'new-file' ? 'New file' : 'Rename'}

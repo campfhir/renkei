@@ -30,10 +30,10 @@
  * worker sealed them and only a command ever sees them.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
-import type { CodeProjectView } from '@/lib/code/project-view';
+import type { CodeCheckoutState, CodeEnvVariableView, CodeProjectView } from '@/lib/code/project-view';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import PipelinesSummary from './pipelines-summary';
@@ -42,6 +42,7 @@ import ServicesSummaryCard from './services-summary';
 import PullsSummary from './pulls-summary';
 import CommitsSummary from './commits-summary';
 import Pill from './pill';
+import { LoadingLine } from '@/components/skeleton';
 import SizeRequest from './size-request';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
@@ -61,7 +62,8 @@ export function CodeRepoStrip({
   code,
 }: {
   projectId: string;
-  code: CodeProjectView['code'];
+  /** The repository, whether workspaces run here, and the clone as the worker has it. */
+  code: CodeCheckoutState & Pick<CodeProjectView['code'], 'repoFullName' | 'repoProvider' | 'enabled'>;
 }) {
   const router = useRouter();
   const base = `/api/code/projects/${projectId}`;
@@ -150,15 +152,72 @@ export function CodeRepoStrip({
   );
 }
 
-/** The cards beside (or below) the chats: pulls, commits, CI, services, then the environment. */
+/**
+ * The cards beside (or below) the chats: pulls, commits, CI, services —
+ * each reading its own data in the browser — then the environment, which
+ * the page streams in as `environment` (an EnvironmentCard behind a
+ * Suspense boundary, since its names come from the sandbox worker).
+ */
 export function CodeRail({
   projectId,
   code,
+  environment,
+}: {
+  projectId: string;
+  code: Pick<CodeProjectView['code'], 'repoProvider' | 'branch' | 'enabled'>;
+  /** The Environment card, or its skeleton while it loads. */
+  environment: ReactNode;
+}) {
+  const isGitHub = code.repoProvider === 'github';
+  return (
+    <>
+      <PullsSummary href={`/code/${projectId}/pulls`} projectId={projectId} />
+      <CommitsSummary href={`/code/${projectId}/commits`} projectId={projectId} />
+      {isGitHub ? (
+        <ActionsSummary href={`/code/${projectId}/actions`} projectId={projectId} />
+      ) : (
+        <PipelinesSummary
+          href={`/code/${projectId}/pipelines`}
+          projectId={projectId}
+          branch={code.branch}
+        />
+      )}
+      {code.enabled ? (
+        <ServicesSummaryCard href={`/code/${projectId}/services`} projectId={projectId} />
+      ) : null}
+      {environment}
+    </>
+  );
+}
+
+/** The Environment card while its names are on their way from the sandbox worker. */
+export function EnvironmentCardSkeleton() {
+  return (
+    <section className={sectionClass} aria-busy="true" data-testid="environment-loading">
+      <div className="mb-2">
+        <h2 className="text-sm font-semibold">Environment</h2>
+        <p className="text-xs text-gray-500">What the project’s commands run with.</p>
+      </div>
+      <LoadingLine size="xs" label="Reading the variables…" />
+    </section>
+  );
+}
+
+/**
+ * The names of the variables the project's commands run with, replaced
+ * by pasting a `.env` again or pruned one at a time. Values are never
+ * shown; the worker sealed them and only a command ever sees them.
+ */
+export function EnvironmentCard({
+  projectId,
+  env,
+  enabled,
   canEdit,
   envProblems,
 }: {
   projectId: string;
-  code: CodeProjectView['code'];
+  env: CodeEnvVariableView[];
+  enabled: boolean;
   canEdit: boolean;
   /** Lines of a just-pasted .env that were not variables, reported once. */
   envProblems: string[];
@@ -201,46 +260,30 @@ export function CodeRail({
     router.refresh();
   };
 
-  const isGitHub = code.repoProvider === 'github';
-
   return (
     <>
-      <PullsSummary href={`/code/${projectId}/pulls`} projectId={projectId} />
-      <CommitsSummary href={`/code/${projectId}/commits`} projectId={projectId} />
-      {isGitHub ? (
-        <ActionsSummary href={`/code/${projectId}/actions`} projectId={projectId} />
-      ) : (
-        <PipelinesSummary
-          href={`/code/${projectId}/pipelines`}
-          projectId={projectId}
-          branch={code.branch}
-        />
-      )}
-      {code.enabled ? (
-        <ServicesSummaryCard href={`/code/${projectId}/services`} projectId={projectId} />
-      ) : null}
       <section className={sectionClass}>
         <div className="mb-2">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold">Environment</h2>
-            {canEdit && code.enabled ? (
+            {canEdit && enabled ? (
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => setEnvOpen((value) => !value)}
                 className="ml-auto text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
               >
-                {code.env.length ? 'Replace .env' : 'Add .env'}
+                {env.length ? 'Replace .env' : 'Add .env'}
               </button>
             ) : null}
           </div>
           <p className="text-xs text-gray-500">What the project’s commands run with.</p>
         </div>
-        {code.env.length === 0 ? (
+        {env.length === 0 ? (
           <p className="text-sm text-gray-500">No environment variables.</p>
         ) : (
           <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800">
-            {code.env.map((variable) => (
+            {env.map((variable) => (
               <li key={variable.name} className="flex items-center gap-2 py-1.5">
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-mono">{variable.name}</span>

@@ -28,7 +28,6 @@ import ArtifactsCard from './artifacts-card';
 import ShareModal from './share-modal';
 import ToolsPopover from './tools-popover';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
-import Markdown from './markdown';
 import { formatTokens } from '@/lib/format-tokens';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import ChatPrBadge from '../../code/_components/chat-pr-badge';
@@ -61,6 +60,7 @@ export default function ProjectView({
   defaultInstructions = null,
   readme = null,
   usage = null,
+  headerActions = null,
 }: {
   initial: ProjectViewData;
   /**
@@ -78,16 +78,20 @@ export default function ProjectView({
    */
   defaultInstructions?: string | null;
   /**
-   * A code project's README, rendered in place of a typed description —
-   * the repository describes itself.
+   * A code project's README section (code/_components/readme-section.tsx),
+   * rendered in place of a typed description — the repository describes
+   * itself. An element, because the page streams it in behind a Suspense
+   * boundary: the text comes from the repository's git host.
    */
-  readme?: { path: string; text: string } | null;
+  readme?: ReactNode;
   /**
    * Token spend: the project's total and each chat's own (input + output,
    * `chat_turns` summed across every turn) — a code project's only, shown
    * beside the chats list.
    */
   usage?: ProjectTokenUsage | null;
+  /** More buttons for the header, before Share — a code project's Download. */
+  headerActions?: ReactNode;
 }) {
   const router = useRouter();
   const { project, role, files, alwaysTokens, viewerSubject, memory, chats } = initial;
@@ -112,7 +116,6 @@ export default function ProjectView({
   const [note, setNote] = useState('');
   const [startingChat, setStartingChat] = useState(false);
   const [allChats, setAllChats] = useState(false);
-  const [readmeOpen, setReadmeOpen] = useState(false);
   const [newChatError, setNewChatError] = useState<string | null>(null);
 
   // A code project's New chat: another chat beside the others, with a
@@ -383,6 +386,7 @@ export default function ProjectView({
             locked={variant === 'code' ? CODE_PROJECT_CONNECTORS : undefined}
           />
         ) : null}
+        {headerActions}
         {role === 'owner' ? (
           <button
             type="button"
@@ -445,55 +449,7 @@ export default function ProjectView({
             </aside>
           ) : null}
           <div className={variant === 'code' ? 'min-w-0 space-y-4 lg:col-start-1' : 'contents'}>
-            {variant === 'code' ? (
-              <section className={sectionClass}>
-                <details open className="group">
-                  <summary className="flex cursor-pointer list-none items-start gap-2 [&::-webkit-details-marker]:hidden">
-                    <Icon
-                      path={ICONS.chevron}
-                      className="mt-0.5 h-4 w-4 shrink-0 text-gray-400 transition-transform group-open:rotate-90"
-                    />
-                    <span className="min-w-0 flex-1">
-                      <h2 className="text-sm font-semibold">README</h2>
-                      <p className="text-xs text-gray-500">
-                        {readme
-                          ? `${readme.path} on the project’s branch, as its host has it.`
-                          : 'The repository’s README, when it has one.'}
-                      </p>
-                    </span>
-                  </summary>
-                  <div className="mt-3">
-                    {readme ? (
-                      <>
-                        <div
-                          className={
-                            readmeOpen
-                              ? undefined
-                              : 'relative max-h-40 overflow-hidden after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-12 after:bg-gradient-to-t after:from-white after:to-transparent dark:after:from-gray-950'
-                          }
-                          data-testid="project-readme-body"
-                          data-expanded={readmeOpen ? 'true' : undefined}
-                        >
-                          <Markdown text={readme.text} />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setReadmeOpen((value) => !value)}
-                          aria-expanded={readmeOpen}
-                          className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
-                        >
-                          {readmeOpen ? 'Show less' : 'Read more'}
-                        </button>
-                      </>
-                    ) : (
-                      <p className="text-sm text-gray-500">
-                        No README was found in the repository.
-                      </p>
-                    )}
-                  </div>
-                </details>
-              </section>
-            ) : null}
+            {variant === 'code' ? readme : null}
             <section className={sectionClass} {...aboutAnchor}>
               <h2 className="mb-2 text-sm font-semibold">About</h2>
               {canEdit ? (

@@ -83,6 +83,7 @@ import { sendJsonFull } from '@/lib/fetch-json';
 import type { ChatNote } from '@/lib/code/note-text';
 import CodePane from '../../code/_components/code-pane';
 import { useCodePane } from '../../code/_components/use-code-pane';
+import UploadIndicator from '@/components/uploads/upload-indicator';
 import { clientLogger } from '@/lib/client-logger';
 
 interface ThreadProps {
@@ -361,6 +362,7 @@ export default function ChatThread({
     codeProjectId !== null && (paneMode === 'split' ? paneOpen : paneTab === 'code');
   // Bumped when a turn ends: the checkout changed, so the pane reads again.
   const [checkoutVersion, setCheckoutVersion] = useState(0);
+  const bumpCheckout = useCallback(() => setCheckoutVersion((version) => version + 1), []);
   // What the person did from the pane, for the transcript — held while a
   // turn runs (the runner is the only writer then) and sent when it ends.
   const pendingNotes = useRef<ChatNote[]>([]);
@@ -884,6 +886,8 @@ export default function ChatThread({
     running,
     messages: state.messages,
     onAsk: isOwner && !running && !sending ? (text) => submit({ text, attachments: [] }) : null,
+    projectName: chat.projectName,
+    onCheckoutChanged: bumpCheckout,
   });
   // A new chat in the project: through the API, which gives a code project's
   // chat its own worktree; outside one, the page that creates it.
@@ -1176,6 +1180,9 @@ export default function ChatThread({
             )
           ) : null}
           <ArtifactsMenu artifacts={state.artifacts} />
+          {/* Uploads running from Add files (or a drop on the tree): shown
+              at every width, since the sends outlive the dialog. */}
+          <UploadIndicator />
           {compact ? (
             isOwner ? (
               <ToolsPopover
@@ -1335,6 +1342,9 @@ export default function ChatThread({
                   chat.projectId
                     ? { id: chat.projectId, name: chat.projectName ?? 'this project' }
                     : null
+                }
+                pathCompletions={
+                  codeProjectId ? { projectId: codeProjectId, chatId: chat.id } : null
                 }
                 onStop={stop}
                 modelControl={

@@ -61,7 +61,7 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import {
   CLONE_TIMEOUT_MS,
   EXEC_MAX_FILE_BYTES,
@@ -1275,4 +1275,72 @@ export function isDebugEnabled(): boolean {
 
 export function logWorkspace(message: string, fields: Record<string, unknown>): void {
   logger.info(message, { component: 'worker-sandbox/workspaces', ...fields });
+}
+
+/** How long a zip of a checkout may take before it is given up on. */
+export const ARCHIVE_TIMEOUT_MS = 10 * 60_000;
+
+/**
+ * `zip` over a folder of the checkout, written to the child's stdout for
+ * the caller to stream on: an offline copy of the folder as it is on
+ * disk, so ignored files (node_modules, build output) go in too — they
+ * are the point of a copy that works without a network — while `.git`
+ * stays out (the repository's history is on its host, and a worktree's
+ * `.git` is a pointer into another checkout). Symlinks are stored as
+ * links, never followed: a link out of the checkout is a link in the
+ * archive, not the file it points at. Runs as the caller's uid like
+ * every other command over the checkout. The root of the checkout zips
+ * as its contents; a subfolder as itself, under its name.
+ */
+export async function spawnArchive(input: {
+  dir: string;
+  home: string;
+  identity: ExecIdentity | null;
+  relativePath: string;
+}): Promise<{ child: ChildProcess; kill: () => void }> {
+  const target = await containedPath(input.dir, input.relativePath);
+  const info = await stat(target);
+  if (!info.isDirectory()) {
+    throw new WorkspacePathError(`${input.relativePath || '.'} is not a folder.`);
+  }
+  const isRoot = (await realpath(input.dir)) === target;
+  const cwd = isRoot ? target : dirname(target);
+  const what = isRoot ? '.' : basename(target);
+  const wrapped = wrapCommand(input.identity, 'zip', [
+    '-r',
+    '-q',
+    '-y',
+    '-',
+    what,
+    '-x',
+    '.git',
+    '.git/*',
+    `${what}/.git`,
+    `${what}/.git/*`,
+  ]);
+  const child = spawn(wrapped.file, wrapped.args, {
+    cwd,
+    env: childEnvironment({
+      cwd,
+      home: input.home,
+      identity: input.identity,
+      env: {},
+      timeoutMs: ARCHIVE_TIMEOUT_MS,
+    }),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  });
+  const kill = (): void => {
+    if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // Already gone.
+      }
+    }
+  };
+  return { child, kill };
 }
