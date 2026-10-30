@@ -99,6 +99,7 @@ import { readUserMemory, renderUserMemory } from './user-memory';
 import { notifyChatReplyDesktop } from './reply-notification';
 import { createSubagentRecorder } from './subagent-runs';
 import type { WidgetDecisionState } from './views';
+import { temporaryUnavailableTools, withoutMemoryConnectors } from './temporary';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -590,7 +591,8 @@ async function executeTurnBody(
     const surfacing = resolveChatToolSurface({
       subject: input.session.subject,
       roles: input.session.roles,
-      config: toolConfig,
+      // A temporary chat is offered no memory connector (temporary.ts).
+      config: input.chat.temporary ? withoutMemoryConnectors(toolConfig) : toolConfig,
       ttlSeconds: Math.ceil((wallClockMs + permissionWaitMs) / 1000) + 15 * 60,
       excluded: denied,
       sandboxScope,
@@ -712,6 +714,7 @@ async function executeTurnBody(
       cipher: input.cipher,
       ...(projectCipher ? { projectCipher } : {}),
       projectId: input.chat.projectId,
+      temporary: input.chat.temporary,
       sandboxScope,
       userEmail: person?.email ?? null,
       readOnly,
@@ -921,6 +924,8 @@ async function executeTurnBody(
           // A blocked tool's preview card is blocked with it.
           denied: new Set([...denied, ...surface.blockedPreviews]),
           previewOnly: surface.previewOnly,
+          // A temporary chat's memory tools: refused, never asked about.
+          ...(input.chat.temporary ? { unavailable: temporaryUnavailableTools() } : {}),
           ...(auto ? { allowAll: true } : {}),
         },
         ...(auto
@@ -1077,7 +1082,9 @@ export async function chatPromptContext(
             code: null,
           }
         : null,
-    userMemoryText: project ? null : renderUserMemory(await readUserMemory(chat.ownerSubject)),
+    // A temporary chat is told nothing it was not told in it (temporary.ts).
+    userMemoryText:
+      project || chat.temporary ? null : renderUserMemory(await readUserMemory(chat.ownerSubject)),
     // A chat upload kept for the project is both the chat's and the
     // project's; it is listed once, where every chat in the project sees it.
     chatFiles: chatFiles

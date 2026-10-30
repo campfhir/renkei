@@ -193,6 +193,7 @@ export const EXPECTED_MIGRATIONS = [
   '167-artifact-ocr',
   '168-document-usage',
   '169-sandbox-scope',
+  '170-temporary-chats',
 ];
 
 export interface MigrationStatus {

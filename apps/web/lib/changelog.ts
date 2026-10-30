@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-30',
     entries: [
       {
+        kind: 'added',
+        title: 'Salesforce Admin builds report types and reports',
+        detail:
+          'The Salesforce Admin connector can propose a custom report type, and reports on it or on any report type in a new or existing folder. Salesforce checks each one first, and an operator reviews and applies it, the same as a new object.',
+      },
+      {
+        kind: 'added',
+        title: 'Temporary chats',
+        detail:
+          'Start a chat as temporary from the switch on an empty chat or New temporary chat in the chat menu: it neither reads nor saves your memories, a ghost marks it in the menu and title bar, and it is deleted 24 hours after its last activity.',
+      },
+      {
         kind: 'fixed',
         title: 'Code downloads work from the iOS home-screen app',
         detail:

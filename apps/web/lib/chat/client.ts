@@ -109,6 +109,8 @@ export const chatClient = {
       toolConfig?: { connectors: string[] } | null;
       thinkingEnabled?: boolean;
       autoMode?: boolean;
+      /** Only while the chat is empty (lib/chat/temporary.ts). */
+      temporary?: boolean;
       archived?: boolean;
     }
   ) => sendJsonFull(`${base()}/chats/${chatId}`, 'PATCH', patch),
@@ -279,7 +281,13 @@ export const chatClient = {
       }
       return response.ok && Array.isArray(body?.results) ? body.results : [];
     } catch (error) {
-      reportFetchFailure('POST', `${base()}/attachments/ocr`, 0, 'Could not reach the server', error);
+      reportFetchFailure(
+        'POST',
+        `${base()}/attachments/ocr`,
+        0,
+        'Could not reach the server',
+        error
+      );
       return [];
     }
   },
@@ -376,7 +384,13 @@ export const chatClient = {
       reportFetchFailure('PUT', `${base()}/artifacts/${artifactId}`, response.status, error);
       return { error };
     } catch (error) {
-      reportFetchFailure('PUT', `${base()}/artifacts/${artifactId}`, 0, 'Could not reach the server', error);
+      reportFetchFailure(
+        'PUT',
+        `${base()}/artifacts/${artifactId}`,
+        0,
+        'Could not reach the server',
+        error
+      );
       return { error: 'Could not reach the server' };
     }
   },

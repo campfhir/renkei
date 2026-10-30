@@ -583,6 +583,7 @@ export interface Chats {
   owner_subject: string;
   project_id: string | null;
   request_overhead_tokens: number | null;
+  temporary: Generated<boolean>;
   thinking_enabled: Generated<boolean>;
   title: string | null;
   tool_config: Json | null;

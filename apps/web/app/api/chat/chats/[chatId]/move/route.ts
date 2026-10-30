@@ -5,6 +5,8 @@
  * Never into or out of a code project: its chats belong to its checkout,
  * and which of them may continue is the project's own affair
  * (lib/code/active-chat.ts) — the menu offers no move for them either.
+ * Nor a temporary chat into any project: a project would give it the
+ * project's memory (lib/chat/temporary.ts).
  */
 
 import type { NextRequest } from 'next/server';
@@ -15,6 +17,7 @@ import { resolveResourceAccess } from '@/lib/chat/access';
 import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner, moveChatToProject } from '@/lib/chat/store';
 import { getActiveTurn } from '@/lib/chat/turns';
+import { TEMPORARY_OUTSIDE_PROJECTS } from '@/lib/chat/temporary';
 
 export async function POST(
   request: NextRequest,
@@ -36,6 +39,9 @@ export async function POST(
     const access = await resolveResourceAccess(session.subject, 'chat_project', body.projectId);
     if (!access) return jsonError(404, 'not-found', 'No such project');
     projectId = body.projectId;
+  }
+  if (chat.temporary && projectId) {
+    return jsonError(400, 'temporary-project', TEMPORARY_OUTSIDE_PROJECTS);
   }
   const codeProject = async (id: string | null) =>
     id ? (await getProjectRow(id))?.kind === 'code' : false;

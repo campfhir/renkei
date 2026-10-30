@@ -96,6 +96,7 @@ export const chatScenarios: Scenario<DataStore>[] = [
         toolConfig: { connectors: ['jira'] },
         thinkingEnabled: true,
         autoMode: true,
+        temporary: true,
       });
       const chat = await store.chats.get(id);
       return {
@@ -105,6 +106,7 @@ export const chatScenarios: Scenario<DataStore>[] = [
           archived: chat.archivedAt,
           lastMessageAt: chat.lastMessageAt,
           autoTitleAsked: chat.autoTitleAsked,
+          temporary: chat.temporary,
         },
         count: (await store.chats.listOwned(CAT, { limit: 10 })).length,
       };
@@ -318,6 +320,24 @@ export const chatScenarios: Scenario<DataStore>[] = [
       );
       return [archived, again, none, state];
     },
+  },
+  {
+    method: 'chats.listTemporaryIdleIds',
+    name: 'temporary chats only, idle before the cut, no running turn, oldest first, bounded',
+    fixture: {
+      ...fixture,
+      chats: (fixture.chats ?? []).map((row) =>
+        [CHAT.annA, CHAT.annB, CHAT.annCode, CHAT.catPrivate].includes(row.id ?? '')
+          ? { ...row, temporary: true }
+          : row
+      ),
+      chat_turns: [{ id: uid(273), chat_id: CHAT.annCode, status: 'running' }],
+    },
+    run: async (store) => [
+      await store.chats.listTemporaryIdleIds(at(40), 50),
+      await store.chats.listTemporaryIdleIds(at(40), 1),
+      await store.chats.listTemporaryIdleIds(at(0), 50),
+    ],
   },
   {
     method: 'chats.listIdsUpdatedBefore',

@@ -10,8 +10,10 @@
  * applies in their browser.
  *
  * Only bundles with tools behind them are listed; the design's others
- * (reports and dashboards, automation, whole applications) join as their
- * tools are built. User access — assigning permission sets to people — is
+ * (dashboards and folder sharing, automation, whole applications) join as
+ * their tools are built. Report types and reports ride the schema bundle:
+ * they deploy as metadata the way an object does, and a separate bundle
+ * would have every existing connection reconnect to get them. User access — assigning permission sets to people — is
  * off by default: it changes who can do what, not how the org is built.
  */
 
@@ -32,28 +34,31 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
       'salesforce_admin_check_access, salesforce_admin_describe_object, salesforce_admin_get_field, ' +
       'salesforce_admin_list_validation_rules, salesforce_admin_get_picklist, ' +
       'salesforce_admin_get_record_type, salesforce_admin_get_layout, ' +
+      'salesforce_admin_list_report_types, salesforce_admin_list_report_folders, ' +
       'salesforce_admin_list_change_requests — objects, fields, picklists and their value sets, ' +
-      'record types, layouts, validation rules and where a field is used, as the person can see ' +
-      'them in Setup.',
+      'record types, layouts, validation rules, where a field is used, report types and their ' +
+      'columns, and report folders, as the person can see them in Setup.',
     userHint:
-      'Read how the org is built — objects, fields, picklists, record types, layouts, validation rules, where a field is used — and your own change requests.',
+      'Read how the org is built — objects, fields, picklists, record types, layouts, validation rules, where a field is used, report types and report folders — and your own change requests.',
     group: 'read',
     defaultChecked: true,
   },
   {
     id: 'sfa-schema',
     scopes: ['sfa-schema'],
-    label: 'Propose objects and fields',
+    label: 'Propose objects, fields and reports',
     hint:
       'salesforce_admin_propose_object, salesforce_admin_propose_fields, ' +
       'salesforce_admin_propose_field_changes, salesforce_admin_propose_picklist_changes, ' +
-      'salesforce_admin_propose_record_type, salesforce_admin_propose_validation_rule — each a ' +
+      'salesforce_admin_propose_record_type, salesforce_admin_propose_validation_rule, ' +
+      'salesforce_admin_propose_report_type, salesforce_admin_propose_report (in an existing ' +
+      'report folder or a new one) — each a ' +
       'change request (picklists include standard ones and global value sets, and what each ' +
       'record type offers), checked by a ' +
       'validation deploy in the org and applied only by the person, in their browser. Nothing ' +
       'on the MCP surface changes the org.',
     userHint:
-      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types and validation rules. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
+      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types, validation rules, report types and reports. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
     group: 'build',
     defaultChecked: true,
   },

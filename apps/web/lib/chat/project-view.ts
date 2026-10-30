@@ -133,6 +133,7 @@ export async function loadProjectView(
       updatedAt: chat.updatedAt.toISOString(),
       lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
       archived: chat.archivedAt !== null,
+      temporary: chat.temporary,
       ownerSubject: chat.ownerSubject,
       ownerName:
         chat.ownerSubject === viewerSubject ? null : (names.get(chat.ownerSubject) ?? null),

@@ -196,6 +196,19 @@ export function postgresChats(db: () => Kysely<DB>): ChatStore {
       `.execute(db());
       return archived.rows.map((row) => row.id).sort();
     },
+    async listTemporaryIdleIds(before, limit) {
+      const rows = await sql<{ id: string }>`
+        SELECT c.id FROM chats c
+         WHERE c.temporary
+           AND c.updated_at < ${before}
+           AND NOT EXISTS (
+             SELECT 1 FROM chat_turns t WHERE t.chat_id = c.id AND t.status = 'running'
+           )
+         ORDER BY c.updated_at, c.id
+         LIMIT ${limit}
+      `.execute(db());
+      return rows.rows.map((row) => row.id);
+    },
     async listIdsUpdatedBefore(before, limit) {
       const rows = await db()
         .selectFrom('chats')

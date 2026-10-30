@@ -78,6 +78,7 @@ function item(
     updatedAt: chat.updatedAt.toISOString(),
     lastMessageAt: chat.lastMessageAt ? chat.lastMessageAt.toISOString() : null,
     archived: chat.archivedAt !== null,
+    temporary: chat.temporary,
     ownerSubject: chat.ownerSubject,
     ownerName,
     via,

@@ -189,6 +189,11 @@ export interface ChatView {
   role: ChatRole;
   archived: boolean;
   /**
+   * A temporary chat (temporary.ts): no memories read or kept, and deleted
+   * after a day without activity. Settable only while the chat is empty.
+   */
+  temporary: boolean;
+  /**
    * The content could not be opened, and why (docs/delegate-key-design.md):
    * the person's key is not delegated to this session, or they have not
    * enrolled. The page shows a notice instead of a thread of markers.
@@ -240,6 +245,8 @@ export interface ChatListItem {
   updatedAt: string;
   lastMessageAt: string | null;
   archived: boolean;
+  /** See ChatView.temporary. */
+  temporary: boolean;
   ownerSubject: string;
   ownerName: string | null;
   /** How the viewer sees it: theirs, shared by name, or via a project. */

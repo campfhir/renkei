@@ -13,6 +13,7 @@ export function chatFromRow(row: Selectable<Chats>): ChatRecord {
     thinkingEnabled: row.thinking_enabled,
     autoMode: row.auto_mode,
     autoTitleAsked: row.auto_title_asked,
+    temporary: row.temporary,
     workspaceId: row.workspace_id,
     lastMessageAt: row.last_message_at ? new Date(row.last_message_at) : null,
     archivedAt: row.archived_at ? new Date(row.archived_at) : null,
@@ -33,6 +34,7 @@ export function newChatValues(chat: NewChat) {
     tool_config: jsonOrNull(chat.toolConfig),
     thinking_enabled: chat.thinkingEnabled,
     auto_mode: chat.autoMode,
+    temporary: chat.temporary ?? false,
   };
 }
 
@@ -44,5 +46,6 @@ export function chatPatchValues(patch: ChatRecordPatch) {
     ...(patch.toolConfig !== undefined ? { tool_config: jsonOrNull(patch.toolConfig) } : {}),
     ...(patch.thinkingEnabled !== undefined ? { thinking_enabled: patch.thinkingEnabled } : {}),
     ...(patch.autoMode !== undefined ? { auto_mode: patch.autoMode } : {}),
+    ...(patch.temporary !== undefined ? { temporary: patch.temporary } : {}),
   };
 }

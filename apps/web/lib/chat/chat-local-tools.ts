@@ -97,14 +97,18 @@ export async function chatLocalTools(
     // A chart needs the worker's Chromium as well as somewhere to keep the file.
     if (await sandboxChartsEnabled()) tools.push(...chartTools());
   }
-  if (context.projectId) {
+  // A temporary chat neither reads nor keeps memories, and does not
+  // recall the person's other chats either (temporary.ts).
+  if (context.temporary) {
+    // Nothing of memory.
+  } else if (context.projectId) {
     if (!context.readOnly) tools.push(...memoryTools());
   } else if (!context.readOnly) {
     tools.push(...userMemoryTools());
   }
   // Recall sees the project's own chats in a project, the person's own
   // outside one — the tool decides from the context (recall-tools.ts).
-  tools.push(...recallTools());
+  if (!context.temporary) tools.push(...recallTools());
   // The preview cards' state (widget-state-tools.ts): listing is always
   // answerable ("no cards"), and marking one decided writes only the
   // chat's own decision row — the tool refuses under read-only itself.

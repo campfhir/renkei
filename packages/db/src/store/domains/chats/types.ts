@@ -15,6 +15,8 @@ export interface ChatRecord {
   thinkingEnabled: boolean;
   autoMode: boolean;
   autoTitleAsked: boolean;
+  /** No memories, and deleted (not archived) after a day without activity. */
+  temporary: boolean;
   workspaceId: string | null;
   lastMessageAt: Date | null;
   archivedAt: Date | null;
@@ -30,6 +32,8 @@ export interface NewChat {
   toolConfig: unknown;
   thinkingEnabled: boolean;
   autoMode: boolean;
+  /** Default false. */
+  temporary?: boolean;
 }
 
 /** Fields an owner may change; absent ones stay. `archived` sets or clears archived_at (now). */
@@ -39,6 +43,8 @@ export interface ChatRecordPatch {
   toolConfig?: unknown;
   thinkingEnabled?: boolean;
   autoMode?: boolean;
+  /** The caller allows this only while the chat is empty. */
+  temporary?: boolean;
   archived?: boolean;
 }
 
@@ -102,6 +108,11 @@ export interface ChatStore {
    * `updatedBefore` that have no running turn; returns their ids, sorted.
    */
   archiveIdle(ownerSubject: string, updatedBefore: Date): Promise<string[]>;
+  /**
+   * Up to `limit` temporary chats (anyone's) last updated before `before`
+   * with no running turn, oldest first (ties by id).
+   */
+  listTemporaryIdleIds(before: Date, limit: number): Promise<string[]>;
   /** Up to `limit` chats (anyone's) last updated before `before`, oldest first (ties by id). */
   listIdsUpdatedBefore(before: Date, limit: number): Promise<string[]>;
   /** Delete these chats (anyone's; what they hold cascades); returns how many went. */

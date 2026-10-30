@@ -73,6 +73,7 @@ import {
   useCodeChatTools,
 } from '../../code/_components/code-chat-tools';
 import AutoModeToggle from './auto-mode-toggle';
+import { TemporaryChatMark, TemporaryChatToggle } from './temporary-chat';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity, type VoiceSendTicket } from './voice-mode';
@@ -861,6 +862,19 @@ export default function ChatThread({
     },
     [chat.id]
   );
+  // Temporary (lib/chat/temporary.ts): only while the chat is empty; the
+  // route refuses it after the first message, and the switch is gone then.
+  const changeTemporary = useCallback(
+    async (on: boolean) => {
+      setChat((current) => ({ ...current, temporary: on }));
+      const result = await chatClient.updateChat(chat.id, { temporary: on });
+      if (result.error) {
+        setChat((current) => ({ ...current, temporary: !on }));
+        setError(result.error);
+      }
+    },
+    [chat.id]
+  );
   const changeConnectors = useCallback(
     async (next: string[] | null) => {
       setConnectors(next);
@@ -934,6 +948,14 @@ export default function ChatThread({
   const overflow: OverflowItem[] = [
     { label: 'New chat', icon: ICONS.plus, onSelect: () => void startNewChat() },
   ];
+  // A temporary chat stands outside projects (lib/chat/temporary.ts).
+  if (!chat.projectId) {
+    overflow.push({
+      label: 'New temporary chat',
+      icon: ICONS.ghost,
+      onSelect: () => router.push('/chat/new?temporary=1'),
+    });
+  }
   if (codeProjectId) {
     overflow.push({ label: 'Environment', icon: ICONS.chip, onSelect: codeTools.openEnvironment });
     if (isOwner)
@@ -1120,6 +1142,9 @@ export default function ChatThread({
                read-only label ChatTitle renders on its own from
                `project.branch`. */
           />
+          {chat.temporary ? (
+            <TemporaryChatMark chatId={chat.id} updatedAt={chat.updatedAt} running={running} />
+          ) : null}
           {codePane ? (
             paneMode === 'tabs' ? (
               <div
@@ -1276,7 +1301,9 @@ export default function ChatThread({
                   : null
               }
               empty={
-                state.messages.length === 0 ? <EmptyState hasModel={currentModel !== null} /> : null
+                state.messages.length === 0 ? (
+                  <EmptyState hasModel={currentModel !== null} temporary={chat.temporary} />
+                ) : null
               }
             />
 
@@ -1367,6 +1394,8 @@ export default function ChatThread({
                       onChange={changeAutoMode}
                       disabled={models.length === 0}
                     />
+                  ) : !chat.projectId && state.messages.length === 0 && !running ? (
+                    <TemporaryChatToggle on={chat.temporary} onChange={changeTemporary} />
                   ) : null
                 }
                 dictation={
@@ -1545,10 +1574,18 @@ export default function ChatThread({
   );
 }
 
-function EmptyState({ hasModel }: { hasModel: boolean }) {
+function EmptyState({ hasModel, temporary }: { hasModel: boolean; temporary: boolean }) {
   return (
     <div className="mx-auto max-w-md px-4 py-16 text-center text-sm text-gray-500">
-      {hasModel ? (
+      {hasModel && temporary ? (
+        <>
+          <p className="text-base font-medium text-gray-700 dark:text-gray-300">Temporary chat</p>
+          <p className="mt-2">
+            This chat doesn’t read or save your memories, and it is deleted 24 hours after its last
+            activity. It still uses your own access to the organization’s tools.
+          </p>
+        </>
+      ) : hasModel ? (
         <>
           <p className="text-base font-medium text-gray-700 dark:text-gray-300">
             What are you working on?

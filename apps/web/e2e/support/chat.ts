@@ -24,6 +24,7 @@ export interface ChatReadBack {
   chat: {
     id: string;
     title: string | null;
+    updatedAt: string;
     activeTurn: {
       id: string;
       status: string;

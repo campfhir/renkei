@@ -13,6 +13,7 @@ import { getProjectRow } from '@/lib/chat/projects';
  * exists — the thread never has to change address or reload under the
  * person mid-reply. An empty chat stays out of the menu until its first
  * message, and one nobody ever wrote in is swept after a day.
+ * `?temporary=1` starts a temporary chat (lib/chat/temporary.ts).
  *
  * In a code project the new chat becomes the project's active chat and
  * the previous one history (lib/code/active-chat.ts). While that previous
@@ -24,12 +25,16 @@ import { getProjectRow } from '@/lib/chat/projects';
 export default async function NewChatPage({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string }>;
+  searchParams: Promise<{ project?: string; temporary?: string }>;
 }) {
-  const { project: requestedProjectId } = await searchParams;
+  const { project: requestedProjectId, temporary } = await searchParams;
   const session = await getSessionFromCookies();
   if (!session) {
-    const query = requestedProjectId ? `?project=${encodeURIComponent(requestedProjectId)}` : '';
+    const query = requestedProjectId
+      ? `?project=${encodeURIComponent(requestedProjectId)}`
+      : temporary === '1'
+        ? '?temporary=1'
+        : '';
     redirect(signInUrl(`/chat/new${query}`));
   }
 
@@ -52,6 +57,8 @@ export default async function NewChatPage({
     ...input,
     projectId,
     autoMode: project?.kind === 'code',
+    // A temporary chat stands outside projects (lib/chat/temporary.ts).
+    temporary: temporary === '1' && !projectId,
   });
   redirect(`/chat/${chatId}`);
 }
