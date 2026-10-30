@@ -182,7 +182,15 @@ test.describe('code projects', () => {
     await expect(main.getByRole('menuitem', { name: 'Download offline copy' })).toBeVisible();
     await expect(main.getByRole('menuitem', { name: 'Share' })).toBeVisible();
     await shot('code-project-menu.png');
+    // Tools opens from the item, outliving the menu: the project's own
+    // picker, Bitbucket locked on, dismissed with Escape.
+    await main.getByRole('menuitem', { name: 'Tools' }).click();
+    await expect(main.getByText(/Connectors chats in this project start with/)).toBeVisible();
+    await expect(main.getByRole('checkbox', { name: /Bitbucket/ })).toBeChecked();
+    await expect(main.getByRole('checkbox', { name: /Bitbucket/ })).toBeDisabled();
+    await shot('code-project-tools.png');
     await page.keyboard.press('Escape');
+    await expect(main.getByText(/Connectors chats in this project start with/)).toHaveCount(0);
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
