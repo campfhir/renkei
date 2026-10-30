@@ -165,3 +165,23 @@ export {
   type RecordTypeSpec,
   type ProfileRecordTypeAccess,
 } from './record-types';
+export {
+  REPORT_TYPE_CATEGORIES,
+  REPORT_FORMATS,
+  REPORT_SUMMARIES,
+  REPORT_FILTER_OPERATORS,
+  DATE_GRANULARITIES,
+  DATE_INTERVALS,
+  FOLDER_ACCESS,
+  reportableFields,
+  checkReportTypeSpec,
+  buildReportTypePackage,
+  checkFilterLogic,
+  checkReportSpec,
+  buildReportPackage,
+  isCustomReportType,
+  type ReportObjectInfo,
+  type ReportTypeSpec,
+  type ReportSpec,
+  type FolderAccess,
+} from './report-metadata';

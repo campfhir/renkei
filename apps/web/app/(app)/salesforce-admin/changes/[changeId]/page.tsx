@@ -37,6 +37,9 @@ const TYPE_LABELS: Record<string, string> = {
   GlobalValueSet: 'global value set',
   StandardValueSet: 'standard picklist',
   Profile: 'profile',
+  ReportType: 'report type',
+  ReportFolder: 'report folder',
+  Report: 'report',
 };
 
 const OUTCOME_LABELS: Record<OperationResult['outcome'], string> = {

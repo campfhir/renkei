@@ -192,6 +192,20 @@ const OPPORTUNITY = {
 };
 const LAYOUT_ID = '00h000000000001AAA';
 
+const VISIT_NOTE = {
+  name: 'Visit_Note__c',
+  label: 'Visit Note',
+  labelPlural: 'Visit Notes',
+  custom: true,
+  fields: [
+    { name: 'Id', label: 'Record ID', type: 'id' },
+    { name: 'Name', label: 'Note Number', type: 'string', nameField: true },
+    { name: 'Body__c', label: 'Body', type: 'textarea', custom: true },
+  ],
+  childRelationships: [],
+  recordTypeInfos: [],
+};
+
 function answer(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -368,7 +382,76 @@ function fakeOrg(method: string, path: string, query: string): Response {
     });
   }
   if (method === 'GET' && path === `${V}/sobjects/Site_Visit__c/describe`)
-    return answer(200, SITE_VISIT);
+    return answer(200, {
+      ...SITE_VISIT,
+      childRelationships: [
+        { relationshipName: 'Visit_Notes__r', childSObject: 'Visit_Note__c', field: 'Visit__c' },
+      ],
+    });
+  if (method === 'GET' && path === `${V}/sobjects/Visit_Note__c/describe`)
+    return answer(200, VISIT_NOTE);
+  if (method === 'GET' && path === `${V}/analytics/reportTypes`) {
+    return answer(200, [
+      {
+        label: 'Opportunities',
+        reportTypes: [{ label: 'Opportunities', type: 'Opportunity' }],
+      },
+      {
+        label: 'Other Reports',
+        reportTypes: [{ label: 'Site Visits', type: 'Site_Visits__c' }],
+      },
+    ]);
+  }
+  if (method === 'GET' && path === `${V}/analytics/reportTypes/Opportunity`) {
+    return answer(200, {
+      reportMetadata: { reportType: { type: 'Opportunity', label: 'Opportunities' } },
+      reportTypeMetadata: {
+        scopeInfo: {
+          defaultValue: 'user',
+          values: [
+            { value: 'user', label: 'My opportunities' },
+            { value: 'organization', label: 'All opportunities' },
+          ],
+        },
+        categories: [
+          {
+            label: 'Opportunity Information',
+            columns: {
+              OPPORTUNITY_NAME: { label: 'Opportunity Name', dataType: 'string' },
+              AMOUNT: { label: 'Amount', dataType: 'currency' },
+              STAGE_NAME: { label: 'Stage', dataType: 'picklist' },
+              CLOSE_DATE: { label: 'Close Date', dataType: 'date' },
+            },
+          },
+        ],
+      },
+    });
+  }
+  if (method === 'GET' && path === `${V}/analytics/reportTypes/Site_Visits__c`) {
+    return answer(200, {
+      reportMetadata: { reportType: { type: 'Site_Visits__c', label: 'Site Visits' } },
+      reportTypeMetadata: { categories: [] },
+    });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM Folder WHERE Type = 'Report'/.test(q)) {
+    const all = [
+      {
+        Id: '00l000000000001AAA',
+        Name: 'Program Reports',
+        DeveloperName: 'Program_Reports',
+        AccessType: 'Public',
+      },
+    ];
+    const match = /DeveloperName = '([^']*)' OR Name = '([^']*)'/.exec(q);
+    const rows = match
+      ? all.filter((f) => f.DeveloperName === match[1] || f.Name === match[2])
+      : all;
+    return answer(200, { totalSize: rows.length, done: true, records: rows });
+  }
+  if (method === 'GET' && path === `${V}/query` && /FROM Report WHERE OwnerId/.test(q)) {
+    const rows = /DeveloperName = 'Pipeline'/.test(q) ? [{ Id: '00O000000000001AAA' }] : [];
+    return answer(200, { totalSize: rows.length, done: true, records: rows });
+  }
   if (method === 'GET' && path === `${V}/query` && /FROM FieldDefinition/.test(q)) {
     // Every field, including one the person's field-level access hides from the describe.
     return answer(200, {
@@ -1422,5 +1505,142 @@ describe('salesforce_admin_propose_record_type', () => {
     expect(created.isError).toBeUndefined();
     const set = (await received()).files['permissionsets/Site_Visit_Home_Visits.permissionset'];
     expect(set).toContain('<recordType>Site_Visit__c.Home_Visit</recordType>');
+  });
+});
+
+describe('salesforce_admin_propose_report_type', () => {
+  it('joins down the child relationship, one section per object, and deploys it alone', async () => {
+    const result = await call('salesforce_admin_propose_report_type', {
+      label: 'Visits with Notes',
+      baseObject: 'Site Visit',
+      joins: [{ relationship: 'visit_notes__r', outerJoin: true }],
+    });
+    expect(result.isError).toBeUndefined();
+    expect(text(result)).toContain('Visits_with_Notes__c');
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'package.xml',
+      'reportTypes/Visits_with_Notes.reportType',
+    ]);
+    const xml = files['reportTypes/Visits_with_Notes.reportType'];
+    expect(xml).toContain('<baseObject>Site_Visit__c</baseObject>');
+    expect(xml).toContain('<relationship>Visit_Notes__r</relationship>');
+    expect(xml).toContain('<table>Site_Visit__c.Visit_Notes__r</table>');
+    expect(xml).toContain('<field>Body__c</field>');
+    expect(files['package.xml']).toContain('<name>ReportType</name>');
+    expect(stored().kind).toBe('report_type');
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'report-type-absent', name: 'Visits_with_Notes' },
+    ]);
+    expect(stored().payload.components[0]).toMatchObject({
+      type: 'ReportType',
+      name: 'Visits_with_Notes__c',
+      action: 'create',
+    });
+  });
+
+  it('refuses a report type that exists, and a relationship the object does not have', async () => {
+    const taken = await call('salesforce_admin_propose_report_type', {
+      label: 'Site Visits',
+      baseObject: 'Site_Visit__c',
+    });
+    expect(text(taken)).toContain('there is already a report type Site_Visits__c');
+    const nowhere = await call('salesforce_admin_propose_report_type', {
+      label: 'Visit Things',
+      baseObject: 'Site_Visit__c',
+      joins: [{ relationship: 'Things__r' }],
+    });
+    expect(text(nowhere)).toContain('Site_Visit__c has no child relationship Things__r');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+    expect(deploys()).toHaveLength(0);
+  });
+});
+
+describe('report reads', () => {
+  it('lists report types, one type’s columns and scopes, and the folders', async () => {
+    const list = await call('salesforce_admin_list_report_types', { search: 'visit' });
+    expect(text(list)).toBe('Other Reports:\n  Site Visits — Site_Visits__c');
+    const one = await call('salesforce_admin_list_report_types', { type: 'Opportunity' });
+    expect(text(one)).toContain('AMOUNT — Amount (currency)');
+    expect(text(one)).toContain('organization — All opportunities');
+    const folders = await call('salesforce_admin_list_report_folders', {});
+    expect(text(folders)).toBe('Program Reports — Program_Reports (Public)');
+  });
+});
+
+describe('salesforce_admin_propose_report', () => {
+  it('builds a summary report in an existing folder, column names spelled the type’s way', async () => {
+    const result = await call('salesforce_admin_propose_report', {
+      name: 'Open Pipeline by Stage',
+      reportType: 'Opportunity',
+      format: 'Summary',
+      columns: [{ field: 'opportunity_name' }, { field: 'AMOUNT', aggregates: ['Sum'] }],
+      groupingsDown: [{ field: 'STAGE_NAME' }],
+      dateFilter: { column: 'close_date', interval: 'INTERVAL_CURRENTQ' },
+      scope: 'organization',
+      folder: 'Program Reports',
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'package.xml',
+      'reports/Program_Reports/Open_Pipeline_by_Stage.report',
+    ]);
+    const xml = files['reports/Program_Reports/Open_Pipeline_by_Stage.report'];
+    expect(xml).toContain('<field>OPPORTUNITY_NAME</field>');
+    expect(xml).toContain('<dateColumn>CLOSE_DATE</dateColumn>');
+    expect(xml).toContain('<format>Summary</format>');
+    expect(files['package.xml']).toContain(
+      '<members>Program_Reports/Open_Pipeline_by_Stage</members>'
+    );
+    expect(stored().kind).toBe('report');
+    expect(stored().payload.preconditions).toEqual([
+      { kind: 'report-absent', folder: 'Program_Reports', name: 'Open_Pipeline_by_Stage' },
+    ]);
+  });
+
+  it('creates a new folder with a report on a custom report type', async () => {
+    const result = await call('salesforce_admin_propose_report', {
+      name: 'All Visits',
+      reportType: 'Site_Visits__c',
+      columns: [{ field: 'Site_Visit__c$Name' }],
+      newFolder: { label: 'Field Team', access: 'Hidden' },
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    expect(files['reports/Field_Team-meta.xml']).toContain('<accessType>Hidden</accessType>');
+    expect(stored().payload.components.map((c: { type: string }) => c.type)).toEqual([
+      'ReportFolder',
+      'Report',
+    ]);
+    expect(stored().payload.preconditions[0]).toEqual({
+      kind: 'report-folder-absent',
+      folder: 'Field_Team',
+    });
+  });
+
+  it('refuses unknown columns, a taken name, and a missing folder, before anything is stored', async () => {
+    const unknown = await call('salesforce_admin_propose_report', {
+      name: 'Bad',
+      reportType: 'Opportunity',
+      columns: [{ field: 'NOPE' }],
+      folder: 'Program_Reports',
+    });
+    expect(text(unknown)).toContain('Opportunity has no column NOPE');
+    const taken = await call('salesforce_admin_propose_report', {
+      name: 'Pipeline',
+      reportType: 'Opportunity',
+      columns: [{ field: 'AMOUNT' }],
+      folder: 'Program_Reports',
+    });
+    expect(text(taken)).toContain('already has a report Pipeline');
+    const nowhere = await call('salesforce_admin_propose_report', {
+      name: 'Lost',
+      reportType: 'Opportunity',
+      columns: [{ field: 'AMOUNT' }],
+      folder: 'Nowhere',
+    });
+    expect(text(nowhere)).toContain('there is no report folder "Nowhere"');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
   });
 });

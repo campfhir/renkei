@@ -28,6 +28,7 @@ import { registerAdminObjectTools } from './propose-object';
 import { registerAdminPermissionTools } from './permissions';
 import { registerAdminPicklistTools } from './picklist-tools';
 import { registerAdminRecordTypeTools } from './record-type-tools';
+import { registerAdminReportTools } from './report-tools';
 import { registerAdminRequestTools } from './request-change';
 import { ROLE_OPERATOR } from '@/lib/access';
 
@@ -71,6 +72,7 @@ export function registerSalesforceAdminTools(
   registerAdminChangeTools(visible, context, auth);
   registerAdminPicklistTools(visible, context, auth);
   registerAdminRecordTypeTools(visible, context, auth);
+  registerAdminReportTools(visible, context, auth);
   registerAdminLayoutTools(visible, context, auth);
   registerAdminPermissionTools(visible, context, auth);
   // A request in words is the CRM connector's to offer

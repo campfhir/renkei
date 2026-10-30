@@ -984,6 +984,21 @@ permission set proposals are built; the as-built description is the `salesforce-
 - **Tabs for a new object** are shown to the permission sets given access to it (in their
   navigation by default); standard objects' tabs are not offered.
 - **The dependency list is on `get_field`**, not on the review page, for now.
+- **Report types and reports are deploys too**, not REST drafts, so they ride the same
+  change-request path as an object: `salesforce_admin_propose_report_type` builds a custom
+  `ReportType` (a base object, up to three child relationships joined down from it, each inner
+  or outer with no inner join after an outer one, and sections of columns — by default one per
+  object with every reportable field, the name field shown), and `salesforce_admin_propose_report`
+  a `Report` in an existing report folder or a new `ReportFolder` deployed with it (Public read
+  only, Public read-write, or Hidden). Elements are written in the Metadata API's schema order.
+  A standard report type's describe names its columns as the report file does, so wrong names
+  are refused before anything is stored; a custom report type's file spells them
+  `Object__c$Field__c`, and Salesforce's validation checks those. Preconditions: the report type,
+  folder and report are still absent on apply. Reads: `salesforce_admin_list_report_types`
+  (`/analytics/reportTypes`, and one type's columns and scopes) and
+  `salesforce_admin_list_report_folders`. Both proposals stand on the schema capability, so no
+  connection reconnects for them. Changing an existing report or report type, dashboards and
+  folder sharing are not offered yet.
 
 ## Open questions
 

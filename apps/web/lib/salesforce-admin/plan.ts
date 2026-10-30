@@ -24,6 +24,7 @@ import {
   rec,
   recs,
   sfQuery,
+  sfRequest,
   str,
   type SalesforceAccess,
   type SalesforceCallContext,
@@ -42,6 +43,8 @@ export const OBJECT_KIND = 'object';
 export const PERMISSION_SET_KIND = 'permission_set';
 export const ASSIGNMENTS_KIND = 'assignments';
 export const RECORD_TYPE_KIND = 'record_type';
+export const REPORT_TYPE_KIND = 'report_type';
+export const REPORT_KIND = 'report';
 
 /**
  * The capabilities applying a change stands on (lib/salesforce-admin-scopes.ts):
@@ -106,7 +109,12 @@ export type Precondition =
       name: string;
       fingerprint: string;
     }
-  | { kind: 'permission-set-absent'; name: string };
+  | { kind: 'permission-set-absent'; name: string }
+  /** A custom report type's developer name, without `__c`. */
+  | { kind: 'report-type-absent'; name: string }
+  | { kind: 'report-folder-absent'; folder: string }
+  /** A report's developer name in a folder (by the folder's developer name). */
+  | { kind: 'report-absent'; folder: string; name: string };
 
 /** Components read whole and written back whole, checked by a hash on apply. */
 export type WholeComponent =
@@ -283,6 +291,12 @@ export function readMetadataPayload(value: unknown): MetadataPayload | null {
       }
       case 'permission-set-absent':
         return [{ kind: 'permission-set-absent', name: str(p.name) }];
+      case 'report-type-absent':
+        return [{ kind: 'report-type-absent', name: str(p.name) }];
+      case 'report-folder-absent':
+        return [{ kind: 'report-folder-absent', folder: str(p.folder) }];
+      case 'report-absent':
+        return [{ kind: 'report-absent', folder: str(p.folder), name: str(p.name) }];
       default:
         return [];
     }
@@ -343,6 +357,73 @@ export async function fieldExists(
     context,
     access,
     `SELECT QualifiedApiName FROM FieldDefinition WHERE EntityDefinition.QualifiedApiName = ${soqlString(object)} AND QualifiedApiName = ${soqlString(field)}`
+  );
+  if (!found.ok) return found.error;
+  return found.records.length > 0;
+}
+
+/** Whether a custom report type exists (its developer name, with or without `__c`). */
+export async function reportTypeExists(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  name: string
+): Promise<boolean | string> {
+  const type = `${name.replace(/__c$/i, '')}__c`;
+  const found = await sfRequest(
+    context,
+    access,
+    'GET',
+    `/analytics/reportTypes/${encodeURIComponent(type)}`
+  );
+  if (found.ok) return true;
+  return found.status === 404 ? false : found.error;
+}
+
+export interface ReportFolder {
+  id: string;
+  name: string;
+  developerName: string;
+  accessType: string;
+}
+
+/** The org's report folders the person can see, by name (private ones are not folders here). */
+export async function listReportFolders(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  match?: string
+): Promise<ReportFolder[] | string> {
+  const where = match
+    ? ` AND (DeveloperName = ${soqlString(match)} OR Name = ${soqlString(match)})`
+    : ` AND DeveloperName != null`;
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT Id, Name, DeveloperName, AccessType FROM Folder WHERE Type = 'Report'${where} ORDER BY Name LIMIT 200`
+  );
+  if (!found.ok) return found.error;
+  return found.records.map((row) => ({
+    id: str(row.Id),
+    name: str(row.Name),
+    developerName: str(row.DeveloperName),
+    accessType: str(row.AccessType),
+  }));
+}
+
+/** Whether a report of this developer name is in the folder. */
+export async function reportExists(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  folder: string,
+  name: string
+): Promise<boolean | string> {
+  const folders = await listReportFolders(context, access, folder);
+  if (typeof folders === 'string') return folders;
+  const match = folders.find((f) => f.developerName.toLowerCase() === folder.toLowerCase());
+  if (!match) return false;
+  const found = await sfQuery(
+    context,
+    access,
+    `SELECT Id FROM Report WHERE OwnerId = ${soqlString(match.id)} AND DeveloperName = ${soqlString(name)} LIMIT 1`
   );
   if (!found.ok) return found.error;
   return found.records.length > 0;
@@ -551,6 +632,32 @@ export async function brokenPreconditions(
             `A permission set ${precondition.name} exists now — someone created it since this was proposed.`
           );
         }
+        break;
+      }
+      case 'report-type-absent': {
+        const name = `The report type ${precondition.name}__c`;
+        const exists = await reportTypeExists(context, access, precondition.name);
+        if (typeof exists === 'string') broken.push(`Could not check ${name}: ${exists}`);
+        else if (exists)
+          broken.push(`${name} exists now — someone created it since this was proposed.`);
+        break;
+      }
+      case 'report-folder-absent': {
+        const name = `The report folder ${precondition.folder}`;
+        const folders = await listReportFolders(context, access, precondition.folder);
+        if (typeof folders === 'string') broken.push(`Could not check ${name}: ${folders}`);
+        else if (
+          folders.some((f) => f.developerName.toLowerCase() === precondition.folder.toLowerCase())
+        )
+          broken.push(`${name} exists now — someone created it since this was proposed.`);
+        break;
+      }
+      case 'report-absent': {
+        const name = `The report ${precondition.folder}/${precondition.name}`;
+        const exists = await reportExists(context, access, precondition.folder, precondition.name);
+        if (typeof exists === 'string') broken.push(`Could not check ${name}: ${exists}`);
+        else if (exists)
+          broken.push(`${name} exists now — someone created it since this was proposed.`);
         break;
       }
       case 'rule-absent':
