@@ -12,7 +12,13 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { closeDataStore, getDataStore } from '@renkei/db';
 import { instanceListMessage, parseEncryptionKey, verifyEd25519 } from '@renkei/crypto';
-import { setGrant, ATLASSIAN_ADMIN_TOKEN, GITHUB, SALESFORCE } from '@renkei/provider-grants';
+import {
+  setGrant,
+  ATLASSIAN_ADMIN_TOKEN,
+  GITHUB,
+  SALESFORCE,
+  SALESFORCE_ADMIN,
+} from '@renkei/provider-grants';
 import { invalidateConnectorConfigCache, setConnectorConfig } from '@renkei/connector-config';
 import { createInstance, deleteInstance, upsertConnection } from '@renkei/connector-mirth';
 import { sealForSubject } from '@renkei/user-keys';
@@ -911,6 +917,144 @@ describeDb('worker-delegate', () => {
         );
       }
       invalidateConnectorConfigCache(SALESFORCE);
+    }
+  });
+
+  it("puts an admin grant's session in a readMetadata envelope, and nothing else it may send to SOAP", async () => {
+    const key = parseEncryptionKey(process.env.TOKEN_ENCRYPTION_KEY || '');
+    if (!key.ok) throw new Error('bad key');
+    const UAT = 'acme-soap--uat.sandbox.my.salesforce.com';
+    const before = await getDataStore().connectorConfigs.get(SALESFORCE_ADMIN);
+    const configured = await setConnectorConfig(
+      SALESFORCE_ADMIN,
+      {
+        enabled: true,
+        settings: {
+          orgs: [{ key: 'uat', name: 'UAT', myDomain: UAT, sandbox: true, clientId: 'uat-admin' }],
+        },
+        secrets: { 'clientSecret:uat': 'uat-admin-secret' },
+      },
+      key.val
+    );
+    expect(configured.ok).toBe(true);
+    invalidateConnectorConfigCache(SALESFORCE_ADMIN);
+    const READ =
+      '<readMetadata xmlns="http://soap.sforce.com/2006/04/metadata"><type>ReportType</type><fullNames>Referrals</fullNames></readMetadata>';
+    const soap = (
+      grant: Record<string, unknown>,
+      body: string,
+      target = `https://${UAT}/services/Soap/m/68.0`
+    ) =>
+      fetch(`${base}/v1/api`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${API_KEY}`,
+          'x-delegate-grant': JSON.stringify(grant),
+          'x-delegate-url': target,
+          'x-delegate-method': 'POST',
+          'x-delegate-headers': JSON.stringify({ 'content-type': 'text/xml' }),
+        },
+        body,
+      });
+    const accountId = '00D000000000064EAA/005000000000002AAA';
+    try {
+      scriptedAnswers.push(
+        () =>
+          new Response(
+            JSON.stringify({
+              access_token: '00D!admin_access',
+              refresh_token: 'admin_refresh',
+              instance_url: `https://${UAT}`,
+              id: `https://test.salesforce.com/id/${accountId}`,
+              issued_at: '1760000000000',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+      );
+      const exchanged = await op('oauth/exchange', {
+        provider: SALESFORCE_ADMIN,
+        org: 'uat',
+        form: {
+          code: 'c',
+          redirect_uri: 'https://renkei.example/api/oauth/callback',
+          code_verifier: 'v',
+        },
+      });
+      expect(exchanged.status).toBe(200);
+      const committed = await op('grant/commit', {
+        provider: SALESFORCE_ADMIN,
+        handle: String(exchanged.json.handle),
+        subject: owner,
+        accountId,
+        displayName: 'Ada Admin',
+        requestedScopes: ['sfa-read'],
+        metadata: {
+          orgId: '00D000000000064EAA',
+          userId: '005000000000002AAA',
+          instanceUrl: `https://${UAT}`,
+          connector: 'uat',
+        },
+      });
+      expect(committed.status).toBe(200);
+      const grant = { provider: SALESFORCE_ADMIN, accountId };
+
+      // The envelope is the delegate's: the session in its header, the
+      // caller's readMetadata in its body, and no Authorization header.
+      scriptedAnswers.push(
+        () =>
+          new Response('<soapenv:Envelope><soapenv:Body>ok</soapenv:Body></soapenv:Envelope>', {
+            status: 200,
+          })
+      );
+      const read = await soap(grant, READ);
+      expect(read.status).toBe(200);
+      expect(await read.text()).toContain('ok');
+      const sent = upstreamCalls.at(-1);
+      expect(sent?.url).toBe(`https://${UAT}/services/Soap/m/68.0`);
+      expect(sent?.authorization).toBeNull();
+      expect(sent?.headers.soapaction).toBe('""');
+      expect(sent?.body).toContain('<met:sessionId>00D!admin_access</met:sessionId>');
+      expect(sent?.body).toContain('<met:fullNames>Referrals</met:fullNames>');
+
+      // An expired session is a SOAP fault, not a 401: it starts a refresh
+      // rather than coming back as the fault. (The refresh dials the org's
+      // token endpoint itself, which this test does not stand in for, so it
+      // ends there; a 401 on REST takes the same path.)
+      scriptedAnswers.push(
+        () => new Response('<faultcode>sf:INVALID_SESSION_ID</faultcode>', { status: 500 })
+      );
+      const expired = await soap(grant, READ);
+      expect(expired.headers.get('x-delegate-error')).toBe('REFRESH_FAILED');
+
+      // Anything else to SOAP is refused before the token is opened into a body.
+      const calls = upstreamCalls.length;
+      for (const refused of [
+        soap(grant, '<deployRequest/>'),
+        soap(grant, READ, `https://${UAT}/services/Soap/u/68.0`),
+        soap({ provider: SALESFORCE, accountId }, READ),
+      ]) {
+        const answer = await refused;
+        expect([400, 404]).toContain(answer.status);
+      }
+      expect(upstreamCalls.length).toBe(calls);
+    } finally {
+      scriptedAnswers.length = 0;
+      await op('grant/delete', { provider: SALESFORCE_ADMIN, accountId });
+      if (before) {
+        await getDataStore().connectorConfigs.upsert({
+          connector: SALESFORCE_ADMIN,
+          enabled: before.enabled,
+          settings: before.settings,
+          encryptedSecrets: before.encryptedSecrets,
+        });
+      } else {
+        await setConnectorConfig(
+          SALESFORCE_ADMIN,
+          { enabled: false, settings: {}, secrets: {} },
+          key.val
+        );
+      }
+      invalidateConnectorConfigCache(SALESFORCE_ADMIN);
     }
   });
 

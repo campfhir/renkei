@@ -49,7 +49,7 @@ import { resetApiUsage } from '../salesforce/client';
 import { ALL_SALESFORCE_ADMIN_SCOPES } from '@/lib/salesforce-admin-scopes';
 import { registerSalesforceAdminTools } from './index';
 import { salesforceAdminScopeFor } from './scopes';
-import { isMissingReportType } from '@/lib/salesforce-admin/plan';
+import { brokenPreconditions, isMissingReportType } from '@/lib/salesforce-admin/plan';
 
 const app = jest.requireMock<{ listSalesforceConnectors: jest.Mock }>('@/lib/salesforce-app');
 const store = jest.requireMock<{
@@ -213,6 +213,12 @@ function answer(status: number, body: unknown): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+/** The body of the request being answered (the last one recorded). */
+const lastBody = () => {
+  const body = requests.at(-1)?.body;
+  return typeof body === 'string' ? body : '';
+};
 
 function fakeOrg(method: string, path: string, query: string): Response {
   const q = new URLSearchParams(query).get('q') ?? '';
@@ -594,6 +600,17 @@ function fakeOrg(method: string, path: string, query: string): Response {
   }
   if (method === 'GET' && path === `${V}/metadata/deployRequest/${DEPLOY}`) {
     return answer(200, { id: DEPLOY, deployResult: { id: DEPLOY, ...checkOnlyAnswer } });
+  }
+  // readMetadata, through the delegate's SOAP envelope (here, straight to the org).
+  if (method === 'POST' && path === '/services/Soap/m/68.0') {
+    const known = /<fullNames>Site_Visits<\/fullNames>/.test(lastBody());
+    const record = known
+      ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections></records>`
+      : '<records xsi:nil="true"/>';
+    return new Response(
+      `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>${record}</result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`,
+      { status: 200, headers: { 'content-type': 'text/xml' } }
+    );
   }
   // A name that names no report type: Salesforce answers 400, not 404.
   if (method === 'GET' && path.startsWith(`${V}/analytics/reportTypes/`)) {
@@ -1747,5 +1764,96 @@ describe('isMissingReportType', () => {
     );
     expect(isMissingReportType(failed(403, 'INSUFFICIENT_ACCESS', 'No access'))).toBe(false);
     expect(isMissingReportType({ ok: true, status: 200, body: {} })).toBe(false);
+  });
+});
+
+describe('salesforce_admin_propose_report_type_changes', () => {
+  it('reads the report type whole, adds the fields, and deploys it with everything else as it was', async () => {
+    const result = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits__c',
+      add: [
+        { section: 'visits', fields: ['visit_date__c'], checked: ['Visit_Date__c'] },
+        { section: 'Regions', fields: ['Region__c'] },
+      ],
+    });
+    expect(result.isError).toBeUndefined();
+    // The read went out as one readMetadata, for the delegate to wrap.
+    const read = requests.find((r) => r.path === '/services/Soap/m/68.0');
+    expect(read?.body).toBe(
+      '<readMetadata xmlns="http://soap.sforce.com/2006/04/metadata"><type>ReportType</type><fullNames>Site_Visits</fullNames></readMetadata>'
+    );
+    const { files } = await received();
+    expect(Object.keys(files).sort()).toEqual([
+      'package.xml',
+      'reportTypes/Site_Visits.reportType',
+    ]);
+    const xml = files['reportTypes/Site_Visits.reportType'];
+    // What was there stays, rename and all; the new columns follow it.
+    expect(xml).toContain('<displayNameOverride>Visit Stage</displayNameOverride>');
+    expect(xml).toContain('<description>Visits</description>');
+    expect(xml.indexOf('<field>Stage__c</field>')).toBeLessThan(
+      xml.indexOf('<field>Visit_Date__c</field>')
+    );
+    expect(xml).toMatch(
+      /<checkedByDefault>true<\/checkedByDefault>\s*<field>Visit_Date__c<\/field>/
+    );
+    expect(xml).toContain('<masterLabel>Regions</masterLabel>');
+    expect(xml).not.toContain('<fullName>');
+    expect(stored().payload.preconditions).toEqual([
+      {
+        kind: 'component-unchanged',
+        type: 'ReportType',
+        object: '',
+        name: 'Site_Visits',
+        fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+    ]);
+    expect(stored().payload.components[0]).toMatchObject({
+      type: 'ReportType',
+      name: 'Site_Visits__c',
+      action: 'update',
+    });
+  });
+
+  it('stops the apply when the report type changed since it was read, or is gone', async () => {
+    await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+      add: [{ fields: ['Region__c'] }],
+    });
+    const [precondition] = stored().payload.preconditions;
+    const access = await stubAuth.resolve();
+    if (typeof access === 'string') throw new Error(access);
+    const context = { subject: 'subject-1' } as unknown as MCPToolContext;
+    expect(await brokenPreconditions(context, access, [precondition])).toEqual([]);
+    expect(
+      await brokenPreconditions(context, access, [{ ...precondition, fingerprint: 'moved' }])
+    ).toEqual([
+      'The report type Site_Visits__c was changed since this was proposed; propose again from what it is now.',
+    ]);
+    expect(
+      await brokenPreconditions(context, access, [{ ...precondition, name: 'Elsewhere' }])
+    ).toEqual([
+      'The report type Elsewhere__c is gone — someone deleted it since this was proposed.',
+    ]);
+  });
+
+  it('refuses a field already offered, one the object lacks, and a report type that is not there', async () => {
+    const twice = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+      add: [{ fields: ['Name'] }],
+    });
+    expect(text(twice)).toContain('Name (Site_Visit__c) is already in the section “Visits”');
+    const missing = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Site_Visits',
+      add: [{ fields: ['Nope__c'] }],
+    });
+    expect(text(missing)).toContain('Site_Visit__c has no field or lookup path Nope__c');
+    const nowhere = await call('salesforce_admin_propose_report_type_changes', {
+      reportType: 'Elsewhere__c',
+      add: [{ fields: ['Name'] }],
+    });
+    expect(text(nowhere)).toContain('there is no custom report type Elsewhere__c');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+    expect(deploys()).toHaveLength(0);
   });
 });

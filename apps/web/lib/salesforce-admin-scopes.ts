@@ -51,14 +51,15 @@ export const SALESFORCE_ADMIN_SCOPE_OPTIONS: ScopeOption[] = [
       'salesforce_admin_propose_object, salesforce_admin_propose_fields, ' +
       'salesforce_admin_propose_field_changes, salesforce_admin_propose_picklist_changes, ' +
       'salesforce_admin_propose_record_type, salesforce_admin_propose_validation_rule, ' +
-      'salesforce_admin_propose_report_type, salesforce_admin_propose_report (in an existing ' +
+      'salesforce_admin_propose_report_type, salesforce_admin_propose_report_type_changes, ' +
+      'salesforce_admin_propose_report (in an existing ' +
       'report folder or a new one) — each a ' +
       'change request (picklists include standard ones and global value sets, and what each ' +
       'record type offers), checked by a ' +
       'validation deploy in the org and applied only by the person, in their browser. Nothing ' +
       'on the MCP surface changes the org.',
     userHint:
-      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types, validation rules, report types and reports. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
+      'Propose new objects, fields, changes to fields and picklists (standard ones too), record types, validation rules, report types (new ones, or fields added to existing ones) and reports. Each is checked by Salesforce and waits for you to review and apply it in Renkei.',
     group: 'build',
     defaultChecked: true,
   },

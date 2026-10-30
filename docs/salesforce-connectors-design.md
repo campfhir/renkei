@@ -997,8 +997,29 @@ permission set proposals are built; the as-built description is the `salesforce-
   folder and report are still absent on apply. Reads: `salesforce_admin_list_report_types`
   (`/analytics/reportTypes`, and one type's columns and scopes) and
   `salesforce_admin_list_report_folders`. Both proposals stand on the schema capability, so no
-  connection reconnects for them. Changing an existing report or report type, dashboards and
-  folder sharing are not offered yet.
+  connection reconnects for them. Changing an existing report, dashboards and folder sharing are
+  not offered yet.
+- **A report type's columns are named as its report file names them.** A custom report type's
+  describe joins everything with dots (`Referral.Client.Name`); its report file puts a `$`
+  between the table (the base object and the child relationships joined down from it) and the
+  field, which may be a lookup path (`Referral$Client.Name`). `reportFileColumn` makes the
+  file's name from the describe's, reading the objects' child relationships to tell table from
+  lookup; `salesforce_admin_list_report_types` lists a custom type's columns that way, and
+  `salesforce_admin_propose_report` takes either spelling and refuses a column the type does not
+  have before anything is stored.
+- **Fields are added to an existing report type through the SOAP read.**
+  `salesforce_admin_propose_report_type_changes` adds fields, lookup paths (a Referral's
+  `Client.Medicare__pc`) or a joined object's fields to a section, existing or new. A report type
+  deploys whole and the Tooling API has no object for it, so the proposal reads it with the
+  Metadata API's SOAP `readMetadata`, merges only the additions (nothing moves or goes, renamed
+  columns and defaults included), and carries a `component-unchanged` precondition on a hash of
+  what it read. SOAP takes the session inside the envelope, not a header, so the **delegate**
+  writes the envelope (`apps/worker-delegate/src/salesforce-soap.ts`): only for an admin grant,
+  only `POST /services/Soap/m/<version>`, and only a body that is one `readMetadata` naming a
+  type and up to ten plain full names. Anything else sent to a SOAP endpoint is refused before
+  the token is opened into a body, so the token in a body can read and never write; every change
+  still deploys through REST with the token in a header. An expired session (a SOAP fault, not a
+  401) starts the same refresh a 401 does.
 
 ## Open questions
 
@@ -1008,8 +1029,9 @@ permission set proposals are built; the as-built description is the `salesforce-
 2. **Production writes default.** This doc defaults the admin connector to sandboxes only. An org
    without sandboxes (Essentials, some nonprofit editions) would have to turn production on to
    use it at all.
-3. **The SOAP fallback for metadata reads** — which types the Tooling API cannot read in a
-   deployable form, settled against a live org in stage 5.
+3. **The SOAP fallback for metadata reads** — built for report types (see "As built"); which
+   other types need it is settled as their tools are built. The first live-org run should be a
+   sandbox, to confirm the envelope and the answer's shape against Salesforce itself.
 4. **API version — decided: v68.0** (Winter '27). The folder, report formula and dashboard
    save shapes are now confirmed against its guides; what remains is a live-org check of the
    starter-dashboard clone-and-save flow.

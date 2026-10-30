@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-30',
     entries: [
       {
+        kind: 'added',
+        title: 'Salesforce Admin adds fields to report types',
+        detail:
+          "The Salesforce Admin connector can propose adding fields to an existing custom report type, including fields reached through a lookup such as the client account's Medicare number, so reports built on it can show them. Everything already in the report type stays as it is, and Salesforce checks the change before an operator applies it.",
+      },
+      {
         kind: 'fixed',
         title: 'Salesforce Admin names custom report type columns correctly',
         detail:

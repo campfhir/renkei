@@ -184,6 +184,18 @@ The browser seals a person's key to the instance public keys `GET /api/tenant/[t
 - **Otherwise the person is asked.** The KeyGuard shows the fingerprint of each unknown key (`deviceCodeOf`: ten base32 characters of its SHA-256, the same the delegate logs at boot as `key fingerprint …`) and seals nothing until they confirm; "Not now" leaves a banner. Rotation and the automation window in Preferences say to confirm there first.
 - **Honest limits.** `TOKEN_ENCRYPTION_KEY` is on the web app too, so a web app compromised together with the database can unseal the signing key and sign a list of its own; what the signed list defeats is a web app that only alters responses. A browser that first meets the deployment while the web app is compromised trusts what it is shown. The key-handling code (`@renkei/crypto/browser`, `lib/keys/browser`) is bundled with the app and loaded from its own origin; no script is loaded from a third-party origin, and nothing here changes that.
 
+### Salesforce's SOAP read
+
+One provider call carries the token in its body rather than a header: the Salesforce Metadata
+API's SOAP `readMetadata`, which the admin connector needs to read a component the Tooling API
+has no object for (a custom report type). The delegate writes that envelope itself
+(`salesforce-soap.ts`), and only for an admin grant, only to `POST /services/Soap/m/<version>`
+on the grant's own org, and only for a body that is a single `readMetadata` naming a type and up
+to ten plain full names. Anything else sent to a SOAP endpoint is refused before the token is
+opened into a body, so this path can read and never write; deploys keep going through REST with
+the token in a header. Redirects are not followed for it, and an `INVALID_SESSION_ID` fault
+starts the same refresh a 401 does.
+
 ### Callers
 
 The bearer key used to be one shared secret on the web app, the queue worker and the agents worker, with a development default in the compose file; any holder could run any op for any tenant and subject. Now each calling process presents a key of its own and the delegate authorizes by who is calling:

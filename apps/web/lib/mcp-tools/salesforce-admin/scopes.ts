@@ -37,6 +37,7 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_propose_validation_rule':
     case 'salesforce_admin_propose_record_type':
     case 'salesforce_admin_propose_report_type':
+    case 'salesforce_admin_propose_report_type_changes':
     case 'salesforce_admin_propose_report':
       return ['sfa-read', 'sfa-schema'];
 
