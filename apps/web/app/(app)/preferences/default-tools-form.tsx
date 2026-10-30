@@ -2,7 +2,7 @@
 
 /**
  * The person's saved default toolsets — the actual, discoverable home for
- * the preferences that tools-popover.tsx's "Save as my default" / "Clear
+ * the preferences that tools-dialog.tsx's "Save as my default" / "Clear
  * my default" links write to. Those links exist for convenience mid-chat;
  * this section is where someone finds and changes the setting on its own,
  * without needing to already be in a chat. Rendered twice: once for new

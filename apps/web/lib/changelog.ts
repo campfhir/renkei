@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-30',
     entries: [
       {
+        kind: 'changed',
+        title: 'Tools opens as a dialog you can search',
+        detail:
+          'The Tools picker in a chat, on a project page and in the new code project form is a dialog: a search box narrows the connectors, the list scrolls on its own, and Save as my default, Clear my default and Done stay in view.',
+      },
+      {
         kind: 'fixed',
         title: "The file tree's row menu is easier to see, and dialogs are centred on a phone",
         detail:

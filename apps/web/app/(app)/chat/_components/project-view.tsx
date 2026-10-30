@@ -26,7 +26,7 @@ import type { ProjectView as ProjectViewData } from '@/lib/chat/project-view';
 import { DialogFooter } from './chat-nav';
 import ArtifactsCard from './artifacts-card';
 import ShareModal from './share-modal';
-import ToolsPopover from './tools-popover';
+import ToolsDialog from './tools-dialog';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import { formatTokens } from '@/lib/format-tokens';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -384,7 +384,7 @@ export default function ProjectView({
             dialogs open from the items and outlive the menu. */}
         {canEdit ? (
           <span className="relative">
-            <ToolsPopover
+            <ToolsDialog
               selected={project.toolConfig?.connectors ?? null}
               onChange={async (next) => {
                 await sendJsonFull(base, 'PATCH', {

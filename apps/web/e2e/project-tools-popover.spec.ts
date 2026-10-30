@@ -1,5 +1,5 @@
 /**
- * The Tools popover in an open project chat must inherit the PROJECT's own
+ * The Tools dialog in an open project chat must inherit the PROJECT's own
  * toolset before falling back to the person's personal default — the same
  * chat ?? project ?? userDefault ?? built-in chain the server already
  * enforces in tool-config.ts's `effectiveToolConfig` (and start-turn.ts's
@@ -50,7 +50,8 @@ test('a new chat in a project starts from the project’s toolset, not the perso
   await page.waitForURL(/\/chat\/[0-9a-f-]{36}$/);
 
   await page.getByRole('button', { name: 'Tools', exact: true }).click();
-  await expect(page.getByText('Starts from this project’s toolset')).toBeVisible();
+  const dialog = page.getByRole('dialog', { name: 'Tools' });
+  await expect(dialog.getByText('Starts from this project’s toolset')).toBeVisible();
 
   // The project's own toolset (agents only) is what shows checked — not
   // the person's personal default (cards only) and not the built-in core
@@ -71,14 +72,36 @@ test('a new chat in a project starts from the project’s toolset, not the perso
     fullPage: false,
   });
 
+  // Search narrows the list as you type; emptied, everything is back.
+  const search = dialog.getByRole('searchbox', { name: 'Search connectors' });
+  await search.fill('sand');
+  await expect(dialog.getByRole('checkbox')).toHaveCount(1);
+  await expect(dialog.getByRole('checkbox', { name: /Renkei sandbox/ })).toBeVisible();
+  await page.screenshot({
+    path: path.join(SCREENS, testInfo.project.name, 'project-tools-popover-03-search.png'),
+    fullPage: false,
+  });
+  await search.fill('zzz');
+  await expect(dialog.getByText('No connector matches “zzz”.')).toBeVisible();
+  await search.fill('');
+  await expect(dialog.getByRole('checkbox', { name: /Renkei agents/ })).toBeChecked();
+
+  // The dialog keeps its actions in a footer under the list, which
+  // scrolls in a box of its own when the catalog outgrows the screen.
+  const footer = dialog.getByTestId('tools-dialog-footer');
+  await expect(footer.getByRole('button', { name: 'Save as my default' })).toBeInViewport();
+  await expect(footer.getByRole('button', { name: 'Done' })).toBeInViewport();
+  await expect(dialog.getByTestId('tools-dialog-list')).toHaveCSS('overflow-y', 'auto');
+  await footer.getByRole('button', { name: 'Done' }).click();
+  await expect(dialog).toHaveCount(0);
+
   // Mobile-width check (a resized Chromium viewport, not the `mobile`
-  // project's device descriptor — AGENTS.md's note): the popover still
-  // renders and reads correctly at phone width. The header switches to its
-  // compact layout at this width, which remounts the popover (and closes
-  // it), so it's reopened here.
+  // project's device descriptor — AGENTS.md's note): the dialog still
+  // renders and reads correctly at phone width, its footer on screen.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'Tools', exact: true }).click();
   await expect(page.getByRole('checkbox', { name: /Renkei agents/ })).toBeChecked();
+  await expect(footer.getByRole('button', { name: 'Done' })).toBeInViewport();
   await page.screenshot({
     path: path.join(SCREENS, testInfo.project.name, 'project-tools-popover-02-mobile.png'),
     fullPage: false,

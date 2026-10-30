@@ -65,7 +65,7 @@ import Composer, { type ComposerSubmit } from './composer';
 import MessageList from './message-list';
 import ModelSelect from './model-select';
 import ContextMeter from './context-meter';
-import ToolsPopover from './tools-popover';
+import ToolsDialog from './tools-dialog';
 import ShareModal from './share-modal';
 import {
   ChangesBadge,
@@ -1185,7 +1185,7 @@ export default function ChatThread({
           <UploadIndicator compact={compact} />
           {compact ? (
             isOwner ? (
-              <ToolsPopover
+              <ToolsDialog
                 selected={connectors}
                 onChange={changeConnectors}
                 locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}
@@ -1197,7 +1197,7 @@ export default function ChatThread({
             <>
               {codeProjectId ? <CodeChatButtons tools={codeTools} canEdit={isOwner} /> : null}
               {isOwner ? (
-                <ToolsPopover
+                <ToolsDialog
                   selected={connectors}
                   onChange={changeConnectors}
                   locked={codeProjectId ? CODE_PROJECT_CONNECTORS : undefined}

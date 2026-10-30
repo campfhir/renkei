@@ -19,7 +19,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
-import ToolsPopover from '../../chat/_components/tools-popover';
+import ToolsDialog from '../../chat/_components/tools-dialog';
 import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
 import type { GitHubAccount } from '@/lib/code/github-browse';
@@ -280,7 +280,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
             Tools — the connectors chats in this project start with
           </span>
           <div className="flex flex-wrap items-center gap-3">
-            <ToolsPopover
+            <ToolsDialog
               selected={connectors}
               onChange={setConnectors}
               context="project"
