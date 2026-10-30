@@ -87,10 +87,13 @@ function prefetchFile(href: string, filename: string | undefined): Promise<boole
  * shared, it is 'ready' straight away and the link downloads as usual.
  */
 export function useDownloadReady(href: string, filename: string | undefined): 'pending' | 'ready' {
-  const [state, setState] = useState<'pending' | 'ready'>('pending');
+  // Where nothing is fetched ahead there is nothing to wait for: 'ready'
+  // from the first render, so the link never flashes a pending state.
+  const waits = () => isIosStandalone() && canShareFiles();
+  const [state, setState] = useState<'pending' | 'ready'>(() => (waits() ? 'pending' : 'ready'));
   useEffect(() => {
     let live = true;
-    setState('pending');
+    setState(waits() ? 'pending' : 'ready');
     void prefetchFile(href, filename).then(() => {
       if (live) setState('ready');
     });

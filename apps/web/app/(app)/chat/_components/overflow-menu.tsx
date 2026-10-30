@@ -20,7 +20,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
-import DownloadLink from '@/components/download-link';
+import DownloadLink, { useDownloadReady } from '@/components/download-link';
+import { Spinner } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
 import { useFloating } from '@/lib/floating';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -110,19 +111,17 @@ export default function OverflowMenu({
   );
   const list = items.map((item) =>
     item.href ? (
-      <DownloadLink
+      <DownloadMenuItem
         key={item.label}
-        role="menuitem"
-        href={item.href}
-        filename={item.filename}
-        onClick={() => {
+        item={item}
+        className={itemClass(item)}
+        onPick={() => {
           setOpen(false);
           item.onSelect?.();
         }}
-        className={itemClass(item)}
       >
         {itemBody(item)}
-      </DownloadLink>
+      </DownloadMenuItem>
     ) : (
       <button
         key={item.label}
@@ -186,5 +185,45 @@ export default function OverflowMenu({
           )
         : null}
     </div>
+  );
+}
+
+/**
+ * A download in the menu. In the iOS home-screen app the share sheet has
+ * to open from the tap itself with the file already fetched, so the
+ * fetch starts as the menu opens and the item waits, with a spinner,
+ * until the file is in hand — then one tap shares it. Everywhere else
+ * the file is "ready" at once and the item is a plain download link.
+ */
+function DownloadMenuItem({
+  item,
+  className,
+  onPick,
+  children,
+}: {
+  item: OverflowItem;
+  className: string;
+  onPick: () => void;
+  children: ReactNode;
+}) {
+  const state = useDownloadReady(item.href ?? '', item.filename);
+  if (state === 'pending') {
+    return (
+      <div role="menuitem" aria-disabled="true" className={`${className} opacity-70`}>
+        {children}
+        <Spinner size={3} label="Preparing the download" />
+      </div>
+    );
+  }
+  return (
+    <DownloadLink
+      role="menuitem"
+      href={item.href ?? ''}
+      filename={item.filename}
+      onClick={onPick}
+      className={className}
+    >
+      {children}
+    </DownloadLink>
   );
 }
