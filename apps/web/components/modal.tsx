@@ -78,26 +78,31 @@ export default function Modal({
       aria-modal="true"
       aria-label={title}
       onClick={dismissible ? onClose : undefined}
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+      className="fixed inset-0 z-50 overflow-y-auto bg-black/40"
     >
-      <div
-        onClick={(event) => event.stopPropagation()}
-        className={`w-full ${size === 'wide' ? 'max-w-6xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-800 dark:bg-gray-950 ${flush ? 'overflow-hidden' : 'p-5'}`}
-      >
-        <div className={`flex items-center justify-between ${flush ? 'px-5 py-3' : 'mb-3'}`}>
-          <h2 className="text-sm font-semibold">{title}</h2>
-          {dismissible ? (
-            <button
-              type="button"
-              aria-label="Close"
-              onClick={onClose}
-              className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
-            >
-              <Icon path={ICONS.close} />
-            </button>
-          ) : null}
+      {/* Centred at every width, a phone's included; a panel taller than
+          the screen grows this box past it, and the overlay scrolls, so
+          its top is never cut off the way a centred flex child's is. */}
+      <div className="flex min-h-full items-center justify-center p-4">
+        <div
+          onClick={(event) => event.stopPropagation()}
+          className={`w-full ${size === 'wide' ? 'max-w-6xl' : size === 'lg' ? 'max-w-2xl' : 'max-w-md'} rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-800 dark:bg-gray-950 ${flush ? 'overflow-hidden' : 'p-5'}`}
+        >
+          <div className={`flex items-center justify-between ${flush ? 'px-5 py-3' : 'mb-3'}`}>
+            <h2 className="text-sm font-semibold">{title}</h2>
+            {dismissible ? (
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={onClose}
+                className="rounded-md p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+              >
+                <Icon path={ICONS.close} />
+              </button>
+            ) : null}
+          </div>
+          {children}
         </div>
-        {children}
       </div>
     </div>,
     document.body
