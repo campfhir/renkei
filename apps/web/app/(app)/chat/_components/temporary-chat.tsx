@@ -104,7 +104,7 @@ export function TemporaryChatMark({
         aria-label="Temporary chat"
         title={TEMPORARY_NOTICE}
         data-testid="temporary-chat-mark"
-        className="flex shrink-0 items-center rounded-md p-1 text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:text-amber-400 dark:hover:bg-amber-950/40 dark:hover:text-amber-300"
+        className="flex shrink-0 items-center rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
       >
         <Icon path={ICONS.ghost} className="h-5 w-5" />
       </button>
@@ -112,7 +112,7 @@ export function TemporaryChatMark({
         <Modal title="Temporary chat" onClose={() => setOpen(false)}>
           <div className="space-y-3 text-sm text-gray-700 dark:text-gray-300">
             <div className="flex items-start gap-3">
-              <span className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400">
+              <span className="mt-0.5 shrink-0 text-gray-500 dark:text-gray-400">
                 <Icon path={ICONS.ghost} className="h-6 w-6" />
               </span>
               <p>

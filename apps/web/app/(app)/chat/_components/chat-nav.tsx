@@ -337,13 +337,7 @@ function ChatRow({
         <span
           data-kind={mark.kind}
           {...(mark.kind === 'temporary' ? { title: TEMPORARY_NOTICE } : {})}
-          className={`shrink-0 ${
-            active
-              ? 'text-blue-600 dark:text-blue-400'
-              : mark.kind === 'temporary'
-                ? 'text-amber-600 dark:text-amber-400'
-                : 'text-gray-400'
-          }`}
+          className={`shrink-0 ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'}`}
         >
           <Icon path={mark.path} className="h-4 w-4" />
         </span>
