@@ -27,6 +27,7 @@ import {
   REPORT_SUMMARIES,
   REPORT_TYPE_CATEGORIES,
   reportableFields,
+  reportFileColumn,
   type ReportObjectInfo,
   type ReportSpec,
   type ReportTypeSpec,
@@ -99,6 +100,45 @@ async function describeReportType(
     scopes: recs(scopeInfo.values).map((v) => ({ value: str(v.value), label: str(v.label) })),
     defaultScope: str(scopeInfo.defaultValue),
   };
+}
+
+/**
+ * A custom report type's columns as a report file names them, keyed by the
+ * describe's name (reportFileColumn): the objects along each name are
+ * described to tell a child relationship (part of the table) from a lookup
+ * (part of the field).
+ */
+async function reportFileColumns(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  described: ReportTypeDescribe
+): Promise<Map<string, string>> {
+  const children = new Map<string, Record<string, string> | undefined>();
+  const load = async (object: string) => {
+    if (children.has(object)) return children.get(object);
+    const info = objectInfo(await describeObject(context, access, object));
+    children.set(object, info?.children);
+    return info?.children;
+  };
+  const names = new Map<string, string>();
+  for (const column of described.sections.flatMap((section) => section.columns)) {
+    const parts = column.name.split('.');
+    let object = parts[0];
+    for (let at = 1; at < parts.length - 1; at += 1) {
+      const next = await load(object);
+      const relationship = Object.keys(next ?? {}).find(
+        (name) => name.toLowerCase() === parts[at].toLowerCase()
+      );
+      if (!relationship || !next) break;
+      object = next[relationship];
+    }
+    if (parts.length > 2) await load(object);
+    names.set(
+      column.name,
+      reportFileColumn(column.name, (name) => children.get(name))
+    );
+  }
+  return names;
 }
 
 /** The describe as a report type proposal needs it. */
@@ -261,16 +301,20 @@ export function registerAdminReportTools(
             `Records (scope): ${described.scopes.map((s) => `${s.value} — ${s.label}`).join('; ')}${described.defaultScope ? ` (default ${described.defaultScope})` : ''}`
           );
         }
+        // A custom type's columns, named the way a report on it names them.
+        const fileNames = custom ? await reportFileColumns(context, access, described) : null;
         if (custom) {
           lines.push(
-            'In a report file, a custom report type’s column is its object path, a $, then the field: Site_Visit__c.Name here is Site_Visit__c$Name, Site_Visit__c.Visit_Notes__r.Name is Site_Visit__c.Visit_Notes__r$Name.'
+            'Columns are listed as a report on this type names them (the table, a $, then the field or lookup path): use them as they are in salesforce_admin_propose_report.'
           );
         }
         for (const section of described.sections) {
           lines.push('', `${section.label}:`);
           for (const column of section.columns) {
             if (shown >= 500) break;
-            lines.push(`  ${column.name} — ${column.label} (${column.dataType})`);
+            lines.push(
+              `  ${fileNames?.get(column.name) ?? column.name} — ${column.label} (${column.dataType})`
+            );
             shown += 1;
           }
         }
@@ -589,13 +633,23 @@ export function registerAdminReportTools(
       const described = await describeReportType(context, access, spec.reportType);
       if (typeof described === 'string') return errText(`Nothing was proposed: ${described}`);
       spec.reportType = described.type;
-      // A standard report type's describe names the columns the report file
-      // takes, so a wrong name is caught here; a custom one's are spelled
-      // differently in the file, and Salesforce's validation checks them.
-      if (!isCustomReportType(described.type)) {
-        const known = new Map(
-          described.sections.flatMap((s) => s.columns.map((c) => [c.name.toLowerCase(), c.name]))
-        );
+      // Every column is checked against the report type's describe, so a
+      // wrong name is refused here rather than by a failed validation in the
+      // operators' queue. A standard type's describe names the columns as
+      // the report file does; a custom type's are spelled differently in the
+      // file (reportFileColumns), and either spelling is taken.
+      {
+        const known = new Map<string, string>();
+        if (isCustomReportType(described.type)) {
+          for (const [name, file] of await reportFileColumns(context, access, described)) {
+            known.set(name.toLowerCase(), file);
+            known.set(file.toLowerCase(), file);
+          }
+        } else {
+          for (const column of described.sections.flatMap((section) => section.columns)) {
+            known.set(column.name.toLowerCase(), column.name);
+          }
+        }
         const unknown: string[] = [];
         const fix = (name: string) => {
           const found = known.get(name.toLowerCase());

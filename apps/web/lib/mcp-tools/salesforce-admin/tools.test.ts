@@ -431,7 +431,23 @@ function fakeOrg(method: string, path: string, query: string): Response {
   if (method === 'GET' && path === `${V}/analytics/reportTypes/Site_Visits__c`) {
     return answer(200, {
       reportMetadata: { reportType: { type: 'Site_Visits__c', label: 'Site Visits' } },
-      reportTypeMetadata: { categories: [] },
+      reportTypeMetadata: {
+        categories: [
+          {
+            label: 'Site Visits',
+            columns: {
+              'Site_Visit__c.Name': { label: 'Visit Number', dataType: 'string' },
+              'Site_Visit__c.Owner.Email': { label: 'Owner: Email', dataType: 'email' },
+            },
+          },
+          {
+            label: 'Visit Notes',
+            columns: {
+              'Site_Visit__c.Visit_Notes__r.Body__c': { label: 'Body', dataType: 'textarea' },
+            },
+          },
+        ],
+      },
     });
   }
   if (method === 'GET' && path === `${V}/query` && /FROM Folder WHERE Type = 'Report'/.test(q)) {
@@ -1639,6 +1655,47 @@ describe('salesforce_admin_propose_report', () => {
     });
     expect(text(result)).toContain('There is no report type No_Such_Type__c');
     expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
+  it('names a custom report type’s columns the way its report file does, and takes either spelling', async () => {
+    const listed = text(
+      await call('salesforce_admin_list_report_types', { type: 'Site_Visits__c' })
+    );
+    expect(listed).toContain('Site_Visit__c$Name — Visit Number (string)');
+    // A lookup path stays in the field; a child relationship joins the table.
+    expect(listed).toContain('Site_Visit__c$Owner.Email — Owner: Email (email)');
+    expect(listed).toContain('Site_Visit__c.Visit_Notes__r$Body__c — Body (textarea)');
+
+    const result = await call('salesforce_admin_propose_report', {
+      name: 'Visits and Owners',
+      reportType: 'Site_Visits__c',
+      columns: [
+        { field: 'Site_Visit__c.Name' },
+        { field: 'Site_Visit__c.Owner.Email' },
+        { field: 'Site_Visit__c.Visit_Notes__r$Body__c' },
+      ],
+      filters: [{ column: 'site_visit__c.owner.email', operator: 'contains', value: '@acme' }],
+      folder: 'Program_Reports',
+    });
+    expect(result.isError).toBeUndefined();
+    const { files } = await received();
+    const xml = files['reports/Program_Reports/Visits_and_Owners.report'];
+    expect(xml).toContain('<field>Site_Visit__c$Name</field>');
+    expect(xml).toContain('<field>Site_Visit__c$Owner.Email</field>');
+    expect(xml).toContain('<field>Site_Visit__c.Visit_Notes__r$Body__c</field>');
+    expect(xml).toContain('<column>Site_Visit__c$Owner.Email</column>');
+  });
+
+  it('refuses a custom report type’s column it does not have, before anything is stored', async () => {
+    const result = await call('salesforce_admin_propose_report', {
+      name: 'Bad Visits',
+      reportType: 'Site_Visits__c',
+      columns: [{ field: 'Site_Visit__c.Owner$Email' }],
+      folder: 'Program_Reports',
+    });
+    expect(text(result)).toContain('Site_Visits__c has no column Site_Visit__c.Owner$Email');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+    expect(deploys()).toHaveLength(0);
   });
 
   it('refuses unknown columns, a taken name, and a missing folder, before anything is stored', async () => {

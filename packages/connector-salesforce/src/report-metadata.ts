@@ -687,5 +687,39 @@ export function buildReportPackage(spec: ReportSpec): {
   return { files, members };
 }
 
+/**
+ * The name a report file gives a custom report type's column, from the name
+ * its describe gives it. The describe joins everything with dots
+ * (`Referral.Client.Name`); the file puts a `$` between the table — the base
+ * object and the child relationships joined down from it — and the field,
+ * which may itself be a lookup path: `Referral$Client.Name`,
+ * `Site_Visit__c.Visit_Notes__r$Owner.Email`. `childrenOf` gives an object's
+ * child relationship names and the object each leads to; a name already
+ * holding a `$` is returned as it is.
+ */
+export function reportFileColumn(
+  describeName: string,
+  childrenOf: (object: string) => Record<string, string> | undefined
+): string {
+  if (describeName.includes('$')) return describeName;
+  const parts = describeName.split('.');
+  if (parts.length < 2) return describeName;
+  const table = [parts[0]];
+  let object = parts[0];
+  let at = 1;
+  // The last part is always a field, so a table never swallows it.
+  while (at < parts.length - 1) {
+    const children = childrenOf(object) ?? {};
+    const relationship = Object.keys(children).find(
+      (name) => name.toLowerCase() === parts[at].toLowerCase()
+    );
+    if (!relationship) break;
+    table.push(relationship);
+    object = children[relationship];
+    at += 1;
+  }
+  return `${table.join('.')}$${parts.slice(at).join('.')}`;
+}
+
 /** Whether a report type's API name is a custom report type's (`…__c`). */
 export const isCustomReportType = (name: string): boolean => /__c$/i.test(name.trim());

@@ -180,6 +180,7 @@ export {
   checkReportSpec,
   buildReportPackage,
   isCustomReportType,
+  reportFileColumn,
   type ReportObjectInfo,
   type ReportTypeSpec,
   type ReportSpec,
