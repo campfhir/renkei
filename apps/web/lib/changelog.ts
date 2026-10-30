@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-30',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Salesforce Admin can propose new report types',
+        detail:
+          'Proposing a custom report type no longer fails with "Specify a valid report type": a report type that does not exist yet is now recognised as new.',
+      },
+      {
         kind: 'added',
         title: 'Salesforce Admin builds report types and reports',
         detail:

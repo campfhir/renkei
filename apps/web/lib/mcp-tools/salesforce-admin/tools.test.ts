@@ -49,6 +49,7 @@ import { resetApiUsage } from '../salesforce/client';
 import { ALL_SALESFORCE_ADMIN_SCOPES } from '@/lib/salesforce-admin-scopes';
 import { registerSalesforceAdminTools } from './index';
 import { salesforceAdminScopeFor } from './scopes';
+import { isMissingReportType } from '@/lib/salesforce-admin/plan';
 
 const app = jest.requireMock<{ listSalesforceConnectors: jest.Mock }>('@/lib/salesforce-app');
 const store = jest.requireMock<{
@@ -577,6 +578,16 @@ function fakeOrg(method: string, path: string, query: string): Response {
   }
   if (method === 'GET' && path === `${V}/metadata/deployRequest/${DEPLOY}`) {
     return answer(200, { id: DEPLOY, deployResult: { id: DEPLOY, ...checkOnlyAnswer } });
+  }
+  // A name that names no report type: Salesforce answers 400, not 404.
+  if (method === 'GET' && path.startsWith(`${V}/analytics/reportTypes/`)) {
+    const type = decodeURIComponent(path.slice(`${V}/analytics/reportTypes/`.length));
+    return answer(400, [
+      {
+        errorCode: 'BAD_REQUEST',
+        message: `Specify a valid report type. ${type} is not a report type.`,
+      },
+    ]);
   }
   return answer(404, [{ errorCode: 'NOT_FOUND', message: `no stub for ${method} ${path}` }]);
 }
@@ -1619,6 +1630,17 @@ describe('salesforce_admin_propose_report', () => {
     });
   });
 
+  it('names a report type the org does not have, from Salesforce’s 400', async () => {
+    const result = await call('salesforce_admin_propose_report', {
+      name: 'Referrals',
+      reportType: 'No_Such_Type__c',
+      columns: [{ field: 'X$Name' }],
+      folder: 'Program_Reports',
+    });
+    expect(text(result)).toContain('There is no report type No_Such_Type__c');
+    expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+
   it('refuses unknown columns, a taken name, and a missing folder, before anything is stored', async () => {
     const unknown = await call('salesforce_admin_propose_report', {
       name: 'Bad',
@@ -1642,5 +1664,31 @@ describe('salesforce_admin_propose_report', () => {
     });
     expect(text(nowhere)).toContain('there is no report folder "Nowhere"');
     expect(store.createChangeRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe('isMissingReportType', () => {
+  it('reads a 404 and Salesforce’s 400 "not a report type" as absent, and nothing else', () => {
+    const failed = (status: number, errorCode: string, message: string) => ({
+      ok: false as const,
+      status,
+      error: message,
+      errors: [{ errorCode, message, fields: [] }],
+    });
+    expect(
+      isMissingReportType(
+        failed(
+          400,
+          'BAD_REQUEST',
+          'Specify a valid report type. Accounts_with_Referrals__c is not a report type.'
+        )
+      )
+    ).toBe(true);
+    expect(isMissingReportType(failed(404, 'NOT_FOUND', 'Not found'))).toBe(true);
+    expect(isMissingReportType(failed(400, 'BAD_REQUEST', 'Something else went wrong'))).toBe(
+      false
+    );
+    expect(isMissingReportType(failed(403, 'INSUFFICIENT_ACCESS', 'No access'))).toBe(false);
+    expect(isMissingReportType({ ok: true, status: 200, body: {} })).toBe(false);
   });
 });

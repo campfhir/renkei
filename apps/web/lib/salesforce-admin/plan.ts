@@ -28,6 +28,7 @@ import {
   str,
   type SalesforceAccess,
   type SalesforceCallContext,
+  type SalesforceResult,
 } from '@/lib/mcp-tools/salesforce/client';
 import { entityKey, fingerprintOf, toolingQuery } from './tooling';
 import { listRecordTypes, wholeComponentFingerprint } from './whole-components';
@@ -362,6 +363,24 @@ export async function fieldExists(
   return found.records.length > 0;
 }
 
+/**
+ * Whether the Reports API's answer for one report type says there is no
+ * such type. Salesforce answers 400 BAD_REQUEST ("Specify a valid report
+ * type. X__c is not a report type.") rather than 404 for a name that names
+ * nothing, so both mean absent; any other failure is a failure.
+ */
+export function isMissingReportType(result: SalesforceResult): boolean {
+  if (result.ok) return false;
+  if (result.status === 404) return true;
+  return (
+    result.status === 400 &&
+    result.errors.some(
+      (error) =>
+        error.errorCode === 'BAD_REQUEST' && /not a (valid )?report type/i.test(error.message)
+    )
+  );
+}
+
 /** Whether a custom report type exists (its developer name, with or without `__c`). */
 export async function reportTypeExists(
   context: SalesforceCallContext,
@@ -376,7 +395,7 @@ export async function reportTypeExists(
     `/analytics/reportTypes/${encodeURIComponent(type)}`
   );
   if (found.ok) return true;
-  return found.status === 404 ? false : found.error;
+  return isMissingReportType(found) ? false : found.error;
 }
 
 export interface ReportFolder {
