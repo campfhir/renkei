@@ -28,14 +28,14 @@ export function salesforceAdminScopeFor(toolName: string): string[] {
     case 'salesforce_admin_request_change':
       return ['sfa-read'];
 
+    // Report types and reports are metadata deploys like an object's,
+    // under the same capability, so nobody reconnects to build them.
     case 'salesforce_admin_propose_object':
     case 'salesforce_admin_propose_fields':
     case 'salesforce_admin_propose_field_changes':
     case 'salesforce_admin_propose_picklist_changes':
     case 'salesforce_admin_propose_validation_rule':
     case 'salesforce_admin_propose_record_type':
-    // Report types and reports are metadata deploys like an object's,
-    // under the same capability, so nobody reconnects to build them.
     case 'salesforce_admin_propose_report_type':
     case 'salesforce_admin_propose_report':
       return ['sfa-read', 'sfa-schema'];
