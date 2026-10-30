@@ -4,8 +4,9 @@
  * The chat list under the app menu's Chat section, on every page: mine
  * grouped by day (archived ones behind a switch), then the ones shared
  * with me. A row leads with a mark for what it is — a round bubble for an
- * ordinary chat, fanned pages for one in a chat project, angle brackets
- * for one in a code project — then its title, with the project's name
+ * ordinary chat, a ghost for a temporary one (its tooltip says what that
+ * means), fanned pages for one in a chat project, angle brackets for one
+ * in a code project — then its title, with the project's name
  * beneath when it sits in one (no owner line: the chat's own title bar
  * carries that). Row actions live behind a "⋯" menu — the notifications
  * list's idiom — and every mutation goes through a route and then
@@ -20,6 +21,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import Modal from '@/components/modal';
+import { TEMPORARY_NOTICE } from './temporary-chat';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
@@ -246,9 +248,14 @@ function StateFilter({
 }
 
 /** The mark at the head of a row: which kind of chat this is. */
-function kindOf(chat: ChatListItem): { kind: 'chat' | 'project' | 'code'; path: string } {
+function kindOf(chat: ChatListItem): {
+  kind: 'chat' | 'project' | 'code' | 'temporary';
+  path: string;
+} {
   if (chat.projectKind === 'code') return { kind: 'code', path: ICONS.code };
   if (chat.projectId) return { kind: 'project', path: ICONS.pages };
+  // A temporary chat is never in a project (lib/chat/temporary.ts).
+  if (chat.temporary) return { kind: 'temporary', path: ICONS.ghost };
   return { kind: 'chat', path: ICONS.chat };
 }
 
@@ -329,7 +336,14 @@ function ChatRow({
       >
         <span
           data-kind={mark.kind}
-          className={`shrink-0 ${active ? 'text-blue-600 dark:text-blue-400' : 'text-gray-400'}`}
+          {...(mark.kind === 'temporary' ? { title: TEMPORARY_NOTICE } : {})}
+          className={`shrink-0 ${
+            active
+              ? 'text-blue-600 dark:text-blue-400'
+              : mark.kind === 'temporary'
+                ? 'text-amber-600 dark:text-amber-400'
+                : 'text-gray-400'
+          }`}
         >
           <Icon path={mark.path} className="h-4 w-4" />
         </span>
@@ -340,14 +354,6 @@ function ChatRow({
             {chat.archived ? (
               <span className="shrink-0 rounded bg-gray-200 px-1 text-[10px] font-medium uppercase text-gray-600 dark:bg-gray-800 dark:text-gray-400">
                 archived
-              </span>
-            ) : null}
-            {chat.temporary ? (
-              <span
-                title="Temporary chat: no memories, deleted 24 hours after its last activity"
-                className="shrink-0 rounded bg-amber-100 px-1 text-[10px] font-medium uppercase text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-              >
-                temporary
               </span>
             ) : null}
           </span>

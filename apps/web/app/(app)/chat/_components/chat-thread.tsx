@@ -73,7 +73,7 @@ import {
   useCodeChatTools,
 } from '../../code/_components/code-chat-tools';
 import AutoModeToggle from './auto-mode-toggle';
-import { TemporaryChatNotice, TemporaryChatToggle } from './temporary-chat';
+import { TemporaryChatMark, TemporaryChatToggle } from './temporary-chat';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity, type VoiceSendTicket } from './voice-mode';
@@ -952,7 +952,7 @@ export default function ChatThread({
   if (!chat.projectId) {
     overflow.push({
       label: 'New temporary chat',
-      icon: ICONS.clock,
+      icon: ICONS.ghost,
       onSelect: () => router.push('/chat/new?temporary=1'),
     });
   }
@@ -1142,6 +1142,9 @@ export default function ChatThread({
                read-only label ChatTitle renders on its own from
                `project.branch`. */
           />
+          {chat.temporary ? (
+            <TemporaryChatMark chatId={chat.id} updatedAt={chat.updatedAt} running={running} />
+          ) : null}
           {codePane ? (
             paneMode === 'tabs' ? (
               <div
@@ -1346,8 +1349,6 @@ export default function ChatThread({
                 </div>
               </div>
             ) : null}
-
-            {chat.temporary ? <TemporaryChatNotice /> : null}
 
             {isOwner ? (
               <Composer

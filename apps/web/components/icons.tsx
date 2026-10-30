@@ -108,6 +108,9 @@ export const ICONS = {
     'M5 9h14v11H5zM12 9V6M12 6a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M9.5 14.5h.01M14.5 14.5h.01M5 13H3v3h2M19 13h2v3h-2',
   /** A round speech bubble — an ordinary chat, and the Chat door. */
   chat: 'M7.9 20A9 9 0 1 0 4 16.1L2 22z',
+  /** A ghost with a wavy hem — a temporary chat: no memories, gone after a quiet day. */
+  ghost:
+    'M5 21V11a7 7 0 0 1 14 0v10l-2.33-2-2.34 2-2.33-2-2.33 2-2.34-2zM9.5 10.5h.01M14.5 10.5h.01',
   /** Three sheets fanned out — a chat in a project, and the Projects door. */
   pages: 'M4 8h11v13H4zM7 8V5h11v13h-3M10 5V2h11v13h-3',
   /** Angle brackets around a slash — a chat in a code project, and the Code door. */

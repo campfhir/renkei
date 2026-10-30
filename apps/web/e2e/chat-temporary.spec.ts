@@ -1,7 +1,9 @@
 /**
  * A temporary chat, end to end in a browser: the Temporary switch on an
  * empty chat's composer makes it one (kept across a reload, with the empty
- * state and the notice saying what it means), the menu tags it, and a
+ * state saying what it means, a ghost in the title bar whose tooltip says
+ * it again and whose dialog says when the chat will be deleted), the
+ * menu's row leads with the same ghost, and a
  * reply in it cannot keep a memory — the stub model calls
  * chat_memory_remember, which a temporary chat is not offered, so the call
  * is refused without a permission ask, the turn carries on, and the
@@ -20,7 +22,7 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Page, TestInfo } from '@playwright/test';
-import { createChat } from './support/chat';
+import { createChat, readChat } from './support/chat';
 import { addStubModel, removeModel, scripted, toolStep } from './support/stub-model';
 import { test, expect } from './fixtures';
 
@@ -53,7 +55,7 @@ test('a temporary chat keeps no memory and says so, and stays out of projects', 
     // An ordinary empty chat: the switch is off, and nothing says temporary.
     const off = main.getByRole('button', { name: 'Temporary chat off' });
     await expect(off).toBeVisible();
-    await expect(page.getByTestId('temporary-chat-notice')).toHaveCount(0);
+    await expect(page.getByTestId('temporary-chat-mark')).toHaveCount(0);
     const saved = page.waitForResponse(
       (response) =>
         response.url().endsWith(`/api/chat/chats/${chatId}`) &&
@@ -62,13 +64,14 @@ test('a temporary chat keeps no memory and says so, and stays out of projects', 
     await off.click();
     expect((await saved).ok()).toBe(true);
 
-    // On: the empty state and the notice say what it means, and it holds.
+    // On: the empty state and the ghost's tooltip say what it means, and it holds.
     await expect(main.getByRole('button', { name: 'Temporary chat on' })).toHaveAttribute(
       'aria-pressed',
       'true'
     );
     await expect(main.getByText('Temporary chat', { exact: true })).toBeVisible();
-    await expect(page.getByTestId('temporary-chat-notice')).toHaveText(NOTICE);
+    const ghost = main.getByTestId('temporary-chat-mark');
+    await expect(ghost).toHaveAttribute('title', NOTICE);
     await page.reload();
     await expect(main.getByRole('button', { name: 'Temporary chat on' })).toBeVisible();
     await shot(page, testInfo, 'chat-temporary-01-empty');
@@ -92,11 +95,30 @@ test('a temporary chat keeps no memory and says so, and stays out of projects', 
     const body: { entries: { content: string }[] } = await memory.json();
     expect(body.entries).toEqual([]);
 
-    // Written in: the switch is gone, the notice stays, the menu tags it.
+    // Written in: the switch is gone, the ghost stays, and the menu's row
+    // leads with a ghost of its own, the same words in its tooltip.
     await expect(main.getByRole('button', { name: /Temporary chat (on|off)/ })).toHaveCount(0);
-    await expect(page.getByTestId('temporary-chat-notice')).toBeVisible();
+    await expect(ghost).toBeVisible();
     const row = page.locator(`a[href="/chat/${chatId}"]`).filter({ visible: true });
-    await expect(row.getByText('temporary', { exact: true })).toBeVisible();
+    await expect(row.locator('[data-kind="temporary"]')).toHaveAttribute('title', NOTICE);
+
+    // The ghost's dialog: when this chat goes, a day after its last
+    // activity as it stands when the dialog opens (the automatic title can
+    // still move it on a moment after the reply, so it is bracketed).
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const before = new Date((await readChat(page.request, chatId)).chat.updatedAt).getTime();
+    await ghost.click();
+    const dialog = page.getByRole('dialog', { name: 'Temporary chat' });
+    const deletes = dialog.getByTestId('temporary-chat-deletes-at');
+    await expect(deletes).toContainText('It will be deleted on');
+    await expect(deletes).toContainText('in about 24 hours');
+    const at = new Date((await deletes.locator('time').getAttribute('datetime')) ?? '').getTime();
+    const after = new Date((await readChat(page.request, chatId)).chat.updatedAt).getTime();
+    expect(at).toBeGreaterThanOrEqual(before + DAY_MS);
+    expect(at).toBeLessThanOrEqual(after + DAY_MS);
+    await shot(page, testInfo, 'chat-temporary-03-dialog');
+    await dialog.getByRole('button', { name: 'Close' }).click();
+    await expect(dialog).toHaveCount(0);
     await shot(page, testInfo, 'chat-temporary-02-replied');
 
     // And the route will not change it now, nor put it in a project.
@@ -125,14 +147,14 @@ test('a temporary chat keeps no memory and says so, and stays out of projects', 
     await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
     await expect(main.getByRole('button', { name: 'Temporary chat on' })).toBeVisible();
 
-    // Phone width: the notice and the switch fit.
+    // Phone width: the ghost and the switch fit.
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await expect(page.getByTestId('temporary-chat-notice')).toBeVisible();
+    await expect(main.getByTestId('temporary-chat-mark')).toBeVisible();
     const fits = await page.evaluate(
       () => document.documentElement.scrollWidth <= document.documentElement.clientWidth
     );
     expect(fits).toBe(true);
-    await shot(page, testInfo, 'chat-temporary-03-mobile');
+    await shot(page, testInfo, 'chat-temporary-04-mobile');
   } finally {
     await removeModel(page.request, modelId);
   }
