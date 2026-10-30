@@ -30,6 +30,7 @@ import AttachmentListModal from './attachment-list-modal';
 import AttachmentChip from './attachment-chip';
 import ComposerToolsMenu from './composer-tools-menu';
 import PromptPicker from './prompt-picker';
+import { usePathCompletions, type PathCompletionScope } from './path-autocomplete';
 import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
 import { useDraftSync } from './use-draft-sync';
 
@@ -130,6 +131,7 @@ export default function Composer({
   project = null,
   bare = false,
   draft,
+  pathCompletions = null,
 }: {
   chatId: string;
   disabled: boolean;
@@ -181,6 +183,11 @@ export default function Composer({
    * persisted at all (a throwaway composer in a dialog).
    */
   draft?: string;
+  /**
+   * In a code project's chat: `@` completes a path in the repository
+   * (path-autocomplete.tsx). Nothing elsewhere.
+   */
+  pathCompletions?: PathCompletionScope | null;
 }) {
   const [text, setText] = useState(draft ?? '');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -206,6 +213,7 @@ export default function Composer({
   const [prompts, setPrompts] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const completions = usePathCompletions({ scope: pathCompletions, textareaRef, text, setText });
   // An earlier prompt being rewritten fills the box but is not a draft of the next one.
   useDraftSync(chatId, text, draft !== undefined && !editing, draft ?? '');
   const composerAnchor = useCoachAnchor('chat-composer');
@@ -461,6 +469,8 @@ export default function Composer({
   }, [uploading, uploadTotal, pendingBatch, placing, send]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    // The path list has first claim on arrows, Enter, Tab and Escape while it shows.
+    if (completions.onKeyDown(event)) return;
     if (event.key === '/' && text === '') {
       event.preventDefault();
       setPrompts(true);
@@ -764,6 +774,10 @@ export default function Composer({
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
+          onSelect={completions.refresh}
+          aria-autocomplete={pathCompletions ? 'list' : undefined}
+          aria-controls={completions.open ? completions.listboxId : undefined}
+          aria-activedescendant={completions.activeId}
           onPaste={(event) => {
             const files = [...event.clipboardData.files];
             if (uploads && files.length > 0) {
@@ -785,6 +799,7 @@ export default function Composer({
           aria-label="Message"
           className="block w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none disabled:opacity-60"
         />
+        {completions.overlay}
         <div className="flex items-center gap-1 px-2 pb-2">
           {project && remembered ? (
             <button

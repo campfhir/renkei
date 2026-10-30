@@ -17,6 +17,7 @@
 
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import JSZip from 'jszip';
 
 const PORT = Number(process.env.SANDBOX_STUB_PORT ?? '8092');
 const API_KEY = process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key';
@@ -120,6 +121,41 @@ function wasTracked(path) {
 function folderOf(path) {
   const index = path.lastIndexOf('/');
   return index < 0 ? '' : path.slice(0, index);
+}
+
+/** Every file (not folder) a workspace has, the fixture and its overlay together. */
+function allFilePaths(workspace) {
+  const result = [];
+  for (const dirPath of new Set([
+    ...Object.keys(TREE),
+    ...(workspace.extraEntries?.keys() ?? []),
+  ])) {
+    for (const entry of pathsIn(dirPath, workspace)) {
+      if (entry.kind === 'file') result.push(entry.path);
+    }
+  }
+  return [...new Set(result)];
+}
+
+/**
+ * The slice of glob syntax ripgrep's `--glob` gives the worker's `find`
+ * and the web app sends it: `**` any depth, `*` within a segment, `?` one
+ * character, everything else literal. Matched against the whole path.
+ */
+function globToRegExp(glob) {
+  let source = '';
+  for (let index = 0; index < glob.length; index += 1) {
+    const char = glob[index];
+    if (char === '*') {
+      if (glob[index + 1] === '*') {
+        index += 1;
+        if (glob[index + 1] === '/') index += 1;
+        source += '(?:.*/)?';
+      } else source += '[^/]*';
+    } else if (char === '?') source += '[^/]';
+    else source += char.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${source}$`);
 }
 
 /** What the checkout has uncommitted, for the Changes button and its diff. */
@@ -776,6 +812,55 @@ function handleWorkspaces(op, body, response) {
         ignored: entry.ignored === true,
       }));
       return json(response, 200, { path, entries });
+    }
+    case 'download': {
+      // A file as its bytes; a folder (or '' — the checkout) as a zip of
+      // every file under it, the fixture's and the overlay's alike, as
+      // the worker's `zip -r` would make it (node_modules included).
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (workspace.status !== 'ready')
+        return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+      const path = typeof body.path === 'string' ? body.path.replace(/^\/+|\/+$/g, '') : '';
+      const entry = path ? entryAt(path, workspace) : { kind: 'dir' };
+      if (!entry) return error(response, 404, 'not_found', `No such file or folder: ${path}`);
+      const bytesOf = (file) =>
+        workspace.files.get(file) ?? Buffer.from(FILES[file] ?? '', 'utf8');
+      if (entry.kind === 'file') {
+        const bytes = bytesOf(path);
+        response.writeHead(200, {
+          'content-type': 'application/octet-stream',
+          'content-length': String(bytes.byteLength),
+          'x-sandbox-kind': 'file',
+        });
+        response.end(bytes);
+        return;
+      }
+      const prefix = path ? `${path}/` : '';
+      const files = allFilePaths(workspace).filter((file) => file.startsWith(prefix));
+      if (files.length === 0)
+        return error(response, 404, 'not_found', `${path || 'The checkout'} has no files to download.`);
+      const zip = new JSZip();
+      for (const file of files) zip.file(file, bytesOf(file));
+      void zip.generateAsync({ type: 'nodebuffer' }).then((bytes) => {
+        response.writeHead(200, { 'content-type': 'application/zip', 'x-sandbox-kind': 'dir' });
+        response.end(bytes);
+      });
+      return;
+    }
+    case 'find': {
+      const workspace = scope.workspaces.get(body.id ?? '');
+      if (!workspace) return error(response, 404, 'not_found', 'No such workspace — see the list.');
+      if (workspace.status !== 'ready')
+        return error(response, 409, 'not_ready', 'That workspace is still cloning.');
+      const glob = typeof body.glob === 'string' ? body.glob : '';
+      if (!glob) return error(response, 400, 'bad_request', 'A glob is required.');
+      const max = typeof body.max === 'number' ? Math.max(1, Math.floor(body.max)) : 200;
+      const matcher = globToRegExp(glob);
+      const paths = allFilePaths(workspace)
+        .filter((path) => matcher.test(path))
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      return json(response, 200, { paths: paths.slice(0, max), truncated: paths.length > max });
     }
     case 'rm': {
       const workspace = scope.workspaces.get(body.id ?? '');
@@ -2704,8 +2789,20 @@ const server = createServer((request, response) => {
       const bytes = Buffer.concat(chunks);
       if (bytes.byteLength === 0)
         return error(response, 400, 'bad_request', 'The request body was empty.');
-      const created = !workspace.files.has(query.path);
+      const created = !entryAt(query.path, workspace);
       workspace.files.set(query.path, bytes);
+      if (created) {
+        // Like `write` below: a new path joins its folder's listing (and
+        // its missing folders are made), so `ls` and `find` see it.
+        workspace.removed?.delete(query.path);
+        const dir = folderOf(query.path);
+        ensureDirChain(workspace, dir);
+        workspace.extraEntries = workspace.extraEntries ?? new Map();
+        if (!workspace.extraEntries.has(dir)) workspace.extraEntries.set(dir, []);
+        workspace.extraEntries
+          .get(dir)
+          .push({ path: query.path, kind: 'file', sizeBytes: bytes.byteLength });
+      }
       json(response, 200, { path: query.path, created, sizeBytes: bytes.byteLength });
     });
     return;

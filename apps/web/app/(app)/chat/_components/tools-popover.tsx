@@ -27,7 +27,18 @@ function connectorLabel(key: string): string {
   return CONNECTOR_CATALOG.find((entry) => entry.capabilityKey === key)?.label ?? key;
 }
 
-export default function ToolsPopover({ selected, onChange, context = 'chat', kind = 'chat', locked, saveDefault, projectDefault = null }: {
+export default function ToolsPopover({
+  selected,
+  onChange,
+  context = 'chat',
+  kind = 'chat',
+  locked,
+  saveDefault,
+  projectDefault = null,
+  open: controlledOpen,
+  onOpenChange,
+  trigger = true,
+}: {
   /** null = the core set. */
   selected: string[] | null;
   onChange: (next: string[] | null) => void;
@@ -67,8 +78,22 @@ export default function ToolsPopover({ selected, onChange, context = 'chat', kin
    * says what the turn will do.
    */
   locked?: readonly string[];
+  /**
+   * Opened from elsewhere — a menu item (the project page's "⋯" → Tools):
+   * the caller holds whether it is open and gets told when it should
+   * close, and `trigger: false` leaves out the button, so the popover
+   * drops from wherever the caller renders this.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  trigger?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const open = controlledOpen ?? ownOpen;
+  const setOpen = (next: boolean) => {
+    if (onOpenChange) onOpenChange(next);
+    else setOwnOpen(next);
+  };
   const toolsAnchor = useCoachAnchor('chat-tools');
   const [options, setOptions] = useState<ConnectorOption[] | null>(null);
   const [core, setCore] = useState<string[]>([]);
@@ -110,19 +135,21 @@ export default function ToolsPopover({ selected, onChange, context = 'chat', kin
 
   return (
     <div ref={ref} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        aria-expanded={open}
-        aria-label="Tools"
-        title="Which tools the assistant may use"
-        {...toolsAnchor}
-        className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
-      >
-        <Icon path={ICONS.tool} className="h-4 w-4" />
-        <span className="hidden sm:inline">Tools</span>
-        {count !== null ? <span className="text-gray-400">{count}</span> : null}
-      </button>
+      {trigger ? (
+        <button
+          type="button"
+          onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-label="Tools"
+          title="Which tools the assistant may use"
+          {...toolsAnchor}
+          className="flex items-center gap-1.5 rounded-md border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
+        >
+          <Icon path={ICONS.tool} className="h-4 w-4" />
+          <span className="hidden sm:inline">Tools</span>
+          {count !== null ? <span className="text-gray-400">{count}</span> : null}
+        </button>
+      ) : null}
       {open ? (
         <div className="absolute right-0 z-40 mt-1 w-64 rounded-md border border-gray-200 bg-white p-2 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900">
           <p className="mb-1 px-1 text-xs text-gray-500">

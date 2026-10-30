@@ -685,6 +685,70 @@ describe('uploading', () => {
   });
 });
 
+describe('downloading', () => {
+  // Its own files: the git tests above commit, clean and discard in this
+  // checkout, so what beforeAll wrote at the top is not relied on here.
+  beforeAll(async () => {
+    const dir = workspaceDir(STORAGE_KEY);
+    await mkdir(join(dir, 'pack', 'sub'), { recursive: true });
+    await writeFile(join(dir, 'pack', 'one.txt'), 'one\n');
+    await writeFile(join(dir, 'pack', 'sub', 'two.txt'), 'two\n');
+    await mkdir(join(dir, 'node_modules', 'left-pad'), { recursive: true });
+    await writeFile(join(dir, 'node_modules', 'left-pad', 'index.js'), 'module.exports = 1;\n');
+    // A .git (the git tests' real one, or a stand-in) with something in it.
+    await mkdir(join(dir, '.git'), { recursive: true });
+    await writeFile(join(dir, '.git', 'download-marker'), 'x\n');
+  });
+  async function download(body: unknown): Promise<Response> {
+    return fetch(`${enabledBase}/v1/workspaces/download`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+  async function namesIn(zip: Buffer): Promise<string[]> {
+    const file = join(root, `download-${Date.now()}.zip`);
+    await writeFile(file, zip);
+    return execFileSync('unzip', ['-Z1', file], { encoding: 'utf8' }).trim().split('\n').sort();
+  }
+
+  it('answers a file as its bytes', async () => {
+    const response = await download({ ...TARGET, id: 'ws-1', path: 'pack/one.txt' });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-sandbox-kind')).toBe('file');
+    expect(response.headers.get('content-type')).toBe('application/octet-stream');
+    expect(await response.text()).toBe('one\n');
+  });
+
+  it('zips a folder under its name, and the root as its contents, ignored files in and .git out', async () => {
+    const folder = await download({ ...TARGET, id: 'ws-1', path: 'pack' });
+    expect(folder.status).toBe(200);
+    expect(folder.headers.get('x-sandbox-kind')).toBe('dir');
+    expect(folder.headers.get('content-type')).toBe('application/zip');
+    expect(await namesIn(Buffer.from(await folder.arrayBuffer()))).toEqual([
+      'pack/',
+      'pack/one.txt',
+      'pack/sub/',
+      'pack/sub/two.txt',
+    ]);
+
+    const whole = await download({ ...TARGET, id: 'ws-1', path: '' });
+    expect(whole.status).toBe(200);
+    const names = await namesIn(Buffer.from(await whole.arrayBuffer()));
+    expect(names).toEqual(
+      expect.arrayContaining(['pack/one.txt', 'pack/sub/two.txt', 'node_modules/left-pad/index.js'])
+    );
+    expect(names.some((name) => name === '.git/' || name.startsWith('.git/'))).toBe(false);
+  });
+
+  it('refuses a path outside the checkout and 404s a missing one', async () => {
+    const outside = await download({ ...TARGET, id: 'ws-1', path: '../../etc' });
+    expect(outside.status).toBe(400);
+    const missing = await download({ ...TARGET, id: 'ws-1', path: 'nope' });
+    expect(missing.status).toBe(404);
+  });
+});
+
 describe('env verbs', () => {
   it('sets a variable and lists names only', async () => {
     envStore.hasEnvSecret.mockResolvedValue(false);

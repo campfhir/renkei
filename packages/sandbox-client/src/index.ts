@@ -962,6 +962,54 @@ export async function sbWorkspaceLs(
   return { ok: true, val: { path: str(result.val.path), entries } };
 }
 
+/** How long a download of a checkout may stream before it is given up on — a zip of a big tree takes a while. */
+const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
+
+export interface WireWorkspaceDownload {
+  /** A file's own bytes, or a folder as a zip. */
+  kind: 'file' | 'dir';
+  contentType: string;
+  /** Known for a file; a zip streams without one. */
+  sizeBytes: number | null;
+  body: ReadableStream<Uint8Array> | null;
+}
+
+/**
+ * A file of the checkout as its bytes, or a folder (`path` '' for the
+ * whole checkout) as a zip, streamed from the worker as it is made —
+ * the person's offline copy. Its own fetch rather than `callOp`: the
+ * usual request timeout would cut a long zip short.
+ */
+export async function sbWorkspaceDownload(
+  target: SandboxTarget,
+  input: { id: string; path: string }
+): Promise<ClientResult<WireWorkspaceDownload>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/workspaces/download`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...target, ...input }),
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  const length = Number(response.headers.get('content-length') ?? '');
+  return {
+    ok: true,
+    val: {
+      kind: response.headers.get('x-sandbox-kind') === 'file' ? 'file' : 'dir',
+      contentType: response.headers.get('content-type') ?? 'application/octet-stream',
+      sizeBytes: Number.isFinite(length) && length > 0 ? length : null,
+      body: response.body,
+    },
+  };
+}
+
 export async function sbWorkspaceFind(
   target: SandboxTarget,
   input: { id: string; glob?: string; max?: number }

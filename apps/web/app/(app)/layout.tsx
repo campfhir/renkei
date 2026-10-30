@@ -20,6 +20,7 @@ import ClientErrorReporter from '@/components/client-error-reporter';
 import ThemeScript from '@/components/theme-script';
 import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
+import { UploadQueueProvider } from '@/components/uploads/upload-queue';
 import { getVersionInfo } from '@/lib/version-info';
 import AppNav from './nav';
 
@@ -113,6 +114,10 @@ export default async function TenantLayout({ children }: { children: ReactNode }
       <ThemeSync mode={theme.mode} />
       <ClientErrorReporter />
       <NotificationCenter>
+        {/* Uploads outlive the dialog they start from (upload-queue.tsx):
+            the queue sits above every page so a navigation inside the app
+            leaves them running. */}
+        <UploadQueueProvider>
         <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-black dark:text-gray-100">
           {/* The person's encryption key, kept connected from this browser
               (docs/delegate-key-design.md); its banners sit above the nav. */}
@@ -147,6 +152,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
               localStorage, not here — see desktop-notifications.tsx. */}
           <DesktopNotifications />
         </div>
+        </UploadQueueProvider>
       </NotificationCenter>
     </CodeLineNumbersProvider>
   );

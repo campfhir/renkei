@@ -176,7 +176,21 @@ test.describe('code projects', () => {
     // (the picker in its header, which its chats start from), and
     // describes itself through its README; its chats are listed here.
     await expect(main.getByRole('button', { name: 'Add files' })).toHaveCount(0);
-    await expect(main.getByRole('button', { name: 'Tools' })).toBeVisible();
+    // Tools, Download and Share sit behind the header's "⋯".
+    await main.getByRole('button', { name: 'More', exact: true }).click();
+    await expect(main.getByRole('menuitem', { name: 'Tools' })).toBeVisible();
+    await expect(main.getByRole('menuitem', { name: 'Download offline copy' })).toBeVisible();
+    await expect(main.getByRole('menuitem', { name: 'Share' })).toBeVisible();
+    await shot('code-project-menu.png');
+    // Tools opens from the item, outliving the menu: the project's own
+    // picker, Bitbucket locked on, dismissed with Escape.
+    await main.getByRole('menuitem', { name: 'Tools' }).click();
+    await expect(main.getByText(/Connectors chats in this project start with/)).toBeVisible();
+    await expect(main.getByRole('checkbox', { name: /Bitbucket/ })).toBeChecked();
+    await expect(main.getByRole('checkbox', { name: /Bitbucket/ })).toBeDisabled();
+    await shot('code-project-tools.png');
+    await page.keyboard.press('Escape');
+    await expect(main.getByText(/Connectors chats in this project start with/)).toHaveCount(0);
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
@@ -384,7 +398,10 @@ test.describe('code projects', () => {
     await expect(filesDialog.getByText('notes.md')).toBeVisible();
     await shot('code-chat-add-files.png');
     await filesDialog.getByRole('button', { name: 'Add to repository' }).click();
-    await expect(filesDialog.getByText('Added to the checkout: docs/notes.md.')).toBeVisible();
+    // The row itself says it landed; the footer carries no report.
+    await expect(
+      filesDialog.getByTestId('upload-table').getByRole('listitem').filter({ hasText: 'docs/notes.md' })
+    ).toContainText('Added');
     await filesDialog.getByRole('button', { name: 'Done' }).click();
 
     // ── Changes carries the checkout's +added −deleted and opens every

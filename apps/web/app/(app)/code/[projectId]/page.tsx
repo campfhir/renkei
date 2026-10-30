@@ -1,10 +1,13 @@
+import { Suspense } from 'react';
 import { notFound, redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveProjectAccess } from '@/lib/chat/access';
-import { loadCodeProjectView } from '@/lib/code/project-view';
+import { loadCodeProjectCore } from '@/lib/code/project-view';
 import ProjectView from '../../chat/_components/project-view';
-import { CodeRail, CodeRepoStrip } from '../_components/code-sections';
+import { CodeRail, EnvironmentCardSkeleton } from '../_components/code-sections';
+import { CheckoutStrip, CheckoutStripSkeleton, Environment, Readme } from '../_components/code-islands';
+import ReadmeSection from '../_components/readme-section';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 
 /**
@@ -15,6 +18,14 @@ import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
  * narrow one, then everything a chat project's page has — README,
  * instructions, memory, sharing. Editors change it; viewers read it and
  * start their own chats in it.
+ *
+ * The page paints as soon as the database has answered — the project,
+ * its chats, its spend — and streams in the three parts that cross the
+ * network behind Suspense boundaries of their own: the checkout's state
+ * and the environment's names from the sandbox worker, the README from
+ * the git host (code-islands.tsx). The rail's other cards read their own
+ * data in the browser already. A slow worker or host no longer holds the
+ * whole page.
  */
 export default async function CodeProjectPage({
   params,
@@ -29,27 +40,46 @@ export default async function CodeProjectPage({
   if (!session) redirect(signInUrl(`/code/${projectId}`));
   const access = await resolveProjectAccess(session.subject, projectId);
   if (!access) notFound();
-  const view = await loadCodeProjectView(session.subject, projectId, access);
-  if (!view) notFound();
-  // The two elements handed to the client view carry keys: React checks
+  const core = await loadCodeProjectCore(session.subject, projectId, access);
+  if (!core) notFound();
+  const canEdit = core.view.role !== 'viewer';
+  // The elements handed to the client view carry keys: React checks
   // server-made elements it finds among siblings on the client the way it
   // checks a list, and a key is what satisfies it.
   return (
     <ProjectView
       key={projectId}
-      initial={view}
+      initial={core.view}
       variant="code"
       defaultInstructions={DEFAULT_CODE_INSTRUCTIONS}
-      readme={view.code.readme}
-      usage={view.code.usage}
-      strip={<CodeRepoStrip key="strip" projectId={projectId} code={view.code} />}
+      readme={
+        <Suspense key="readme" fallback={<ReadmeSection readme={null} loading />}>
+          <Readme viewerSubject={session.subject} project={core.project} />
+        </Suspense>
+      }
+      usage={core.usage}
+      download={{ repoFullName: core.repoFullName }}
+      strip={
+        <Suspense key="strip" fallback={<CheckoutStripSkeleton repoFullName={core.repoFullName} />}>
+          <CheckoutStrip projectId={projectId} core={core} />
+        </Suspense>
+      }
       rail={
         <CodeRail
           key="rail"
           projectId={projectId}
-          code={view.code}
-          canEdit={view.role !== 'viewer'}
-          envProblems={envProblems ? envProblems.split('\n').filter(Boolean) : []}
+          code={{ repoProvider: core.repoProvider, branch: core.branch, enabled: core.enabled }}
+          environment={
+            <Suspense fallback={<EnvironmentCardSkeleton />}>
+              <Environment
+                projectId={projectId}
+                project={core.project}
+                enabled={core.enabled}
+                canEdit={canEdit}
+                envProblems={envProblems ? envProblems.split('\n').filter(Boolean) : []}
+              />
+            </Suspense>
+          }
         />
       }
     />

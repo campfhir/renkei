@@ -155,9 +155,15 @@ export default function CodePane({
   // rename, open the file at its new path in its place) rather than
   // leaving a stale tab showing text that no longer lives there.
   const renamedOpen = (from: string, to: string) => {
-    if (pane.tabs.includes(from)) {
-      pane.close(from);
-      pane.open(to);
+    for (const tab of pane.tabs) {
+      if (tab === from) {
+        pane.close(tab);
+        pane.open(to);
+      } else if (tab.startsWith(`${from}/`)) {
+        // A folder moved: every open file under it moved with it.
+        pane.close(tab);
+        pane.open(`${to}${tab.slice(from.length)}`);
+      }
     }
     pane.refresh();
   };
@@ -290,6 +296,7 @@ export default function CodePane({
         onRenamed={renamedOpen}
         onDeleted={deletedOpen}
         onDeletedClick={setDiffFor}
+        onChanged={pane.refresh}
       />
     </div>
   );
