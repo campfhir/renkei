@@ -67,7 +67,6 @@ import { useOptionalUploadQueue } from '@/components/uploads/upload-queue';
 import { DialogFooter } from '../../chat/_components/chat-nav';
 import OverflowMenu from '../../chat/_components/overflow-menu';
 import { checkoutSender } from './add-files-modal';
-import { startDownload } from '@/lib/download';
 
 interface Entry {
   path: string;
@@ -256,7 +255,8 @@ const RepoTree = forwardRef<
   const downloadItem = (path: string, kind: 'file' | 'dir') => ({
     label: kind === 'dir' ? 'Download as zip' : 'Download',
     icon: ICONS.download,
-    onSelect: () => startDownload(`${archiveBase}?path=${encodeURIComponent(path)}`),
+    href: `${archiveBase}?path=${encodeURIComponent(path)}`,
+    filename: kind === 'dir' ? `${nameOf(path)}.zip` : nameOf(path),
   });
 
   const ghostsFor = (path: string): string[] => {
@@ -665,7 +665,11 @@ const RepoTree = forwardRef<
         {...dragProps(entry)}
         className={`flex items-center gap-0.5 pr-1 text-xs text-gray-700 dark:text-gray-300 ${dimmed} ${beingDragged}`}
       >
-        <span style={indent} className={`flex min-w-0 flex-1 items-center gap-1.5 ${rowClass}`} title={entry.path}>
+        <span
+          style={indent}
+          className={`flex min-w-0 flex-1 items-center gap-1.5 ${rowClass}`}
+          title={entry.path}
+        >
           {body}
         </span>
         {menu}
@@ -745,7 +749,9 @@ const RepoTree = forwardRef<
               aria-label={dialog.kind === 'new-file' ? 'File name' : 'New name'}
               value={dialog.name}
               onChange={(event) =>
-                setDialog((current) => (current ? { ...current, name: event.target.value } : current))
+                setDialog((current) =>
+                  current ? { ...current, name: event.target.value } : current
+                )
               }
               maxLength={255}
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"

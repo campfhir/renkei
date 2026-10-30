@@ -20,6 +20,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
+import DownloadLink, { useDownloadReady } from '@/components/download-link';
+import { Spinner } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
 import { useFloating } from '@/lib/floating';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -27,7 +29,16 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 export interface OverflowItem {
   label: string;
   icon: string;
-  onSelect: () => void;
+  /** What the item does — or nothing of its own when it is a download (`href`). */
+  onSelect?: () => void;
+  /**
+   * A download instead of an action: the item is a DownloadLink
+   * (components/download-link.tsx) to this URL — a real link, so the
+   * browser's download manager and the iOS home-screen app's share
+   * sheet both get it — saved as `filename`.
+   */
+  href?: string;
+  filename?: string;
   /** Something beside the label — a diff's +added −deleted. */
   extra?: ReactNode;
   /** A destructive action (delete): rendered in red, like the sidebar's. */
@@ -86,25 +97,46 @@ export default function OverflowMenu({
   const box = useFloating(open && compact, buttonRef, menuRef, { align: 'end' });
   if (items.length === 0) return null;
 
-  const list = items.map((item) => (
-    <button
-      key={item.label}
-      type="button"
-      role="menuitem"
-      onClick={() => {
-        setOpen(false);
-        item.onSelect();
-      }}
-      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${item.danger ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}
-    >
+  const itemClass = (item: OverflowItem) =>
+    `flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-800 ${item.danger ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`;
+  const itemBody = (item: OverflowItem) => (
+    <>
       <Icon
         path={item.icon}
         className={`h-4 w-4 shrink-0 ${item.danger ? 'text-red-500' : 'text-gray-500 dark:text-gray-400'}`}
       />
       <span className="flex-1">{item.label}</span>
       {item.extra}
-    </button>
-  ));
+    </>
+  );
+  const list = items.map((item) =>
+    item.href ? (
+      <DownloadMenuItem
+        key={item.label}
+        item={item}
+        className={itemClass(item)}
+        onPick={() => {
+          setOpen(false);
+          item.onSelect?.();
+        }}
+      >
+        {itemBody(item)}
+      </DownloadMenuItem>
+    ) : (
+      <button
+        key={item.label}
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          setOpen(false);
+          item.onSelect?.();
+        }}
+        className={itemClass(item)}
+      >
+        {itemBody(item)}
+      </button>
+    )
+  );
 
   return (
     <div ref={ref} className="relative">
@@ -153,5 +185,45 @@ export default function OverflowMenu({
           )
         : null}
     </div>
+  );
+}
+
+/**
+ * A download in the menu. In the iOS home-screen app the share sheet has
+ * to open from the tap itself with the file already fetched, so the
+ * fetch starts as the menu opens and the item waits, with a spinner,
+ * until the file is in hand — then one tap shares it. Everywhere else
+ * the file is "ready" at once and the item is a plain download link.
+ */
+function DownloadMenuItem({
+  item,
+  className,
+  onPick,
+  children,
+}: {
+  item: OverflowItem;
+  className: string;
+  onPick: () => void;
+  children: ReactNode;
+}) {
+  const state = useDownloadReady(item.href ?? '', item.filename);
+  if (state === 'pending') {
+    return (
+      <div role="menuitem" aria-disabled="true" className={`${className} opacity-70`}>
+        {children}
+        <Spinner size={3} label="Preparing the download" />
+      </div>
+    );
+  }
+  return (
+    <DownloadLink
+      role="menuitem"
+      href={item.href ?? ''}
+      filename={item.filename}
+      onClick={onPick}
+      className={className}
+    >
+      {children}
+    </DownloadLink>
   );
 }

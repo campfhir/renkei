@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-30',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Code downloads work from the iOS home-screen app',
+        detail:
+          'Downloading a file, a folder or the whole checkout of a code project goes through the same link every other download in Renkei uses, so in the iOS home-screen app one tap opens the share sheet with the file, instead of stranding you on a file view.',
+      },
+      {
         kind: 'changed',
         title: 'Tools opens as a dialog you can search',
         detail:

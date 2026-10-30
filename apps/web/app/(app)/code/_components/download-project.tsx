@@ -3,7 +3,9 @@
 /**
  * An offline copy of a code project: a dialog opened from the project
  * header's "⋯" menu (Download offline copy) that, once it has looked at
- * the checkout, downloads it as a zip
+ * the checkout, downloads it as a zip through a DownloadLink — the
+ * house link for a file of this app, which also serves the iOS
+ * home-screen app's share sheet —
  * (`…/code/projects/[id]/archive`) — the project's base clone as it is
  * on the sandbox, ignored files such as node_modules included, `.git`
  * left out. Before any chat has cloned the repository there is nothing
@@ -12,8 +14,9 @@
 
 import { useEffect, useState } from 'react';
 import Modal from '@/components/modal';
+import DownloadLink, { useDownloadReady } from '@/components/download-link';
 import { Icon, ICONS } from '@/components/icons';
-import { LoadingLine } from '@/components/skeleton';
+import { LoadingLine, Spinner } from '@/components/skeleton';
 import { getJson } from '@/lib/fetch-json';
 import type { CodeProjectView } from '@/lib/code/project-view';
 
@@ -76,8 +79,8 @@ export default function DownloadProjectModal({
           <p className="text-gray-500">Code workspaces are not enabled on this deployment.</p>
         ) : !state.workspace ? (
           <p className="text-gray-500" data-testid="download-not-cloned">
-            Nothing is cloned yet: the first chat in this project clones the repository, and
-            there is a copy to download after that.
+            Nothing is cloned yet: the first chat in this project clones the repository, and there
+            is a copy to download after that.
           </p>
         ) : state.workspace.status !== 'ready' ? (
           <p className="text-gray-500">
@@ -102,14 +105,7 @@ export default function DownloadProjectModal({
           Done
         </button>
         {ready ? (
-          <a
-            href={`/api/code/projects/${projectId}/archive`}
-            download={`${repoName}.zip`}
-            className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
-          >
-            <Icon path={ICONS.download} className="h-4 w-4" />
-            Download zip
-          </a>
+          <ZipLink href={`/api/code/projects/${projectId}/archive`} filename={`${repoName}.zip`} />
         ) : (
           <button
             type="button"
@@ -121,5 +117,38 @@ export default function DownloadProjectModal({
         )}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * The zip's link, once the zip is in hand where that matters: in the iOS
+ * home-screen app the share sheet must be opened by the tap itself, with
+ * the file already fetched, so the fetch starts as soon as this renders
+ * and the link waits behind "Preparing…" until it is done. Everywhere
+ * else the file is "ready" at once and the link is a plain download.
+ */
+function ZipLink({ href, filename }: { href: string; filename: string }) {
+  const state = useDownloadReady(href, filename);
+  if (state === 'pending') {
+    return (
+      <button
+        type="button"
+        disabled
+        className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white opacity-70"
+      >
+        <Spinner size={3.5} className="border-white/40 border-t-white" />
+        Preparing…
+      </button>
+    );
+  }
+  return (
+    <DownloadLink
+      href={href}
+      filename={filename}
+      className="flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+    >
+      <Icon path={ICONS.download} className="h-4 w-4" />
+      Download zip
+    </DownloadLink>
   );
 }
