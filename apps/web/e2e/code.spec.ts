@@ -185,12 +185,13 @@ test.describe('code projects', () => {
     // Tools opens from the item, outliving the menu: the project's own
     // picker, Bitbucket locked on, dismissed with Escape.
     await main.getByRole('menuitem', { name: 'Tools' }).click();
-    await expect(main.getByText(/Connectors chats in this project start with/)).toBeVisible();
-    await expect(main.getByRole('checkbox', { name: /Bitbucket/ })).toBeChecked();
-    await expect(main.getByRole('checkbox', { name: /Bitbucket/ })).toBeDisabled();
+    const toolsDialog = page.getByRole('dialog', { name: 'Tools' });
+    await expect(toolsDialog.getByText(/Connectors chats in this project start with/)).toBeVisible();
+    await expect(toolsDialog.getByRole('checkbox', { name: /Bitbucket/ })).toBeChecked();
+    await expect(toolsDialog.getByRole('checkbox', { name: /Bitbucket/ })).toBeDisabled();
     await shot('code-project-tools.png');
     await page.keyboard.press('Escape');
-    await expect(main.getByText(/Connectors chats in this project start with/)).toHaveCount(0);
+    await expect(toolsDialog).toHaveCount(0);
     await expect(main.getByLabel('Description')).toHaveCount(0);
     await expect(
       main.getByRole('heading', { level: 2, name: 'Chats in this project' })
