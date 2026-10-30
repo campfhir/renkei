@@ -15,6 +15,7 @@
 
 import { developerNameOf, isDeveloperName, packageXml, type PackageMember } from './metadata';
 import { metadataFile } from './metadata-xml';
+import type { ChangeRow } from './changes';
 
 type Json = Record<string, unknown>;
 
@@ -204,7 +205,7 @@ export function checkReportTypeSpec(
     const named = Array.isArray(section.fields) ? section.fields.map(str).filter(Boolean) : [];
     const columns: ReportTypeColumn[] = [];
     for (const name of named.length > 0 ? named : found.info.fields) {
-      const field = columnOf(found.info, name);
+      const field = reportColumnOf(found.info, name);
       if (!field) {
         errors.push(`${sectionLabel}: ${found.info.name} has no field ${name}.`);
         continue;
@@ -240,7 +241,7 @@ export function checkReportTypeSpec(
 }
 
 /** A field name, or a lookup path (`Owner.Email`) through one of the object's lookups. */
-function columnOf(info: ReportObjectInfo, name: string): string | null {
+export function reportColumnOf(info: ReportObjectInfo, name: string): string | null {
   const [head, ...rest] = name.split('.');
   if (rest.length === 0) {
     return info.fields.find((field) => field.toLowerCase() === head.toLowerCase()) ?? null;
@@ -685,6 +686,118 @@ export function buildReportPackage(spec: ReportSpec): {
     );
   }
   return { files, members };
+}
+
+// ——— changes to an existing report type ———
+
+const list = (value: unknown): unknown[] =>
+  Array.isArray(value) ? value : value === null || value === undefined ? [] : [value];
+
+/**
+ * A report type read whole (readMetadata), with its repeated elements
+ * always arrays — sections, and each section's columns — so a change and
+ * its fingerprint do not depend on whether there happened to be one.
+ */
+export function normalizeReportType(metadata: Json): Json {
+  const next = structuredClone(metadata);
+  next.sections = list(next.sections)
+    .filter(isRecord)
+    .map((section) => ({ ...section, columns: list(section.columns).filter(isRecord) }));
+  return next;
+}
+
+/** A report type's tables: its base object, then each join down from it (`Base.Child__r`). */
+export function reportTypeTables(metadata: Json): string[] {
+  const tables = [str(metadata.baseObject)];
+  let join = isRecord(metadata.join) ? metadata.join : null;
+  while (join) {
+    tables.push(`${tables[tables.length - 1]}.${str(join.relationship)}`);
+    join = isRecord(join.join) ? join.join : null;
+  }
+  return tables.filter(Boolean);
+}
+
+export interface ReportTypeColumnAdd {
+  /** A section's label: an existing one gains the column, a new one is made. */
+  section: string;
+  /** One of reportTypeTables. */
+  table: string;
+  field: string;
+  checked: boolean;
+}
+
+/**
+ * A report type with columns added, and its rows for the review page — or
+ * why not. A report type deploys whole, so everything it has stays exactly
+ * as read: columns are only added, at the end of their section (a new
+ * section at the end), never moved or taken away. A column already offered
+ * anywhere in the type is refused, as is a table the type does not join.
+ */
+export function mergeReportTypeColumns(
+  metadata: Json,
+  adds: readonly ReportTypeColumnAdd[]
+): { ok: true; metadata: Json; rows: ChangeRow[] } | { ok: false; errors: string[] } {
+  const next = normalizeReportType(metadata);
+  const sections = list(next.sections).filter(isRecord);
+  const tables = reportTypeTables(next);
+  const errors: string[] = [];
+  const added = new Map<string, string[]>();
+  const has = (table: string, field: string) =>
+    sections.find((section) =>
+      list(section.columns)
+        .filter(isRecord)
+        .some(
+          (column) =>
+            str(column.table).toLowerCase() === table.toLowerCase() &&
+            str(column.field).toLowerCase() === field.toLowerCase()
+        )
+    );
+  for (const add of adds) {
+    const table = tables.find((t) => t.toLowerCase() === add.table.toLowerCase());
+    if (!table) {
+      errors.push(
+        `${add.field}: the report type’s tables are ${tables.join(', ')}, not ${add.table}.`
+      );
+      continue;
+    }
+    const holder = has(table, add.field);
+    if (holder) {
+      errors.push(
+        `${add.field} (${table}) is already in the section “${str(holder.masterLabel)}”.`
+      );
+      continue;
+    }
+    const label = add.section.trim();
+    if (!label || label.length > 80) {
+      errors.push('A section label is 1 to 80 characters.');
+      continue;
+    }
+    let section = sections.find((s) => str(s.masterLabel).toLowerCase() === label.toLowerCase());
+    if (!section) {
+      section = { columns: [], masterLabel: label };
+      sections.push(section);
+    }
+    const columns = list(section.columns).filter(isRecord);
+    columns.push({ checkedByDefault: add.checked ? 'true' : 'false', field: add.field, table });
+    section.columns = columns;
+    const key = str(section.masterLabel);
+    added.set(key, [
+      ...(added.get(key) ?? []),
+      `${add.field}${add.checked ? ' (shown by default)' : ''}`,
+    ]);
+  }
+  next.sections = sections;
+  if (errors.length === 0 && added.size === 0)
+    errors.push('Nothing in that changes the report type.');
+  if (errors.length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    metadata: next,
+    rows: [...added].map(([section, fields]) => ({
+      label: `Section “${section}”`,
+      value: `adds ${fields.join(', ')}`,
+    })),
+  };
 }
 
 /**

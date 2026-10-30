@@ -6,6 +6,8 @@ import {
   checkReportTypeSpec,
   reportableFields,
   reportFileColumn,
+  mergeReportTypeColumns,
+  reportTypeTables,
   type ReportObjectInfo,
 } from './report-metadata';
 
@@ -289,5 +291,99 @@ describe('reportFileColumn', () => {
   it('leaves a name already in the file’s form, and an unknown object’s table at its first part', () => {
     expect(reportFileColumn('Referral$Client.Name', childrenOf)).toBe('Referral$Client.Name');
     expect(reportFileColumn('Unknown__c.Owner.Email', childrenOf)).toBe('Unknown__c$Owner.Email');
+  });
+});
+
+describe('mergeReportTypeColumns', () => {
+  const live = {
+    fullName: 'Referrals',
+    baseObject: 'Referral',
+    category: 'other',
+    deployed: 'true',
+    label: 'Referrals',
+    sections: [
+      {
+        columns: [
+          { checkedByDefault: 'true', field: 'Name', table: 'Referral' },
+          {
+            checkedByDefault: 'false',
+            displayNameOverride: 'Stage',
+            field: 'Referral_Stage__c',
+            table: 'Referral',
+          },
+        ],
+        masterLabel: 'Referrals',
+      },
+      {
+        columns: {
+          checkedByDefault: 'false',
+          field: 'Client.Medicare_Status__c',
+          table: 'Referral',
+        },
+        masterLabel: 'Account',
+      },
+    ],
+  };
+
+  it('adds to a section and makes a new one, keeping everything else exactly as read', () => {
+    const merged = mergeReportTypeColumns(live, [
+      { section: 'account', table: 'Referral', field: 'Client.Medicare__pc', checked: false },
+      { section: 'Account', table: 'referral', field: 'Client.Medi_Cal__pc', checked: true },
+      { section: 'Programs', table: 'Referral', field: 'Program.Name', checked: false },
+    ]);
+    expect(merged.ok).toBe(true);
+    if (!merged.ok) return;
+    expect(merged.metadata.sections).toEqual([
+      live.sections[0],
+      {
+        columns: [
+          { checkedByDefault: 'false', field: 'Client.Medicare_Status__c', table: 'Referral' },
+          { checkedByDefault: 'false', field: 'Client.Medicare__pc', table: 'Referral' },
+          { checkedByDefault: 'true', field: 'Client.Medi_Cal__pc', table: 'Referral' },
+        ],
+        masterLabel: 'Account',
+      },
+      {
+        columns: [{ checkedByDefault: 'false', field: 'Program.Name', table: 'Referral' }],
+        masterLabel: 'Programs',
+      },
+    ]);
+    expect(merged.rows).toEqual([
+      {
+        label: 'Section “Account”',
+        value: 'adds Client.Medicare__pc, Client.Medi_Cal__pc (shown by default)',
+      },
+      { label: 'Section “Programs”', value: 'adds Program.Name' },
+    ]);
+    // The read is untouched.
+    expect(live.sections[1].columns).not.toBeInstanceOf(Array);
+  });
+
+  it('refuses a column already offered, a table the type does not join, and nothing at all', () => {
+    const refused = mergeReportTypeColumns(live, [
+      { section: 'Account', table: 'Referral', field: 'client.medicare_status__c', checked: false },
+      { section: 'Account', table: 'Referral.Notes__r', field: 'Body__c', checked: false },
+    ]);
+    expect(refused.ok === false && refused.errors).toEqual([
+      'client.medicare_status__c (Referral) is already in the section “Account”.',
+      'Body__c: the report type’s tables are Referral, not Referral.Notes__r.',
+    ]);
+    expect(mergeReportTypeColumns(live, [])).toEqual({
+      ok: false,
+      errors: ['Nothing in that changes the report type.'],
+    });
+  });
+
+  it('knows the tables of a type that joins down', () => {
+    expect(
+      reportTypeTables({
+        baseObject: 'Account',
+        join: {
+          join: { outerJoin: 'false', relationship: 'Notes__r' },
+          outerJoin: 'true',
+          relationship: 'Referrals1__r',
+        },
+      })
+    ).toEqual(['Account', 'Account.Referrals1__r', 'Account.Referrals1__r.Notes__r']);
   });
 });

@@ -6,14 +6,22 @@
  * `Metadata` (a one-row query each); a global value set likewise; a
  * standard value set has no whole read anywhere, so it is assembled from
  * the field's describe and, for the sets with flags (stages, statuses,
- * priorities), the status objects that carry them.
+ * priorities), the status objects that carry them. A custom report type
+ * has no Tooling API object at all, so it is read with the Metadata API's
+ * SOAP readMetadata, whose envelope — the session goes in it — the
+ * delegate writes (apps/worker-delegate/src/salesforce-soap.ts).
  */
 
 import {
+  isDeveloperName,
+  normalizeReportType,
+  readMetadataRecords,
+  SALESFORCE_API_VERSION,
   soqlString,
   standardValueSetOf,
   type StandardValueRead,
 } from '@renkei/connector-salesforce';
+import { refusalTextOf } from '@/lib/grant-refusals';
 import {
   rec,
   sfQuery,
@@ -23,6 +31,51 @@ import {
 } from '@/lib/mcp-tools/salesforce/client';
 import { describeObject, invalidateDescribe } from '@/lib/mcp-tools/salesforce/schema';
 import { fingerprintOf, toolingQuery } from './tooling';
+
+export interface LiveReportType {
+  /** The developer name, without `__c`. */
+  name: string;
+  /** As readMetadata gives it, sections and their columns always arrays. */
+  metadata: Record<string, unknown>;
+  fingerprint: string;
+}
+
+/**
+ * A custom report type whole, by its developer name (with or without
+ * `__c`), through the delegate's readMetadata; null when there is none.
+ */
+export async function readReportType(
+  context: SalesforceCallContext,
+  access: SalesforceAccess,
+  name: string
+): Promise<LiveReportType | null | string> {
+  const developerName = name.trim().replace(/__c$/i, '');
+  if (!isDeveloperName(developerName, 50)) return `${name} is not a report type’s API name.`;
+  let response: Response;
+  try {
+    response = await access.auth(
+      `${access.instanceUrl}/services/Soap/m/${SALESFORCE_API_VERSION}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/xml; charset=UTF-8' },
+        body:
+          '<readMetadata xmlns="http://soap.sforce.com/2006/04/metadata">' +
+          `<type>ReportType</type><fullNames>${developerName}</fullNames></readMetadata>`,
+        signal: AbortSignal.timeout(60_000),
+      }
+    );
+  } catch (error) {
+    return `Could not reach Salesforce to read the report type: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  const refused = refusalTextOf(response, 'Salesforce Admin');
+  if (refused) return refused;
+  const read = readMetadataRecords(await response.text().catch(() => ''));
+  if (!Array.isArray(read)) return `Salesforce would not read the report type: ${read.fault}`;
+  const record = read[0];
+  if (!record || !record.baseObject) return null;
+  const metadata = normalizeReportType(record);
+  return { name: developerName, metadata, fingerprint: fingerprintOf(metadata) };
+}
 
 export interface RecordTypeRef {
   id: string;
@@ -321,6 +374,8 @@ export async function wholeComponentFingerprint(
     }
     case 'GlobalValueSet':
       return wrap(await readGlobalValueSet(context, access, precondition.name));
+    case 'ReportType':
+      return wrap(await readReportType(context, access, precondition.name));
     case 'StandardValueSet': {
       const [object, field] = [precondition.object, precondition.name];
       const set = standardValueSetOf(object, field);

@@ -27,7 +27,13 @@ import {
   REPORT_SUMMARIES,
   REPORT_TYPE_CATEGORIES,
   reportableFields,
+  reportColumnOf,
   reportFileColumn,
+  mergeReportTypeColumns,
+  metadataFile,
+  packageXml,
+  reportTypeTables,
+  type ReportTypeColumnAdd,
   type ReportObjectInfo,
   type ReportSpec,
   type ReportTypeSpec,
@@ -53,6 +59,7 @@ import {
   REPORT_TYPE_KIND,
   type ComponentView,
 } from '@/lib/salesforce-admin/plan';
+import { readReportType } from '@/lib/salesforce-admin/whole-components';
 import { proposeAndValidate, reasonField, refusesChanges, replacesField } from './shared';
 
 const bullets = (errors: string[]) =>
@@ -494,6 +501,157 @@ export function registerAdminReportTools(
           ...spec.sections.map((s) => `  ${s.label}: ${s.columns.length} columns`),
           'Once applied, reports can be built on it (salesforce_admin_propose_report, reportType ' +
             `${spec.developerName}__c).`,
+        ],
+      });
+    }
+  );
+
+  server.registerTool(
+    'salesforce_admin_propose_report_type_changes',
+    {
+      title: 'Salesforce Admin · Act — Propose fields for a report type',
+      description:
+        'Add fields to an existing custom report type, so reports built on it can show them: a ' +
+        'field of the report type’s object, a field reached through a lookup (Client.Medicare__pc ' +
+        'on a Referral is the client account’s Medicare #), or one of a joined object — into an ' +
+        'existing section, by its label, or a new one. Nothing already in the report type moves ' +
+        'or goes: it deploys whole, read as it is now, with only the additions merged in, and ' +
+        'applying is refused if anyone changed it in the meantime. Checked by a validation deploy ' +
+        'that changes nothing; the person reviews and applies it from the link this returns.',
+      annotations: { readOnlyHint: false },
+      inputSchema: z.object({
+        reportType: z
+          .string()
+          .min(1)
+          .describe('The custom report type’s API name, with or without __c: Referrals__c.'),
+        add: z
+          .array(
+            z.object({
+              object: z
+                .string()
+                .optional()
+                .describe(
+                  'Whose fields: the base object (default), or a joined relationship such as Visit_Notes__r.'
+                ),
+              section: z
+                .string()
+                .max(80)
+                .optional()
+                .describe(
+                  'The section to add them to, by label — an existing one, or a new one (default the object’s plural label).'
+                ),
+              fields: z
+                .array(z.string().min(1))
+                .min(1)
+                .max(100)
+                .describe('Field API names, or lookup paths like Client.Medicare__pc.'),
+              checked: z
+                .array(z.string())
+                .optional()
+                .describe('Which of them a new report shows by default.'),
+            })
+          )
+          .min(1)
+          .max(10),
+        reason: reasonField,
+        replaces: replacesField,
+      }),
+    },
+    async (args) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const refused = await refusesChanges(access);
+      if (refused) return errText(refused);
+      const live = await readReportType(context, access, args.reportType);
+      if (typeof live === 'string') return errText(live);
+      if (!live) {
+        return errText(
+          `Nothing was proposed: there is no custom report type ${args.reportType.replace(/__c$/i, '')}__c (salesforce_admin_list_report_types lists them; standard report types cannot be changed).`
+        );
+      }
+      // The objects down the report type's join path, so each addition's
+      // fields can be checked against the object they belong to.
+      const tables: Array<{ table: string; info: ReportObjectInfo }> = [];
+      for (const table of reportTypeTables(live.metadata)) {
+        const parent = tables[tables.length - 1];
+        const object = parent
+          ? parent.info.children[
+              Object.keys(parent.info.children).find(
+                (name) => name.toLowerCase() === (table.split('.').pop() ?? '').toLowerCase()
+              ) ?? ''
+            ]
+          : table;
+        const info = object ? objectInfo(await describeObject(context, access, object)) : null;
+        if (!info) return errText(`Could not read the object behind ${table} in the report type.`);
+        tables.push({ table, info });
+      }
+      const errors: string[] = [];
+      const adds: ReportTypeColumnAdd[] = [];
+      for (const item of args.add) {
+        const wanted = (item.object ?? tables[0]?.table ?? '').toLowerCase();
+        const found = tables.find(
+          ({ table, info }) =>
+            table.toLowerCase() === wanted ||
+            table.split('.').pop()?.toLowerCase() === wanted ||
+            info.name.toLowerCase() === wanted
+        );
+        if (!found) {
+          errors.push(
+            `The report type’s objects are ${tables.map((t) => t.table).join(', ')}, not ${item.object}.`
+          );
+          continue;
+        }
+        const checked = new Set((item.checked ?? []).map((name) => name.toLowerCase()));
+        for (const name of item.fields) {
+          const field = reportColumnOf(found.info, name);
+          if (!field) {
+            errors.push(`${found.info.name} has no field or lookup path ${name}.`);
+            continue;
+          }
+          adds.push({
+            section: item.section?.trim() || found.info.labelPlural,
+            table: found.table,
+            field,
+            checked: checked.has(name.toLowerCase()) || checked.has(field.toLowerCase()),
+          });
+        }
+      }
+      if (errors.length > 0) return bullets(errors);
+      const merged = mergeReportTypeColumns(live.metadata, adds);
+      if (!merged.ok) return bullets(merged.errors);
+
+      const name = live.name;
+      const members = [{ type: 'ReportType', member: name }];
+      const label = str(live.metadata.label) || name;
+      return proposeAndValidate(context, access, {
+        kind: REPORT_TYPE_KIND,
+        title: `${label}: add fields to the report type ${name}__c`,
+        reason: args.reason,
+        replaces: args.replaces,
+        payload: {
+          files: {
+            'package.xml': packageXml(members),
+            [`reportTypes/${name}.reportType`]: metadataFile('ReportType', merged.metadata),
+          },
+          members,
+          components: [
+            { type: 'ReportType', name: `${name}__c`, action: 'update', rows: merged.rows },
+          ],
+          preconditions: [
+            {
+              kind: 'component-unchanged',
+              type: 'ReportType',
+              object: '',
+              name,
+              fingerprint: live.fingerprint,
+            },
+          ],
+          dataSteps: [],
+        },
+        summary: [
+          `• ${name}__c — “${label}”:`,
+          ...merged.rows.map((row) => `  ${row.label}: ${row.value}`),
+          'Everything else in the report type stays as it is. Once applied, reports on it can use the new columns.',
         ],
       });
     }

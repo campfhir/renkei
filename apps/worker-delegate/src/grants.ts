@@ -43,6 +43,7 @@ import {
 } from '@renkei/provider-grants';
 import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
 import { onbaseWorkerCall, refreshedOf } from './onbase-worker';
+import { isExpiredSession, salesforceSoapRequest } from './salesforce-soap';
 import {
   clientIdOf,
   clientSecretOf,
@@ -344,6 +345,11 @@ export class Grants {
 
     const body = await readBody(request, MAX_REQUEST_BYTES);
     if (body === null) return fail('too_large');
+    // The admin connector's one SOAP call, readMetadata, carries the session
+    // in its envelope, which only this process can write (salesforce-soap.ts);
+    // anything else sent to a SOAP endpoint is refused here.
+    const soap = salesforceSoapRequest(provider === SALESFORCE_ADMIN, url, method, body);
+    if (soap && !soap.ok) return fail('bad_request', soap.message);
 
     // The token: a pending exchange's, or the stored grant's (refreshed if due).
     let token: string;
@@ -402,6 +408,17 @@ export class Grants {
         if (typeof value === 'string' && !FORBIDDEN_REQUEST_HEADERS.has(name.toLowerCase()))
           headers.set(name, value);
       }
+      if (soap) {
+        headers.set('content-type', 'text/xml; charset=UTF-8');
+        headers.set('soapaction', '""');
+        return this.fetchImpl(target, {
+          method: 'POST',
+          headers,
+          body: new Uint8Array(soap.envelope(bearer)),
+          redirect: 'manual',
+          signal: AbortSignal.timeout(timeoutMs),
+        });
+      }
       if (bearer && spec.credential === 'basic') {
         headers.set(
           'authorization',
@@ -429,13 +446,24 @@ export class Grants {
       let hopBody = body;
       for (let hop = 0; ; hop += 1) {
         upstream = await send(token, current, hopMethod, hopBody);
-        if (hop === 0 && upstream.status === 401 && retryWithRefresh) {
+        // SOAP says an expired session with a fault, not a 401.
+        const expired =
+          upstream.status === 401 ||
+          (soap !== null &&
+            isExpiredSession(
+              upstream.status,
+              await upstream
+                .clone()
+                .text()
+                .catch(() => '')
+            ));
+        if (hop === 0 && expired && retryWithRefresh) {
           const again = await this.access(provider, { subject, accountId }, true);
           if (!again.ok) return fail(again.error);
           token = again.grant.accessToken;
           upstream = await send(token, current, hopMethod, hopBody);
         }
-        if (!follow || !isRedirect(upstream.status) || hop >= MAX_REDIRECT_HOPS) break;
+        if (soap || !follow || !isRedirect(upstream.status) || hop >= MAX_REDIRECT_HOPS) break;
         const location = upstream.headers.get('location');
         if (!location) break;
         let next: URL;

@@ -28,6 +28,7 @@ import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel, scripted } from './support/stub-model';
 import { createChat } from './support/tool-cards';
 import { previewChat } from './support/preview-cards';
+import { pointerReaches } from './support/settle';
 import {
   addConnectors,
   connectJira,
@@ -394,8 +395,13 @@ test('cancelling a card runs nothing', async ({ page, person: _person }, testInf
     ({ modelId } = await openCommentChat(page, testInfo));
     const frame = page.getByRole('main').frameLocator('iframe[title="Preview card"]');
     await expect(frame.locator('.card-title')).toHaveText('Comment on PROJ-12', COLD);
-    await frame.getByRole('button', { name: 'Cancel' }).click();
-    await expect(frame.locator('.done-headline')).toHaveText('Cancelled');
+    // The card has only just been drawn inside its frame: Chrome routes a
+    // press by what it last drew, so the pointer has to reach the button
+    // first or the click can be lost (AGENTS.md, "Pitfalls").
+    const cancel = frame.getByRole('button', { name: 'Cancel' });
+    await pointerReaches(page, cancel);
+    await cancel.click();
+    await expect(frame.locator('.done-headline')).toHaveText('Cancelled', COLD);
     await expect(
       noteLine(page, 'The user cancelled "Comment on PROJ-12" from the preview card')
     ).toBeVisible(COLD);

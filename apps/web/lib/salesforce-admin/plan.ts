@@ -119,13 +119,14 @@ export type Precondition =
 
 /** Components read whole and written back whole, checked by a hash on apply. */
 export type WholeComponent =
-  'RecordType' | 'BusinessProcess' | 'GlobalValueSet' | 'StandardValueSet';
+  'RecordType' | 'BusinessProcess' | 'GlobalValueSet' | 'StandardValueSet' | 'ReportType';
 
 const WHOLE_COMPONENTS: readonly WholeComponent[] = [
   'RecordType',
   'BusinessProcess',
   'GlobalValueSet',
   'StandardValueSet',
+  'ReportType',
 ];
 
 export interface Access {
@@ -729,7 +730,9 @@ export async function brokenPreconditions(
             ? `The values of ${precondition.object}.${precondition.name}`
             : precondition.type === 'GlobalValueSet'
               ? `The global value set ${precondition.name}`
-              : `The ${precondition.type === 'RecordType' ? 'record type' : 'process'} ${precondition.object}.${precondition.name}`;
+              : precondition.type === 'ReportType'
+                ? `The report type ${precondition.name}__c`
+                : `The ${precondition.type === 'RecordType' ? 'record type' : 'process'} ${precondition.object}.${precondition.name}`;
         const now = await wholeComponentFingerprint(context, access, precondition);
         if (now && typeof now === 'object') broken.push(`Could not check ${label}: ${now.error}`);
         else if (now === null)

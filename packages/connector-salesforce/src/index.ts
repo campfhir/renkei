@@ -181,8 +181,14 @@ export {
   buildReportPackage,
   isCustomReportType,
   reportFileColumn,
+  reportColumnOf,
+  normalizeReportType,
+  reportTypeTables,
+  mergeReportTypeColumns,
+  type ReportTypeColumnAdd,
   type ReportObjectInfo,
   type ReportTypeSpec,
   type ReportSpec,
   type FolderAccess,
 } from './report-metadata';
+export { parseXml, xmlToJson, readMetadataRecords } from './xml';
