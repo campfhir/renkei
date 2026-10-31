@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-31',
     entries: [
       {
+        kind: 'fixed',
+        title: "Salesforce Admin reports take a report type's lookup columns",
+        detail:
+          "A report on a custom report type can now include a lookup shown as itself, such as a referral's client account name, and building a report type over an object no longer fails on an owner field that can be a user or a queue.",
+      },
+      {
         kind: 'added',
         title: 'Copy a reply with its tool calls or its prompt',
         detail:
