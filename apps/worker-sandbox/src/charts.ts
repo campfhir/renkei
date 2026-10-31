@@ -30,7 +30,7 @@
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { chromium, type Browser, type BrowserContext } from 'playwright-core';
+import { type Browser, type BrowserContext } from 'playwright-core';
 import {
   CHART_IDLE_MS,
   CHART_MAX_CONCURRENT,
@@ -40,6 +40,7 @@ import {
   chartMediaType,
   type ChartRequest,
 } from '@renkei/connector-sandbox';
+import { launchChromium } from './browser-launch';
 import { logger } from './logger';
 
 export type ChartErrorType =
@@ -109,12 +110,10 @@ export function resolveMermaidBundle(cwd = process.cwd()): string | null {
   }
 }
 
-/** Chromium's own executable resolution, unless the image pins one (SANDBOX_BROWSER_EXECUTABLE, shared with browser.ts). */
+/** Chromium via browser-launch.ts, the same way browser.ts starts it. */
 export function defaultChartLaunch(): Promise<Browser> {
-  const executablePath = process.env.SANDBOX_BROWSER_EXECUTABLE?.trim() || undefined;
-  return chromium.launch({
+  return launchChromium({
     headless: true,
-    ...(executablePath ? { executablePath } : {}),
     args: [
       '--disable-dev-shm-usage',
       '--disable-gpu',

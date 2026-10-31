@@ -59,6 +59,14 @@ DELEGATE_KEY_WEB=<32-byte-base64-key>
 DELEGATE_KEY_WORKER=<32-byte-base64-key>
 DELEGATE_KEY_AGENTS=<32-byte-base64-key>
 DELEGATE_KEY_SANDBOX=<32-byte-base64-key>
+# docker-compose.yaml hands each service only the variables it reads (there is
+# no `env_file: .env`): the sandbox worker gets its own delegate key,
+# SANDBOX_WORKER_API_KEY and SANDBOX_ENV_SECRETS_KEY, but not
+# TOKEN_ENCRYPTION_KEY or CONTENT_ENCRYPTION_KEY, so set SANDBOX_ENV_SECRETS_KEY
+# (`openssl rand -base64 32`) — workspace and browser secrets are sealed under
+# it and the worker's fallback to TOKEN_ENCRYPTION_KEY has nothing to read.
+# `node scripts/check-compose-secrets.mjs` fails if a key lands on a service
+# that should not carry it.
 # A code workspace's git goes through the delegate's /git/<ticket>/… proxy
 # (no bearer key; the short-lived ticket is the credential). The web app
 # builds that proxy URL from DELEGATE_WORKER_URL; set this only when the

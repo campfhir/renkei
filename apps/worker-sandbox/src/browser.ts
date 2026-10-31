@@ -42,7 +42,6 @@
 
 import { randomUUID } from 'node:crypto';
 import {
-  chromium,
   type Browser,
   type BrowserContext,
   type Locator,
@@ -80,6 +79,7 @@ import { callInPage } from './crawl-page-script';
 import type { CrawlContext, CrawlPage } from './crawler';
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
+import { launchChromium } from './browser-launch';
 import { logger } from './logger';
 import type { BrowserStateStore, SavedBrowserState } from './browser-state';
 
@@ -233,12 +233,10 @@ function sessionKey(target: BrowserTarget): string {
   return target.subject;
 }
 
-/** Chromium's own executable resolution, unless the image pins one (SANDBOX_BROWSER_EXECUTABLE). */
+/** Chromium via browser-launch.ts: unprivileged where the worker is root, its own sandbox on where it can be. */
 export function defaultLaunch(proxyServer: string): Promise<Browser> {
-  const executablePath = process.env.SANDBOX_BROWSER_EXECUTABLE?.trim() || undefined;
-  return chromium.launch({
+  return launchChromium({
     headless: true,
-    ...(executablePath ? { executablePath } : {}),
     // `<-loopback>` removes Chromium's implicit proxy bypass for localhost,
     // so even 127.0.0.1 is sent to the proxy — and refused there.
     proxy: { server: proxyServer, bypass: '<-loopback>' },

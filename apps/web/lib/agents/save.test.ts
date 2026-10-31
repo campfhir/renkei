@@ -12,6 +12,7 @@ jest.mock('@/lib/mcp-tools/tool-catalog', () => ({
 }));
 jest.mock('@/lib/agents/store', () => ({
   getAgent: jest.fn(),
+  listAgentNames: jest.fn(async () => []),
   createAgent: jest.fn(),
   updateAgent: jest.fn(async () => ({ apiKeys: [] })),
 }));
@@ -22,9 +23,11 @@ jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 import type { AgentDraft } from '@renkei/agents';
 import { saveAgent } from './save';
 
-const storeMock = jest.requireMock<{ getAgent: jest.Mock; updateAgent: jest.Mock }>(
-  '@/lib/agents/store'
-);
+const storeMock = jest.requireMock<{
+  getAgent: jest.Mock;
+  listAgentNames: jest.Mock;
+  updateAgent: jest.Mock;
+}>('@/lib/agents/store');
 const describeMock = jest.requireMock<{ generateAgentDescription: jest.Mock }>(
   '@/lib/agents/describe'
 );
@@ -118,5 +121,28 @@ describe('validation against the owner’s tools', () => {
       outcome: 'invalid',
       issues: [expect.objectContaining({ path: 'tools.0' })],
     });
+  });
+});
+
+describe('chained triggers', () => {
+  const OWN = '11111111-1111-4111-8111-111111111111';
+  const FOREIGN = '22222222-2222-4222-8222-222222222222';
+  const chained = (callerAgentId: string) =>
+    parsedWith({ triggers: [{ kind: 'agent', callerAgentId }], enabled: true });
+
+  it('refuses a trigger on an agent the owner does not own', async () => {
+    storeMock.listAgentNames.mockResolvedValue([{ id: OWN, name: 'Mine' }]);
+    const result = await saveAgent('auth0|alice', chained(FOREIGN), { agentId: 'agent-1' });
+    expect(result).toEqual({
+      outcome: 'invalid',
+      issues: [expect.objectContaining({ path: 'triggers.0' })],
+    });
+    expect(storeMock.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('accepts a trigger on one of the owner’s own agents', async () => {
+    storeMock.listAgentNames.mockResolvedValue([{ id: OWN, name: 'Mine' }]);
+    const result = await saveAgent('auth0|alice', chained(OWN), { agentId: 'agent-1' });
+    expect(result.outcome).toBe('saved');
   });
 });

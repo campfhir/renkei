@@ -209,6 +209,23 @@ jobs:
           RESULT: ${{ needs.e2e-shard.result }}
         run: test "$RESULT" = success
 
+  # No service in docker-compose.yaml may carry a secret it is not meant to
+  # hold (the per-caller delegate keys, USER_KEY_ENCRYPTION_KEY, the connector
+  # workers' keys, SETUP_SECRET) or an `env_file` that hands it the whole
+  # .env. Reads the rendered config, so it checks what a container receives.
+  compose-secrets:
+    name: compose secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Compose secrets check
+        run: node scripts/check-compose-secrets.mjs
+
   # Every change to the product (apps/, packages/, docker/) needs an entry in
   # apps/web/lib/changelog.ts in the same pull request, or a commit that says
   # `Changelog: none`. `pnpm changelog add` writes the entry with today's date.
@@ -336,7 +353,7 @@ jobs:
   # publishes it; the publish itself (login and push) happens only on main.
   docker:
     name: docker (${{ matrix.image }})
-    needs: [checks, security]
+    needs: [checks, security, compose-secrets]
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # The smoke start boots the image against a database at this build's

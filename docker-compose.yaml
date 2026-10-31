@@ -83,6 +83,37 @@ x-delegate-sandbox: &delegate-sandbox
   <<: *delegate-url
   DELEGATE_WORKER_API_KEY: ${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
 
+# What each service is handed from .env. There is NO `env_file: .env` on any
+# service: a container gets exactly the variables below, so the per-caller
+# delegate keys and the delegate-only USER_KEY_ENCRYPTION_KEY mean something
+# at the container boundary — a process that is compromised holds its own
+# bearer key and nothing that opens another caller's. A bare `NAME:` passes
+# the value from .env through when it is set and leaves it unset otherwise,
+# the same as it was under env_file.
+#
+# Encryption keys a service seals or opens organization-level values with
+# (connector configs, model keys, content envelopes).
+x-crypto-keys: &crypto-keys
+  TOKEN_ENCRYPTION_KEY:
+  TOKEN_ENCRYPTION_KEYS:
+  CONTENT_ENCRYPTION_KEY:
+  CONTENT_ENCRYPTION_KEYS:
+# Log sealing and shipping, read by every long-running process.
+x-logging-env: &logging-env
+  LOG_ENCRYPTION_KEY:
+  LOG_ENCRYPTION_KEYS:
+  LOG_SHIP_ENDPOINT:
+  LOG_SHIP_CLIENT_ID:
+  LOG_SHIP_API_KEY:
+  LOG_SHIP_SIGNING_KEYS:
+# Chat attachments (the web app and the agents worker's retention sweep).
+x-blob-store: &blob-store
+  BLOB_STORE_PROVIDER:
+  AZURE_BLOB_ACCOUNT:
+  AZURE_BLOB_KEY:
+  AZURE_BLOB_CONTAINER:
+  AZURE_BLOB_ENDPOINT:
+
 services:
   # Third-party images are pinned to a digest as well as a tag — the tag
   # says what it is, the digest says exactly which build, so a tag that is
@@ -115,9 +146,11 @@ services:
   migrate:
     image: scotteremiaroden/renkei-migrate:latest
     container_name: renkei-migrate
-    env_file:
-      - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *crypto-keys]
+      # Two migrations reseal sandbox secrets.
+      SANDBOX_ENV_SECRETS_KEY:
+      SANDBOX_ENV_SECRETS_KEYS:
     <<: *locked-down
     tmpfs:
       - /tmp
@@ -134,8 +167,6 @@ services:
   worker:
     image: scotteremiaroden/renkei-worker:latest
     container_name: renkei-worker
-    env_file:
-      - .env
     # Optional e2e log shipping (worker → renkei over HTTP, encrypted +
     # signed, instead of writing the logs table directly). Generate the whole
     # .env block with:  pnpm --filter renkei generate:log-ship-keys (from a
@@ -155,7 +186,7 @@ services:
     # Reaches the delegate for chat keys, provider tokens and the connector
     # workers (a person's own credential attached there, never here).
     environment:
-      <<: [*database-urls, *delegate-worker]
+      <<: [*crypto-keys, *logging-env, *database-urls, *delegate-worker]
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -176,10 +207,8 @@ services:
     image: scotteremiaroden/renkei-worker:latest
     container_name: renkei-embeddings-worker
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/embeddings-worker.ts']
-    env_file:
-      - .env
     environment:
-      <<: [*database-urls, *delegate-worker]
+      <<: [*crypto-keys, *logging-env, *database-urls, *delegate-worker]
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -199,10 +228,8 @@ services:
     # is the working directory, as the image's default command has for apps/worker.
     working_dir: /app/apps/worker-agents
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
     environment:
-      <<: [*database-urls, *delegate-agents]
+      <<: [*crypto-keys, *logging-env, *blob-store, *database-urls, *delegate-agents]
       RENKEI_WEB_INTERNAL_URL: http://renkei-app:3000
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -231,10 +258,9 @@ services:
   worker-batch-jobs:
     image: scotteremiaroden/renkei-worker:latest
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/batch-jobs-worker.ts']
-    env_file:
-      - .env
     environment:
-      <<: [*database-urls, *delegate-worker]
+      <<: [*crypto-keys, *logging-env, *database-urls, *delegate-worker]
+      SANDBOX_WORKER_API_KEY:
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -261,9 +287,9 @@ services:
     image: scotteremiaroden/renkei-fileshares:latest
     container_name: renkei-worker-fileshares
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *crypto-keys, *logging-env]
+      FILESHARES_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -284,9 +310,9 @@ services:
     image: scotteremiaroden/renkei-onbase:latest
     container_name: renkei-worker-onbase
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *crypto-keys, *logging-env]
+      ONBASE_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -308,9 +334,9 @@ services:
     image: scotteremiaroden/renkei-mirth:latest
     container_name: renkei-worker-mirth
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *crypto-keys, *logging-env]
+      MIRTH_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -332,9 +358,9 @@ services:
     image: scotteremiaroden/renkei-admanager:latest
     container_name: renkei-worker-admanager
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
-    environment: *database-urls
+    environment:
+      <<: [*database-urls, *crypto-keys, *logging-env]
+      ADMANAGER_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -364,10 +390,8 @@ services:
     image: scotteremiaroden/renkei-delegate:latest
     container_name: renkei-worker-delegate
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
     environment:
-      <<: *database-urls
+      <<: [*database-urls, *crypto-keys, *logging-env]
       # One key per caller (see the top of this file). The map is what the
       # delegate reads; the plain list is the same four keys for a delegate
       # image from before the map existed, so either reads them.
@@ -376,6 +400,10 @@ services:
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>); the bearer keys
       # (*_WORKER_API_KEY) come from .env.
+      FILESHARES_WORKER_API_KEY:
+      ONBASE_WORKER_API_KEY:
+      MIRTH_WORKER_API_KEY:
+      ADMANAGER_WORKER_API_KEY:
       FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090
       ONBASE_WORKER_URL: http://renkei-worker-onbase:8091
       MIRTH_WORKER_URL: http://renkei-worker-mirth:8093
@@ -490,10 +518,19 @@ services:
     image: scotteremiaroden/renkei-sandbox:latest
     container_name: renkei-worker-sandbox
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
-    env_file:
-      - .env
+    # Its own secrets only (see x-crypto-keys): the sandbox runs untrusted
+    # code and a headless browser, so it is NOT handed TOKEN_ENCRYPTION_KEY
+    # or CONTENT_ENCRYPTION_KEY. Workspace and browser secrets are sealed
+    # under SANDBOX_ENV_SECRETS_KEY, which therefore must be set in .env
+    # (the worker's fallback to TOKEN_ENCRYPTION_KEY has nothing to fall
+    # back to here).
     environment:
-      <<: [*database-urls, *delegate-sandbox]
+      <<: [*database-urls, *delegate-sandbox, *logging-env]
+      SANDBOX_WORKER_API_KEY:
+      SANDBOX_ENV_SECRETS_KEY:
+      SANDBOX_ENV_SECRETS_KEYS:
+      SANDBOX_DOCKER_HOST:
+      SANDBOX_SERVICES_NETWORK:
       # A fixed Node heap, well inside the container limit, so the worker's
       # own process can never be what pushes the container over it — the
       # browser gets the rest.
@@ -570,13 +607,19 @@ services:
   renkei:
     image: scotteremiaroden/renkei:latest
     container_name: renkei-app
-    env_file:
-      - .env
     environment:
       # The connector workers (file shares, OnBase, Mirth, ADManager Plus)
       # are reached through the delegate, which attaches the person's
       # credential; the app holds neither their addresses nor their keys.
-      <<: [*database-urls, *delegate-web]
+      <<: [*database-urls, *delegate-web, *crypto-keys, *logging-env, *blob-store]
+      SETUP_SECRET:
+      PUBLIC_BASE_URL:
+      BITBUCKET_API_BASE_URL:
+      ENTRA_DEVELOPER_API_BASE_URL:
+      GITHUB_API_BASE_URL:
+      JIRA_ADMIN_API_BASE_URL:
+      JIRA_AUTOMATION_API_BASE_URL:
+      SANDBOX_WORKER_API_KEY:
       # Where the web app reaches the sandbox worker; the bearer key
       # (SANDBOX_WORKER_API_KEY) comes from the shared .env. Omit both to
       # run without an agent scratch space — the sandbox_* tools simply
