@@ -10,6 +10,7 @@ describe('security header rules', () => {
     publicBaseUrl: 'https://renkei.example.com',
   });
   const everywhere = headerMap(production[0].headers);
+  const enforcedRule = production[1];
 
   it('applies the baseline to every path', () => {
     expect(production[0].source).toBe('/:path*');
@@ -27,7 +28,8 @@ describe('security header rules', () => {
   });
 
   it('enforces only the directives that need no nonce, and reports the rest', () => {
-    expect(everywhere['Content-Security-Policy']).toBe(
+    expect(everywhere['Content-Security-Policy']).toBeUndefined();
+    expect(headerMap(enforcedRule.headers)['Content-Security-Policy']).toBe(
       "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     );
     expect(everywhere['Reporting-Endpoints']).toBe('csp="/api/csp-report"');
@@ -73,7 +75,7 @@ describe('security header rules', () => {
   });
 
   it('lets the framed routes be framed by this origin and nothing else', () => {
-    const framed = production.slice(1);
+    const framed = production.slice(2);
     expect(framed.map((rule) => rule.source)).toEqual(FRAMED_ROUTES);
     expect(FRAMED_ROUTES).toContain('/api/chat/widgets');
     expect(FRAMED_ROUTES).toContain('/api/chat/chats/:chatId/mockups/:toolUseId');
@@ -81,9 +83,32 @@ describe('security header rules', () => {
       const headers = headerMap(rule.headers);
       expect(headers['X-Frame-Options']).toBe('SAMEORIGIN');
       expect(headers['Content-Security-Policy-Report-Only']).toContain("frame-ancestors 'self'");
-      // Enforced for framing only: the documents carry CSP of their own
-      // (the mockup route's stays authoritative), so no form-action/base-uri here.
-      expect(headers['Content-Security-Policy']).toBe("object-src 'none'; frame-ancestors 'self'");
+      // The documents set a CSP of their own (the mockup route's carries its
+      // `sandbox`): a header from the config would replace it.
+      expect(headers['Content-Security-Policy']).toBeUndefined();
+    }
+  });
+
+  it('puts the enforced directives on every route but the framed ones', () => {
+    // `/:path((?!a|b).*)`: the lookahead is the whole of the rule's reach.
+    const lookahead = enforcedRule.source.match(/^\/:path\(\(\?!(.*)\)\.\*\)$/)?.[1];
+    expect(lookahead).toBeDefined();
+    const matches = new RegExp(`^/(?!${lookahead}).*$`);
+    for (const path of [
+      '/',
+      '/chat/abc',
+      '/api/chat/chats/123',
+      '/api/health',
+      '/api/chat/widgetsx',
+    ]) {
+      expect(matches.test(path)).toBe(true);
+    }
+    for (const path of [
+      '/api/chat/widgets',
+      '/api/chat/widgets/x',
+      '/api/chat/chats/123/mockups/t1',
+    ]) {
+      expect(matches.test(path)).toBe(false);
     }
   });
 });

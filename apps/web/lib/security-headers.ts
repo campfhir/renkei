@@ -124,6 +124,17 @@ export function servesHttps(publicBaseUrl: string | undefined): boolean {
   return typeof publicBaseUrl === 'string' && /^https:\/\//i.test(publicBaseUrl.trim());
 }
 
+/**
+ * A header `source` matching every path except the framed routes (path-to-regexp
+ * with a negative lookahead, which Next's `headers()` accepts).
+ */
+function notFramedSource(): string {
+  const framed = FRAMED_ROUTES.map(
+    (route) => `${route.replace(/^\//, '').replace(/:[A-Za-z]+/g, '[^/]+')}(?:/|$)`
+  );
+  return `/:path((?!${framed.join('|')}).*)`;
+}
+
 export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
   const isDevelopment = env.nodeEnv === 'development';
   const common = [
@@ -141,12 +152,21 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
       ...common,
       { key: 'X-Frame-Options', value: 'DENY' },
       {
-        key: 'Content-Security-Policy',
-        value: enforcedContentSecurityPolicy({ frameAncestors: "'none'" }),
-      },
-      {
         key: 'Content-Security-Policy-Report-Only',
         value: contentSecurityPolicy({ isDevelopment, frameAncestors: "'none'" }),
+      },
+    ],
+  };
+  // The enforced directives go on every route EXCEPT the framed ones: those
+  // documents (widget and mockup HTML) set a Content-Security-Policy of
+  // their own — the mockup route's carries its `sandbox` — and a header from
+  // here would replace it rather than add to it.
+  const enforced: HeaderRule = {
+    source: notFramedSource(),
+    headers: [
+      {
+        key: 'Content-Security-Policy',
+        value: enforcedContentSecurityPolicy({ frameAncestors: "'none'" }),
       },
     ],
   };
@@ -156,17 +176,11 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
     source,
     headers: [
       { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-      // Only what the framing needs: these documents are widget and mockup
-      // HTML with CSP of their own, so no `form-action` / `base-uri` here.
-      {
-        key: 'Content-Security-Policy',
-        value: "object-src 'none'; frame-ancestors 'self'",
-      },
       {
         key: 'Content-Security-Policy-Report-Only',
         value: contentSecurityPolicy({ isDevelopment, frameAncestors: "'self'" }),
       },
     ],
   }));
-  return [everywhere, ...framed];
+  return [everywhere, enforced, ...framed];
 }
