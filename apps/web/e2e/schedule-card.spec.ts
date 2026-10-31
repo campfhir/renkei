@@ -105,6 +105,54 @@ test('a time the model picked is pre-filled into Send later, and Schedule sends 
   }
 });
 
+test('on a phone the card and its fields stay inside the screen, with no sideways scroll', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const at = new Date(Math.ceil((Date.now() + 26 * 3_600_000) / 60_000) * 60_000);
+    const card = emailCard('AAMkAD-phone');
+    card.structuredContent = { ...card.structuredContent, sendAt: at.toISOString() };
+    modelId = await openChat(page, testInfo, card);
+    const frame = page.frameLocator('iframe[title="Preview card"]').first();
+    await expect(frame.getByRole('button', { name: 'Schedule' })).toBeVisible(COLD);
+
+    const fit = await frame.locator('html').evaluate((html) => {
+      const box = (el: Element) => el.getBoundingClientRect();
+      const cardEl = html.querySelector('.card');
+      if (!cardEl) return { error: 'no card' };
+      const cardBox = box(cardEl);
+      const fields = [...html.querySelectorAll('.field input, .field textarea, .field select, .field-value')];
+      const overflowing = fields
+        .filter((f) => {
+          const b = box(f);
+          return b.right > cardBox.right + 0.5 || b.left < cardBox.left - 0.5;
+        })
+        .map((f) => f.outerHTML.slice(0, 80));
+      return {
+        overflowing,
+        pageScrolls: html.scrollWidth > html.clientWidth + 0.5,
+        cardWidth: cardBox.width,
+        viewport: html.clientWidth,
+      };
+    });
+    expect(fit).toEqual({
+      overflowing: [],
+      pageScrolls: false,
+      cardWidth: expect.any(Number),
+      viewport: expect.any(Number),
+    });
+    expect((fit as { cardWidth: number }).cardWidth).toBeLessThanOrEqual(
+      (fit as { viewport: number }).viewport
+    );
+  } finally {
+    if (modelId) await removeModel(page.request, modelId);
+  }
+});
+
 test('the send card schedules: a picked time turns Send into Schedule and sends sendAt', async ({
   page,
   person: _person,
