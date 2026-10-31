@@ -13,6 +13,7 @@ import { registerJsmOpsTools } from './ops';
 import { opsScopes, oauthJsmOpsAuth } from './ops-auth';
 import { serviceDeskScopes, customerScopes, oauthJsmAuth } from './jsm-auth';
 import { withScopeGate } from '../capability-gate';
+import { registerJsmPreviewLookups } from './preview-lookups';
 
 export async function registerJiraServiceManagementTools(
   server: McpServer,
@@ -24,6 +25,8 @@ export async function registerJiraServiceManagementTools(
   // whoever calls these register functions directly — see
   // jsm.integration.test.ts and ops.integration.test.ts.
   const auth = oauthJsmAuth(context);
+  const opsAuth = oauthJsmOpsAuth(context);
+  registerJsmPreviewLookups(context, auth, opsAuth);
   await registerJsmTools(withScopeGate(server, scopes, serviceDeskScopes), context, auth);
   await registerRequestDetailsTools(
     withScopeGate(server, scopes, serviceDeskScopes),
@@ -31,9 +34,5 @@ export async function registerJiraServiceManagementTools(
     auth
   );
   await registerJsmCustomerTools(withScopeGate(server, scopes, customerScopes), context, auth);
-  await registerJsmOpsTools(
-    withScopeGate(server, scopes, opsScopes),
-    context,
-    oauthJsmOpsAuth(context)
-  );
+  await registerJsmOpsTools(withScopeGate(server, scopes, opsScopes), context, opsAuth);
 }

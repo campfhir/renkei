@@ -45,7 +45,9 @@ import { connectorKeyForTool } from '@renkei/tool-outcomes';
 import type { ActCard } from '@/lib/mcp-widgets/src/act-card';
 import { isAppOnlyTool } from './capability-gate';
 import { PREVIEW_BUILDERS } from './previews';
-import type { PreviewBuilder } from './previews/card';
+import type { MCPToolContext } from './common';
+import { lookupNames } from './lookup';
+import type { Names, PreviewBuilder } from './previews/card';
 import {
   APP_ONLY_META,
   ACT_PREVIEW_URI,
@@ -134,9 +136,10 @@ export function needsPreview(name: string, config: RegisterToolArgs[1]): boolean
 export function buildPreviewCard(
   builder: PreviewBuilder,
   name: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  names: Names = {}
 ): ActCard {
-  const { confirmWith, ...spec } = builder(args);
+  const { confirmWith, ...spec } = builder(args, names);
   return {
     ...spec,
     kind: 'act',
@@ -168,7 +171,7 @@ export interface ActPreviewServer {
  * no preview of their own. Registration order does not matter: the
  * decision waits until every name is known.
  */
-export function withActPreviews(target: McpServer): ActPreviewServer {
+export function withActPreviews(target: McpServer, context?: MCPToolContext): ActPreviewServer {
   const registered = new Set<string>();
   const candidates: { name: string; config: RegisterToolArgs[1]; handler: RegisterToolArgs[2] }[] =
     [];
@@ -214,7 +217,7 @@ export function withActPreviews(target: McpServer): ActPreviewServer {
         const args = hasInput && isRecord(handlerArgs[0]) ? handlerArgs[0] : {};
         let card: ActCard;
         try {
-          card = buildPreviewCard(builder, name, args);
+          card = buildPreviewCard(builder, name, args, await lookupNames(context, name, args));
         } catch (error) {
           return {
             content: [

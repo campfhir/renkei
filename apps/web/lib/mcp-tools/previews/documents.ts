@@ -5,7 +5,9 @@
 
 import type { FileItem } from '@/lib/mcp-widgets/src/act-card';
 import type { PreviewBuilder, PreviewSpec } from './card';
-import { clip, people, record, ref, show, strings, text, yes } from './card';
+import type { Names } from './card';
+import { clip, named, people, record, ref, show, strings, text, yes } from './card';
+import { siteLabel } from './graph-names';
 
 type Args = Record<string, unknown>;
 
@@ -20,7 +22,7 @@ const SERVICES: Service[] = [
 ];
 
 /** The file or folder a call names, the way a person would: by its path, else its link. */
-function itemOf(args: Args): { item: FileItem; where: string } {
+function itemOf(args: Args, names: Names): { item: FileItem; where: string } {
   const path = text(args.path).replace(/^\/+/, '');
   const url = text(args.itemUrl);
   const fromUrl = (() => {
@@ -30,8 +32,10 @@ function itemOf(args: Args): { item: FileItem; where: string } {
       return '';
     }
   })();
-  const name = path ? (path.split('/').pop() ?? path) : fromUrl || 'The item you named';
-  const where = [text(args.site), text(args.library)].filter(Boolean).join(' · ');
+  const name = path
+    ? (path.split('/').pop() ?? path)
+    : fromUrl || named(names, 'item', args.itemId) || 'The item you named';
+  const where = [siteLabel(names, args.site), text(args.library)].filter(Boolean).join(' · ');
   return {
     item: {
       name,
@@ -54,15 +58,16 @@ const CONFLICT: Record<string, string> = {
 
 function family(service: Service): Record<string, PreviewBuilder> {
   const { prefix, name: system } = service;
-  const sub = (args: Args) => [system, text(args.site)].filter(Boolean).join(' · ');
+  const sub = (args: Args, names: Names) =>
+    [system, siteLabel(names, args.site)].filter(Boolean).join(' · ');
   const builders: Record<string, PreviewBuilder> = {
-    [`${prefix}_create_folder`]: (args): PreviewSpec => {
-      const parent = itemOf(args);
+    [`${prefix}_create_folder`]: (args, names): PreviewSpec => {
+      const parent = itemOf(args, names);
       return {
         verb: 'Create',
         icon: 'folder',
         title: `Create the folder ${text(args.name)}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Create folder',
         body: {
           kind: 'fileop',
@@ -77,13 +82,13 @@ function family(service: Service): Record<string, PreviewBuilder> {
         },
       };
     },
-    [`${prefix}_copy_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
+    [`${prefix}_copy_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
       return {
         verb: 'Copy',
         icon: 'doc',
         title: `Copy ${item.name}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Copy',
         body: {
           kind: 'fileop',
@@ -91,24 +96,28 @@ function family(service: Service): Record<string, PreviewBuilder> {
           items: [item],
           to: {
             path: text(args.destinationFolderId)
-              ? `Folder ${text(args.destinationFolderId)}`
-              : 'The same folder',
+              ? named(names, 'folder', args.destinationFolderId) || 'Another folder'
+              : text(args.destinationDriveId)
+                ? 'Another drive'
+                : 'The same folder',
             ...(text(args.newName) ? { name: text(args.newName) } : {}),
           },
           note: 'The original stays where it is.',
         },
       };
     },
-    [`${prefix}_move_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
+    [`${prefix}_move_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
       const destination =
         text(args.destinationPath) ||
-        (text(args.destinationFolderId) ? `Folder ${text(args.destinationFolderId)}` : '');
+        (text(args.destinationFolderId)
+          ? named(names, 'folder', args.destinationFolderId) || 'Another folder'
+          : '');
       return {
         verb: 'Move',
         icon: 'folder',
         title: `Move ${item.name}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Move',
         body: {
           kind: 'fileop',
@@ -122,26 +131,26 @@ function family(service: Service): Record<string, PreviewBuilder> {
         },
       };
     },
-    [`${prefix}_rename_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
+    [`${prefix}_rename_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
       return {
         verb: 'Rename',
         icon: 'doc',
         title: `Rename ${item.name}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Rename',
         editable: [{ key: 'newName', label: 'New name', multiline: false }],
         body: { kind: 'fileop', mode: 'rename', items: [item], to: { name: text(args.newName) } },
       };
     },
-    [`${prefix}_delete_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
+    [`${prefix}_delete_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
       return {
         verb: 'Delete',
         tone: 'danger',
         icon: 'trash',
         title: `Delete ${item.name}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Delete',
         body: {
           kind: 'fileop',
@@ -151,8 +160,8 @@ function family(service: Service): Record<string, PreviewBuilder> {
         },
       };
     },
-    [`${prefix}_share_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
+    [`${prefix}_share_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
       const scope = text(args.scope) || 'organization';
       const edit = text(args.linkType) === 'edit';
       const anonymous = scope === 'anonymous';
@@ -161,7 +170,7 @@ function family(service: Service): Record<string, PreviewBuilder> {
         tone: anonymous ? 'danger' : 'caution',
         icon: 'link',
         title: `Create ${edit ? 'an editing' : 'a viewing'} link to ${item.name}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Create link',
         body: {
           kind: 'access',
@@ -193,15 +202,15 @@ function family(service: Service): Record<string, PreviewBuilder> {
         },
       };
     },
-    [`${prefix}_add_user_to_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
+    [`${prefix}_add_user_to_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
       const emails = strings(args.emails);
       return {
         verb: 'Share',
         tone: 'caution',
         icon: 'users',
         title: `Give ${emails.length === 1 ? emails[0] : `${emails.length} people`} access to ${item.name}`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: 'Share',
         editable:
           args.message === undefined ? [] : [{ key: 'message', label: 'Message', multiline: true }],
@@ -222,20 +231,22 @@ function family(service: Service): Record<string, PreviewBuilder> {
         },
       };
     },
-    [`${prefix}_remove_user_from_document`]: (args): PreviewSpec => {
-      const { item } = itemOf(args);
-      const who = text(args.email) || `Permission ${text(args.permissionId)}`;
+    [`${prefix}_remove_user_from_document`]: (args, names): PreviewSpec => {
+      const { item } = itemOf(args, names);
+      const who = text(args.email) || named(names, 'permission', args.permissionId);
       return {
         verb: 'Unshare',
         tone: 'danger',
         icon: 'users',
-        title: `Take ${who}’s access to ${item.name} away`,
-        subtitle: sub(args),
+        title: who
+          ? `Take ${who}’s access to ${item.name} away`
+          : `Take a person’s access to ${item.name} away`,
+        subtitle: sub(args, names),
         confirmLabel: 'Remove access',
         body: {
           kind: 'access',
           mode: 'revoke',
-          who: [{ name: who, kind: 'email' }],
+          who: [{ name: who || 'A person with access', kind: text(args.email) ? 'email' : 'user' }],
           on: ref(item.name, 'File', item.path),
         },
       };
@@ -243,11 +254,11 @@ function family(service: Service): Record<string, PreviewBuilder> {
   };
   if (prefix === 'sharepoint') {
     Object.assign(builders, {
-      sharepoint_create_page: (args: Args): PreviewSpec => ({
+      sharepoint_create_page: (args: Args, names: Names): PreviewSpec => ({
         verb: 'Create',
         icon: 'doc',
         title: `Create the page “${text(args.title)}”`,
-        subtitle: sub(args),
+        subtitle: sub(args, names),
         confirmLabel: yes(args.publish) ? 'Create and publish' : 'Create page',
         editable: [{ key: 'title', label: 'Title', multiline: false }],
         body: {
@@ -256,70 +267,74 @@ function family(service: Service): Record<string, PreviewBuilder> {
           type: 'Site page',
           titleKey: 'title',
           title: text(args.title),
-          location: [text(args.site)],
+          location: [siteLabel(names, args.site)].filter(Boolean),
           status: yes(args.publish) ? 'Published' : 'Draft',
           ...(args.contentHtml === undefined ? {} : { body: htmlText(text(args.contentHtml)) }),
         },
       }),
-      sharepoint_update_page: (args: Args): PreviewSpec => ({
+      sharepoint_update_page: (args: Args, names: Names): PreviewSpec => ({
         verb: 'Edit',
         icon: 'doc',
-        title: text(args.title)
-          ? `Edit the page “${text(args.title)}”`
-          : `Edit page ${text(args.pageId)}`,
-        subtitle: sub(args),
+        title: pageTitle(args, names)
+          ? `Edit the page “${pageTitle(args, names)}”`
+          : 'Edit the page',
+        subtitle: sub(args, names),
         confirmLabel: yes(args.publish) ? 'Save and publish' : 'Save page',
         body: {
           kind: 'document',
           mode: 'update',
           type: 'Site page',
-          ...(text(args.title) ? { title: text(args.title) } : {}),
-          location: [text(args.site), `Page ${text(args.pageId)}`],
+          ...(pageTitle(args, names) ? { title: pageTitle(args, names) } : {}),
+          location: [siteLabel(names, args.site)].filter(Boolean),
           status: yes(args.publish) ? 'Published after saving' : undefined,
           ...(args.contentHtml === undefined
             ? { unchanged: 'The page content stays as it is.' }
             : { body: htmlText(text(args.contentHtml)), bodyLabel: 'The page will read' }),
         },
       }),
-      sharepoint_publish_page: (args: Args): PreviewSpec => ({
+      sharepoint_publish_page: (args: Args, names: Names): PreviewSpec => ({
         verb: 'Publish',
         tone: 'caution',
         icon: 'upload',
-        title: `Publish page ${text(args.pageId)}`,
-        subtitle: sub(args),
+        title: named(names, 'page', args.pageId)
+          ? `Publish the page “${named(names, 'page', args.pageId)}”`
+          : 'Publish the page',
+        subtitle: sub(args, names),
         confirmLabel: 'Publish page',
         body: {
           kind: 'document',
           mode: 'publish',
           type: 'Site page',
-          title: `Page ${text(args.pageId)}`,
-          location: [text(args.site)],
+          title: named(names, 'page', args.pageId) || 'The page',
+          location: [siteLabel(names, args.site)].filter(Boolean),
           status: 'Published',
           versionNote: 'Everyone who can see the site can read it.',
         },
       }),
-      sharepoint_delete_page: (args: Args): PreviewSpec => ({
+      sharepoint_delete_page: (args: Args, names: Names): PreviewSpec => ({
         verb: 'Delete',
         tone: 'danger',
         icon: 'trash',
-        title: `Delete page ${text(args.pageId)}`,
-        subtitle: sub(args),
+        title: named(names, 'page', args.pageId)
+          ? `Delete the page “${named(names, 'page', args.pageId)}”`
+          : 'Delete the page',
+        subtitle: sub(args, names),
         confirmLabel: 'Delete page',
         body: {
           kind: 'document',
           mode: 'delete',
           type: 'Site page',
-          title: `Page ${text(args.pageId)}`,
-          location: [text(args.site)],
+          title: named(names, 'page', args.pageId) || 'The page',
+          location: [siteLabel(names, args.site)].filter(Boolean),
         },
       }),
-      sharepoint_update_document_metadata: (args: Args): PreviewSpec => {
-        const { item } = itemOf(args);
+      sharepoint_update_document_metadata: (args: Args, names: Names): PreviewSpec => {
+        const { item } = itemOf(args, names);
         return {
           verb: 'Update',
           icon: 'tag',
           title: `Update the properties of ${item.name}`,
-          subtitle: sub(args),
+          subtitle: sub(args, names),
           confirmLabel: 'Update properties',
           body: {
             kind: 'change',
@@ -331,14 +346,21 @@ function family(service: Service): Record<string, PreviewBuilder> {
           },
         };
       },
-      sharepoint_watch_library: (args: Args) => watch(args, true, sub(args)),
-      sharepoint_unwatch_library: (args: Args) => watch(args, false, sub(args)),
+      sharepoint_watch_library: (args: Args, names: Names) =>
+        watch(args, true, sub(args, names), siteLabel(names, args.site)),
+      sharepoint_unwatch_library: (args: Args, names: Names) =>
+        watch(args, false, sub(args, names), siteLabel(names, args.site)),
     });
   }
   return builders;
 }
 
-function watch(args: Args, on: boolean, subtitle: string): PreviewSpec {
+/** A page's title: the one the call is setting, else the one it has now. */
+function pageTitle(args: Args, names: Names): string {
+  return text(args.title) || named(names, 'page', args.pageId);
+}
+
+function watch(args: Args, on: boolean, subtitle: string, site: string): PreviewSpec {
   const library = text(args.library) || 'the default library';
   return {
     verb: on ? 'Watch' : 'Unwatch',
@@ -350,7 +372,7 @@ function watch(args: Args, on: boolean, subtitle: string): PreviewSpec {
       kind: 'access',
       mode: on ? 'watch' : 'unwatch',
       who: [],
-      on: ref(library, 'Library', text(args.site)),
+      on: ref(library, 'Library', site),
       details: [
         {
           label: 'You will',

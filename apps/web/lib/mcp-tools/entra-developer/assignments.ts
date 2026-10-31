@@ -146,7 +146,7 @@ export async function registerAssignmentTools(
         action: 'Assign app role',
         tone: 'positive',
         title: `Assign ${role.value.displayName} on ${str(sp.displayName)}`,
-        subtitle: `Microsoft Entra · enterprise application ${str(sp.appId)}`,
+        subtitle: 'Microsoft Entra · enterprise application',
         person: {
           name: toAdd.length === 1 ? toAdd[0].displayName : `${toAdd.length} users and groups`,
           detail: toAdd.length === 1 ? principalLine(toAdd[0]) : undefined,
@@ -154,7 +154,7 @@ export async function registerAssignmentTools(
         secondaryPerson: {
           label: 'Application',
           name: str(sp.displayName),
-          detail: `Application (client) id ${str(sp.appId)}`,
+          detail: 'Enterprise application',
         },
         fields: [
           {
@@ -290,7 +290,7 @@ export async function registerAssignmentTools(
         action: 'Remove app role assignment',
         tone: 'caution',
         title: `Remove ${role.value.displayName} on ${str(sp.displayName)}`,
-        subtitle: `Microsoft Entra · enterprise application ${str(sp.appId)}`,
+        subtitle: 'Microsoft Entra · enterprise application',
         person: {
           name:
             toRemove.length === 1 ? toRemove[0].displayName : `${toRemove.length} users and groups`,
@@ -299,7 +299,7 @@ export async function registerAssignmentTools(
         secondaryPerson: {
           label: 'Application',
           name: str(sp.displayName),
-          detail: `Application (client) id ${str(sp.appId)}`,
+          detail: 'Enterprise application',
         },
         fields: [
           {

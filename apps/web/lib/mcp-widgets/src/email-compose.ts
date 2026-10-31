@@ -11,6 +11,9 @@
  * quoted thread as one, so an edited comment goes to the confirm tool with
  * the message it answers (`messageId`) and the draft is rebuilt from it.
  *
+ * "Send later" picks a moment and turns Send into Schedule: the confirm tool
+ * gets a `sendAt` and Exchange holds the message in the Outbox until then.
+ *
  * Bodies are Markdown. The editable textarea holds the Markdown source
  * (what the confirm tool renders on send); a read-only body shows the
  * server's rendering of it, so the user sees the email as it will arrive.
@@ -123,11 +126,17 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     );
   }
 
+  const sendLater = inputField('Send later (optional)', '');
+  sendLater.input.type = 'datetime-local';
+  card.append(sendLater.field);
   const discardButton = el('button', undefined, 'Discard');
   const sendButton = el('button', 'primary', 'Send');
   const footer = cardActions([discardButton, sendButton]);
   card.append(footer.actions);
   root.append(card);
+  sendLater.input.addEventListener('input', () => {
+    sendButton.textContent = sendLater.input.value ? 'Schedule' : 'Send';
+  });
 
   footer.run(sendButton, async () => {
     const finalTo = splitAddresses(toInput.input.value);
@@ -163,31 +172,39 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       };
     }
     if (finalTo.length === 0) throw new Error('Add someone to send it to.');
+    let when: Date | null = null;
+    if (sendLater.input.value) {
+      when = new Date(sendLater.input.value);
+      if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
+        throw new Error('Pick a send time at least a minute from now.');
+      }
+    }
     const sent = await bridge.callTool(
       'outlook_send_draft_confirm',
-      { draftId, ...args },
+      { draftId, ...args, ...(when ? { sendAt: when.toISOString() } : {}) },
       stateKey
     );
-    if (sent.isError) throw new Error(resultText(sent) || 'Send failed');
+    if (sent.isError) {
+      throw new Error(resultText(sent) || (when ? 'Scheduling failed' : 'Send failed'));
+    }
     const sentTo = finalTo.join(', ');
+    const what = `To ${sentTo}${finalSubject ? ` — “${finalSubject}”` : ''}`;
     finishDone({
       icon: 'sent',
       ...(parseLinks(resultText(sent)).length > 0 ? { links: parseLinks(resultText(sent)) } : {}),
-      headline: 'Sent',
-      detail: `To ${sentTo}${finalSubject ? ` — “${finalSubject}”` : ''}`,
+      headline: when ? 'Scheduled' : 'Sent',
+      detail: when ? `${what} — sends ${when.toLocaleString()}` : what,
     });
     bridge.updateModelContext(
-      `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${sentTo}.`,
+      when
+        ? `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and scheduled it to ${sentTo} for ${when.toISOString()}.`
+        : `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${sentTo}.`,
       stateKey
     );
   });
 
   footer.run(discardButton, async () => {
-    const discarded = await bridge.callTool(
-      'outlook_discard_draft_confirm',
-      { draftId },
-      stateKey
-    );
+    const discarded = await bridge.callTool('outlook_discard_draft_confirm', { draftId }, stateKey);
     if (discarded.isError) throw new Error(resultText(discarded) || 'Discard failed');
     finishDone({ icon: 'cancelled', headline: 'Discarded', detail: 'Nothing was sent.' });
     bridge.updateModelContext(

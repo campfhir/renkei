@@ -27,6 +27,7 @@ import { registerDatabaseTools } from './databases';
 import { registerWhiteboardTools } from './whiteboards';
 import { registerAnalyticsTools } from './analytics';
 import { registerWatchTools } from './watches';
+import { registerConfluencePreviewLookups } from './preview-lookups';
 
 export const CONFLUENCE_MCP_CONNECTOR = 'atlassian-confluence';
 
@@ -38,6 +39,8 @@ export async function registerConfluenceTools(
   const server = withScopeGate(rawServer, context.confluenceScopes, (name) =>
     confluenceScopeFor(name)
   );
+
+  registerConfluencePreviewLookups(context, auth);
 
   await registerSpaceTools(server, context, auth);
   await registerSearchTools(server, context, auth);

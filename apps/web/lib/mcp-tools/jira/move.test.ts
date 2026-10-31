@@ -764,7 +764,7 @@ describe('jira_move_issues_preview', () => {
           value: 'IT Help Desk (HELP) · [System] Service request',
           oldValue: 'ENG · Task',
         },
-        { label: 'Request type', value: 'Get IT help (25)' },
+        { label: 'Request type', value: 'Get IT help' },
       ])
     );
     expect(rows.find((row) => row.label === 'Warnings')?.value).toContain('Components (ENG-1)');

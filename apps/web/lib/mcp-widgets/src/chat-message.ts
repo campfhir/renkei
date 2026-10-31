@@ -47,7 +47,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     return;
   }
 
-  const destination = roomId ? str(preview.roomTitle) || `room ${roomId}` : toPersonEmail;
+  const destination = roomId ? str(preview.roomTitle) || 'a Webex room' : toPersonEmail;
   // Keyed by the id the preview tool minted for THIS card, not by its
   // content: two previews of the same kind used to share a receipt, so the
   // second rendered as already-decided with no fields and no button. No id

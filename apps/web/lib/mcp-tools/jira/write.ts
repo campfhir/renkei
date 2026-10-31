@@ -17,6 +17,7 @@ import {
   loadFieldSchema,
 } from './field-schema';
 import { jiraIssueFieldRows, renderFieldValue } from './fields';
+import { previewUserLabel } from './user-label';
 import {
   unwrittenFieldsComment,
   writeWithFieldFallback,
@@ -607,6 +608,27 @@ export async function registerWriteTools(
   // card holds the request; its confirm button runs the SAME handler the
   // direct tools run, via the app-only *_confirm twins above each pair.
 
+  /** The card's field rows, with an assignee given as an accountId shown by name. */
+  const previewRows = async (args: Record<string, unknown>) => {
+    const rows = jiraIssueFieldRows(args);
+    return Promise.all(
+      rows.map(async (row) =>
+        row.label === 'Assignee'
+          ? {
+              ...row,
+              value: await previewUserLabel(async (accountId) => {
+                const response = await auth.fetch(
+                  granularJiraScopes('jira_get_user', true),
+                  `/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`
+                );
+                return response.ok ? response.json() : null;
+              }, row.value),
+            }
+          : row
+      )
+    );
+  };
+
   const previewGuidance = (what: string) =>
     `${what} is awaiting the user's decision on the preview card. Do not write it another ` +
     `way and do not repeat its contents in your reply; the user confirms or cancels from ` +
@@ -645,7 +667,7 @@ export async function registerWriteTools(
           confirmLabel: 'Create',
           confirmArgs: args,
           editable: { summaryKey: 'summary', descriptionKey: 'description' },
-          fields: jiraIssueFieldRows(args),
+          fields: await previewRows(args),
         },
       };
     }
@@ -718,7 +740,7 @@ export async function registerWriteTools(
             .join(', ')
         : '';
 
-      const fields = jiraIssueFieldRows(args).map((row) => {
+      const fields = (await previewRows(args)).map((row) => {
         if (row.label === 'Priority' && isString(priorityOld)) {
           return { ...row, oldValue: priorityOld };
         }

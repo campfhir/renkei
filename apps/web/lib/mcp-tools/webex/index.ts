@@ -1488,7 +1488,7 @@ export async function registerWebexUserTools(
 
       // Best-effort: the card should say "Renkei team" rather than a base64
       // room id. A grant without rooms_read (or a stale id) falls back to
-      // the id — the preview still works, it just reads worse.
+      // "a WebEx room" — the preview still works, it just reads worse.
       let roomTitle = '';
       if (roomId) {
         const room = await webexGet(
@@ -1499,7 +1499,7 @@ export async function registerWebexUserTools(
         if (room.ok) roomTitle = str(room.body.title);
       }
 
-      const destination = roomId ? roomTitle || `room ${roomId}` : toPersonEmail;
+      const destination = roomId ? roomTitle || 'a WebEx room' : toPersonEmail;
       return {
         ...textResult(
           `The message to ${destination} is awaiting the user's decision on the preview card. ` +

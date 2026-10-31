@@ -1183,7 +1183,7 @@ export async function registerMoveTools(
           fields.push({
             label: 'Request type',
             value: plan.requestType
-              ? `${plan.requestType.name} (${plan.requestType.id})`
+              ? plan.requestType.name
               : 'None — the tickets will not appear in the customer portal',
           });
         }

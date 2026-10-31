@@ -35,6 +35,7 @@ import {
   resolveRequestType,
   resolveServiceDesk,
 } from './components';
+import { previewUserLabel } from '../jira/user-label';
 import { resolveUserId } from '../jira/resolve-user';
 import { collectExtraFields, extraFieldSchema } from '../jira/write';
 import { writeWithFieldFallback } from '../jira/field-write';
@@ -978,6 +979,22 @@ export async function registerJsmTools(
         return errText('serviceDeskId, requestTypeId, and summary are required');
       }
 
+      // A request type typed as a name is its own label; an id is not wording.
+      const typeLabel = /^\d+$/.test(requestTypeId) ? 'The selected request type' : requestTypeId;
+      const readUser = async (accountId: string): Promise<unknown> => {
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_service_desks', true),
+          `/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`
+        );
+        return response.ok ? response.json() : null;
+      };
+      const reporter = str(args.reporter)
+        ? await previewUserLabel(readUser, str(args.reporter), 'The selected person')
+        : '';
+      const assignee = str(args.assignee)
+        ? await previewUserLabel(readUser, str(args.assignee), 'The selected person')
+        : '';
+
       // Best-effort: name the desk and request type like the portal would
       // rather than showing bare ids. A failed read costs the labels only.
       let deskName = '';
@@ -1031,20 +1048,20 @@ export async function registerJsmTools(
           kind: 'issue',
           previewId: newPreviewId(),
           title: 'Create service desk request',
-          subtitle: `${deskName || `desk ${serviceDeskId}`} · ${typeName || `type ${requestTypeId}`}`,
+          subtitle: `${deskName || 'Service desk'} · ${typeName || typeLabel}`,
           confirmTool: 'jsm_create_request_confirm',
           confirmLabel: 'Create request',
           confirmArgs: args,
           editable: { summaryKey: 'summary', descriptionKey: 'description' },
           fields: [
-            { label: 'Service desk', value: deskName || serviceDeskId },
-            { label: 'Request type', value: typeName || requestTypeId },
+            { label: 'Service desk', value: deskName || 'The selected service desk' },
+            { label: 'Request type', value: typeName || typeLabel },
             // Only when asked for. A card row reading "Components: —" on
             // every request would be noise; the point of showing these is
             // that somebody approving the card can see who it is for, who
             // gets it, and where it will be filed.
-            ...(str(args.reporter) ? [{ label: 'Reporter', value: str(args.reporter) }] : []),
-            ...(str(args.assignee) ? [{ label: 'Assignee', value: str(args.assignee) }] : []),
+            ...(reporter ? [{ label: 'Reporter', value: reporter }] : []),
+            ...(assignee ? [{ label: 'Assignee', value: assignee }] : []),
             ...(str(args.priority) ? [{ label: 'Priority', value: str(args.priority) }] : []),
             ...(Array.isArray(args.components) && args.components.length > 0
               ? [{ label: 'Components', value: args.components.map(String).join(', ') }]

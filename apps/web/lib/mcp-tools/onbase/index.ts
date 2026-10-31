@@ -36,6 +36,7 @@
  */
 
 import { z } from 'zod';
+import { registerOnbasePreviewLookups } from './preview-lookups';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { extractText, DEFAULT_MAX_INPUT_BYTES } from '@renkei/document-text';
 import {
@@ -156,6 +157,18 @@ export function displayName(thing: NamedThing): string {
  * every search. Only successes are cached (the CatalogCache contract).
  */
 const catalogCache = new CatalogCache<NamedThing[]>();
+
+const CATALOG_KINDS = [
+  'keyword-types',
+  'document-types',
+  'document-type-groups',
+  'custom-queries',
+  'note-types',
+] as const;
+
+function isCatalogKind(kind: string): kind is (typeof CATALOG_KINDS)[number] {
+  return CATALOG_KINDS.some((known) => known === kind);
+}
 
 export async function loadCatalog(
   context: MCPToolContext,
@@ -315,6 +328,21 @@ export function registerOnbaseTools(
    * its own failure. A search records the scope it ran over (a document
    * type, type group or custom query id), never the keyword values.
    */
+  // The names the generated preview cards show in place of ids (../lookup.ts).
+  registerOnbasePreviewLookups(context, {
+    catalog: (kind) => loadCatalog(context, auth, isCatalogKind(kind) ? kind : 'document-types'),
+    documentName: async (id) => {
+      const segment = idSegment(id);
+      if (!segment) return '';
+      const found = await apiJson(
+        auth,
+        { method: 'GET', path: `/documents/${segment}` },
+        'read the document'
+      );
+      return typeof found === 'string' || !isRecord(found.json) ? '' : str(found.json.name);
+    },
+  });
+
   const actor = phiActorOf(context);
   const recordAccess = async (input: {
     action: PhiAction;

@@ -31,6 +31,7 @@ import { registerFileTools } from './files';
 import { registerRequestAdminChangeTool } from './request-admin-change';
 import { registerOrgTools } from './orgs';
 import { orgField, withOrgSelection } from './org-choice';
+import { registerSalesforcePreviewLookups } from './preview-lookups';
 
 export const SALESFORCE_MCP_CONNECTOR = 'salesforce';
 
@@ -47,6 +48,7 @@ export function registerSalesforceTools(
     orgField
   );
 
+  registerSalesforcePreviewLookups(context, auth);
   registerOrgTools(server, context);
   registerRecordReadTools(server, context, auth);
   registerWriteTools(server, context, auth);

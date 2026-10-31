@@ -68,6 +68,7 @@
  */
 
 import { z } from 'zod';
+import { registerOnbaseAdminPreviewLookups } from './preview-lookups';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { CatalogCache, resolveKeywordTypeRef } from '@renkei/connector-onbase';
 import type { MCPToolContext } from '../common';
@@ -92,6 +93,21 @@ type AdminCatalogKind =
   | 'disk-groups'
   | 'user-groups'
   | 'users';
+
+const ADMIN_CATALOG_KINDS: readonly string[] = [
+  'document-types',
+  'keyword-types',
+  'document-type-groups',
+  'keyword-type-groups',
+  'file-types',
+  'disk-groups',
+  'user-groups',
+  'users',
+];
+
+function isAdminCatalogKind(kind: string): kind is AdminCatalogKind {
+  return ADMIN_CATALOG_KINDS.includes(kind);
+}
 
 /**
  * Every paged listing takes `limit`, where 0 means "everything". A catalog
@@ -389,6 +405,12 @@ export function registerOnbaseAdminTools(
   context: MCPToolContext,
   auth: OnBaseAuth
 ): void {
+  // The names the generated preview cards show in place of ids (../lookup.ts).
+  registerOnbaseAdminPreviewLookups(context, {
+    catalog: (kind) =>
+      isAdminCatalogKind(kind) ? loadAdminCatalog(context, auth, kind) : Promise.resolve('unknown'),
+  });
+
   /* ------------------------------- Read ------------------------------- */
 
   server.registerTool(

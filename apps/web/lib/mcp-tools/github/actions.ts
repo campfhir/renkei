@@ -231,6 +231,17 @@ export async function registerActionsTools(
       inputSchema: triggerSchema,
     },
     async (args: Record<string, any>) => {
+      // A numeric workflow id is a handle for the dispatch call; the card names the workflow
+      // (a file name like ci.yml is already readable and is shown as given).
+      let workflow = str(args.workflowId);
+      if (/^\d+$/.test(workflow)) {
+        const found = await ghJson(
+          auth,
+          githubScopeFor('github_list_workflows'),
+          `${repoPath(str(args.owner), str(args.repo))}/actions/workflows/${encodeURIComponent(workflow)}`
+        ).catch(() => null);
+        workflow = (found?.ok && str(rec(found.body).name)) || 'the selected workflow';
+      }
       return {
         content: [
           {
@@ -250,7 +261,7 @@ export async function registerActionsTools(
           confirmLabel: 'Run workflow',
           confirmArgs: args,
           fields: [
-            { label: 'Workflow', value: str(args.workflowId) },
+            { label: 'Workflow', value: workflow },
             { label: 'Branch/tag', value: str(args.ref) },
           ],
         },

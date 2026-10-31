@@ -62,8 +62,10 @@ import { NO_SUCH_INSTANCE } from './mirth-auth';
 import type { MirthAuth } from './mirth-auth';
 import { registerOperationTools, xstreamValue, type OperationRuntime } from './operations';
 import { logger } from '@/lib/logger';
+import { registerMirthPreviewLookups } from './preview-lookups';
 import { phiActorOf, recordPhiAccess, type PhiAction } from '@/lib/phi-access';
 import {
+  REF_ARGS,
   REF_KINDS,
   createDirectory,
   isRefKind,
@@ -472,14 +474,25 @@ export function registerMirthTools(
   const scope = auth.target();
   const directory =
     options.directory ??
-    createDirectory(
-      call,
-      typeof scope === 'string' ? 'denied' : scope.subject
-    );
+    createDirectory(call, typeof scope === 'string' ? 'denied' : scope.subject);
   const server = withReferenceResolution(rawServer, {
     listConnected: () => auth.listConnected(),
     directory,
   });
+  // The names the generated preview cards show in place of ids (../lookup.ts).
+  registerMirthPreviewLookups(context, {
+    listConnected: () => auth.listConnected(),
+    directory,
+  });
+
+  /** The instance's name for a card; never its id. */
+  const instanceLabel = async (instanceId: string): Promise<string> => {
+    const connected = await auth.listConnected();
+    if (typeof connected === 'string') return 'Mirth Connect';
+    return (
+      connected.find((entry) => entry.instance.id === instanceId)?.instance.name ?? 'Mirth Connect'
+    );
+  };
 
   /**
    * A tool registers only when the caller holds its permission on some
@@ -600,11 +613,15 @@ export function registerMirthTools(
       });
     },
     async instanceName(instanceId) {
-      const connected = await auth.listConnected();
-      if (typeof connected === 'string') return instanceId;
-      return (
-        connected.find((entry) => entry.instance.id === instanceId)?.instance.name ?? instanceId
-      );
+      return instanceLabel(instanceId);
+    },
+    async refName(instanceId, argName, value, args) {
+      const kind = REF_ARGS[argName];
+      if (!kind) return null;
+      const channel = typeof args.channelId === 'string' ? args.channelId : undefined;
+      const entries = await directory.entries(instanceId, kind, { channelId: channel });
+      if (typeof entries === 'string') return null;
+      return entries.find((entry) => entry.id === value)?.name ?? null;
     },
     maxChars: DEFAULT_MAX_CHARS,
   };
@@ -2063,12 +2080,7 @@ export function registerMirthTools(
       if (!names.ok) return errText(names.message);
       const name = unwrapMap(names.value)[str(args.channelId)];
       if (name === undefined) return errText('Mirth has no channel with that id.');
-      const connected = await auth.listConnected();
-      const instanceName =
-        typeof connected === 'string'
-          ? instanceId
-          : (connected.find((entry) => entry.instance.id === instanceId)?.instance.name ??
-            instanceId);
+      const instanceName = await instanceLabel(instanceId);
       return {
         content: [
           {
@@ -2080,14 +2092,13 @@ export function registerMirthTools(
           kind: 'issue',
           previewId: newPreviewId(),
           title: `Delete channel ${textOf(name)} permanently`,
-          subtitle: `${instanceName} · ${str(args.channelId)}`,
+          subtitle: `${instanceName} · ${textOf(name)}`,
           confirmTool: 'mirth_delete_channel_confirm',
           confirmLabel: 'Delete permanently',
           confirmArgs: args,
           fields: [
             { label: 'Instance', value: instanceName },
             { label: 'Channel', value: textOf(name) },
-            { label: 'Id', value: str(args.channelId) },
             { label: 'Undo', value: 'None — the definition and its message store are removed' },
           ],
         },
@@ -2181,23 +2192,31 @@ export function registerMirthTools(
       if (!counted.ok) return errText(counted.message);
       const count = numericBody(counted.response.body.trim());
       const scope = args.all === true ? 'every message' : `${count} matching message(s)`;
+      const channelEntries = await directory.entries(instanceId, 'channel');
+      const channelName =
+        (typeof channelEntries === 'string'
+          ? undefined
+          : channelEntries.find((entry) => entry.id === str(args.channelId))?.name) ?? '';
+      const channelLabel = channelName || 'the channel';
       return {
         content: [
           {
             type: 'text' as const,
-            text: previewGuidance(`The removal of ${scope} from channel ${str(args.channelId)}`),
+            text: previewGuidance(
+              `The removal of ${scope} from ${channelName ? `channel ${channelName}` : 'the channel'}`
+            ),
           },
         ],
         structuredContent: {
           kind: 'issue',
           previewId: newPreviewId(),
           title: `Remove ${scope} permanently`,
-          subtitle: `channel ${str(args.channelId)}`,
+          subtitle: channelName ? `channel ${channelName}` : channelLabel,
           confirmTool: 'mirth_remove_messages_confirm',
           confirmLabel: 'Remove permanently',
           confirmArgs: args,
           fields: [
-            { label: 'Channel', value: str(args.channelId) },
+            { label: 'Channel', value: channelLabel },
             { label: 'Messages', value: `${count}` },
             {
               label: 'Scope',
