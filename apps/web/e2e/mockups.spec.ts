@@ -331,11 +331,13 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
   // Focus is now inside the frame; the frame's own key handler forwards these.
   await page.keyboard.press('Control+=');
   await expect.poll(() => zoomPercent(page)).toBe(125);
-  // Down, then up once the dialog has gone: the key-up of a single press
-  // can be sent to the frame the key-down just removed, and wait on it.
-  await page.keyboard.down('Escape');
+  // Escape raised where focus is, inside the frame, and forwarded from
+  // there like the key above. Not a native key press: closing the dialog
+  // removes the (out-of-process) frame the key went to, and Chrome's answer
+  // to that key can then never come, hanging the press until the test's
+  // timeout. The key above already showed real keys reach the frame.
+  await team.dispatchEvent('keydown', { key: 'Escape' });
   await expect(dialog).toHaveCount(0);
-  await page.keyboard.up('Escape');
 });
 
 test('a mockup’s document can neither reach the network nor read cookies, and links go nowhere', async ({

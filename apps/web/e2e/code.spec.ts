@@ -100,7 +100,11 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
  * viewport and user agent), in a context of its own, signed in as them.
  */
 async function phonePage(browser: Browser, person: Person): Promise<Page> {
-  const context = await browser.newContext({ ...devices['Pixel 7'], baseURL: MEMORY_BASE_URL });
+  const context = await browser.newContext({
+    reducedMotion: 'reduce',
+    ...devices['Pixel 7'],
+    baseURL: MEMORY_BASE_URL,
+  });
   await signIn(context, person);
   return context.newPage();
 }
@@ -186,7 +190,9 @@ test.describe('code projects', () => {
     // picker, Bitbucket locked on, dismissed with Escape.
     await main.getByRole('menuitem', { name: 'Tools' }).click();
     const toolsDialog = page.getByRole('dialog', { name: 'Tools' });
-    await expect(toolsDialog.getByText(/Connectors chats in this project start with/)).toBeVisible();
+    await expect(
+      toolsDialog.getByText(/Connectors chats in this project start with/)
+    ).toBeVisible();
     await expect(toolsDialog.getByRole('checkbox', { name: /Bitbucket/ })).toBeChecked();
     await expect(toolsDialog.getByRole('checkbox', { name: /Bitbucket/ })).toBeDisabled();
     await shot('code-project-tools.png');
@@ -401,7 +407,10 @@ test.describe('code projects', () => {
     await filesDialog.getByRole('button', { name: 'Add to repository' }).click();
     // The row itself says it landed; the footer carries no report.
     await expect(
-      filesDialog.getByTestId('upload-table').getByRole('listitem').filter({ hasText: 'docs/notes.md' })
+      filesDialog
+        .getByTestId('upload-table')
+        .getByRole('listitem')
+        .filter({ hasText: 'docs/notes.md' })
     ).toContainText('Added');
     await filesDialog.getByRole('button', { name: 'Done' }).click();
 

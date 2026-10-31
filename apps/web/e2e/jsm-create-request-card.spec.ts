@@ -136,13 +136,15 @@ test('the card shows the type by name, asks for required fields as pick lists, a
 
   await impact.locator('select').selectOption({ label: 'Whole site' });
   await priority.locator('select').selectOption({ label: 'High' });
-  await components.getByRole('combobox', { name: 'Components' }).fill('Platform');
+  // Typing an option's name adds it (the rest of the combo box's rules —
+  // taking a chip off, Backspace, partial words — are chips.test.ts's).
+  const search = components.getByRole('combobox', { name: 'Components' });
+  await search.fill('Platform');
   await expect(components.locator('.chip')).toHaveText(['Billing×', 'Platform×']);
-  // Taking a chip off puts it back on the list; the card sends what is left.
-  await components.getByRole('button', { name: 'Remove Billing' }).click();
-  await expect(components.locator('.chip')).toHaveText(['Platform×']);
-  await components.getByRole('combobox', { name: 'Components' }).fill('billing');
-  await expect(components.locator('.chip')).toHaveText(['Platform×', 'Billing×']);
+  await expect(components.locator('datalist option')).toHaveCount(0);
+  // Out of the box, so Chrome's suggestion popup for it is closed before
+  // the next press: a press while it is open only dismisses it.
+  await search.blur();
   await page.screenshot({
     path: path.join(
       import.meta.dirname,
@@ -163,7 +165,7 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   expect(confirmCall.value?.arguments).toMatchObject({
     requestTypeId: '9001',
     priority: '2',
-    components: ['10043', '10042'],
+    components: ['10042', '10043'],
     formFields: { customfield_10010: '20002' },
   });
 });

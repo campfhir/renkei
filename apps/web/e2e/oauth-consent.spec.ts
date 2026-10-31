@@ -136,7 +136,10 @@ test('an MCP client must be allowed on the consent page before it gets a code', 
   expect(tokens.accessToken).toBeTruthy();
 
   // Both answers are on the audit trail, as this person.
-  const operatorPage = await browser.newContext({ baseURL: MEMORY_BASE_URL });
+  const operatorPage = await browser.newContext({
+    reducedMotion: 'reduce',
+    baseURL: MEMORY_BASE_URL,
+  });
   await signIn(operatorPage, operator);
   const audit = await operatorPage.newPage();
   await audit.goto('/admin/audit');

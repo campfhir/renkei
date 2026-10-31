@@ -109,7 +109,7 @@ async function join(
     email: `${who.name.split(' ')[0]?.toLowerCase()}@${org.domain}`,
     roles: who.operator ? ['renkei-user', 'renkei-operator'] : ['renkei-user'],
   });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ reducedMotion: 'reduce' });
   await signIn(context, person);
   const page = await context.newPage();
   await connectJiraAdministration(page);

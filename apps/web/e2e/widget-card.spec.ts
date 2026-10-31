@@ -184,7 +184,7 @@ test('a preview tool renders its card, and confirming it runs the real tool call
   // A second device (no localStorage, and no tools/call answer wired up):
   // the same durable decision resolves it there too.
   const cookies = await page.context().cookies();
-  const fresh = await browser.newContext();
+  const fresh = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await fresh.addCookies(cookies);
     const freshPage = await fresh.newPage();

@@ -62,8 +62,15 @@ test('the feed, newest first, marked read and unread again', async ({
   await expect(page.getByLabel(/unread notification/)).toHaveCount(0);
 
   await page.getByRole('button', { name: `Actions for "${middle.headline}"` }).click();
+  // The count changes the moment it is pressed (optimistic); the reload
+  // waits for the write behind it, or it can read the row from before.
+  const unmarked = page.waitForResponse(
+    (response) =>
+      response.url().endsWith('/api/notifications') && response.request().method() === 'POST'
+  );
   await page.getByRole('menuitem', { name: 'Mark as unread' }).click();
   await expect(unread('1 unread')).toBeVisible();
+  expect((await unmarked).ok()).toBe(true);
   await page.reload();
   await expect(unread('1 unread')).toBeVisible();
 });

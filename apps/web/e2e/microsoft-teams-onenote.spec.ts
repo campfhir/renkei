@@ -53,7 +53,7 @@ test('Teams and OneNote: two panels on the one Microsoft consent', async ({
     roles: ['renkei-user', 'renkei-operator'],
     displayName: 'Microsoft operator',
   });
-  const asOperator = await browser.newContext();
+  const asOperator = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await signIn(asOperator, operator);
     await registerConnector(

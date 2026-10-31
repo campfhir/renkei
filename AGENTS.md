@@ -85,6 +85,26 @@ shape: empty state, filling a form, a vendor call answered with
   `settled`/`painted`/`steady` (`e2e/support/settle.ts`). A model reply
   that must stay in flight while the test looks holds `until` a key the
   test lets go with `releaseStub`, rather than a long `delayMs`.
+- **No motion to wait out.** The suite runs with the OS's reduce-motion
+  on (`reducedMotion` in `playwright.config.ts`), and the app ends every
+  transition and animation at once under it (`app/globals.css`), so a
+  slow CI CPU cannot stretch a slide or fade past a step's timeout. A
+  context a spec opens itself (`browser.newContext`) passes
+  `reducedMotion: 'reduce'` too. New motion respects the setting
+  (`motion-safe:`, or `scrollMotion()` from `lib/hash-scroll.ts` for a
+  scripted scroll).
+- **Rules go in unit tests, not presses.** Logic a card or form applies
+  (what a typed value adds, what a × takes off, what a field sends) lives
+  in a pure module with a jest test beside it —
+  `lib/mcp-widgets/src/chips.ts` is the shape — and the spec drives only
+  the path end to end: a value in, the right request out. Every press in
+  an iframe is a chance for Chrome to route it by an old frame.
+- **Shared org state is written the same by everyone.** A setting one
+  spec needs and another overwrites (a connector's scopes, the
+  organization default model) is a race, not a slow server: pin it where
+  it is written (`SHARED_SETTINGS` in `e2e/support/connectors.ts`), or
+  leave it untouched and answer the read with `page.route`
+  (`llm-models.spec.ts`'s default badge).
 - **Pitfalls.** A built app can hold hidden copies of a page's
   pieces (a streamed render, a responsive twin): scope to
   `getByRole('main')` or add `.filter({ visible: true })`. Chrome routes

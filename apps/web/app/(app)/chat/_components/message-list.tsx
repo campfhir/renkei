@@ -216,8 +216,11 @@ export default function MessageList({
     element.scrollTop = element.scrollHeight;
   }, [messages, compaction, permission, pinned]);
 
-  // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx);
-  // a reader at the bottom should still be at the bottom afterwards.
+  // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx),
+  // and what is in it grows with no new message (a preview card sizing
+  // itself to its content, an image loading): a reader at the bottom stays
+  // at the bottom as it happens, rather than the next message jumping the
+  // thread under them — and under a press on a card.
   useEffect(() => {
     const element = scroller.current;
     if (!element || !pinned || typeof ResizeObserver === 'undefined') return;
@@ -225,6 +228,7 @@ export default function MessageList({
       element.scrollTop = element.scrollHeight;
     });
     observer.observe(element);
+    if (element.firstElementChild) observer.observe(element.firstElementChild);
     return () => observer.disconnect();
   }, [pinned]);
 

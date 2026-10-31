@@ -87,6 +87,10 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     channel,
     launchOptions,
+    // The OS's "reduce motion" on: the app ends every transition and
+    // animation at once (app/globals.css), so no step waits out a slide or
+    // fade that a busy CI CPU has stretched past its timeout.
+    contextOptions: { reducedMotion: 'reduce' },
   },
   projects: [
     {

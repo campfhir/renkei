@@ -282,8 +282,8 @@ test('a stale or refused proposal changes nothing, and says why', async ({
     roles: ['renkei-user', 'renkei-operator'],
   });
   const ordinary = await createPerson(request, { displayName: 'Ola Ordinary' });
-  const someoneContext = await browser.newContext();
-  const ordinaryContext = await browser.newContext();
+  const someoneContext = await browser.newContext({ reducedMotion: 'reduce' });
+  const ordinaryContext = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await signIn(someoneContext, someone);
     const someonePage = await someoneContext.newPage();

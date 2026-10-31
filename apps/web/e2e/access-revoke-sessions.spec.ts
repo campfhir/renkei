@@ -44,7 +44,10 @@ test('admin access: sign a person out everywhere', async ({ page, request, brows
 
   // The target connects an MCP client: consent in their browser, tokens to the client.
   const client = await registerClient(request, operator, `Revoke client ${tag}`, CALLBACK);
-  const targetContext = await browser.newContext({ baseURL: MEMORY_BASE_URL });
+  const targetContext = await browser.newContext({
+    reducedMotion: 'reduce',
+    baseURL: MEMORY_BASE_URL,
+  });
   await signIn(targetContext, target);
   const targetPage = await targetContext.newPage();
   let code = '';

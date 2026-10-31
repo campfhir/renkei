@@ -58,7 +58,7 @@ test('Outlook opt-in: Mail is a trigger feed; Tasks and Calendar are gone', asyn
     roles: ['renkei-user', 'renkei-operator'],
     displayName: 'Microsoft operator',
   });
-  const asOperator = await browser.newContext();
+  const asOperator = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await signIn(asOperator, operator);
     await registerConnector(

@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-31',
     entries: [
       {
+        kind: 'fixed',
+        title: 'The chat stays at the bottom as a preview card grows',
+        detail:
+          'When you are at the end of a chat, a preview card that grows to fit its form keeps the end of the chat in view, instead of the chat jumping later when the next message arrives.',
+      },
+      {
+        kind: 'changed',
+        title: 'Reduce motion is respected everywhere',
+        detail:
+          'With your device set to reduce motion, Renkei no longer slides, fades or spins anything: panels, toasts and preview cards appear in place, and jumping to a section no longer scrolls smoothly.',
+      },
+      {
         kind: 'changed',
         title: 'My usage charts the same breakdowns as Organization usage',
         detail:

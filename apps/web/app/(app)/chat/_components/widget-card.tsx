@@ -220,11 +220,9 @@ export default function WidgetCard({
           // the server could not write at all (no usable model on a chat
           // this isn't, so effectively never) is simply lost.
           if (!text) return;
-          void chatClient
-            .appendWidgetModelContext(chatId, text, stateKey)
-            .then(({ data }) => {
-              if (data?.message) onModelContext?.(data);
-            });
+          void chatClient.appendWidgetModelContext(chatId, text, stateKey).then(({ data }) => {
+            if (data?.message) onModelContext?.(data);
+          });
           return;
         }
         case 'ui/notifications/size-changed': {
@@ -249,13 +247,8 @@ export default function WidgetCard({
         ref={iframeRef}
         src={ready ? chatClient.widgetResourceUrl(resourceUri) : undefined}
         sandbox="allow-scripts"
-        style={{
-          width: '100%',
-          height,
-          border: 'none',
-          display: 'block',
-          transition: 'height 120ms ease',
-        }}
+        className="block w-full border-none motion-safe:transition-[height] motion-safe:duration-[120ms] motion-safe:ease-[ease]"
+        style={{ height }}
         title="Preview card"
       />
     </div>

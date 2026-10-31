@@ -241,7 +241,7 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
   );
   // Its own request context: signing in sets the session cookie where it is sent.
   const asker = await createPerson(request, { displayName: 'Arlo Asker' });
-  const askerContext = await browser.newContext();
+  const askerContext = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await signIn(askerContext, asker);
     const askerPage = await askerContext.newPage();

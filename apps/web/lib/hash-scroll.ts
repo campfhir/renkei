@@ -12,6 +12,18 @@ export function anchorId(prefix: string, name: string): string {
   return `${prefix}-${slug}`;
 }
 
+/**
+ * How a scroll this page starts should move: smoothly, unless the person
+ * asked for less motion (CSS's scroll-behavior cannot override a script's
+ * explicit `behavior`).
+ */
+export function scrollMotion(): ScrollBehavior {
+  return typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    ? 'auto'
+    : 'smooth';
+}
+
 const MARK = ['ring-2', 'ring-blue-400', 'ring-offset-2', 'rounded-lg'];
 
 /** Scrolls to the element the address names, and marks it for a moment. */
@@ -26,7 +38,7 @@ export function scrollToHash(): void {
   if (!named) return;
   // A heading names its section: the section is what is brought into view.
   const target = named.closest('section') ?? named;
-  target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  target.scrollIntoView({ block: 'start', behavior: scrollMotion() });
   target.classList.add(...MARK);
   window.setTimeout(() => target.classList.remove(...MARK), 2000);
 }

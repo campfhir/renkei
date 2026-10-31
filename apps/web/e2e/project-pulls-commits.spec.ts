@@ -263,7 +263,7 @@ test.describe('project pulls, commits and actions', () => {
       data: { granteeSubject: viewer.subject, role: 'viewer' },
     });
     expect(shared.ok(), await shared.text()).toBe(true);
-    const context = await browser.newContext();
+    const context = await browser.newContext({ reducedMotion: 'reduce' });
     await signIn(context, viewer);
     const viewerPage = await context.newPage();
     try {

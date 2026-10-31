@@ -183,7 +183,42 @@ test('admin: the model roster, listing, testing, and saving', async ({
   // store, the real encrypt-at-rest.
   await page.getByLabel('Model id').fill('claude-sonnet-5');
   await page.getByRole('checkbox', { name: 'Organization default' }).check();
+  // The organization default is one slot every spec shares (artifacts.spec.ts
+  // keeps its stub there for summaries): the form must ask for it, but the
+  // store is left with the default it had, and the roster read after the
+  // save answers with this row as the default — what the badge draws from.
+  const sent: { isDefault?: unknown } = {};
+  await page.route('**/api/admin/llm-models', async (route) => {
+    const request = route.request();
+    if (request.method() === 'POST') {
+      const body: unknown = request.postDataJSON();
+      if (typeof body === 'object' && body !== null) Object.assign(sent, body);
+      await route.continue({ postData: JSON.stringify({ ...sent, isDefault: false }) });
+      return;
+    }
+    const response = await route.fetch();
+    const roster: unknown = await response.json();
+    const models: unknown[] =
+      typeof roster === 'object' &&
+      roster !== null &&
+      'models' in roster &&
+      Array.isArray(roster.models)
+        ? roster.models
+        : [];
+    await route.fulfill({
+      response,
+      json: {
+        ...(typeof roster === 'object' ? roster : {}),
+        models: models.map((model) =>
+          typeof model === 'object' && model !== null
+            ? { ...model, isDefault: Reflect.get(model, 'label') === label }
+            : model
+        ),
+      },
+    });
+  });
   await saveModel(page);
+  expect(sent.isDefault).toBe(true);
   const row = modelRow(page, label);
   await expect(row).toBeVisible();
   await expect(row.getByText('key stored')).toBeVisible();
@@ -192,6 +227,7 @@ test('admin: the model roster, listing, testing, and saving', async ({
   // operator has not confirmed a BAA for must not look like one they have.
   await expect(row.getByText('Not BAA-covered')).toBeVisible();
   await shot(page, testInfo, 'llm-models-06-saved');
+  await page.unroute('**/api/admin/llm-models');
 
   // Mobile: a resized Chromium viewport — the layout question here is
   // "does the form fit and stay usable", which a viewport size answers.

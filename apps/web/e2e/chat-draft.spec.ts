@@ -101,7 +101,11 @@ test('another device sees the draft, and clearing the box removes it', async ({
 
   // A second browser context with the same sign-in, at phone width.
   const state = await page.context().storageState();
-  const phone = await browser.newContext({ storageState: state, viewport: MOBILE_VIEWPORT });
+  const phone = await browser.newContext({
+    reducedMotion: 'reduce',
+    storageState: state,
+    viewport: MOBILE_VIEWPORT,
+  });
   try {
     const other = await phone.newPage();
     await other.goto(`/chat/${chatId}`);

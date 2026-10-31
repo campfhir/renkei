@@ -1633,3 +1633,24 @@ input[type='number']::-webkit-inner-spin-button {
     display: none;
   }
 }
+
+/*
+ * Asked for less motion (the OS setting): nothing slides, fades or spins.
+ * Every transition and animation ends at once, in the state it would have
+ * ended in, so whatever waits for one (a toast's fan, a card's height, the
+ * coach marks' spotlight) is already there. The browser suite runs this
+ * way (reducedMotion in playwright.config.ts), so no step races an
+ * animation a slow CPU has stretched.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}
