@@ -9,7 +9,10 @@
  * right when the deployment is https) and a reviewer can find the whole
  * policy in one place.
  *
- * Content-Security-Policy is REPORT-ONLY for now. The App Router hydrates
+ * Content-Security-Policy is REPORT-ONLY for now, with one exception: the
+ * directives that need no nonce (`object-src`, `base-uri`, `frame-ancestors`)
+ * are ENFORCED in a second header beside it. Reports go to
+ * /api/csp-report, so the report-only phase produces the data it exists for. The App Router hydrates
  * through inline `<script>` tags and Tailwind/next-font emit inline styles,
  * so an enforcing policy needs per-request nonces (dynamic rendering of
  * every page, through the proxy) before it could drop `'unsafe-inline'`;
@@ -81,8 +84,32 @@ export function contentSecurityPolicy(options: {
     "base-uri 'self'",
     "form-action 'self'",
     `frame-ancestors ${options.frameAncestors}`,
+    // Violations go somewhere: `report-uri` for browsers that read it,
+    // `report-to` (the Reporting-Endpoints entry below) for those that don't.
+    `report-uri ${CSP_REPORT_PATH}`,
+    'report-to csp',
   ];
   return directives.join('; ');
+}
+
+/** Where CSP violation reports are sent (app/api/csp-report/route.ts). */
+export const CSP_REPORT_PATH = '/api/csp-report';
+
+/**
+ * The directives that hold without a nonce and are enforced today. Kept
+ * apart from the report-only policy so tightening script/style later does
+ * not touch what is already enforced.
+ */
+export function enforcedContentSecurityPolicy(options: {
+  frameAncestors: "'none'" | "'self'";
+}): string {
+  // No `form-action`: the MCP consent form posts to this app, which answers
+  // with a redirect to the client's own callback, and browsers hold a
+  // redirect after a form post to `form-action` too. It stays in the
+  // report-only policy.
+  return ["object-src 'none'", "base-uri 'self'", `frame-ancestors ${options.frameAncestors}`].join(
+    '; '
+  );
 }
 
 export interface SecurityHeaderEnv {
@@ -103,6 +130,7 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
     { key: 'X-Content-Type-Options', value: 'nosniff' },
     { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
     { key: 'Permissions-Policy', value: PERMISSIONS_POLICY },
+    { key: 'Reporting-Endpoints', value: `csp="${CSP_REPORT_PATH}"` },
     ...(servesHttps(env.publicBaseUrl)
       ? [{ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' }]
       : []),
@@ -112,6 +140,10 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
     headers: [
       ...common,
       { key: 'X-Frame-Options', value: 'DENY' },
+      {
+        key: 'Content-Security-Policy',
+        value: enforcedContentSecurityPolicy({ frameAncestors: "'none'" }),
+      },
       {
         key: 'Content-Security-Policy-Report-Only',
         value: contentSecurityPolicy({ isDevelopment, frameAncestors: "'none'" }),
@@ -124,6 +156,12 @@ export function securityHeaderRules(env: SecurityHeaderEnv): HeaderRule[] {
     source,
     headers: [
       { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+      // Only what the framing needs: these documents are widget and mockup
+      // HTML with CSP of their own, so no `form-action` / `base-uri` here.
+      {
+        key: 'Content-Security-Policy',
+        value: "object-src 'none'; frame-ancestors 'self'",
+      },
       {
         key: 'Content-Security-Policy-Report-Only',
         value: contentSecurityPolicy({ isDevelopment, frameAncestors: "'self'" }),

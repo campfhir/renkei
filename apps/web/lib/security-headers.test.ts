@@ -26,8 +26,18 @@ describe('security header rules', () => {
     expect(policy).toContain('microphone=(self)');
   });
 
-  it('reports a CSP (not yet enforcing) with no third-party script origins', () => {
-    expect(everywhere['Content-Security-Policy']).toBeUndefined();
+  it('enforces only the directives that need no nonce, and reports the rest', () => {
+    expect(everywhere['Content-Security-Policy']).toBe(
+      "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    );
+    expect(everywhere['Reporting-Endpoints']).toBe('csp="/api/csp-report"');
+    expect(everywhere['Content-Security-Policy-Report-Only']).toContain(
+      'report-uri /api/csp-report'
+    );
+    expect(everywhere['Content-Security-Policy-Report-Only']).toContain('report-to csp');
+  });
+
+  it('reports a CSP with no third-party script origins', () => {
     const csp = everywhere['Content-Security-Policy-Report-Only'];
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("frame-ancestors 'none'");
@@ -71,8 +81,9 @@ describe('security header rules', () => {
       const headers = headerMap(rule.headers);
       expect(headers['X-Frame-Options']).toBe('SAMEORIGIN');
       expect(headers['Content-Security-Policy-Report-Only']).toContain("frame-ancestors 'self'");
-      // The mockup route sets its own enforcing CSP; nothing here competes with it.
-      expect(headers['Content-Security-Policy']).toBeUndefined();
+      // Enforced for framing only: the documents carry CSP of their own
+      // (the mockup route's stays authoritative), so no form-action/base-uri here.
+      expect(headers['Content-Security-Policy']).toBe("object-src 'none'; frame-ancestors 'self'");
     }
   });
 });

@@ -100,6 +100,9 @@ const PUBLIC: Record<string, string> = {
   'api/oauth/register/route.ts': 'RFC 7591 dynamic client registration',
   // Operational.
   'api/health/route.ts': 'liveness probe — content-free',
+  'api/csp-report/route.ts':
+    'browser CSP violation reports, sent with no credentials: bounded body, origins and directive ' +
+    'only are logged, rate-limited, answers 204',
 };
 
 /**
