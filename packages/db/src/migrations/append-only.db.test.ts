@@ -1,7 +1,8 @@
 /**
  * The audit trails are append-only in the database itself: a trigger
  * refuses UPDATE and DELETE on the delegate's access log (migration 144)
- * and on the PHI access trail (migration 141), so a process that can write
+ * on the PHI access trail (migration 141) and on the platform audit events
+ * (migration 171), so a process that can write
  * a trail cannot rewrite it. No store method updates or deletes either, so
  * this is checked here, against Postgres, with the package's own
  * connection.
@@ -87,5 +88,33 @@ run('append-only audit trails', () => {
 
     const [after] = await getDataStore().phiAccess.list({ subject, limit: 1 });
     expect(after?.action).toBe('read');
+  });
+
+  it('refuses to update or delete a platform audit event (migration 171)', async () => {
+    const id = randomUUID();
+    await getDataStore().auditEvents.record({
+      id,
+      actorSubject: null,
+      action: 'append-only.test',
+      targetKind: null,
+      targetLabel: null,
+      details: null,
+    });
+
+    const db = getDatabase();
+    if (!db.ok) throw new Error('database unavailable');
+    await expect(db.val.deleteFrom('audit_events').where('id', '=', id).execute()).rejects.toThrow(
+      /append-only/
+    );
+    await expect(
+      db.val.updateTable('audit_events').set({ action: 'rewritten' }).where('id', '=', id).execute()
+    ).rejects.toThrow(/append-only/);
+
+    const row = await db.val
+      .selectFrom('audit_events')
+      .select('action')
+      .where('id', '=', id)
+      .executeTakeFirst();
+    expect(row?.action).toBe('append-only.test');
   });
 });
