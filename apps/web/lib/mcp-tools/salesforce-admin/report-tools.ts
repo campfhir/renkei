@@ -172,8 +172,12 @@ async function reportFileColumns(
         typeof related === 'string' ? undefined : related.fields.find((f) => f.nameField)?.name;
       if (nameField) nameFields.set(`${table}.${field}`.toLowerCase(), nameField);
     }
-    fromLayout = reportFileColumnsFromLayout(describeNames, layout, (table, field) =>
-      nameFields.get(`${table}.${field}`.toLowerCase())
+    fromLayout = reportFileColumnsFromLayout(
+      describeNames,
+      layout,
+      (table, field) => nameFields.get(`${table}.${field}`.toLowerCase()),
+      // A joined table's columns may be described by its object's name.
+      (table) => objects.get(table.toLowerCase())?.name
     );
   }
   if (fromLayout.size === describeNames.length) return fromLayout;

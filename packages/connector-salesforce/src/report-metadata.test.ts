@@ -75,6 +75,57 @@ describe('reportFileColumnsFromLayout', () => {
   });
 });
 
+describe('reportFileColumnsFromLayout, a table joined down from the base', () => {
+  // Client Accounts with Referrals: Account, then Referral through
+  // Referrals1__r. The describe names Referral's columns by the object.
+  const layout = [
+    { table: 'Account', field: 'Name' },
+    { table: 'Account.Referrals1__r', field: 'Name' },
+    { table: 'Account.Referrals1__r', field: 'Referral_Stage__c' },
+    { table: 'Account.Referrals1__r', field: 'Client__c' },
+  ];
+  const objectOf = (table: string) =>
+    ({ account: 'Account', 'account.referrals1__r': 'Referral' })[table.toLowerCase()];
+
+  it('names its columns by the join path, matched by the object the describe uses', () => {
+    expect(
+      Object.fromEntries(
+        reportFileColumnsFromLayout(
+          [
+            'Account.Name',
+            'Referral.Name',
+            'Referral.Referral_Stage__c',
+            'Referral.Client__c.Name',
+          ],
+          layout,
+          undefined,
+          objectOf
+        )
+      )
+    ).toEqual({
+      'Account.Name': 'Account$Name',
+      'Referral.Name': 'Account.Referrals1__r$Name',
+      'Referral.Referral_Stage__c': 'Account.Referrals1__r$Referral_Stage__c',
+      'Referral.Client__c.Name': 'Account.Referrals1__r$Client__c',
+    });
+  });
+
+  it('does not guess when two tables are the same object', () => {
+    const selfJoin = [
+      { table: 'Account', field: 'Name' },
+      { table: 'Account.ChildAccounts', field: 'Name' },
+    ];
+    const names = reportFileColumnsFromLayout(
+      ['Account.Name'],
+      selfJoin,
+      undefined,
+      () => 'Account'
+    );
+    // Account.Name is the base table's own name, never the child's.
+    expect(Object.fromEntries(names)).toEqual({ 'Account.Name': 'Account$Name' });
+  });
+});
+
 describe('reportableFields', () => {
   it('puts the name field first and leaves out compound and binary fields', () => {
     expect(

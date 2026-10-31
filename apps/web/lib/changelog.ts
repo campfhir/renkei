@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: "Salesforce Admin reports take a joined object's columns",
+        detail:
+          'A report on a custom report type that joins down from its base object, such as client accounts with their referrals, now names the joined object\'s columns the way Salesforce takes them, so the referral columns no longer fail with "Invalid field name".',
+      },
+      {
+        kind: 'fixed',
         title: "Salesforce Admin reports take a report type's lookup columns",
         detail:
           "A report on a custom report type can now include a lookup shown as itself, such as a referral's client account name, and building a report type over an object no longer fails on an owner field that can be a user or a queue.",

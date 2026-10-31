@@ -65,7 +65,9 @@ export default async function ChangesPage({
         href={row.href}
         className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-gray-200 p-3 hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
       >
-        <span className="min-w-0 flex-1">
+        {/* A real basis, not flex-1's zero: below it the pills wrap under
+            the title instead of squeezing it to a column on a phone. */}
+        <span className="min-w-0 flex-[1_1_16rem]">
           <span className="flex min-w-0 items-start gap-2">
             <span
               data-testid="change-source"
@@ -73,7 +75,12 @@ export default async function ChangesPage({
             >
               {row.sourceLabel}
             </span>
-            <span className="min-w-0 text-sm font-medium break-words">{row.title}</span>
+            <span
+              data-testid="change-row-title"
+              className="min-w-0 text-sm font-medium break-words"
+            >
+              {row.title}
+            </span>
           </span>
           <span className="mt-0.5 block text-xs break-words text-gray-500 dark:text-gray-400">
             {row.where ? `${row.where} · ` : ''}

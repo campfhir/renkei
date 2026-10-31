@@ -392,10 +392,23 @@ test('an operator finds every connector’s waiting changes from the menu; other
   await expect(page).toHaveURL(/\/changes\?source=jira-admin$/);
   await expect(row).toBeVisible();
 
-  // Phone width: the list fits.
+  // Phone width: the list fits, and the status pills wrap under the title
+  // rather than squeezing it into a narrow column beside them.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await expect(row).toBeVisible();
   await noHorizontalOverflow(page);
+  await expect(async () => {
+    const rowBox = await row.boundingBox();
+    const titleColumn = await row
+      .getByTestId('change-row-title')
+      .locator('xpath=../..')
+      .boundingBox();
+    const pill = await row.getByTestId('change-state').boundingBox();
+    expect(rowBox && titleColumn && pill).toBeTruthy();
+    if (!rowBox || !titleColumn || !pill) return;
+    expect(titleColumn.width).toBeGreaterThan(rowBox.width * 0.75);
+    expect(pill.y).toBeGreaterThanOrEqual(titleColumn.y + titleColumn.height);
+  }).toPass();
   await shot(page, testInfo, 'admin-change-queue-14-changes-inbox-mobile');
   await page.setViewportSize({ width: 1280, height: 900 });
 
