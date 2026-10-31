@@ -1,11 +1,10 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
- * Scheduled send and drafting for Outlook.
+ * Scheduled send for Outlook.
  *
  * Graph can hold a message until a time (PidTagDeferredSendTime, an extended
  * property on the message), so `sendAt` rides on outlook_send_mail and on the
- * send-draft confirm. A draft tool saves a real Graph draft and never sends;
- * its card saves edits and deletes it.
+ * send-draft confirm and on the direct reply, reply-all and forward tools.
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
@@ -85,7 +84,11 @@ beforeEach(() => {
       url: String(url),
       body: init?.body ? JSON.parse(String(init.body)) : null,
     });
-    const body = method === 'POST' && /\/me\/messages$/.test(String(url)) ? { id: 'draft-1' } : {};
+    const body =
+      method === 'POST' &&
+      /\/me\/messages(\/[^/]+\/create(Reply|ReplyAll|Forward))?$/.test(String(url))
+        ? { id: 'draft-1', toRecipients: [{ emailAddress: { address: 'orig@example.com' } }] }
+        : {};
     return {
       ok: true,
       status: method === 'POST' ? 201 : 200,
@@ -169,39 +172,29 @@ describe('outlook_send_draft_confirm with sendAt', () => {
   });
 });
 
-describe('outlook_draft_mail', () => {
-  it('saves a draft and never sends it', async () => {
-    const result = await outlookTool('outlook_draft_mail', { subject: 'Plan', body: 'Draft text' });
+describe('sendAt on reply, reply-all and forward', () => {
+  it.each([
+    ['outlook_reply_message', 'createReply', { comment: 'Thanks' }],
+    ['outlook_reply_all_message', 'createReplyAll', { comment: 'Thanks' }],
+    ['outlook_forward_message', 'createForward', { to: ['c@example.com'] }],
+  ])('%s PATCHes the deferred time onto the draft before sending', async (tool, action, extra) => {
+    const result = await outlookTool(tool, { messageId: 'msg-1', ...extra, sendAt: inHours(2) });
     expect(result.isError).toBeFalsy();
-    expect(requests.map((request) => request.method)).toEqual(['POST']);
-    expect(requests.some((request) => request.url.includes('/send'))).toBe(false);
-    expect(result.structuredContent).toMatchObject({
-      kind: 'compose',
-      mode: 'draft',
-      draftId: 'draft-1',
-      to: [],
-    });
-    expect(textOf(result)).toContain('NOT been sent');
-  });
-});
-
-describe('outlook_update_draft_confirm / outlook_discard_draft_confirm', () => {
-  it('saves card edits onto the draft without sending', async () => {
-    const result = await outlookTool('outlook_update_draft_confirm', {
-      draftId: 'draft-1',
-      overrides: { to: ['b@example.com'], subject: 'New', body: 'Edited' },
-    });
-    expect(result.isError).toBeFalsy();
-    expect(requests.map((request) => request.method)).toEqual(['PATCH']);
-    expect(requests[0].body).toMatchObject({
-      toRecipients: [{ emailAddress: { address: 'b@example.com' } }],
-      subject: 'New',
-    });
+    expect(textOf(result)).toContain('scheduled for');
+    const steps = requests.map((request) => `${request.method} ${request.url.split('/v1.0')[1]}`);
+    expect(steps[0]).toBe(`POST /me/messages/msg-1/${action}`);
+    expect(steps.at(-2)).toMatch(/^PATCH \/me\/messages\//);
+    expect(steps.at(-1)).toMatch(/^POST \/me\/messages\/[^/]+\/send$/);
+    expect(JSON.stringify(requests.at(-2)?.body)).toContain(DEFERRED);
   });
 
-  it('deleting a draft removes it from Graph', async () => {
-    const result = await outlookTool('outlook_discard_draft_confirm', { draftId: 'draft-1' });
-    expect(result.isError).toBeFalsy();
-    expect(requests.map((request) => request.method)).toEqual(['DELETE']);
+  it('refuses a past time before creating any draft', async () => {
+    const result = await outlookTool('outlook_reply_message', {
+      messageId: 'msg-1',
+      comment: 'Thanks',
+      sendAt: inHours(-1),
+    });
+    expect(result.isError).toBe(true);
+    expect(requests).toEqual([]);
   });
 });

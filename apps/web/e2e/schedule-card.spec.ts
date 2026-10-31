@@ -1,0 +1,106 @@
+/**
+ * Scheduling on the email send card: "Send later" turns Send into Schedule
+ * and hands the confirm tool a `sendAt`; a time too soon is refused on the
+ * card before any call.
+ *
+ * Same harness as email-card-discard.spec.ts: the real built bundle and
+ * decision routes, a chat on the stand-in model, the vendor tool's answer
+ * and the card's `tools/call` reply handed over at the browser edge.
+ */
+
+import { randomUUID } from 'node:crypto';
+import type { Page, TestInfo } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { addStubModel, removeModel } from './support/stub-model';
+import { createChat, sendForCards, widgetUri, type ToolCard } from './support/tool-cards';
+
+const COLD = { timeout: 30_000 };
+const EMAIL_COMPOSE_URI = widgetUri('email-compose.ts', 'email-compose');
+
+test.use({ roles: ['renkei-user', 'renkei-operator'] });
+
+interface CardCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+function emailCard(draftId: string): ToolCard {
+  return {
+    toolUseId: `toolu_${randomUUID().slice(0, 8)}`,
+    tool: 'outlook_send_mail_preview',
+    input: { to: ['vendor@example.com'], subject: 'Invoice question', body: 'About 1042.' },
+    content: 'The email is drafted and awaiting the user’s decision on the preview card.',
+    uiResourceUri: EMAIL_COMPOSE_URI,
+    structuredContent: {
+      kind: 'compose',
+      draftId,
+      to: ['vendor@example.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Invoice question',
+      body: 'About 1042.',
+      bodyHtml: '<p>About 1042.</p>',
+    },
+  };
+}
+
+async function openChat(page: Page, testInfo: TestInfo, card: ToolCard): Promise<string> {
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const modelId = await addStubModel(page.request, tag);
+  const title = `Schedule (${tag})`;
+  const chatId = await createChat(page.request, { modelId, title });
+  await page.goto(`/chat/${chatId}`);
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible(COLD);
+  await sendForCards(page, {
+    modelId,
+    chatId,
+    prompt: 'Email the vendor.',
+    assistantText: 'Here’s the draft — nothing is sent until you confirm.',
+    cards: [card],
+  });
+  return modelId;
+}
+
+/** Stand in for Graph: every card tool call succeeds. Returns what the card called. */
+async function mockCardTools(page: Page): Promise<CardCall[]> {
+  const calls: CardCall[] = [];
+  await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
+    calls.push(route.request().postDataJSON());
+    await route.fulfill({ json: { result: { content: [{ type: 'text', text: 'Done.' }] } } });
+  });
+  return calls;
+}
+
+test('the send card schedules: a picked time turns Send into Schedule and sends sendAt', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
+  try {
+    modelId = await openChat(page, testInfo, emailCard('AAMkAD-send'));
+    const calls = await mockCardTools(page);
+    const frame = page.frameLocator('iframe[title="Preview card"]').first();
+    await expect(frame.getByRole('button', { name: 'Send', exact: true })).toBeVisible(COLD);
+
+    const later = frame.locator('input[type="datetime-local"]');
+    // Too soon is refused on the card, before any call.
+    await later.fill(new Date(Date.now() - 3_600_000).toISOString().slice(0, 16));
+    await frame.getByRole('button', { name: 'Schedule' }).click();
+    await expect(frame.getByText('at least a minute from now')).toBeVisible(COLD);
+    expect(calls).toHaveLength(0);
+
+    const when = new Date(Date.now() + 26 * 3_600_000);
+    const local = new Date(when.getTime() - when.getTimezoneOffset() * 60_000)
+      .toISOString()
+      .slice(0, 16);
+    await later.fill(local);
+    await frame.getByRole('button', { name: 'Schedule' }).click();
+    await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe('outlook_send_draft_confirm');
+    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(new Date(local).getTime());
+  } finally {
+    if (modelId) await removeModel(page.request, modelId);
+  }
+});
