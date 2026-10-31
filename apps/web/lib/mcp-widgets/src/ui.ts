@@ -82,6 +82,9 @@ body {
 .field input:not([type="checkbox"]):focus, .field textarea:focus, .field select:focus {
   outline: 2px solid var(--card-accent); outline-offset: -1px;
 }
+/* 16px or larger: iOS Safari zooms the page in on focus of any smaller field. */
+.field input:not([type="checkbox"]), .field textarea, .field select,
+.chips-box input.chips-input { font-size: 16px; }
 .checkbox-row {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 0; font-size: 13px; cursor: pointer;

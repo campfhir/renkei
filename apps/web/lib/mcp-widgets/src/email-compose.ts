@@ -46,6 +46,15 @@ const KIND_TITLES: Record<string, string> = {
   forward: 'Forward',
 };
 
+/** A moment as the local `YYYY-MM-DDTHH:mm` value a datetime-local input holds. */
+function localDateTimeValue(at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
+}
+
 function render(bridge: WidgetBridge, result: ToolResult): void {
   const root = document.getElementById('root');
   if (!root) return;
@@ -126,11 +135,19 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     );
   }
 
-  const sendLater = inputField('Send later (optional)', '');
+  // A time the model picked arrives as a UTC instant; the picker works in the
+  // viewer's local clock, so it is shown there. A time that has already
+  // passed is left off rather than pre-filled into a refusal.
+  const suggested = str(draft.sendAt) ? new Date(str(draft.sendAt)) : null;
+  const sendAtValue =
+    suggested && !Number.isNaN(suggested.getTime()) && suggested.getTime() >= Date.now() + 60_000
+      ? localDateTimeValue(suggested)
+      : '';
+  const sendLater = inputField('Send later (optional)', sendAtValue);
   sendLater.input.type = 'datetime-local';
   card.append(sendLater.field);
   const discardButton = el('button', undefined, 'Discard');
-  const sendButton = el('button', 'primary', 'Send');
+  const sendButton = el('button', 'primary', sendAtValue ? 'Schedule' : 'Send');
   const footer = cardActions([discardButton, sendButton]);
   card.append(footer.actions);
   root.append(card);

@@ -71,6 +71,40 @@ async function mockCardTools(page: Page): Promise<CardCall[]> {
   return calls;
 }
 
+test('a time the model picked is pre-filled into Send later, and Schedule sends it', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
+  try {
+    // The preview tool's sendAt, a whole minute ahead, as the card receives it.
+    const at = new Date(Math.ceil((Date.now() + 26 * 3_600_000) / 60_000) * 60_000);
+    const card = emailCard('AAMkAD-suggested');
+    card.structuredContent = { ...card.structuredContent, sendAt: at.toISOString() };
+    modelId = await openChat(page, testInfo, card);
+    const calls = await mockCardTools(page);
+    const frame = page.frameLocator('iframe[title="Preview card"]').first();
+
+    // The picker shows the moment in the viewer's own clock, and the button says Schedule.
+    const later = frame.locator('input[type="datetime-local"]');
+    const localValue = new Date(at.getTime() - at.getTimezoneOffset() * 60_000)
+      .toISOString()
+      .slice(0, 16);
+    await expect(later).toHaveValue(localValue, COLD);
+    await expect(frame.getByRole('button', { name: 'Schedule' })).toBeVisible(COLD);
+    // Under 16px, iOS Safari zooms the page in when the field is focused.
+    expect(await later.evaluate((el) => getComputedStyle(el).fontSize)).toBe('16px');
+
+    await frame.getByRole('button', { name: 'Schedule' }).click();
+    await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
+    expect(calls).toHaveLength(1);
+    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(at.getTime());
+  } finally {
+    if (modelId) await removeModel(page.request, modelId);
+  }
+});
+
 test('the send card schedules: a picked time turns Send into Schedule and sends sendAt', async ({
   page,
   person: _person,
