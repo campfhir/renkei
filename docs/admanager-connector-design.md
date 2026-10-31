@@ -33,7 +33,7 @@ on-prem, and it has a real per-technician auth model already:
   CA / explicit allow-insecure-http, the OnBase/Mirth discipline).
 - `admanager_instance_connections` — one row per (instance, person): that
   person's own ADManager Plus **authtoken** (see "Auth: a bearer
-  authtoken, not a session" below), sealed under `TOKEN_ENCRYPTION_KEY`,
+  authtoken, not a session" below), sealed under `TOKEN_ENCRYPTION_KEY` _(as built: by the delegate under the person's own key, a `uenc1:` envelope; `docs/delegate-key-design.md`)_,
   a **self-reported technician name** for display (ADManager Plus's REST
   API has no verified "who am I" endpoint the way Mirth's login response
   echoes the username, so the person types their own technician name when

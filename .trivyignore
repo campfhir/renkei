@@ -1,12 +1,12 @@
 # Trivy's baseline for the image scan in .github/workflows/ci.yml (the
 # `docker` job scans every image before it is pushed and fails on a
 # fixable HIGH or CRITICAL). These are the advisories that were already
-# open against the production dependencies when the gate went in — the
-# same list pnpm-workspace.yaml's auditConfig.ignoreGhsas carries for
-# `pnpm audit`, by the id Trivy reports (the CVE where one exists, the
-# GHSA otherwise). Each line expires: past its date Trivy counts the
+# open against the production dependencies when the gate went in, by the
+# id Trivy reports (the CVE where one exists, the GHSA otherwise).
+# pnpm-workspace.yaml's auditConfig.ignoreGhsas is NOT the same list: it is
+# empty by design, so `pnpm audit` gates on every advisory. Each line expires: past its date Trivy counts the
 # finding again and the push fails, so fix the dependency and delete the
-# line, or renew the date with a reason. Keep the two lists in step.
+# line, or renew the date with a reason.
 
 
 # guava 33.7.1 under the Eclipse JDT language server in the sandbox image

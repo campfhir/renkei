@@ -3,7 +3,8 @@
  * TOKEN_ENCRYPTION_KEY"): every value the deployment keys seal — connector
  * secrets, model API keys, OIDC client secrets, the VAPID private key,
  * knowledge chunks, a code project's environment secrets and registry
- * credentials — is re-encrypted under the CURRENT key of its ring. A ring
+ * credentials, a remote MCP server's client secret and the delegate's
+ * signing key — is re-encrypted under the CURRENT key of its ring. A ring
  * is `<current>,<previous>,...` (`TOKEN_ENCRYPTION_KEYS` and the like,
  * packages/crypto secretbox.ts): the previous key opens what is still
  * under it, the current key seals the result as a `v2` envelope naming
@@ -137,6 +138,25 @@ export const REWRAP_TARGETS: readonly RewrapTarget[] = [
     column: 'registry_sealed',
     prefix: 'reg1.',
     ring: 'sandbox',
+  },
+  // apps/web/app/api/admin/mcp-servers and the delegate's dynamic client
+  // registration (apps/worker-delegate/src/mcp.ts): a remote MCP server's
+  // OAuth client secret, read by the delegate on every token refresh.
+  {
+    table: 'mcp_servers',
+    idColumns: ['id'],
+    column: 'encrypted_client_secret',
+    prefix: '',
+    ring: 'token',
+  },
+  // apps/worker-delegate/src/signing.ts: the private half of the instance
+  // list's signing key; unreadable, the delegate cannot sign the list.
+  {
+    table: 'delegate_signing_keys',
+    idColumns: ['id'],
+    column: 'sealed_private_key',
+    prefix: '',
+    ring: 'token',
   },
 ];
 

@@ -41,6 +41,7 @@ import { silentDelegateLogger, type DelegateLogger } from './grants';
 
 const COMPONENT = 'worker-delegate/mcp';
 const TIMEOUT_MS = 15_000;
+const MAX_REDIRECTS = 3;
 
 export type McpPrepareError =
   'bad_request' | 'unknown_server' | 'DISCOVERY_FAILED' | 'NEEDS_CLIENT' | 'REGISTRATION_FAILED';
@@ -131,9 +132,33 @@ export class McpPreparer {
     }
   }
 
-  private async getJson(url: string): Promise<unknown> {
+  /**
+   * One request to an address that a remote server (not an operator) named:
+   * redirects are followed by hand, and every hop, the first included, goes
+   * through `guard` before it is dialed. A hostile public MCP server could
+   * otherwise 30x the delegate into internal GET and POST requests. A POST
+   * follows only 307 and 308 (which keep the method and body); any other
+   * redirect of one is refused.
+   */
+  private async guardedFetch(server: McpServer, url: string, init: RequestInit): Promise<Response> {
+    let target = url;
+    for (let hops = 0; ; hops += 1) {
+      await this.guard(server, target);
+      const answer = await this.fetchImpl(target, { ...init, redirect: 'manual' });
+      const location = answer.headers.get('location');
+      if (answer.status < 300 || answer.status >= 400 || !location) return answer;
+      await answer.body?.cancel().catch(() => undefined);
+      if (hops >= MAX_REDIRECTS) throw new Error('too many redirects');
+      if (init.method === 'POST' && answer.status !== 307 && answer.status !== 308) {
+        throw new Error(`refusing a ${answer.status} redirect of a POST`);
+      }
+      target = new URL(location, target).toString();
+    }
+  }
+
+  private async getJson(server: McpServer, url: string): Promise<unknown> {
     try {
-      const answer = await this.fetchImpl(url, {
+      const answer = await this.guardedFetch(server, url, {
         headers: { accept: 'application/json' },
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
@@ -149,11 +174,11 @@ export class McpPreparer {
   private async probe(server: McpServer): Promise<{ open: boolean; metadataUrl: string | null }> {
     const request =
       server.transport === 'sse'
-        ? this.fetchImpl(server.url, {
+        ? this.guardedFetch(server, server.url, {
             headers: { accept: 'text/event-stream' },
             signal: AbortSignal.timeout(TIMEOUT_MS),
           })
-        : this.fetchImpl(server.url, {
+        : this.guardedFetch(server, server.url, {
             method: 'POST',
             headers: {
               'content-type': 'application/json',
@@ -200,7 +225,7 @@ export class McpPreparer {
     ];
     let issuer: string | null = null;
     for (const url of candidates) {
-      const doc = await this.getJson(url);
+      const doc = await this.getJson(server, url);
       const servers = authorizationServersOf(doc);
       if (servers.length > 0) {
         issuer = servers[0];
@@ -212,7 +237,7 @@ export class McpPreparer {
 
     for (const url of authServerMetadataUrls(issuer)) {
       await this.guard(server, url);
-      const metadata = parseAuthServerMetadata(await this.getJson(url), issuer);
+      const metadata = parseAuthServerMetadata(await this.getJson(server, url), issuer);
       if (!metadata) continue;
       for (const endpoint of [
         metadata.authorizationEndpoint,
@@ -256,7 +281,7 @@ export class McpPreparer {
         : 'client_secret_post';
     let answer: Response;
     try {
-      answer = await this.fetchImpl(oauth.registrationEndpoint ?? '', {
+      answer = await this.guardedFetch(server, oauth.registrationEndpoint ?? '', {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: JSON.stringify({

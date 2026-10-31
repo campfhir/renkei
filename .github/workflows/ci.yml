@@ -253,6 +253,9 @@ jobs:
       - name: Changelog helper tests
         run: node --test scripts/changelog.test.mjs
 
+      - name: Node version check tests
+        run: node --test scripts/check-node-version.test.mjs
+
       - name: Changelog check
         run: >-
           node scripts/changelog.mjs check

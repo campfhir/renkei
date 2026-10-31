@@ -976,6 +976,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
+            repo: binding.repoFullName,
           },
           { write: false }
         );
@@ -1020,6 +1021,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
+            repo: binding.repoFullName,
           },
           { write: true }
         );
@@ -1062,6 +1064,7 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
             subject: context.subject,
             origin: binding.origin,
             provider: binding.repoProvider,
+            repo: binding.repoFullName,
           },
           { write: false }
         );

@@ -182,23 +182,33 @@ image is pushed under three tags: `latest`, the version in
 and the same one `scripts/docker-build.sh` stamps), and the full commit
 SHA, so a deployment can pin exactly the build it tested
 (`image: scotteremiaroden/renkei:<sha>`) rather than whatever `latest`
-has become. Bump the version when a release should keep its own tag;
+has become. `docker-compose.yaml` pulls `latest`, and `docker compose up` does not
+re-pull an image it already has: run `docker compose pull` to move to a new
+build, and pin the SHA tag when a deployment must not move on its own.
+Bump the version when a release should keep its own tag;
 until then a new push to `main` overwrites `latest` and the version tag.
 Images are built for `linux/amd64`, with the short commit baked in as
 `GIT_COMMIT` so log rows name the exact build and the version as
 `APP_VERSION` so the web app can show it. Pull requests never publish.
 
 Every image is also built, smoke-started and scanned by Trivy on every pull
-request, and again before the push from `main`. The smoke start
+request, and again before the push from `main`. There is no
+scheduled rebuild: the distribution refresh happens on a build, so on a quiet
+week images age until the next merge to `main`. The smoke start
 (`scripts/smoke-image.sh`) boots each image against a throwaway Postgres at
 that build's schema and waits for its health endpoint (the queue worker's
 boot line; the migrate image's clean exit), so an image that cannot start —
 a file the runtime stage forgot to copy, say — fails the PR rather than the
 first production pull. The scan: a fixable `HIGH` or `CRITICAL` in the OS
-packages, in `node_modules`, or in anything else the image carries (the
-sandbox's toolchains and language servers included) fails that image's job
-and nothing of it is pushed (the dated baseline is `.trivyignore`; the
-same list by GHSA id gates `pnpm audit` in `pnpm-workspace.yaml`). The
+packages, in `node_modules`, or in the sandbox's toolchains and language
+servers fails that image's job and nothing of it is pushed (the scan skips
+vulnerabilities with no fix yet, and it does **not** see the Node runtime
+itself: Node is installed from the base image's tarball, not as a
+distribution package, so a Node security release reaches you only through a
+new base digest, which the weekly `weekly-security` workflow checks for) (the dated baseline is `.trivyignore`; `pnpm audit` is gated
+separately, with `auditConfig.ignoreGhsas` in `pnpm-workspace.yaml` empty by
+design, and does not cover the sandbox image's pip, CRAN, npm-global or Go
+inputs). The
 images ship no package manager: npm and pnpm are build-time tools removed
 from every final stage, and each process is started with `node` from its
 app's directory (the sandbox keeps pnpm on the PATH for a code workspace's
@@ -689,158 +699,17 @@ backstop.
 
 ## Deployment Options
 
-### Option 1: Vercel (Recommended)
-
-Vercel is the easiest way to deploy Next.js:
-
-```bash
-npm install -g vercel
-
-# Deploy
-vercel --prod
-
-# Set environment variables in Vercel UI or via CLI
-vercel env add TOKEN_ENCRYPTION_KEY
-vercel env add DATABASE_URL
-vercel env add PUBLIC_BASE_URL
-```
-
-### Option 2: Self-Hosted on Linux/Docker
-
-**Docker Setup:**
-
-```dockerfile
-# Dockerfile
-FROM node:24-alpine
-WORKDIR /app
-
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
-
-COPY . .
-RUN npm run build
-
-EXPOSE 3000
-ENV NODE_ENV=production
-CMD ["npm", "start"]
-```
-
-**Build and Run:**
-
-```bash
-docker build -t jira-mcp-gateway .
-
-docker run \
-  -e TOKEN_ENCRYPTION_KEY="<value>" \
-  -e DATABASE_URL="postgresql://..." \
-  -e PUBLIC_BASE_URL="https://yourdomain.com" \
-  -p 3000:3000 \
-  jira-mcp-gateway
-```
-
-**Docker Compose:**
-
-```yaml
-version: '3.8'
-services:
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: jira_mcp
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: jira_mcp_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - '5432:5432'
-
-  app:
-    build: .
-    environment:
-      DATABASE_URL: postgresql://jira_mcp:${DB_PASSWORD}@postgres:5432/jira_mcp_db
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
-      PUBLIC_BASE_URL: https://yourdomain.com
-      NODE_ENV: production
-    ports:
-      - '3000:3000'
-    depends_on:
-      - postgres
-
-volumes:
-  postgres_data:
-```
-
-### Option 3: Traditional Server (Ubuntu)
-
-**Install Dependencies:**
-
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Node.js
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# Install pnpm
-npm install -g pnpm
-
-# Install PostgreSQL
-sudo apt install -y postgresql postgresql-contrib
-```
-
-**Setup Application:**
-
-```bash
-# Create app directory
-sudo mkdir -p /opt/jira-mcp-gateway
-sudo chown ubuntu:ubuntu /opt/jira-mcp-gateway
-cd /opt/jira-mcp-gateway
-
-# Clone repository
-git clone <repo-url> .
-
-# Install dependencies
-pnpm install --frozen-lockfile
-
-# Build
-npm run build
-
-# Create .env file
-nano .env.local
-```
-
-**Systemd Service:**
-
-```ini
-# /etc/systemd/system/jira-mcp-gateway.service
-[Unit]
-Description=Jira MCP Gateway
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=app-user
-WorkingDirectory=/opt/jira-mcp-gateway
-ExecStart=/usr/bin/npm start
-Restart=always
-RestartSec=10
-
-# Environment variables
-EnvironmentFile=/opt/jira-mcp-gateway/.env.local
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Start Service:**
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable jira-mcp-gateway
-sudo systemctl start jira-mcp-gateway
-sudo systemctl status jira-mcp-gateway
-```
+`docker-compose.yaml` is the only supported shape. Renkei is nine first-party
+images run as thirteen services (Postgres, the migration job, the web app, the
+interactive, embeddings, agents and batch-jobs workers, the fileshares,
+OnBase, Mirth and ADManager connector workers, the delegate and the
+sandbox), wired to each other by service name; a single Node process on
+Vercel or under systemd cannot run it, and an earlier version of this guide
+carried sample Dockerfiles, a compose file and a systemd unit for a
+single-process gateway that no longer describe the system (Node 20, a
+Postgres port published on every interface, none of the required keys).
+Use the compose file, set the variables in "Environment Setup", and put
+TLS in front of it (see "Nginx Reverse Proxy"). Node 24 is required.
 
 ## Nginx Reverse Proxy
 
@@ -984,16 +853,55 @@ deploying if that is what the org wants. Successful connector exchanges no
 longer persist request or response bodies into these rows; failed ones
 still do, `secure()`-encrypted.
 
-### Database Backups
+### Backup and recovery
 
-```bash
-# Daily backup script
-#!/bin/bash
-pg_dump -U jira_mcp jira_mcp_db | gzip > /backups/jira_mcp_$(date +%Y%m%d).sql.gz
+A restorable Renkei is four things, and the database dump alone is only
+the first:
 
-# Keep last 30 days
-find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
-```
+1. **PostgreSQL** (volume `renkei-postgres`). Dump through compose, so the
+   user and database names are the ones the stack actually uses:
+
+   ```bash
+   docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+     > /backups/renkei_$(date +%Y%m%d).dump
+   find /backups -name 'renkei_*.dump' -mtime +30 -delete
+   ```
+
+   Restore into an empty database with `pg_restore` before starting the
+   application services, then start `migrate` so the schema lands at the
+   version of the images you run. A managed Postgres has its own backup;
+   use it and test the restore.
+
+2. **The blob store** (chat attachments; the Azure container or the
+   `BLOB_STORE_LOCAL_DIR` directory, see "Chat attachments"). The
+   database holds the rows and the store holds the sealed bytes: a
+   database restored without its blobs has attachments that cannot be
+   opened, and blobs without the database cannot be found. Snapshot the
+   two together, or use the storage account's own versioning and soft
+   delete.
+
+3. **The sandbox volumes** (`renkei-sandbox-workspaces`, the code
+   workspaces and their checkouts; `renkei-sandbox-data`, short-lived
+   sealed files that expire in hours). Back up the workspaces if people
+   keep uncommitted work there; `renkei-sandbox-data` need not be.
+
+4. **The keys** (`.env`). Everything sealed in the database is
+   unreadable without `TOKEN_ENCRYPTION_KEY` (and
+   `CONTENT_ENCRYPTION_KEY`, `SANDBOX_ENV_SECRETS_KEY`,
+   `LOG_ENCRYPTION_KEY` and the delegate's caller keys, where set). Keep
+   `.env`, and every key a rotation has retired while a backup still names
+   it, in a secrets manager, separately from the database backups: a
+   backup stored with its keys protects nothing, and keys lost with the
+   host make every backup worthless. People's own user keys are held in
+   their browsers, not in `.env` or the database, so there is nothing of
+   them for you to back up; the delegate's delegations are memory-only, so
+   background work resumes as people sign in again after any restart or
+   restore (`docs/delegate-key-design.md`).
+
+Restore order: keys in the environment, then Postgres, then `migrate`,
+then the blob store, then the rest of the stack. Practice it on a scratch
+host before you need it: sign in, open an old chat with an attachment, and
+open a connector's settings page, since each reads through a different key.
 
 ## First-run setup
 
@@ -1095,14 +1003,14 @@ again once.
 
 ## Security Checklist
 
-- [ ] HTTPS enabled (TLS 1.2+): a reverse proxy in front of 127.0.0.1:3000, with `PUBLIC_BASE_URL` set to its https address (the app refuses to start without it)
+- [ ] HTTPS enabled (TLS 1.2+): the app is published on 127.0.0.1:3000 only and session cookies are `Secure`, so put a TLS-terminating reverse proxy in front of it and set `PUBLIC_BASE_URL` to its https address (the app refuses to start without it). This box is yours to tick
 - [x] Environment variables set (no secrets in code)
 - [x] Database password strong (16+ characters, mixed case, symbols)
 - [x] Regular database backups
-- [x] PostgreSQL firewall rules (only app can connect)
+- [ ] PostgreSQL firewall rules (only app can connect) — the bundled `postgres` service publishes no port; keep it that way, and firewall a managed Postgres to the compose host
 - [x] Failed login attempts logged
 - [x] Rate limiting: app-level, in-process fixed windows (`apps/web/lib/inbound-rate-limit.ts`; per forwarded client address AND a per-endpoint ceiling, so a spoofed address cannot widen the budget; N replicas multiply the ceiling). OIDC sign-in start 30/min per client, 600/min overall; OAuth token endpoint 60/min per client, 1,200/min overall; dynamic client registration 10 per 10 min per client, 100 per 10 min overall (and per the system-level endpoint); inbound webhooks 600/min per client, 6,000/min per provider; voice 120/min per person. Webhook routes also refuse a missing or malformed signature header before any config or database read, and cap bodies at 1 MiB (413). Add nginx `limit_req` in front for a ceiling that holds across replicas.
-- [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
+- [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https **at `next build`** (the headers are decided at build; the published images are built without it, so set HSTS at your proxy), `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; nothing collects reports yet (no `report-uri` or `report-to`), so it observes nothing until you add a sink or read the browser console.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
 - [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`; the MCP consent answer is bound to the session that was shown the page and must be posted from this origin)
@@ -1275,7 +1183,8 @@ names it:
    `llm_model_configs.encrypted_secrets`, `oidc_config.client_secret`,
    `platform_settings.vapid_keys`, `knowledge_chunks.content`,
    `sandbox_env_secrets.sealed` and
-   `code_service_image_rules.registry_sealed` in batches of 200, opens
+   `code_service_image_rules.registry_sealed`, `mcp_servers.encrypted_client_secret`
+   and `delegate_signing_keys.sealed_private_key` in batches of 200, opens
    each `v1` or old-kid value with the ring and seals it again under the
    current key. It is resumable (a row already under the current key is
    never read again) and safe to run while the services are up (a row

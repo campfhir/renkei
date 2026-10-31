@@ -1076,11 +1076,26 @@ describeDb('worker-delegate', () => {
 
     // Nobody but GitHub and Bitbucket; nobody without a grant.
     expect(
-      errorType((await op('grant/git-ticket', { provider: 'webex', subject: owner })).json)
+      errorType(
+        (await op('grant/git-ticket', { provider: 'webex', subject: owner, repo: 'acme/demo' }))
+          .json
+      )
     ).toBe('host_not_allowed');
-    expect((await op('grant/git-ticket', { provider: GITHUB, subject: friend })).status).toBe(404);
+    expect(
+      (await op('grant/git-ticket', { provider: GITHUB, subject: friend, repo: 'acme/demo' }))
+        .status
+    ).toBe(404);
+    // A ticket names its repository.
+    expect((await op('grant/git-ticket', { provider: GITHUB, subject: owner })).status).toBe(400);
+    expect(
+      (await op('grant/git-ticket', { provider: GITHUB, subject: owner, repo: '../etc' })).status
+    ).toBe(400);
 
-    const read = await op('grant/git-ticket', { provider: GITHUB, subject: owner });
+    const read = await op('grant/git-ticket', {
+      provider: GITHUB,
+      subject: owner,
+      repo: 'acme/demo',
+    });
     expect(read.status).toBe(200);
     expect(read.json.host).toBe('github.com');
     expect(read.json.insteadOf).toBe('https://github.com/');
@@ -1151,11 +1166,29 @@ describeDb('worker-delegate', () => {
     expect((await fetch(`${base}/git/${ticket}/github.com/acme/demo.git/HEAD`)).status).toBe(404);
     expect(gitCalls.length).toBe(dialed);
 
+    // ...and for its repository, nothing else the person's token reaches.
+    expect(
+      (
+        await fetch(
+          `${base}/git/${ticket}/github.com/acme/other.git/info/refs?service=git-upload-pack`
+        )
+      ).status
+    ).toBe(404);
+    expect(
+      (
+        await fetch(
+          `${base}/git/${ticket}/github.com/elsewhere/demo.git/info/refs?service=git-upload-pack`
+        )
+      ).status
+    ).toBe(404);
+    expect(gitCalls.length).toBe(dialed);
+
     // A write ticket pushes.
     const write = await op('grant/git-ticket', {
       provider: GITHUB,
       subject: owner,
       write: true,
+      repo: 'acme/demo',
     });
     const writeTicket = typeof write.json.ticket === 'string' ? write.json.ticket : '';
     const pushed = await fetch(
