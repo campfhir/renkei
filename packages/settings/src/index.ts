@@ -394,7 +394,7 @@ export const DEFAULT_ORG_SETTINGS: OrgSettings = {
   rateLimitPerUserPerMinute: 60,
   accessTokenTtlMinutes: 60,
   authorizationCodeTtlSeconds: 60,
-  refreshTokenTtlDays: 30,
+  refreshTokenTtlDays: 7,
   sessionIdleTimeoutMinutes: 720,
   redactionEnabled: true,
   redactionDetectors: ['ssn', 'card', 'mrn', 'dob'],

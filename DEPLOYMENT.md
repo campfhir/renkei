@@ -1060,9 +1060,12 @@ again once.
   returns a new `refresh_token` and retires the presented one; presenting a
   retired token again revokes that whole token family and the subject's
   access tokens for the client. Rotation never extends the family's
-  lifetime (**Refresh token lifetime**, default 30 days), and a refreshed
+  lifetime (**Refresh token lifetime**, default 7 days), and a refreshed
   token takes the roles of the subject's newest live browser session when
-  one exists, the original roles otherwise.
+  one exists, the original roles minus `renkei-operator` otherwise (an
+  always-on client regains operator tools by signing in again). Refresh
+  never asks the identity provider, so **Sign out everywhere** below is the
+  offboarding step: it is what ends a person's MCP access.
 - Operators end a person's access from admin → Access: **Sign out
   everywhere** deletes their sessions, access tokens and refresh tokens and
   writes a `user.sessions_revoked` audit event; disconnecting a connector

@@ -191,4 +191,18 @@ export const oauthTokenScenarios: Scenario<DataStore>[] = [
       return { rotated, token, successor, bob, replay: (await rotate(store, 'r-live')).outcome };
     },
   },
+  {
+    method: 'oauthTokens.rotateRefreshToken',
+    name: 'with no live session the frozen operator role is dropped, the rest kept',
+    fixture: {
+      oauth_clients: clients,
+      oauth_refresh_tokens: [
+        { ...refresh(1, 'r-op', { subject: 'dan' }), roles: ['renkei-user', 'renkei-operator'] },
+      ],
+    },
+    run: async (store) => [
+      await rotate(store, 'r-op'),
+      (await store.oauthTokens.findAccessToken('a-next', 'jira'))?.roles ?? null,
+    ],
+  },
 ];

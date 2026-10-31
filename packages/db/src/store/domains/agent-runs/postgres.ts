@@ -618,6 +618,7 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           'resume_failure',
           'error_kind',
           'trigger_kind',
+          'triggered_by_subject',
           'parent_run_id',
           'active_ms',
         ])

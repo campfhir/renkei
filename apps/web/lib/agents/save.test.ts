@@ -146,3 +146,40 @@ describe('chained triggers', () => {
     expect(result.outcome).toBe('saved');
   });
 });
+
+describe('API triggers added through an access grant', () => {
+  const api = { kind: 'api' as const, inputs: [] };
+
+  it('are refused: the key would outlive the grant', async () => {
+    const result = await saveAgent(
+      'auth0|grantee',
+      parsedWith({ triggers: [api], enabled: true }),
+      { agentId: 'agent-1', ownerSubject: 'auth0|owner' }
+    );
+    expect(result).toEqual({
+      outcome: 'invalid',
+      issues: [expect.objectContaining({ path: 'triggers' })],
+    });
+    expect(storeMock.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('are allowed to the owner', async () => {
+    const result = await saveAgent('auth0|owner', parsedWith({ triggers: [api], enabled: true }), {
+      agentId: 'agent-1',
+    });
+    expect(result.outcome).toBe('saved');
+  });
+
+  it('may stay when the agent already has one', async () => {
+    storeMock.getAgent.mockResolvedValue({
+      ...existing,
+      triggers: [{ id: 't1', kind: 'api', enabled: true, draft: api }],
+    });
+    const result = await saveAgent(
+      'auth0|grantee',
+      parsedWith({ triggers: [api], enabled: true }),
+      { agentId: 'agent-1', ownerSubject: 'auth0|owner' }
+    );
+    expect(result.outcome).toBe('saved');
+  });
+});

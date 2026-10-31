@@ -152,6 +152,25 @@ export async function saveAgent(
   const agentId = options.agentId;
   const existing = await getAgent(owner, agentId);
   if (!existing) return { outcome: 'not-found' };
+  // An API trigger mints a bearer key that runs the agent on the owner's
+  // accounts and outlives any access grant, so only the owner adds one. A
+  // grantee may keep, edit or remove the ones that exist.
+  if (owner !== subject) {
+    const apiCount = (triggers: { kind: string }[]) =>
+      triggers.filter((trigger) => trigger.kind === 'api').length;
+    if (apiCount(normalized.triggers) > apiCount(existing.triggers.map((t) => t.draft))) {
+      return {
+        outcome: 'invalid',
+        issues: [
+          {
+            path: 'triggers',
+            message:
+              'Only the agent’s owner can add an API trigger: its key keeps working after access is removed.',
+          },
+        ],
+      };
+    }
+  }
   // Compared NORMALIZED-to-normalized: a round-tripped save that changed
   // nothing the author can see must not read as a content change — the
   // list's on/off toggle sends the whole definition back.

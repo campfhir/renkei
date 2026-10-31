@@ -415,6 +415,8 @@ export interface AgentRunExecutionRecord {
   resumeFailure: string | null;
   errorKind: string | null;
   triggerKind: string;
+  /** Who pressed Run (a manual run); null for a machine start. */
+  triggeredBySubject: string | null;
   parentRunId: string | null;
   activeMs: number;
 }

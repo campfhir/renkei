@@ -82,3 +82,14 @@ export interface OAuthTokenStore {
     access: { tokenHash: string; expiresAt: Date };
   }): Promise<OAuthRefreshRotation>;
 }
+
+/**
+ * A refresh that finds no live browser session has only the roles frozen at
+ * consent to go on, and a frozen operator role may long since have been
+ * withdrawn at the identity provider. It is dropped then: the client keeps
+ * working as an ordinary member and gets operator tools back by signing in
+ * again.
+ */
+export function withoutOperator(roles: readonly string[]): string[] {
+  return roles.filter((role) => role !== 'renkei-operator');
+}
