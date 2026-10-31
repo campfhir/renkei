@@ -696,7 +696,6 @@ async function createDraftAction(
   };
 }
 
-/** Send an existing draft. `keepOnFailure` leaves it in Drafts for a retry. */
 /**
  * Graph's PidTagDeferredSendTime: a message carrying it sits in the Outbox
  * and Exchange delivers it at that instant. It is the only scheduled send
@@ -737,6 +736,7 @@ const deferredSendProperties = (at: string) => ({
   singleValueExtendedProperties: [{ id: DEFERRED_SEND_PROPERTY_ID, value: at }],
 });
 
+/** Send an existing draft. `keepOnFailure` leaves it in Drafts for a retry. */
 async function sendDraft(
   context: MCPToolContext,
   auth: AuthedFetch,
@@ -2202,7 +2202,7 @@ export async function registerOutlookTools(
       });
       return {
         ...textResult(
-          (schedule.at ? `Reply sent scheduled for ${schedule.at} (UTC).` : 'Reply sent.') +
+          (schedule.at ? `Reply scheduled for ${schedule.at} (UTC).` : 'Reply sent.') +
             (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
             (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
             (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
@@ -2272,7 +2272,7 @@ export async function registerOutlookTools(
       });
       return {
         ...textResult(
-          (schedule.at ? `Reply-all sent scheduled for ${schedule.at} (UTC).` : 'Reply-all sent.') +
+          (schedule.at ? `Reply-all scheduled for ${schedule.at} (UTC).` : 'Reply-all sent.') +
             (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
             (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
             (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
@@ -2382,8 +2382,7 @@ export async function registerOutlookTools(
       description:
         'Draft an email and show the user an interactive preview card to send, send later ' +
         '(scheduled) or discard. Prefer this over outlook_send_mail whenever the user should ' +
-        'review before it goes out — the card does the sending. If the user only wants a ' +
-        'draft saved, not sent, use outlook_draft_mail instead. Markdown body, rendered to ' +
+        'review before it goes out — the card does the sending. Markdown body, rendered to ' +
         'HTML. This speaks AS the user.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(EMAIL_COMPOSE_URI),
@@ -2570,25 +2569,26 @@ export async function registerOutlookTools(
    * where the card sent none), and sent. The previewed draft is deleted
    * only once that send went out, so a failure leaves it for a retry.
    */
-  const rebuildReplyDraft = async (
+  const sendRebuiltReply = async (
     authed: AuthedFetch,
     draftId: string,
     comment: string,
     replyTo: Record<string, unknown>,
-    edits: { to: string[] | null; cc: string[] | null; subject: string }
-  ): Promise<{ ok: true; draft: DraftInfo } | { ok: false; error: string }> => {
+    edits: { to: string[] | null; cc: string[] | null; subject: string },
+    sendAt: string | null
+  ) => {
     const messageId = str(replyTo.messageId);
     const action = REPLY_ACTIONS.get(str(replyTo.kind));
-    if (!messageId || !action) return { ok: false, error: 'replyTo is required to edit a reply' };
+    if (!messageId || !action) return errText('replyTo is required to edit a reply');
     if (!comment.trim() && action !== 'createForward') {
-      return { ok: false, error: 'Write the reply, or discard it.' };
+      return errText('Write the reply, or discard it.');
     }
     const current = await graphGet(
       context,
       authed,
       `/me/messages/${encodeURIComponent(draftId)}?$select=subject,toRecipients,ccRecipients,bccRecipients`
     );
-    if (!current.ok) return current;
+    if (!current.ok) return errText(current.error);
     const to = edits.to ?? addressesOf(current.body.toRecipients);
     const cc = edits.cc ?? addressesOf(current.body.ccRecipients);
     const bcc = addressesOf(current.body.bccRecipients);
@@ -2599,7 +2599,7 @@ export async function registerOutlookTools(
       cc,
       bcc,
     });
-    if (!rebuilt.ok) return rebuilt;
+    if (!rebuilt.ok) return errText(rebuilt.error);
     // Graph re-adds the people a reply goes to; the card's list is the one
     // to keep, removals included.
     const exact = await graphPatch(
@@ -2614,22 +2614,9 @@ export async function registerOutlookTools(
     );
     if (!exact.ok) {
       await graphDelete(context, authed, `/me/messages/${encodeURIComponent(rebuilt.draftId)}`);
-      return exact;
+      return errText(exact.error);
     }
-    return { ok: true, draft: { ...rebuilt, to, cc, bcc, subject: subject || rebuilt.subject } };
-  };
-
-  const sendRebuiltReply = async (
-    authed: AuthedFetch,
-    draftId: string,
-    comment: string,
-    replyTo: Record<string, unknown>,
-    edits: { to: string[] | null; cc: string[] | null; subject: string },
-    sendAt: string | null
-  ) => {
-    const rebuilt = await rebuildReplyDraft(authed, draftId, comment, replyTo, edits);
-    if (!rebuilt.ok) return errText(rebuilt.error);
-    const sent = await sendDraft(context, authed, rebuilt.draft.draftId, false, sendAt);
+    const sent = await sendDraft(context, authed, rebuilt.draftId, false, sendAt);
     if (!sent.ok) return errText(sent.error);
     await graphDelete(context, authed, `/me/messages/${encodeURIComponent(draftId)}`);
     logger.info('outlook_send_draft_confirm sent an edited reply', {
