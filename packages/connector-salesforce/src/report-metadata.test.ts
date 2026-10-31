@@ -6,6 +6,7 @@ import {
   checkReportTypeSpec,
   reportableFields,
   reportFileColumn,
+  reportFileColumnsFromLayout,
   mergeReportTypeColumns,
   reportTypeTables,
   type ReportObjectInfo,
@@ -30,6 +31,50 @@ const NOTE: ReportObjectInfo = {
 const objects = (name: string) =>
   [VISIT, NOTE].find((o) => o.name.toLowerCase() === name.toLowerCase());
 
+describe('reportFileColumnsFromLayout', () => {
+  it('names each column table$field from the layout, a lookup by itself', () => {
+    const layout = [
+      { table: 'Referral', field: 'Name' },
+      { table: 'Referral', field: 'Client__c' },
+      { table: 'Referral', field: 'CreatedBy' },
+      { table: 'Referral', field: 'Client.Medicare_Status__c' },
+      { table: 'Account.Referrals1__r', field: 'Referral_Stage__c' },
+    ];
+    expect(
+      Object.fromEntries(
+        reportFileColumnsFromLayout(
+          [
+            'Referral.Name',
+            'Referral.Client__c.Name',
+            'Referral.CreatedBy.Name',
+            'Referral.Client.Medicare_Status__c',
+            'Account.Referrals1__r.Referral_Stage__c',
+            'Referral.Unknown__c',
+            'Referral.Client__c.Phone',
+          ],
+          layout
+        )
+      )
+    ).toEqual({
+      'Referral.Name': 'Referral$Name',
+      'Referral.Client__c.Name': 'Referral$Client__c',
+      'Referral.CreatedBy.Name': 'Referral$CreatedBy',
+      'Referral.Client.Medicare_Status__c': 'Referral$Client.Medicare_Status__c',
+      'Account.Referrals1__r.Referral_Stage__c': 'Account.Referrals1__r$Referral_Stage__c',
+    });
+  });
+
+  it('takes the related name field it is given, and never another field of the lookup', () => {
+    const layout = [{ table: 'Referral', field: 'Case' }];
+    const names = reportFileColumnsFromLayout(
+      ['Referral.Case.CaseNumber', 'Referral.Case.Name'],
+      layout,
+      (table, field) => (table === 'Referral' && field === 'Case' ? 'CaseNumber' : undefined)
+    );
+    expect(Object.fromEntries(names)).toEqual({ 'Referral.Case.CaseNumber': 'Referral$Case' });
+  });
+});
+
 describe('reportableFields', () => {
   it('puts the name field first and leaves out compound and binary fields', () => {
     expect(
@@ -38,8 +83,10 @@ describe('reportableFields', () => {
         { name: 'BillingAddress', type: 'address' },
         { name: 'Name', type: 'string', nameField: true },
         { name: 'Logo__c', type: 'base64' },
+        { name: 'OwnerId', type: 'reference', referenceTo: ['Group', 'User'] },
+        { name: 'CreatedById', type: 'reference', referenceTo: ['User'] },
       ])
-    ).toEqual({ fields: ['Name', 'Id'], nameField: 'Name' });
+    ).toEqual({ fields: ['Name', 'Id', 'CreatedById'], nameField: 'Name' });
   });
 });
 

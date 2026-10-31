@@ -87,9 +87,20 @@ const NOT_COLUMNS = new Set(['address', 'location', 'base64']);
 
 /** The describe's fields a report type offers by default. */
 export function reportableFields(
-  fields: ReadonlyArray<{ name: string; type?: string; nameField?: boolean }>
+  fields: ReadonlyArray<{
+    name: string;
+    type?: string;
+    nameField?: boolean;
+    referenceTo?: readonly string[];
+  }>
 ): { fields: string[]; nameField?: string } {
-  const usable = fields.filter((field) => !NOT_COLUMNS.has(String(field.type ?? '')));
+  // A lookup that can point at more than one object (an owner that may be a
+  // user or a queue) is refused in a report type's layout.
+  const usable = fields.filter(
+    (field) =>
+      !NOT_COLUMNS.has(String(field.type ?? '')) &&
+      !(field.type === 'reference' && (field.referenceTo?.length ?? 0) > 1)
+  );
   const nameField = usable.find((field) => field.nameField)?.name;
   return {
     fields: [
@@ -832,6 +843,47 @@ export function reportFileColumn(
     at += 1;
   }
   return `${table.join('.')}$${parts.slice(at).join('.')}`;
+}
+
+/**
+ * A custom report type's columns as its report file names them, read from
+ * the type's own layout (readMetadata): each layout column is a table and a
+ * field, and the file names it `table$field`. The describe names the same
+ * column `table.field` — or, for a lookup offered as itself, with the
+ * related record's name field after it (`Referral.Client__c.Name` for the
+ * layout's `Client__c`), which no rule on the name alone can tell from a
+ * field reached through that lookup, except by the related object's name
+ * field: `nameFieldOf(table, field)` gives it for a layout lookup (`Name`
+ * when it is not known; `CaseNumber` for a Case). Keyed by the describe's
+ * name; a name the layout does not explain is left out.
+ */
+export function reportFileColumnsFromLayout(
+  describeNames: readonly string[],
+  layout: ReadonlyArray<{ table: string; field: string }>,
+  nameFieldOf: (table: string, field: string) => string | undefined = () => undefined
+): Map<string, string> {
+  const exact = new Map<string, string>();
+  const asItself = new Map<string, string>();
+  for (const { table, field } of layout) {
+    exact.set(`${table}.${field}`.toLowerCase(), `${table}$${field}`);
+    if (!field.includes('.')) {
+      const nameField = nameFieldOf(table, field) ?? 'Name';
+      asItself.set(`${table}.${field}.${nameField}`.toLowerCase(), `${table}$${field}`);
+    }
+  }
+  const names = new Map<string, string>();
+  for (const name of describeNames) {
+    const lower = name.toLowerCase();
+    const direct = exact.get(lower);
+    if (direct) {
+      names.set(name, direct);
+      continue;
+    }
+    // A lookup offered as itself: the describe adds its record's name field.
+    const lookup = asItself.get(lower);
+    if (lookup) names.set(name, lookup);
+  }
+  return names;
 }
 
 /** Whether a report type's API name is a custom report type's (`…__c`). */

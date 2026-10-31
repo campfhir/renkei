@@ -181,6 +181,7 @@ export {
   buildReportPackage,
   isCustomReportType,
   reportFileColumn,
+  reportFileColumnsFromLayout,
   reportColumnOf,
   normalizeReportType,
   reportTypeTables,
