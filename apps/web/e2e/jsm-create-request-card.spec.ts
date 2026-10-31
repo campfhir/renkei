@@ -115,10 +115,13 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   await expect(impact.locator('select')).toBeVisible();
   await expect(impact.locator('option')).toHaveText(['—', 'Single user', 'Whole site']);
 
-  // Components: the model passed the NAME; the control shows it ticked.
+  // Components: a combo box with chips, not a checkbox per option. The
+  // model passed a NAME; the card shows it as a chip, and the list offers
+  // only what is not yet chosen.
   const components = frame.locator('.field', { hasText: 'Components' });
-  await expect(components.getByRole('checkbox', { name: 'Billing' })).toBeChecked();
-  await expect(components.getByRole('checkbox', { name: 'Platform' })).not.toBeChecked();
+  await expect(components.getByRole('checkbox')).toHaveCount(0);
+  await expect(components.locator('.chip')).toHaveText(['Billing×']);
+  await expect(components.locator('datalist option')).toHaveCount(1);
 
   // Priority is offered even though nobody asked for one.
   const priority = frame.locator('.field', { hasText: 'Priority' });
@@ -126,7 +129,13 @@ test('the card shows the type by name, asks for required fields as pick lists, a
 
   await impact.locator('select').selectOption({ label: 'Whole site' });
   await priority.locator('select').selectOption({ label: 'High' });
-  await components.getByRole('checkbox', { name: 'Platform' }).check();
+  await components.getByRole('combobox', { name: 'Components' }).fill('Platform');
+  await expect(components.locator('.chip')).toHaveText(['Billing×', 'Platform×']);
+  // Taking a chip off puts it back on the list; the card sends what is left.
+  await components.getByRole('button', { name: 'Remove Billing' }).click();
+  await expect(components.locator('.chip')).toHaveText(['Platform×']);
+  await components.getByRole('combobox', { name: 'Components' }).fill('billing');
+  await expect(components.locator('.chip')).toHaveText(['Platform×', 'Billing×']);
   await page.screenshot({
     path: path.join(
       import.meta.dirname,
@@ -147,7 +156,7 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   expect(confirmCall.value?.arguments).toMatchObject({
     requestTypeId: '9001',
     priority: '2',
-    components: ['10042', '10043'],
+    components: ['10043', '10042'],
     formFields: { customfield_10010: '20002' },
   });
 });

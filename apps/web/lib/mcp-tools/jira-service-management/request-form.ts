@@ -199,14 +199,14 @@ export async function shapeFormValue(
 
 /** What the card edits a field with: a pick list, a checkbox group, or text. */
 export function controlFor(field: FormField): {
-  kind: 'select' | 'checkboxes' | 'number' | 'text' | 'text-array';
+  kind: 'select' | 'chips' | 'number' | 'text' | 'text-array';
   options: { label: string; value: string }[];
 } {
   const options = field.options.map((option) => ({ label: option.name, value: option.id }));
   const multi =
     field.type === 'array' &&
     (field.itemType === 'option' || field.itemType === 'component' || field.itemType === 'version');
-  if (options.length > 0) return { kind: multi ? 'checkboxes' : 'select', options };
+  if (options.length > 0) return { kind: multi ? 'chips' : 'select', options };
   if (field.type === 'number') return { kind: 'number', options: [] };
   if (field.type === 'array') return { kind: 'text-array', options: [] };
   return { kind: 'text', options: [] };
@@ -220,7 +220,7 @@ function initialValue(field: FormField, raw: unknown): string | string[] {
   const resolved = list.map(
     (entry) => matchComponents([entry], field.options).resolved[0]?.id ?? entry
   );
-  return controlFor(field).kind === 'checkboxes' ? resolved : (resolved[0] ?? '');
+  return controlFor(field).kind === 'chips' ? resolved : (resolved[0] ?? '');
 }
 
 export interface CardRow {
@@ -228,7 +228,7 @@ export interface CardRow {
   value: string;
   editable?: {
     path: string[];
-    kind: 'select' | 'checkboxes' | 'number' | 'text' | 'text-array';
+    kind: 'select' | 'chips' | 'number' | 'text' | 'text-array';
     value: string | string[];
     options: { label: string; value: string }[];
   };
@@ -289,7 +289,7 @@ export function formCardRows(
         kind:
           lower === 'components'
             ? control.options.length > 0
-              ? 'checkboxes'
+              ? 'chips'
               : 'text-array'
             : control.kind,
         value: initialValue(field, raw),

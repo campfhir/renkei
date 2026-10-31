@@ -590,7 +590,7 @@ describe('jsm_create_request_preview form rows', () => {
     });
     const components = fields.find((f) => f.label === 'Components');
     expect(components?.value).toBe('Billing');
-    expect(components?.editable).toMatchObject({ kind: 'checkboxes', value: ['10042'] });
+    expect(components?.editable).toMatchObject({ kind: 'chips', value: ['10042'] });
   });
 });
 
