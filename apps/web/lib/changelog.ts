@@ -54,6 +54,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           "Operators get a Changes item in the menu, with a count of what is waiting for approval, listing Salesforce and Jira admin changes together — waiting, running and recent — with who asked and a filter by connector. Each row opens that change's review page.",
       },
+      {
+        kind: 'added',
+        title: 'Copy a reply with its tool calls or its prompt',
+        detail:
+          "A chat reply's Copy still copies just the answer. The arrow beside it now also offers Copy with tool calls, which adds each tool call's input and result, and Copy with context, which adds the prompt you sent before the reply.",
+      },
     ],
   },
   {
