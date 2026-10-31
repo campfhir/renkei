@@ -824,8 +824,7 @@ function handleWorkspaces(op, body, response) {
       const path = typeof body.path === 'string' ? body.path.replace(/^\/+|\/+$/g, '') : '';
       const entry = path ? entryAt(path, workspace) : { kind: 'dir' };
       if (!entry) return error(response, 404, 'not_found', `No such file or folder: ${path}`);
-      const bytesOf = (file) =>
-        workspace.files.get(file) ?? Buffer.from(FILES[file] ?? '', 'utf8');
+      const bytesOf = (file) => workspace.files.get(file) ?? Buffer.from(FILES[file] ?? '', 'utf8');
       if (entry.kind === 'file') {
         const bytes = bytesOf(path);
         response.writeHead(200, {
@@ -839,7 +838,12 @@ function handleWorkspaces(op, body, response) {
       const prefix = path ? `${path}/` : '';
       const files = allFilePaths(workspace).filter((file) => file.startsWith(prefix));
       if (files.length === 0)
-        return error(response, 404, 'not_found', `${path || 'The checkout'} has no files to download.`);
+        return error(
+          response,
+          404,
+          'not_found',
+          `${path || 'The checkout'} has no files to download.`
+        );
       const zip = new JSZip();
       for (const file of files) zip.file(file, bytesOf(file));
       void zip.generateAsync({ type: 'nodebuffer' }).then((bytes) => {
@@ -2334,6 +2338,50 @@ function handleJiraWorkTypes(request, url, response, cloudId, path) {
       projectId: '10100',
       projectKey: 'HELP',
       projectName: 'Help desk',
+    });
+  }
+  // One fixed request type with a form that carries required, enumerated
+  // fields (id 9001 on desk 3), for the create-request card.
+  const typeForm = /^\/rest\/servicedeskapi\/servicedesk\/3\/requesttype\/9001(\/field)?$/.exec(
+    path
+  );
+  if (typeForm && request.method === 'GET') {
+    if (!typeForm[1]) return json(response, 200, { id: '9001', name: 'Report an incident' });
+    return json(response, 200, {
+      requestTypeFields: [
+        { fieldId: 'summary', name: 'Summary', required: true, jiraSchema: { type: 'string' } },
+        { fieldId: 'description', name: 'Description', required: false },
+        {
+          fieldId: 'customfield_10010',
+          name: 'Impact',
+          required: true,
+          jiraSchema: { type: 'option' },
+          validValues: [
+            { value: '20001', label: 'Single user' },
+            { value: '20002', label: 'Whole site' },
+          ],
+        },
+        {
+          fieldId: 'components',
+          name: 'Components',
+          required: false,
+          jiraSchema: { type: 'array', items: 'component' },
+          validValues: [
+            { value: '10042', label: 'Billing' },
+            { value: '10043', label: 'Platform' },
+          ],
+        },
+        {
+          fieldId: 'priority',
+          name: 'Priority',
+          required: false,
+          jiraSchema: { type: 'priority' },
+          validValues: [
+            { value: '2', label: 'High' },
+            { value: '3', label: 'Medium' },
+          ],
+        },
+      ],
     });
   }
   const requestTypes = /^\/rest\/servicedeskapi\/servicedesk\/([^/]+)\/requesttype$/.exec(path);
