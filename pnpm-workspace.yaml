@@ -29,9 +29,9 @@ minimumReleaseAgeExclude:
 # open when the gate went in and are not fixable without a dependency bump
 # that is its own change; each is listed with what fixes it and a review
 # date. An entry past its date is overdue, not permanent: fix the
-# dependency and delete the line, or renew the date with a reason. The same
-# baseline, by CVE id, is in .trivyignore for the image scan. Keep the two
-# in step.
+# dependency and delete the line, or renew the date with a reason. The image
+# scan's baseline is separate (.trivyignore, by CVE id); the two are not
+# required to match, and this list is empty by design.
 auditConfig:
   ignoreGhsas: []
 patchedDependencies:

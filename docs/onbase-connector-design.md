@@ -30,7 +30,7 @@ not an environment variable — the first connector where that is true.
 **3. It is usually on-premises — which collides with our SSRF guard.**
 `apps/web/lib/safe-fetch.ts` exists to stop a tenant-supplied URL pointing the
 server at `169.254.169.254` or `localhost`, and `assertPublicHttpsUrl` rejects
-every private range. An on-prem OnBase server _lives_ in a private range. The
+every private range. (Its reach is narrower than that sentence suggests: it guards the OIDC sign-in and discovery paths and this worker; the org-configured LLM, embeddings, OCR, web-search and voice endpoints are fetched with plain `fetch` and get no such check.) An on-prem OnBase server _lives_ in a private range. The
 guard as written would refuse precisely the deployments this connector is
 for. **This has to be resolved deliberately, not by weakening the guard** —
 see "Reaching a private host" below. It is the single biggest decision in

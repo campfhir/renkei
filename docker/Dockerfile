@@ -29,8 +29,11 @@ ARG DISTRO_REFRESH=unset
 # time (`apk upgrade`, `apt-get upgrade`), so a fix the distribution has
 # shipped since the base image was built is in the image — the CI image
 # scan fails on a fixable HIGH/CRITICAL, and the base image lags its
-# distribution by days. Each upgrade sits under `ARG DISTRO_REFRESH`, so a
-# cached upgrade layer is never more than a day old (see the ARG above).
+# distribution by days. Node itself is NOT a distribution package (it is a
+# tarball in the base image) and Trivy does not identify it, so only a new
+# base digest moves it: the weekly-security workflow compares the pinned
+# digest's NODE_VERSION with the Node release index. Each upgrade sits
+# under `ARG DISTRO_REFRESH`, so a cached upgrade layer is never more than a day old (see the ARG above).
 #   docker.io/library/node:24-alpine         (every Node-only stage)
 #   docker.io/library/node:24-bookworm-slim  (the sandbox: Chromium and the
 #                                             toolchains need glibc)
@@ -560,9 +563,9 @@ RUN apt-get update && \
 # and lists what it found at boot. pandas 2.3 and numpy 2.3 are the last
 # lines with wheels for bookworm's Python 3.11 (pandas 3 and numpy 2.5
 # need 3.12), as is matplotlib 3.10; a move to a newer base image lifts
-# them together. Pillow and pypdf are kept at their newest: the image
-# scan (CI's Trivy step) fails the build on a HIGH advisory against
-# either, and both ship a steady stream of parser fixes — Pillow's
+# them together. Pillow and pypdf are exact pins that move when an advisory
+# lands, not on their own: the image scan (CI's Trivy step) fails the build
+# on a HIGH advisory against either, and both ship a steady stream of parser fixes — Pillow's
 # current wheels are manylinux_2_28, which bookworm's glibc satisfies.
 ARG PANDAS_VERSION=2.3.2
 ARG NUMPY_VERSION=2.3.5

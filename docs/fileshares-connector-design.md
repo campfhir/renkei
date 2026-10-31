@@ -54,7 +54,7 @@ is stored — a wrong password is an immediate 4xx, never a stored
 credential that fails later. Disconnecting deletes the row, credential
 included; deleting a share cascades over everyone's connections. Only the
 fileshare worker ever decrypts a stored credential; the web app encrypts
-on the way in and never reads back.
+on the way in and never reads back. **As built:** the credential is sealed by the delegate under the person's own key (a `uenc1:` envelope; `docs/delegate-key-design.md`), not under `TOKEN_ENCRYPTION_KEY` by the web app, which holds no key; the text above is the original design.
 
 Delete is separate consent from write because file-server deletion is
 permanent: one permission on the server, two checkboxes at the model
