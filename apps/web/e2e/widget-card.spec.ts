@@ -393,7 +393,7 @@ test('ui/open-link opens https, mailto and webexteams links and nothing else', a
       });
   }
   await expect
-    .poll(() => page.evaluate(() => (window as unknown as { __opened: string[] }).__opened))
+    .poll(() => page.evaluate(() => Reflect.get(window, '__opened')))
     .toEqual([
       'https://example.atlassian.net/browse/OPS-1',
       'mailto:ann@example.com',
