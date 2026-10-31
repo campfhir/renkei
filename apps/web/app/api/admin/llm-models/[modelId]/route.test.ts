@@ -16,7 +16,13 @@ jest.mock('@renkei/agent-llm', () => ({
 
 import { NextRequest } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { decrypt, encrypt, parseEncryptionKey } from '@renkei/crypto';
+import {
+  AAD_PURPOSE,
+  aadFor,
+  decryptBoundValue,
+  encrypt,
+  parseEncryptionKey,
+} from '@renkei/crypto';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { DELETE, PUT } from './route';
 
@@ -97,7 +103,7 @@ describe('PUT .../llm-models/[modelId]', () => {
 
     expect(response.status).toBe(200);
     const stored = db.rows[0]!.encrypted_secrets;
-    const decrypted = decrypt(stored, KEY_BUFFER);
+    const decrypted = decryptBoundValue(stored, KEY_BUFFER, aadFor(AAD_PURPOSE.llmModelKey));
     expect(decrypted.ok).toBe(true);
     if (decrypted.ok) expect(JSON.parse(decrypted.val)).toEqual({ apiKey: 'original-secret' });
   });
@@ -116,7 +122,11 @@ describe('PUT .../llm-models/[modelId]', () => {
     );
 
     expect(response.status).toBe(200);
-    const decrypted = decrypt(db.rows[0]!.encrypted_secrets, KEY_BUFFER);
+    const decrypted = decryptBoundValue(
+      db.rows[0]!.encrypted_secrets,
+      KEY_BUFFER,
+      aadFor(AAD_PURPOSE.llmModelKey)
+    );
     expect(decrypted.ok).toBe(true);
     if (decrypted.ok) expect(JSON.parse(decrypted.val)).toEqual({ apiKey: 'rotated-secret' });
   });

@@ -18,14 +18,28 @@
  * TOKEN_ENCRYPTION_KEYS, secretbox.ts), so rows under the previous key
  * stay readable until `pnpm --filter @renkei/user-keys rewrap` has moved them.
  *
+ * ASSOCIATED DATA (audit R-04): new envelopes are `v3` secretbox envelopes
+ * bound to a purpose (`knowledge-chunk` for chunk bodies; a caller may name
+ * another, e.g. the job-payload fields). Org credentials (connector secrets,
+ * model keys, the OIDC secret) are sealed under their own purposes, so
+ * copying one into a chunk and prepending `renc1:` no longer decrypts.
+ * RESIDUAL RISK: chunks and credentials sealed BEFORE this change are `v1`/
+ * `v2` envelopes with no associated data; they cannot be told apart from
+ * each other, so the reader still opens them (a legacy credential copied
+ * into a chunk would be shown). `pnpm --filter @renkei/user-keys rewrap
+ * --aad` re-seals them; then RENKEI_REQUIRE_AAD=1 makes the reader refuse
+ * every legacy envelope and the residual risk is gone. Chunk bodies are
+ * bound to the purpose, not the row: a chunk's id is assigned by the
+ * database after sealing, so one chunk can still be moved onto another row.
+ *
  * Trade acknowledged at the call sites: SQL string matching against
  * encrypted content is impossible — lookups go by ref_id/metadata/vector,
  * all of which stay plaintext.
  */
 
-import { err } from '@campfhir/safe-functions/helpers';
+import { err, ok } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
-import { encrypt, decrypt, loadKeyring, type Keyring } from './secretbox';
+import { AAD_PURPOSE, aadFor, decryptBound, encrypt, loadKeyring, type Keyring } from './secretbox';
 
 /** Exported for the backfill sweep's SQL predicate; never build envelopes by hand. */
 export const CONTENT_ENVELOPE_PREFIX = 'renc1:';
@@ -52,8 +66,15 @@ export function contentEncryptionKey(
   return loadKeyring(name, env);
 }
 
-export function encryptContent(plaintext: string, key: Buffer): string {
-  return CONTENT_PREFIX + encrypt(plaintext, key);
+/** The AAD purpose of knowledge chunk bodies (and the default for this module). */
+export const CONTENT_AAD_PURPOSE = AAD_PURPOSE.knowledgeChunk;
+
+export function encryptContent(
+  plaintext: string,
+  key: Buffer,
+  purpose: string = CONTENT_AAD_PURPOSE
+): string {
+  return CONTENT_PREFIX + encrypt(plaintext, key, aadFor(purpose));
 }
 
 export function isEncryptedContent(value: string): boolean {
@@ -61,13 +82,18 @@ export function isEncryptedContent(value: string): boolean {
 }
 
 /** Envelope → plaintext. A value without the envelope marker is an error. */
-export function decryptContent(value: string, key: Buffer): Result<string, 'DECRYPTION_ERROR'> {
+export function decryptContent(
+  value: string,
+  key: Buffer,
+  purpose: string = CONTENT_AAD_PURPOSE
+): Result<string, 'DECRYPTION_ERROR'> {
   if (!isEncryptedContent(value)) {
     return err('DECRYPTION_ERROR' as const, {
       message: 'value is not an encrypted envelope — plaintext at rest is not accepted',
     });
   }
-  return decrypt(value.slice(CONTENT_PREFIX.length), key);
+  const opened = decryptBound(value.slice(CONTENT_PREFIX.length), key, aadFor(purpose));
+  return opened.ok ? ok(opened.val.value) : opened;
 }
 
 /**
@@ -77,11 +103,15 @@ export function decryptContent(value: string, key: Buffer): Result<string, 'DECR
  * a thrown 500 — one broken row must not take down a whole search result
  * page, and an unencrypted row must be seen, not silently served.
  */
-export function revealContent(value: string, key: Buffer | null): string {
+export function revealContent(
+  value: string,
+  key: Buffer | null,
+  purpose: string = CONTENT_AAD_PURPOSE
+): string {
   if (!isEncryptedContent(value)) {
     return '[content unavailable: stored unencrypted — run the encrypt-at-rest sweep]';
   }
   if (!key) return '[content unavailable: encryption key not configured]';
-  const opened = decryptContent(value, key);
+  const opened = decryptContent(value, key, purpose);
   return opened.ok ? opened.val : '[content unavailable: decryption failed]';
 }

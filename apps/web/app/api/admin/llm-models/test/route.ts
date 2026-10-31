@@ -15,7 +15,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
-import { decrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, loadKeyring } from '@renkei/crypto';
 import { testLlmConnection, type TestConnectionError } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { API_SURFACES, SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
@@ -97,7 +97,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     const secretsResult = row.encryptedSecrets
-      ? decrypt(row.encryptedSecrets, keyResult.val)
+      ? decryptBoundValue(row.encryptedSecrets, keyResult.val, aadFor(AAD_PURPOSE.llmModelKey))
       : null;
     if (secretsResult && !secretsResult.ok) {
       logger.warn(
