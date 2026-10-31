@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-10-31',
     entries: [
       {
+        kind: 'changed',
+        title: 'Preview cards show names, not ids',
+        detail:
+          "Cards for Jira, Confluence, Microsoft 365, Teams, GitHub, Bitbucket, Salesforce, Mirth, OnBase and Zoom now show a sprint, page, folder, channel or document by its name instead of an internal id. When a name can't be found the card says so in words rather than showing an id.",
+      },
+      {
+        kind: 'added',
+        title: 'Schedule an email to send later',
+        detail:
+          'Outlook sends, replies and forwards can be scheduled for a later time, and the email preview card has a Send later picker. Outlook holds the message in its Outbox and sends it then; deleting it there cancels it.',
+      },
+      {
         kind: 'fixed',
         title: "Salesforce Admin reports take a joined object's columns",
         detail:
