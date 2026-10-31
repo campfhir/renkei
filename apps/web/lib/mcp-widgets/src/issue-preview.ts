@@ -18,7 +18,9 @@
  * `editable` keys above; any OTHER row (priority, a custom field, …) is
  * editable only when the preview tool resolved enough about it to say so —
  * `row.editable` names the path into `confirmArgs` to write back to, what
- * kind of control to render, and (for a picklist/checkbox row) the options.
+ * kind of control to render, and (for a picklist/checkbox/chips row) the
+ * options. `chips` is a combo box whose picks collect as removable chips,
+ * for a multi-select with many options (a desk's components).
  * A row with no `editable` stays a plain value — project/type never carry
  * one, so the card cannot be used to redirect the write structurally.
  *
@@ -41,6 +43,7 @@ import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
   checkboxGroupField,
+  chipsField,
   doneStateOf,
   el,
   injectStyle,
@@ -59,7 +62,7 @@ import {
 
 interface FieldEdit {
   path: string[];
-  kind: 'text' | 'text-array' | 'number' | 'select' | 'checkboxes';
+  kind: 'text' | 'text-array' | 'number' | 'select' | 'checkboxes' | 'chips';
   value: string | string[];
   options: FieldOption[];
 }
@@ -101,14 +104,15 @@ function fieldEditOf(record: Record<string, unknown>): FieldEdit | undefined {
       kind !== 'text-array' &&
       kind !== 'number' &&
       kind !== 'select' &&
-      kind !== 'checkboxes')
+      kind !== 'checkboxes' &&
+      kind !== 'chips')
   ) {
     return undefined;
   }
   return {
     path,
     kind,
-    value: kind === 'checkboxes' ? strings(raw.value) : str(raw.value),
+    value: kind === 'checkboxes' || kind === 'chips' ? strings(raw.value) : str(raw.value),
     options: fieldOptions(raw.options),
   };
 }
@@ -216,6 +220,14 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       fieldEdits.push({ path: edit.path, read: () => control.input.value });
     } else if (edit.kind === 'checkboxes') {
       const control = checkboxGroupField(
+        row.label,
+        Array.isArray(edit.value) ? edit.value : [],
+        edit.options
+      );
+      built = control;
+      fieldEdits.push({ path: edit.path, read: () => control.getValues() });
+    } else if (edit.kind === 'chips') {
+      const control = chipsField(
         row.label,
         Array.isArray(edit.value) ? edit.value : [],
         edit.options

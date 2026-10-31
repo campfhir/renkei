@@ -52,11 +52,7 @@ async function toolsOf(): Promise<Map<string, Handler>> {
       registered.set(name, handler);
     },
   } as unknown as McpServer;
-  await registerRequestDetailsTools(
-    server,
-    { } as unknown as MCPToolContext,
-    stubAuth
-  );
+  await registerRequestDetailsTools(server, {} as unknown as MCPToolContext, stubAuth);
   return registered;
 }
 

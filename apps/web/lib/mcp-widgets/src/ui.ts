@@ -87,6 +87,20 @@ body {
   padding: 5px 0; font-size: 13px; cursor: pointer;
 }
 .checkbox-row input { flex: none; cursor: pointer; }
+.chips-box { display: flex; flex-direction: column; gap: 8px; }
+.chips-box input.chips-input { width: 100%; }
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips-row:empty { display: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  background: var(--card-field-bg); border: 1px solid var(--card-border);
+  border-radius: 999px; padding: 1px 4px 1px 10px; font-size: 13px;
+}
+.chip button {
+  all: unset; cursor: pointer; line-height: 1; padding: 2px 5px; border-radius: 999px;
+  color: var(--card-muted); font-size: 15px;
+}
+.chip button:hover, .chip button:focus-visible { color: var(--card-fg); background: var(--card-bg); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .status { margin-right: auto; font-size: 13px; }
 .status.error { color: var(--card-danger); }
@@ -314,6 +328,88 @@ export function checkboxGroupField(
     field.append(row);
   }
   return { field, getValues: () => boxes.filter((box) => box.checked).map((box) => box.value) };
+}
+
+let chipsCount = 0;
+
+/**
+ * Label + a combo box, with its picks collected below it as removable chips — for a
+ * multi-select with too many options for a checkbox per option (a desk's
+ * components can run to dozens). Type to narrow the list, pick (or press
+ * Enter on an exact label) to add a chip, press its × to take it off.
+ * Options already chosen leave the list. Returns a getter for the chosen
+ * values, like checkboxGroupField.
+ */
+export function chipsField(
+  label: string,
+  values: readonly string[],
+  options: readonly FieldOption[]
+): { field: HTMLElement; getValues: () => string[] } {
+  const field = el('div', 'field');
+  const box = el('div', 'chips-box');
+  const input = el('input', 'chips-input');
+  const row = el('div', 'chips-row');
+  const listId = `chips-list-${chipsCount++}`;
+  const list = document.createElement('datalist');
+  list.id = listId;
+  input.setAttribute('list', listId);
+  input.setAttribute('aria-label', label);
+  input.placeholder = 'Search to add…';
+  input.autocomplete = 'off';
+  const labelFor = (value: string) =>
+    options.find((option) => option.value === value)?.label ?? value;
+  const chosen: string[] = [];
+
+  const refresh = () => {
+    row.textContent = '';
+    for (const value of chosen) {
+      const chip = el('span', 'chip', labelFor(value));
+      const remove = el('button', undefined, '×');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove ${labelFor(value)}`);
+      remove.addEventListener('click', () => {
+        chosen.splice(chosen.indexOf(value), 1);
+        refresh();
+        input.focus();
+      });
+      chip.append(remove);
+      row.append(chip);
+    }
+    list.textContent = '';
+    for (const option of options) {
+      if (!chosen.includes(option.value)) list.append(new Option(option.label, option.label));
+    }
+  };
+  const take = () => {
+    const typed = input.value.trim().toLowerCase();
+    if (!typed) return;
+    const match = options.find(
+      (option) => option.label.toLowerCase() === typed || option.value.toLowerCase() === typed
+    );
+    if (match && !chosen.includes(match.value)) {
+      chosen.push(match.value);
+      input.value = '';
+      refresh();
+    }
+  };
+  // A pick from the list fires `input` with the full label; typing a
+  // prefix does not match, so a half-typed word never adds a chip.
+  input.addEventListener('input', take);
+  input.addEventListener('change', take);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      take();
+    } else if (event.key === 'Backspace' && !input.value && chosen.length > 0) {
+      chosen.pop();
+      refresh();
+    }
+  });
+  for (const value of values) if (!chosen.includes(value)) chosen.push(value);
+  box.append(input, list, row);
+  refresh();
+  field.append(el('div', 'field-label', label), box);
+  return { field, getValues: () => [...chosen] };
 }
 
 /**

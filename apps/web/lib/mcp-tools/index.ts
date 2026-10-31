@@ -33,7 +33,12 @@ export async function registerAllTools(server: McpServer, context: MCPToolContex
         jiraAuth: context.jsmGrant.auth,
         accountId: context.jsmGrant.accountId,
         cloudId: context.jsmGrant.cloudId,
-        apiBaseUrl: `https://api.atlassian.com/ex/jira/${context.jsmGrant.cloudId}`,
+        // The gateway may be pointed at a stand-in (JIRA_ADMIN_API_BASE_URL),
+        // as jira-admin/client.ts does, for the browser suite.
+        apiBaseUrl: `${
+          process.env.JIRA_ADMIN_API_BASE_URL?.replace(/\/+$/, '') ||
+          'https://api.atlassian.com/ex/jira'
+        }/${context.jsmGrant.cloudId}`,
         grantedScopes: context.jsmGrant.scopes,
       }
     : context;

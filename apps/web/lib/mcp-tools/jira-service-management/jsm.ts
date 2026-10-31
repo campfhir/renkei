@@ -35,6 +35,15 @@ import {
   resolveRequestType,
   resolveServiceDesk,
 } from './components';
+import {
+  describeForm,
+  describeMissing,
+  formCardRows,
+  formFieldOf,
+  isFilled,
+  missingRequired,
+  shapeFormValue,
+} from './request-form';
 import { previewUserLabel } from '../jira/user-label';
 import { resolveUserId } from '../jira/resolve-user';
 import { collectExtraFields, extraFieldSchema } from '../jira/write';
@@ -570,6 +579,22 @@ export async function registerJsmTools(
           'this request type accepts. Names are matched case-insensitively.'
       )
       .optional(),
+    requestParticipants: z
+      .array(z.string())
+      .describe(
+        'Emails or accountIds of people to add as request participants at creation. ' +
+          'Dropped with a note if Jira refuses them.'
+      )
+      .optional(),
+    formFields: z
+      .record(z.string(), z.unknown())
+      .describe(
+        "The request type's OTHER form fields, keyed by field id as jsm_get_request_type_fields " +
+          'shows them (e.g. {"customfield_10010": "High impact"}). Required fields of the form ' +
+          'MUST be set here or the request is refused. For a pick-list field pass the option ' +
+          'label or id (an array for a multi-select); for a person pass an email or accountId.'
+      )
+      .optional(),
   });
   const createRequestHandler = async (args: Record<string, any>) => {
     const displayName = getCachedDisplayName(context.accountId);
@@ -635,8 +660,26 @@ export async function registerJsmTools(
       let priorityValue: { id: string } | null = null;
       let priorityViaEdit = false;
       const notes: string[] = [];
-      if (wanted.length > 0 || priorityWanted) {
-        const form = await loadRequestTypeForm(auth, deskId, typeId);
+      const formFields: Record<string, unknown> =
+        typeof args.formFields === 'object' && args.formFields !== null
+          ? (args.formFields as Record<string, unknown>)
+          : {};
+      const participants: string[] = [];
+      for (const raw of Array.isArray(args.requestParticipants) ? args.requestParticipants : []) {
+        const person = String(raw).trim();
+        if (!person) continue;
+        // The API wants accountIds; an email is looked up, and one that
+        // cannot be found costs that participant, not the request.
+        const resolved = await resolveUserId(auth, person);
+        if (resolved.ok) participants.push(resolved.id);
+        else notes.push(`Participant "${person}" was not added — ${resolved.reason}.`);
+      }
+      const extraValues: Record<string, unknown> = {};
+      // The form is ALWAYS read: its required fields decide whether this
+      // create can succeed at all, and a refusal that names them beats the
+      // API's bare 400.
+      const form = await loadRequestTypeForm(auth, deskId, typeId);
+      {
         if (!form.ok) {
           if (wanted.length > 0) notes.push(`Components were not set — ${form.message}`);
           // The form being unreadable does not decide whether priority can
@@ -678,6 +721,34 @@ export async function registerJsmTools(
               }
             }
           }
+
+          // The rest of the form: each value shaped to its field's schema.
+          // A value the form cannot take is a note unless the field is
+          // required — then the request would be refused, so say so here.
+          const described = describeForm(form.fields);
+          const supplied = new Set<string>();
+          for (const [fieldId, value] of Object.entries(formFields)) {
+            if (!isFilled(value)) continue;
+            const field = formFieldOf(described, fieldId);
+            if (!field) {
+              notes.push(`${fieldId} was not set — this request type's form has no such field.`);
+              continue;
+            }
+            const shaped = await shapeFormValue(field, value, (raw) => resolveUserId(auth, raw));
+            if (shaped.ok) {
+              extraValues[fieldId] = shaped.value;
+              supplied.add(fieldId);
+            } else {
+              notes.push(`${field.name} was not set — ${shaped.reason}.`);
+            }
+          }
+          const missing = missingRequired(described, formFields, supplied);
+          if (missing.length > 0) {
+            return errText(
+              `Nothing was created: this request type requires ${describeMissing(missing)}. ` +
+                `Pass them in formFields (keyed by field id), then try again.`
+            );
+          }
         }
       }
 
@@ -704,7 +775,9 @@ export async function registerJsmTools(
             ...(description ? { description: markdownToAdf(description) } : {}),
             ...(componentValues.length > 0 ? { components: componentValues } : {}),
             ...(priorityValue ? { priority: priorityValue } : {}),
+            ...extraValues,
           },
+          ...(participants.length > 0 ? { requestParticipants: participants } : {}),
         };
         return auth.fetch(
           serviceDeskScopes('jsm_create_request', false),
@@ -946,8 +1019,11 @@ export async function registerJsmTools(
         'Create a customer request in a service desk. Prefer this over jira_create_issue ' +
         'whenever the target project is a service desk (see jsm_list_service_desks) — a plain ' +
         'issue in a service desk project skips its request types and SLAs. Reporter, assignee, ' +
-        'priority, and components are their own inputs here — pass them as fields, never as ' +
-        'lines inside the description text.',
+        'priority, components, and requestParticipants are their own inputs here — pass them as ' +
+        'fields, never as lines inside the description text. The request type may REQUIRE ' +
+        'other form fields (see jsm_get_request_type_fields, marked [REQUIRED]); set them in ' +
+        'formFields by field id, using option labels or ids — a create missing one is refused ' +
+        'with the list of what it accepts.',
       annotations: { readOnlyHint: false },
       inputSchema: createRequestSchema,
     },
@@ -999,6 +1075,7 @@ export async function registerJsmTools(
       // rather than showing bare ids. A failed read costs the labels only.
       let deskName = '';
       let typeName = '';
+      let formRows: ReturnType<typeof formCardRows> = [];
       try {
         const deskResponse = await auth.fetch(
           serviceDeskScopes('jsm_list_service_desks', true),
@@ -1029,9 +1106,25 @@ export async function registerJsmTools(
             typeName = str(requestType?.name);
           }
         }
+        // The form decides which rows the card needs: every required field,
+        // plus components and priority as pick lists. Ids stay in
+        // confirmArgs; the card shows labels.
+        if (type.ok) {
+          const form = await loadRequestTypeForm(auth, deskId, type.requestType.id);
+          if (form.ok) formRows = formCardRows(describeForm(form.fields), args);
+        }
       } catch {
         // preview renders with ids
       }
+      const shownPeople = async (values: unknown): Promise<string> => {
+        const list = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
+        const labels = await Promise.all(
+          list.map((value) => previewUserLabel(readUser, value, 'The selected person'))
+        );
+        return labels.join(', ');
+      };
+      const participantsLabel = await shownPeople(args.requestParticipants);
+      const formHas = new Set(formRows.map((row) => row.editable?.path[0]));
 
       return {
         content: [
@@ -1062,8 +1155,18 @@ export async function registerJsmTools(
             // gets it, and where it will be filed.
             ...(reporter ? [{ label: 'Reporter', value: reporter }] : []),
             ...(assignee ? [{ label: 'Assignee', value: assignee }] : []),
-            ...(str(args.priority) ? [{ label: 'Priority', value: str(args.priority) }] : []),
-            ...(Array.isArray(args.components) && args.components.length > 0
+            ...(participantsLabel
+              ? [{ label: 'Request participants', value: participantsLabel }]
+              : []),
+            // The form's own rows (pick lists with labels, required fields)
+            // win; the plain rows below cover a form that could not be read.
+            ...formRows,
+            ...(!formHas.has('priority') && str(args.priority)
+              ? [{ label: 'Priority', value: str(args.priority) }]
+              : []),
+            ...(!formHas.has('components') &&
+            Array.isArray(args.components) &&
+            args.components.length > 0
               ? [{ label: 'Components', value: args.components.map(String).join(', ') }]
               : []),
           ],

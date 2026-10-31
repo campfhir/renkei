@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: "Service desk request cards show the form's required fields",
+        detail:
+          "The create-request card now reads the request type's form and shows its required fields, components and priority as labelled pick lists (components as a search box with removable chips) instead of ids. A request missing a required field is refused with the accepted values named, and requests can carry participants.",
+      },
+      {
+        kind: 'changed',
         title: 'Preview cards show names, not ids',
         detail:
           "Cards for Jira, Confluence, Microsoft 365, Teams, GitHub, Bitbucket, Salesforce, Mirth, OnBase and Zoom now show a sprint, page, folder, channel or document by its name instead of an internal id. When a name can't be found the card says so in words rather than showing an id.",

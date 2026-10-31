@@ -152,7 +152,7 @@ describe('jsm_create_request desk-id resolution', () => {
     expect(body.serviceDeskId).toBe('7');
   });
 
-  it('posts a numeric id straight through without a lookup', async () => {
+  it('posts a numeric id straight through without a request-type lookup', async () => {
     routes = [{ match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-102' } }];
     const tools = await toolsOf();
 
@@ -163,8 +163,9 @@ describe('jsm_create_request desk-id resolution', () => {
     });
 
     expect(result.isError).not.toBe(true);
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.method).toBe('POST');
+    // Only the form read (for required fields) and the create itself.
+    expect(requests.map((r) => r.method)).toEqual(['GET', 'POST']);
+    expect(requests[0]?.path).toContain('/requesttype/165/field');
   });
 
   it('sends the description as ADF, never as a raw markdown string', async () => {
@@ -432,7 +433,7 @@ describe('jsm_create_request components', () => {
     expect(result.content[0]?.text).toContain('Billing (10042)');
   });
 
-  it('does not look up the form at all when no components were asked for', async () => {
+  it('creates without components when none were asked for', async () => {
     routes = [created];
     const tools = await toolsOf();
     await tools.get('jsm_create_request')!({
@@ -441,8 +442,155 @@ describe('jsm_create_request components', () => {
       summary: 'Wait-time display discrepancy',
     });
 
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.method).toBe('POST');
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as { requestFieldValues?: Record<string, unknown> };
+    expect(body.requestFieldValues?.components).toBeUndefined();
+  });
+});
+
+/** The form's other fields: required ones are checked, values shaped by schema. */
+describe('jsm_create_request form fields', () => {
+  const form = {
+    match: '/requesttype/165/field',
+    body: {
+      requestTypeFields: [
+        { fieldId: 'summary', name: 'Summary', required: true },
+        {
+          fieldId: 'customfield_10010',
+          name: 'Impact',
+          required: true,
+          jiraSchema: { type: 'option' },
+          validValues: [
+            { value: '20001', label: 'Low' },
+            { value: '20002', label: 'High' },
+          ],
+        },
+        {
+          fieldId: 'customfield_10011',
+          name: 'Regions',
+          required: false,
+          jiraSchema: { type: 'array', items: 'option' },
+          validValues: [
+            { value: '30001', label: 'EMEA' },
+            { value: '30002', label: 'APAC' },
+          ],
+        },
+      ],
+    },
+  };
+  const created = { match: '/rest/servicedeskapi/request', body: { issueKey: 'CAS-300' } };
+  const create = async (extra: Record<string, unknown>) => {
+    const tools = await toolsOf();
+    return tools.get('jsm_create_request')!({
+      serviceDeskId: '7',
+      requestTypeId: '165',
+      summary: 'Printer down',
+      ...extra,
+    });
+  };
+  const sent = () => {
+    const post = requests.find((r) => r.method === 'POST');
+    return JSON.parse(post?.body ?? '{}') as { requestFieldValues?: Record<string, unknown> };
+  };
+
+  it('refuses before creating when a required field is missing, naming its options', async () => {
+    routes = [form, created];
+    const result = await create({});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('Impact (customfield_10010)');
+    expect(result.content[0]?.text).toContain('High (20002)');
+    expect(requests.some((r) => r.method === 'POST')).toBe(false);
+  });
+
+  it('accepts a label or an id and sends ids in the form field shape', async () => {
+    routes = [form, created];
+    const result = await create({
+      formFields: { customfield_10010: 'high', customfield_10011: ['30001', 'APAC'] },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(sent().requestFieldValues?.customfield_10010).toEqual({ id: '20002' });
+    expect(sent().requestFieldValues?.customfield_10011).toEqual([
+      { id: '30001' },
+      { id: '30002' },
+    ]);
+  });
+
+  it('treats a required field the card left blank as missing', async () => {
+    routes = [form, created];
+    const result = await create({ formFields: { customfield_10010: '' } });
+
+    expect(result.isError).toBe(true);
+    expect(requests.some((r) => r.method === 'POST')).toBe(false);
+  });
+
+  it('sends participants as accountIds', async () => {
+    routes = [form, created];
+    const result = await create({
+      formFields: { customfield_10010: '20001' },
+      requestParticipants: ['5b10ac8d82e05b22cc7d4ef5'],
+    });
+
+    expect(result.isError).not.toBe(true);
+    const post = requests.find((r) => r.method === 'POST');
+    const body = JSON.parse(post?.body ?? '{}') as { requestParticipants?: string[] };
+    expect(body.requestParticipants).toEqual(['5b10ac8d82e05b22cc7d4ef5']);
+  });
+});
+
+describe('jsm_create_request_preview form rows', () => {
+  it('shows required fields and pick lists by label, holding ids in confirmArgs', async () => {
+    routes = [
+      {
+        match: '/requesttype/165/field',
+        body: {
+          requestTypeFields: [
+            { fieldId: 'summary', name: 'Summary', required: true },
+            {
+              fieldId: 'customfield_10010',
+              name: 'Impact',
+              required: true,
+              jiraSchema: { type: 'option' },
+              validValues: [{ value: '20002', label: 'High' }],
+            },
+            {
+              fieldId: 'components',
+              name: 'Components',
+              jiraSchema: { type: 'array', items: 'component' },
+              validValues: [{ value: '10042', label: 'Billing' }],
+            },
+          ],
+        },
+      },
+      { match: '/servicedesk/7', body: { id: '7', projectKey: 'CAS', projectName: 'Support' } },
+    ];
+    const tools = await toolsOf();
+    const result = (await tools.get('jsm_create_request_preview')!({
+      serviceDeskId: '7',
+      requestTypeId: '165',
+      summary: 'Printer down',
+      components: ['10042'],
+    })) as {
+      structuredContent?: {
+        fields?: {
+          label: string;
+          value: string;
+          editable?: { path: string[]; kind: string; value: unknown };
+        }[];
+      };
+    };
+
+    const fields = result.structuredContent?.fields ?? [];
+    const impact = fields.find((f) => f.label === 'Impact (required)');
+    expect(impact?.value).toBe('Choose one');
+    expect(impact?.editable).toMatchObject({
+      path: ['formFields', 'customfield_10010'],
+      kind: 'select',
+    });
+    const components = fields.find((f) => f.label === 'Components');
+    expect(components?.value).toBe('Billing');
+    expect(components?.editable).toMatchObject({ kind: 'chips', value: ['10042'] });
   });
 });
 
