@@ -27,6 +27,18 @@ export const PATHNAME_HEADER = 'x-renkei-pathname';
 export function safeReturnPath(candidate: string | null | undefined): string | null {
   if (!candidate) return null;
   if (!candidate.startsWith('/')) return null;
-  if (candidate.startsWith('//') || candidate.startsWith('/\\')) return null;
-  return candidate;
+  // The URL parser strips tab, CR and LF before it parses, so `/\t/evil.com`
+  // would resolve to `//evil.com`; a backslash reads as a slash.
+  // The encoded forms go too: something later in the chain may decode them.
+  if (/[\t\r\n\\]|%0[9ad]|%5c/i.test(candidate)) return null;
+  if (candidate.startsWith('//')) return null;
+  // Whatever the parser makes of it must still be this origin.
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate, 'http://x');
+  } catch {
+    return null;
+  }
+  if (parsed.origin !== 'http://x') return null;
+  return parsed.pathname + parsed.search + parsed.hash;
 }
