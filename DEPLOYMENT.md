@@ -1086,7 +1086,7 @@ again once.
 
 ## Security Checklist
 
-- [x] HTTPS enabled (TLS 1.2+)
+- [ ] HTTPS enabled (TLS 1.2+): a reverse proxy in front of 127.0.0.1:3000, with `PUBLIC_BASE_URL` set to its https address (the app refuses to start without it)
 - [x] Environment variables set (no secrets in code)
 - [x] Database password strong (16+ characters, mixed case, symbols)
 - [x] Regular database backups

@@ -159,7 +159,7 @@ describe('registerKnowledgeTools', () => {
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('[webex:room-1/msg-1]');
     expect(text).toContain('distance 0.123');
-    expect(text).toContain('2 withheld: you do not have access at the source.');
+    expect(text).toContain('Some matches were withheld: you do not have access at the source.');
 
     const searchArgs = mockSearch.mock.calls[0]?.[0];
     expect(searchArgs.userEmail).toBe('sam@example.com');
@@ -211,7 +211,7 @@ describe('registerKnowledgeTools', () => {
 
     const text = result.content[0]?.text ?? '';
     expect(text).toContain('No accessible results');
-    expect(text).toContain('3 withheld: you do not have access at the source.');
+    expect(text).toContain('Some matches were withheld: you do not have access at the source.');
   });
 
   it('does not call a provider timeout a permission denial', async () => {

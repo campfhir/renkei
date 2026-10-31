@@ -8,7 +8,7 @@ import {
   registerDataStore,
 } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
-import { watchLogLevel } from '@renkei/settings';
+import { publicBaseUrlRefusal, watchLogLevel } from '@renkei/settings';
 import type { LogCipher } from '@/lib/log-encryption';
 
 // register() re-runs on dev recompiles, and the logger it decorates is a
@@ -58,6 +58,15 @@ export async function register() {
         component: 'web/instrumentation',
       });
       return;
+    }
+
+    // The declared public origin: production never derives it from request
+    // headers (see getOrigin), so a boot without one stops here. Not asked
+    // of the in-memory store above, which only the UI suite runs.
+    const originRefusal = publicBaseUrlRefusal();
+    if (originRefusal) {
+      console.error(`FATAL [web/instrumentation]: ${originRefusal}`);
+      process.exit(1);
     }
 
     // Every adapter starts at info, which holds only for the few seconds

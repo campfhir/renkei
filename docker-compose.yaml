@@ -11,15 +11,14 @@
 #   docker compose -f docker-compose.yaml run --rm migrate
 #   docker compose -f docker-compose.yaml up -d renkei
 #
-# PUBLIC_BASE_URL in .env must match whatever address actually reaches this
-# host on port 80. That same URL must be registered as the Atlassian app's
-# callback — the gateway refuses to start if they disagree.
+# PUBLIC_BASE_URL in .env is required: the https address people reach this
+# host at through your TLS-terminating reverse proxy. That same URL is
+# registered with the identity provider and every connector, and the app
+# refuses to start without it.
 #
-# Port 80 is exposed directly here as the requested default. That means
-# bearer tokens travel in plaintext to anyone who can reach this host on 80 —
-# fine on a private/internal network, not fine on the open internet. For a
-# public deployment, put a TLS-terminating reverse proxy in front instead and
-# publish 3000 on 127.0.0.1 only.
+# The app is published on 127.0.0.1:3000 only. Point the reverse proxy at it;
+# do not publish it to other machines, where bearer tokens would cross the
+# network in the clear.
 
 # The database credential comes from .env, never from this file:
 #   POSTGRES_PASSWORD   required — `openssl rand -hex 32` (hex, so it needs
@@ -613,7 +612,10 @@ services:
       # credential; the app holds neither their addresses nor their keys.
       <<: [*database-urls, *delegate-web, *crypto-keys, *logging-env, *blob-store]
       SETUP_SECRET:
-      PUBLIC_BASE_URL:
+      # Required: the https address people reach this app at. Registered with
+      # the identity provider and every connector; the app refuses to start
+      # without it rather than read an origin off request headers.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:?set PUBLIC_BASE_URL in .env (the https address people reach this app at)}
       BITBUCKET_API_BASE_URL:
       ENTRA_DEVELOPER_API_BASE_URL:
       GITHUB_API_BASE_URL:
@@ -637,14 +639,12 @@ services:
       # AZURE_BLOB_ENDPOINT for a non-default endpoint) come from .env, read
       # by this service AND worker-agents (whose retention sweep deletes
       # blobs). Unset, chat uploads are simply off.
-      # PUBLIC_BASE_URL in .env is the authoritative origin when set — it is
-      # the address registered with every OAuth provider. Without it, the app
-      # falls back to X-Forwarded-Proto/Host from the reverse proxy, which it
-      # believes unconditionally — so this port must never be reachable by
-      # untrusted clients directly: keep it published on 127.0.0.1 / an
-      # internal network, with the proxy in front.
+    # Published on this host's loopback only: put a TLS-terminating reverse
+    # proxy in front (it forwards to 127.0.0.1:3000). Sign-in cookies are
+    # `Secure`, so plain HTTP from other machines cannot sign in anyway, and
+    # bearer tokens must not cross a network in the clear.
     ports:
-      - '80:3000'
+      - '127.0.0.1:3000:3000'
     <<: *locked-down
     tmpfs:
       - /tmp

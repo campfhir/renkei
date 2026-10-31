@@ -40,19 +40,28 @@ export interface RateLimitVerdict {
   retryAfterSeconds: number;
 }
 
-const windows = new Map<string, Window>();
+/** One window per endpoint — a handful of keys, never evicted: the ceiling must not be clearable. */
+const globalWindows = new Map<string, Window>();
+/** Per-client windows, bounded; the oldest are evicted first. */
+const clientWindows = new Map<string, Window>();
 
 /**
  * Bounded so a spoofed-header flood cannot grow the map without limit: past
- * this many live keys, the whole table is dropped rather than tracked. That
- * forgives everyone briefly — the global limit is what still holds, which is
- * exactly why it exists.
+ * this many live keys the oldest client windows are evicted one at a time.
+ * Only per-client windows live here — the global ceiling is in its own map,
+ * so no flood of unique addresses can clear it.
  */
 const MAX_TRACKED_KEYS = 10_000;
 
-function hit(key: string, rule: RateLimitRule, now: number): RateLimitVerdict {
+function hit(
+  windows: Map<string, Window>,
+  key: string,
+  rule: RateLimitRule,
+  now: number
+): RateLimitVerdict {
   const existing = windows.get(key);
   if (!existing || existing.resetAt <= now) {
+    windows.delete(key); // re-insert at the young end of the eviction order
     windows.set(key, { count: 1, resetAt: now + rule.windowMs });
     return { allowed: true, retryAfterSeconds: 0 };
   }
@@ -66,13 +75,16 @@ function hit(key: string, rule: RateLimitRule, now: number): RateLimitVerdict {
   return { allowed: true, retryAfterSeconds: 0 };
 }
 
-/** Drop expired windows; if the table is still oversized, clear it. */
+/** Drop expired client windows; if the table is still full, evict the oldest. */
 function prune(now: number): void {
-  if (windows.size < MAX_TRACKED_KEYS) return;
-  for (const [key, window] of windows) {
-    if (window.resetAt <= now) windows.delete(key);
+  if (clientWindows.size < MAX_TRACKED_KEYS) return;
+  for (const [key, window] of clientWindows) {
+    if (window.resetAt <= now) clientWindows.delete(key);
   }
-  if (windows.size >= MAX_TRACKED_KEYS) windows.clear();
+  for (const key of clientWindows.keys()) {
+    if (clientWindows.size < MAX_TRACKED_KEYS) break;
+    clientWindows.delete(key);
+  }
 }
 
 /** The forwarded client address, or a constant when nothing is forwarded. */
@@ -96,18 +108,16 @@ export function checkInboundLimit(
   now: number = Date.now()
 ): RateLimitVerdict {
   prune(now);
-  const globalVerdict = hit(`${endpoint}:global`, rules.global, now);
-  const clientVerdict = hit(`${endpoint}:client:${typeof request === 'string' ? request : clientKey(request)}`, rules.perClient, now);
-  if (globalVerdict.allowed && clientVerdict.allowed) {
-    return { allowed: true, retryAfterSeconds: 0 };
-  }
-  return {
-    allowed: false,
-    retryAfterSeconds: Math.max(globalVerdict.retryAfterSeconds, clientVerdict.retryAfterSeconds),
-  };
+  const globalVerdict = hit(globalWindows, endpoint, rules.global, now);
+  // A request the global ceiling already refused is not charged to anyone's
+  // own window: a flood past the ceiling must not also churn the client table.
+  if (!globalVerdict.allowed) return globalVerdict;
+  const clientKeyed = `${endpoint}:${typeof request === 'string' ? request : clientKey(request)}`;
+  return hit(clientWindows, clientKeyed, rules.perClient, now);
 }
 
 /** Test seam: forget every window. */
 export function resetInboundLimits(): void {
-  windows.clear();
+  globalWindows.clear();
+  clientWindows.clear();
 }

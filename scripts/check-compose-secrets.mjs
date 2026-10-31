@@ -45,6 +45,7 @@ const names = [
   'SANDBOX_WORKER_API_KEY',
   // Required by compose; every service's DATABASE_URL embeds it (audit R-13).
   'POSTGRES_PASSWORD',
+  'PUBLIC_BASE_URL',
 ];
 for (const name of names) values[name] = `sentinel-${name.toLowerCase()}-${n++}`;
 writeFileSync(

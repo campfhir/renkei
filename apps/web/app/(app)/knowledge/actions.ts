@@ -169,7 +169,7 @@ export async function searchMyKnowledge(
     }
     return {
       hits: recent.val.hits.map((hit) => toPageHit(hit, null)),
-      elided: recent.val.elided,
+      elided: withheldForBrowser(recent.val.elided, recent.val.unverified),
       unverified: recent.val.unverified,
       error: null,
       browsing: true,
@@ -222,9 +222,18 @@ export async function searchMyKnowledge(
 
   return {
     hits: searched.val.hits.map((hit) => toPageHit(hit, knowledge.maxDistance)),
-    elided: searched.val.elided,
+    // Refused matches reach the browser as "some", never a count; the
+    // timed-out ones stay counted (an operational fact, not a measure of
+    // restricted content).
+    elided: withheldForBrowser(searched.val.elided, searched.val.unverified),
     unverified: searched.val.unverified,
     weak: searched.val.weak,
     error: null,
   };
+}
+
+/** `elided` for the browser: any refusals collapse to one, timed-out matches keep their count. */
+function withheldForBrowser(elided: number, unverified: number): number {
+  const timedOut = Math.min(Math.max(unverified, 0), elided);
+  return (elided - timedOut > 0 ? 1 : 0) + timedOut;
 }

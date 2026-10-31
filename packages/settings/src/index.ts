@@ -749,8 +749,9 @@ export async function getWorkspaceLimitBytes(subject: string): Promise<Result<nu
 
 /**
  * The deployment's public base URL from PUBLIC_BASE_URL, or null when unset —
- * web callers then fall back to trusted proxy headers and finally the request
- * URL (see web's getOrigin).
+ * outside production, web callers then fall back to the request's own
+ * origin (see web's getOrigin); a production web boot refuses to start
+ * without it (publicBaseUrlRefusal).
  *
  * Deliberately NOT a platform_settings row, and an exception to Decision #19's
  * policy-is-data rule: this value gates the OIDC redirect_uri, so it must be
@@ -762,6 +763,24 @@ export async function getWorkspaceLimitBytes(subject: string): Promise<Result<nu
 export function getPublicBaseUrl(): string | null {
   const fromEnv = process.env.PUBLIC_BASE_URL?.trim();
   return fromEnv ? fromEnv.replace(/\/+$/, '') : null;
+}
+
+/**
+ * Why a production web boot must stop for want of a declared origin, or null.
+ * Without PUBLIC_BASE_URL the origin is read off request headers, which any
+ * client can set; it gates the OIDC redirect_uri, the MCP issuer and every
+ * connector callback, so production does not guess it.
+ */
+export function publicBaseUrlRefusal(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.NODE_ENV !== 'production') return null;
+  const value = env.PUBLIC_BASE_URL?.trim();
+  if (!value) {
+    return 'PUBLIC_BASE_URL is not set: production needs the https address people reach this app at (it is the address registered with the identity provider and every connector)';
+  }
+  if (!/^https?:\/\/[^/\s]+/i.test(value)) {
+    return `PUBLIC_BASE_URL must be an absolute http(s) URL, got "${value}"`;
+  }
+  return null;
 }
 
 /** Test hook. */
