@@ -34,8 +34,38 @@
 #                       and drops the postgres service.
 # `docker compose config` and `up` refuse to start while POSTGRES_PASSWORD is
 # unset, which is the point: there is no default to forget to change.
+#
+# Database roles (audit R-13; DEPLOYMENT.md, "Database roles"). Out of the box
+# there is ONE role, POSTGRES_USER: it owns every table and every service
+# connects as it, exactly as before. An owner can disable the append-only
+# triggers on the audit trails, so a deployment that wants those trails
+# tamper-evident against the services' own credential adds, in .env:
+#   RENKEI_RUNTIME_DB_USER / RENKEI_RUNTIME_DB_PASSWORD
+#       the role every service but `migrate` connects as: DML on every table,
+#       INSERT and SELECT only on the audit trails. Created and kept current
+#       by `migrate`, which keeps connecting as the owner. Password: hex.
+#   RENKEI_SANDBOX_DB_USER / RENKEI_SANDBOX_DB_PASSWORD
+#       optional, a further role for worker-sandbox alone (the container that
+#       runs other people's commands), limited to the tables it uses. Unset,
+#       the sandbox uses the runtime role.
+# With these unset every URL below resolves to the owner, so nothing changes.
+# Set the user AND the password together; run `migrate` before restarting the
+# services on them.
+#   x-database-urls          the owner     — `migrate` only
+#   x-runtime-database-urls  the runtime role (owner while unset)
+#   x-sandbox-database-urls  the sandbox role (runtime role, else owner)
 x-database-urls: &database-urls
   DATABASE_URL: postgres://${POSTGRES_USER:-renkei}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}@postgres:5432/${POSTGRES_DB:-renkei}${DATABASE_URL_PARAMS:-}
+x-runtime-database-urls: &runtime-database-urls
+  DATABASE_URL: postgres://${RENKEI_RUNTIME_DB_USER:-${POSTGRES_USER:-renkei}}:${RENKEI_RUNTIME_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}}@postgres:5432/${POSTGRES_DB:-renkei}${DATABASE_URL_PARAMS:-}
+x-sandbox-database-urls: &sandbox-database-urls
+  DATABASE_URL: postgres://${RENKEI_SANDBOX_DB_USER:-${RENKEI_RUNTIME_DB_USER:-${POSTGRES_USER:-renkei}}}:${RENKEI_SANDBOX_DB_PASSWORD:-${RENKEI_RUNTIME_DB_PASSWORD:-${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (openssl rand -hex 32)}}}@postgres:5432/${POSTGRES_DB:-renkei}${DATABASE_URL_PARAMS:-}
+# What `migrate` reads to create the roles above; empty means "not asked for".
+x-database-roles: &database-roles
+  RENKEI_RUNTIME_DB_USER: ${RENKEI_RUNTIME_DB_USER:-}
+  RENKEI_RUNTIME_DB_PASSWORD: ${RENKEI_RUNTIME_DB_PASSWORD:-}
+  RENKEI_SANDBOX_DB_USER: ${RENKEI_SANDBOX_DB_USER:-}
+  RENKEI_SANDBOX_DB_PASSWORD: ${RENKEI_SANDBOX_DB_PASSWORD:-}
 
 # The delegate (docs/delegate-key-design.md) is where every other process
 # gets a chat's key, a person's provider token and the connector workers;
@@ -138,15 +168,18 @@ services:
     # no-new-privileges does not stop that drop, only an escalation.
     security_opt:
       - no-new-privileges:true
+    # Also on `renkei-sandbox-db`, which only worker-sandbox shares (see the
+    # networks block): the sandbox worker is a database client.
     networks:
       - renkei-internal
+      - renkei-sandbox-db
     restart: unless-stopped
 
   migrate:
     image: scotteremiaroden/renkei-migrate:latest
     container_name: renkei-migrate
     environment:
-      <<: [*database-urls, *crypto-keys]
+      <<: [*database-urls, *database-roles, *crypto-keys]
       # Two migrations reseal sandbox secrets.
       SANDBOX_ENV_SECRETS_KEY:
       SANDBOX_ENV_SECRETS_KEYS:
@@ -185,7 +218,7 @@ services:
     # Reaches the delegate for chat keys, provider tokens and the connector
     # workers (a person's own credential attached there, never here).
     environment:
-      <<: [*crypto-keys, *logging-env, *database-urls, *delegate-worker]
+      <<: [*crypto-keys, *logging-env, *runtime-database-urls, *delegate-worker]
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -207,7 +240,7 @@ services:
     container_name: renkei-embeddings-worker
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/embeddings-worker.ts']
     environment:
-      <<: [*crypto-keys, *logging-env, *database-urls, *delegate-worker]
+      <<: [*crypto-keys, *logging-env, *runtime-database-urls, *delegate-worker]
     <<: *locked-down
     tmpfs: *worker-tmpfs
     networks:
@@ -228,7 +261,7 @@ services:
     working_dir: /app/apps/worker-agents
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     environment:
-      <<: [*crypto-keys, *logging-env, *blob-store, *database-urls, *delegate-agents]
+      <<: [*crypto-keys, *logging-env, *blob-store, *runtime-database-urls, *delegate-agents]
       RENKEI_WEB_INTERNAL_URL: http://renkei-app:3000
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -258,7 +291,7 @@ services:
     image: scotteremiaroden/renkei-worker:latest
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/batch-jobs-worker.ts']
     environment:
-      <<: [*crypto-keys, *logging-env, *database-urls, *delegate-worker]
+      <<: [*crypto-keys, *logging-env, *runtime-database-urls, *delegate-worker]
       SANDBOX_WORKER_API_KEY:
       SANDBOX_WORKER_URL: ${SANDBOX_WORKER_URL:-http://renkei-worker-sandbox:8092}
     <<: *locked-down
@@ -287,7 +320,7 @@ services:
     container_name: renkei-worker-fileshares
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     environment:
-      <<: [*database-urls, *crypto-keys, *logging-env]
+      <<: [*runtime-database-urls, *crypto-keys, *logging-env]
       FILESHARES_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -310,7 +343,7 @@ services:
     container_name: renkei-worker-onbase
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     environment:
-      <<: [*database-urls, *crypto-keys, *logging-env]
+      <<: [*runtime-database-urls, *crypto-keys, *logging-env]
       ONBASE_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -334,7 +367,7 @@ services:
     container_name: renkei-worker-mirth
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     environment:
-      <<: [*database-urls, *crypto-keys, *logging-env]
+      <<: [*runtime-database-urls, *crypto-keys, *logging-env]
       MIRTH_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -358,7 +391,7 @@ services:
     container_name: renkei-worker-admanager
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     environment:
-      <<: [*database-urls, *crypto-keys, *logging-env]
+      <<: [*runtime-database-urls, *crypto-keys, *logging-env]
       ADMANAGER_WORKER_API_KEY:
     <<: *locked-down
     tmpfs: *worker-tmpfs
@@ -390,7 +423,7 @@ services:
     container_name: renkei-worker-delegate
     command: ['node', 'node_modules/tsx/dist/cli.mjs', 'src/index.ts']
     environment:
-      <<: [*database-urls, *crypto-keys, *logging-env]
+      <<: [*runtime-database-urls, *crypto-keys, *logging-env]
       # One key per caller (see the top of this file). The map is what the
       # delegate reads; the plain list is the same four keys for a delegate
       # image from before the map existed, so either reads them.
@@ -466,12 +499,21 @@ services:
   # container then runs its supervisor as root so every caller's commands
   # can be dropped to that caller's own uid (docker/sandbox-entrypoint.sh).
   # Those commands DO have this container's network — a project's own
-  # install and tests need the internet — which is why this service is on
-  # `renkei-sandbox` ALONE (below): a route out, and of the stack only the
-  # web app and the delegate's git proxy, which join that network to be
-  # reached; postgres and the other workers are not on it. The bearer keys
-  # and database password those hold are never in a command's environment,
-  # and the network is not either. SANDBOX_ENV_SECRETS_KEY in .env
+  # install and tests need the internet — which is why this service is kept
+  # off `renkei-internal` and on `renkei-sandbox` (a route out, and of the stack only the web app,
+  # the delegate's git proxy and the batch worker, which join that network
+  # to be reached or to call this service) and on `renkei-sandbox-db`,
+  # which it shares with postgres and nothing else. THE SANDBOX CONTAINER
+  # THEREFORE HAS A ROUTE TO POSTGRES, and so does every command a
+  # workspace runs, since commands have the container's network: the worker
+  # is a database client (staged files, settings, crawls, its log). What
+  # holds that route in check is the role it connects as: with
+  # RENKEI_SANDBOX_DB_USER set (see the top of this file) it can touch only
+  # the sandbox tables and the logs, never chats, agents, keys or grants;
+  # without it the worker uses the runtime role (or the owner), and the
+  # route is to the whole database. The bearer keys and database password
+  # are never in a command's environment; the route is only the network's.
+  # The other workers stay off both networks. SANDBOX_ENV_SECRETS_KEY in .env
   # (`openssl rand -base64 32`) seals the environment variables people hand
   # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
   #
@@ -524,7 +566,7 @@ services:
     # (the worker's fallback to TOKEN_ENCRYPTION_KEY has nothing to fall
     # back to here).
     environment:
-      <<: [*database-urls, *delegate-sandbox, *logging-env]
+      <<: [*sandbox-database-urls, *delegate-sandbox, *logging-env]
       SANDBOX_WORKER_API_KEY:
       SANDBOX_ENV_SECRETS_KEY:
       SANDBOX_ENV_SECRETS_KEYS:
@@ -593,6 +635,7 @@ services:
       - SETPCAP
     networks:
       - renkei-sandbox
+      - renkei-sandbox-db
     depends_on:
       postgres:
         condition: service_healthy
@@ -610,7 +653,7 @@ services:
       # The connector workers (file shares, OnBase, Mirth, ADManager Plus)
       # are reached through the delegate, which attaches the person's
       # credential; the app holds neither their addresses nor their keys.
-      <<: [*database-urls, *delegate-web, *crypto-keys, *logging-env, *blob-store]
+      <<: [*runtime-database-urls, *delegate-web, *crypto-keys, *logging-env, *blob-store]
       SETUP_SECRET:
       # Required: the https address people reach this app at. Registered with
       # the identity provider and every connector; the app refuses to start
@@ -668,19 +711,27 @@ services:
     # drain and exit inside this. Docker's default 10s cut it close.
     stop_grace_period: 30s
 
-# Two networks, so that the one container that runs other people's code
-# (worker-sandbox) has a route to exactly two things of the stack: the web
-# app and the delegate, both of which join `renkei-sandbox` to be reached.
-# Postgres and every other worker live on `renkei-internal` only, which the
-# sandbox is not on. Both have a route out of the host (a workspace's
-# install and tests, and the connectors' provider APIs, need the internet);
-# neither publishes anything. A service another operator adds goes on
-# `renkei-internal` unless the sandbox must reach it.
+# Three networks. The one container that runs other people's code
+# (worker-sandbox) is on two of them: `renkei-sandbox`, shared with the web
+# app, the delegate and the batch worker (which call it or are called by
+# it), and `renkei-sandbox-db`, shared with postgres ONLY. That second one
+# exists because the sandbox worker is a Postgres client (audit R-06); it
+# is internal (no route out of the host through it) and nothing else joins
+# it, so the sandbox has a route to the database and to no other worker.
+# Every other service lives on `renkei-internal`, which the sandbox is not
+# on. `renkei-internal` and `renkei-sandbox` have a route out of the host
+# (a workspace's install and tests, and the connectors' provider APIs, need
+# the internet); none publishes anything. A service another operator adds
+# goes on `renkei-internal` unless the sandbox must reach it.
+# scripts/check-compose-secrets.mjs asserts this layout.
 networks:
   renkei-internal:
     name: renkei-internal
   renkei-sandbox:
     name: renkei-sandbox
+  renkei-sandbox-db:
+    name: renkei-sandbox-db
+    internal: true
 
 volumes:
   renkei-postgres:

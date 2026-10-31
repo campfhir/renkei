@@ -87,6 +87,13 @@ POSTGRES_PASSWORD=<openssl rand -hex 32>
 # it empty there. Against a managed Postgres (drop the postgres service and
 # set DATABASE_URL below instead) always require a verified TLS session:
 # DATABASE_URL_PARAMS=?sslmode=verify-full
+# OPTIONAL least-privilege roles (see "Database roles" below). Unset, every
+# service connects as POSTGRES_USER, as it always has. Set each user together
+# with its password (hex again), run `migrate`, then restart the services:
+# RENKEI_RUNTIME_DB_USER=renkei_app
+# RENKEI_RUNTIME_DB_PASSWORD=<openssl rand -hex 32>
+# RENKEI_SANDBOX_DB_USER=renkei_sandbox
+# RENKEI_SANDBOX_DB_PASSWORD=<openssl rand -hex 32>
 #
 # Outside compose (systemd, a PaaS), set the URL directly:
 DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db?sslmode=verify-full
@@ -156,6 +163,86 @@ later and much further from the cause — a build expecting
 `oauth_clients.client_secret_hash` against a database that still has
 `client_secret` fails every MCP client registration with a 500, and the reason
 appears only as a Postgres `42703 undefined_column` in the container log.
+
+### Database roles
+
+**Default: one role.** `POSTGRES_USER` creates the schema, owns every table
+and is what every service connects as. The audit trails (`audit_events`,
+`phi_access_events`, `delegate_access_events`) are append-only by trigger,
+but in PostgreSQL a table's owner may `ALTER TABLE … DISABLE TRIGGER` or
+`DROP TRIGGER` without being a superuser. On the single-role layout the
+triggers therefore stop the application's own code paths (a bug, an
+injection), **not** anyone who holds the connection string, and every
+service container holds it.
+
+**Optional: separate roles.** The `migrate` step can also create and keep
+current two roles that own nothing, so the trails cannot be rewritten with
+the services' own credential:
+
+| Role (variable)                              | Used by                        | May do                                                                                                                                                                                                                                                                                |
+| -------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| owner (`POSTGRES_USER`)                      | `migrate` only                 | everything; creates the schema and the two roles                                                                                                                                                                                                                                      |
+| runtime (`RENKEI_RUNTIME_DB_USER`)           | every service except `migrate` | `SELECT`/`INSERT`/`UPDATE`/`DELETE` on every table, `USAGE` on sequences, **`INSERT` + `SELECT` only** on `audit_events`, `phi_access_events`, `delegate_access_events`, `platform_audit_log`; `SELECT` only on `kysely_migration`; the same rights on tables later migrations create |
+| sandbox (`RENKEI_SANDBOX_DB_USER`, optional) | `worker-sandbox` only          | DML on the `sandbox_*` tables and `code_service_image_rules`, `SELECT` on `settings` and `sandbox_size_requests`, `INSERT` + `SELECT` on the log tables; nothing else                                                                                                                 |
+
+To switch (nothing changes until you do; the variables are optional and
+compose falls back to the owner when they are unset):
+
+1. In `.env`, set `RENKEI_RUNTIME_DB_USER` and `RENKEI_RUNTIME_DB_PASSWORD`
+   (and, to confine the sandbox worker, `RENKEI_SANDBOX_DB_USER` and
+   `RENKEI_SANDBOX_DB_PASSWORD`). Names are lowercase letters, digits and
+   underscores and must differ from `POSTGRES_USER` and from each other;
+   use hex passwords (`openssl rand -hex 32`) so the URL needs no escaping.
+   Set each user and its password together; `migrate` refuses a half-set pair.
+2. Run `docker compose -f docker-compose.yaml run --rm migrate`. As the
+   owner it applies pending migrations, then creates or updates the roles
+   and re-asserts every grant in one transaction (it prints
+   `[Roles] ensured: …`). It is safe to run again and does so on every
+   upgrade, which is how a table added by a later migration is covered. A
+   migration that fails, or role setup that fails, now makes the command
+   exit non-zero.
+3. Restart the services (`docker compose -f docker-compose.yaml up -d`).
+   They now connect as the runtime role (the sandbox worker as the sandbox
+   role); only `migrate` and `postgres` still hold `POSTGRES_PASSWORD`.
+   `node scripts/check-compose-secrets.mjs` asserts this wiring.
+
+To go back, unset the four variables and restart: the services return to
+the owner. The roles stay in the database until you `DROP OWNED BY` and
+`DROP ROLE` them.
+
+What this does and does not give you:
+
+- The runtime role cannot disable or drop a trigger, `UPDATE`, `DELETE` or
+  `TRUNCATE` a trail, create tables, or touch the migration ledger. A
+  compromised service container cannot rewrite the PHI access trail or the
+  audit log. The trigger on `audit_events` (migration 171) is the second
+  line and also covers a deployment that keeps the single role.
+- **The owner can still do all of it**, and `POSTGRES_PASSWORD` stays in
+  `.env`, in the `postgres` container and in the `migrate` container.
+  Keep `.env` readable by the operator only; run `migrate` only when
+  migrating. Anyone with the owner credential, or superuser on the
+  database, is outside this protection.
+- The role passwords are stored as SCRAM verifiers (the plaintext never
+  appears in a statement or the server log). Role creation needs a role
+  with `CREATEROLE` (the bundled postgres's `POSTGRES_USER` is a
+  superuser; a `CREATEROLE` owner also worked in testing). Against a
+  managed Postgres where the owner cannot create roles this automation
+  does not apply: create the roles yourself with the privileges the table
+  lists and give each service its own `DATABASE_URL` outside compose's
+  variables.
+- The grants were exercised by hand against PostgreSQL 16 with pgvector
+  (every migration, then the privilege matrix as each role, with both a
+  superuser and a `CREATEROLE` owner). They are
+  not covered by an automated test: the role SQL needs a real server and a
+  role allowed to create roles, so only the statement builders are unit
+  tested (`packages/db/src/roles.test.ts`).
+- Retention of the trails is a deliberate act of the owner: as the owner,
+  disable the trigger, prune, enable it again, and archive the rows first.
+  Nothing in the application deletes or updates a trail row.
+- A table a future migration guards with an append-only trigger must be
+  added to `APPEND_ONLY_TABLES` in `packages/db/src/roles.ts` (a test fails
+  until it is), and a table the sandbox worker starts to use to
+  `SANDBOX_TABLE_GRANTS` there.
 
 ## Building for Production
 
@@ -364,7 +451,15 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `http://renkei-worker-sandbox:8092`) presenting the shared bearer key
   `SANDBOX_WORKER_API_KEY` — set both in `.env` (`openssl rand -base64 32`
   makes a good key; the worker also honors `SANDBOX_WORKER_PORT`, default
-  8092). Without them the `sandbox_*` tools simply don't register — closed,
+  8092). **`SANDBOX_WORKER_API_KEY` is the whole boundary of this
+  service.** The worker trusts the subject a caller names, so whoever
+  holds the key can read, write and delete any person's scratch-space
+  files and code workspaces and run commands in them. Treat it like a
+  database password: it is held by the web app (and the batch worker) and
+  the sandbox itself, and it must be rotated — new value in `.env`, then
+  restart `renkei`, `worker-batch-jobs` and `worker-sandbox` — after any
+  incident involving the web container, and with it the delegate keys.
+  Without it the `sandbox_*` tools simply don't register — closed,
   never open, same as the other two. Staged files expire on a fixed TTL and
   a per-caller quota regardless of whether anything ever deletes them
   explicitly. **Which of the worker's features an organization gets is
@@ -465,11 +560,26 @@ DESC` says which server to add next.
   `CAP_SETUID`/`CAP_SETGID`/`CAP_SETPCAP` held — Docker's defaults) and
   refuses to start otherwise, saying why. A
   command has the container's network (a project's install and tests
-  need it), which is why `docker-compose.yaml` puts this service on the
-  `renkei-sandbox` network alone — a route out, plus the web app and the
-  delegate's git proxy, which join that network to be reached — and
-  postgres and every other worker on `renkei-internal`, which the sandbox
-  is not on. The same file drops every capability from this container
+  need it), which is why `docker-compose.yaml` keeps this service off
+  `renkei-internal` and on `renkei-sandbox` — a route out, plus the web
+  app, the delegate's git proxy and the batch worker, which join that
+  network to be reached or to call it — and every other worker on
+  `renkei-internal` only. **The sandbox container does have a route to
+  Postgres**, on purpose: the worker is a database client (staged files,
+  workspaces, services, crawls, settings, its log), and Docker resolves
+  `postgres` only across a shared network. So the file defines a third,
+  internal network, `renkei-sandbox-db`, joined by `postgres` and
+  `worker-sandbox` and nothing else; a workspace command, which runs with
+  the container's network, can therefore open a connection to the
+  database port. It cannot read the password (it is not in a command's
+  environment), and with the sandbox role from "Database roles"
+  (`RENKEI_SANDBOX_DB_USER`) a login would reach only the sandbox tables
+  and the log table. Without that role the worker connects as the runtime
+  role, or the owner, and the route is to the whole database: set the
+  sandbox role if the sandbox runs code you do not trust.
+  `scripts/check-compose-secrets.mjs` (run in CI) asserts the layout: the
+  database network holds exactly those two services, and the sandbox
+  network holds neither postgres nor any other worker. The same file drops every capability from this container
   but the seven the uid drop needs (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
   `KILL`, `SETGID`, `SETUID`, `SETPCAP`), sets `no-new-privileges` (a
   setuid binary in a checkout cannot regain root; setpriv's drop is a
@@ -1101,7 +1211,7 @@ again once.
 - [x] SQL injection prevention (using Kysely ORM)
 - [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`; the MCP consent answer is bound to the session that was shown the page and must be posted from this origin)
 - [x] XSS protection (React escaping; `dangerouslySetInnerHTML` only for the theme bootstrap script in `components/theme-script.tsx`, whose content is a constant)
-- [x] PHI access trail append-only (`phi_access_events`, below)
+- [x] PHI access trail append-only against the application (`phi_access_events`, below); against a holder of the connection string only with the separate runtime role ("Database roles")
 
 ### PHI access trail
 
@@ -1119,16 +1229,22 @@ Operators read it at `GET /api/admin/phi-access?subject=<oidc
 subject>&limit=100&before=<ISO date-time>` (operator role; without
 `subject` the org's whole trail, newest first).
 
-The table is **append-only by trigger**: `UPDATE` and `DELETE` are refused
-whatever role connects, because the migration runs as the application's
-own database user, which owns the table, and a `REVOKE` on an owner would
-be a no-op. Retention is therefore a deliberate DBA act, never the
-application's: as a superuser, `ALTER TABLE phi_access_events DISABLE
-TRIGGER phi_access_events_no_update_delete;`, prune, then `ENABLE` it
-again — and prefer archiving the pruned rows first. If the application
-connects as a role that does not own the table, additionally `REVOKE
-UPDATE, DELETE ON phi_access_events FROM <app role>;` so the guarantee no
-longer rests on the trigger alone. A failed insert is logged at `warn`
+The table is **append-only by trigger**: the application's `UPDATE` and
+`DELETE` statements are refused by every role that has no right to change
+the trigger. That is not "whatever role connects": the **owner** of the
+table, which on the default single-role layout is the role every service
+uses, may disable or drop the trigger (no superuser needed), and a
+`REVOKE` on an owner is a no-op. So with one role the trail is protected
+against the application's own code paths, not against a holder of the
+connection string. To protect it against that too, run the services as
+the non-owning runtime role ("Database roles" above), which holds
+`INSERT` and `SELECT` on this table and nothing more; `migrate` sets that
+up. Retention is a deliberate act of the owner (or a superuser), never the
+application's: `ALTER TABLE phi_access_events DISABLE TRIGGER
+phi_access_events_no_update_delete;`, prune, then `ENABLE` it again — and
+prefer archiving the pruned rows first. The platform audit log
+(`audit_events`, trigger from migration 171) and the delegate's access log
+follow the same rules. A failed insert is logged at `warn`
 (`component=phi-access`); the read it describes still returns.
 
 ### Upgrading to migration 155 (agents become instructions)
