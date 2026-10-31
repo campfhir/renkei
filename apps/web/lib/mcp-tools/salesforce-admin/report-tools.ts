@@ -29,10 +29,12 @@ import {
   reportableFields,
   reportColumnOf,
   reportFileColumn,
+  reportFileColumnsFromLayout,
   mergeReportTypeColumns,
   metadataFile,
   packageXml,
   reportTypeTables,
+  type DescribeSObject,
   type ReportTypeColumnAdd,
   type ReportObjectInfo,
   type ReportSpec,
@@ -111,15 +113,70 @@ async function describeReportType(
 
 /**
  * A custom report type's columns as a report file names them, keyed by the
- * describe's name (reportFileColumn): the objects along each name are
- * described to tell a child relationship (part of the table) from a lookup
- * (part of the field).
+ * describe's name. Read from the type's own layout when it can be
+ * (reportFileColumnsFromLayout, through the delegate's readMetadata): that
+ * is exact, a lookup offered as itself included. A column the layout does
+ * not explain, or a type whose layout cannot be read, falls back to the
+ * names themselves (reportFileColumn), describing the objects along each
+ * one to tell a child relationship (part of the table) from a lookup.
  */
 async function reportFileColumns(
   context: MCPToolContext,
   access: SalesforceAccess,
   described: ReportTypeDescribe
 ): Promise<Map<string, string>> {
+  const describeNames = described.sections.flatMap((section) =>
+    section.columns.map((column) => column.name)
+  );
+  const live = await readReportType(context, access, described.type);
+  let fromLayout = new Map<string, string>();
+  if (live && typeof live !== 'string') {
+    const layout = recs(live.metadata.sections).flatMap((section) =>
+      recs(section.columns).map((column) => ({
+        table: str(column.table),
+        field: str(column.field),
+      }))
+    );
+    // Each table's object, down the join path, to find what a layout
+    // lookup points at and that object's name field.
+    const objects = new Map<string, DescribeSObject>();
+    let parent: DescribeSObject | null = null;
+    for (const table of reportTypeTables(live.metadata)) {
+      const segment = (table.split('.').pop() ?? '').toLowerCase();
+      const object: string | undefined = parent
+        ? (parent.childRelationships ?? []).find(
+            (rel) => rel.relationshipName?.toLowerCase() === segment
+          )?.childSObject
+        : table;
+      const describe: DescribeSObject | string | null = object
+        ? await describeObject(context, access, object)
+        : null;
+      if (!describe || typeof describe === 'string') break;
+      objects.set(table.toLowerCase(), describe);
+      parent = describe;
+    }
+    const nameFields = new Map<string, string>();
+    for (const { table, field } of layout) {
+      if (field.includes('.')) continue;
+      const lookup = objects
+        .get(table.toLowerCase())
+        ?.fields.find(
+          (f) =>
+            f.name.toLowerCase() === field.toLowerCase() ||
+            f.relationshipName?.toLowerCase() === field.toLowerCase()
+        );
+      const target = lookup?.referenceTo?.[0];
+      if (!target) continue;
+      const related = await describeObject(context, access, target);
+      const nameField =
+        typeof related === 'string' ? undefined : related.fields.find((f) => f.nameField)?.name;
+      if (nameField) nameFields.set(`${table}.${field}`.toLowerCase(), nameField);
+    }
+    fromLayout = reportFileColumnsFromLayout(describeNames, layout, (table, field) =>
+      nameFields.get(`${table}.${field}`.toLowerCase())
+    );
+  }
+  if (fromLayout.size === describeNames.length) return fromLayout;
   const children = new Map<string, Record<string, string> | undefined>();
   const load = async (object: string) => {
     if (children.has(object)) return children.get(object);
@@ -127,8 +184,9 @@ async function reportFileColumns(
     children.set(object, info?.children);
     return info?.children;
   };
-  const names = new Map<string, string>();
+  const names = new Map<string, string>(fromLayout);
   for (const column of described.sections.flatMap((section) => section.columns)) {
+    if (names.has(column.name)) continue;
     const parts = column.name.split('.');
     let object = parts[0];
     for (let at = 1; at < parts.length - 1; at += 1) {
