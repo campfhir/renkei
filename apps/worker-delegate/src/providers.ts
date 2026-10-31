@@ -295,7 +295,12 @@ export async function resolveProviderSpec(
   const sealed = await getSealedClientSecret(serverId);
   if (sealed.ok && sealed.val) {
     const opened = decrypt(sealed.val, encryptionKey);
-    if (opened.ok) secret = opened.val;
+    // A stored secret no key of the ring opens is a key dropped too early
+    // (DEPLOYMENT.md, "Rotating TOKEN_ENCRYPTION_KEY"). Refuse the server
+    // rather than carry on as a public client with an empty secret, which
+    // would fail at the vendor with a misleading error.
+    if (!opened.ok) return null;
+    secret = opened.val;
   }
   const oauth = server.oauth;
   const clientAuth = tokenClientAuth(oauth?.tokenAuthMethods ?? [], secret !== '');

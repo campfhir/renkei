@@ -1163,7 +1163,8 @@ names it:
    `llm_model_configs.encrypted_secrets`, `oidc_config.client_secret`,
    `platform_settings.vapid_keys`, `knowledge_chunks.content`,
    `sandbox_env_secrets.sealed` and
-   `code_service_image_rules.registry_sealed` in batches of 200, opens
+   `code_service_image_rules.registry_sealed`, `mcp_servers.encrypted_client_secret`
+   and `delegate_signing_keys.sealed_private_key` in batches of 200, opens
    each `v1` or old-kid value with the ring and seals it again under the
    current key. It is resumable (a row already under the current key is
    never read again) and safe to run while the services are up (a row
