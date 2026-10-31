@@ -41,12 +41,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import {
-  type Browser,
-  type BrowserContext,
-  type Locator,
-  type Page,
-} from 'playwright-core';
+import { type Browser, type BrowserContext, type Locator, type Page } from 'playwright-core';
 import {
   assertPublicHttpsUrl,
   BlockedUrlError,

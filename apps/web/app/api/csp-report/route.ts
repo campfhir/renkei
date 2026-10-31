@@ -57,11 +57,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const raw = await request.text().catch(() => '');
   if (raw.length > 0 && raw.length <= MAX_BODY_BYTES) {
-    let body: unknown = null;
+    let body: unknown;
     try {
       body = JSON.parse(raw);
     } catch {
-      body = null;
+      body = undefined;
     }
     for (const violation of violationsOf(body).slice(0, 5)) {
       const directive = violation.effectiveDirective ?? violation['effective-directive'];
