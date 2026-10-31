@@ -69,16 +69,23 @@ export const MAX_XLSX_RATIO = 1_000;
  * touches it. The declared sizes are checked while inflating, so a header
  * that understates its entry fails there instead of passing here.
  */
+/** The sizes an entry's header declares (jszip keeps them on its internal `_data`); 0 when absent. */
+function declaredSizes(entry: unknown): { size: number; packed: number } {
+  const data = typeof entry === 'object' && entry !== null && '_data' in entry ? entry._data : null;
+  const read = (key: string): number =>
+    typeof data === 'object' && data !== null && key in data
+      ? Number(Reflect.get(data, key)) || 0
+      : 0;
+  return { size: read('uncompressedSize'), packed: read('compressedSize') };
+}
+
 export async function assertWorkbookWithinBudget(bytes: Uint8Array): Promise<void> {
   const zip = await JSZip.loadAsync(bytes);
-  const entries = Object.values(zip.files) as unknown as Array<{
-    _data?: { uncompressedSize?: number; compressedSize?: number };
-  }>;
+  const entries = Object.values(zip.files);
   if (entries.length > MAX_XLSX_ENTRIES) throw new Error('workbook has too many entries');
   let total = 0;
   for (const entry of entries) {
-    const size = entry._data?.uncompressedSize ?? 0;
-    const packed = entry._data?.compressedSize ?? 0;
+    const { size, packed } = declaredSizes(entry);
     if (size > 1024 * 1024 && size > Math.max(packed, 1) * MAX_XLSX_RATIO) {
       throw new Error('workbook entry compresses implausibly well');
     }
