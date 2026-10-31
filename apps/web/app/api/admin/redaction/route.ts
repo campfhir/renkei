@@ -14,14 +14,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
 import { logger } from '@/lib/logger';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -41,10 +40,9 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -110,5 +108,12 @@ export async function PUT(
     });
     return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
   }
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'settings.updated',
+    targetKind: 'settings',
+    targetLabel: 'redaction',
+    details: { changed: updates },
+  });
   return NextResponse.json({ ok: true });
 }

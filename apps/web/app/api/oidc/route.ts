@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
@@ -174,6 +175,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (configured) {
       // Authenticated update.
+      const actor = await checkAccess([ROLE_OPERATOR]);
       const setResult = await setTenantOidc(config);
       if (!setResult.ok) {
         logger.error('Failed to save OIDC configuration: {error}', {
@@ -186,6 +188,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       logger.info('Identity provider updated by operator', {
         component: 'auth/oidc',
         issuer,
+      });
+      // Whoever controls this record controls who becomes an operator, so a
+      // replacement leaves a row naming who made it and where it now points.
+      recordAuditEvent({
+        actorSubject: actor ? actor.subject : 'unknown',
+        action: 'oidc.provider_replaced',
+        targetKind: 'settings',
+        targetLabel: 'identity provider',
+        details: { issuer },
       });
       return NextResponse.json({ success: true });
     }

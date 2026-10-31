@@ -13,6 +13,8 @@ import { encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
@@ -38,13 +40,20 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseModelPayload(body);
   if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
+  if (parsed.baseUrl) {
+    const endpointVerdict = await checkServiceEndpoint(parsed.baseUrl);
+    if (!endpointVerdict.ok) {
+      return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
+    }
+  }
   if (!parsed.apiKey && !parsed.apiKeyFromId) {
     return NextResponse.json({ error: 'apiKey is required' }, { status: 400 });
   }
@@ -95,5 +104,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   invalidateLlmCache();
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'llm_model.configured',
+    targetKind: 'llm_model',
+    targetLabel: parsed.label,
+    details: {
+      modelId: id,
+      provider: parsed.provider,
+      model: parsed.model,
+      baseUrl: parsed.baseUrl,
+      keyReplaced: Boolean(parsed.apiKey),
+      isDefault: parsed.isDefault,
+      enabled: parsed.enabled,
+    },
+  });
   return NextResponse.json({ id }, { status: 201 });
 }

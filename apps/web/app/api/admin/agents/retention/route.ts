@@ -6,14 +6,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 
 const ALLOWED_DAYS = [7, 14, 30, 90];
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -28,10 +27,9 @@ export async function GET(
   return NextResponse.json({ agentRunRetentionDays: settings.val.agentRunRetentionDays });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
@@ -54,5 +52,12 @@ export async function PUT(
     });
     return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'settings.updated',
+    targetKind: 'settings',
+    targetLabel: 'agent run retention',
+    details: { changed: { agentRunRetentionDays: days } },
+  });
   return NextResponse.json({ agentRunRetentionDays: days });
 }
