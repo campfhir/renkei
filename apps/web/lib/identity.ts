@@ -82,11 +82,15 @@ export function hasGroupsOverage(decoded: Record<string, unknown>, claimName: st
  * `groupsClaim` names where the groups live; with none configured (null)
  * the person is in no groups at all. There is no conventional claim to
  * fall back on: a group nobody named is a group nobody is in.
+ * A token whose `email_verified` is present and not `true` yields no claims.
  */
 export function identityClaimsFromIdToken(
   decoded: Record<string, unknown>,
   groupsClaim: string | null
 ): IdentityClaims | null {
+  // An address the IdP says it has not verified is not an identity: the
+  // spine is keyed on it downstream. A token without the claim is taken as is.
+  if ('email_verified' in decoded && decoded.email_verified !== true) return null;
   const email =
     typeof decoded.email === 'string' && decoded.email.includes('@')
       ? decoded.email

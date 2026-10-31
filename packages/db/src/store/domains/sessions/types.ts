@@ -4,6 +4,8 @@ export interface SessionRecord {
   subject: string;
   roles: string[];
   expiresAt: Date;
+  /** When the person signed in: the session row's creation time. */
+  createdAt: Date;
   lastUsedAt: Date;
 }
 

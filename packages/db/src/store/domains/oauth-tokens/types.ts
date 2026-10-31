@@ -55,6 +55,8 @@ export interface OAuthTokenStore {
   findAccessToken(tokenHash: string, application: string): Promise<OAuthAccessTokenRecord | null>;
   /** Returns how many rows went (0 or 1). */
   deleteAccessToken(tokenHash: string): Promise<number>;
+  /** Delete every refresh and access token a client holds for a subject. */
+  revokeClientTokens(clientId: string, subject: string): Promise<void>;
   /** A family's first refresh token (its family id is fresh). */
   insertRefreshToken(token: NewOAuthRefreshToken): Promise<void>;
   /**

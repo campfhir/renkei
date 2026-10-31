@@ -349,3 +349,54 @@ test('two cards from one reply: deciding both opens exactly one turn, informed b
   expect((await turnsOf(page, chatId)).turns).toBe(2);
   await shot(page, testInfo, 'widget-card-batched-decisions.png');
 });
+
+test('ui/open-link opens https, mailto and webexteams links and nothing else', async ({ page }) => {
+  const { chatId, title } = await oneCard(page);
+  await page.goto(`/chat/${chatId}`);
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible(COLD);
+  await expect(cardFrame(page).locator('.card-title')).toHaveText('Create Jira issue', COLD);
+
+  await page.evaluate(() => {
+    const calls: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+    (window as unknown as { __opened: string[] }).__opened = calls;
+    window.open = (url) => {
+      calls.push(String(url));
+      return null;
+    };
+  });
+
+  // What the widget bundle itself would send, from inside its own frame.
+  const frame = page
+    .getByRole('main')
+    .locator('iframe[title="Preview card"]')
+    .filter({ visible: true })
+    .first()
+    .contentFrame();
+  const urls = [
+    'javascript:alert(1)',
+    'webex-unknown://x',
+    'file:///etc/passwd',
+    'http://example.com/',
+    'https://example.atlassian.net/browse/OPS-1',
+    'mailto:ann@example.com',
+    'webexteams://im?email=ann@example.com',
+  ];
+  for (const [index, url] of urls.entries()) {
+    await frame
+      .locator('body')
+      .evaluate((_body, message) => window.parent.postMessage(message, '*'), {
+        jsonrpc: '2.0',
+        id: 1000 + index,
+        method: 'ui/open-link',
+        params: { url },
+      });
+  }
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, '__opened')))
+    .toEqual([
+      'https://example.atlassian.net/browse/OPS-1',
+      'mailto:ann@example.com',
+      'webexteams://im?email=ann@example.com',
+    ]);
+});
