@@ -87,26 +87,20 @@ body {
   padding: 5px 0; font-size: 13px; cursor: pointer;
 }
 .checkbox-row input { flex: none; cursor: pointer; }
-.chips-box {
-  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-  background: var(--card-field-bg);
-  border: 1px solid var(--card-border); border-radius: 6px; padding: 5px 6px;
-}
-.chips-box:focus-within { outline: 2px solid var(--card-accent); outline-offset: -1px; }
+.chips-box { display: flex; flex-direction: column; gap: 8px; }
+.chips-box input.chips-input { width: 100%; }
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips-row:empty { display: none; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
-  background: var(--card-bg); border: 1px solid var(--card-border);
+  background: var(--card-field-bg); border: 1px solid var(--card-border);
   border-radius: 999px; padding: 1px 4px 1px 10px; font-size: 13px;
 }
 .chip button {
   all: unset; cursor: pointer; line-height: 1; padding: 2px 5px; border-radius: 999px;
   color: var(--card-muted); font-size: 15px;
 }
-.chip button:hover, .chip button:focus-visible { color: var(--card-fg); background: var(--card-field-bg); }
-.chips-box input.chips-input {
-  flex: 1 1 120px; width: auto; min-width: 120px; border: 0; background: transparent;
-  padding: 3px 4px; outline: none;
-}
+.chip button:hover, .chip button:focus-visible { color: var(--card-fg); background: var(--card-bg); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .status { margin-right: auto; font-size: 13px; }
 .status.error { color: var(--card-danger); }
@@ -339,7 +333,7 @@ export function checkboxGroupField(
 let chipsCount = 0;
 
 /**
- * Label + a combo box whose picks collect as removable chips — for a
+ * Label + a combo box, with its picks collected below it as removable chips — for a
  * multi-select with too many options for a checkbox per option (a desk's
  * components can run to dozens). Type to narrow the list, pick (or press
  * Enter on an exact label) to add a chip, press its × to take it off.
@@ -354,6 +348,7 @@ export function chipsField(
   const field = el('div', 'field');
   const box = el('div', 'chips-box');
   const input = el('input', 'chips-input');
+  const row = el('div', 'chips-row');
   const listId = `chips-list-${chipsCount++}`;
   const list = document.createElement('datalist');
   list.id = listId;
@@ -366,7 +361,7 @@ export function chipsField(
   const chosen: string[] = [];
 
   const refresh = () => {
-    box.querySelectorAll('.chip').forEach((chip) => chip.remove());
+    row.textContent = '';
     for (const value of chosen) {
       const chip = el('span', 'chip', labelFor(value));
       const remove = el('button', undefined, '×');
@@ -378,7 +373,7 @@ export function chipsField(
         input.focus();
       });
       chip.append(remove);
-      box.insertBefore(chip, input);
+      row.append(chip);
     }
     list.textContent = '';
     for (const option of options) {
@@ -411,7 +406,7 @@ export function chipsField(
     }
   });
   for (const value of values) if (!chosen.includes(value)) chosen.push(value);
-  box.append(input, list);
+  box.append(input, list, row);
   refresh();
   field.append(el('div', 'field-label', label), box);
   return { field, getValues: () => [...chosen] };

@@ -122,6 +122,10 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   await expect(components.getByRole('checkbox')).toHaveCount(0);
   await expect(components.locator('.chip')).toHaveText(['Billing×']);
   await expect(components.locator('datalist option')).toHaveCount(1);
+  // The search sits above the chips.
+  const searchBox = await components.getByRole('combobox', { name: 'Components' }).boundingBox();
+  const chipBox = await components.locator('.chip').first().boundingBox();
+  expect(searchBox!.y + searchBox!.height).toBeLessThanOrEqual(chipBox!.y);
 
   // Priority is offered even though nobody asked for one.
   const priority = frame.locator('.field', { hasText: 'Priority' });
