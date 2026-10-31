@@ -92,9 +92,13 @@ body {
 .field input:not([type="checkbox"]), .field textarea, .field select {
   min-width: 0; max-width: 100%;
 }
-.field input[type="datetime-local"], .field input[type="date"], .field input[type="time"] {
+.field input[type="date"], .field input[type="time"] {
   -webkit-appearance: none; appearance: none; display: block;
 }
+/* Two fields on one row (a date and its time); each takes an equal share, and
+   neither can grow past its share on a narrow screen. */
+.field-row { display: flex; gap: 8px; }
+.field-row > .field { flex: 1 1 0; min-width: 0; }
 .checkbox-row {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 0; font-size: 13px; cursor: pointer;

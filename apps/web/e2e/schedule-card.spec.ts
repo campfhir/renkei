@@ -19,6 +19,12 @@ const EMAIL_COMPOSE_URI = widgetUri('email-compose.ts', 'email-compose');
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
+/** A moment as the viewer's local day and clock time, as the two Send later inputs hold them. */
+function localParts(ms: number): { day: string; clock: string } {
+  const iso = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString();
+  return { day: iso.slice(0, 10), clock: iso.slice(11, 16) };
+}
+
 interface CardCall {
   name: string;
   arguments: Record<string, unknown>;
@@ -87,14 +93,16 @@ test('a time the model picked is pre-filled into Send later, and Schedule sends 
     const frame = page.frameLocator('iframe[title="Preview card"]').first();
 
     // The picker shows the moment in the viewer's own clock, and the button says Schedule.
-    const later = frame.locator('input[type="datetime-local"]');
-    const localValue = new Date(at.getTime() - at.getTimezoneOffset() * 60_000)
-      .toISOString()
-      .slice(0, 16);
-    await expect(later).toHaveValue(localValue, COLD);
+    const day = frame.locator('input[type="date"]');
+    const clock = frame.locator('input[type="time"]');
+    const parts = localParts(at.getTime());
+    await expect(day).toHaveValue(parts.day, COLD);
+    await expect(clock).toHaveValue(parts.clock);
     await expect(frame.getByRole('button', { name: 'Schedule' })).toBeVisible(COLD);
-    // Under 16px, iOS Safari zooms the page in when the field is focused.
-    expect(await later.evaluate((el) => getComputedStyle(el).fontSize)).toBe('16px');
+    // Under 16px, iOS Safari zooms the page in when a field is focused.
+    for (const input of [day, clock]) {
+      expect(await input.evaluate((el) => getComputedStyle(el).fontSize)).toBe('16px');
+    }
 
     await frame.getByRole('button', { name: 'Schedule' }).click();
     await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
@@ -165,23 +173,24 @@ test('the send card schedules: a picked time turns Send into Schedule and sends 
     const frame = page.frameLocator('iframe[title="Preview card"]').first();
     await expect(frame.getByRole('button', { name: 'Send', exact: true })).toBeVisible(COLD);
 
-    const later = frame.locator('input[type="datetime-local"]');
+    const day = frame.locator('input[type="date"]');
+    const clock = frame.locator('input[type="time"]');
     // Too soon is refused on the card, before any call.
-    await later.fill(new Date(Date.now() - 3_600_000).toISOString().slice(0, 16));
+    const past = localParts(Date.now() - 3_600_000);
+    await day.fill(past.day);
+    await clock.fill(past.clock);
     await frame.getByRole('button', { name: 'Schedule' }).click();
     await expect(frame.getByText('at least a minute from now')).toBeVisible(COLD);
     expect(calls).toHaveLength(0);
 
-    const when = new Date(Date.now() + 26 * 3_600_000);
-    const local = new Date(when.getTime() - when.getTimezoneOffset() * 60_000)
-      .toISOString()
-      .slice(0, 16);
-    await later.fill(local);
+    const later = localParts(Date.now() + 26 * 3_600_000);
+    await day.fill(later.day);
+    await clock.fill(later.clock);
     await frame.getByRole('button', { name: 'Schedule' }).click();
     await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
     expect(calls).toHaveLength(1);
     expect(calls[0].name).toBe('outlook_send_draft_confirm');
-    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(new Date(local).getTime());
+    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(new Date(`${later.day}T${later.clock}`).getTime());
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }
