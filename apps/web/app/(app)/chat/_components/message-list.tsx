@@ -27,6 +27,8 @@ import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
 import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
+import { contextCopyText, promptText, replyCalls, replyCopyText } from '@/lib/chat/copy-text';
+import { useDismiss } from '@/lib/use-dismiss';
 import { IMAGE_TOOL } from '@/lib/chat/image-size';
 import { imageArtifactFor } from '@/lib/chat/image-artifact';
 import type {
@@ -265,16 +267,13 @@ export default function MessageList({
         {turns.map((group) => (
           <div key={group.key} className="flex flex-col gap-5">
             {group.prompts.map((message) => (
-              <UserMessage
-                key={message.id}
-                message={message}
-                actions={promptActions}
-              />
+              <UserMessage key={message.id} message={message} actions={promptActions} />
             ))}
             {group.replies.length > 0 ? (
               <Reply
                 chatId={chatId}
                 messages={group.replies}
+                prompts={group.prompts}
                 results={results}
                 pendingToolCalls={pendingToolCalls}
                 streaming={running && group.key === lastTurnKey}
@@ -391,13 +390,9 @@ function UserMessage({
   message: ChatMessageView;
   actions: PromptActions | null;
 }) {
-  const text = message.blocks
-    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-    .join('\n')
-    // The attachment excerpts ride inside the prompt for the model; the
-    // person sees the chips instead.
-    .replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '')
-    .trim();
+  // The attachment excerpts ride inside the prompt for the model; the
+  // person sees the chips instead.
+  const text = promptText(message);
   return (
     <div className="group flex flex-col items-end">
       <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 px-4 py-2.5 text-sm text-white">
@@ -457,23 +452,90 @@ function useCopyToClipboard(): [boolean, (text: string) => void] {
   return [copied, copy];
 }
 
-function CopyButton({ text }: { text: string }) {
+/**
+ * The reply's Copy: the prose alone, which is what most people copy a
+ * reply for. A chevron beside it offers the fuller copies
+ * (lib/chat/copy-text.ts) — with each call's input and result between
+ * the prose, or with the prompt as well — one click further, so they
+ * never get in the way of the plain copy.
+ */
+interface CopyChoice {
+  label: string;
+  text: string;
+}
+
+function CopyButton({ text, more }: { text: string; more: CopyChoice[] }) {
   const [copied, copy] = useCopyToClipboard();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, ref, close);
   return (
-    <button
-      type="button"
-      onClick={() => copy(text)}
-      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
-    >
-      <Icon path={copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
-      {copied ? 'Copied' : 'Copy'}
-    </button>
+    <div ref={ref} className="relative flex items-center">
+      <button
+        type="button"
+        onClick={() => copy(text)}
+        className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+      >
+        <Icon path={copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      {more.length > 0 ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setOpen((state) => !state)}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label="More copy options"
+            className="rounded-md px-0.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.chevron} className="h-3.5 w-3.5 rotate-90" />
+          </button>
+          {open ? (
+            // Opens upward: the row sits at the foot of a reply, often the
+            // last thing above the composer.
+            <div
+              role="menu"
+              className="absolute bottom-full left-0 z-40 mb-1 w-56 rounded-lg border border-gray-200 bg-white p-1 text-sm text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  copy(text);
+                }}
+                className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Copy text only
+              </button>
+              {more.map((choice) => (
+                <button
+                  key={choice.label}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOpen(false);
+                    copy(choice.text);
+                  }}
+                  className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  {choice.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
   );
 }
 
 function Reply({
   chatId,
   messages,
+  prompts,
   results,
   pendingToolCalls,
   streaming,
@@ -489,6 +551,8 @@ function Reply({
 }: {
   chatId: string;
   messages: ChatMessageView[];
+  /** The turn's prompt rows, for Copy with context. */
+  prompts: ChatMessageView[];
   results: Map<string, ToolResult>;
   pendingToolCalls: string[];
   streaming: boolean;
@@ -518,14 +582,22 @@ function Reply({
     }
     return null;
   }, [messages, permission]);
-  const copyText = useMemo(
-    () =>
-      segments
-        .filter((part): part is Extract<Segment, { kind: 'text' }> => part.kind === 'text')
-        .map((part) => part.text.trim())
-        .join('\n\n'),
-    [segments]
-  );
+  const copyText = useMemo(() => replyCopyText(segments), [segments]);
+  // The fuller copies, behind the chevron: the tool calls only when there
+  // were any; the context only when there is a prompt to copy with it.
+  const moreCopies = useMemo(() => {
+    const more: CopyChoice[] = [];
+    if (replyCalls(segments).length > 0) {
+      more.push({
+        label: 'Copy with tool calls',
+        text: replyCopyText(segments, { toolCalls: true }),
+      });
+    }
+    if (prompts.some((prompt) => promptText(prompt) !== '')) {
+      more.push({ label: 'Copy with context', text: contextCopyText(prompts, segments) });
+    }
+    return more;
+  }, [segments, prompts]);
   // The calls of the latest tool-calling row that have not been answered.
   // While the turn runs these are still in flight, whatever the stream
   // said: a snapshot (a reconnect, a phone coming back to the tab) clears
@@ -743,7 +815,7 @@ function Reply({
             speech?.playingKey === speechKey ? '' : 'lg:opacity-0'
           }`}
         >
-          <CopyButton text={copyText} />
+          <CopyButton text={copyText} more={moreCopies} />
           {speech ? (
             <ListenButton
               state={

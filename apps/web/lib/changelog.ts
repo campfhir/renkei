@@ -54,6 +54,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           "A report on a custom report type can now include a lookup shown as itself, such as a referral's client account name, and building a report type over an object no longer fails on an owner field that can be a user or a queue.",
       },
+      {
+        kind: 'added',
+        title: 'Copy a reply with its tool calls or its prompt',
+        detail:
+          "A chat reply's Copy still copies just the answer. The arrow beside it now also offers Copy with tool calls, which adds each tool call's input and result, and Copy with context, which adds the prompt you sent before the reply.",
+      },
     ],
   },
   {
