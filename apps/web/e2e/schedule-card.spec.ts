@@ -70,7 +70,9 @@ async function openChat(page: Page, testInfo: TestInfo, card: ToolCard): Promise
 /** Stand in for Graph: every card tool call succeeds. Returns what the card called. */
 async function mockCardTools(page: Page): Promise<CardCall[]> {
   const calls: CardCall[] = [];
-  await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
+  // On the whole context, not the page: a card's frame can run in its own process,
+  // and a page-level route then misses its request (the real route answers 403).
+  await page.context().route('**/chat/chats/*/widget/tool-call', async (route) => {
     calls.push(route.request().postDataJSON());
     await route.fulfill({ json: { result: { content: [{ type: 'text', text: 'Done.' }] } } });
   });
