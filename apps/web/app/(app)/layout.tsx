@@ -22,6 +22,7 @@ import ThemeSync from '@/components/theme-sync';
 import { CodeLineNumbersProvider } from '@/components/code-display-context';
 import { UploadQueueProvider } from '@/components/uploads/upload-queue';
 import { getVersionInfo } from '@/lib/version-info';
+import { countChangesAwaitingReview } from '@/lib/admin-changes/sources';
 import AppNav from './nav';
 
 /**
@@ -83,7 +84,9 @@ export default async function TenantLayout({ children }: { children: ReactNode }
   // engine needs to know which tours this person has already settled.
   // A chat list that cannot be read leaves the menu without chats, as it
   // always has when the database is down.
-  const [identity, prefs, theme, coachMarks, orgSettings, chats, coachMarkProgress] =
+  // An operator's Changes row counts what waits for them; a count that
+  // cannot be read leaves the row without one.
+  const [identity, prefs, theme, coachMarks, orgSettings, chats, coachMarkProgress, pendingChanges] =
     await Promise.all([
       getIdentityDisplay(session.subject),
       getNotificationPrefs(session.subject, { fresh: true }),
@@ -92,6 +95,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
       getOrgSettings(),
       loadChatSidebar(session.subject, { since: chatSidebarActiveSince() }).catch(() => null),
       listCoachMarkProgress(session.subject),
+      isOperator ? countChangesAwaitingReview().catch(() => null) : null,
     ]);
   const userName = identity?.displayName ?? identity?.email ?? session.subject;
   const coachMarksEnabled = orgSettings.ok ? orgSettings.val.coachMarksEnabled : true;
@@ -138,6 +142,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
               isOperator={isOperator}
               chats={chats}
               version={version}
+              pendingChanges={pendingChanges}
             >
               {children}
             </AppNav>
