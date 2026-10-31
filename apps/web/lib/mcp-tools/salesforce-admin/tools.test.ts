@@ -449,8 +449,9 @@ function fakeOrg(method: string, path: string, query: string): Response {
           },
           {
             label: 'Visit Notes',
+            // A joined table's columns go by its object, not the join path.
             columns: {
-              'Site_Visit__c.Visit_Notes__r.Body__c': { label: 'Body', dataType: 'textarea' },
+              'Visit_Note__c.Body__c': { label: 'Body', dataType: 'textarea' },
             },
           },
         ],
@@ -606,7 +607,7 @@ function fakeOrg(method: string, path: string, query: string): Response {
   if (method === 'POST' && path === '/services/Soap/m/68.0') {
     const known = /<fullNames>Site_Visits<\/fullNames>/.test(lastBody());
     const record = known
-      ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><field>Owner</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections></records>`
+      ? `<records xsi:type="ReportType"><fullName>Site_Visits</fullName><baseObject>Site_Visit__c</baseObject><category>other</category><deployed>true</deployed><description>Visits</description><label>Site Visits</label><sections><columns><checkedByDefault>true</checkedByDefault><field>Name</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><displayNameOverride>Visit Stage</displayNameOverride><field>Stage__c</field><table>Site_Visit__c</table></columns><columns><checkedByDefault>false</checkedByDefault><field>Owner</field><table>Site_Visit__c</table></columns><masterLabel>Visits</masterLabel></sections><join><outerJoin>false</outerJoin><relationship>Visit_Notes__r</relationship></join><sections><columns><checkedByDefault>true</checkedByDefault><field>Body__c</field><table>Site_Visit__c.Visit_Notes__r</table></columns><masterLabel>Visit Notes</masterLabel></sections></records>`
       : '<records xsi:nil="true"/>';
     return new Response(
       `<?xml version="1.0"?><soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns="http://soap.sforce.com/2006/04/metadata" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><soapenv:Body><readMetadataResponse><result>${record}</result></readMetadataResponse></soapenv:Body></soapenv:Envelope>`,
@@ -1682,7 +1683,9 @@ describe('salesforce_admin_propose_report', () => {
     expect(listed).toContain('Site_Visit__c$Name — Visit Number (string)');
     // A lookup path stays in the field; a child relationship joins the table.
     expect(listed).toContain('Site_Visit__c$Owner.Email — Owner: Email (email)');
+    // A joined table's column, described by its object, is named by the join path.
     expect(listed).toContain('Site_Visit__c.Visit_Notes__r$Body__c — Body (textarea)');
+    expect(listed).not.toContain('Visit_Note__c$Body__c');
     // A lookup the layout offers as itself is named as itself, not by its name field.
     expect(listed).toContain('Site_Visit__c$Owner — Owner: Full Name (string)');
 

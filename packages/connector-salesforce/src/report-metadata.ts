@@ -854,21 +854,45 @@ export function reportFileColumn(
  * layout's `Client__c`), which no rule on the name alone can tell from a
  * field reached through that lookup, except by the related object's name
  * field: `nameFieldOf(table, field)` gives it for a layout lookup (`Name`
- * when it is not known; `CaseNumber` for a Case). Keyed by the describe's
- * name; a name the layout does not explain is left out.
+ * when it is not known; `CaseNumber` for a Case). A table joined down from
+ * the base is a path (`Account.Referrals1__r`), and the describe may name
+ * its columns by the object at the end of it instead (`Referral.Name`):
+ * `objectOf(table)` gives that object, and each column is also matched by
+ * it — unless two tables are the same object, when the object cannot say
+ * which. Keyed by the describe's name; a name the layout does not explain
+ * is left out.
  */
 export function reportFileColumnsFromLayout(
   describeNames: readonly string[],
   layout: ReadonlyArray<{ table: string; field: string }>,
-  nameFieldOf: (table: string, field: string) => string | undefined = () => undefined
+  nameFieldOf: (table: string, field: string) => string | undefined = () => undefined,
+  objectOf: (table: string) => string | undefined = () => undefined
 ): Map<string, string> {
+  // The names a table's columns may go by: its own, and its object's when
+  // no other table is the same object.
+  const tables = [...new Set(layout.map(({ table }) => table))];
+  const tablesOfObject = new Map<string, number>();
+  for (const table of tables) {
+    const object = objectOf(table)?.toLowerCase();
+    if (object) tablesOfObject.set(object, (tablesOfObject.get(object) ?? 0) + 1);
+  }
+  const prefixesOf = (table: string): string[] => {
+    const object = objectOf(table);
+    return object &&
+      object.toLowerCase() !== table.toLowerCase() &&
+      tablesOfObject.get(object.toLowerCase()) === 1
+      ? [table, object]
+      : [table];
+  };
   const exact = new Map<string, string>();
   const asItself = new Map<string, string>();
   for (const { table, field } of layout) {
-    exact.set(`${table}.${field}`.toLowerCase(), `${table}$${field}`);
-    if (!field.includes('.')) {
-      const nameField = nameFieldOf(table, field) ?? 'Name';
-      asItself.set(`${table}.${field}.${nameField}`.toLowerCase(), `${table}$${field}`);
+    for (const prefix of prefixesOf(table)) {
+      exact.set(`${prefix}.${field}`.toLowerCase(), `${table}$${field}`);
+      if (!field.includes('.')) {
+        const nameField = nameFieldOf(table, field) ?? 'Name';
+        asItself.set(`${prefix}.${field}.${nameField}`.toLowerCase(), `${table}$${field}`);
+      }
     }
   }
   const names = new Map<string, string>();
