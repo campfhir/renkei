@@ -1016,6 +1016,12 @@ It is gated by a **setup secret in the app's environment** instead:
    redirects home once a provider exists, and `SETUP_SECRET` is ignored from
    then on — remove it from the environment.
 
+Renkei keys some provider checks on the sign-in email (the `email` claim,
+else `preferred_username`). That claim must be immutable and verified at the
+IdP: a person who can set their own email can be taken for someone else. A
+token whose `email_verified` is present and not `true` records no email, and
+an email shared by two subjects resolves to nobody.
+
 The organization's name, shown on the consent page, is the `organizationName`
 org setting (default "Renkei").
 
