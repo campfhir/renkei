@@ -6,9 +6,10 @@
  * for the one clone, pull or push, and this module relays the smart-HTTP
  * exchange to the real host with the person's token attached.
  *
- *   grant/git-ticket  — `{ provider, subject, write }`: a ticket
- *                       bound to one person, one provider's host and one
- *                       direction, good for a few minutes. Answers the
+ *   grant/git-ticket  — `{ provider, subject, write, repo }`: a ticket
+ *                       bound to one person, one provider's host, one
+ *                       repository (`owner/repo`) and one direction, good
+ *                       for a few minutes. Answers the
  *                       ticket and the host; the caller builds the proxy
  *                       base from the delegate's own address.
  *   /git/<ticket>/<host>/<owner>/<repo>.git/info/refs?service=…
@@ -19,7 +20,13 @@
  *
  * The ticket is the credential for these routes (there is no bearer
  * key on the sandbox side, by design): random, hashed at rest, expiring,
- * and worth exactly one person's grant on one host.
+ * and worth exactly one person's grant on one host and one repository.
+ *
+ * The repository binding needs no column: the stored hash covers the
+ * secret AND the lower-cased `owner/repo`, so a request for any other path
+ * hashes to something else and finds nothing. Without it a ticket would
+ * let a workspace command clone or push every repository the person's
+ * token reaches on that host.
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -86,8 +93,13 @@ export const nodeGitDialer: GitDialer = (target, init) =>
     else request.end();
   });
 
-function hashSecret(secret: string): string {
-  return createHash('sha256').update(secret).digest('hex');
+/** `owner/repo` as a ticket binds it: case-insensitive, never carrying `.git`. */
+export function repoKey(owner: string, name: string): string {
+  return `${owner}/${name.replace(/\.git$/i, '')}`.toLowerCase();
+}
+
+function hashSecret(secret: string, repo: string): string {
+  return createHash('sha256').update(`${secret}\0${repo}`).digest('hex');
 }
 
 function sameHash(a: string, b: string): boolean {
@@ -108,9 +120,17 @@ export class GitTickets {
     const provider = str(body.provider);
     const subject = str(body.subject);
     const write = body.write === true;
-    if (!provider || !subject) {
+    const repoMatch = /^([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/.exec(str(body.repo));
+    if (
+      !provider ||
+      !subject ||
+      !repoMatch ||
+      /^\.+$/.test(repoMatch[1]) ||
+      /^\.+$/.test(repoMatch[2])
+    ) {
       return sendJson(response, 400, { error: { type: 'bad_request' } });
     }
+    const repo = repoKey(repoMatch[1], repoMatch[2]);
     const host = Object.prototype.hasOwnProperty.call(HOSTS, provider) ? HOSTS[provider] : null;
     if (!host) {
       return sendJson(response, 403, {
@@ -132,7 +152,7 @@ export class GitTickets {
       provider,
       host: host.host,
       write,
-      secretHash: hashSecret(secret),
+      secretHash: hashSecret(secret, repo),
       expiresAt,
     });
     void this.sweep();
@@ -169,7 +189,7 @@ export class GitTickets {
     const ticket = await getDataStore().delegateGitTickets.find(id);
     if (
       !ticket ||
-      !sameHash(ticket.secretHash, hashSecret(secret)) ||
+      !sameHash(ticket.secretHash, hashSecret(secret, repoKey(path[1], path[2]))) ||
       ticket.host !== host ||
       ticket.expiresAt.getTime() <= Date.now()
     ) {

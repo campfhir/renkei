@@ -41,6 +41,7 @@ export async function POST(
       subject: session.subject,
       origin: origin.ok ? origin.val : '',
       provider: project.repo!.provider,
+      repo: project.repo!.fullName,
     },
     { write: true }
   );

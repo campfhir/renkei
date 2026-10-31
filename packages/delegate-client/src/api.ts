@@ -419,6 +419,8 @@ export class DelegateGrants {
     provider: string;
     subject: string;
     write: boolean;
+    /** `owner/repo` the ticket may reach, and no other. */
+    repo: string;
   }): Promise<Result<GitProxy, GrantOpError>> {
     const answer = await this.transport.call('grant/git-ticket', { ...input });
     if (!answer.ok) return err(grantOpError(answer.err.type));
