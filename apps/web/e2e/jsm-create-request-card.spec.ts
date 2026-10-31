@@ -17,6 +17,7 @@ import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { connectThrough, registerConnector } from './support/connectors';
 import { send } from './support/chat';
+import { pointerReaches } from './support/settle';
 import { addStubModel, removeModel, scripted } from './support/stub-model';
 import { createChat } from './support/tool-cards';
 
@@ -139,7 +140,13 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   await components.getByRole('combobox', { name: 'Components' }).fill('Platform');
   await expect(components.locator('.chip')).toHaveText(['Billing×', 'Platform×']);
   // Taking a chip off puts it back on the list; the card sends what is left.
-  await components.getByRole('button', { name: 'Remove Billing' }).click();
+  // The chip was drawn a moment ago inside the card's own process: wait until the pointer
+  // reaches it, or the press can go to the layer that was there before and leave it in place.
+  const removeBilling = components.getByRole('button', { name: 'Remove Billing' });
+  // (The card runs past the fold of the chat, and the mouse only reaches what is on screen.)
+  await removeBilling.scrollIntoViewIfNeeded();
+  await pointerReaches(page, removeBilling);
+  await removeBilling.click();
   await expect(components.locator('.chip')).toHaveText(['Platform×']);
   await components.getByRole('combobox', { name: 'Components' }).fill('billing');
   await expect(components.locator('.chip')).toHaveText(['Platform×', 'Billing×']);
