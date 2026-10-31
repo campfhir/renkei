@@ -3,7 +3,7 @@ import type { MCPToolContext } from '../common';
 import { lookupNames } from '../lookup';
 import { nameKey } from '../previews/card';
 import type { ConfluenceAuth } from './confluence-auth';
-import { registerConfluencePreviewLookups } from './preview-lookups';
+import { plain, registerConfluencePreviewLookups } from './preview-lookups';
 
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
@@ -90,5 +90,13 @@ describe('confluence preview lookups', () => {
     await expect(lookupNames(context, 'confluence_delete_page', { pageId: '42' })).resolves.toEqual(
       {}
     );
+  });
+});
+
+describe('plain', () => {
+  it('decodes each entity once, so an escaped entity stays escaped', () => {
+    expect(plain('<p>Fish &amp; chips &lt;3</p>')).toBe('Fish & chips <3');
+    expect(plain('&amp;lt;b&amp;gt;')).toBe('&lt;b&gt;');
+    expect(plain('a&nbsp;&nbsp;b &quot;c&quot;')).toBe('a b "c"');
   });
 });

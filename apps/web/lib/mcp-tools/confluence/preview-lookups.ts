@@ -13,15 +13,23 @@ import type { ConfluenceAuth } from './confluence-auth';
 
 const EXCERPT = 80;
 
-/** Plain text of Confluence storage/ADF-less HTML: tags dropped, whitespace folded. */
-function plain(html: string): string {
+const ENTITIES: Record<string, string> = {
+  '&nbsp;': ' ',
+  '&amp;': '&',
+  '&lt;': '<',
+  '&gt;': '>',
+  '&quot;': '"',
+};
+
+/**
+ * Plain text of Confluence storage/ADF-less HTML: tags dropped, whitespace
+ * folded. Entities are decoded in ONE pass, so "&amp;lt;" reads "&lt;" and
+ * not "<" (chained replaces would unescape it twice).
+ */
+export function plain(html: string): string {
   return html
     .replace(/<[^>]*>/g, ' ')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
+    .replace(/&(?:nbsp|amp|lt|gt|quot);/g, (entity) => ENTITIES[entity] ?? entity)
     .replace(/\s+/g, ' ')
     .trim();
 }
