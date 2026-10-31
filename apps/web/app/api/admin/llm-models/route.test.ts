@@ -18,7 +18,7 @@ jest.mock('@renkei/agent-llm', () => ({
 
 import { NextRequest } from 'next/server';
 import { randomBytes } from 'node:crypto';
-import { decrypt, parseEncryptionKey } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, parseEncryptionKey } from '@renkei/crypto';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GET, POST } from './route';
 
@@ -97,7 +97,9 @@ describe('POST .../llm-models', () => {
 
     const keyResult = parseEncryptionKey(ENCRYPTION_KEY);
     expect(keyResult.ok).toBe(true);
-    const decrypted = keyResult.ok ? decrypt(stored!, keyResult.val) : null;
+    const decrypted = keyResult.ok
+      ? decryptBoundValue(stored!, keyResult.val, aadFor(AAD_PURPOSE.llmModelKey))
+      : null;
     expect(decrypted?.ok).toBe(true);
     if (decrypted?.ok) expect(JSON.parse(decrypted.val)).toEqual({ apiKey: 'sk-ant-secret' });
   });

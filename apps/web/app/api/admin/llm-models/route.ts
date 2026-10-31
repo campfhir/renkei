@@ -9,7 +9,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'node:crypto';
 import { getDataStore } from '@renkei/db';
-import { encrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
@@ -65,7 +65,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // row seals with the same deployment key — and the tenant predicate makes
   // someone else's config id come back empty, not copied.
   let encryptedSecrets = parsed.apiKey
-    ? encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val)
+    ? encrypt(
+        JSON.stringify({ apiKey: parsed.apiKey }),
+        keyResult.val,
+        aadFor(AAD_PURPOSE.llmModelKey)
+      )
     : null;
   if (!encryptedSecrets && parsed.apiKeyFromId) {
     const source = await models.get(parsed.apiKeyFromId);

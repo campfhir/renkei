@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
-import { decrypt, encrypt, loadKeyring } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBoundValue, encrypt, loadKeyring } from '@renkei/crypto';
 import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
@@ -49,7 +49,11 @@ export async function PUT(
   // rows sharing one connection can be re-pointed without retyping it.
   let encryptedSecrets = existing.encryptedSecrets;
   if (parsed.apiKey) {
-    encryptedSecrets = encrypt(JSON.stringify({ apiKey: parsed.apiKey }), keyResult.val);
+    encryptedSecrets = encrypt(
+      JSON.stringify({ apiKey: parsed.apiKey }),
+      keyResult.val,
+      aadFor(AAD_PURPOSE.llmModelKey)
+    );
   } else if (parsed.apiKeyFromId && parsed.apiKeyFromId !== modelId) {
     const source = await models.get(parsed.apiKeyFromId);
     if (!source?.encryptedSecrets) {
@@ -59,7 +63,10 @@ export async function PUT(
       );
     }
     encryptedSecrets = source.encryptedSecrets;
-  } else if (!encryptedSecrets || !decrypt(encryptedSecrets, keyResult.val).ok) {
+  } else if (
+    !encryptedSecrets ||
+    !decryptBoundValue(encryptedSecrets, keyResult.val, aadFor(AAD_PURPOSE.llmModelKey)).ok
+  ) {
     return NextResponse.json({ error: 'apiKey is required (none stored yet)' }, { status: 400 });
   }
 
