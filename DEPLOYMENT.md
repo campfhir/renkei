@@ -1291,6 +1291,22 @@ names it:
    backup taken before step 2 still needs it, and restoring one means
    putting it back behind the current key and running `rewrap` again.
 
+**Binding secrets to their purpose (associated data).** Connector secrets,
+model API keys, the OIDC client secret and knowledge chunks are sealed as
+`v3.<kid>.…` envelopes bound to what they are (and, for connectors, which
+connector), so a database writer cannot copy one into another column and
+have the application decrypt it. Rows written before this release stay
+`v1`/`v2` and keep working; they are rebound by an operator step, not
+automatically. Once **every** service (web and workers) runs this release
+(older ones cannot open `v3`), run from `packages/user-keys` with the
+current rings: `pnpm rewrap --aad --dry-run`, then `pnpm rewrap --aad`
+(resumable; exits 1 on rows the ring cannot open; SANDBOX secrets, registry
+credentials and the VAPID key are not bound yet and are left alone). Until
+it has run, a legacy credential copied into a knowledge chunk would still
+be shown; after it, set `RENKEI_REQUIRE_AAD=1` on the services so legacy
+envelopes are refused for the bound purposes. A plain key rotation keeps
+the binding. Chunk bodies are bound to their purpose, not their row.
+
 A key that has **leaked** is rotated the same way — the steps are in the
 order that keeps the service up — but step 4 is the one that matters and
 should follow the rewrap immediately; until it does, the leaked key still
