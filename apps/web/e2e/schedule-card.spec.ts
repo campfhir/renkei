@@ -129,33 +129,27 @@ test('on a phone the card and its fields stay inside the screen, with no sideway
     await expect(frame.getByRole('button', { name: 'Schedule' })).toBeVisible(COLD);
 
     const fit = await frame.locator('html').evaluate((html) => {
-      const box = (el: Element) => el.getBoundingClientRect();
       const cardEl = html.querySelector('.card');
-      if (!cardEl) return { error: 'no card' };
-      const cardBox = box(cardEl);
-      const fields = [...html.querySelectorAll('.field input, .field textarea, .field select, .field-value')];
-      const overflowing = fields
+      if (!cardEl) throw new Error('the preview card did not render');
+      const cardBox = cardEl.getBoundingClientRect();
+      const overflowing = [
+        ...html.querySelectorAll('.field input, .field textarea, .field select, .field-value'),
+      ]
         .filter((f) => {
-          const b = box(f);
+          const b = f.getBoundingClientRect();
           return b.right > cardBox.right + 0.5 || b.left < cardBox.left - 0.5;
         })
         .map((f) => f.outerHTML.slice(0, 80));
       return {
         overflowing,
         pageScrolls: html.scrollWidth > html.clientWidth + 0.5,
-        cardWidth: cardBox.width,
-        viewport: html.clientWidth,
+        cardRight: cardBox.right,
+        viewportWidth: html.clientWidth,
       };
     });
-    expect(fit).toEqual({
-      overflowing: [],
-      pageScrolls: false,
-      cardWidth: expect.any(Number),
-      viewport: expect.any(Number),
-    });
-    expect((fit as { cardWidth: number }).cardWidth).toBeLessThanOrEqual(
-      (fit as { viewport: number }).viewport
-    );
+    expect(fit.overflowing).toEqual([]);
+    expect(fit.pageScrolls).toBe(false);
+    expect(fit.cardRight).toBeLessThanOrEqual(fit.viewportWidth);
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }
