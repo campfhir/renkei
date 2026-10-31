@@ -697,12 +697,67 @@ async function createDraftAction(
 }
 
 /** Send an existing draft. `keepOnFailure` leaves it in Drafts for a retry. */
+/**
+ * Graph's PidTagDeferredSendTime: a message carrying it sits in the Outbox
+ * and Exchange delivers it at that instant. It is the only scheduled send
+ * the API offers, set as an extended property on the message itself.
+ */
+const DEFERRED_SEND_PROPERTY_ID = 'SystemTime 0x3FEF';
+const MIN_SCHEDULE_LEAD_MS = 60_000;
+const SEND_AT_HINT =
+  'Schedule delivery for a later moment: an ISO 8601 timestamp WITH a UTC offset or "Z", ' +
+  'e.g. 2026-11-02T14:00:00-05:00 — resolve "9am Monday" with resolve_date first. Omit to ' +
+  "send now. It must be at least a minute ahead. The message waits in Outlook's Outbox " +
+  'and Exchange sends it then; deleting it from the Outbox cancels it.';
+
+/** `sendAt` as the UTC instant Graph wants, or null when none was given. */
+function parseSendAt(
+  value: unknown
+): { ok: true; at: string | null } | { ok: false; error: string } {
+  const raw = str(value).trim();
+  if (!raw) return { ok: true, at: null };
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+    return {
+      ok: false,
+      error: 'sendAt needs a UTC offset or "Z" (e.g. 2026-11-02T14:00:00-05:00).',
+    };
+  }
+  const time = Date.parse(raw);
+  if (Number.isNaN(time)) return { ok: false, error: `sendAt "${raw}" is not a valid timestamp.` };
+  if (time < Date.now() + MIN_SCHEDULE_LEAD_MS) {
+    return { ok: false, error: 'sendAt must be at least a minute in the future.' };
+  }
+  return { ok: true, at: new Date(time).toISOString() };
+}
+
+const scheduledText = (at: string) =>
+  `Scheduled for ${at} (UTC). It waits in Outlook's Outbox until then.`;
+
+const deferredSendProperties = (at: string) => ({
+  singleValueExtendedProperties: [{ id: DEFERRED_SEND_PROPERTY_ID, value: at }],
+});
+
 async function sendDraft(
   context: MCPToolContext,
   auth: AuthedFetch,
   draftId: string,
-  keepOnFailure = false
+  keepOnFailure = false,
+  sendAt: string | null = null
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (sendAt) {
+    const deferred = await graphPatch(
+      context,
+      auth,
+      `/me/messages/${encodeURIComponent(draftId)}`,
+      deferredSendProperties(sendAt)
+    );
+    if (!deferred.ok) {
+      if (!keepOnFailure) {
+        await graphDelete(context, auth, `/me/messages/${encodeURIComponent(draftId)}`);
+      }
+      return deferred;
+    }
+  }
   const sent = await graphPost(
     context,
     auth,
@@ -807,6 +862,9 @@ export function outlookScopeFor(toolName: string): string[] {
     case 'outlook_forward_preview':
     case 'outlook_send_draft_confirm':
     case 'outlook_discard_draft_confirm':
+    case 'outlook_draft_mail':
+    case 'outlook_draft_reply':
+    case 'outlook_update_draft_confirm':
     case 'outlook_request_draft_attachment_upload':
       return ['Mail.Send'];
     // The bulk-job pair shares one scope so it appears and disappears
@@ -2015,14 +2073,15 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Send an email',
       description:
         'Send an email as the connected user — e.g. a summary assembled with the other tools. ' +
-        'Markdown body, rendered to HTML. This speaks AS the user, so only send what they ' +
-        'asked to send.',
+        'Pass sendAt to schedule it for later. Markdown body, rendered to HTML. This speaks AS ' +
+        'the user, so only send what they asked to send.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
         cc: z.array(z.string().min(1)).describe('CC email addresses').optional(),
         subject: z.string().min(1).describe('Subject line'),
         body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2032,6 +2091,8 @@ export async function registerOutlookTools(
       if (to.length === 0) return errText('to is required');
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const recipient = (address: string) => ({ emailAddress: { address } });
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const result = await graphPost(context, access.auth, '/me/sendMail', {
         message: {
@@ -2039,11 +2100,12 @@ export async function registerOutlookTools(
           body: { contentType: 'HTML', content: markdownToHtml(str(args.body)) },
           toRecipients: to.map(recipient),
           ...(cc.length > 0 ? { ccRecipients: cc.map(recipient) } : {}),
+          ...(schedule.at ? deferredSendProperties(schedule.at) : {}),
         },
         saveToSentItems: true,
       });
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_send_mail sent', {
+      logger.info(schedule.at ? 'outlook_send_mail scheduled' : 'outlook_send_mail sent', {
         component: 'mcp/tool',
         recipients: to.length + cc.length,
       });
@@ -2072,7 +2134,12 @@ export async function registerOutlookTools(
         happened even without somewhere to click.
       */
       return {
-        ...textResult(`Sent to ${[...to, ...cc].join(', ')}.`),
+        ...textResult(
+          schedule.at
+            ? `Scheduled for ${schedule.at} (UTC) to ${[...to, ...cc].join(', ')}. It sits in ` +
+                `Outlook's Outbox until then.`
+            : `Sent to ${[...to, ...cc].join(', ')}.`
+        ),
         _meta: sentMailMeta({ webLink: '', subject: str(args.subject) }),
       };
     }
@@ -2266,8 +2333,14 @@ export async function registerOutlookTools(
   // `messageId` (reply-family only) is what lets the card edit the reply's
   // own text: the confirm tool rebuilds the draft from that message rather
   // than editing a body the quoted thread is part of.
-  const draftStructured = (kind: string, draft: DraftInfo, messageId?: string) => ({
+  const draftStructured = (
+    kind: string,
+    draft: DraftInfo,
+    messageId?: string,
+    mode: 'send' | 'draft' = 'send'
+  ) => ({
     kind,
+    ...(mode === 'draft' ? { mode } : {}),
     draftId: draft.draftId,
     ...(messageId ? { messageId } : {}),
     to: draft.to,
@@ -2283,10 +2356,11 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Preview an email before sending',
       description:
-        'Draft an email and show the user an interactive preview card to send or discard. ' +
-        'Prefer this over outlook_send_mail whenever the user should review before it goes ' +
-        'out — the card does the sending. Markdown body, rendered to HTML. This speaks AS ' +
-        'the user.',
+        'Draft an email and show the user an interactive preview card to send, send later ' +
+        '(scheduled) or discard. Prefer this over outlook_send_mail whenever the user should ' +
+        'review before it goes out — the card does the sending. If the user only wants a ' +
+        'draft saved, not sent, use outlook_draft_mail instead. Markdown body, rendered to ' +
+        'HTML. This speaks AS the user.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(EMAIL_COMPOSE_URI),
       inputSchema: z.object({
@@ -2472,25 +2546,25 @@ export async function registerOutlookTools(
    * where the card sent none), and sent. The previewed draft is deleted
    * only once that send went out, so a failure leaves it for a retry.
    */
-  const sendRebuiltReply = async (
+  const rebuildReplyDraft = async (
     authed: AuthedFetch,
     draftId: string,
     comment: string,
     replyTo: Record<string, unknown>,
     edits: { to: string[] | null; cc: string[] | null; subject: string }
-  ) => {
+  ): Promise<{ ok: true; draft: DraftInfo } | { ok: false; error: string }> => {
     const messageId = str(replyTo.messageId);
     const action = REPLY_ACTIONS.get(str(replyTo.kind));
-    if (!messageId || !action) return errText('replyTo is required to edit a reply');
+    if (!messageId || !action) return { ok: false, error: 'replyTo is required to edit a reply' };
     if (!comment.trim() && action !== 'createForward') {
-      return errText('Write the reply, or discard it.');
+      return { ok: false, error: 'Write the reply, or discard it.' };
     }
     const current = await graphGet(
       context,
       authed,
       `/me/messages/${encodeURIComponent(draftId)}?$select=subject,toRecipients,ccRecipients,bccRecipients`
     );
-    if (!current.ok) return errText(current.error);
+    if (!current.ok) return current;
     const to = edits.to ?? addressesOf(current.body.toRecipients);
     const cc = edits.cc ?? addressesOf(current.body.ccRecipients);
     const bcc = addressesOf(current.body.bccRecipients);
@@ -2501,7 +2575,7 @@ export async function registerOutlookTools(
       cc,
       bcc,
     });
-    if (!rebuilt.ok) return errText(rebuilt.error);
+    if (!rebuilt.ok) return rebuilt;
     // Graph re-adds the people a reply goes to; the card's list is the one
     // to keep, removals included.
     const exact = await graphPatch(
@@ -2516,16 +2590,29 @@ export async function registerOutlookTools(
     );
     if (!exact.ok) {
       await graphDelete(context, authed, `/me/messages/${encodeURIComponent(rebuilt.draftId)}`);
-      return errText(exact.error);
+      return exact;
     }
-    const sent = await sendDraft(context, authed, rebuilt.draftId);
+    return { ok: true, draft: { ...rebuilt, to, cc, bcc, subject: subject || rebuilt.subject } };
+  };
+
+  const sendRebuiltReply = async (
+    authed: AuthedFetch,
+    draftId: string,
+    comment: string,
+    replyTo: Record<string, unknown>,
+    edits: { to: string[] | null; cc: string[] | null; subject: string },
+    sendAt: string | null
+  ) => {
+    const rebuilt = await rebuildReplyDraft(authed, draftId, comment, replyTo, edits);
+    if (!rebuilt.ok) return errText(rebuilt.error);
+    const sent = await sendDraft(context, authed, rebuilt.draft.draftId, false, sendAt);
     if (!sent.ok) return errText(sent.error);
     await graphDelete(context, authed, `/me/messages/${encodeURIComponent(draftId)}`);
     logger.info('outlook_send_draft_confirm sent an edited reply', {
       component: 'mcp/tool',
       draftId,
     });
-    return textResult('Sent.');
+    return textResult(sendAt ? scheduledText(sendAt) : 'Sent.');
   };
 
   server.registerTool(
@@ -2559,6 +2646,7 @@ export async function registerOutlookTools(
           })
           .describe('The message a reply/forward draft answers — needed to edit its comment')
           .optional(),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2566,17 +2654,26 @@ export async function registerOutlookTools(
       if (typeof access === 'string') return errText(access);
       const draftId = str(args.draftId);
       if (!draftId) return errText('draftId is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const overrides = rec(args.overrides);
       const to = Array.isArray(overrides.to) ? overrides.to.map(String).filter(Boolean) : null;
       const cc = Array.isArray(overrides.cc) ? overrides.cc.map(String).filter(Boolean) : null;
       if (to !== null && to.length === 0) return errText('No recipient to send to');
       if (typeof overrides.comment === 'string') {
-        return sendRebuiltReply(access.auth, draftId, overrides.comment, rec(args.replyTo), {
-          to,
-          cc,
-          subject: str(overrides.subject),
-        });
+        return sendRebuiltReply(
+          access.auth,
+          draftId,
+          overrides.comment,
+          rec(args.replyTo),
+          {
+            to,
+            cc,
+            subject: str(overrides.subject),
+          },
+          schedule.at
+        );
       }
       const patch: Record<string, unknown> = {
         ...(to !== null ? { toRecipients: to.map(recipientOf) } : {}),
@@ -2597,13 +2694,16 @@ export async function registerOutlookTools(
         if (!patched.ok) return errText(patched.error);
       }
 
-      const sent = await sendDraft(context, access.auth, draftId, true);
+      const sent = await sendDraft(context, access.auth, draftId, true, schedule.at);
       if (!sent.ok) return errText(sent.error);
-      logger.info('outlook_send_draft_confirm sent', {
-        component: 'mcp/tool',
-        draftId,
-      });
-      return textResult('Sent.');
+      logger.info(
+        schedule.at ? 'outlook_send_draft_confirm scheduled' : 'outlook_send_draft_confirm sent',
+        {
+          component: 'mcp/tool',
+          draftId,
+        }
+      );
+      return textResult(schedule.at ? scheduledText(schedule.at) : 'Sent.');
     }
   );
 
@@ -2636,6 +2736,220 @@ export async function registerOutlookTools(
         draftId,
       });
       return textResult('Draft discarded; nothing was sent.');
+    }
+  );
+
+  // ——— Drafting (no send) ————————————————————————————————————————————————
+  // The partner of the preview-to-send tools above: the same real Graph
+  // draft and the same card, but the card's buttons are Save and Delete —
+  // there is no Send, so nothing leaves the mailbox. Leaving the card alone
+  // keeps the draft in Drafts; Delete removes it.
+
+  const draftResultText = (draft: DraftInfo, what: string) =>
+    `${what} is saved as a draft in the user's Outlook Drafts — to: ` +
+    `${draft.to.join(', ') || '(no recipient yet)'}; subject: ${draft.subject || '(none)'}. ` +
+    `It has NOT been sent. Do not repeat the draft contents in your reply. To send it, the ` +
+    `user asks and you use outlook_send_mail_preview (or the reply/forward preview).`;
+
+  server.registerTool(
+    'outlook_draft_mail',
+    {
+      title: 'Outlook · Draft — Save an email as a draft',
+      description:
+        "Save an email as a draft in the user's Outlook Drafts, shown on a card they can edit " +
+        'or delete. Only when the user explicitly asks to DRAFT (or "save as a draft") — ' +
+        'nothing is sent. To send, use outlook_send_mail_preview instead. Recipients may be ' +
+        'left out. Markdown body, rendered to HTML.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(EMAIL_COMPOSE_URI),
+      inputSchema: z.object({
+        to: z.array(z.string().min(1)).describe('Recipient email addresses').optional(),
+        cc: z.array(z.string().min(1)).describe('CC email addresses').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC email addresses').optional(),
+        subject: z.string().describe('Subject line').optional(),
+        body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const list = (value: unknown) =>
+        Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+      const to = list(args.to);
+      const cc = list(args.cc);
+      const bcc = list(args.bcc);
+      const subject = str(args.subject);
+      const body = str(args.body);
+      if (!body) return errText('body is required');
+
+      const created = await graphPost(context, access.auth, '/me/messages', {
+        subject,
+        body: { contentType: 'HTML', content: markdownToHtml(body) },
+        ...(to.length > 0 ? { toRecipients: to.map(recipientOf) } : {}),
+        ...(cc.length > 0 ? { ccRecipients: cc.map(recipientOf) } : {}),
+        ...(bcc.length > 0 ? { bccRecipients: bcc.map(recipientOf) } : {}),
+      });
+      if (!created.ok) return errText(created.error);
+      const draftId = str((created.body ?? {}).id);
+      if (!draftId) return errText('Graph did not return a draft id');
+      logger.info('outlook_draft_mail drafted', {
+        component: 'mcp/tool',
+        recipients: to.length + cc.length + bcc.length,
+      });
+      const draft: DraftInfo = {
+        ok: true,
+        draftId,
+        to,
+        cc,
+        bcc,
+        subject,
+        body,
+        webLink: str((created.body ?? {}).webLink),
+      };
+      return {
+        ...textResult(draftResultText(draft, 'The email')),
+        structuredContent: draftStructured('compose', draft, undefined, 'draft'),
+      };
+    }
+  );
+
+  server.registerTool(
+    'outlook_draft_reply',
+    {
+      title: 'Outlook · Draft — Save a reply or forward as a draft',
+      description:
+        "Save a reply, reply-all or forward of a message as a draft in the user's Outlook " +
+        'Drafts, shown on a card they can edit or delete. Only when the user explicitly asks ' +
+        'to DRAFT it — nothing is sent. To send, use the outlook_reply_preview / ' +
+        'outlook_reply_all_preview / outlook_forward_preview tools. A forward needs "to".',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(EMAIL_COMPOSE_URI),
+      inputSchema: z.object({
+        kind: z.enum(['reply', 'replyAll', 'forward']).describe('What to draft'),
+        messageId: z
+          .string()
+          .min(1)
+          .describe('Message id from outlook_list_messages/outlook_get_message'),
+        comment: z.string().describe(REPLY_MARKDOWN_HINT).optional(),
+        to: z
+          .array(z.string().min(1))
+          .describe('Extra "to" addresses (required for a forward)')
+          .optional(),
+        cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
+        bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const messageId = str(args.messageId);
+      if (!messageId) return errText('messageId is required');
+      const kind = str(args.kind);
+      const action = REPLY_ACTIONS.get(kind);
+      if (!action) return errText('kind must be reply, replyAll or forward');
+      const list = (value: unknown) =>
+        Array.isArray(value) ? value.map(String).filter(Boolean) : [];
+      const to = list(args.to);
+      if (action === 'createForward' && to.length === 0) return errText('to is required');
+      const comment = str(args.comment);
+      if (action !== 'createForward' && !comment) return errText('comment is required');
+
+      const created = await createDraftAction(context, access.auth, messageId, action, {
+        ...(comment ? { comment } : {}),
+        additionalTo: to,
+        cc: list(args.cc),
+        bcc: list(args.bcc),
+      });
+      if (!created.ok) return errText(created.error);
+      logger.info('outlook_draft_reply drafted', { component: 'mcp/tool', messageId });
+      return {
+        ...textResult(draftResultText(created, 'The draft')),
+        structuredContent: draftStructured(kind, created, messageId, 'draft'),
+      };
+    }
+  );
+
+  server.registerTool(
+    'outlook_update_draft_confirm',
+    {
+      title: 'Outlook · Draft — Save edits to a draft (card only)',
+      description:
+        'Save the edits a user made on a draft card to the draft, without sending it.' +
+        confirmGuard('outlook_draft_mail (or outlook_draft_reply)'),
+      annotations: { readOnlyHint: false },
+      _meta: APP_ONLY_META,
+      inputSchema: z.object({
+        draftId: z.string().min(1).describe('Draft id from a draft tool'),
+        overrides: z
+          .object({
+            to: z.array(z.string().min(1)).optional(),
+            cc: z.array(z.string().min(1)).optional(),
+            subject: z.string().optional(),
+            body: z.string().describe(BODY_MARKDOWN_HINT).optional(),
+            comment: z
+              .string()
+              .describe(`A reply/forward's own text, edited on the card: ${REPLY_MARKDOWN_HINT}`)
+              .optional(),
+          })
+          .describe('Edits to PATCH onto the draft'),
+        replyTo: z
+          .object({
+            messageId: z.string().min(1),
+            kind: z.enum(['reply', 'replyAll', 'forward']),
+          })
+          .describe('The message a reply/forward draft answers — needed to edit its comment')
+          .optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const access = await auth.resolve();
+      if (typeof access === 'string') return errText(access);
+      const draftId = str(args.draftId);
+      if (!draftId) return errText('draftId is required');
+      const overrides = rec(args.overrides);
+      const to = Array.isArray(overrides.to) ? overrides.to.map(String).filter(Boolean) : null;
+      const cc = Array.isArray(overrides.cc) ? overrides.cc.map(String).filter(Boolean) : null;
+
+      if (typeof overrides.comment === 'string') {
+        // A reply's text can't be patched inside the quoted thread: rebuild
+        // the draft from the message and retire the old one.
+        const rebuilt = await rebuildReplyDraft(
+          access.auth,
+          draftId,
+          overrides.comment,
+          rec(args.replyTo),
+          {
+            to,
+            cc,
+            subject: str(overrides.subject),
+          }
+        );
+        if (!rebuilt.ok) return errText(rebuilt.error);
+        await graphDelete(context, access.auth, `/me/messages/${encodeURIComponent(draftId)}`);
+        return {
+          ...textResult('Draft saved.'),
+          structuredContent: { draftId: rebuilt.draft.draftId },
+        };
+      }
+      const patch: Record<string, unknown> = {
+        ...(to !== null ? { toRecipients: to.map(recipientOf) } : {}),
+        ...(cc !== null ? { ccRecipients: cc.map(recipientOf) } : {}),
+        ...(typeof overrides.subject === 'string' ? { subject: overrides.subject } : {}),
+        ...(str(overrides.body)
+          ? { body: { contentType: 'HTML', content: markdownToHtml(str(overrides.body)) } }
+          : {}),
+      };
+      if (Object.keys(patch).length > 0) {
+        const patched = await graphPatch(
+          context,
+          access.auth,
+          `/me/messages/${encodeURIComponent(draftId)}`,
+          patch
+        );
+        if (!patched.ok) return errText(patched.error);
+      }
+      logger.info('outlook_update_draft_confirm saved', { component: 'mcp/tool', draftId });
+      return { ...textResult('Draft saved.'), structuredContent: { draftId } };
     }
   );
 

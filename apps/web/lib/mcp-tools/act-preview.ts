@@ -86,6 +86,11 @@ export const PREVIEW_EXEMPT_CONNECTORS: readonly string[] = [
 /** Single tools that only write to Renkei: a suggestion on the feed, never to the provider. */
 export const PREVIEW_EXEMPT_TOOLS: readonly string[] = [
   'webex_capture_message',
+  // Drafting sends nothing: each shows its own editable card (Save/Delete),
+  // the partner of the preview-to-send tools.
+  'outlook_draft_mail',
+  'outlook_draft_reply',
+  'webex_draft_message',
   // Stages a file in the person's own scratch space; Salesforce is only read.
   'salesforce_download_file',
 ];

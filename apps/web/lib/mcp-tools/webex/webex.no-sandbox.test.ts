@@ -96,6 +96,8 @@ const CALLS: { tool: string; args: Record<string, unknown> }[] = [
   // best-effort and a lookup failure still previews), so a denied credential
   // cannot make it fail — empty args exercise its validation path instead.
   { tool: 'webex_send_message_preview', args: {} },
+  // A draft needs no credential either: empty args hit its validation path.
+  { tool: 'webex_draft_message', args: {} },
   { tool: 'webex_send_message_confirm', args: { roomId: 'room-1', markdown: 'hi' } },
   { tool: 'webex_list_meetings', args: {} },
   { tool: 'webex_list_transcripts', args: {} },

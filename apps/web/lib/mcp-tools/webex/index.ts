@@ -623,6 +623,7 @@ export function webexScopeFor(toolName: string): string[] {
     // sees the tool at all.
     case 'webex_send_message':
     case 'webex_send_message_preview':
+    case 'webex_draft_message':
     case 'webex_send_message_confirm':
     case 'webex_request_attachment_upload':
       return ['spark:messages_write'];
@@ -1511,6 +1512,67 @@ export async function registerWebexUserTools(
           previewId: newPreviewId(),
           kind: 'webex',
           ...(roomId ? { roomId, ...(roomTitle ? { roomTitle } : {}) } : { toPersonEmail }),
+          markdown,
+          ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
+        },
+      };
+    }
+  );
+
+  // Drafting. WebEx has no drafts API, so there is nothing to save or delete
+  // server-side: the draft lives on its card in the chat, editable until the
+  // person discards it. To send it, the person asks and the preview above runs.
+  server.registerTool(
+    'webex_draft_message',
+    {
+      title: 'WebEx · Draft — Draft a message',
+      description:
+        'Draft a WebEx message on an editable card without sending it. Only when the user ' +
+        'explicitly asks to DRAFT a WebEx message — WebEx stores no drafts, so it lives on ' +
+        'the card and nothing is posted. To send, use webex_send_message_preview instead. ' +
+        'The destination is optional while drafting.',
+      annotations: { readOnlyHint: false },
+      _meta: previewToolMeta(CHAT_MESSAGE_URI),
+      inputSchema: z.object({
+        roomId: z.string().describe('Destination room id (from webex_list_rooms)').optional(),
+        toPersonEmail: z
+          .string()
+          .describe('Recipient email for a 1:1 message instead of a room')
+          .optional(),
+        markdown: z.string().min(1).describe(MARKDOWN_HINT),
+        parentId: z.string().describe(PARENT_ID_HINT).optional(),
+      }),
+    },
+    async (args: Record<string, any>) => {
+      const roomId = str(args.roomId);
+      const toPersonEmail = str(args.toPersonEmail);
+      if (roomId && toPersonEmail) return errText('Provide roomId or toPersonEmail, not both.');
+      const markdown = str(args.markdown);
+      if (!markdown) return errText('markdown is required');
+      let roomTitle = '';
+      if (roomId) {
+        const room = await webexGet(
+          auth,
+          webexScopeFor('webex_list_rooms'),
+          `/rooms/${encodeURIComponent(roomId)}`
+        );
+        if (room.ok) roomTitle = str(room.body.title);
+      }
+      const destination = roomId
+        ? roomTitle || `room ${roomId}`
+        : toPersonEmail || 'no destination yet';
+      return {
+        ...textResult(
+          `The message to ${destination} is drafted on a card and has NOT been sent; WebEx ` +
+            `keeps no drafts, so it exists only on that card. Do not repeat its contents in ` +
+            `your reply. To send it, the user asks and you use webex_send_message_preview.`
+        ),
+        structuredContent: {
+          previewId: newPreviewId(),
+          kind: 'webex',
+          mode: 'draft',
+          ...(roomId ? { roomId, ...(roomTitle ? { roomTitle } : {}) } : {}),
+          ...(toPersonEmail ? { toPersonEmail } : {}),
           markdown,
           ...(str(args.parentId) ? { parentId: str(args.parentId) } : {}),
         },
