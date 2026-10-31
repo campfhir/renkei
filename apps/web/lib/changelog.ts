@@ -50,6 +50,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Send later suggests the time you asked for',
+        detail:
+          'When the assistant drafts an email with a send time, the card fills in that date and time under Send later, and the button reads Schedule. Date and time are two fields, so they are easy to change on a phone.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Email cards work on a phone',
+        detail:
+          'Fields on the email preview card are 16px, so iOS no longer zooms in when you tap one, and every field stays inside the card instead of spilling past its edge.',
+      },
+      {
+        kind: 'changed',
         title: "Service desk request cards show the form's required fields",
         detail:
           "The create-request card now reads the request type's form and shows its required fields, components and priority as labelled pick lists (components as a search box with removable chips) instead of ids. A request missing a required field is refused with the accepted values named, and requests can carry participants.",
