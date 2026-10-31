@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-31',
+    entries: [
+      {
+        kind: 'added',
+        title: 'One Changes page for every admin connector',
+        detail:
+          "Operators get a Changes item in the menu, with a count of what is waiting for approval, listing Salesforce and Jira admin changes together — waiting, running and recent — with who asked and a filter by connector. Each row opens that change's review page.",
+      },
+    ],
+  },
+  {
     date: '2026-10-30',
     entries: [
       {

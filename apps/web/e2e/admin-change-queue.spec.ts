@@ -18,7 +18,10 @@
  * declines one with a reason Arlo reads. Approving Pat's proposal queues
  * it: the click answers at once, the server applies it, and Olive can
  * leave the page and find it done on the list; both are told, and the
- * notification rows open the right page.
+ * notification rows open the right page. The Changes page gathers every
+ * admin connector's requests: Olive reaches it from the menu, where a
+ * count says what waits, and filters it by connector; Arlo has no menu
+ * row for it and sees only his own there.
  *
  * Not reachable here: a change caught mid-apply ("Running now"). The
  * in-process job finishes against the stub in milliseconds, and nothing
@@ -338,4 +341,83 @@ test('the notification row for a waiting proposal opens the right page', async (
   await link.click();
   await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`), { timeout: 30_000 });
   await expect(main(page).getByTestId('change-title')).toContainText(`Vendor ${team.tag}`);
+});
+
+test('an operator finds every connector’s waiting changes from the menu; others see only their own', async ({
+  browser,
+  request,
+}, testInfo) => {
+  const team = current();
+  const olive = await join(browser, request, team, { name: 'Olive Operator', operator: true });
+  const arlo = await join(browser, request, team, { name: 'Arlo Asker', operator: false });
+  team.modelId = await addStubModel(olive.page.request, `queue-${team.tag}`);
+  const title = `Queue ${team.tag}: please add a Partner option`;
+  const id = await proposeInChat(arlo.page, team.modelId, 'jira_admin_request_change', {
+    title,
+    description: 'The Source field in OPS needs a Partner option.',
+  });
+
+  // --- The operator: the menu's Changes row counts what waits, and opens the list. ---
+  const page = olive.page;
+  await page.goto('/');
+  const menu = page.getByRole('navigation', { name: 'Application' }).filter({ visible: true });
+  const changes = menu.getByRole('link', { name: /^Changes/ });
+  // Every test's waiting changes count, so only that some wait is asserted.
+  await expect(changes.getByTestId('nav-badge')).toHaveText(/^[1-9]\d*\+?$/);
+  await changes.click();
+  await expect(page).toHaveURL(/\/changes$/, { timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'Changes', level: 1 })).toBeVisible();
+  await expect(changes).toHaveAttribute('aria-current', 'page');
+
+  const row = main(page)
+    .getByTestId('changes-waiting')
+    .locator(`a[href$="/jira-admin/changes/${id}"]`);
+  await expect(row).toContainText(title);
+  await expect(row.getByTestId('change-source')).toHaveText('Jira');
+  await expect(row).toContainText('requested');
+  await expect(row).toContainText('by Arlo Asker');
+  await expect(row.getByTestId('change-state')).toHaveText('Waiting for review');
+  await shot(page, testInfo, 'admin-change-queue-13-changes-inbox');
+
+  // The connector filter narrows the list, and keeps the request under Jira.
+  const filters = main(page).getByRole('navigation', { name: 'Filter by connector' });
+  await filters.getByRole('link', { name: 'Salesforce' }).click();
+  await expect(page).toHaveURL(/\/changes\?source=salesforce-admin$/);
+  await expect(filters.getByRole('link', { name: 'Salesforce' })).toHaveAttribute(
+    'aria-current',
+    'page'
+  );
+  await expect(main(page).locator(`a[href$="/jira-admin/changes/${id}"]`)).toHaveCount(0);
+  await filters.getByRole('link', { name: 'Jira' }).click();
+  await expect(page).toHaveURL(/\/changes\?source=jira-admin$/);
+  await expect(row).toBeVisible();
+
+  // Phone width: the list fits.
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(row).toBeVisible();
+  await noHorizontalOverflow(page);
+  await shot(page, testInfo, 'admin-change-queue-14-changes-inbox-mobile');
+  await page.setViewportSize({ width: 1280, height: 900 });
+
+  // The row opens the connector's own review page.
+  await row.click();
+  await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`), { timeout: 30_000 });
+  await expect(main(page).getByTestId('change-title')).toContainText(title);
+
+  // --- The person who asked: no Changes row in the menu; the page lists their own. ---
+  const asker = arlo.page;
+  await asker.goto('/');
+  await expect(
+    asker
+      .getByRole('navigation', { name: 'Application' })
+      .filter({ visible: true })
+      .getByRole('link', { name: /^Changes/ })
+  ).toHaveCount(0);
+  await asker.goto('/changes');
+  await expect(asker.getByRole('heading', { name: 'Waiting for an operator' })).toBeVisible();
+  const own = main(asker)
+    .getByTestId('changes-waiting')
+    .locator(`a[href$="/jira-admin/changes/${id}"]`);
+  await expect(own).toContainText(title);
+  await expect(own).not.toContainText('by Arlo Asker');
 });

@@ -25,6 +25,8 @@ interface NavProps {
   chats: ChatSidebarData | null;
   /** Version + commit hash for display in sidebar. */
   version: string;
+  /** Admin changes waiting for an operator, for an operator's Changes row; null otherwise. */
+  pendingChanges?: number | null;
   children: ReactNode;
 }
 
@@ -53,6 +55,8 @@ interface NavItem {
   plus?: { href: string; label: string };
   /** The coach-mark anchor a tour may spotlight this row by. */
   coach?: CoachAnchor;
+  /** A count at the row's right edge — changes waiting for review. */
+  badge?: { count: number; label: string };
 }
 
 interface NavGroup {
@@ -81,6 +85,7 @@ export default function AppNav({
   isOperator,
   chats,
   version,
+  pendingChanges = null,
   children,
 }: NavProps) {
   const isNarrow = useMediaQuery(NARROW);
@@ -208,6 +213,24 @@ export default function AppNav({
         // kind of chat; the page keeps its address under /chat.
         { href: `/chat/artifacts`, label: 'Artifacts', icon: ICONS.layers },
         { href: `/files`, label: 'Files', icon: ICONS.folder },
+        // Every admin connector's change requests, for the people who
+        // approve them; the count is what waits on them.
+        ...(isOperator
+          ? [
+              {
+                href: `/changes`,
+                label: 'Changes',
+                icon: ICONS.changeRequest,
+                badge:
+                  pendingChanges && pendingChanges > 0
+                    ? {
+                        count: pendingChanges,
+                        label: `${pendingChanges} waiting for approval`,
+                      }
+                    : undefined,
+              },
+            ]
+          : []),
       ],
     },
     {
@@ -351,6 +374,16 @@ export default function AppNav({
                       className={`h-4 w-4 shrink-0 ${here ? '' : 'text-gray-500 dark:text-gray-400'}`}
                     />
                     <span className="truncate">{item.label}</span>
+                    {item.badge ? (
+                      <span
+                        data-testid="nav-badge"
+                        aria-label={item.badge.label}
+                        title={item.badge.label}
+                        className="ml-auto shrink-0 rounded-full bg-blue-600 px-1.5 text-[11px] leading-[18px] font-semibold text-white dark:bg-blue-500"
+                      >
+                        {item.badge.count > 99 ? '99+' : item.badge.count}
+                      </span>
+                    ) : null}
                   </Link>
                   {item.plus ? (
                     <Link
