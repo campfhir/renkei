@@ -709,6 +709,12 @@ const SEND_AT_HINT =
   'e.g. 2026-11-02T14:00:00-05:00 — resolve "9am Monday" with resolve_date first. Omit to ' +
   "send now. It must be at least a minute ahead. The message waits in Outlook's Outbox " +
   'and Exchange sends it then; deleting it from the Outbox cancels it.';
+/** Preview tools only pre-set the card's "Send later" time; the user confirms it on the card. */
+const PREVIEW_SEND_AT_HINT =
+  'Pre-set the preview card\'s "Send later" time to this moment (same format as sendAt on ' +
+  'outlook_send_mail: ISO 8601 with a UTC offset or "Z", resolved with resolve_date first). ' +
+  'The user sees it filled in and can change or clear it before confirming. Omit to leave ' +
+  'the card on Send.';
 
 /** `sendAt` as the UTC instant Graph wants, or null when none was given. */
 function parseSendAt(
@@ -2355,9 +2361,12 @@ export async function registerOutlookTools(
   // below. On a host without MCP Apps support the draft still exists — the
   // text result says so, and the user can send it from Outlook's Drafts.
 
-  const previewResultText = (draft: DraftInfo, what: string) =>
+  const previewResultText = (draft: DraftInfo, what: string, scheduledAt: string | null = null) =>
     `${what} is drafted and awaiting the user's decision on the preview card — ` +
     `to: ${draft.to.join(', ') || '(auto-populated)'}; subject: ${draft.subject || '(none)'}. ` +
+    (scheduledAt
+      ? `The card's Send later is pre-set to ${scheduledAt} (UTC); the user confirms or changes it there. `
+      : '') +
     `Do not send it another way and do not repeat the draft contents in your reply; the user ` +
     `sends or discards from the card. If no card appeared in this client, tell the user the ` +
     `draft is in their Outlook Drafts folder.`;
@@ -2365,10 +2374,16 @@ export async function registerOutlookTools(
   // `messageId` (reply-family only) is what lets the card edit the reply's
   // own text: the confirm tool rebuilds the draft from that message rather
   // than editing a body the quoted thread is part of.
-  const draftStructured = (kind: string, draft: DraftInfo, messageId?: string) => ({
+  const draftStructured = (
+    kind: string,
+    draft: DraftInfo,
+    messageId?: string,
+    sendAt: string | null = null
+  ) => ({
     kind,
     draftId: draft.draftId,
     ...(messageId ? { messageId } : {}),
+    ...(sendAt ? { sendAt } : {}),
     to: draft.to,
     cc: draft.cc,
     bcc: draft.bcc,
@@ -2394,6 +2409,7 @@ export async function registerOutlookTools(
         bcc: z.array(z.string().min(1)).describe('BCC email addresses').optional(),
         subject: z.string().min(1).describe('Subject line'),
         body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
+        sendAt: z.string().describe(PREVIEW_SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2405,6 +2421,8 @@ export async function registerOutlookTools(
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
       const subject = str(args.subject);
       const body = str(args.body);
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const created = await graphPost(context, access.auth, '/me/messages', {
         subject,
@@ -2432,8 +2450,8 @@ export async function registerOutlookTools(
         webLink: str((created.body ?? {}).webLink),
       };
       return {
-        ...textResult(previewResultText(draft, 'The email')),
-        structuredContent: draftStructured('compose', draft),
+        ...textResult(previewResultText(draft, 'The email', schedule.at)),
+        structuredContent: draftStructured('compose', draft, undefined, schedule.at),
       };
     }
   );
@@ -2484,6 +2502,7 @@ export async function registerOutlookTools(
             .optional(),
           cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
           bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+          sendAt: z.string().describe(PREVIEW_SEND_AT_HINT).optional(),
         }),
       },
       async (args: Record<string, any>) => {
@@ -2493,6 +2512,8 @@ export async function registerOutlookTools(
         if (!messageId) return errText('messageId is required');
         const comment = str(args.comment);
         if (!comment) return errText('comment is required');
+        const schedule = parseSendAt(args.sendAt);
+        if (!schedule.ok) return errText(schedule.error);
 
         const created = await createDraftAction(context, access.auth, messageId, preview.action, {
           comment,
@@ -2508,8 +2529,8 @@ export async function registerOutlookTools(
           messageId,
         });
         return {
-          ...textResult(previewResultText(created, preview.what)),
-          structuredContent: draftStructured(preview.kind, created, messageId),
+          ...textResult(previewResultText(created, preview.what, schedule.at)),
+          structuredContent: draftStructured(preview.kind, created, messageId, schedule.at),
         };
       }
     );
@@ -2534,6 +2555,7 @@ export async function registerOutlookTools(
         comment: z.string().describe(FORWARD_NOTE_HINT).optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
+        sendAt: z.string().describe(PREVIEW_SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2543,6 +2565,8 @@ export async function registerOutlookTools(
       if (!messageId) return errText('messageId is required');
       const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
       if (to.length === 0) return errText('to is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const created = await createDraftAction(context, access.auth, messageId, 'createForward', {
         comment: str(args.comment) || undefined,
@@ -2556,8 +2580,8 @@ export async function registerOutlookTools(
         messageId,
       });
       return {
-        ...textResult(previewResultText(created, 'The forward')),
-        structuredContent: draftStructured('forward', created, messageId),
+        ...textResult(previewResultText(created, 'The forward', schedule.at)),
+        structuredContent: draftStructured('forward', created, messageId, schedule.at),
       };
     }
   );

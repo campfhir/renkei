@@ -88,7 +88,7 @@ const STYLE = `
 .a-words { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
 .a-words.is-clamped { max-height: 11em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .a-more { align-self: flex-start; }
-.a-words-edit { width: 100%; font: inherit; color: inherit; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 7px 9px; resize: vertical; }
+.a-words-edit { width: 100%; font: inherit; font-size: 16px; color: inherit; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 7px 9px; resize: vertical; }
 textarea.a-words-edit { min-height: 84px; }
 .a-words-edit:focus { outline: 2px solid var(--card-accent); outline-offset: -1px; }
 .a-anchor { border: 1px solid var(--card-border); border-left: 3px solid var(--card-accent); border-radius: 6px; padding: 6px 10px; background: var(--card-field-bg); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }

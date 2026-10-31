@@ -82,6 +82,23 @@ body {
 .field input:not([type="checkbox"]):focus, .field textarea:focus, .field select:focus {
   outline: 2px solid var(--card-accent); outline-offset: -1px;
 }
+/* 16px or larger: iOS Safari zooms the page in on focus of any smaller field. */
+.field input:not([type="checkbox"]), .field textarea, .field select,
+.chips-box input.chips-input { font-size: 16px; }
+/* Nothing may size itself past its card: a native date/time control brings its own
+   intrinsic width (iOS Safari draws it wider than the column), so cap every field
+   and drop the native appearance that sets that width. */
+.card, .field { min-width: 0; max-width: 100%; }
+.field input:not([type="checkbox"]), .field textarea, .field select {
+  min-width: 0; max-width: 100%;
+}
+.field input[type="date"], .field input[type="time"] {
+  -webkit-appearance: none; appearance: none; display: block;
+}
+/* Two fields on one row (a date and its time); each takes an equal share, and
+   neither can grow past its share on a narrow screen. */
+.field-row { display: flex; gap: 8px; }
+.field-row > .field { flex: 1 1 0; min-width: 0; }
 .checkbox-row {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 0; font-size: 13px; cursor: pointer;

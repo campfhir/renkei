@@ -46,6 +46,18 @@ const KIND_TITLES: Record<string, string> = {
   forward: 'Forward',
 };
 
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** A moment's local calendar day, as a date input holds it (`YYYY-MM-DD`). */
+function localDateValue(at: Date): string {
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
+
+/** A moment's local clock time, as a time input holds it (`HH:mm`). */
+function localTimeValue(at: Date): string {
+  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
+}
+
 function render(bridge: WidgetBridge, result: ToolResult): void {
   const root = document.getElementById('root');
   if (!root) return;
@@ -126,17 +138,33 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     );
   }
 
-  const sendLater = inputField('Send later (optional)', '');
-  sendLater.input.type = 'datetime-local';
-  card.append(sendLater.field);
+  // A time the model picked arrives as a UTC instant; the picker works in the
+  // viewer's local clock, so it is shown there. A time that has already
+  // passed is left off rather than pre-filled into a refusal.
+  const suggested = str(draft.sendAt) ? new Date(str(draft.sendAt)) : null;
+  const suggestedAt =
+    suggested && !Number.isNaN(suggested.getTime()) && suggested.getTime() >= Date.now() + 60_000
+      ? suggested
+      : null;
+  // Date and time are two inputs: a native date-time control is wider than a
+  // phone column and is hard to fill by hand, while each half is a plain field.
+  const sendDate = inputField('Send date (optional)', suggestedAt ? localDateValue(suggestedAt) : '');
+  sendDate.input.type = 'date';
+  const sendTime = inputField('Time', suggestedAt ? localTimeValue(suggestedAt) : '');
+  sendTime.input.type = 'time';
+  const sendLaterRow = el('div', 'field-row');
+  sendLaterRow.append(sendDate.field, sendTime.field);
+  card.append(sendLaterRow);
   const discardButton = el('button', undefined, 'Discard');
-  const sendButton = el('button', 'primary', 'Send');
+  const sendButton = el('button', 'primary', suggestedAt ? 'Schedule' : 'Send');
   const footer = cardActions([discardButton, sendButton]);
   card.append(footer.actions);
   root.append(card);
-  sendLater.input.addEventListener('input', () => {
-    sendButton.textContent = sendLater.input.value ? 'Schedule' : 'Send';
-  });
+  const syncSendButton = () => {
+    sendButton.textContent = sendDate.input.value || sendTime.input.value ? 'Schedule' : 'Send';
+  };
+  sendDate.input.addEventListener('input', syncSendButton);
+  sendTime.input.addEventListener('input', syncSendButton);
 
   footer.run(sendButton, async () => {
     const finalTo = splitAddresses(toInput.input.value);
@@ -173,8 +201,12 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     }
     if (finalTo.length === 0) throw new Error('Add someone to send it to.');
     let when: Date | null = null;
-    if (sendLater.input.value) {
-      when = new Date(sendLater.input.value);
+    const dateValue = sendDate.input.value;
+    const timeValue = sendTime.input.value;
+    if (dateValue || timeValue) {
+      if (!dateValue || !timeValue) throw new Error('Pick both a send date and a time.');
+      // No offset in the string: the browser reads it as the viewer's local time.
+      when = new Date(`${dateValue}T${timeValue}`);
       if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
         throw new Error('Pick a send time at least a minute from now.');
       }

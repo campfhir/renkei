@@ -19,6 +19,12 @@ const EMAIL_COMPOSE_URI = widgetUri('email-compose.ts', 'email-compose');
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
+/** A moment as the viewer's local day and clock time, as the two Send later inputs hold them. */
+function localParts(ms: number): { day: string; clock: string } {
+  const iso = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000).toISOString();
+  return { day: iso.slice(0, 10), clock: iso.slice(11, 16) };
+}
+
 interface CardCall {
   name: string;
   arguments: Record<string, unknown>;
@@ -64,12 +70,92 @@ async function openChat(page: Page, testInfo: TestInfo, card: ToolCard): Promise
 /** Stand in for Graph: every card tool call succeeds. Returns what the card called. */
 async function mockCardTools(page: Page): Promise<CardCall[]> {
   const calls: CardCall[] = [];
-  await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
+  // On the whole context, not the page: a card's frame can run in its own process,
+  // and a page-level route then misses its request (the real route answers 403).
+  await page.context().route('**/chat/chats/*/widget/tool-call', async (route) => {
     calls.push(route.request().postDataJSON());
     await route.fulfill({ json: { result: { content: [{ type: 'text', text: 'Done.' }] } } });
   });
   return calls;
 }
+
+test('a time the model picked is pre-filled into Send later, and Schedule sends it', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
+  try {
+    // The preview tool's sendAt, a whole minute ahead, as the card receives it.
+    const at = new Date(Math.ceil((Date.now() + 26 * 3_600_000) / 60_000) * 60_000);
+    const card = emailCard('AAMkAD-suggested');
+    card.structuredContent = { ...card.structuredContent, sendAt: at.toISOString() };
+    modelId = await openChat(page, testInfo, card);
+    const calls = await mockCardTools(page);
+    const frame = page.frameLocator('iframe[title="Preview card"]').first();
+
+    // The picker shows the moment in the viewer's own clock, and the button says Schedule.
+    const day = frame.locator('input[type="date"]');
+    const clock = frame.locator('input[type="time"]');
+    const parts = localParts(at.getTime());
+    await expect(day).toHaveValue(parts.day, COLD);
+    await expect(clock).toHaveValue(parts.clock);
+    await expect(frame.getByRole('button', { name: 'Schedule' })).toBeVisible(COLD);
+    // Under 16px, iOS Safari zooms the page in when a field is focused.
+    for (const input of [day, clock]) {
+      expect(await input.evaluate((el) => getComputedStyle(el).fontSize)).toBe('16px');
+    }
+
+    await frame.getByRole('button', { name: 'Schedule' }).click();
+    await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
+    expect(calls).toHaveLength(1);
+    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(at.getTime());
+  } finally {
+    if (modelId) await removeModel(page.request, modelId);
+  }
+});
+
+test('on a phone the card and its fields stay inside the screen, with no sideways scroll', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(150_000);
+  let modelId: string | null = null;
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const at = new Date(Math.ceil((Date.now() + 26 * 3_600_000) / 60_000) * 60_000);
+    const card = emailCard('AAMkAD-phone');
+    card.structuredContent = { ...card.structuredContent, sendAt: at.toISOString() };
+    modelId = await openChat(page, testInfo, card);
+    const frame = page.frameLocator('iframe[title="Preview card"]').first();
+    await expect(frame.getByRole('button', { name: 'Schedule' })).toBeVisible(COLD);
+
+    const fit = await frame.locator('html').evaluate((html) => {
+      const cardEl = html.querySelector('.card');
+      if (!cardEl) throw new Error('the preview card did not render');
+      const cardBox = cardEl.getBoundingClientRect();
+      const overflowing = [
+        ...html.querySelectorAll('.field input, .field textarea, .field select, .field-value'),
+      ]
+        .filter((f) => {
+          const b = f.getBoundingClientRect();
+          return b.right > cardBox.right + 0.5 || b.left < cardBox.left - 0.5;
+        })
+        .map((f) => f.outerHTML.slice(0, 80));
+      return {
+        overflowing,
+        pageScrolls: html.scrollWidth > html.clientWidth + 0.5,
+        cardRight: cardBox.right,
+        viewportWidth: html.clientWidth,
+      };
+    });
+    expect(fit.overflowing).toEqual([]);
+    expect(fit.pageScrolls).toBe(false);
+    expect(fit.cardRight).toBeLessThanOrEqual(fit.viewportWidth);
+  } finally {
+    if (modelId) await removeModel(page.request, modelId);
+  }
+});
 
 test('the send card schedules: a picked time turns Send into Schedule and sends sendAt', async ({
   page,
@@ -83,23 +169,24 @@ test('the send card schedules: a picked time turns Send into Schedule and sends 
     const frame = page.frameLocator('iframe[title="Preview card"]').first();
     await expect(frame.getByRole('button', { name: 'Send', exact: true })).toBeVisible(COLD);
 
-    const later = frame.locator('input[type="datetime-local"]');
+    const day = frame.locator('input[type="date"]');
+    const clock = frame.locator('input[type="time"]');
     // Too soon is refused on the card, before any call.
-    await later.fill(new Date(Date.now() - 3_600_000).toISOString().slice(0, 16));
+    const past = localParts(Date.now() - 3_600_000);
+    await day.fill(past.day);
+    await clock.fill(past.clock);
     await frame.getByRole('button', { name: 'Schedule' }).click();
     await expect(frame.getByText('at least a minute from now')).toBeVisible(COLD);
     expect(calls).toHaveLength(0);
 
-    const when = new Date(Date.now() + 26 * 3_600_000);
-    const local = new Date(when.getTime() - when.getTimezoneOffset() * 60_000)
-      .toISOString()
-      .slice(0, 16);
-    await later.fill(local);
+    const later = localParts(Date.now() + 26 * 3_600_000);
+    await day.fill(later.day);
+    await clock.fill(later.clock);
     await frame.getByRole('button', { name: 'Schedule' }).click();
     await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
     expect(calls).toHaveLength(1);
     expect(calls[0].name).toBe('outlook_send_draft_confirm');
-    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(new Date(local).getTime());
+    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(new Date(`${later.day}T${later.clock}`).getTime());
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }
