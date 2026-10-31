@@ -32,6 +32,7 @@ import type { MCPToolContext } from '../common';
 import { withPresentationHint } from '../common';
 import { withScopeGate } from '../capability-gate';
 import type { GraphAuth } from '../graph/graph-auth';
+import { registerTeamsPreviewLookups } from './preview-lookups';
 import type { GraphCallContext } from '../graph/client';
 import { graphGet, graphPost, values, str, num, rec, textResult, errText } from '../graph/client';
 import { markdownToHtml } from '../outlook/markdown';
@@ -234,6 +235,7 @@ export async function registerTeamsTools(
   auth: GraphAuth
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.graphScopes, (name) => teamsScopeFor(name));
+  registerTeamsPreviewLookups(context, auth);
 
   // ——— chats ———
 

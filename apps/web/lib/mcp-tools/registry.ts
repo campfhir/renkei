@@ -586,7 +586,8 @@ export async function registerRenkeiTools(
     every module has run — see the flush at the end.
   */
   const { server, flush: flushGenericPreviews } = withActPreviews(
-    withKindStamp(withSchemaGuard(rawServer))
+    withKindStamp(withSchemaGuard(rawServer)),
+    context
   );
 
   const {

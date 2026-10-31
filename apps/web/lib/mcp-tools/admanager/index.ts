@@ -443,7 +443,7 @@ export function registerAdManagerTools(
   };
 
   const instanceNameFor = async (instanceId: string): Promise<string> =>
-    (await instanceFor(instanceId))?.name ?? instanceId;
+    (await instanceFor(instanceId))?.name ?? 'ADManager Plus';
 
   /** One user record by logon name, or an error string. */
   const getUserRecord = async (

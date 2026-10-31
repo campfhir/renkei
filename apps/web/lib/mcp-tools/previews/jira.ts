@@ -4,7 +4,7 @@
  */
 
 import type { PreviewBuilder } from './card';
-import { clip, count, ref, record, show, strings, text, yes } from './card';
+import { clip, count, named, nameOr, ref, record, show, strings, text, yes } from './card';
 
 const JIRA = 'Jira';
 const issue = (key: string) => ref(key, undefined, undefined);
@@ -47,7 +47,7 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jira_update_comment: (args) => ({
+  jira_update_comment: (args, names) => ({
     verb: 'Edit',
     icon: 'comment',
     title: `Edit a comment on ${text(args.issueKey)}`,
@@ -59,12 +59,13 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
       mode: 'edit',
       on: issue(text(args.issueKey)),
       commentId: text(args.commentId),
+      commentLabel: named(names, 'comment', args.commentId),
       bodyKey: 'comment',
       body: text(args.comment),
     },
   }),
 
-  jira_delete_comment: (args) => ({
+  jira_delete_comment: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
@@ -76,6 +77,7 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
       mode: 'delete',
       on: issue(text(args.issueKey)),
       commentId: text(args.commentId),
+      commentLabel: named(names, 'comment', args.commentId),
     },
   }),
 
@@ -132,7 +134,7 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
   jira_log_work: (args) => worklog(args),
   jira_create_worklog: (args) => worklog(args),
 
-  jira_delete_worklog: (args) => ({
+  jira_delete_worklog: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
@@ -144,6 +146,7 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
       mode: 'delete',
       on: issue(text(args.issueKey)),
       worklogId: text(args.worklogId),
+      worklogLabel: named(names, 'worklog', args.worklogId),
     },
   }),
 
@@ -203,17 +206,23 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jira_delete_issue_link: (args) => ({
+  jira_delete_issue_link: (args, names) => ({
     verb: 'Unlink',
     tone: 'danger',
     icon: 'link',
     title: 'Remove a link between two issues',
     subtitle: JIRA,
     confirmLabel: 'Remove link',
-    body: { kind: 'link', mode: 'delete', relation: '', linkId: text(args.linkId) },
+    body: {
+      kind: 'link',
+      mode: 'delete',
+      relation: '',
+      linkId: text(args.linkId),
+      linkLabel: named(names, 'link', args.linkId),
+    },
   }),
 
-  jira_create_sprint: (args) => ({
+  jira_create_sprint: (args, names) => ({
     verb: 'Create',
     icon: 'sprint',
     title: `Create the sprint ${text(args.name)}`,
@@ -224,7 +233,7 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
       mode: 'create',
       sprint: {
         name: text(args.name),
-        board: text(args.boardId),
+        board: named(names, 'board', args.boardId),
         start: text(args.startDate),
         end: text(args.endDate),
         goal: text(args.goal),
@@ -232,30 +241,34 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jira_complete_sprint: (args) => ({
+  jira_complete_sprint: (args, names) => ({
     verb: 'Complete',
     tone: 'caution',
     icon: 'sprint',
-    title: `Complete sprint ${text(args.sprintId)}`,
+    title: `Complete ${nameOr(names, 'sprint', args.sprintId, 'the sprint')}`,
     subtitle: JIRA,
     confirmLabel: 'Complete sprint',
     body: {
       kind: 'sprint',
       mode: 'complete',
-      sprint: { id: text(args.sprintId), board: text(args.boardId) },
+      sprint: {
+        id: text(args.sprintId),
+        name: named(names, 'sprint', args.sprintId),
+        board: named(names, 'board', args.boardId),
+      },
     },
   }),
 
-  jira_move_issue_to_sprint: (args) => ({
+  jira_move_issue_to_sprint: (args, names) => ({
     verb: 'Move',
     icon: 'sprint',
-    title: `Move ${text(args.issueKey)} into sprint ${text(args.sprintId)}`,
+    title: `Move ${text(args.issueKey)} into ${nameOr(names, 'sprint', args.sprintId, 'the sprint')}`,
     subtitle: JIRA,
     confirmLabel: 'Move to sprint',
     body: {
       kind: 'sprint',
       mode: 'move',
-      sprint: { id: text(args.sprintId) },
+      sprint: { id: text(args.sprintId), name: named(names, 'sprint', args.sprintId) },
       issues: [text(args.issueKey)],
     },
   }),
@@ -269,21 +282,21 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
     body: { kind: 'sprint', mode: 'remove', issues: [text(args.issueKey)] },
   }),
 
-  jira_bulk_move_sprint_issues: (args) => {
+  jira_bulk_move_sprint_issues: (args, names) => {
     const keys = strings(args.issueKeys);
     const sprint = text(args.sprintId);
     return {
       verb: 'Move many',
       icon: 'sprint',
       title: sprint
-        ? `Move ${count(keys.length, 'issue')} into sprint ${sprint}`
+        ? `Move ${count(keys.length, 'issue')} into ${nameOr(names, 'sprint', sprint, 'the sprint')}`
         : `Move ${count(keys.length, 'issue')} out of their sprints`,
       subtitle: JIRA,
       confirmLabel: 'Move issues',
       body: {
         kind: 'sprint',
         mode: 'move',
-        ...(sprint ? { sprint: { id: sprint } } : {}),
+        ...(sprint ? { sprint: { id: sprint, name: named(names, 'sprint', sprint) } } : {}),
         issues: keys,
       },
     };
@@ -307,18 +320,23 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jira_delete_component: (args) => ({
+  jira_delete_component: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
-    title: `Delete component ${text(args.componentId)}`,
+    title: `Delete ${nameOr(names, 'component', args.componentId, 'a component')}`,
     subtitle: JIRA,
     confirmLabel: 'Delete component',
     body: {
       kind: 'change',
-      subject: ref(text(args.componentId), 'Component'),
+      subject: ref(nameOr(names, 'component', args.componentId, 'The component'), 'Component'),
       rows: text(args.moveIssuesTo)
-        ? [{ label: 'Its issues move to', value: text(args.moveIssuesTo) }]
+        ? [
+            {
+              label: 'Its issues move to',
+              value: nameOr(names, 'component', args.moveIssuesTo, 'another component'),
+            },
+          ]
         : [],
       notes: [
         text(args.moveIssuesTo)
@@ -349,16 +367,16 @@ export const JIRA_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jira_delete_filter: (args) => ({
+  jira_delete_filter: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
-    title: `Delete filter ${text(args.filterId)}`,
+    title: `Delete ${nameOr(names, 'filter', args.filterId, 'a saved filter')}`,
     subtitle: JIRA,
     confirmLabel: 'Delete filter',
     body: {
       kind: 'change',
-      subject: ref(text(args.filterId), 'Saved filter'),
+      subject: ref(nameOr(names, 'filter', args.filterId, 'The filter'), 'Saved filter'),
       rows: [],
       notes: ['Boards and dashboards that use it stop showing its results.'],
     },

@@ -3,14 +3,15 @@
  * replying and forwarding mail, and cancelling an event, have hand-written
  * cards next to their tools.)
  *
- * A mailbox act names its messages by Graph id, which says nothing to a
- * person, so those cards say what will happen and to how many; the message
- * subjects are not in the arguments to show.
+ * A mailbox act names its messages and folders by Graph id, which says
+ * nothing to a person. The lookup (outlook/preview-lookups.ts) finds the
+ * subject or folder name; where it could not, the card says "a message" or
+ * "another folder", never the id.
  */
 
 import type { Attendee } from '@/lib/mcp-widgets/src/act-card';
-import type { PreviewBuilder } from './card';
-import { count, record, strings, text, yes } from './card';
+import type { Names, PreviewBuilder } from './card';
+import { count, named, record, strings, text, yes } from './card';
 import { parseRecurrence } from '../outlook/recurrence';
 
 const OUTLOOK = 'Outlook';
@@ -27,6 +28,39 @@ function attendeesOf(required: string[], optional: string[], removed: string[] =
     ...optional.map((name) => ({ name, optional: true })),
     ...removed.map((name) => ({ name, removed: true })),
   ];
+}
+
+/** The well-known folder names a call may pass in place of an id, as Outlook shows them. */
+const WELL_KNOWN: Record<string, string> = {
+  inbox: 'Inbox',
+  archive: 'Archive',
+  deleteditems: 'Deleted Items',
+  drafts: 'Drafts',
+  sentitems: 'Sent Items',
+  junkemail: 'Junk Email',
+  outbox: 'Outbox',
+};
+
+/** A folder a call names: a well-known name, its looked-up name, else '' (never an id). */
+function folderOf(names: Names, folder: unknown): string {
+  return WELL_KNOWN[text(folder).toLowerCase()] ?? named(names, 'folder', folder);
+}
+
+/** The message a single-message act names: its subject in quotes, else "a message". */
+function messageOf(names: Names, messageId: unknown): { quoted: string; plain: string } {
+  const subject = named(names, 'message', messageId);
+  return subject
+    ? { quoted: `“${subject}”`, plain: `“${subject}”` }
+    : { quoted: 'a message', plain: '1 message' };
+}
+
+/** The messages a bulk job was given by id: the first few subjects, then a count. */
+function bulkMessages(names: Names, ids: string[]): string {
+  const subjects = ids.map((id) => named(names, 'message', id)).filter(Boolean);
+  if (subjects.length === 0) return count(ids.length, 'named message');
+  const shown = subjects.slice(0, 3).map((subject) => `“${subject}”`);
+  const rest = ids.length - shown.length;
+  return rest > 0 ? `${shown.join(', ')} and ${count(rest, 'other message')}` : shown.join(', ');
 }
 
 export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
@@ -138,16 +172,21 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
     };
   },
 
-  outlook_mark_message: (args) => ({
+  outlook_mark_message: (args, names) => ({
     verb: yes(args.isRead) ? 'Mark read' : 'Mark unread',
     icon: 'mail',
-    title: yes(args.isRead) ? 'Mark a message as read' : 'Mark a message as unread',
+    title: `Mark ${messageOf(names, args.messageId).quoted} as ${yes(args.isRead) ? 'read' : 'unread'}`,
     subtitle: OUTLOOK,
     confirmLabel: yes(args.isRead) ? 'Mark read' : 'Mark unread',
-    body: { kind: 'mailbox', mode: yes(args.isRead) ? 'read' : 'unread', messages: '1 message' },
+    body: {
+      kind: 'mailbox',
+      mode: yes(args.isRead) ? 'read' : 'unread',
+      messages: messageOf(names, args.messageId).plain,
+    },
   }),
 
-  outlook_flag_message: (args) => {
+  outlook_flag_message: (args, names) => {
+    const message = messageOf(names, args.messageId);
     const status = text(args.status);
     const mode = status === 'flagged' ? 'flag' : status === 'complete' ? 'complete' : 'unflag';
     return {
@@ -155,27 +194,29 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
       icon: 'flag',
       title:
         mode === 'flag'
-          ? 'Flag a message for follow-up'
+          ? `Flag ${message.quoted} for follow-up`
           : mode === 'complete'
-            ? 'Mark a flagged message complete'
-            : 'Clear the flag on a message',
+            ? `Mark ${message.quoted} complete`
+            : `Clear the flag on ${message.quoted}`,
       subtitle: OUTLOOK,
       confirmLabel:
         mode === 'flag' ? 'Flag message' : mode === 'complete' ? 'Mark complete' : 'Clear flag',
-      body: { kind: 'mailbox', mode, messages: '1 message' },
+      body: { kind: 'mailbox', mode, messages: message.plain },
     };
   },
 
-  outlook_categorize_message: (args) => ({
+  outlook_categorize_message: (args, names) => ({
     verb: 'Categorize',
     icon: 'tag',
-    title: 'Change a message’s categories',
+    title: named(names, 'message', args.messageId)
+      ? `Change the categories of “${named(names, 'message', args.messageId)}”`
+      : 'Change a message’s categories',
     subtitle: OUTLOOK,
     confirmLabel: 'Save categories',
     body: {
       kind: 'mailbox',
       mode: 'categorize',
-      messages: '1 message',
+      messages: messageOf(names, args.messageId).plain,
       categories: {
         add: strings(args.add),
         remove: strings(args.remove),
@@ -184,21 +225,21 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  outlook_move_message: (args) => ({
+  outlook_move_message: (args, names) => ({
     verb: 'Move',
     icon: 'folder',
-    title: `Move a message to ${text(args.destinationFolder)}`,
+    title: `Move ${messageOf(names, args.messageId).quoted} to ${folderOf(names, args.destinationFolder) || 'another folder'}`,
     subtitle: OUTLOOK,
     confirmLabel: 'Move message',
     body: {
       kind: 'mailbox',
       mode: 'move',
-      messages: '1 message',
-      to: text(args.destinationFolder),
+      messages: messageOf(names, args.messageId).plain,
+      to: folderOf(names, args.destinationFolder) || 'Another folder',
     },
   }),
 
-  outlook_create_mail_folder: (args) => ({
+  outlook_create_mail_folder: (args, names) => ({
     verb: 'Create',
     icon: 'folder',
     title: `Create the mail folder ${text(args.displayName)}`,
@@ -209,36 +250,44 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
       mode: 'folder-create',
       to: text(args.displayName),
       messages: text(args.parentFolderId)
-        ? `Inside folder ${text(args.parentFolderId)}`
+        ? `Inside ${folderOf(names, args.parentFolderId) || 'another folder'}`
         : 'At the top of your mailbox',
     },
   }),
 
-  outlook_rename_mail_folder: (args) => ({
+  outlook_rename_mail_folder: (args, names) => ({
     verb: 'Rename',
     icon: 'folder',
-    title: `Rename a mail folder to ${text(args.displayName)}`,
+    title: folderOf(names, args.folderId)
+      ? `Rename ${folderOf(names, args.folderId)} to ${text(args.displayName)}`
+      : `Rename a mail folder to ${text(args.displayName)}`,
     subtitle: OUTLOOK,
     confirmLabel: 'Rename folder',
     body: {
       kind: 'mailbox',
       mode: 'folder-rename',
-      folder: `Folder ${text(args.folderId)}`,
+      folder: folderOf(names, args.folderId) || 'The folder',
       to: text(args.displayName),
     },
   }),
 
-  outlook_delete_mail_folder: (args) => ({
+  outlook_delete_mail_folder: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
-    title: 'Delete a mail folder',
+    title: folderOf(names, args.folderId)
+      ? `Delete the mail folder ${folderOf(names, args.folderId)}`
+      : 'Delete a mail folder',
     subtitle: OUTLOOK,
     confirmLabel: 'Delete folder',
-    body: { kind: 'mailbox', mode: 'folder-delete', folder: `Folder ${text(args.folderId)}` },
+    body: {
+      kind: 'mailbox',
+      mode: 'folder-delete',
+      folder: folderOf(names, args.folderId) || 'The folder',
+    },
   }),
 
-  outlook_start_bulk_mail_job: (args) => {
+  outlook_start_bulk_mail_job: (args, names) => {
     const action = text(args.action);
     const filters = record(args.filters);
     return {
@@ -253,7 +302,7 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
         mode: 'bulk',
         messages:
           strings(args.messageIds).length > 0
-            ? `${count(strings(args.messageIds).length, 'named message')}`
+            ? bulkMessages(names, strings(args.messageIds))
             : 'Every message matching the filters below',
         filters: [
           {
@@ -266,7 +315,12 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
                 : action,
           },
           ...(text(args.destinationFolder)
-            ? [{ label: 'Into folder', value: text(args.destinationFolder) }]
+            ? [
+                {
+                  label: 'Into folder',
+                  value: folderOf(names, args.destinationFolder) || 'Another folder',
+                },
+              ]
             : []),
           ...(text(args.flagStatus) ? [{ label: 'Flag', value: text(args.flagStatus) }] : []),
           ...strings(args.add).map((value) => ({ label: 'Add category', value })),
@@ -274,7 +328,12 @@ export const OUTLOOK_PREVIEWS: Record<string, PreviewBuilder> = {
           ...strings(args.replace).map((value) => ({ label: 'Set category', value })),
           ...Object.entries(filters).map(([label, value]) => ({
             label,
-            value: typeof value === 'string' ? value : JSON.stringify(value),
+            value:
+              label === 'folder'
+                ? folderOf(names, value) || 'A folder'
+                : typeof value === 'string'
+                  ? value
+                  : JSON.stringify(value),
           })),
         ],
       },

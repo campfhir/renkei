@@ -33,6 +33,7 @@ import type { MCPToolContext } from '../common';
 import { withPresentationHint } from '../common';
 import { withScopeGate } from '../capability-gate';
 import type { GraphAuth } from '../graph/graph-auth';
+import { registerOneNotePreviewLookups } from './preview-lookups';
 import type { GraphCallContext } from '../graph/client';
 import {
   graphGet,
@@ -173,6 +174,7 @@ export async function registerOneNoteTools(
   auth: GraphAuth
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.graphScopes, (name) => onenoteScopeFor(name));
+  registerOneNotePreviewLookups(context, auth);
 
   server.registerTool(
     'onenote_list_notebooks',

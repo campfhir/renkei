@@ -365,7 +365,7 @@ function renderComment(body: CommentBody, ctx: RenderContext): HTMLElement {
     const line = el('div', 'a-flow');
     line.append(
       icon(body.mode === 'delete' ? 'trash' : 'check'),
-      el('span', undefined, body.commentId ? `Comment ${body.commentId}` : 'The comment')
+      el('span', undefined, body.commentLabel ? `Comment ${body.commentLabel}` : 'The comment')
     );
     if (body.mode !== 'delete') {
       line.append(
@@ -472,7 +472,7 @@ function renderWorklog(body: WorklogBody, ctx: RenderContext): HTMLElement {
       el(
         'span',
         undefined,
-        `Worklog ${str(body.worklogId)} will be removed and its time taken back off the issue.`
+        `${body.worklogLabel ? `The worklog (${body.worklogLabel})` : 'The worklog'} will be removed and its time taken back off the issue.`
       )
     );
     root.append(line);
@@ -495,7 +495,11 @@ function renderLink(body: LinkBody): HTMLElement {
     const line = el('div', 'a-flow');
     line.append(
       icon('trash'),
-      el('span', undefined, `Link ${str(body.linkId)} will be removed from both issues.`)
+      el(
+        'span',
+        undefined,
+        `${body.linkLabel ? `The link (${body.linkLabel})` : 'The link'} will be removed from both issues.`
+      )
     );
     root.append(line);
     return root;
@@ -780,8 +784,9 @@ function renderSprint(body: SprintBody): HTMLElement {
   const root = el('div', 'a-body');
   const sprint = body.sprint;
   if (sprint && (sprint.name || sprint.id)) {
+    // The id is the confirm call's handle, never wording for a person.
     const card = el('div', 'a-sprint-card');
-    card.append(el('div', 'a-sprint-name', sprint.name || `Sprint ${str(sprint.id)}`));
+    card.append(el('div', 'a-sprint-name', sprint.name || 'The sprint'));
     const dates = [
       sprint.start ? formatWhen(sprint.start) : '',
       sprint.end ? formatWhen(sprint.end) : '',

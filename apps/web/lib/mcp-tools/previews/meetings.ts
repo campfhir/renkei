@@ -1,7 +1,7 @@
 /** Preview cards for Zoom (meetings and docs) and Webex (notes). */
 
 import type { PreviewBuilder } from './card';
-import { ref, text, yes } from './card';
+import { named, ref, text, yes } from './card';
 import { parseZoomRecurrence } from '../zoom/recurrence';
 
 const ZOOM = 'Zoom';
@@ -14,17 +14,21 @@ function repeats(value: unknown, start: string): string | undefined {
 }
 
 export const MEETING_PREVIEWS: Record<string, PreviewBuilder> = {
-  zoom_update_meeting: (args) => {
+  zoom_update_meeting: (args, names) => {
     const occurrence = text(args.occurrenceId);
+    const current = named(names, 'meeting', args.meetingId);
+    const when = named(names, 'occurrence', occurrence);
     const recurrence =
       repeats(args.recurrence, text(args.startTime)) ??
       (yes(args.stopRepeating) ? 'no longer — the series ends' : undefined);
     return {
       verb: 'Update',
       icon: 'calendar',
-      title: text(args.topic)
-        ? `Update “${text(args.topic)}”`
-        : `Update Zoom meeting ${text(args.meetingId)}`,
+      title: current
+        ? `Update “${current}”`
+        : text(args.topic)
+          ? `Update “${text(args.topic)}”`
+          : 'Update a Zoom meeting',
       subtitle: ZOOM,
       confirmLabel: 'Update meeting',
       editable:
@@ -32,13 +36,13 @@ export const MEETING_PREVIEWS: Record<string, PreviewBuilder> = {
       body: {
         kind: 'event',
         mode: 'update',
-        ...(text(args.topic) ? { subject: text(args.topic) } : {}),
+        ...(text(args.topic) || current ? { subject: text(args.topic) || current } : {}),
         ...(text(args.startTime) ? { start: text(args.startTime) } : {}),
         ...(text(args.durationMinutes) ? { where: `${text(args.durationMinutes)} minutes` } : {}),
         ...(text(args.timezone) ? { timezone: text(args.timezone) } : {}),
         ...(recurrence ? { recurrence } : {}),
         online: true,
-        scope: occurrence ? 'This occurrence only' : undefined,
+        scope: occurrence ? `This occurrence only${when ? ` (${when})` : ''}` : undefined,
         bodyKey: 'agenda',
         body: text(args.agenda),
         note: 'Only what is shown changes. Invitees see the new details.',
@@ -46,23 +50,27 @@ export const MEETING_PREVIEWS: Record<string, PreviewBuilder> = {
     };
   },
 
-  zoom_delete_meeting: (args) => {
+  zoom_delete_meeting: (args, names) => {
     const occurrence = text(args.occurrenceId);
+    const topic = named(names, 'meeting', args.meetingId);
+    const when = named(names, 'occurrence', occurrence);
     return {
       verb: 'Cancel',
       tone: 'danger',
       icon: 'trash',
       title: occurrence
-        ? `Cancel one occurrence of meeting ${text(args.meetingId)}`
-        : `Delete Zoom meeting ${text(args.meetingId)}`,
+        ? `Cancel one occurrence of ${topic ? `“${topic}”` : 'a Zoom meeting'}`
+        : `Delete ${topic ? `“${topic}”` : 'a Zoom meeting'}`,
       subtitle: ZOOM,
       confirmLabel: occurrence ? 'Cancel occurrence' : 'Delete meeting',
       body: {
         kind: 'event',
         mode: 'delete',
-        subject: `Meeting ${text(args.meetingId)}`,
+        subject: topic || 'The Zoom meeting',
         online: true,
-        scope: occurrence ? `Occurrence ${occurrence} only` : 'The whole meeting, every occurrence',
+        scope: occurrence
+          ? `${when ? `The occurrence on ${when}` : 'One occurrence'} only`
+          : 'The whole meeting, every occurrence',
         note:
           args.notifyRegistrants === false
             ? 'Registrants are not told.'
@@ -92,10 +100,12 @@ export const MEETING_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  zoom_append_to_doc: (args) => ({
+  zoom_append_to_doc: (args, names) => ({
     verb: 'Append',
     icon: 'doc',
-    title: `Add to Zoom doc ${text(args.fileId)}`,
+    title: named(names, 'doc', args.fileId)
+      ? `Add to the Zoom doc “${named(names, 'doc', args.fileId)}”`
+      : 'Add to a Zoom doc',
     subtitle: ZOOM,
     confirmLabel: 'Add to doc',
     editable: [{ key: 'text', label: 'Text to add', multiline: true }],
@@ -103,7 +113,7 @@ export const MEETING_PREVIEWS: Record<string, PreviewBuilder> = {
       kind: 'document',
       mode: 'append',
       type: 'Zoom Doc',
-      location: [`Doc ${text(args.fileId)}`],
+      location: [named(names, 'doc', args.fileId) || 'The doc'],
       bodyKey: 'text',
       body: text(args.text),
       unchanged: 'What is already in the doc is not touched.',

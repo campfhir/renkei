@@ -62,6 +62,7 @@ import {
 } from '../graph/directory';
 import { REQUEST_TIMEOUT_MS, isTimeoutError } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
+import { registerOutlookPreviewLookups } from './preview-lookups';
 import { createUploadSlot } from '../upload-slots';
 import { extractText } from '@renkei/document-text';
 
@@ -940,6 +941,7 @@ export async function registerOutlookTools(
   // all — the org may have narrowed the checkboxes, or the user narrowed
   // their own connect.
   const server = withScopeGate(rawServer, context.graphScopes, (name) => outlookScopeFor(name));
+  registerOutlookPreviewLookups(context, auth);
 
   // The async bulk mail job pair (replacing the synchronous outlook_bulk_*
   // act tools) lives in its own module — this file is long enough.

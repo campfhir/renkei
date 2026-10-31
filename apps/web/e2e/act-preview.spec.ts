@@ -111,7 +111,7 @@ const GALLERY: GalleryCard[] = [
     tool: 'confluence_update_page_preview',
     input: { pageId: '98765', markdown: '# Handbook\n\nThe 2026 edition.', title: 'Handbook 2026' },
     verb: 'Edit',
-    title: 'Edit page 98765 — “Handbook 2026”',
+    title: 'Edit the page — new title “Handbook 2026”',
   },
   {
     tool: 'onedrive_move_document_preview',
@@ -151,7 +151,7 @@ const GALLERY: GalleryCard[] = [
     tool: 'jira_complete_sprint_preview',
     input: { boardId: '3', sprintId: '41' },
     verb: 'Complete',
-    title: 'Complete sprint 41',
+    title: 'Complete the sprint',
   },
   {
     tool: 'bitbucket_update_pull_request_preview',
@@ -163,7 +163,7 @@ const GALLERY: GalleryCard[] = [
     tool: 'outlook_move_message_preview',
     input: { messageId: 'AAMk', destinationFolder: 'archive' },
     verb: 'Move',
-    title: 'Move a message to archive',
+    title: 'Move a message to Archive',
   },
   {
     tool: 'bitbucket_delete_branch_preview',

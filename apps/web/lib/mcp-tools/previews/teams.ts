@@ -5,15 +5,15 @@
  */
 
 import type { PreviewBuilder } from './card';
-import { ref, text } from './card';
+import { named, ref, text } from './card';
 
 const TEAMS = 'Teams';
 
 export const TEAMS_PREVIEWS: Record<string, PreviewBuilder> = {
-  teams_send_chat_message: (args) => {
+  teams_send_chat_message: (args, names) => {
     const toEmail = text(args.toEmail);
-    const chatId = text(args.chatId);
-    const destination = toEmail || `chat ${chatId}`;
+    const chat = named(names, 'chat', args.chatId);
+    const destination = toEmail || (chat ? `chat with ${chat}` : 'a Teams chat');
     return {
       verb: 'Send',
       icon: 'comment',
@@ -24,7 +24,11 @@ export const TEAMS_PREVIEWS: Record<string, PreviewBuilder> = {
       body: {
         kind: 'comment',
         mode: 'add',
-        on: ref(toEmail ? toEmail : 'Chat', toEmail ? '1:1 chat' : chatId, 'Sent as you, in Teams'),
+        on: ref(
+          toEmail || chat || 'Chat',
+          toEmail ? '1:1 chat' : 'Existing chat',
+          'Sent as you, in Teams'
+        ),
         bodyKey: 'markdown',
         body: text(args.markdown),
         badges: toEmail ? ['1:1 chat (started if there is none)'] : ['Existing chat'],
@@ -32,17 +36,20 @@ export const TEAMS_PREVIEWS: Record<string, PreviewBuilder> = {
     };
   },
 
-  teams_send_channel_message: (args) => {
+  teams_send_channel_message: (args, names) => {
     const replyTo = text(args.replyToId);
     const subject = text(args.subject);
+    const channel = named(names, 'channel', args.channelId);
+    const team = named(names, 'team', args.teamId);
+    const post = named(names, 'post', args.replyToId);
     return {
       verb: replyTo ? 'Reply' : 'Post',
       icon: 'comment',
       title: replyTo
-        ? `Reply in a Teams channel`
+        ? `Reply in ${channel || 'a Teams channel'}`
         : subject
-          ? `Post “${subject}” in a Teams channel`
-          : 'Post in a Teams channel',
+          ? `Post “${subject}” in ${channel || 'a Teams channel'}`
+          : `Post in ${channel || 'a Teams channel'}`,
       subtitle: TEAMS,
       confirmLabel: replyTo ? 'Post reply' : 'Post',
       editable: [{ key: 'markdown', label: replyTo ? 'Reply' : 'Post', multiline: true }],
@@ -50,13 +57,13 @@ export const TEAMS_PREVIEWS: Record<string, PreviewBuilder> = {
         kind: 'comment',
         mode: 'add',
         on: ref(
-          `Channel ${text(args.channelId)}`,
+          channel ? `Channel ${channel}` : 'The channel',
           subject || undefined,
-          `Team ${text(args.teamId)} — everyone in the channel sees it`
+          `${team ? `Team ${team} — ` : ''}everyone in the channel sees it`
         ),
         bodyKey: 'markdown',
         body: text(args.markdown),
-        badges: replyTo ? [`Reply to post ${replyTo}`] : ['New post'],
+        badges: replyTo ? [post ? `Reply to a post ${post}` : 'Reply to a post'] : ['New post'],
       },
     };
   },

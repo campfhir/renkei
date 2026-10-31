@@ -11,7 +11,12 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { nameFieldOf, soqlString, type DescribeSObject } from '@renkei/connector-salesforce';
+import {
+  isSalesforceId,
+  nameFieldOf,
+  soqlString,
+  type DescribeSObject,
+} from '@renkei/connector-salesforce';
 import type { MCPToolContext } from '../common';
 import {
   APP_ONLY_META,
@@ -37,6 +42,52 @@ import { describeObject, resolveObject, resolveOwner, resolveRecord } from './sc
 import { sfQueryPolicy } from './policy';
 import { prepareWrite, blocked, display } from './writes';
 import { fieldsField, objectField, recordField } from './fields';
+import { resolveRef } from './records';
+
+/** Ids shown on a card are looked up this many at a time at most; the rest read as "a record". */
+const MAX_NAMED_IDS = 20;
+
+/**
+ * The names of the records behind any ids among `values` (a lookup field is
+ * written as the id it points at), so a card shows "Acme", never "001…".
+ * A lookup that fails leaves the id out of the map; `shown` then says so.
+ */
+async function nameIds(
+  context: MCPToolContext,
+  access: SalesforceAccess,
+  values: unknown[]
+): Promise<Map<string, string>> {
+  const ids = [
+    ...new Set(
+      values.filter((value): value is string => typeof value === 'string' && isSalesforceId(value))
+    ),
+  ].slice(0, MAX_NAMED_IDS);
+  const names = new Map<string, string>();
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const found = await resolveRef(context, access, { record: id });
+        if (typeof found !== 'string' && found.name && found.name !== found.id) {
+          names.set(id, found.name);
+        }
+      } catch {
+        // Falls back to "a record".
+      }
+    })
+  );
+  return names;
+}
+
+/** A field value for a card: an id becomes the record's name; anything else as `display` has it. */
+function shown(value: unknown, names: Map<string, string>): string {
+  if (typeof value === 'string' && isSalesforceId(value)) return names.get(value) ?? 'a record';
+  return display(value);
+}
+
+/** A record's name for a card; objects with no name field would otherwise show their id. */
+function nameOnCard(entry: { id: string; name: string }, label: string): string {
+  return entry.name && entry.name !== entry.id ? entry.name : `A ${label}`;
+}
 
 const MAX_BATCH = 200;
 /** Records listed on a card; the rest are counted. */
@@ -176,6 +227,16 @@ export function registerBulkTools(
       }
       if (errors.length > 0) return errText(errors.join('\n'));
       const label = (name: string) => describe.fields.find((f) => f.name === name)?.label ?? name;
+      const names = await nameIds(
+        context,
+        access,
+        resolved
+          .slice(0, MAX_SHOWN)
+          .flatMap((entry) => [
+            ...Object.values(entry.values),
+            ...Object.keys(entry.values).map((key) => entry.current[key]),
+          ])
+      );
       return previewResult({
         kind: 'directory_action',
         previewId: newPreviewId(),
@@ -189,9 +250,9 @@ export function registerBulkTools(
         },
         fields: resolved.slice(0, MAX_SHOWN).flatMap((entry) =>
           Object.entries(entry.values).map(([key, value]) => ({
-            label: `${entry.name} · ${label(key)}`,
-            value: display(value),
-            ...(key in entry.current ? { oldValue: display(entry.current[key]) } : {}),
+            label: `${nameOnCard(entry, describe.label)} · ${label(key)}`,
+            value: shown(value, names),
+            ...(key in entry.current ? { oldValue: shown(entry.current[key], names) } : {}),
           }))
         ),
         groupLists:
@@ -199,7 +260,7 @@ export function registerBulkTools(
             ? [
                 {
                   label: `And ${resolved.length - MAX_SHOWN} more`,
-                  groups: resolved.slice(MAX_SHOWN).map((e) => e.name),
+                  groups: resolved.slice(MAX_SHOWN).map((e) => nameOnCard(e, describe.label)),
                   tone: 'muted',
                 },
               ]
@@ -309,7 +370,7 @@ export function registerBulkTools(
         groupLists: [
           {
             label: 'Deleted',
-            groups: found.map((entry) => `${entry.name} (${entry.id})`),
+            groups: found.map((entry) => nameOnCard(entry, describe.label)),
             tone: 'remove',
           },
           ...(cascades.length
@@ -412,7 +473,7 @@ export function registerBulkTools(
             label: 'Records',
             groups: found.map(
               (entry) =>
-                `${entry.name} — from ${str(rec(entry.current.Owner).Name) || 'current owner'}`
+                `${nameOnCard(entry, describe.label)} — from ${str(rec(entry.current.Owner).Name) || 'current owner'}`
             ),
           },
         ],
@@ -538,6 +599,10 @@ export function registerBulkTools(
       }
       if (errors.length > 0) return errText(errors.join('\n'));
       const total = children.reduce((n, group) => n + group.records.length, 0);
+      const names = await nameIds(context, access, [
+        ...Object.values(parent.values),
+        ...children.flatMap((group) => group.records.flatMap((row) => Object.values(row))),
+      ]);
       return previewResult({
         kind: 'directory_action',
         previewId: newPreviewId(),
@@ -548,13 +613,13 @@ export function registerBulkTools(
         person: { name: describe.label, detail: 'New record' },
         fields: Object.entries(parent.values).map(([key, value]) => ({
           label: key,
-          value: display(value),
+          value: shown(value, names),
         })),
         groupLists: children.map((group) => ({
           label: `${group.object} (${group.relationship})`,
           groups: group.records.map((record) =>
             Object.entries(record)
-              .map(([key, value]) => `${key}: ${display(value)}`)
+              .map(([key, value]) => `${key}: ${shown(value, names)}`)
               .join(', ')
           ),
           tone: 'add' as const,

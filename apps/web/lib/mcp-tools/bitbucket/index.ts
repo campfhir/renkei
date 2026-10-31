@@ -21,6 +21,7 @@ import { registerRepositoryTools } from './repositories';
 import { registerProjectTools } from './projects';
 import { registerPullRequestTools } from './pullrequests';
 import { registerPipelineTools } from './pipelines';
+import { registerBitbucketPreviewLookups } from './preview-lookups';
 
 export const BITBUCKET_MCP_CONNECTOR = 'atlassian-bitbucket';
 
@@ -33,6 +34,7 @@ export async function registerBitbucketTools(
     bitbucketScopeFor(name)
   );
 
+  registerBitbucketPreviewLookups(context, auth);
   await registerRepositoryTools(server, context, auth);
   await registerProjectTools(server, context, auth);
   await registerPullRequestTools(server, context, auth);

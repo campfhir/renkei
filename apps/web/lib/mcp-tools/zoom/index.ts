@@ -29,6 +29,7 @@ import {
 } from './recurrence';
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
+import { registerZoomPreviewLookups } from './preview-lookups';
 import { withPresentationHint, type MCPToolContext } from '../common';
 import {
   APP_ONLY_META,
@@ -301,6 +302,9 @@ export async function registerZoomTools(
   // A tool whose scope the user's (possibly narrowed) selection lacks is
   // never registered — Renkei-enforced narrowing, see the header comment.
   const server = withScopeGate(rawServer, context.zoomScopes, (name) => zoomScopeFor(name));
+
+  // The names the generated preview cards show in place of ids (../lookup.ts).
+  registerZoomPreviewLookups(context, auth, zoomScopeFor);
 
   server.registerTool(
     'zoom_list_meetings',

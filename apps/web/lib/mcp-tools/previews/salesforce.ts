@@ -12,24 +12,49 @@
  */
 
 import type { Row } from '@/lib/mcp-widgets/src/act-card';
-import type { PreviewBuilder } from './card';
-import { clip, record, records, ref, show, text } from './card';
+import type { Names, PreviewBuilder } from './card';
+import { clip, named, record, records, ref, show, text } from './card';
 
 type Args = Record<string, unknown>;
 
 /** "Salesforce · UAT" — the org asked for, or the person's default org. */
 const where = (args: Args) => `Salesforce · ${text(args.org) || 'your org'}`;
 
-/** A { object?, record } reference in words. */
-function recordName(value: Args, object?: unknown): string {
-  const named = text(value.record);
-  const of = text(value.object ?? object);
-  return of ? `${of} ${named}` : named;
+/** Salesforce's own test for "this is an id, not a name" (15 or 18 characters). */
+const isId = (value: string) => /^[a-zA-Z0-9]{15}(?:[a-zA-Z0-9]{3})?$/.test(value);
+
+/**
+ * What a person calls a record: the name as they typed it, the name looked
+ * up for an id, or "the record" — an id is a handle for the confirm call.
+ */
+function recordLabel(ref: string, names: Names): string {
+  if (!isId(ref)) return ref;
+  return named(names, 'record', ref) || 'the record';
 }
 
-function fieldRows(value: unknown): Row[] {
+/** A { object?, record } reference in words: "Account Acme", never "Account 001…". */
+function recordName(value: Args, names: Names, object?: unknown): string {
+  const of = text(value.object ?? object);
+  const label = recordLabel(text(value.record), names);
+  if (!of) return label;
+  return label === 'the record' ? `${of} record` : `${of} ${label}`;
+}
+
+/** The record's own name where there is one, else a generic phrase. */
+const recordTitle = (value: Args, names: Names, object?: unknown) =>
+  recordLabel(text(value.record), names) === 'the record'
+    ? text(value.object ?? object) || 'Record'
+    : recordLabel(text(value.record), names);
+
+function fieldRows(value: unknown, names: Names = {}): Row[] {
   return Object.entries(record(value)).map(([label, v]) => {
-    const shown = v === null ? '(cleared)' : show(v);
+    // A lookup typed as an id reads as the record it points at.
+    const shown =
+      v === null
+        ? '(cleared)'
+        : typeof v === 'string' && isId(v.trim())
+          ? recordLabel(v.trim(), names)
+          : show(v);
     return { label, value: shown, block: shown.length > 80 };
   });
 }
@@ -37,10 +62,16 @@ function fieldRows(value: unknown): Row[] {
 const CHECKED =
   'Values are checked against the object (types, picklists, required fields) when you confirm; a value Salesforce refuses changes nothing.';
 
-const related = (args: Args) =>
+const related = (args: Args, names: Names) =>
   records(args.relatedTo)
-    .map((entry) => recordName(entry))
+    .map((entry) => recordName(entry, names))
     .filter(Boolean);
+
+/** A person given as an id (or a name): the looked-up name, the typed name, or a generic phrase. */
+function personLabel(value: string, names: Names): string {
+  if (!isId(value)) return value;
+  return named(names, 'user', value) || 'a Salesforce user';
+}
 
 export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
   salesforce_request_admin_change: (args) => ({
@@ -62,7 +93,7 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  salesforce_create_record: (args) => {
+  salesforce_create_record: (args, names) => {
     const object = text(args.object);
     const parent = record(args.parent);
     return {
@@ -76,26 +107,33 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
         subject: ref(object || 'New record', 'New record'),
         rows: [
           ...(text(args.recordType)
-            ? [{ label: 'Record type', value: text(args.recordType) }]
+            ? [
+                {
+                  label: 'Record type',
+                  value: isId(text(args.recordType))
+                    ? named(names, 'recordType', args.recordType) || 'the selected record type'
+                    : text(args.recordType),
+                },
+              ]
             : []),
-          ...(text(parent.record) ? [{ label: 'Under', value: recordName(parent) }] : []),
-          ...fieldRows(args.fields),
+          ...(text(parent.record) ? [{ label: 'Under', value: recordName(parent, names) }] : []),
+          ...fieldRows(args.fields, names),
         ],
         notes: [CHECKED, 'The org’s own automation may set more fields when it saves.'],
       },
     };
   },
 
-  salesforce_update_record: (args) => ({
+  salesforce_update_record: (args, names) => ({
     verb: 'Update',
     icon: 'doc',
-    title: `Update ${recordName(args, args.object)}`,
+    title: `Update ${recordName(args, names, args.object)}`,
     subtitle: where(args),
     confirmLabel: 'Update record',
     body: {
       kind: 'change',
-      subject: ref(text(args.record), text(args.object) || 'Record'),
-      rows: fieldRows(args.fields),
+      subject: ref(recordTitle(args, names, args.object), text(args.object) || 'Record'),
+      rows: fieldRows(args.fields, names),
       notes: [
         CHECKED,
         'Saved only if nobody changed the record since it is read; otherwise nothing is written.',
@@ -103,19 +141,22 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  salesforce_upsert_record: (args) => ({
+  salesforce_upsert_record: (args, names) => ({
     verb: 'Save',
     icon: 'doc',
-    title: `Create or update the ${text(args.object) || 'record'} with ${text(args.externalIdField)} ${text(args.externalId)}`,
+    title: named(names, 'external', args.externalId)
+      ? `Create or update ${text(args.object) || 'the record'} ${named(names, 'external', args.externalId)}`
+      : `Create or update the ${text(args.object) || 'record'} matching its ${text(args.externalIdField) || 'external id'}`,
     subtitle: where(args),
     confirmLabel: 'Save record',
     body: {
       kind: 'change',
       subject: ref(
-        `${text(args.externalIdField)} = ${text(args.externalId)}`,
+        named(names, 'external', args.externalId) ||
+          `${text(args.object) || 'Record'} matching its ${text(args.externalIdField) || 'external id'}`,
         text(args.object) || 'Record'
       ),
-      rows: fieldRows(args.fields),
+      rows: fieldRows(args.fields, names),
       notes: [
         'Updates the record with that external id, or creates it when there is none.',
         CHECKED,
@@ -123,26 +164,26 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  salesforce_relate_records: (args) => {
+  salesforce_relate_records: (args, names) => {
     const from = record(args.from);
     const to = record(args.to);
     return {
       verb: 'Relate',
       icon: 'link',
-      title: `Relate ${recordName(from)} and ${recordName(to)}`,
+      title: `Relate ${recordName(from, names)} and ${recordName(to, names)}`,
       subtitle: where(args),
       confirmLabel: 'Relate records',
       body: {
         kind: 'link',
         mode: 'create',
-        from: ref(text(from.record), text(from.object) || 'Record'),
+        from: ref(recordTitle(from, names), text(from.object) || 'Record'),
         relation: text(args.junctionObject) ? `through ${text(args.junctionObject)}` : 'related to',
-        to: ref(text(to.record), text(to.object) || 'Record'),
+        to: ref(recordTitle(to, names), text(to.object) || 'Record'),
       },
     };
   },
 
-  salesforce_log_activity: (args) => ({
+  salesforce_log_activity: (args, names) => ({
     verb: 'Log',
     icon: 'clock',
     title: `Log a ${text(args.kind) || 'activity'}: ${text(args.subject)}`,
@@ -154,7 +195,7 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
       rows: [
         { label: 'What', value: text(args.kind) || 'other' },
         { label: 'When', value: text(args.date) || 'today' },
-        ...(related(args).length ? [{ label: 'About', add: related(args) }] : []),
+        ...(related(args, names).length ? [{ label: 'About', add: related(args, names) }] : []),
         ...(text(args.notes)
           ? [{ label: 'Notes', value: clip(text(args.notes), 2000), block: true }]
           : []),
@@ -162,7 +203,7 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  salesforce_create_task: (args) => ({
+  salesforce_create_task: (args, names) => ({
     verb: 'Assign',
     icon: 'flag',
     title: `Task: ${text(args.subject)}`,
@@ -172,10 +213,10 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
       kind: 'change',
       subject: ref(text(args.subject), 'Task'),
       rows: [
-        { label: 'Assigned to', value: text(args.assignee) || 'you' },
+        { label: 'Assigned to', value: personLabel(text(args.assignee), names) || 'you' },
         ...(text(args.due) ? [{ label: 'Due', value: text(args.due) }] : []),
         ...(text(args.priority) ? [{ label: 'Priority', value: text(args.priority) }] : []),
-        ...(related(args).length ? [{ label: 'About', add: related(args) }] : []),
+        ...(related(args, names).length ? [{ label: 'About', add: related(args, names) }] : []),
         ...(text(args.notes)
           ? [{ label: 'Notes', value: clip(text(args.notes), 2000), block: true }]
           : []),
@@ -183,33 +224,38 @@ export const SALESFORCE_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  salesforce_add_note: (args) => ({
+  salesforce_add_note: (args, names) => ({
     verb: 'Add note',
     icon: 'comment',
-    title: `Note on ${recordName(args, args.object)}`,
+    title: `Note on ${recordName(args, names, args.object)}`,
     subtitle: where(args),
     confirmLabel: 'Add note',
     body: {
       kind: 'comment',
       mode: 'note',
-      on: ref(text(args.record), text(args.object) || 'Record'),
+      on: ref(recordTitle(args, names, args.object), text(args.object) || 'Record'),
       body: `${text(args.title)}\n\n${clip(text(args.text))}`,
     },
   }),
 
-  salesforce_attach_file: (args) => {
-    const also = records(args.alsoOn).map((entry) => recordName(entry));
+  salesforce_attach_file: (args, names) => {
+    const also = records(args.alsoOn).map((entry) => recordName(entry, names));
     return {
       verb: 'Attach',
       icon: 'upload',
-      title: `Attach a file to ${recordName(args, args.object)}`,
+      title: `Attach a file to ${recordName(args, names, args.object)}`,
       subtitle: where(args),
       confirmLabel: 'Attach file',
       body: {
         kind: 'fileop',
         mode: 'attach',
-        items: [{ name: text(args.title) || text(args.fileId), type: 'attachment' }],
-        to: { name: recordName(args, args.object) },
+        items: [
+          {
+            name: text(args.title) || named(names, 'file', args.fileId) || 'The staged file',
+            type: 'attachment',
+          },
+        ],
+        to: { name: recordName(args, names, args.object) },
         ...(also.length ? { details: [{ label: 'Also shared to', value: also.join(', ') }] } : {}),
         note: 'Anyone who can see these records in Salesforce can open the file.',
       },

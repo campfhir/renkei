@@ -11,12 +11,29 @@
  */
 
 import type { Row } from '@/lib/mcp-widgets/src/act-card';
-import type { PreviewBuilder, PreviewSpec } from './card';
+import type { Names, PreviewBuilder, PreviewSpec } from './card';
 import { clip, count, record, ref, show, strings, text, yes } from './card';
+import { labelOr, labelsOr } from './readable';
 
 type Args = Record<string, unknown>;
 
-const instance = (args: Args) => `Mirth Connect · ${text(args.instanceId) || 'instance'}`;
+const instance = (args: Args, names: Names) => {
+  const name = labelOr(names, 'instance', args.instanceId, '');
+  return name ? `Mirth Connect · ${name}` : 'Mirth Connect';
+};
+
+/** What a card calls a thing it looked up; never its id. */
+/** "alert ADT errors", or "an alert" when there is no name to show. */
+const titled = (names: Names, kind: string, noun: string, value: unknown) => {
+  const name = labelOr(names, kind, value, '');
+  return name ? `${noun} ${name}` : `a ${noun}`;
+};
+const channelOf = (args: Args, names: Names) =>
+  labelOr(names, 'channel', args.channelId, 'The channel');
+const userOf = (args: Args, names: Names) => labelOr(names, 'user', args.userId, 'The user');
+const alertOf = (args: Args, names: Names) => labelOr(names, 'alert', args.alertId, 'The alert');
+const templateOf = (args: Args, names: Names) =>
+  labelOr(names, 'code_template', args.codeTemplateId, 'The code template');
 const block = (label: string, value: unknown, max = 1500): Row => ({
   label,
   value: clip(show(value), max),
@@ -35,13 +52,13 @@ interface Change {
   confirmLabel?: string;
 }
 
-function change(args: Args, spec: Change): PreviewSpec {
+function change(args: Args, names: Names, spec: Change): PreviewSpec {
   return {
     verb: spec.verb,
     ...(spec.tone ? { tone: spec.tone } : {}),
     icon: spec.icon,
     title: spec.title,
-    subtitle: instance(args),
+    subtitle: instance(args, names),
     confirmLabel: spec.confirmLabel ?? spec.title,
     body: {
       kind: 'change',
@@ -54,14 +71,14 @@ function change(args: Args, spec: Change): PreviewSpec {
 
 const ids = (value: unknown) => strings(value);
 
-function toggle(args: Args, to: string, title: string): PreviewSpec {
-  const channels = ids(args.channelId);
+function toggle(args: Args, names: Names, to: string, title: string): PreviewSpec {
+  const channels = labelsOr(names, 'channel', args.channelId, 'A channel');
   return {
     verb: to,
     tone: to === 'Disabled' ? 'caution' : 'positive',
     icon: to === 'Disabled' ? 'stop' : 'check',
     title,
-    subtitle: instance(args),
+    subtitle: instance(args, names),
     confirmLabel: title,
     body: {
       kind: 'transition',
@@ -98,8 +115,8 @@ function filterRows(args: Args): Row[] {
 }
 
 function audit(title: string, what: string) {
-  return (args: Args): PreviewSpec =>
-    change(args, {
+  return (args: Args, names: Names): PreviewSpec =>
+    change(args, names, {
       verb: 'Record',
       icon: 'flag',
       title,
@@ -114,56 +131,57 @@ function audit(title: string, what: string) {
 }
 
 export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
-  mirth_set_channels_enabled: (args) =>
+  mirth_set_channels_enabled: (args, names) =>
     toggle(
       args,
+      names,
       yes(args.enabled) ? 'Enabled' : 'Disabled',
       `${yes(args.enabled) ? 'Enable' : 'Disable'} ${count(ids(args.channelId).length, 'channel')}`
     ),
 
-  mirth_set_channels_initial_state: (args) => ({
+  mirth_set_channels_initial_state: (args, names) => ({
     verb: 'Set state',
     icon: 'gear',
     title: `Deploy ${count(ids(args.channelId).length, 'channel')} ${text(args.initialState).toLowerCase()}`,
-    subtitle: instance(args),
+    subtitle: instance(args, names),
     confirmLabel: 'Set initial state',
     body: {
       kind: 'transition',
-      query: ids(args.channelId).join('\n'),
+      query: labelsOr(names, 'channel', args.channelId, 'A channel').join('\n'),
       field: 'State after each deploy',
       to: text(args.initialState),
     },
   }),
 
-  mirth_process_raw_message: (args) =>
-    change(args, {
+  mirth_process_raw_message: (args, names) =>
+    change(args, names, {
       verb: 'Process',
       tone: 'caution',
       icon: 'play',
       title: 'Process a raw message',
-      subject: text(args.channelId),
+      subject: channelOf(args, names),
       kind: 'Channel',
       rows: [block('Raw message', args.rawMessage)],
       notes: ['The channel handles it as if it had arrived: destinations act on it for real.'],
     }),
 
-  mirth_import_message: (args) =>
-    change(args, {
+  mirth_import_message: (args, names) =>
+    change(args, names, {
       verb: 'Import',
       icon: 'upload',
       title: 'Import a message into a channel',
-      subject: text(args.channelId),
+      subject: channelOf(args, names),
       kind: 'Channel',
       rows: [block('Message', args.message)],
       notes: ['Stored as it is; it is not processed.'],
     }),
 
-  mirth_import_messages_from_path: (args) =>
-    change(args, {
+  mirth_import_messages_from_path: (args, names) =>
+    change(args, names, {
       verb: 'Import',
       icon: 'upload',
       title: 'Import messages from a folder on the server',
-      subject: text(args.channelId),
+      subject: channelOf(args, names),
       kind: 'Channel',
       rows: [
         { label: 'Server path', value: text(args.path) },
@@ -172,13 +190,13 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['Reads files from the Mirth server’s own disk.'],
     }),
 
-  mirth_export_messages: (args) =>
-    change(args, {
+  mirth_export_messages: (args, names) =>
+    change(args, names, {
       verb: 'Export',
       tone: 'caution',
       icon: 'upload',
       title: 'Export messages to a folder on the server',
-      subject: text(args.channelId),
+      subject: channelOf(args, names),
       kind: 'Channel',
       rows: [
         {
@@ -203,16 +221,16 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['Writes files on the Mirth server. Message content may include patient data.'],
     }),
 
-  mirth_export_message_attachment: (args) =>
-    change(args, {
+  mirth_export_message_attachment: (args, names) =>
+    change(args, names, {
       verb: 'Export',
       icon: 'upload',
       title: 'Export an attachment to a file on the server',
-      subject: text(args.channelId),
+      subject: channelOf(args, names),
       kind: 'Channel',
       rows: [
-        { label: 'Message', value: text(args.messageId) },
-        { label: 'Attachment', value: text(args.attachmentId) },
+        { label: 'Message', value: 'One message of this channel' },
+        { label: 'Attachment', value: 'One of its attachments' },
         { label: 'Write to', value: text(args.filePath) },
         { label: 'As', value: yes(args.binary) ? 'Binary' : 'Text' },
       ],
@@ -232,8 +250,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
     'an export finished'
   ),
 
-  mirth_update_server_settings: (args) =>
-    change(args, {
+  mirth_update_server_settings: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       tone: 'danger',
       icon: 'gear',
@@ -243,8 +261,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['These replace the current settings in full.'],
     }),
 
-  mirth_send_test_email: (args) =>
-    change(args, {
+  mirth_send_test_email: (args, names) =>
+    change(args, names, {
       verb: 'Send',
       icon: 'mail',
       title: 'Send a test email from the server',
@@ -253,8 +271,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['An email is sent using these settings.'],
     }),
 
-  mirth_update_update_settings: (args) =>
-    change(args, {
+  mirth_update_update_settings: (args, names) =>
+    change(args, names, {
       verb: 'Change',
       tone: 'caution',
       icon: 'gear',
@@ -263,8 +281,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       rows: [block('New settings', args.settings)],
     }),
 
-  mirth_update_database_drivers: (args) =>
-    change(args, {
+  mirth_update_database_drivers: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       tone: 'danger',
       icon: 'gear',
@@ -274,8 +292,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['The whole list is replaced; a driver left out stops being available.'],
     }),
 
-  mirth_update_resources: (args) =>
-    change(args, {
+  mirth_update_resources: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       tone: 'danger',
       icon: 'gear',
@@ -285,19 +303,19 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['The whole list is replaced.'],
     }),
 
-  mirth_reload_resource: (args) =>
-    change(args, {
+  mirth_reload_resource: (args, names) =>
+    change(args, names, {
       verb: 'Reload',
       icon: 'play',
       title: 'Reload a resource',
-      subject: text(args.resourceId),
+      subject: labelOr(names, 'resource', args.resourceId, 'The resource'),
       kind: 'Resource',
       rows: [],
       notes: ['Channels using it pick up changes to its files.'],
     }),
 
-  mirth_update_channel_dependencies: (args) =>
-    change(args, {
+  mirth_update_channel_dependencies: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       tone: 'caution',
       icon: 'link',
@@ -307,8 +325,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['Controls the order channels deploy in.'],
     }),
 
-  mirth_update_channel_metadata: (args) =>
-    change(args, {
+  mirth_update_channel_metadata: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       icon: 'tag',
       title: 'Replace channel metadata',
@@ -316,8 +334,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       rows: [block('New metadata', args.metadata)],
     }),
 
-  mirth_update_channel_tags: (args) =>
-    change(args, {
+  mirth_update_channel_tags: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       icon: 'tag',
       title: 'Replace channel tags',
@@ -325,8 +343,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       rows: [block('New tags', args.channelTags)],
     }),
 
-  mirth_create_user: (args) =>
-    change(args, {
+  mirth_create_user: (args, names) =>
+    change(args, names, {
       verb: 'Create',
       tone: 'caution',
       icon: 'user',
@@ -337,49 +355,49 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['The new user can sign in to Mirth with the role the definition gives them.'],
     }),
 
-  mirth_update_user: (args) =>
-    change(args, {
+  mirth_update_user: (args, names) =>
+    change(args, names, {
       verb: 'Update',
       tone: 'caution',
       icon: 'user',
-      title: `Update Mirth user ${show(args.userId)}`,
-      subject: show(args.userId),
+      title: `Update ${titled(names, 'user', 'Mirth user', args.userId)}`,
+      subject: userOf(args, names),
       kind: 'User',
       rows: [block('New definition', args.user)],
     }),
 
-  mirth_update_user_preferences: (args) =>
-    change(args, {
+  mirth_update_user_preferences: (args, names) =>
+    change(args, names, {
       verb: 'Set',
       icon: 'user',
-      title: `Set preferences for Mirth user ${show(args.userId)}`,
-      subject: show(args.userId),
+      title: `Set preferences for ${titled(names, 'user', 'Mirth user', args.userId)}`,
+      subject: userOf(args, names),
       kind: 'User',
       rows: [block('Preferences', args.properties)],
     }),
 
-  mirth_set_user_preference: (args) =>
-    change(args, {
+  mirth_set_user_preference: (args, names) =>
+    change(args, names, {
       verb: 'Set',
       icon: 'user',
       title: `Set the preference ${text(args.name)}`,
-      subject: show(args.userId),
+      subject: userOf(args, names),
       kind: 'User',
       rows: [{ label: text(args.name), value: text(args.value) }],
     }),
 
-  mirth_acknowledge_user_notification: (args) =>
-    change(args, {
+  mirth_acknowledge_user_notification: (args, names) =>
+    change(args, names, {
       verb: 'Acknowledge',
       icon: 'bell',
       title: 'Mark a user’s notifications as read',
-      subject: show(args.userId),
+      subject: userOf(args, names),
       kind: 'User',
       rows: [],
     }),
 
-  mirth_export_events: (args) =>
-    change(args, {
+  mirth_export_events: (args, names) =>
+    change(args, names, {
       verb: 'Export',
       icon: 'upload',
       title: 'Export every event',
@@ -388,8 +406,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       notes: ['Writes the whole event log out; it may be large.'],
     }),
 
-  mirth_create_alert: (args) =>
-    change(args, {
+  mirth_create_alert: (args, names) =>
+    change(args, names, {
       verb: 'Create',
       icon: 'bell',
       title: 'Create an alert',
@@ -398,19 +416,19 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       rows: [block('Alert', args.alertModel)],
     }),
 
-  mirth_update_alert: (args) =>
-    change(args, {
+  mirth_update_alert: (args, names) =>
+    change(args, names, {
       verb: 'Update',
       tone: 'caution',
       icon: 'bell',
-      title: `Update alert ${text(args.alertId)}`,
-      subject: text(args.alertId),
+      title: `Update ${titled(names, 'alert', 'alert', args.alertId)}`,
+      subject: alertOf(args, names),
       kind: 'Alert',
       rows: [block('New definition', args.alertModel)],
     }),
 
-  mirth_update_code_template_libraries: (args) =>
-    change(args, {
+  mirth_update_code_template_libraries: (args, names) =>
+    change(args, names, {
       verb: 'Replace',
       tone: 'danger',
       icon: 'doc',
@@ -425,13 +443,13 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       ],
     }),
 
-  mirth_update_code_template: (args) =>
-    change(args, {
+  mirth_update_code_template: (args, names) =>
+    change(args, names, {
       verb: 'Save',
       tone: 'caution',
       icon: 'doc',
-      title: `Save code template ${text(args.codeTemplateId)}`,
-      subject: text(args.codeTemplateId),
+      title: `Save ${titled(names, 'code_template', 'code template', args.codeTemplateId)}`,
+      subject: templateOf(args, names),
       kind: 'Code template',
       rows: [
         block('Template', args.codeTemplate),
@@ -439,12 +457,12 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       ],
     }),
 
-  mirth_set_extension_enabled: (args) => ({
+  mirth_set_extension_enabled: (args, names) => ({
     verb: yes(args.enabled) ? 'Enable' : 'Disable',
     tone: yes(args.enabled) ? 'positive' : 'caution',
     icon: yes(args.enabled) ? 'check' : 'stop',
     title: `${yes(args.enabled) ? 'Enable' : 'Disable'} the extension ${text(args.extensionName)}`,
-    subtitle: instance(args),
+    subtitle: instance(args, names),
     confirmLabel: yes(args.enabled) ? 'Enable extension' : 'Disable extension',
     body: {
       kind: 'transition',
@@ -454,8 +472,8 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  mirth_update_extension_properties: (args) =>
-    change(args, {
+  mirth_update_extension_properties: (args, names) =>
+    change(args, names, {
       verb: 'Set',
       tone: 'caution',
       icon: 'gear',
@@ -471,20 +489,20 @@ export const MIRTH_ADMIN_PREVIEWS: Record<string, PreviewBuilder> = {
       ],
     }),
 
-  mirth_cancel_database_task: (args) =>
-    change(args, {
+  mirth_cancel_database_task: (args, names) =>
+    change(args, names, {
       verb: 'Cancel',
       tone: 'caution',
       icon: 'stop',
-      title: `Cancel database task ${text(args.databaseTaskId)}`,
-      subject: text(args.databaseTaskId),
+      title: `Cancel ${titled(names, 'database_task', 'database task', args.databaseTaskId)}`,
+      subject: labelOr(names, 'database_task', args.databaseTaskId, 'The task'),
       kind: 'Database task',
       rows: [],
       notes: ['A task cancelled part-way may leave its work half done.'],
     }),
 
-  mirth_generate_usage_data: (args) =>
-    change(args, {
+  mirth_generate_usage_data: (args, names) =>
+    change(args, names, {
       verb: 'Generate',
       icon: 'doc',
       title: 'Generate the usage document',
