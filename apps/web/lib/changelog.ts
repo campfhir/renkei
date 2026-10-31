@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-10-31',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Copy a reply with its tool calls or its prompt',
+        detail:
+          "A chat reply's Copy still copies just the answer. The arrow beside it now also offers Copy with tool calls, which adds each tool call's input and result, and Copy with context, which adds the prompt you sent before the reply.",
+      },
+    ],
+  },
+  {
     date: '2026-10-30',
     entries: [
       {
