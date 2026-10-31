@@ -209,6 +209,23 @@ jobs:
           RESULT: ${{ needs.e2e-shard.result }}
         run: test "$RESULT" = success
 
+  # No service in docker-compose.yaml may carry a secret it is not meant to
+  # hold (the per-caller delegate keys, USER_KEY_ENCRYPTION_KEY, the connector
+  # workers' keys, SETUP_SECRET) or an `env_file` that hands it the whole
+  # .env. Reads the rendered config, so it checks what a container receives.
+  compose-secrets:
+    name: compose secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+
+      - name: Compose secrets check
+        run: node scripts/check-compose-secrets.mjs
+
   # Every change to the product (apps/, packages/, docker/) needs an entry in
   # apps/web/lib/changelog.ts in the same pull request, or a commit that says
   # `Changelog: none`. `pnpm changelog add` writes the entry with today's date.
@@ -235,6 +252,9 @@ jobs:
 
       - name: Changelog helper tests
         run: node --test scripts/changelog.test.mjs
+
+      - name: Node version check tests
+        run: node --test scripts/check-node-version.test.mjs
 
       - name: Changelog check
         run: >-
@@ -309,7 +329,9 @@ jobs:
           deny-licenses: AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later, SSPL-1.0
 
   # Publishes every image docker-compose.yaml pulls, but only once the checks
-  # above have passed on a push to main — never for a pull request. Each
+  # above have passed (the unit checks, the data store contract, the browser
+  # suite, the dependency audit, CodeQL and the compose secrets check) on a
+  # push to main — never for a pull request. Each
   # image is tagged three times: `latest`, the version in apps/web/package.json
   # (the same version scripts/docker-build.sh stamps — every app in the
   # workspace shares it), and the commit SHA, so a deployment can pin the
@@ -336,7 +358,7 @@ jobs:
   # publishes it; the publish itself (login and push) happens only on main.
   docker:
     name: docker (${{ matrix.image }})
-    needs: [checks, security]
+    needs: [checks, db-contract, e2e-memory, security, codeql, compose-secrets]
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     # The smoke start boots the image against a database at this build's

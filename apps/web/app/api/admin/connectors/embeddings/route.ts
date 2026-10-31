@@ -15,13 +15,13 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
 const EMBEDDINGS_CONNECTOR = 'embeddings';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -67,9 +67,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -82,6 +80,10 @@ export async function PUT(
   const { baseUrl, model, apiKey } = body;
   if (typeof baseUrl !== 'string' || !baseUrl) {
     return NextResponse.json({ error: 'baseUrl is required' }, { status: 400 });
+  }
+  const endpointVerdict = await checkServiceEndpoint(baseUrl);
+  if (!endpointVerdict.ok) {
+    return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
   }
   if (typeof model !== 'string' || !model) {
     return NextResponse.json({ error: 'model is required' }, { status: 400 });
@@ -145,6 +147,18 @@ export async function PUT(
   }
 
   invalidateConnectorConfigCache(EMBEDDINGS_CONNECTOR);
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'connector.configured',
+    targetKind: 'connector',
+    targetLabel: EMBEDDINGS_CONNECTOR,
+    details: {
+      connector: EMBEDDINGS_CONNECTOR,
+      endpoint: baseUrl,
+      enabled,
+      apiKeyReplaced: typeof apiKey === 'string' && apiKey.length > 0,
+    },
+  });
   // The knowledge tools register org-wide on this config, so every caller's
   // cached tool catalog may now be wrong — same as web-search/route.ts.
   invalidateToolCatalogCache();

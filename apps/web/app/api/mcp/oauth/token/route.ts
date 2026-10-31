@@ -236,6 +236,24 @@ async function redeemCode(
       );
     }
 
+    // Spend the code before anything is issued: the delete is one statement,
+    // so of two concurrent redemptions only one gets the row back. The loser
+    // is a replay; whatever the winner was just given is revoked, since the
+    // code has been presented by more than one party.
+    const spent = await getDataStore().oauthConsents.takeAuthorizationCode(code);
+    if (!spent) {
+      await getDataStore().oauthTokens.revokeClientTokens(client_id, authCode.subject);
+      logger.warn('Authorization code replayed; tokens of client {clientId} revoked for subject', {
+        component: 'auth/oauth-token',
+        clientId: client_id,
+        subject: authCode.subject,
+      });
+      return NextResponse.json(
+        { error: 'invalid_grant', error_description: 'Authorization code already used' },
+        { status: 400 }
+      );
+    }
+
     // Generate tokens
     const accessToken = generateSecret(32);
     const refreshToken = generateSecret(32);
@@ -271,9 +289,6 @@ async function redeemCode(
       roles: authCode.roles,
       ttlSeconds: tokenExpiresIn,
     });
-
-    // Delete the authorization code (one-time use)
-    await getDataStore().oauthConsents.deleteAuthorizationCode(code);
 
     return NextResponse.json({
       access_token: accessToken,

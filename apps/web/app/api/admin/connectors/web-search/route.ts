@@ -26,6 +26,8 @@ import {
   parseLocation,
   parseReasoningEffort,
 } from '@/lib/mcp-tools/web-search/config';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -37,9 +39,7 @@ function settingString(settings: Record<string, unknown> | undefined, key: strin
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -106,9 +106,7 @@ function validateDomains(
   return { ok: true, domains };
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -130,6 +128,10 @@ export async function PUT(
   }
   if (parsedBase.protocol !== 'https:' && parsedBase.protocol !== 'http:') {
     return NextResponse.json({ error: 'baseUrl must be an http(s) URL' }, { status: 400 });
+  }
+  const endpointVerdict = await checkServiceEndpoint(baseUrl);
+  if (!endpointVerdict.ok) {
+    return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
   }
   if (typeof model !== 'string' || !model.trim()) {
     return NextResponse.json({ error: 'model is required' }, { status: 400 });
@@ -210,6 +212,18 @@ export async function PUT(
   }
 
   invalidateConnectorConfigCache(WEB_SEARCH_CONNECTOR);
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'connector.configured',
+    targetKind: 'connector',
+    targetLabel: WEB_SEARCH_CONNECTOR,
+    details: {
+      connector: WEB_SEARCH_CONNECTOR,
+      endpoint: baseUrl.trim(),
+      enabled,
+      apiKeyReplaced: typeof apiKey === 'string' && apiKey.length > 0,
+    },
+  });
   // Web search is org-wide: this one save decides whether `web_search`
   // registers for EVERY caller, and each of them may hold a cached tool
   // catalog built before it existed (up to four hours old). Without this,

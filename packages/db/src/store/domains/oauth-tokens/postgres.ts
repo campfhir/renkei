@@ -1,6 +1,6 @@
 import type { Kysely, Selectable } from 'kysely';
 import type { DB, OauthAccessTokens } from '../../../db.types';
-import type { OAuthAccessTokenRecord, OAuthTokenStore } from './types';
+import { withoutOperator, type OAuthAccessTokenRecord, type OAuthTokenStore } from './types';
 
 export function accessTokenFromRow(row: Selectable<OauthAccessTokens>): OAuthAccessTokenRecord {
   return {
@@ -111,7 +111,7 @@ export function postgresOAuthTokens(db: () => Kysely<DB>): OAuthTokenStore {
             .orderBy('id', 'desc')
             .limit(1)
             .executeTakeFirst();
-          const roles = live ? live.roles : (token.roles ?? []);
+          const roles = live ? live.roles : withoutOperator(token.roles ?? []);
 
           await trx
             .updateTable('oauth_refresh_tokens')
@@ -150,6 +150,18 @@ export function postgresOAuthTokens(db: () => Kysely<DB>): OAuthTokenStore {
             roles,
           } as const;
         });
+    },
+    async revokeClientTokens(clientId, subject) {
+      await db()
+        .deleteFrom('oauth_refresh_tokens')
+        .where('client_id', '=', clientId)
+        .where('subject', '=', subject)
+        .execute();
+      await db()
+        .deleteFrom('oauth_access_tokens')
+        .where('client_id', '=', clientId)
+        .where('subject', '=', subject)
+        .execute();
     },
   };
 }

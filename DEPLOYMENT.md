@@ -59,6 +59,14 @@ DELEGATE_KEY_WEB=<32-byte-base64-key>
 DELEGATE_KEY_WORKER=<32-byte-base64-key>
 DELEGATE_KEY_AGENTS=<32-byte-base64-key>
 DELEGATE_KEY_SANDBOX=<32-byte-base64-key>
+# docker-compose.yaml hands each service only the variables it reads (there is
+# no `env_file: .env`): the sandbox worker gets its own delegate key,
+# SANDBOX_WORKER_API_KEY and SANDBOX_ENV_SECRETS_KEY, but not
+# TOKEN_ENCRYPTION_KEY or CONTENT_ENCRYPTION_KEY, so set SANDBOX_ENV_SECRETS_KEY
+# (`openssl rand -base64 32`) — workspace and browser secrets are sealed under
+# it and the worker's fallback to TOKEN_ENCRYPTION_KEY has nothing to read.
+# `node scripts/check-compose-secrets.mjs` fails if a key lands on a service
+# that should not carry it.
 # A code workspace's git goes through the delegate's /git/<ticket>/… proxy
 # (no bearer key; the short-lived ticket is the credential). The web app
 # builds that proxy URL from DELEGATE_WORKER_URL; set this only when the
@@ -79,6 +87,13 @@ POSTGRES_PASSWORD=<openssl rand -hex 32>
 # it empty there. Against a managed Postgres (drop the postgres service and
 # set DATABASE_URL below instead) always require a verified TLS session:
 # DATABASE_URL_PARAMS=?sslmode=verify-full
+# OPTIONAL least-privilege roles (see "Database roles" below). Unset, every
+# service connects as POSTGRES_USER, as it always has. Set each user together
+# with its password (hex again), run `migrate`, then restart the services:
+# RENKEI_RUNTIME_DB_USER=renkei_app
+# RENKEI_RUNTIME_DB_PASSWORD=<openssl rand -hex 32>
+# RENKEI_SANDBOX_DB_USER=renkei_sandbox
+# RENKEI_SANDBOX_DB_PASSWORD=<openssl rand -hex 32>
 #
 # Outside compose (systemd, a PaaS), set the URL directly:
 DATABASE_URL=postgresql://user:password@postgres.example.com:5432/jira_mcp_db?sslmode=verify-full
@@ -149,6 +164,86 @@ later and much further from the cause — a build expecting
 `client_secret` fails every MCP client registration with a 500, and the reason
 appears only as a Postgres `42703 undefined_column` in the container log.
 
+### Database roles
+
+**Default: one role.** `POSTGRES_USER` creates the schema, owns every table
+and is what every service connects as. The audit trails (`audit_events`,
+`phi_access_events`, `delegate_access_events`) are append-only by trigger,
+but in PostgreSQL a table's owner may `ALTER TABLE … DISABLE TRIGGER` or
+`DROP TRIGGER` without being a superuser. On the single-role layout the
+triggers therefore stop the application's own code paths (a bug, an
+injection), **not** anyone who holds the connection string, and every
+service container holds it.
+
+**Optional: separate roles.** The `migrate` step can also create and keep
+current two roles that own nothing, so the trails cannot be rewritten with
+the services' own credential:
+
+| Role (variable)                              | Used by                        | May do                                                                                                                                                                                                                                                                                |
+| -------------------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| owner (`POSTGRES_USER`)                      | `migrate` only                 | everything; creates the schema and the two roles                                                                                                                                                                                                                                      |
+| runtime (`RENKEI_RUNTIME_DB_USER`)           | every service except `migrate` | `SELECT`/`INSERT`/`UPDATE`/`DELETE` on every table, `USAGE` on sequences, **`INSERT` + `SELECT` only** on `audit_events`, `phi_access_events`, `delegate_access_events`, `platform_audit_log`; `SELECT` only on `kysely_migration`; the same rights on tables later migrations create |
+| sandbox (`RENKEI_SANDBOX_DB_USER`, optional) | `worker-sandbox` only          | DML on the `sandbox_*` tables and `code_service_image_rules`, `SELECT` on `settings` and `sandbox_size_requests`, `INSERT` + `SELECT` on the log tables; nothing else                                                                                                                 |
+
+To switch (nothing changes until you do; the variables are optional and
+compose falls back to the owner when they are unset):
+
+1. In `.env`, set `RENKEI_RUNTIME_DB_USER` and `RENKEI_RUNTIME_DB_PASSWORD`
+   (and, to confine the sandbox worker, `RENKEI_SANDBOX_DB_USER` and
+   `RENKEI_SANDBOX_DB_PASSWORD`). Names are lowercase letters, digits and
+   underscores and must differ from `POSTGRES_USER` and from each other;
+   use hex passwords (`openssl rand -hex 32`) so the URL needs no escaping.
+   Set each user and its password together; `migrate` refuses a half-set pair.
+2. Run `docker compose -f docker-compose.yaml run --rm migrate`. As the
+   owner it applies pending migrations, then creates or updates the roles
+   and re-asserts every grant in one transaction (it prints
+   `[Roles] ensured: …`). It is safe to run again and does so on every
+   upgrade, which is how a table added by a later migration is covered. A
+   migration that fails, or role setup that fails, now makes the command
+   exit non-zero.
+3. Restart the services (`docker compose -f docker-compose.yaml up -d`).
+   They now connect as the runtime role (the sandbox worker as the sandbox
+   role); only `migrate` and `postgres` still hold `POSTGRES_PASSWORD`.
+   `node scripts/check-compose-secrets.mjs` asserts this wiring.
+
+To go back, unset the four variables and restart: the services return to
+the owner. The roles stay in the database until you `DROP OWNED BY` and
+`DROP ROLE` them.
+
+What this does and does not give you:
+
+- The runtime role cannot disable or drop a trigger, `UPDATE`, `DELETE` or
+  `TRUNCATE` a trail, create tables, or touch the migration ledger. A
+  compromised service container cannot rewrite the PHI access trail or the
+  audit log. The trigger on `audit_events` (migration 171) is the second
+  line and also covers a deployment that keeps the single role.
+- **The owner can still do all of it**, and `POSTGRES_PASSWORD` stays in
+  `.env`, in the `postgres` container and in the `migrate` container.
+  Keep `.env` readable by the operator only; run `migrate` only when
+  migrating. Anyone with the owner credential, or superuser on the
+  database, is outside this protection.
+- The role passwords are stored as SCRAM verifiers (the plaintext never
+  appears in a statement or the server log). Role creation needs a role
+  with `CREATEROLE` (the bundled postgres's `POSTGRES_USER` is a
+  superuser; a `CREATEROLE` owner also worked in testing). Against a
+  managed Postgres where the owner cannot create roles this automation
+  does not apply: create the roles yourself with the privileges the table
+  lists and give each service its own `DATABASE_URL` outside compose's
+  variables.
+- The grants were exercised by hand against PostgreSQL 16 with pgvector
+  (every migration, then the privilege matrix as each role, with both a
+  superuser and a `CREATEROLE` owner). They are
+  not covered by an automated test: the role SQL needs a real server and a
+  role allowed to create roles, so only the statement builders are unit
+  tested (`packages/db/src/roles.test.ts`).
+- Retention of the trails is a deliberate act of the owner: as the owner,
+  disable the trigger, prune, enable it again, and archive the rows first.
+  Nothing in the application deletes or updates a trail row.
+- A table a future migration guards with an append-only trigger must be
+  added to `APPEND_ONLY_TABLES` in `packages/db/src/roles.ts` (a test fails
+  until it is), and a table the sandbox worker starts to use to
+  `SANDBOX_TABLE_GRANTS` there.
+
 ## Building for Production
 
 ```bash
@@ -174,23 +269,33 @@ image is pushed under three tags: `latest`, the version in
 and the same one `scripts/docker-build.sh` stamps), and the full commit
 SHA, so a deployment can pin exactly the build it tested
 (`image: scotteremiaroden/renkei:<sha>`) rather than whatever `latest`
-has become. Bump the version when a release should keep its own tag;
+has become. `docker-compose.yaml` pulls `latest`, and `docker compose up` does not
+re-pull an image it already has: run `docker compose pull` to move to a new
+build, and pin the SHA tag when a deployment must not move on its own.
+Bump the version when a release should keep its own tag;
 until then a new push to `main` overwrites `latest` and the version tag.
 Images are built for `linux/amd64`, with the short commit baked in as
 `GIT_COMMIT` so log rows name the exact build and the version as
 `APP_VERSION` so the web app can show it. Pull requests never publish.
 
 Every image is also built, smoke-started and scanned by Trivy on every pull
-request, and again before the push from `main`. The smoke start
+request, and again before the push from `main`. There is no
+scheduled rebuild: the distribution refresh happens on a build, so on a quiet
+week images age until the next merge to `main`. The smoke start
 (`scripts/smoke-image.sh`) boots each image against a throwaway Postgres at
 that build's schema and waits for its health endpoint (the queue worker's
 boot line; the migrate image's clean exit), so an image that cannot start —
 a file the runtime stage forgot to copy, say — fails the PR rather than the
 first production pull. The scan: a fixable `HIGH` or `CRITICAL` in the OS
-packages, in `node_modules`, or in anything else the image carries (the
-sandbox's toolchains and language servers included) fails that image's job
-and nothing of it is pushed (the dated baseline is `.trivyignore`; the
-same list by GHSA id gates `pnpm audit` in `pnpm-workspace.yaml`). The
+packages, in `node_modules`, or in the sandbox's toolchains and language
+servers fails that image's job and nothing of it is pushed (the scan skips
+vulnerabilities with no fix yet, and it does **not** see the Node runtime
+itself: Node is installed from the base image's tarball, not as a
+distribution package, so a Node security release reaches you only through a
+new base digest, which the weekly `weekly-security` workflow checks for) (the dated baseline is `.trivyignore`; `pnpm audit` is gated
+separately, with `auditConfig.ignoreGhsas` in `pnpm-workspace.yaml` empty by
+design, and does not cover the sandbox image's pip, CRAN, npm-global or Go
+inputs). The
 images ship no package manager: npm and pnpm are build-time tools removed
 from every final stage, and each process is started with `node` from its
 app's directory (the sandbox keeps pnpm on the PATH for a code workspace's
@@ -356,7 +461,15 @@ swapped for RabbitMQ/Kafka without touching producers or consumers):
   `http://renkei-worker-sandbox:8092`) presenting the shared bearer key
   `SANDBOX_WORKER_API_KEY` — set both in `.env` (`openssl rand -base64 32`
   makes a good key; the worker also honors `SANDBOX_WORKER_PORT`, default
-  8092). Without them the `sandbox_*` tools simply don't register — closed,
+  8092). **`SANDBOX_WORKER_API_KEY` is the whole boundary of this
+  service.** The worker trusts the subject a caller names, so whoever
+  holds the key can read, write and delete any person's scratch-space
+  files and code workspaces and run commands in them. Treat it like a
+  database password: it is held by the web app (and the batch worker) and
+  the sandbox itself, and it must be rotated — new value in `.env`, then
+  restart `renkei`, `worker-batch-jobs` and `worker-sandbox` — after any
+  incident involving the web container, and with it the delegate keys.
+  Without it the `sandbox_*` tools simply don't register — closed,
   never open, same as the other two. Staged files expire on a fixed TTL and
   a per-caller quota regardless of whether anything ever deletes them
   explicitly. **Which of the worker's features an organization gets is
@@ -457,11 +570,26 @@ DESC` says which server to add next.
   `CAP_SETUID`/`CAP_SETGID`/`CAP_SETPCAP` held — Docker's defaults) and
   refuses to start otherwise, saying why. A
   command has the container's network (a project's install and tests
-  need it), which is why `docker-compose.yaml` puts this service on the
-  `renkei-sandbox` network alone — a route out, plus the web app and the
-  delegate's git proxy, which join that network to be reached — and
-  postgres and every other worker on `renkei-internal`, which the sandbox
-  is not on. The same file drops every capability from this container
+  need it), which is why `docker-compose.yaml` keeps this service off
+  `renkei-internal` and on `renkei-sandbox` — a route out, plus the web
+  app, the delegate's git proxy and the batch worker, which join that
+  network to be reached or to call it — and every other worker on
+  `renkei-internal` only. **The sandbox container does have a route to
+  Postgres**, on purpose: the worker is a database client (staged files,
+  workspaces, services, crawls, settings, its log), and Docker resolves
+  `postgres` only across a shared network. So the file defines a third,
+  internal network, `renkei-sandbox-db`, joined by `postgres` and
+  `worker-sandbox` and nothing else; a workspace command, which runs with
+  the container's network, can therefore open a connection to the
+  database port. It cannot read the password (it is not in a command's
+  environment), and with the sandbox role from "Database roles"
+  (`RENKEI_SANDBOX_DB_USER`) a login would reach only the sandbox tables
+  and the log table. Without that role the worker connects as the runtime
+  role, or the owner, and the route is to the whole database: set the
+  sandbox role if the sandbox runs code you do not trust.
+  `scripts/check-compose-secrets.mjs` (run in CI) asserts the layout: the
+  database network holds exactly those two services, and the sandbox
+  network holds neither postgres nor any other worker. The same file drops every capability from this container
   but the seven the uid drop needs (`CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
   `KILL`, `SETGID`, `SETUID`, `SETPCAP`), sets `no-new-privileges` (a
   setuid binary in a checkout cannot regain root; setpriv's drop is a
@@ -681,158 +809,17 @@ backstop.
 
 ## Deployment Options
 
-### Option 1: Vercel (Recommended)
-
-Vercel is the easiest way to deploy Next.js:
-
-```bash
-npm install -g vercel
-
-# Deploy
-vercel --prod
-
-# Set environment variables in Vercel UI or via CLI
-vercel env add TOKEN_ENCRYPTION_KEY
-vercel env add DATABASE_URL
-vercel env add PUBLIC_BASE_URL
-```
-
-### Option 2: Self-Hosted on Linux/Docker
-
-**Docker Setup:**
-
-```dockerfile
-# Dockerfile
-FROM node:24-alpine
-WORKDIR /app
-
-COPY package.json pnpm-lock.yaml ./
-RUN npm install -g pnpm && pnpm install --frozen-lockfile
-
-COPY . .
-RUN npm run build
-
-EXPOSE 3000
-ENV NODE_ENV=production
-CMD ["npm", "start"]
-```
-
-**Build and Run:**
-
-```bash
-docker build -t jira-mcp-gateway .
-
-docker run \
-  -e TOKEN_ENCRYPTION_KEY="<value>" \
-  -e DATABASE_URL="postgresql://..." \
-  -e PUBLIC_BASE_URL="https://yourdomain.com" \
-  -p 3000:3000 \
-  jira-mcp-gateway
-```
-
-**Docker Compose:**
-
-```yaml
-version: '3.8'
-services:
-  postgres:
-    image: postgres:15-alpine
-    environment:
-      POSTGRES_USER: jira_mcp
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: jira_mcp_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - '5432:5432'
-
-  app:
-    build: .
-    environment:
-      DATABASE_URL: postgresql://jira_mcp:${DB_PASSWORD}@postgres:5432/jira_mcp_db
-      TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}
-      PUBLIC_BASE_URL: https://yourdomain.com
-      NODE_ENV: production
-    ports:
-      - '3000:3000'
-    depends_on:
-      - postgres
-
-volumes:
-  postgres_data:
-```
-
-### Option 3: Traditional Server (Ubuntu)
-
-**Install Dependencies:**
-
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Node.js
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# Install pnpm
-npm install -g pnpm
-
-# Install PostgreSQL
-sudo apt install -y postgresql postgresql-contrib
-```
-
-**Setup Application:**
-
-```bash
-# Create app directory
-sudo mkdir -p /opt/jira-mcp-gateway
-sudo chown ubuntu:ubuntu /opt/jira-mcp-gateway
-cd /opt/jira-mcp-gateway
-
-# Clone repository
-git clone <repo-url> .
-
-# Install dependencies
-pnpm install --frozen-lockfile
-
-# Build
-npm run build
-
-# Create .env file
-nano .env.local
-```
-
-**Systemd Service:**
-
-```ini
-# /etc/systemd/system/jira-mcp-gateway.service
-[Unit]
-Description=Jira MCP Gateway
-After=network.target postgresql.service
-
-[Service]
-Type=simple
-User=app-user
-WorkingDirectory=/opt/jira-mcp-gateway
-ExecStart=/usr/bin/npm start
-Restart=always
-RestartSec=10
-
-# Environment variables
-EnvironmentFile=/opt/jira-mcp-gateway/.env.local
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**Start Service:**
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable jira-mcp-gateway
-sudo systemctl start jira-mcp-gateway
-sudo systemctl status jira-mcp-gateway
-```
+`docker-compose.yaml` is the only supported shape. Renkei is nine first-party
+images run as thirteen services (Postgres, the migration job, the web app, the
+interactive, embeddings, agents and batch-jobs workers, the fileshares,
+OnBase, Mirth and ADManager connector workers, the delegate and the
+sandbox), wired to each other by service name; a single Node process on
+Vercel or under systemd cannot run it, and an earlier version of this guide
+carried sample Dockerfiles, a compose file and a systemd unit for a
+single-process gateway that no longer describe the system (Node 20, a
+Postgres port published on every interface, none of the required keys).
+Use the compose file, set the variables in "Environment Setup", and put
+TLS in front of it (see "Nginx Reverse Proxy"). Node 24 is required.
 
 ## Nginx Reverse Proxy
 
@@ -976,16 +963,55 @@ deploying if that is what the org wants. Successful connector exchanges no
 longer persist request or response bodies into these rows; failed ones
 still do, `secure()`-encrypted.
 
-### Database Backups
+### Backup and recovery
 
-```bash
-# Daily backup script
-#!/bin/bash
-pg_dump -U jira_mcp jira_mcp_db | gzip > /backups/jira_mcp_$(date +%Y%m%d).sql.gz
+A restorable Renkei is four things, and the database dump alone is only
+the first:
 
-# Keep last 30 days
-find /backups -name "jira_mcp_*.sql.gz" -mtime +30 -delete
-```
+1. **PostgreSQL** (volume `renkei-postgres`). Dump through compose, so the
+   user and database names are the ones the stack actually uses:
+
+   ```bash
+   docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+     > /backups/renkei_$(date +%Y%m%d).dump
+   find /backups -name 'renkei_*.dump' -mtime +30 -delete
+   ```
+
+   Restore into an empty database with `pg_restore` before starting the
+   application services, then start `migrate` so the schema lands at the
+   version of the images you run. A managed Postgres has its own backup;
+   use it and test the restore.
+
+2. **The blob store** (chat attachments; the Azure container or the
+   `BLOB_STORE_LOCAL_DIR` directory, see "Chat attachments"). The
+   database holds the rows and the store holds the sealed bytes: a
+   database restored without its blobs has attachments that cannot be
+   opened, and blobs without the database cannot be found. Snapshot the
+   two together, or use the storage account's own versioning and soft
+   delete.
+
+3. **The sandbox volumes** (`renkei-sandbox-workspaces`, the code
+   workspaces and their checkouts; `renkei-sandbox-data`, short-lived
+   sealed files that expire in hours). Back up the workspaces if people
+   keep uncommitted work there; `renkei-sandbox-data` need not be.
+
+4. **The keys** (`.env`). Everything sealed in the database is
+   unreadable without `TOKEN_ENCRYPTION_KEY` (and
+   `CONTENT_ENCRYPTION_KEY`, `SANDBOX_ENV_SECRETS_KEY`,
+   `LOG_ENCRYPTION_KEY` and the delegate's caller keys, where set). Keep
+   `.env`, and every key a rotation has retired while a backup still names
+   it, in a secrets manager, separately from the database backups: a
+   backup stored with its keys protects nothing, and keys lost with the
+   host make every backup worthless. People's own user keys are held in
+   their browsers, not in `.env` or the database, so there is nothing of
+   them for you to back up; the delegate's delegations are memory-only, so
+   background work resumes as people sign in again after any restart or
+   restore (`docs/delegate-key-design.md`).
+
+Restore order: keys in the environment, then Postgres, then `migrate`,
+then the blob store, then the rest of the stack. Practice it on a scratch
+host before you need it: sign in, open an old chat with an attachment, and
+open a connector's settings page, since each reads through a different key.
 
 ## First-run setup
 
@@ -1015,6 +1041,12 @@ It is gated by a **setup secret in the app's environment** instead:
    change to the provider is operator-only (Settings → Identity), `/setup`
    redirects home once a provider exists, and `SETUP_SECRET` is ignored from
    then on — remove it from the environment.
+
+Renkei keys some provider checks on the sign-in email (the `email` claim,
+else `preferred_username`). That claim must be immutable and verified at the
+IdP: a person who can set their own email can be taken for someone else. A
+token whose `email_verified` is present and not `true` records no email, and
+an email shared by two subjects resolves to nobody.
 
 The organization's name, shown on the consent page, is the `organizationName`
 org setting (default "Renkei").
@@ -1052,9 +1084,12 @@ again once.
   returns a new `refresh_token` and retires the presented one; presenting a
   retired token again revokes that whole token family and the subject's
   access tokens for the client. Rotation never extends the family's
-  lifetime (**Refresh token lifetime**, default 30 days), and a refreshed
+  lifetime (**Refresh token lifetime**, default 7 days), and a refreshed
   token takes the roles of the subject's newest live browser session when
-  one exists, the original roles otherwise.
+  one exists, the original roles minus `renkei-operator` otherwise (an
+  always-on client regains operator tools by signing in again). Refresh
+  never asks the identity provider, so **Sign out everywhere** below is the
+  offboarding step: it is what ends a person's MCP access.
 - Operators end a person's access from admin → Access: **Sign out
   everywhere** deletes their sessions, access tokens and refresh tokens and
   writes a `user.sessions_revoked` audit event; disconnecting a connector
@@ -1078,19 +1113,19 @@ again once.
 
 ## Security Checklist
 
-- [x] HTTPS enabled (TLS 1.2+)
+- [ ] HTTPS enabled (TLS 1.2+): the app is published on 127.0.0.1:3000 only and session cookies are `Secure`, so put a TLS-terminating reverse proxy in front of it and set `PUBLIC_BASE_URL` to its https address (the app refuses to start without it). This box is yours to tick
 - [x] Environment variables set (no secrets in code)
 - [x] Database password strong (16+ characters, mixed case, symbols)
 - [x] Regular database backups
-- [x] PostgreSQL firewall rules (only app can connect)
+- [ ] PostgreSQL firewall rules (only app can connect) — the bundled `postgres` service publishes no port; keep it that way, and firewall a managed Postgres to the compose host
 - [x] Failed login attempts logged
 - [x] Rate limiting: app-level, in-process fixed windows (`apps/web/lib/inbound-rate-limit.ts`; per forwarded client address AND a per-endpoint ceiling, so a spoofed address cannot widen the budget; N replicas multiply the ceiling). OIDC sign-in start 30/min per client, 600/min overall; OAuth token endpoint 60/min per client, 1,200/min overall; dynamic client registration 10 per 10 min per client, 100 per 10 min overall (and per the system-level endpoint); inbound webhooks 600/min per client, 6,000/min per provider; voice 120/min per person. Webhook routes also refuse a missing or malformed signature header before any config or database read, and cap bodies at 1 MiB (413). Add nginx `limit_req` in front for a ceiling that holds across replicas.
-- [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https, `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; review reports before enforcing.
+- [x] Security headers set by the app itself (`apps/web/lib/security-headers.ts`, via `next.config.ts`): `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (camera/geolocation/payment denied, microphone self), `X-Frame-Options: DENY` + `frame-ancestors 'none'` except on the chat's framed widget/mockup routes, `Strict-Transport-Security` when `PUBLIC_BASE_URL` is https **at `next build`** (the headers are decided at build; the published images are built without it, so set HSTS at your proxy), `X-Powered-By` removed. Content-Security-Policy is REPORT-ONLY — it still carries `'unsafe-inline'` for scripts and styles until per-request nonces are wired; nothing collects reports yet (no `report-uri` or `report-to`), so it observes nothing until you add a sink or read the browser console.
 - [x] CORS configured properly
 - [x] SQL injection prevention (using Kysely ORM)
 - [x] CSRF protection (OAuth state rows are single-use and bound to the starting browser by an httpOnly cookie plus the session subject — sign-in `oidc_state_`, connector flows `connect_state_`; the MCP consent answer is bound to the session that was shown the page and must be posted from this origin)
 - [x] XSS protection (React escaping; `dangerouslySetInnerHTML` only for the theme bootstrap script in `components/theme-script.tsx`, whose content is a constant)
-- [x] PHI access trail append-only (`phi_access_events`, below)
+- [x] PHI access trail append-only against the application (`phi_access_events`, below); against a holder of the connection string only with the separate runtime role ("Database roles")
 
 ### PHI access trail
 
@@ -1108,16 +1143,22 @@ Operators read it at `GET /api/admin/phi-access?subject=<oidc
 subject>&limit=100&before=<ISO date-time>` (operator role; without
 `subject` the org's whole trail, newest first).
 
-The table is **append-only by trigger**: `UPDATE` and `DELETE` are refused
-whatever role connects, because the migration runs as the application's
-own database user, which owns the table, and a `REVOKE` on an owner would
-be a no-op. Retention is therefore a deliberate DBA act, never the
-application's: as a superuser, `ALTER TABLE phi_access_events DISABLE
-TRIGGER phi_access_events_no_update_delete;`, prune, then `ENABLE` it
-again — and prefer archiving the pruned rows first. If the application
-connects as a role that does not own the table, additionally `REVOKE
-UPDATE, DELETE ON phi_access_events FROM <app role>;` so the guarantee no
-longer rests on the trigger alone. A failed insert is logged at `warn`
+The table is **append-only by trigger**: the application's `UPDATE` and
+`DELETE` statements are refused by every role that has no right to change
+the trigger. That is not "whatever role connects": the **owner** of the
+table, which on the default single-role layout is the role every service
+uses, may disable or drop the trigger (no superuser needed), and a
+`REVOKE` on an owner is a no-op. So with one role the trail is protected
+against the application's own code paths, not against a holder of the
+connection string. To protect it against that too, run the services as
+the non-owning runtime role ("Database roles" above), which holds
+`INSERT` and `SELECT` on this table and nothing more; `migrate` sets that
+up. Retention is a deliberate act of the owner (or a superuser), never the
+application's: `ALTER TABLE phi_access_events DISABLE TRIGGER
+phi_access_events_no_update_delete;`, prune, then `ENABLE` it again — and
+prefer archiving the pruned rows first. The platform audit log
+(`audit_events`, trigger from migration 171) and the delegate's access log
+follow the same rules. A failed insert is logged at `warn`
 (`component=phi-access`); the read it describes still returns.
 
 ### Upgrading to migration 155 (agents become instructions)
@@ -1258,7 +1299,8 @@ names it:
    `llm_model_configs.encrypted_secrets`, `oidc_config.client_secret`,
    `platform_settings.vapid_keys`, `knowledge_chunks.content`,
    `sandbox_env_secrets.sealed` and
-   `code_service_image_rules.registry_sealed` in batches of 200, opens
+   `code_service_image_rules.registry_sealed`, `mcp_servers.encrypted_client_secret`
+   and `delegate_signing_keys.sealed_private_key` in batches of 200, opens
    each `v1` or old-kid value with the ring and seals it again under the
    current key. It is resumable (a row already under the current key is
    never read again) and safe to run while the services are up (a row
@@ -1290,6 +1332,22 @@ names it:
    old key in your secrets manager for a while regardless: a database
    backup taken before step 2 still needs it, and restoring one means
    putting it back behind the current key and running `rewrap` again.
+
+**Binding secrets to their purpose (associated data).** Connector secrets,
+model API keys, the OIDC client secret and knowledge chunks are sealed as
+`v3.<kid>.…` envelopes bound to what they are (and, for connectors, which
+connector), so a database writer cannot copy one into another column and
+have the application decrypt it. Rows written before this release stay
+`v1`/`v2` and keep working; they are rebound by an operator step, not
+automatically. Once **every** service (web and workers) runs this release
+(older ones cannot open `v3`), run from `packages/user-keys` with the
+current rings: `pnpm rewrap --aad --dry-run`, then `pnpm rewrap --aad`
+(resumable; exits 1 on rows the ring cannot open; SANDBOX secrets, registry
+credentials and the VAPID key are not bound yet and are left alone). Until
+it has run, a legacy credential copied into a knowledge chunk would still
+be shown; after it, set `RENKEI_REQUIRE_AAD=1` on the services so legacy
+envelopes are refused for the bound purposes. A plain key rotation keeps
+the binding. Chunk bodies are bound to their purpose, not their row.
 
 A key that has **leaked** is rotated the same way — the steps are in the
 order that keeps the service up — but step 4 is the one that matters and

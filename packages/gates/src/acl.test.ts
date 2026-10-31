@@ -196,6 +196,11 @@ describe('verifyCandidates', () => {
 });
 
 describe('withheldNote', () => {
+  it('never says how many matches were refused', () => {
+    const note = withheldNote(7, 0);
+    expect(note).not.toMatch(/\d/);
+  });
+
   it('says nothing when nothing was withheld', () => {
     expect(withheldNote(0, 0)).toBe('');
   });
@@ -214,7 +219,7 @@ describe('withheldNote', () => {
 
   it('reports both when both happened', () => {
     const note = withheldNote(5, 2);
-    expect(note).toContain('3 withheld: you do not have access');
+    expect(note).toContain('withheld: you do not have access');
     expect(note).toContain('2 withheld: the source did not respond');
   });
 
@@ -222,7 +227,7 @@ describe('withheldNote', () => {
     // Arithmetic on a missing count used to yield NaN, which made every
     // branch false and dropped the note entirely — withholding results while
     // saying nothing at all, which is the one outcome that is never allowed.
-    expect(withheldNote(3, Number.NaN)).toContain('3 withheld');
+    expect(withheldNote(3, Number.NaN)).toContain('withheld: you do not have access');
   });
 
   it('never reports more timeouts than were withheld', () => {

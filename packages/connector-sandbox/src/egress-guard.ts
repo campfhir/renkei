@@ -53,14 +53,57 @@ function isBlockedIPv4(ip: string): boolean {
   return false;
 }
 
+/**
+ * Expand an IPv6 literal to its eight 16-bit groups, or null when it is
+ * not one. Handles `::` compression and a dotted-quad tail.
+ */
+function ipv6Groups(ip: string): number[] | null {
+  let text = ip.toLowerCase();
+  const zone = text.indexOf('%');
+  if (zone >= 0) text = text.slice(0, zone);
+  const tail = text.match(/^(.*:)(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (tail) {
+    const quad = tail.slice(2).map(Number);
+    if (quad.some((n) => n > 255)) return null;
+    text = `${tail[1]}${((quad[0] << 8) | quad[1]).toString(16)}:${((quad[2] << 8) | quad[3]).toString(16)}`;
+  }
+  const halves = text.split('::');
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(':') : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+  if (fill < 0 || (halves.length === 1 && head.length !== 8)) return null;
+  const groups = [...head, ...Array<string>(fill).fill('0'), ...rest].map((g) =>
+    /^[0-9a-f]{1,4}$/.test(g) ? parseInt(g, 16) : NaN
+  );
+  return groups.length === 8 && groups.every((g) => !Number.isNaN(g)) ? groups : null;
+}
+
+const embeddedIPv4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
+/**
+ * Allow-list by scope: only global unicast (2000::/3) is reachable, and the
+ * transitional forms that embed an IPv4 destination (mapped, compatible,
+ * NAT64, 6to4) are judged by the address they embed. A deny-list of
+ * prefixes keeps missing spellings; this does not.
+ */
 function isBlockedIPv6(ip: string): boolean {
-  const lower = ip.toLowerCase();
-  if (lower === '::1' || lower === '::') return true; // loopback / unspecified
-  if (lower.startsWith('fe80')) return true; // link-local fe80::/10
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // unique-local fc00::/7
-  const mapped = lower.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/); // IPv4-mapped
-  if (mapped) return isBlockedIPv4(mapped[1]);
-  return false;
+  const g = ipv6Groups(ip);
+  if (!g) return true; // unparseable: refuse
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = g;
+  const upperZero = g0 === 0 && g1 === 0 && g2 === 0 && g3 === 0;
+  // ::ffff:a.b.c.d (mapped) and ::a.b.c.d (compatible), incl. :: and ::1
+  if (upperZero && g4 === 0 && g5 === 0xffff) return isBlockedIPv4(embeddedIPv4(g6, g7));
+  if (upperZero && g4 === 0 && g5 === 0) return true;
+  // 64:ff9b::/96 NAT64 well-known prefix
+  if (g0 === 0x64 && g1 === 0xff9b && g2 === 0 && g3 === 0 && g4 === 0 && g5 === 0) {
+    return isBlockedIPv4(embeddedIPv4(g6, g7));
+  }
+  // 2002::/16 6to4 embeds an IPv4 in groups 1-2
+  if (g0 === 0x2002) return isBlockedIPv4(embeddedIPv4(g1, g2));
+  // Everything outside global unicast 2000::/3 (loopback, link-local,
+  // unique-local, site-local, multicast, documentation-free reserved).
+  return (g0 & 0xe000) !== 0x2000;
 }
 
 /** Whether an IP literal is in a private/reserved range the worker refuses to reach. */

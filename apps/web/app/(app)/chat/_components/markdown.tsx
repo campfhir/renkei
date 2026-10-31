@@ -51,6 +51,7 @@ import rehypeHighlight from 'rehype-highlight';
 import { Icon, ICONS } from '@/components/icons';
 import { useCodeLineNumbers } from '@/components/code-display-context';
 import { CODE_GRAMMARS } from '@/lib/chat/code-grammars';
+import { classifyImageSource } from '@/lib/chat/markdown-image-source';
 import { CODE_ALIASES, languageFromClassName, languageLabel } from '@/lib/chat/code-languages';
 import { copySelectionWithMarkdownTables } from './copy-tables-as-markdown';
 
@@ -281,7 +282,31 @@ function withHardBreaks(text: string): string {
  * React a new `pre` component type each time, which remounts every code
  * block (and loses its Copy / Save confirmation) whenever the thread re-renders.
  */
+/**
+ * A Markdown image. One from this origin or inline loads as usual; one from
+ * anywhere else is a button until the viewer asks (lib/chat/markdown-image-source.ts:
+ * the browser fetches an <img> on render, which is a channel out for
+ * whatever a prompt-injected model put in the URL).
+ */
+function MarkdownImage({ src, alt }: { src?: string | Blob; alt?: string }) {
+  const [requested, setRequested] = useState(false);
+  const url = typeof src === 'string' ? src : undefined;
+  const source = classifyImageSource(url);
+  if (source.trusted || requested) {
+    return <img src={url} alt={alt ?? ''} loading="lazy" referrerPolicy="no-referrer" />;
+  }
+  return (
+    <span className="chat-image-held">
+      <button type="button" onClick={() => setRequested(true)}>
+        Load image from {source.host}
+      </button>
+      {alt ? <span className="chat-image-held-alt"> — {alt}</span> : null}
+    </span>
+  );
+}
+
 const MARKDOWN_COMPONENTS: Components = {
+  img: ({ src, alt }) => <MarkdownImage src={src} alt={alt} />,
   a: ({ href, children }) => (
     <a href={href} target="_blank" rel="noopener noreferrer nofollow">
       {children}

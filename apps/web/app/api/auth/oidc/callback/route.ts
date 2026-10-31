@@ -19,6 +19,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { oidcDiscoveryUrl } from '@/lib/oidc-discovery';
 import { safeFetch, assertPublicHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
 import { verifyIdTokenClaims } from '@/lib/oidc-id-token';
+import { safeReturnPath } from '@/lib/return-path';
 
 interface OIDCTokenResponse {
   access_token: string;
@@ -257,6 +258,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return response;
     }
 
+    // Decode and mint standardized renkei roles from IDP claims
+    const userRoles = new Set<string>();
+    {
+      if (decoded && oidc.roleClaim) {
+        const idpClaim = decoded[oidc.roleClaim];
+
+        // Handle both single value string and array of values
+        const idpValues = Array.isArray(idpClaim) ? idpClaim : idpClaim ? [idpClaim] : [];
+
+        for (const value of idpValues) {
+          if (value === oidc.operatorIdpValue) {
+            userRoles.add('renkei-operator');
+          }
+          if (value === oidc.userIdpValue) {
+            userRoles.add('renkei-user');
+          }
+        }
+
+        // Require user to have at least one renkei role
+        if (userRoles.size === 0) {
+          logger.warn('Sign-in refused: no authorized roles in IdP claim {roleClaim}: {claim}', {
+            component: 'auth/oidc',
+            subject,
+            roleClaim: oidc.roleClaim,
+            claim: JSON.stringify(idpClaim),
+          });
+          return NextResponse.json({ error: 'User role not authorized' }, { status: 403 });
+        }
+      }
+    }
+
+    // Recorded only now, after the role check: a sign-in refused above
+    // leaves no identity behind for an email lookup to find.
     // Record the identity spine entry (subject → email, plus the groups
     // claim for connector audiences) while the id_token is in hand — the
     // only moment the mapping is trustworthy. Non-fatal: a failed upsert
@@ -304,42 +338,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Decode and mint standardized renkei roles from IDP claims
-    const userRoles = new Set<string>();
-    {
-      if (decoded && oidc.roleClaim) {
-        const idpClaim = decoded[oidc.roleClaim];
-
-        // Handle both single value string and array of values
-        const idpValues = Array.isArray(idpClaim) ? idpClaim : idpClaim ? [idpClaim] : [];
-
-        for (const value of idpValues) {
-          if (value === oidc.operatorIdpValue) {
-            userRoles.add('renkei-operator');
-          }
-          if (value === oidc.userIdpValue) {
-            userRoles.add('renkei-user');
-          }
-        }
-
-        // Require user to have at least one renkei role
-        if (userRoles.size === 0) {
-          logger.warn('Sign-in refused: no authorized roles in IdP claim {roleClaim}: {claim}', {
-            component: 'auth/oidc',
-            subject,
-            roleClaim: oidc.roleClaim,
-            claim: JSON.stringify(idpClaim),
-          });
-          return NextResponse.json({ error: 'User role not authorized' }, { status: 403 });
-        }
-      }
-    }
-
     // Delete used state token
     await pendingSignins.deleteByState(state);
 
     // Get redirect target from cookie; without one, land on the home page.
-    const redirect = request.cookies.get('oidc_redirect')?.value || '/';
+    const redirect = safeReturnPath(request.cookies.get('oidc_redirect')?.value) ?? '/';
 
     // Create a server-side session. Subject and roles are stored in the database
     // and never sent to the client; the cookie holds only an opaque id. Previously

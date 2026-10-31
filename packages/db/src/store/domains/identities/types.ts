@@ -8,7 +8,7 @@ export interface IdentityRecord {
 
 export interface IdentityStore {
   get(subject: string): Promise<IdentityRecord | null>;
-  /** The identity recorded with this email (exact match; ties by subject), or null. */
+  /** The identity recorded with this email (exact match), or null; null as well when several subjects share it. */
   findByEmail(email: string): Promise<IdentityRecord | null>;
   /** Insert, or replace email, name and groups of an existing subject. */
   upsert(identity: IdentityRecord): Promise<void>;

@@ -29,9 +29,21 @@ minimumReleaseAgeExclude:
 # open when the gate went in and are not fixable without a dependency bump
 # that is its own change; each is listed with what fixes it and a review
 # date. An entry past its date is overdue, not permanent: fix the
-# dependency and delete the line, or renew the date with a reason. The same
-# baseline, by CVE id, is in .trivyignore for the image scan. Keep the two
-# in step.
+# dependency and delete the line, or renew the date with a reason. The image
+# scan's baseline is separate (.trivyignore, by CVE id); the two are not
+# required to match, and this list is empty by design.
+# Unmaintained parsers on untrusted-input paths, reviewed 2026-10-31. No
+# automated gate flags these (their CVEs are CVE.org records with commit
+# ranges only, so `pnpm audit`, OSV and Trivy report them clean): re-check
+# by hand at each review and replace, or renew the date with a reason.
+#   exceljs 4.4.0            last published 2024-12-20. Reads uploaded
+#                            workbooks (apps/web/lib/chat/sheet-preview.ts),
+#                            now behind a zip-budget check.
+#                            Next review: 2027-01-31.
+#   @tryjsky/v9u-smb2 1.1.0  last published 2023-06-30, locally patched.
+#                            Parses responses from SMB shares
+#                            (connector-fileshares); SMB 2.0.2/2.1 only,
+#                            unsigned. Next review: 2027-01-31.
 auditConfig:
   ignoreGhsas: []
 patchedDependencies:

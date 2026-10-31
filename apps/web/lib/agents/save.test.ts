@@ -12,6 +12,7 @@ jest.mock('@/lib/mcp-tools/tool-catalog', () => ({
 }));
 jest.mock('@/lib/agents/store', () => ({
   getAgent: jest.fn(),
+  listAgentNames: jest.fn(async () => []),
   createAgent: jest.fn(),
   updateAgent: jest.fn(async () => ({ apiKeys: [] })),
 }));
@@ -22,9 +23,11 @@ jest.mock('@/lib/audit-events', () => ({ recordAuditEvent: jest.fn() }));
 import type { AgentDraft } from '@renkei/agents';
 import { saveAgent } from './save';
 
-const storeMock = jest.requireMock<{ getAgent: jest.Mock; updateAgent: jest.Mock }>(
-  '@/lib/agents/store'
-);
+const storeMock = jest.requireMock<{
+  getAgent: jest.Mock;
+  listAgentNames: jest.Mock;
+  updateAgent: jest.Mock;
+}>('@/lib/agents/store');
 const describeMock = jest.requireMock<{ generateAgentDescription: jest.Mock }>(
   '@/lib/agents/describe'
 );
@@ -118,5 +121,65 @@ describe('validation against the owner’s tools', () => {
       outcome: 'invalid',
       issues: [expect.objectContaining({ path: 'tools.0' })],
     });
+  });
+});
+
+describe('chained triggers', () => {
+  const OWN = '11111111-1111-4111-8111-111111111111';
+  const FOREIGN = '22222222-2222-4222-8222-222222222222';
+  const chained = (callerAgentId: string) =>
+    parsedWith({ triggers: [{ kind: 'agent', callerAgentId }], enabled: true });
+
+  it('refuses a trigger on an agent the owner does not own', async () => {
+    storeMock.listAgentNames.mockResolvedValue([{ id: OWN, name: 'Mine' }]);
+    const result = await saveAgent('auth0|alice', chained(FOREIGN), { agentId: 'agent-1' });
+    expect(result).toEqual({
+      outcome: 'invalid',
+      issues: [expect.objectContaining({ path: 'triggers.0' })],
+    });
+    expect(storeMock.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('accepts a trigger on one of the owner’s own agents', async () => {
+    storeMock.listAgentNames.mockResolvedValue([{ id: OWN, name: 'Mine' }]);
+    const result = await saveAgent('auth0|alice', chained(OWN), { agentId: 'agent-1' });
+    expect(result.outcome).toBe('saved');
+  });
+});
+
+describe('API triggers added through an access grant', () => {
+  const api = { kind: 'api' as const, inputs: [] };
+
+  it('are refused: the key would outlive the grant', async () => {
+    const result = await saveAgent(
+      'auth0|grantee',
+      parsedWith({ triggers: [api], enabled: true }),
+      { agentId: 'agent-1', ownerSubject: 'auth0|owner' }
+    );
+    expect(result).toEqual({
+      outcome: 'invalid',
+      issues: [expect.objectContaining({ path: 'triggers' })],
+    });
+    expect(storeMock.updateAgent).not.toHaveBeenCalled();
+  });
+
+  it('are allowed to the owner', async () => {
+    const result = await saveAgent('auth0|owner', parsedWith({ triggers: [api], enabled: true }), {
+      agentId: 'agent-1',
+    });
+    expect(result.outcome).toBe('saved');
+  });
+
+  it('may stay when the agent already has one', async () => {
+    storeMock.getAgent.mockResolvedValue({
+      ...existing,
+      triggers: [{ id: 't1', kind: 'api', enabled: true, draft: api }],
+    });
+    const result = await saveAgent(
+      'auth0|grantee',
+      parsedWith({ triggers: [api], enabled: true }),
+      { agentId: 'agent-1', ownerSubject: 'auth0|owner' }
+    );
+    expect(result.outcome).toBe('saved');
   });
 });

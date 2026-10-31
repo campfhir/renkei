@@ -1,6 +1,6 @@
 import type { Scenario } from '../../domain';
 import type { DataStore } from '../../types';
-import { CHAT, at, chatWorld, uid } from '../chats/fixtures';
+import { ANN, BOB, CAT, CHAT, at, chatWorld, uid } from '../chats/fixtures';
 
 const TURN = { done: uid(501), running: uid(502), other: uid(503) };
 
@@ -132,6 +132,35 @@ export const chatThreadScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.chatThreads.getActiveTurn(CHAT.annA),
       await store.chatThreads.getActiveTurn(CHAT.annB),
+    ],
+  },
+  {
+    method: 'chatThreads.countRunningForOwner',
+    name: "running turns across the person's own chats only",
+    fixture: {
+      ...fixture,
+      chat_turns: [
+        ...fixture.chat_turns,
+        {
+          id: uid(512),
+          chat_id: CHAT.annB,
+          status: 'running',
+          started_at: at(5),
+          updated_at: at(5),
+        },
+        {
+          id: uid(513),
+          chat_id: CHAT.bobShared,
+          status: 'running',
+          started_at: at(5),
+          updated_at: at(5),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.chatThreads.countRunningForOwner(ANN),
+      await store.chatThreads.countRunningForOwner(BOB),
+      await store.chatThreads.countRunningForOwner(CAT),
     ],
   },
   {

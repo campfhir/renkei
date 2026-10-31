@@ -569,6 +569,11 @@ export function postgresAgents(db: () => Kysely<DB>): AgentStore {
         .where('t.enabled', '=', true)
         .where('a.enabled', '=', true)
         .where(sql<string>`t.config->>'callerAgentId'`, '=', callerAgentId)
+        // Chaining is within one owner: the source's owner never consented
+        // to anyone else receiving its run output.
+        .where(
+          sql<boolean>`exists (select 1 from agents c where c.id::text = ${callerAgentId} and c.owner_subject = a.owner_subject)`
+        )
         .orderBy('t.id')
         .execute();
       return rows.map((row) => ({

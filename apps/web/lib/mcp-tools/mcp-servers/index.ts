@@ -82,6 +82,9 @@ export function registeredNames(slug: string, tools: McpListedTool[]): Map<strin
   return names;
 }
 
+/** The most content blocks of one remote result that are relayed. */
+const MAX_RESULT_BLOCKS = 50;
+
 export function registerMcpServerTools(
   server: McpServer,
   context: MCPToolContext,
@@ -107,11 +110,14 @@ export function registerMcpServerTools(
         }
         try {
           const result = await callRemoteTool(entry, subject, tool.name, args);
-          const content = result.content.map((block) =>
+          // Text only, and a bounded number of blocks: an image or audio block
+          // from a remote server is unbounded bytes nothing here can read or
+          // filter, so it is replaced by a note rather than relayed.
+          const content = result.content.slice(0, MAX_RESULT_BLOCKS).map((block) =>
             block.type === 'text' && typeof block.text === 'string'
               ? { type: 'text' as const, text: clip(block.text) }
               : block.type === 'image' || block.type === 'audio'
-                ? block
+                ? { type: 'text' as const, text: `[${block.type} content omitted]` }
                 : {
                     type: 'text' as const,
                     text: clip(JSON.stringify(block)),

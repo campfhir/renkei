@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
@@ -50,8 +51,10 @@ export const GET = async (request: NextRequest): Promise<NextResponse> => {
       siteUrl: typeof metadata.siteUrl === 'string' ? metadata.siteUrl : null,
     });
   } catch (error) {
+    const correlationId = randomUUID();
     logger.error('Jira status check failed: {error}', {
       component: 'api/mcp/status',
+      correlationId,
       subject: session.subject,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
@@ -59,7 +62,7 @@ export const GET = async (request: NextRequest): Promise<NextResponse> => {
     return NextResponse.json(
       {
         connected: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: `Status check failed (ref ${correlationId})`,
       },
       { status: 500 }
     );

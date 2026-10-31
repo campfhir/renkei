@@ -18,11 +18,8 @@ export function memoryIdentities(tables: MemoryTables): IdentityStore {
       return row ? record(row) : null;
     },
     async findByEmail(email) {
-      const [row] = orderBy(
-        tables.select('identities', (r) => r.email === email),
-        [(r) => r.subject]
-      );
-      return row ? record(row) : null;
+      const rows = tables.select('identities', (r) => r.email === email);
+      return rows.length === 1 ? record(rows[0]) : null;
     },
     async upsert({ subject, email, displayName, idpGroups }) {
       tables.upsert(

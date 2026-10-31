@@ -16,15 +16,15 @@ import {
   invalidateConnectorConfigCache,
 } from '@renkei/connector-config';
 import { MISTRAL_OCR_CONNECTOR, DEFAULT_MISTRAL_OCR_MODEL } from '@renkei/connector-mistral-ocr';
+import { checkServiceEndpoint } from '@/lib/service-endpoint';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -61,9 +61,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -76,6 +74,10 @@ export async function PUT(
   const { endpoint, model, apiKey } = body;
   if (typeof endpoint !== 'string' || !endpoint) {
     return NextResponse.json({ error: 'endpoint is required' }, { status: 400 });
+  }
+  const endpointVerdict = await checkServiceEndpoint(endpoint);
+  if (!endpointVerdict.ok) {
+    return NextResponse.json({ error: endpointVerdict.error }, { status: 400 });
   }
   const enabled = typeof body.enabled === 'boolean' ? body.enabled : true;
 
@@ -121,6 +123,18 @@ export async function PUT(
   }
 
   invalidateConnectorConfigCache(MISTRAL_OCR_CONNECTOR);
+  recordAuditEvent({
+    actorSubject: access.subject,
+    action: 'connector.configured',
+    targetKind: 'connector',
+    targetLabel: MISTRAL_OCR_CONNECTOR,
+    details: {
+      connector: MISTRAL_OCR_CONNECTOR,
+      endpoint: endpoint,
+      enabled,
+      apiKeyReplaced: typeof apiKey === 'string' && apiKey.length > 0,
+    },
+  });
   return NextResponse.json({
     connector: MISTRAL_OCR_CONNECTOR,
     configured: true,

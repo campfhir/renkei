@@ -306,10 +306,13 @@ function step(
 
 const lifecycleFixture = {
   agents,
+  agent_triggers: [
+    { id: id(999), agent_id: id(1), kind: 'event', event_source: 'jira', event_type: 'x' },
+  ],
   agent_runs: [
     run(61, 1, 'ann', 1, { status: 'failed', error: 'boom', error_kind: 'tool' }),
     run(62, 1, 'ann', 3, { status: 'queued' }),
-    run(63, 1, 'ann', 3, { status: 'running' }),
+    run(63, 1, 'ann', 3, { status: 'running', trigger_id: id(999) }),
     run(64, 2, 'bob', 2, { status: 'succeeded' }),
   ],
   agent_run_steps: [
@@ -854,12 +857,20 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agentRuns.countCreatedSince',
-    name: 'strictly after the cutoff, everyone',
+    name: 'strictly after the cutoff: everyone, one owner, one trigger',
     fixture: lifecycleFixture,
     run: async (store) => [
       await store.agentRuns.countCreatedSince(new Date(at(0))),
       await store.agentRuns.countCreatedSince(new Date(at(2))),
       await store.agentRuns.countCreatedSince(new Date(at(99))),
+      await store.agentRuns.countCreatedSince(new Date(at(0)), { ownerSubject: 'ann' }),
+      await store.agentRuns.countCreatedSince(new Date(at(2)), { ownerSubject: 'ann' }),
+      await store.agentRuns.countCreatedSince(new Date(at(0)), { triggerId: id(999) }),
+      await store.agentRuns.countCreatedSince(new Date(at(0)), {
+        ownerSubject: 'bob',
+        triggerId: id(999),
+      }),
+      await store.agentRuns.countCreatedSince(new Date(at(3)), { triggerId: id(999) }),
     ],
   },
   {

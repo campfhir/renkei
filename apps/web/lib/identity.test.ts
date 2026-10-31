@@ -54,6 +54,17 @@ describe('identityClaimsFromIdToken', () => {
     expect(claims?.displayName).toBeNull();
   });
 
+  it('yields nothing when the IdP says the address is not verified', () => {
+    for (const email_verified of [false, 'true', 'false', null]) {
+      expect(
+        identityClaimsFromIdToken({ email: 'sam@example.com', email_verified }, 'groups')
+      ).toBeNull();
+    }
+    expect(
+      identityClaimsFromIdToken({ email: 'sam@example.com', email_verified: true }, 'groups')?.email
+    ).toBe('sam@example.com');
+  });
+
   it('yields nothing for a token with no address anywhere', () => {
     expect(
       identityClaimsFromIdToken({ preferred_username: 'DOMAIN\\sam', name: 'Sam' }, 'groups')

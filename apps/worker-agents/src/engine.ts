@@ -2442,9 +2442,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
   /**
    * Whether a run started from outside the org's own hand (act-approval.ts).
    * A chained run inherits its ROOT's provenance; a chain that cannot be
-   * walked reads as external — the fail-closed direction.
+   * walked reads as external — the fail-closed direction. So does a manual
+   * run pressed by someone other than the owner (an access grantee): it
+   * acts on the owner's accounts, and the owner's "accept automatically"
+   * was never a decision about what a grantee asks for.
    */
   async function runIsExternallyTriggered(run: RunRow): Promise<boolean> {
+    if (
+      run.triggerKind === 'manual' &&
+      run.triggeredBySubject !== null &&
+      run.triggeredBySubject !== run.ownerSubject
+    ) {
+      return true;
+    }
     let kind = run.triggerKind;
     let parentId = run.parentRunId;
     for (let hops = 0; kind === 'agent' && parentId && hops < MAX_CHAIN_WALK; hops += 1) {

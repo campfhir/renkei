@@ -29,8 +29,11 @@ ARG DISTRO_REFRESH=unset
 # time (`apk upgrade`, `apt-get upgrade`), so a fix the distribution has
 # shipped since the base image was built is in the image — the CI image
 # scan fails on a fixable HIGH/CRITICAL, and the base image lags its
-# distribution by days. Each upgrade sits under `ARG DISTRO_REFRESH`, so a
-# cached upgrade layer is never more than a day old (see the ARG above).
+# distribution by days. Node itself is NOT a distribution package (it is a
+# tarball in the base image) and Trivy does not identify it, so only a new
+# base digest moves it: the weekly-security workflow compares the pinned
+# digest's NODE_VERSION with the Node release index. Each upgrade sits
+# under `ARG DISTRO_REFRESH`, so a cached upgrade layer is never more than a day old (see the ARG above).
 #   docker.io/library/node:24-alpine         (every Node-only stage)
 #   docker.io/library/node:24-bookworm-slim  (the sandbox: Chromium and the
 #                                             toolchains need glibc)
@@ -46,7 +49,7 @@ ARG DISTRO_REFRESH=unset
 # the pinned pnpm stays on its PATH; npm goes there too.
 
 # Build stage
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS builder
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS builder
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -91,7 +94,7 @@ RUN node packages/db/scripts/build-migrations.js
 RUN pnpm --filter renkei build
 
 # Web runtime stage
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS runtime
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -209,7 +212,7 @@ CMD ["node", "node_modules/next/dist/bin/next", "start"]
 # file-share worker is NOT here: it ships as its own image (the
 # `fileshares` stage below), so this image never carries the SMB/SSH
 # protocol stack and the fileshare container never carries the agents' deps.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS worker
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS worker
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -261,7 +264,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # credentials, so its container carries exactly the protocol stack (the
 # patched @tryjsky/v9u-smb2 among it) and nothing of the queue workers' LLM
 # and connector dependencies — and it rolls out independently of them.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS fileshares
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS fileshares
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -309,7 +312,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # is the only process that dials a customer's on-prem OnBase API Server or
 # Hyland IdP (the web app's SSRF guard refuses private hosts by design),
 # and it rolls out independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS onbase
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS onbase
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -358,7 +361,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # (typically on a private network the web app's SSRF guard refuses by
 # design) or decrypts a person's stored Mirth credential, and it rolls out
 # independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS mirth
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS mirth
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -408,7 +411,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # chat's or project's data key, or opens a person's sealed values. Its own
 # image so that key is set on exactly one service and it rolls out
 # independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS delegate
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS delegate
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -451,7 +454,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # ADManager Plus servers (typically on a private network the web app's SSRF
 # guard refuses by design) or decrypts a person's stored authtoken, and it
 # rolls out independently of the queue workers.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS admanager
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS admanager
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -519,7 +522,7 @@ CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 # the entrypoint drops itself when workspaces are off); the build checks
 # it is there, because a missing one would show up only as a failed spawn
 # on every command a caller runs.
-FROM node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20 AS sandbox
+FROM node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS sandbox
 ARG PNPM_VERSION
 
 WORKDIR /app
@@ -560,9 +563,9 @@ RUN apt-get update && \
 # and lists what it found at boot. pandas 2.3 and numpy 2.3 are the last
 # lines with wheels for bookworm's Python 3.11 (pandas 3 and numpy 2.5
 # need 3.12), as is matplotlib 3.10; a move to a newer base image lifts
-# them together. Pillow and pypdf are kept at their newest: the image
-# scan (CI's Trivy step) fails the build on a HIGH advisory against
-# either, and both ship a steady stream of parser fixes — Pillow's
+# them together. Pillow and pypdf are exact pins that move when an advisory
+# lands, not on their own: the image scan (CI's Trivy step) fails the build
+# on a HIGH advisory against either, and both ship a steady stream of parser fixes — Pillow's
 # current wheels are manylinux_2_28, which bookworm's glibc satisfies.
 ARG PANDAS_VERSION=2.3.2
 ARG NUMPY_VERSION=2.3.5
@@ -572,7 +575,7 @@ ARG PYTHON_DATEUTIL_VERSION=2.9.0.post0
 ARG PYTHON_DOCX_VERSION=1.2.0
 ARG PYTHON_PPTX_VERSION=1.0.2
 ARG REPORTLAB_VERSION=4.4.4
-ARG PYPDF_VERSION=6.21.2
+ARG PYPDF_VERSION=6.21.4
 ARG PILLOW_VERSION=13.0.0
 ARG MATPLOTLIB_VERSION=3.10.7
 RUN python3 -m venv /opt/sandbox-python && \
@@ -794,7 +797,12 @@ RUN mkdir -p /data /workspaces /runs && chown worker:nodejs /data && chmod 711 /
 # (see the script); SANDBOX_RUN_AS_WORKER=true drops to `worker` before the
 # process starts, for a deployment that will never run anyone's commands.
 COPY docker/sandbox-entrypoint.sh /usr/local/bin/sandbox-entrypoint
-RUN chmod 755 /usr/local/bin/sandbox-entrypoint
+# The browser does not inherit that root: the worker starts Chromium through
+# this launcher, which execs it as uid 1002 — an account that owns nothing,
+# below every per-caller uid (src/browser-launch.ts).
+COPY docker/sandbox-browser-launcher.sh /usr/local/bin/sandbox-browser-launcher
+RUN chmod 755 /usr/local/bin/sandbox-entrypoint /usr/local/bin/sandbox-browser-launcher && \
+    useradd -r -u 1002 -M -d /nonexistent -s /usr/sbin/nologin sandbox-browser
 
 ARG GIT_COMMIT
 ENV NODE_ENV=production \
@@ -803,7 +811,8 @@ ENV NODE_ENV=production \
     SANDBOX_WORKSPACES_DIR=/workspaces \
     SANDBOX_RUNS_DIR=/runs \
     SANDBOX_PYTHON=/opt/sandbox-python/bin/python3 \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    SANDBOX_BROWSER_LAUNCHER=/usr/local/bin/sandbox-browser-launcher
 
 EXPOSE 8092
 
@@ -822,7 +831,7 @@ WORKDIR /app/apps/worker-sandbox
 CMD ["node", "node_modules/tsx/dist/cli.mjs", "src/index.ts"]
 
 # Migration stage - runs migrations only
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS migrate
+FROM node:24-alpine@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85 AS migrate
 ARG PNPM_VERSION
 
 WORKDIR /app

@@ -11,7 +11,7 @@
  */
 
 import { configCacheTtlMs as storeConfigCacheTtlMs, getDataStore } from '@renkei/db';
-import { encrypt, decrypt } from '@renkei/crypto';
+import { AAD_PURPOSE, aadFor, decryptBound, encrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -39,6 +39,16 @@ function readStringRecord(value: unknown): Record<string, string> {
   return out;
 }
 
+/**
+ * A connector's secrets are sealed bound to this purpose and the connector
+ * name (audit R-04), so the blob opens only as this connector's row. Rows
+ * sealed before still open (legacy v1/v2) until `rewrap --aad` or the next
+ * admin save re-seals them.
+ */
+export function connectorSecretsAad(connector: string): string {
+  return aadFor(AAD_PURPOSE.connectorConfig, connector);
+}
+
 export async function getConnectorConfig(
   connector: string,
   encryptionKey: Buffer
@@ -52,16 +62,16 @@ export async function getConnectorConfig(
   const row = rowResult.val;
   if (!row) return ok(null);
 
-  const secretsJson = decrypt(row.encryptedSecrets, encryptionKey);
-  if (!secretsJson.ok) {
+  const sealed = decryptBound(row.encryptedSecrets, encryptionKey, connectorSecretsAad(connector));
+  if (!sealed.ok) {
     return err('DECRYPTION_ERROR' as const, {
-      message: `${connector} secrets did not decrypt: ${secretsJson.err.message ?? secretsJson.err.type}`,
+      message: `${connector} secrets did not decrypt: ${sealed.err.message ?? sealed.err.type}`,
     });
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(secretsJson.val);
+    parsed = JSON.parse(sealed.val.value);
   } catch {
     return err('DECRYPTION_ERROR' as const, { message: `${connector} secrets are not JSON` });
   }
@@ -79,7 +89,11 @@ export async function setConnectorConfig(
   config: { enabled: boolean; settings: Record<string, unknown>; secrets: Record<string, string> },
   encryptionKey: Buffer
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const encryptedSecrets = encrypt(JSON.stringify(config.secrets), encryptionKey);
+  const encryptedSecrets = encrypt(
+    JSON.stringify(config.secrets),
+    encryptionKey,
+    connectorSecretsAad(connector)
+  );
   const result = await wrapAsync(
     () =>
       getDataStore().connectorConfigs.upsert({

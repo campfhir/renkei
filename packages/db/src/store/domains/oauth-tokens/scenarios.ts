@@ -191,4 +191,34 @@ export const oauthTokenScenarios: Scenario<DataStore>[] = [
       return { rotated, token, successor, bob, replay: (await rotate(store, 'r-live')).outcome };
     },
   },
+  {
+    method: 'oauthTokens.rotateRefreshToken',
+    name: 'with no live session the frozen operator role is dropped, the rest kept',
+    fixture: {
+      oauth_clients: clients,
+      oauth_refresh_tokens: [
+        { ...refresh(1, 'r-op', { subject: 'dan' }), roles: ['renkei-user', 'renkei-operator'] },
+      ],
+    },
+    run: async (store) => [
+      await rotate(store, 'r-op'),
+      (await store.oauthTokens.findAccessToken('a-next', 'jira'))?.roles ?? null,
+    ],
+  },
+  {
+    method: 'oauthTokens.revokeClientTokens',
+    name: 'every token of that client and subject goes; other clients and subjects stay',
+    fixture,
+    run: async (store) => {
+      await store.oauthTokens.revokeClientTokens('cli-a', 'ann');
+      return [
+        await store.oauthTokens.findAccessToken('a1', 'jira'),
+        await store.oauthTokens.findAccessToken('a2', 'agent'),
+        (await store.oauthTokens.findAccessToken('a3', 'jira'))?.tokenHash ?? null,
+        (await store.oauthTokens.findAccessToken('a4', 'jira'))?.tokenHash ?? null,
+        (await rotate(store, 'r-live')).outcome,
+        (await rotate(store, 'r-bob')).outcome,
+      ];
+    },
+  },
 ];

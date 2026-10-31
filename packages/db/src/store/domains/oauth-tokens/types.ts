@@ -55,6 +55,8 @@ export interface OAuthTokenStore {
   findAccessToken(tokenHash: string, application: string): Promise<OAuthAccessTokenRecord | null>;
   /** Returns how many rows went (0 or 1). */
   deleteAccessToken(tokenHash: string): Promise<number>;
+  /** Delete every refresh and access token a client holds for a subject. */
+  revokeClientTokens(clientId: string, subject: string): Promise<void>;
   /** A family's first refresh token (its family id is fresh). */
   insertRefreshToken(token: NewOAuthRefreshToken): Promise<void>;
   /**
@@ -81,4 +83,15 @@ export interface OAuthTokenStore {
     next: { tokenId: string; tokenHash: string };
     access: { tokenHash: string; expiresAt: Date };
   }): Promise<OAuthRefreshRotation>;
+}
+
+/**
+ * A refresh that finds no live browser session has only the roles frozen at
+ * consent to go on, and a frozen operator role may long since have been
+ * withdrawn at the identity provider. It is dropped then: the client keeps
+ * working as an ordinary member and gets operator tools back by signing in
+ * again.
+ */
+export function withoutOperator(roles: readonly string[]): string[] {
+  return roles.filter((role) => role !== 'renkei-operator');
 }

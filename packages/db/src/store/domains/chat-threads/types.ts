@@ -82,6 +82,8 @@ export interface ChatThreadStore extends ChatTurnEngineStore {
   listTurnMessages(turnId: string): Promise<ChatMessageRecord[]>;
   /** The chat's running turn, if any (at most one runs per chat). */
   getActiveTurn(chatId: string): Promise<ChatTurnRecord | null>;
+  /** How many turns are running across all the chats this person owns. */
+  countRunningForOwner(ownerSubject: string): Promise<number>;
   /** One turn of one chat; null when the turn is not that chat's. */
   getTurn(chatId: string, turnId: string): Promise<ChatTurnRecord | null>;
   /** The chat's newest compaction summary (ties by id), or null. */

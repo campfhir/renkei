@@ -44,12 +44,12 @@ be found again.
 
 ## The model
 
-| Table                 | What a row is                                                                                                  |
-| --------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `artifacts`           | `chat_attachments` renamed: owner, bytes (`blob_key`), extracted text, `chat_id` (the chat it came from), `origin`. |
-| `artifact_references` | A project holds an artifact, with `mode` `always` or `on_demand`.                                              |
-| `resource_access_grants` kind `artifact` | A person it is shared with. Role is always `viewer`: shared to **use**, never to edit.                      |
-| `resource_keys` kind `artifact` | Its own content key (below).                                                                                   |
+| Table                                    | What a row is                                                                                                       |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `artifacts`                              | `chat_attachments` renamed: owner, bytes (`blob_key`), extracted text, `chat_id` (the chat it came from), `origin`. |
+| `artifact_references`                    | A project holds an artifact, with `mode` `always` or `on_demand`.                                                   |
+| `resource_access_grants` kind `artifact` | A person it is shared with. Role is always `viewer`: shared to **use**, never to edit.                              |
+| `resource_keys` kind `artifact`          | Its own content key (below).                                                                                        |
 
 Rules, as enforced in `apps/web/lib/chat/artifact-access.ts`:
 
@@ -62,9 +62,11 @@ Rules, as enforced in `apps/web/lib/chat/artifact-access.ts`:
 - A **reader of the chat** it came from reads it, as before.
 - Nobody else: the routes answer 404, never 403, as everywhere else.
 
-Lifecycle: a chat's own file (no reference, no share) still dies with the
-chat, by cascade, as it did; a file a project holds or a person was
-shared outlives any one chat or project. Deleting shows the owner who
+Lifecycle: a chat's own file (no reference, no share, owned by the
+chat's owner) dies with the chat, its bytes deleted first (the chat's
+delete and the retention sweep both do this); a file a project holds or a person was
+shared outlives any one chat or project: the chat's delete detaches it
+(`chat_id` cleared) before the row goes. Deleting shows the owner who
 loses it — projects and their member counts, direct shares, the chat it
 came from — and offers **hand-over** instead: the new owner keeps the
 file, every attachment and every share, and the old owner's access ends.

@@ -34,6 +34,7 @@ export async function ensureChatWorktree(
       subject: actor.subject,
       origin: actor.origin ?? getPublicBaseUrl() ?? '',
       provider: project.repo!.provider,
+      repo: project.repo!.fullName,
     },
     { write: false }
   );

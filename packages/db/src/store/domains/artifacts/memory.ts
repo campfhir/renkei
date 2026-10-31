@@ -479,5 +479,34 @@ export function memoryArtifacts(tables: MemoryTables): ArtifactStore {
         [(r) => r.id]
       ).map((row) => ({ id: row.id, chatId: row.chat_id, blobKey: row.blob_key }));
     },
+    async listKeptInChats(chatIds) {
+      if (chatIds.length === 0) return [];
+      const wanted = new Set(chatIds);
+      const kept = (r: Artifact) => {
+        const chat = tables.first('chats', (c) => c.id === r.chat_id);
+        return (
+          chat !== undefined &&
+          (chat.owner_subject !== r.owner_subject ||
+            tables.select('artifact_references', (x) => x.artifact_id === r.id).length > 0 ||
+            tables.select(
+              'resource_access_grants',
+              (g) => g.resource_kind === 'artifact' && g.resource_id === r.id
+            ).length > 0)
+        );
+      };
+      return orderBy(
+        tables.select('artifacts', (r) => r.chat_id !== null && wanted.has(r.chat_id) && kept(r)),
+        [(r) => r.id]
+      ).map((r) => ({
+        id: r.id,
+        chatId: r.chat_id ?? '',
+        ownerSubject: r.owner_subject,
+        keyKind: r.key_kind,
+      }));
+    },
+    async detachFromChats(artifactIds) {
+      const wanted = new Set(artifactIds);
+      return tables.update('artifacts', (r) => wanted.has(r.id), { chat_id: null }).length;
+    },
   };
 }

@@ -29,13 +29,14 @@ export function postgresIdentities(db: () => Kysely<DB>): IdentityStore {
       return row ? record(row) : null;
     },
     async findByEmail(email) {
-      const row = await db()
+      const rows = await db()
         .selectFrom('identities')
         .select(COLUMNS)
         .where('email', '=', email)
         .orderBy('subject')
-        .executeTakeFirst();
-      return row ? record(row) : null;
+        .limit(2)
+        .execute();
+      return rows.length === 1 ? record(rows[0]) : null;
     },
     async upsert({ subject, email, displayName, idpGroups }) {
       await db()

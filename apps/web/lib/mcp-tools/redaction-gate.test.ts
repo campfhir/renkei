@@ -166,4 +166,45 @@ describe('withRedaction', () => {
     expect(() => server.registerTool('weird_tool', {})).not.toThrow();
     expect(registered.get('weird_tool')).toBeUndefined();
   });
+
+  it('redacts every string inside structuredContent and _meta, keeping shape and keys', async () => {
+    const { server, registered } = harness();
+    server.registerTool('jira_search_issues', {}, async () => ({
+      content: [{ type: 'text', text: '1 issue' }],
+      structuredContent: {
+        total: 1,
+        issues: [{ key: 'ABC-1', summary: 'Member SSN 123-45-6789', labels: ['MRN: 4417732', 7] }],
+      },
+      _meta: { note: 'SSN 123-45-6789' },
+    }));
+
+    const result = (await registered.get('jira_search_issues')!({})) as {
+      structuredContent: {
+        total: number;
+        issues: { key: string; summary: string; labels: unknown[] }[];
+      };
+      _meta: { note: string };
+    };
+    const row = result.structuredContent.issues[0];
+    expect(row.summary).not.toContain('123-45-6789');
+    expect(row.summary).toMatch(/\[SSN-[0-9a-f]{8}\]/);
+    expect(row.labels[0]).not.toContain('4417732');
+    expect(row.labels[1]).toBe(7);
+    expect(row.key).toBe('ABC-1');
+    expect(result.structuredContent.total).toBe(1);
+    expect(result._meta.note).not.toContain('123-45-6789');
+  });
+
+  it('withholds a result whose structuredContent is nested too deeply to filter', async () => {
+    const { server, registered } = harness();
+    let deep: unknown = 'SSN 123-45-6789';
+    for (let i = 0; i < 100; i += 1) deep = { deep };
+    server.registerTool('deep_tool', {}, async () => ({
+      content: [{ type: 'text', text: 'ok' }],
+      structuredContent: deep,
+    }));
+    const result = await registered.get('deep_tool')!({});
+    expect(JSON.stringify(result)).not.toContain('123-45-6789');
+    expect(text(result)).toMatch(/could not be filtered/);
+  });
 });

@@ -13,12 +13,11 @@ import type { Result } from '@campfhir/safe-functions/types';
  *    it. It is also the only source available with no request in hand
  *    (server components, the worker).
  * 2. X-Forwarded-* headers — how the reverse proxy says the request arrived.
- *    Trusted, because the deployment contract is that this app always stands
- *    behind a proxy the operator controls; verifying the proxy per-request is
- *    not possible anyway (a route handler gets a Web-standard Request with no
- *    socket underneath, and X-Forwarded-For carries what each hop appended —
- *    the peer it saw — which for a single proxy is the client, not the
- *    proxy). Do not publish the app port to untrusted clients directly.
+ *    NOT a production source: a header is whatever the client sent, and a
+ *    route handler has no socket to verify the proxy with. A production web
+ *    boot refuses to start without PUBLIC_BASE_URL (instrumentation.ts,
+ *    publicBaseUrlRefusal), so this step is reached only outside production
+ *    (a proxy in front of a dev box, the UI suite's in-memory server).
  * 3. Request URL — bare local development, where the browser talks to the
  *    app directly and the Host header is its own.
  *

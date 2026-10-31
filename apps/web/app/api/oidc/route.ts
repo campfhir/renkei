@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
+import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
 import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
@@ -12,11 +13,33 @@ import {
   verifySetupSecret,
 } from '@/lib/setup-secret';
 
-/** Confirm the caller is an operator. */
-async function requireOperator(): Promise<NextResponse | null> {
+/**
+ * How recent the operator's sign-in must be to replace the identity
+ * provider: whoever controls it controls who becomes an operator, so a
+ * cookie that has been lying around is not enough.
+ */
+const RECENT_SIGN_IN_MS = 15 * 60 * 1000;
+
+/** Confirm the caller is an operator; for a change, one who signed in recently. */
+async function requireOperator(
+  options: { recentSignIn?: boolean } = {}
+): Promise<NextResponse | null> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (
+    options.recentSignIn &&
+    (!access.createdAt || Date.now() - access.createdAt.getTime() > RECENT_SIGN_IN_MS)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          'Changing the identity provider needs a recent sign-in. Sign out, sign in again and retry.',
+        code: 'reauthentication_required',
+      },
+      { status: 403 }
+    );
   }
   return null;
 }
@@ -56,7 +79,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // since whoever controls this record controls who becomes an operator.
     const configured = await identityProviderConfigured();
     if (configured) {
-      const denied = await requireOperator();
+      const denied = await requireOperator({ recentSignIn: true });
       if (denied) {
         logger.warn('Rejected unauthorised attempt to change identity provider', {
           component: 'auth/oidc',
@@ -174,6 +197,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (configured) {
       // Authenticated update.
+      const actor = await checkAccess([ROLE_OPERATOR]);
       const setResult = await setTenantOidc(config);
       if (!setResult.ok) {
         logger.error('Failed to save OIDC configuration: {error}', {
@@ -186,6 +210,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       logger.info('Identity provider updated by operator', {
         component: 'auth/oidc',
         issuer,
+      });
+      // Whoever controls this record controls who becomes an operator, so a
+      // replacement leaves a row naming who made it and where it now points.
+      recordAuditEvent({
+        actorSubject: actor ? actor.subject : 'unknown',
+        action: 'oidc.provider_replaced',
+        targetKind: 'settings',
+        targetLabel: 'identity provider',
+        details: { issuer },
       });
       return NextResponse.json({ success: true });
     }

@@ -82,3 +82,19 @@ describe('clientKey', () => {
     expect(clientKey(new Request('https://e.test/'))).toBe('unknown');
   });
 });
+
+describe('a flood of unique forwarded addresses', () => {
+  it('cannot clear the global ceiling by filling the client table', () => {
+    const now = 1_000_000;
+    const rules = {
+      perClient: { limit: 1_000, windowMs: 60_000 },
+      global: { limit: 6_000, windowMs: 60_000 },
+    };
+    let allowed = 0;
+    for (let i = 0; i < 30_000; i += 1) {
+      const ip = `10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`;
+      if (checkInboundLimit('flood', requestFrom(ip), rules, now).allowed) allowed += 1;
+    }
+    expect(allowed).toBe(6_000);
+  });
+});

@@ -39,6 +39,13 @@ export type AuditAction =
   | 'agent.access_revoked'
   | 'agent.copied'
   | 'settings.updated'
+  /** An operator saved an LLM model config (details: modelId, provider, model, baseUrl, keyReplaced). */
+  | 'llm_model.configured'
+  | 'llm_model.deleted'
+  /** An operator pointed chat attachment storage somewhere (details: account, container, endpoint — never the key). */
+  | 'storage.configured'
+  /** An operator replaced the identity provider (details: issuer). */
+  | 'oidc.provider_replaced'
   /** A person allowed an MCP client to act as them (details: clientId, redirectTarget). */
   | 'oauth.consent_granted'
   /** A person refused an MCP client on the consent page (details: clientId, redirectTarget). */
