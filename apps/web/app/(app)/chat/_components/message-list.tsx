@@ -27,6 +27,8 @@ import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
 import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
+import { replyCalls, replyCopyText } from '@/lib/chat/copy-text';
+import { useDismiss } from '@/lib/use-dismiss';
 import { IMAGE_TOOL } from '@/lib/chat/image-size';
 import { imageArtifactFor } from '@/lib/chat/image-artifact';
 import type {
@@ -265,11 +267,7 @@ export default function MessageList({
         {turns.map((group) => (
           <div key={group.key} className="flex flex-col gap-5">
             {group.prompts.map((message) => (
-              <UserMessage
-                key={message.id}
-                message={message}
-                actions={promptActions}
-              />
+              <UserMessage key={message.id} message={message} actions={promptActions} />
             ))}
             {group.replies.length > 0 ? (
               <Reply
@@ -457,17 +455,75 @@ function useCopyToClipboard(): [boolean, (text: string) => void] {
   return [copied, copy];
 }
 
-function CopyButton({ text }: { text: string }) {
+/**
+ * The reply's Copy: the prose alone, which is what most people copy a
+ * reply for. When the reply called tools, a chevron beside it offers the
+ * same copy with each call's input and result between the prose
+ * (lib/chat/copy-text.ts) — one click further, so it never gets in the
+ * way of the plain copy.
+ */
+function CopyButton({ text, withCalls }: { text: string; withCalls: string | null }) {
   const [copied, copy] = useCopyToClipboard();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, ref, close);
   return (
-    <button
-      type="button"
-      onClick={() => copy(text)}
-      className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
-    >
-      <Icon path={copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
-      {copied ? 'Copied' : 'Copy'}
-    </button>
+    <div ref={ref} className="relative flex items-center">
+      <button
+        type="button"
+        onClick={() => copy(text)}
+        className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+      >
+        <Icon path={copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+      {withCalls ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setOpen((state) => !state)}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            aria-label="More copy options"
+            className="rounded-md px-0.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
+          >
+            <Icon path={ICONS.chevron} className="h-3.5 w-3.5 rotate-90" />
+          </button>
+          {open ? (
+            // Opens upward: the row sits at the foot of a reply, often the
+            // last thing above the composer.
+            <div
+              role="menu"
+              className="absolute bottom-full left-0 z-40 mb-1 w-56 rounded-lg border border-gray-200 bg-white p-1 text-sm text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  copy(text);
+                }}
+                className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Copy text only
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  copy(withCalls);
+                }}
+                className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Copy with tool calls
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -518,12 +574,10 @@ function Reply({
     }
     return null;
   }, [messages, permission]);
-  const copyText = useMemo(
-    () =>
-      segments
-        .filter((part): part is Extract<Segment, { kind: 'text' }> => part.kind === 'text')
-        .map((part) => part.text.trim())
-        .join('\n\n'),
+  const copyText = useMemo(() => replyCopyText(segments), [segments]);
+  // Only offered when there were calls to copy.
+  const copyWithCalls = useMemo(
+    () => (replyCalls(segments).length > 0 ? replyCopyText(segments, { toolCalls: true }) : null),
     [segments]
   );
   // The calls of the latest tool-calling row that have not been answered.
@@ -743,7 +797,7 @@ function Reply({
             speech?.playingKey === speechKey ? '' : 'lg:opacity-0'
           }`}
         >
-          <CopyButton text={copyText} />
+          <CopyButton text={copyText} withCalls={copyWithCalls} />
           {speech ? (
             <ListenButton
               state={
