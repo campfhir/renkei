@@ -4,7 +4,13 @@
  * bucket refills — never all at once, never out of order.
  */
 
-import { TokenBucket, LaneLimiter, RateLimitTimeoutError, KeyedGate, GateTimeoutError } from './index';
+import {
+  TokenBucket,
+  LaneLimiter,
+  RateLimitTimeoutError,
+  KeyedGate,
+  GateTimeoutError,
+} from './index';
 
 beforeEach(() => {
   jest.useFakeTimers();
@@ -96,9 +102,7 @@ describe('TokenBucket', () => {
     await bucket.take();
 
     const resolved: string[] = [];
-    void bucket
-      .take(50)
-      .catch(() => resolved.push('timed-out'));
+    void bucket.take(50).catch(() => resolved.push('timed-out'));
     void bucket.take().then(() => resolved.push('untimed'));
 
     await jest.advanceTimersByTimeAsync(50);
@@ -172,6 +176,36 @@ describe('LaneLimiter', () => {
     // Both defaults competed for the background token, so the second queued
     // while the untouched interactive lane let its call straight through.
     expect(resolved).toEqual(['default-1', 'interactive']);
+  });
+});
+
+describe('LaneLimiter per-subject bucket', () => {
+  const config = {
+    interactive: { capacity: 10, refillPerSecond: 10 },
+    background: { capacity: 1, refillPerSecond: 1 },
+  };
+
+  it('queues one subject behind itself and leaves the shared lane to others', async () => {
+    const limiter = new LaneLimiter(config, { capacity: 2, refillPerSecond: 1 });
+    const done: string[] = [];
+    for (let i = 0; i < 5; i++)
+      void limiter.take('interactive', undefined, 'loop').then(() => done.push('loop'));
+    await jest.advanceTimersByTimeAsync(0);
+    expect(done).toHaveLength(2); // the subject's burst; the rest wait their turn
+    // Another subject still gets straight through, the lane having spent only two tokens.
+    await limiter.take('interactive', undefined, 'someone-else');
+    await limiter.take('interactive', undefined, 'someone-else');
+    await jest.advanceTimersByTimeAsync(3_000);
+    expect(done).toHaveLength(5);
+  });
+
+  it('does nothing without a subject, a config, or on the background lane', async () => {
+    const plain = new LaneLimiter(config);
+    for (let i = 0; i < 5; i++) await plain.take('interactive', undefined, 'x');
+    const limited = new LaneLimiter(config, { capacity: 1, refillPerSecond: 1 });
+    await limited.take('interactive');
+    await limited.take('interactive');
+    await limited.take('background', undefined, 'x');
   });
 });
 

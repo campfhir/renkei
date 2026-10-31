@@ -145,22 +145,56 @@ export class LaneLimiter {
   private readonly interactive: TokenBucket;
   private readonly background: TokenBucket;
 
-  constructor(config: Record<RequestLane, RateLimiterOptions>) {
+  private readonly subjectOptions: RateLimiterOptions | null;
+  private readonly subjects = new Map<string, TokenBucket>();
+
+  /**
+   * `perSubject`, when given, puts a smaller bucket per caller in front of
+   * the interactive lane (see `take`).
+   */
+  constructor(config: Record<RequestLane, RateLimiterOptions>, perSubject?: RateLimiterOptions) {
     this.interactive = new TokenBucket(config.interactive);
     this.background = new TokenBucket(config.background);
+    this.subjectOptions = perSubject ?? null;
   }
 
   /**
    * Defaults to 'background': a caller that has not thought about which lane
    * it is in is, by definition, not the one holding a person up, and the
    * conservative lane is the safe place to be wrong.
+   *
+   * With `subject` (whoever the call is made for — a grant, a person) and a
+   * `perSubject` config, an interactive call first takes from that
+   * subject's own bucket, so one caller's loop queues behind itself and
+   * leaves the shared reserve to everyone else. The subject's wait comes
+   * before the lane's, so a waiting caller holds no lane token.
    */
-  take(lane: RequestLane = 'background', timeoutMs?: number): Promise<void> {
-    return lane === 'interactive'
-      ? this.interactive.take(timeoutMs)
-      : this.background.take(timeoutMs);
+  take(lane: RequestLane = 'background', timeoutMs?: number, subject?: string): Promise<void> {
+    if (lane !== 'interactive') return this.background.take(timeoutMs);
+    if (subject === undefined || !this.subjectOptions) return this.interactive.take(timeoutMs);
+    return this.subjectBucket(subject, this.subjectOptions)
+      .take(timeoutMs)
+      .then(() => this.interactive.take(timeoutMs));
+  }
+
+  private subjectBucket(subject: string, options: RateLimiterOptions): TokenBucket {
+    let bucket = this.subjects.get(subject);
+    if (bucket) {
+      this.subjects.delete(subject); // re-insert: Map order is least-recently-used first
+    } else {
+      bucket = new TokenBucket(options);
+      // Bounded: forgetting the least recently used subject only refills theirs.
+      if (this.subjects.size >= MAX_TRACKED_SUBJECTS) {
+        const oldest = this.subjects.keys().next();
+        if (!oldest.done) this.subjects.delete(oldest.value);
+      }
+    }
+    this.subjects.set(subject, bucket);
+    return bucket;
   }
 }
+
+const MAX_TRACKED_SUBJECTS = 5_000;
 
 /**
  * Thrown by `KeyedGate.acquire()` when `timeoutMs` passes before a slot
