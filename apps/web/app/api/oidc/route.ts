@@ -12,11 +12,33 @@ import {
   verifySetupSecret,
 } from '@/lib/setup-secret';
 
-/** Confirm the caller is an operator. */
-async function requireOperator(): Promise<NextResponse | null> {
+/**
+ * How recent the operator's sign-in must be to replace the identity
+ * provider: whoever controls it controls who becomes an operator, so a
+ * cookie that has been lying around is not enough.
+ */
+const RECENT_SIGN_IN_MS = 15 * 60 * 1000;
+
+/** Confirm the caller is an operator; for a change, one who signed in recently. */
+async function requireOperator(
+  options: { recentSignIn?: boolean } = {}
+): Promise<NextResponse | null> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (
+    options.recentSignIn &&
+    (!access.createdAt || Date.now() - access.createdAt.getTime() > RECENT_SIGN_IN_MS)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          'Changing the identity provider needs a recent sign-in. Sign out, sign in again and retry.',
+        code: 'reauthentication_required',
+      },
+      { status: 403 }
+    );
   }
   return null;
 }
@@ -56,7 +78,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // since whoever controls this record controls who becomes an operator.
     const configured = await identityProviderConfigured();
     if (configured) {
-      const denied = await requireOperator();
+      const denied = await requireOperator({ recentSignIn: true });
       if (denied) {
         logger.warn('Rejected unauthorised attempt to change identity provider', {
           component: 'auth/oidc',
