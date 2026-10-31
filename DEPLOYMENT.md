@@ -174,7 +174,10 @@ image is pushed under three tags: `latest`, the version in
 and the same one `scripts/docker-build.sh` stamps), and the full commit
 SHA, so a deployment can pin exactly the build it tested
 (`image: scotteremiaroden/renkei:<sha>`) rather than whatever `latest`
-has become. Bump the version when a release should keep its own tag;
+has become. `docker-compose.yaml` pulls `latest`, and `docker compose up` does not
+re-pull an image it already has: run `docker compose pull` to move to a new
+build, and pin the SHA tag when a deployment must not move on its own.
+Bump the version when a release should keep its own tag;
 until then a new push to `main` overwrites `latest` and the version tag.
 Images are built for `linux/amd64`, with the short commit baked in as
 `GIT_COMMIT` so log rows name the exact build and the version as
