@@ -56,6 +56,12 @@ export async function POST(
         return jsonError(413, 'too-long', 'The message is too long.');
       case 'ALREADY_RUNNING':
         return jsonError(409, 'turn-running', 'A reply is already in progress.');
+      case 'TOO_MANY_RUNNING':
+        return jsonError(
+          429,
+          'too-many-running',
+          started.err.message ?? 'Too many replies running.'
+        );
       case 'NO_MODEL':
         return jsonError(
           409,

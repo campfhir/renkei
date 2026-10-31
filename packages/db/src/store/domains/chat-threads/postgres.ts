@@ -37,6 +37,16 @@ export function postgresChatThreads(db: () => Kysely<DB>): ChatThreadStore {
         .executeTakeFirst();
       return row ? turnFromRow(row) : null;
     },
+    async countRunningForOwner(ownerSubject) {
+      const row = await db()
+        .selectFrom('chat_turns as t')
+        .innerJoin('chats as c', 'c.id', 't.chat_id')
+        .select(({ fn }) => fn.countAll<string>().as('count'))
+        .where('c.owner_subject', '=', ownerSubject)
+        .where('t.status', '=', 'running')
+        .executeTakeFirst();
+      return Number(row?.count ?? 0);
+    },
     async getTurn(chatId, turnId) {
       const row = await db()
         .selectFrom('chat_turns')

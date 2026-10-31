@@ -31,6 +31,13 @@ export function memoryChatThreads(tables: MemoryTables): ChatThreadStore {
       );
       return row ? turnFromRow(row) : null;
     },
+    async countRunningForOwner(ownerSubject) {
+      const owned = new Set(
+        tables.select('chats', (c) => c.owner_subject === ownerSubject).map((c) => c.id)
+      );
+      return tables.select('chat_turns', (r) => r.status === 'running' && owned.has(r.chat_id))
+        .length;
+    },
     async getTurn(chatId, turnId) {
       const id = chatId;
       const turn = turnId;

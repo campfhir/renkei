@@ -160,12 +160,21 @@ function chunkedUserBlocks(text: string, extraBlocks: LlmContentBlock[]): LlmCon
 const THINKING_SHARE = 0.6;
 const THINKING_MAX = 16_000;
 
+/**
+ * Replies one person may have running at once, across their chats: one per
+ * chat is already the rule, and each holds a model call and an SSE stream,
+ * so a script opening chats in a loop cannot drain the model budget or the
+ * server's connections. Several parallel chats stay well inside it.
+ */
+export const MAX_RUNNING_TURNS_PER_SUBJECT = 8;
+
 export type StartTurnError =
   | 'NOT_FOUND'
   | 'FORBIDDEN'
   | 'EMPTY'
   | 'TOO_LONG'
   | 'ALREADY_RUNNING'
+  | 'TOO_MANY_RUNNING'
   | 'NO_MODEL'
   | 'MODEL_ERROR'
   | 'CONTENT_KEY'
@@ -290,6 +299,14 @@ export async function startChatTurn(
   const access = await resolveChatAccess(input.session.subject, input.chatId);
   if (!access) return err('NOT_FOUND' as const);
   if (access.role !== 'owner') return err('FORBIDDEN' as const);
+  if (
+    (await getDataStore().chatThreads.countRunningForOwner(input.session.subject)) >=
+    MAX_RUNNING_TURNS_PER_SUBJECT
+  ) {
+    return err('TOO_MANY_RUNNING' as const, {
+      message: 'Several of your replies are still running; wait for one to finish.',
+    });
+  }
   const chat = access.chat;
   // The prompt's files, excerpted under the chat's key.
   const extraBlocks = [
