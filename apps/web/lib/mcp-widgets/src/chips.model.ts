@@ -4,7 +4,7 @@
  * list still offers. The field renders from this and sends `chosen`; the
  * rules — a typed label or value adds its option, never a half-typed
  * word, never twice; × or Backspace takes one off and it is offered again
- * — are tested here (chips.test.ts) instead of through a browser.
+ * — are tested here (chips.model.test.ts) instead of through a browser.
  */
 
 export interface ChipOption {

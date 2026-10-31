@@ -70,7 +70,7 @@ async function interceptCallback(page: Page): Promise<() => URL | null> {
   return () => landed;
 }
 
-test('an MCP client must be allowed on the consent page before it gets a code', async ({
+test('an MCP client must be allowed on the consent page before it gets a code @smoke', async ({
   page,
   request,
   browser,

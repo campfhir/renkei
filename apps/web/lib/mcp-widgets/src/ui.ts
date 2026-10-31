@@ -8,7 +8,7 @@
  * `data-theme` stamped by the bridge, falling back to prefers-color-scheme.
  */
 
-import { chipLabel, chipsReducer, initialChips, offeredOptions, type ChipsAction } from './chips';
+import { chipLabel, chipsReducer, initialChips, offeredOptions, type ChipsAction } from './chips.model';
 
 const STYLE = `
 :root {

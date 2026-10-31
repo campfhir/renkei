@@ -1,7 +1,9 @@
 /**
- * Scheduling on the email send card: "Send later" turns Send into Schedule
- * and hands the confirm tool a `sendAt`; a time too soon is refused on the
- * card before any call.
+ * Scheduling on the email send card, end to end: a time the model picked
+ * reaches the picker, and Schedule hands the confirm tool its `sendAt`; and
+ * the card fits a phone. The rules in between (when Send reads Schedule,
+ * what is refused before any call, what a reply overrides) are
+ * lib/mcp-widgets/src/email-compose.model.test.ts's.
  *
  * Same harness as email-card-discard.spec.ts: the real built bundle and
  * decision routes, a chat on the stand-in model, the vendor tool's answer
@@ -152,41 +154,6 @@ test('on a phone the card and its fields stay inside the screen, with no sideway
     expect(fit.overflowing).toEqual([]);
     expect(fit.pageScrolls).toBe(false);
     expect(fit.cardRight).toBeLessThanOrEqual(fit.viewportWidth);
-  } finally {
-    if (modelId) await removeModel(page.request, modelId);
-  }
-});
-
-test('the send card schedules: a picked time turns Send into Schedule and sends sendAt', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  test.setTimeout(150_000);
-  let modelId: string | null = null;
-  try {
-    modelId = await openChat(page, testInfo, emailCard('AAMkAD-send'));
-    const calls = await mockCardTools(page);
-    const frame = page.frameLocator('iframe[title="Preview card"]').first();
-    await expect(frame.getByRole('button', { name: 'Send', exact: true })).toBeVisible(COLD);
-
-    const day = frame.locator('input[type="date"]');
-    const clock = frame.locator('input[type="time"]');
-    // Too soon is refused on the card, before any call.
-    const past = localParts(Date.now() - 3_600_000);
-    await day.fill(past.day);
-    await clock.fill(past.clock);
-    await frame.getByRole('button', { name: 'Schedule' }).click();
-    await expect(frame.getByText('at least a minute from now')).toBeVisible(COLD);
-    expect(calls).toHaveLength(0);
-
-    const later = localParts(Date.now() + 26 * 3_600_000);
-    await day.fill(later.day);
-    await clock.fill(later.clock);
-    await frame.getByRole('button', { name: 'Schedule' }).click();
-    await expect(frame.locator('.done-headline')).toHaveText('Scheduled', COLD);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].name).toBe('outlook_send_draft_confirm');
-    expect(Date.parse(String(calls[0].arguments.sendAt))).toBe(new Date(`${later.day}T${later.clock}`).getTime());
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }

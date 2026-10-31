@@ -131,7 +131,9 @@ test.describe('code projects', () => {
     await removeModel(page.request, ids.modelId);
   });
 
-  test('index, menu, new project, project page, chat, delete', async ({ page }, testInfo) => {
+  test('index, menu, new project, project page, chat, delete @smoke', async ({
+    page,
+  }, testInfo) => {
     // The phone the old `mobile` project was, as a resized viewport.
     const mobile = testInfo.project.name === 'desktop-dark';
     const shot = (name: string) =>

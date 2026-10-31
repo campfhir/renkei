@@ -21,7 +21,10 @@ const QUESTION = 'What slipped out of the OPS sprint?';
 // Adding a model to the roster is an operator's.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-test('a sealed chat opens for its enrolled owner', async ({ page, person: _person }, testInfo) => {
+test('a sealed chat opens for its enrolled owner @smoke', async ({
+  page,
+  person: _person,
+}, testInfo) => {
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   const title = `Sprint retro prep ${tag}`;
   const modelId = await addStubModel(page.request, tag);

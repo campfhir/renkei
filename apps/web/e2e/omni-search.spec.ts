@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { test, expect } from './fixtures';
 
-test('top bar search: Ctrl+K focuses it, a setting is found and opened', async ({
+test('top bar search: Ctrl+K focuses it, a setting is found and opened @smoke', async ({
   page,
   person: _person,
 }, testInfo) => {

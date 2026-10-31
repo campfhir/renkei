@@ -114,7 +114,7 @@ async function adminAddsTheServer(
   return row;
 }
 
-test('an admin lists a server, a person connects it through the server’s own sign-in, and chat finds and calls its tools', async ({
+test('an admin lists a server, a person connects it through the server’s own sign-in, and chat finds and calls its tools @smoke', async ({
   page,
   person: _person,
 }, testInfo) => {

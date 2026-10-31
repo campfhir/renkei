@@ -111,7 +111,7 @@ test.afterEach(async ({ page }) => {
   modelId = '';
 });
 
-test('a proposal waits for review, and applying it changes Jira exactly as shown', async ({
+test('a proposal waits for review, and applying it changes Jira exactly as shown @smoke', async ({
   page,
   person,
 }, testInfo) => {

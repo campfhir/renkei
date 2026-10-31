@@ -178,7 +178,7 @@ async function forgetDevice(page: Page): Promise<void> {
   );
 }
 
-test('a first sign-in enrolls the browser, shows the key once, and keeps it on the device', async ({
+test('a first sign-in enrolls the browser, shows the key once, and keeps it on the device @smoke', async ({
   page,
   request,
 }, testInfo) => {

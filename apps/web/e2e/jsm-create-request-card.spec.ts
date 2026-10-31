@@ -137,7 +137,7 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   await impact.locator('select').selectOption({ label: 'Whole site' });
   await priority.locator('select').selectOption({ label: 'High' });
   // Typing an option's name adds it (the rest of the combo box's rules —
-  // taking a chip off, Backspace, partial words — are chips.test.ts's).
+  // taking a chip off, Backspace, partial words — are chips.model.test.ts's).
   const search = components.getByRole('combobox', { name: 'Components' });
   await search.fill('Platform');
   await expect(components.locator('.chip')).toHaveText(['Billing×', 'Platform×']);

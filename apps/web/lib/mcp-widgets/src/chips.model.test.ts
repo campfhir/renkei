@@ -1,5 +1,5 @@
 /**
- * The chips combo box's rules (chips.ts), which the JSM create card's
+ * The chips combo box's rules (chips.model.ts), which the JSM create card's
  * Components field and every other many-option pick list send from. These
  * used to be driven through the card's iframe in a browser
  * (jsm-create-request-card.spec.ts); the spec now only checks that what the
@@ -13,7 +13,7 @@ import {
   matchOption,
   offeredOptions,
   type ChipsState,
-} from './chips';
+} from './chips.model';
 
 const OPTIONS = [
   { value: '10042', label: 'Billing' },

@@ -105,7 +105,7 @@ async function decided(page: Page, chatId: string): Promise<void> {
     .toEqual({ running: false, noted: true });
 }
 
-test('a preview tool renders its card, and confirming it runs the real tool call and the model replies', async ({
+test('a preview tool renders its card, and confirming it runs the real tool call and the model replies @smoke', async ({
   page,
   browser,
 }, testInfo) => {

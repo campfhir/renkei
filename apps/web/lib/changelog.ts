@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Deleting a knowledge note clears it from the selection',
+        detail:
+          "On an agent's Knowledge panel, deleting a note you had ticked no longer leaves the toolbar counting it as selected.",
+      },
+      {
+        kind: 'fixed',
         title: 'The chat stays at the bottom as a preview card grows',
         detail:
           'When you are at the end of a chat, a preview card that grows to fit its form keeps the end of the chat in view, instead of the chat jumping later when the next message arrives.',

@@ -81,7 +81,7 @@ function shot(page: Page, testInfo: TestInfo, name: string): Promise<Buffer> {
   });
 }
 
-test('chat thread: sidebar, blocks, folds, no overflow', async ({
+test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
   page,
   person: _person,
 }, testInfo) => {

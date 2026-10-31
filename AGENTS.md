@@ -5,14 +5,56 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-# UI changes: add and run Playwright steps
+# UI models: a screen's behaviour is a reducer, tested in node
 
-Whenever a change touches UI (a page, a form, a component with visible
-output), add or update Playwright coverage in `apps/web/e2e/*.spec.ts` as
-part of that change, and actually run it — don't just write the spec and
-assume it passes. `llm-models.spec.ts` is a worked example of the full
-shape: empty state, filling a form, a vendor call answered with
-`page.route`, a saved-state screenshot, and a phone-width pass.
+What a screen does — which fields a form enables, what a card adds or takes
+off, what a list shows after a click, what request Save sends, what an
+error leaves on screen — lives in a `*.model.ts` beside the component: a
+state type, an action union, a reducer, and selectors for what the screen
+derives (`canSave`, the select-all box, the request body). The component
+holds `useReducer(reducer, props, init)`, makes the calls, dispatches what
+the person did and what the server answered, and renders. The model's
+`*.model.test.ts` beside it is the authority on that behaviour, runs in
+milliseconds in `pnpm test`, and gates every merge.
+
+- **Worked examples:** `app/(app)/agents/[agentId]/knowledge-panel.model.ts`
+  (a React panel: list, selection, draft form, deletes) and, for the
+  preview cards drawn in iframes (plain TypeScript, not React),
+  `lib/mcp-widgets/src/email-compose.model.ts` (what Send sends, what is
+  refused) and `chips.model.ts`. `lib/chat/stream-events.ts` is the
+  oldest: the chat thread's stream reducer, shared with the server.
+- **A model is pure.** `lib/ui-models.seam.test.ts` fails a `*.model.ts`
+  that imports React, Next, a component or the data store, touches
+  `window`/`document`/storage, fetches, sets a timer, reads the clock or
+  draws a random id — pass the time or id in an action — or has no
+  `*.model.test.ts` beside it.
+- **Write the test as the screen's spec**, in the words a person would use
+  ("a refused delete keeps the selection and shows why"): a sequence of
+  actions folded through the reducer, then the state or a selector.
+- **When you change a screen**, change or add its model and model tests in
+  the same change. A component with rules still inline (`useState` and
+  handlers deciding things) gets its model when you next change those
+  rules; the order the rest move in is `docs/testing-tiers.md`.
+
+# UI changes: the browser suite shows what only a browser can
+
+The Playwright suite in `apps/web/e2e/*.spec.ts` is for what a model test
+cannot show: that a page renders on the real server, routes and redirects,
+fits a phone, keeps focus and keyboard where they belong, and that one path
+end to end — a press in, the right request out, the answer drawn — reaches
+the server. Add or update a spec when a change touches one of those, and
+actually run it — don't just write the spec and assume it passes. A rule
+("Save is off until both fields say something") goes in the model test,
+not a press.
+
+Two tiers (`.github/workflows/ci.yml`): the tests tagged `@smoke` in their
+title (`pnpm --filter renkei e2e:smoke`), one critical path per area and
+the page crawl, gate a merge as `e2e (memory store)`; the full suite runs
+beside them on every pull request and on main as an advisory signal.
+Tag a test `@smoke` only for a new critical path no smoke test walks.
+`llm-models.spec.ts` shows the harness end to end (empty state, a form, a
+vendor call answered with `page.route`, a saved-state screenshot, a
+phone-width pass); its form rules are next to move into a model.
 
 - **The suite** (`apps/web/playwright.config.ts`) runs the web app on the
   in-memory data store (`RENKEI_DATA_STORE=memory`, no Postgres) with its
@@ -93,12 +135,10 @@ shape: empty state, filling a form, a vendor call answered with
   `reducedMotion: 'reduce'` too. New motion respects the setting
   (`motion-safe:`, or `scrollMotion()` from `lib/hash-scroll.ts` for a
   scripted scroll).
-- **Rules go in unit tests, not presses.** Logic a card or form applies
-  (what a typed value adds, what a × takes off, what a field sends) lives
-  in a pure module with a jest test beside it —
-  `lib/mcp-widgets/src/chips.ts` is the shape — and the spec drives only
-  the path end to end: a value in, the right request out. Every press in
-  an iframe is a chance for Chrome to route it by an old frame.
+- **Rules go in model tests, not presses** ("UI models", above). The spec
+  drives only the path end to end: a value in, the right request out.
+  Every press in an iframe is a chance for Chrome to route it by an old
+  frame.
 - **Shared org state is written the same by everyone.** A setting one
   spec needs and another overwrites (a connector's scopes, the
   organization default model) is a race, not a slow server: pin it where

@@ -32,12 +32,12 @@ import {
   recallDone,
   rememberDone,
   renderDone,
-  splitAddresses,
   str,
   strings,
   textField,
   type DoneState,
 } from './ui';
+import { planSend, sendLabel, suggestedSendFields } from './email-compose.model';
 
 const KIND_TITLES: Record<string, string> = {
   compose: 'New email',
@@ -45,18 +45,6 @@ const KIND_TITLES: Record<string, string> = {
   replyAll: 'Reply all',
   forward: 'Forward',
 };
-
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** A moment's local calendar day, as a date input holds it (`YYYY-MM-DD`). */
-function localDateValue(at: Date): string {
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
-}
-
-/** A moment's local clock time, as a time input holds it (`HH:mm`). */
-function localTimeValue(at: Date): string {
-  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
-}
 
 function render(bridge: WidgetBridge, result: ToolResult): void {
   const root = document.getElementById('root');
@@ -141,85 +129,52 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // A time the model picked arrives as a UTC instant; the picker works in the
   // viewer's local clock, so it is shown there. A time that has already
   // passed is left off rather than pre-filled into a refusal.
-  const suggested = str(draft.sendAt) ? new Date(str(draft.sendAt)) : null;
-  const suggestedAt =
-    suggested && !Number.isNaN(suggested.getTime()) && suggested.getTime() >= Date.now() + 60_000
-      ? suggested
-      : null;
+  const suggested = suggestedSendFields(str(draft.sendAt), Date.now());
   // Date and time are two inputs: a native date-time control is wider than a
   // phone column and is hard to fill by hand, while each half is a plain field.
-  const sendDate = inputField('Send date (optional)', suggestedAt ? localDateValue(suggestedAt) : '');
+  const sendDate = inputField('Send date (optional)', suggested?.day ?? '');
   sendDate.input.type = 'date';
-  const sendTime = inputField('Time', suggestedAt ? localTimeValue(suggestedAt) : '');
+  const sendTime = inputField('Time', suggested?.clock ?? '');
   sendTime.input.type = 'time';
   const sendLaterRow = el('div', 'field-row');
   sendLaterRow.append(sendDate.field, sendTime.field);
   card.append(sendLaterRow);
   const discardButton = el('button', undefined, 'Discard');
-  const sendButton = el('button', 'primary', suggestedAt ? 'Schedule' : 'Send');
+  const sendButton = el(
+    'button',
+    'primary',
+    sendLabel(suggested?.day ?? '', suggested?.clock ?? '')
+  );
   const footer = cardActions([discardButton, sendButton]);
   card.append(footer.actions);
   root.append(card);
   const syncSendButton = () => {
-    sendButton.textContent = sendDate.input.value || sendTime.input.value ? 'Schedule' : 'Send';
+    sendButton.textContent = sendLabel(sendDate.input.value, sendTime.input.value);
   };
   sendDate.input.addEventListener('input', syncSendButton);
   sendTime.input.addEventListener('input', syncSendButton);
 
   footer.run(sendButton, async () => {
-    const finalTo = splitAddresses(toInput.input.value);
-    const finalCc = ccInput ? splitAddresses(ccInput.input.value) : [];
-    const finalSubject = subjectInput.input.value;
-    let args: Record<string, unknown>;
-    if (compose) {
-      args = {
-        overrides: {
-          to: finalTo,
-          cc: finalCc,
-          subject: finalSubject,
-          body: bodyInput?.input.value ?? body,
-        },
-      };
-    } else {
-      // A reply goes out as previewed unless something on it changed; only
-      // a changed text needs the draft rebuilt (`replyTo`).
-      const comment = bodyInput ? bodyInput.input.value : body;
-      const textEdited = commentEditable && comment.trim() !== body.trim();
-      if (textEdited && !comment.trim() && kind !== 'forward') {
-        throw new Error('Write the reply, or discard it.');
-      }
-      const overrides = {
-        ...(finalTo.join(', ') !== to ? { to: finalTo } : {}),
-        ...(ccInput && finalCc.join(', ') !== cc ? { cc: finalCc } : {}),
-        ...(finalSubject.trim() !== subject.trim() ? { subject: finalSubject } : {}),
-        ...(textEdited ? { comment } : {}),
-      };
-      args = {
-        ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
-        ...(textEdited ? { replyTo: { messageId, kind } } : {}),
-      };
-    }
-    if (finalTo.length === 0) throw new Error('Add someone to send it to.');
-    let when: Date | null = null;
-    const dateValue = sendDate.input.value;
-    const timeValue = sendTime.input.value;
-    if (dateValue || timeValue) {
-      if (!dateValue || !timeValue) throw new Error('Pick both a send date and a time.');
-      // No offset in the string: the browser reads it as the viewer's local time.
-      when = new Date(`${dateValue}T${timeValue}`);
-      if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
-        throw new Error('Pick a send time at least a minute from now.');
-      }
-    }
-    const sent = await bridge.callTool(
-      'outlook_send_draft_confirm',
-      { draftId, ...args, ...(when ? { sendAt: when.toISOString() } : {}) },
-      stateKey
+    const plan = planSend(
+      { draftId, kind, messageId, to, cc, subject, body },
+      {
+        to: toInput.input.value,
+        cc: ccInput ? ccInput.input.value : null,
+        subject: subjectInput.input.value,
+        body: bodyInput ? bodyInput.input.value : null,
+        day: sendDate.input.value,
+        clock: sendTime.input.value,
+      },
+      Date.now()
     );
+    if (!plan.ok) throw new Error(plan.error);
+    const { when } = plan;
+    const finalSubject = plan.subject;
+    const sent = await bridge.callTool('outlook_send_draft_confirm', plan.args, stateKey);
     if (sent.isError) {
       throw new Error(resultText(sent) || (when ? 'Scheduling failed' : 'Send failed'));
     }
-    const sentTo = finalTo.join(', ');
+    const sentTo = plan.to.join(', ');
     const what = `To ${sentTo}${finalSubject ? ` — “${finalSubject}”` : ''}`;
     finishDone({
       icon: 'sent',
