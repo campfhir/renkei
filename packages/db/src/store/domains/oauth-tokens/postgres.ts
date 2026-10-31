@@ -151,5 +151,17 @@ export function postgresOAuthTokens(db: () => Kysely<DB>): OAuthTokenStore {
           } as const;
         });
     },
+    async revokeClientTokens(clientId, subject) {
+      await db()
+        .deleteFrom('oauth_refresh_tokens')
+        .where('client_id', '=', clientId)
+        .where('subject', '=', subject)
+        .execute();
+      await db()
+        .deleteFrom('oauth_access_tokens')
+        .where('client_id', '=', clientId)
+        .where('subject', '=', subject)
+        .execute();
+    },
   };
 }

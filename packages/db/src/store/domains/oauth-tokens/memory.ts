@@ -104,5 +104,15 @@ export function memoryOAuthTokens(tables: MemoryTables): OAuthTokenStore {
       });
       return { outcome: 'rotated', subject: token.subject, scope: token.scope, roles };
     },
+    async revokeClientTokens(clientId, subject) {
+      tables.delete(
+        'oauth_refresh_tokens',
+        (r) => r.client_id === clientId && r.subject === subject
+      );
+      tables.delete(
+        'oauth_access_tokens',
+        (r) => r.client_id === clientId && r.subject === subject
+      );
+    },
   };
 }

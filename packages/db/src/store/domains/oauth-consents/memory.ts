@@ -60,5 +60,9 @@ export function memoryOAuthConsents(tables: MemoryTables): OAuthConsentStore {
     async deleteAuthorizationCode(code) {
       return tables.delete('oauth_authorization_codes', (r) => r.code === code).length;
     },
+    async takeAuthorizationCode(code) {
+      const [row] = tables.delete('oauth_authorization_codes', (r) => r.code === code);
+      return row ? authorizationCodeFromRow(row) : null;
+    },
   };
 }
