@@ -118,7 +118,10 @@ test('the card shows the type by name, asks for required fields as pick lists, a
   // Components: a combo box with chips, not a checkbox per option. The
   // model passed a NAME; the card shows it as a chip, and the list offers
   // only what is not yet chosen.
-  const components = frame.locator('.field', { hasText: 'Components' });
+  // Scoped to the visible copy: a built card can hold a hidden twin of a field, and a
+  // press lands on what is drawn, so a click on the hidden one leaves the chip in place.
+  const components = frame.locator('.field', { hasText: 'Components' }).filter({ visible: true });
+  await expect(components).toHaveCount(1);
   await expect(components.getByRole('checkbox')).toHaveCount(0);
   await expect(components.locator('.chip')).toHaveText(['Billing×']);
   await expect(components.locator('datalist option')).toHaveCount(1);
