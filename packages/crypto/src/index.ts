@@ -15,6 +15,12 @@ export {
   keyId,
   isKeyring,
   envelopeKeyId,
+  isBoundEnvelope,
+  aadFor,
+  AAD_PURPOSE,
+  decryptBound,
+  decryptBoundValue,
+  requireBoundEnvelopes,
   safeEqual,
   DecryptionError,
   type Keyring,
@@ -27,6 +33,7 @@ export {
   isEncryptedContent,
   revealContent,
   CONTENT_ENVELOPE_PREFIX,
+  CONTENT_AAD_PURPOSE,
 } from './content';
 export {
   userKeyMaster,
