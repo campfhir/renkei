@@ -162,13 +162,34 @@ async function archiveIdleChats(orgRetentionDays: number): Promise<void> {
   }
 }
 
-/** Chats whose attachment bytes are gone (or never existed); the rest wait. */
+/**
+ * Chats whose own attachment bytes are gone (or never existed); the rest
+ * wait. A file a project holds, a person was shared, or someone else owns
+ * outlives its chat: it is detached first, so neither the chat's delete
+ * cascade nor this sweep's blob delete reaches it. One still under the
+ * chat's own key cannot be detached here (re-sealing needs a person's
+ * key), so its chat waits for a delete from the app, which can.
+ */
 async function deleteAttachmentBlobs(
   chatIds: string[],
   store: BlobStore | null
 ): Promise<string[]> {
-  const attachments = await getDataStore().artifacts.listBlobsInChats(chatIds);
   const blocked = new Set<string>();
+  const detach: string[] = [];
+  for (const kept of await getDataStore().artifacts.listKeptInChats(chatIds)) {
+    if (kept.keyKind === 'artifact') {
+      detach.push(kept.id);
+    } else {
+      blocked.add(kept.chatId);
+      logger.warn('chat retention left a chat whose kept file is still under its key', {
+        component: 'worker-agents/chat-retention',
+        chatId: kept.chatId,
+        artifactId: kept.id,
+      });
+    }
+  }
+  await getDataStore().artifacts.detachFromChats(detach);
+  const attachments = await getDataStore().artifacts.listBlobsInChats(chatIds);
   for (const attachment of attachments) {
     if (!attachment.chatId) continue;
     if (!store) {

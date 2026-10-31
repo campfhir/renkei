@@ -432,12 +432,16 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
         })),
       };
     },
-    async countCreatedSince(since) {
-      const row = await db()
+    async countCreatedSince(since, scope) {
+      let query = db()
         .selectFrom('agent_runs')
         .select(({ fn }) => fn.countAll<string>().as('count'))
-        .where('created_at', '>', since)
-        .executeTakeFirst();
+        .where('created_at', '>', since);
+      if (scope?.ownerSubject !== undefined) {
+        query = query.where('owner_subject', '=', scope.ownerSubject);
+      }
+      if (scope?.triggerId !== undefined) query = query.where('trigger_id', '=', scope.triggerId);
+      const row = await query.executeTakeFirst();
       return Number(row?.count ?? 0);
     },
     async createQueued(run) {

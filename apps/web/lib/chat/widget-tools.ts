@@ -209,6 +209,7 @@ export async function recordWidgetModelContext(input: {
     // decision lands is not this decision's fault, and losing it meant
     // the person had to repeat themselves once the reply finished.
     case 'ALREADY_RUNNING':
+    case 'TOO_MANY_RUNNING':
     case 'NO_MODEL':
     case 'MODEL_ERROR': {
       const appended = await appendWidgetModelContext({

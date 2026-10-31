@@ -9,6 +9,7 @@
  */
 
 import { getDataStore, type ChatRecord } from '@renkei/db';
+import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { parseToolConfig, toolConfigJson, type ChatToolConfig } from './tool-config';
 import { createKey, deleteKey, wrapKeyUnderProject } from './chat-keys';
@@ -173,9 +174,55 @@ export async function moveChatToProject(
   return moved;
 }
 
+/**
+ * A chat's delete takes its own files with it, and only those. A file a
+ * project holds, a person was shared, or someone else owns outlives the
+ * chat (docs/artifacts-design.md): it is detached (`chat_id` cleared,
+ * which the column's cascade would otherwise act on) once its key is its
+ * own, so it stays readable with the chat's key gone. The rest have their
+ * bytes deleted before their rows, as the retention sweep does. Throws,
+ * with the chat left in place, when a kept file's key cannot be made its
+ * own or a blob cannot be deleted; a later delete tries again.
+ */
+async function settleChatArtifacts(ownerSubject: string, chatId: string): Promise<void> {
+  const store = getDataStore();
+  const detach: string[] = [];
+  for (const kept of await store.artifacts.listKeptInChats([chatId])) {
+    if (kept.keyKind !== 'artifact') {
+      // Still under the chat's key (a row from before artifacts had their own).
+      // Only its owner's key can mint the new one, so only the owner's delete moves it.
+      const { resolveArtifactAccess } = await import('./artifact-access');
+      const { promoteKey } = await import('./artifact-library');
+      const access =
+        kept.ownerSubject === ownerSubject
+          ? await resolveArtifactAccess(ownerSubject, kept.id)
+          : null;
+      if (!access || !(await promoteKey(access)).ok) {
+        throw new Error(`artifact ${kept.id} outlives the chat but its key cannot be moved yet`);
+      }
+    }
+    detach.push(kept.id);
+  }
+  await store.artifacts.detachFromChats(detach);
+  const blobs = await store.artifacts.listBlobsInChats([chatId]);
+  if (blobs.length === 0) return;
+  const blobStore = await resolveTenantBlobStore();
+  if (!blobStore.ok) throw new Error('the blob store is unavailable; chat files were not deleted');
+  for (const blob of blobs) {
+    const gone = await blobStore.val.deleteObject(blob.blobKey);
+    if (!gone.ok && gone.err.type !== 'NOT_FOUND') {
+      throw new Error(`a chat file's bytes could not be deleted: ${gone.err.type}`);
+    }
+    await store.artifacts.delete(blob.id);
+    await deleteKey('artifact', blob.id);
+  }
+}
+
 export async function deleteChat(ownerSubject: string, chatId: string): Promise<boolean> {
   if (!isUuid(chatId)) return false;
   const store = getDataStore();
+  if (!(await getChatForOwner(ownerSubject, chatId))) return false;
+  await settleChatArtifacts(ownerSubject, chatId);
   const deleted = await store.chats.delete(ownerSubject, chatId);
   if (deleted) {
     await store.resourceGrants.deleteForResource('chat', chatId);

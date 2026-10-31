@@ -350,8 +350,14 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         tools: page(orderBy(tools, [(t) => t.calls, 'desc'], [(t) => t.tool]), maxTools),
       };
     },
-    async countCreatedSince(since) {
-      return tables.select('agent_runs', (r) => r.created_at.getTime() > since.getTime()).length;
+    async countCreatedSince(since, scope) {
+      return tables.select(
+        'agent_runs',
+        (r) =>
+          r.created_at.getTime() > since.getTime() &&
+          (scope?.ownerSubject === undefined || r.owner_subject === scope.ownerSubject) &&
+          (scope?.triggerId === undefined || r.trigger_id === scope.triggerId)
+      ).length;
     },
     async createQueued(run) {
       const values = newRunValues(run);

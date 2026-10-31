@@ -75,10 +75,16 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'PUT', 'PATCH', 'D
  * queue behind a sweep, since anything unverified by the deadline is withheld
  * and reads as a denial.
  */
-const limiter = new LaneLimiter({
-  interactive: { capacity: 20, refillPerSecond: 10 },
-  background: { capacity: 5, refillPerSecond: 5 },
-});
+const limiter = new LaneLimiter(
+  {
+    interactive: { capacity: 20, refillPerSecond: 10 },
+    background: { capacity: 5, refillPerSecond: 5 },
+  },
+  // Per grant, in front of the interactive lane: one person's (or one
+  // looping agent's) calls cannot drain the reserve everyone else's ACL
+  // checks need.
+  { capacity: 10, refillPerSecond: 5 }
+);
 
 const mailboxGate = new KeyedGate({ limit: MAILBOX_CONCURRENCY });
 
@@ -245,7 +251,7 @@ export async function graphFetch(
   void _key;
 
   for (let attempt = 1; ; attempt += 1) {
-    await limiter.take(lane);
+    await limiter.take(lane, undefined, auth.grantKey);
     const release = gated ? await mailboxGate.acquire(gateKey, GATE_WAIT_MS[lane]) : null;
     let response: Response;
     try {

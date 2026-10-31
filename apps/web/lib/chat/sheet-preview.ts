@@ -9,6 +9,7 @@
 
 import { Readable } from 'node:stream';
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 
 export const MAX_ROWS = 40;
 export const MAX_COLUMNS = 15;
@@ -56,7 +57,38 @@ function cellOf(value: ExcelJS.CellValue): PreviewCell {
   return { v: String(value) };
 }
 
+/** What a workbook may inflate to, summed over its entries (exceljs inflates it all in memory). */
+export const MAX_XLSX_UNCOMPRESSED_BYTES = 200 * 1024 * 1024;
+export const MAX_XLSX_ENTRIES = 5_000;
+/** Per-entry deflate ratio; real sheets of repeated cells stay well under it. */
+export const MAX_XLSX_RATIO = 1_000;
+
+/**
+ * Reads only the zip's central directory and refuses an archive that would
+ * inflate past the budget, before exceljs (which has no cap of its own)
+ * touches it. The declared sizes are checked while inflating, so a header
+ * that understates its entry fails there instead of passing here.
+ */
+export async function assertWorkbookWithinBudget(bytes: Uint8Array): Promise<void> {
+  const zip = await JSZip.loadAsync(bytes);
+  const entries = Object.values(zip.files) as unknown as Array<{
+    _data?: { uncompressedSize?: number; compressedSize?: number };
+  }>;
+  if (entries.length > MAX_XLSX_ENTRIES) throw new Error('workbook has too many entries');
+  let total = 0;
+  for (const entry of entries) {
+    const size = entry._data?.uncompressedSize ?? 0;
+    const packed = entry._data?.compressedSize ?? 0;
+    if (size > 1024 * 1024 && size > Math.max(packed, 1) * MAX_XLSX_RATIO) {
+      throw new Error('workbook entry compresses implausibly well');
+    }
+    total += size;
+    if (total > MAX_XLSX_UNCOMPRESSED_BYTES) throw new Error('workbook inflates past the budget');
+  }
+}
+
 export async function sheetFromXlsx(bytes: Uint8Array): Promise<PreviewSheet | null> {
+  await assertWorkbookWithinBudget(bytes);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.read(Readable.from([Buffer.from(bytes)]));
   const worksheet = workbook.worksheets[0];

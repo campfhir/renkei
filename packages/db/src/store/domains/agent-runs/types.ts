@@ -256,8 +256,14 @@ export interface AgentRunStore extends AgentRunSweepStore {
     maxFailures: number;
     maxTools: number;
   }): Promise<OptimizationEvidenceRecord>;
-  /** How many runs were created after `since`. */
-  countCreatedSince(since: Date): Promise<number>;
+  /**
+   * How many runs were created after `since`: everyone's, or only those of
+   * one `ownerSubject` and/or one `triggerId` when given.
+   */
+  countCreatedSince(
+    since: Date,
+    scope?: { ownerSubject?: string; triggerId?: string }
+  ): Promise<number>;
   /** Insert a run in status 'queued'. */
   createQueued(run: AgentRunNewInput): Promise<void>;
   /** Drop a run (a queued row whose message never landed); returns how many went. */
