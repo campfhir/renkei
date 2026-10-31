@@ -1,5 +1,14 @@
 import ExcelJS from 'exceljs';
-import { MAX_COLUMNS, MAX_ROWS, sheetFromCsv, sheetFromXlsx } from './sheet-preview';
+import JSZip from 'jszip';
+import {
+  MAX_COLUMNS,
+  MAX_ROWS,
+  MAX_XLSX_ENTRIES,
+  MAX_XLSX_UNCOMPRESSED_BYTES,
+  assertWorkbookWithinBudget,
+  sheetFromCsv,
+  sheetFromXlsx,
+} from './sheet-preview';
 
 describe('sheetFromCsv', () => {
   it('splits quoted fields, doubled quotes, CRLF and a quoted newline; numbers set right', () => {
@@ -54,5 +63,40 @@ describe('sheetFromXlsx', () => {
     workbook.addWorksheet('S').addRow([2, { formula: 'A1*3' }]);
     const sheet = await sheetFromXlsx(new Uint8Array(await workbook.xlsx.writeBuffer()));
     expect(sheet!.rows[0]).toEqual([{ v: '2', n: true }, { v: '=A1*3' }]);
+  });
+});
+
+describe('workbook decompression budget', () => {
+  const zipOf = async (files: Record<string, string | Buffer>) => {
+    const zip = new JSZip();
+    for (const [name, data] of Object.entries(files)) zip.file(name, data);
+    return new Uint8Array(await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' }));
+  };
+
+  it('refuses a bomb-shaped archive: a few KiB that inflate past the budget', async () => {
+    const chunk = Buffer.alloc(64 * 1024 * 1024, 0);
+    const bomb = await zipOf({ a: chunk, b: chunk, c: chunk, d: chunk });
+    expect(bomb.length).toBeLessThan(1024 * 1024);
+    expect(4 * chunk.length).toBeGreaterThan(MAX_XLSX_UNCOMPRESSED_BYTES);
+    await expect(assertWorkbookWithinBudget(bomb)).rejects.toThrow(/budget|compresses/);
+    await expect(sheetFromXlsx(bomb)).rejects.toThrow();
+  }, 60_000);
+
+  it('refuses a single entry with an absurd ratio', async () => {
+    const one = await zipOf({ 'xl/sheet.xml': Buffer.alloc(32 * 1024 * 1024, 0) });
+    await expect(assertWorkbookWithinBudget(one)).rejects.toThrow(/compresses/);
+  });
+
+  it('refuses an archive with absurdly many entries', async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i <= MAX_XLSX_ENTRIES; i++) files[`f${i}`] = '';
+    await expect(assertWorkbookWithinBudget(await zipOf(files))).rejects.toThrow(/entries/);
+  });
+
+  it('lets an ordinary workbook through', async () => {
+    const workbook = new ExcelJS.Workbook();
+    workbook.addWorksheet('S').addRow([1, 2]);
+    const bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
+    await expect(assertWorkbookWithinBudget(bytes)).resolves.toBeUndefined();
   });
 });
