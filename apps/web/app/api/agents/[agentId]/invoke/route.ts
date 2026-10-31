@@ -28,24 +28,19 @@ import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
 import { hasActiveGrant } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 
 const MAX_STATE_BYTES = 64 * 1024;
-/** Small in-memory burst brake; the daily cap in createAgentRun is the law. */
-const BURST_WINDOW_MS = 60_000;
-const BURST_MAX = 30;
-let recentInvokes: number[] = [];
-
-function overBurst(): boolean {
-  const now = Date.now();
-  const stamps = recentInvokes.filter((at) => now - at < BURST_WINDOW_MS);
-  if (stamps.length >= BURST_MAX) {
-    recentInvokes = stamps;
-    return true;
-  }
-  stamps.push(now);
-  recentInvokes = stamps;
-  return false;
-}
+/**
+ * Small in-memory burst brake; the daily caps in createAgentRun are the law.
+ * Per caller (a signed-in subject, or the API trigger whose key it is), so
+ * one member's loop does not block "Run now" for everyone; the global rule
+ * is a loose ceiling beside it.
+ */
+const BURST_RULES = {
+  perClient: { limit: 30, windowMs: 60_000 },
+  global: { limit: 600, windowMs: 60_000 },
+};
 
 async function agentById(agentId: string): Promise<AgentRecord | null> {
   // Callers paste this id into external tools; a malformed one (glued-on
@@ -113,8 +108,16 @@ export async function POST(
     // "Run now" may (that is how a draft gets tested before enabling).
     return NextResponse.json({ error: 'This agent is turned off.' }, { status: 409 });
   }
-  if (overBurst()) {
-    return NextResponse.json({ error: 'Too many runs started; slow down.' }, { status: 429 });
+  const burst = checkInboundLimit(
+    'agents/invoke',
+    triggeredBy ?? `trigger:${triggerId}`,
+    BURST_RULES
+  );
+  if (!burst.allowed) {
+    return NextResponse.json(
+      { error: 'Too many runs started; slow down.' },
+      { status: 429, headers: { 'Retry-After': String(burst.retryAfterSeconds) } }
+    );
   }
 
   const raw = await request.text();

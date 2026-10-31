@@ -14,6 +14,8 @@
  *   - depth: chains stop at the org's agentMaxChainDepth.
  *   - daily cap: runs created in the last 24h stop at agentMaxRunsPerDay —
  *     the brake on a runaway trigger, priced per org.
+ *   - per-owner and per-trigger ceilings beside it, as fractions of the org
+ *     cap, so one member or one leaked API key cannot spend everyone's day.
  *
  * A refused run returns a typed reason so the caller can put it where its
  * kind surfaces failures (a trigger's last_error, an API 429, a parent
@@ -47,6 +49,24 @@ export interface CreateAgentRunInput {
 export type CreateAgentRunError =
   'AGENT_CYCLE' | 'CHAIN_TOO_DEEP' | 'DAILY_RUN_CAP' | 'DB_ERROR' | 'QUEUE_ERROR';
 
+/** Share of the org's daily cap one owner's runs may take, and the least that allows. */
+export const OWNER_RUN_SHARE = 0.5;
+export const OWNER_RUN_FLOOR = 20;
+/**
+ * The same for one event or API trigger. Schedules (bounded by their own
+ * cadence) and manual runs (a person) are not held to it.
+ */
+export const TRIGGER_RUN_SHARE = 0.25;
+export const TRIGGER_RUN_FLOOR = 10;
+
+export function ownerDailyRunCap(orgCap: number): number {
+  return Math.max(OWNER_RUN_FLOOR, Math.ceil(orgCap * OWNER_RUN_SHARE));
+}
+
+export function triggerDailyRunCap(orgCap: number): number {
+  return Math.max(TRIGGER_RUN_FLOOR, Math.ceil(orgCap * TRIGGER_RUN_SHARE));
+}
+
 export async function createAgentRun(
   producer: QueueProducer,
   input: CreateAgentRunInput
@@ -79,6 +99,32 @@ export async function createAgentRun(
     return err('DAILY_RUN_CAP' as const, {
       message: `This organization has reached its ${settings.agentMaxRunsPerDay} runs per day.`,
     });
+  }
+
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const ownerCap = ownerDailyRunCap(settings.agentMaxRunsPerDay);
+  const ownerCount = await wrapAsync(
+    () => runs.countCreatedSince(since, { ownerSubject: input.ownerSubject }),
+    'DB_ERROR' as const
+  );
+  if (!ownerCount.ok) return ownerCount;
+  if (ownerCount.val >= ownerCap) {
+    return err('DAILY_RUN_CAP' as const, {
+      message: `Runs owned by this account have reached ${ownerCap} per day.`,
+    });
+  }
+  if (input.triggerId && (input.triggerKind === 'event' || input.triggerKind === 'api')) {
+    const triggerCap = triggerDailyRunCap(settings.agentMaxRunsPerDay);
+    const triggerCount = await wrapAsync(
+      () => runs.countCreatedSince(since, { triggerId: input.triggerId ?? undefined }),
+      'DB_ERROR' as const
+    );
+    if (!triggerCount.ok) return triggerCount;
+    if (triggerCount.val >= triggerCap) {
+      return err('DAILY_RUN_CAP' as const, {
+        message: `This trigger has reached ${triggerCap} runs per day.`,
+      });
+    }
   }
 
   const runId = randomUUID();
