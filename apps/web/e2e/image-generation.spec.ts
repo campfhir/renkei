@@ -710,10 +710,13 @@ test('the Tokens chart shows images by colour beside chat and agents, hour by ho
   await main.getByRole('button', { name: 'Agent runs', exact: true }).click();
   await expect(main.locator('[title*="Images"]')).toHaveCount(0);
 
-  // My usage keeps its own input/output chart, with no Images switch.
+  // My usage charts the same buckets, read for this person alone: today's
+  // bar carries the pictures drawn for them, and there is still no Images switch.
   await page.goto(`/utilization`);
   await expect(main.getByTestId('image-usage-card')).toBeVisible(COLD);
   await expect(main.getByRole('button', { name: 'Images', exact: true })).toHaveCount(0);
+  await expect(imageBars).toHaveCount(1);
+  await expect(imageBars).toHaveAttribute('title', imageTitle);
 
   // Phone width.
   await page.setViewportSize(MOBILE_VIEWPORT);

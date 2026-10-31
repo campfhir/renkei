@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'My usage charts the same breakdowns as Organization usage',
+        detail:
+          'My usage now shows your tokens by surface over time, an activity calendar, tokens by model, your top agents and your top tools, for the period you pick. It is only ever your own usage, with no rankings of other people.',
+      },
+      {
+        kind: 'changed',
         title: 'Send later suggests the time you asked for',
         detail:
           'When the assistant drafts an email with a send time, the card fills in that date and time under Send later, and the button reads Schedule. Date and time are two fields, so they are easy to change on a phone.',
