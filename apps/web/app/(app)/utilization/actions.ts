@@ -15,7 +15,6 @@ import { safeTimeZone } from '../usage/window';
 import {
   getAgentUtilization,
   getFailureSignatures,
-  getUtilizationSeries,
   getUtilizationTotals,
   type AgentUtilizationRow,
   type FailureSignature,
@@ -23,9 +22,16 @@ import {
 } from '@/lib/usage/user-utilization';
 import {
   getMostEfficientAgents,
+  getOrgDailySeries,
   getSurfaceTokenTotals,
+  getTokensByModel,
+  getTopAgentsByTokens,
+  getTopToolsOrg,
   type EfficientAgentRow,
+  type ModelTokenRow,
   type OrgTokenTotals,
+  type OrgToolRow,
+  type TopAgentRow,
 } from '@/lib/usage/org-usage';
 import { getVoiceTotals, ZERO_VOICE_TOTALS, type VoiceTotals } from '@/lib/usage/voice-usage';
 import { getImageTotals, ZERO_IMAGE_TOTALS, type ImageTotals } from '@/lib/usage/image-usage';
@@ -37,11 +43,13 @@ import {
 import { listImageModels } from '@/lib/chat/models';
 import { resolveVoiceProvider } from '@/lib/voice/config';
 import {
-  bucketUtilization,
-  resolvePeriod,
+  activityCells,
+  bucketOrgSeries,
   seriesGranularity,
-  type UtilizationBucket,
-} from './window';
+  type ActivityCell,
+  type OrgBucket,
+} from '../admin/usage/window';
+import { resolvePeriod } from './window';
 import { logger } from '@/lib/logger';
 
 export interface UtilizationReport {
@@ -50,7 +58,19 @@ export interface UtilizationReport {
   /** The IANA zone every day in the report is bucketed in. */
   timeZone: string;
   totals: UtilizationTotals;
-  series: UtilizationBucket[];
+  /**
+   * The same buckets Organization usage charts — tokens split by surface,
+   * runs, tool calls — read for this person alone.
+   */
+  series: OrgBucket[];
+  /** One square per day (or hour) of the window, for the activity calendar. */
+  cells: ActivityCell[];
+  /** This person's tokens by model. */
+  byModel: ModelTokenRow[];
+  /** This person's agents by tokens spent. */
+  topAgents: TopAgentRow[];
+  /** The tools this person called most, from a chat client or through their agents. */
+  topTools: OrgToolRow[];
   agents: AgentUtilizationRow[];
   attention: FailureSignature[];
   /** This person's own tokens, split the same way Organization Usage splits the org's. */
@@ -105,6 +125,10 @@ export async function getUtilizationReport(
     timeZone,
     totals: ZERO,
     series: [],
+    cells: [],
+    byModel: [],
+    topAgents: [],
+    topTools: [],
     agents: [],
     attention: [],
     surfaceTokens: ZERO_SURFACE_TOKENS,
@@ -138,9 +162,12 @@ export async function getUtilizationReport(
       image,
       imageModels,
       document,
+      byModel,
+      topAgents,
+      topTools,
     ] = await Promise.all([
       getUtilizationTotals(subject, span, timeZone),
-      getUtilizationSeries(subject, span, timeZone, seriesGranularity(period.days)),
+      getOrgDailySeries(span, timeZone, subject, seriesGranularity(period.days)),
       getAgentUtilization(subject, span, timeZone),
       getFailureSignatures(subject, span, timeZone),
       getSurfaceTokenTotals(span, timeZone, subject),
@@ -150,13 +177,21 @@ export async function getUtilizationReport(
       getImageTotals(span, timeZone, subject),
       listImageModels(),
       getDocumentTotals(span, timeZone, subject),
+      getTokensByModel(span, timeZone, subject),
+      getTopAgentsByTokens(span, timeZone, subject),
+      getTopToolsOrg(span, timeZone, subject),
     ]);
+    const now = new Date();
     return {
       periodKey: period.key,
       days: period.days,
       timeZone,
       totals,
-      series: bucketUtilization(daily, span, new Date(), timeZone),
+      series: bucketOrgSeries(daily, span, now, timeZone),
+      cells: activityCells(daily, span, now, timeZone),
+      byModel,
+      topAgents,
+      topTools,
       agents,
       attention,
       surfaceTokens,
