@@ -6,11 +6,13 @@
  * answer, not the work behind it. With `toolCalls` the calls the reply
  * made are copied too, in order between the prose, each as its name, its
  * input and its result in fences — so a person can paste the whole
- * exchange into a bug report or another chat. Thinking is never copied:
- * it is the model's scratch work, folded away on screen for that reason.
+ * exchange into a bug report or another chat; with context, the prompt
+ * that asked for the reply comes first. Thinking is never copied: it is
+ * the model's scratch work, folded away on screen for that reason.
  */
 
 import type { Segment, WorkStep } from './segment';
+import type { ChatMessageView } from './views';
 
 type Call = Extract<WorkStep, { kind: 'call' }>;
 
@@ -69,4 +71,28 @@ function fence(text: string, lang: string): string {
   const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
   const ticks = '`'.repeat(Math.max(3, longest + 1));
   return `${ticks}${lang}\n${text.replace(/\n+$/, '')}\n${ticks}`;
+}
+
+/**
+ * A prompt's text as the person wrote it: the attachment excerpts that
+ * ride inside it for the model are left out — the person sees chips for
+ * those, and a copy is of what they typed.
+ */
+export function promptText(message: ChatMessageView): string {
+  return message.blocks
+    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+    .join('\n')
+    .replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '')
+    .trim();
+}
+
+/**
+ * The reply with its context: the prompt that asked for it, then the
+ * reply with its tool calls — the whole exchange, ready to paste
+ * somewhere that never saw the chat.
+ */
+export function contextCopyText(prompts: ChatMessageView[], segments: Segment[]): string {
+  const prompt = prompts.map(promptText).filter(Boolean).join('\n\n');
+  const reply = replyCopyText(segments, { toolCalls: true });
+  return prompt ? `Prompt:\n${prompt}\n\nReply:\n${reply}` : reply;
 }
