@@ -136,7 +136,10 @@ screenshot, a phone-width pass); its form's rules are
   server (a turn, an agent run) is waited for through its route —
   `settled(request, chatId)` in `e2e/support/chat.ts`, `runSettled` in
   `e2e/support/agents.ts` — then the page is loaded once, never reloaded
-  until it shows. A model reply
+  until it shows. A page that redirects from the server while it streams
+  (`/chat`, `/chat/new`: any `redirect()` under a `loading.tsx`) lands
+  with a second full load a moment after `goto` returns, which aborts a
+  `goto` started in that moment: wait with `redirectLanded(page)` first. A model reply
   that must stay in flight while the test looks holds `until` a key the
   test lets go with `releaseStub`, rather than a long `delayMs`.
 - **No motion to wait out.** The suite runs with the OS's reduce-motion

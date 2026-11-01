@@ -119,3 +119,17 @@ export async function pointerReaches(
 export async function hydrated(page: Page, name = 'app'): Promise<void> {
   await expect(page.locator(`[data-hydrated="${name}"]`).first()).toBeAttached();
 }
+
+/**
+ * A redirect the server sent mid-stream has fully landed. A page under a
+ * `loading.tsx` that calls `redirect()` (/chat, /chat/new) has already
+ * started its 200 response, so Next answers with
+ * `<meta id="__next-page-redirect" http-equiv="refresh" content="1;url=…">`
+ * and the browser loads the target again a second later — a navigation
+ * that aborts a `goto` started in that second. The tag stays in the
+ * document until that load replaces it (Next's router reads it to force
+ * full loads), so once it is gone nothing more is coming.
+ */
+export async function redirectLanded(page: Page): Promise<void> {
+  await expect(page.locator('#__next-page-redirect')).toHaveCount(0);
+}

@@ -19,6 +19,7 @@
 
 import path from 'node:path';
 import { test, expect } from './fixtures';
+import { hydrated, redirectLanded } from './support/settle';
 
 const SCREENS = path.join(import.meta.dirname, '..', 'test-results', 'screens');
 
@@ -40,8 +41,12 @@ test('a new chat in a project starts from the project’s toolset, not the perso
   const { projectId } = await created.json();
 
   // "+ New" inside the project: the real creation path (chat/new/page.tsx).
+  // A mid-stream redirect, finished by a second load a moment later: wait
+  // for it to land and the thread to hydrate before the first press.
   await page.goto(`/chat/new?project=${projectId}`);
   await page.waitForURL(/\/chat\/[0-9a-f-]{36}$/);
+  await redirectLanded(page);
+  await hydrated(page, 'chat-thread');
 
   await page.getByRole('button', { name: 'Tools', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Tools' });
