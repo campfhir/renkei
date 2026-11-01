@@ -15,7 +15,7 @@
  * section is for the choices.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import type { KeyStatusView } from '@/lib/keys/shared';
 import { AUTOMATION_WINDOW_DAYS, askedAtText, describeUserAgent } from '@/lib/keys/shared';
@@ -28,31 +28,27 @@ import {
   revokeAutomationInBrowser,
   rotateInBrowser,
 } from '@/lib/keys/browser/flows';
+import {
+  automationOn as automationOnFor,
+  automationText,
+  canApprove,
+  canChangeWindow,
+  canRotate,
+  codeFor,
+  initKeySection,
+  keySectionReducer,
+  whenText,
+} from './encryption-key-section.model';
 
-function whenText(iso: string | null): string {
-  if (!iso) return '';
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-export default function EncryptionKeySection({
-  initial,
-}: {
-  initial: KeyStatusView;
-}) {
+export default function EncryptionKeySection({ initial }: { initial: KeyStatusView }) {
   const router = useRouter();
-  const [status, setStatus] = useState<KeyStatusView>(initial);
-  const [deviceHasKey, setDeviceHasKey] = useState<boolean | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [revealed, setRevealed] = useState<string | null>(null);
-  const [confirmRotate, setConfirmRotate] = useState(false);
-  const [typedCodes, setTypedCodes] = useState<Record<string, string>>({});
+  // What each choice leaves on screen is encryption-key-section.model.ts's.
+  const [state, dispatch] = useReducer(keySectionReducer, initial, initKeySection);
+  const { status, deviceHasKey, busy, notice, failure, revealed, confirmRotate } = state;
 
   const refresh = useCallback(async () => {
     const [next, key] = await Promise.all([fetchKeyStatus(), loadUserKey()]);
-    if (next) setStatus(next);
-    setDeviceHasKey(key !== null);
+    dispatch({ type: 'refreshed', status: next, deviceHasKey: key !== null });
   }, []);
 
   useEffect(() => {
@@ -62,98 +58,67 @@ export default function EncryptionKeySection({
   async function setWindow(days: number): Promise<void> {
     const key = await loadUserKey();
     if (!key) {
-      setFailure('This device does not hold your key, so it cannot extend your agents.');
+      dispatch({ type: 'no-key', need: 'extend' });
       return;
     }
-    setBusy(true);
-    setFailure(null);
+    dispatch({ type: 'sent' });
     const delegated = await delegateInBrowser(status, key, { automationDays: days });
-    setBusy(false);
-    if (!delegated.ok) {
-      setFailure(
-        delegated.failure.code === 'untrusted_instances'
-          ? 'This browser has not confirmed the key service yet; reload the page and confirm its fingerprint in the dialog first.'
-          : delegated.failure.error
-      );
-      return;
-    }
-    setNotice(
-      `Your agents can run until ${whenText(new Date(Date.now() + days * 24 * 60 * 60_000).toISOString())}. Signing in extends this.`
-    );
-    await refresh();
+    dispatch({ type: 'window-answered', answer: delegated, days, now: Date.now() });
+    if (delegated.ok) await refresh();
   }
 
   async function pauseAutomation(): Promise<void> {
-    setBusy(true);
-    setFailure(null);
+    dispatch({ type: 'sent' });
     const revoked = await revokeAutomationInBrowser();
-    setBusy(false);
-    if (!revoked.ok) {
-      setFailure(revoked.failure.error);
-      return;
-    }
-    setNotice('Your agents are paused. They run again after your next sign-in.');
-    await refresh();
+    dispatch({ type: 'pause-answered', answer: revoked });
+    if (revoked.ok) await refresh();
   }
 
   async function rotate(): Promise<void> {
-    setBusy(true);
-    setFailure(null);
+    dispatch({ type: 'sent' });
     const rotated = await rotateInBrowser(status, {
       automationDays: status.automationDays,
     });
-    setBusy(false);
-    setConfirmRotate(false);
-    if (!rotated.ok) {
-      setFailure(
-        rotated.failure.code === 'untrusted_instances'
-          ? 'This browser has not confirmed the key service yet; reload the page and confirm its fingerprint in the dialog first.'
-          : rotated.failure.error
-      );
-      return;
-    }
-    setRevealed(rotated.outcome.shown);
-    setNotice('Your key was replaced. Every other device needs the new one.');
+    dispatch({
+      type: 'rotate-answered',
+      answer: rotated.ok ? { ok: true, shown: rotated.outcome.shown } : rotated,
+    });
+    if (!rotated.ok) return;
     await refresh();
     router.refresh();
   }
 
   async function forget(): Promise<void> {
     await forgetUserKey();
-    setNotice(
-      'This device no longer holds your key. Next time, type it or approve from another device.'
-    );
+    dispatch({ type: 'forgotten' });
     await refresh();
   }
 
   async function confirmRevealed(): Promise<void> {
     const key = await loadUserKey();
     if (key) await saveUserKey(key, { acknowledged: true });
-    setRevealed(null);
+    dispatch({ type: 'revealed-confirmed' });
   }
 
   async function decide(requestId: string, approve: boolean): Promise<void> {
-    setBusy(true);
-    setFailure(null);
+    const code = codeFor(state, requestId);
+    dispatch({ type: 'sent' });
     if (approve) {
       const key = await loadUserKey();
-      if (!key) setFailure('This device does not hold your key, so it cannot share it.');
-      else {
-        const approved = await approveDeviceAsk(
-          requestId,
-          typedCodes[requestId] ?? '',
-          key
-        );
-        if (!approved.ok) setFailure(approved.failure.error);
-      }
+      if (!key) dispatch({ type: 'no-key', need: 'share' });
+      else
+        dispatch({
+          type: 'decision-answered',
+          answer: await approveDeviceAsk(requestId, code, key),
+        });
     } else {
       await denyDeviceAsk(requestId);
+      dispatch({ type: 'decision-answered', answer: { ok: true } });
     }
-    setBusy(false);
     await refresh();
   }
 
-  const automationOn = status.automationInstances.length > 0 && status.automationUntil !== null;
+  const automationOn = automationOnFor(status);
   const button =
     'rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900';
   const primary =
@@ -187,9 +152,7 @@ export default function EncryptionKeySection({
           <div className="mt-4 space-y-1 text-sm" data-testid="encryption-key-automation">
             <p className="font-medium">Your agents</p>
             <p className="text-gray-600 dark:text-gray-400" data-testid="encryption-key-state">
-              {automationOn
-                ? `Your agents can run until ${whenText(status.automationUntil)}. Signing in extends this.`
-                : 'Your agents are paused until your next sign-in.'}
+              {automationText(status)}
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <label className="text-gray-600 dark:text-gray-400" htmlFor="automation-days">
@@ -199,7 +162,7 @@ export default function EncryptionKeySection({
                 id="automation-days"
                 className="rounded-md border border-gray-300 px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
                 value={status.automationDays}
-                disabled={busy || deviceHasKey === false}
+                disabled={!canChangeWindow(state)}
                 onChange={(event) => void setWindow(Number(event.target.value))}
               >
                 {AUTOMATION_WINDOW_DAYS.map((days) => (
@@ -251,13 +214,17 @@ export default function EncryptionKeySection({
                 <button
                   type="button"
                   className={primary}
-                  disabled={busy || deviceHasKey !== true}
+                  disabled={!canRotate(state)}
                   data-testid="encryption-key-rotate-confirm"
                   onClick={() => void rotate()}
                 >
                   Yes, replace my key
                 </button>
-                <button type="button" className={button} onClick={() => setConfirmRotate(false)}>
+                <button
+                  type="button"
+                  className={button}
+                  onClick={() => dispatch({ type: 'rotate-kept' })}
+                >
                   Keep it
                 </button>
               </div>
@@ -265,9 +232,9 @@ export default function EncryptionKeySection({
               <button
                 type="button"
                 className={button}
-                disabled={busy || deviceHasKey !== true}
+                disabled={!canRotate(state)}
                 data-testid="encryption-key-rotate-start"
-                onClick={() => setConfirmRotate(true)}
+                onClick={() => dispatch({ type: 'rotate-asked' })}
               >
                 Replace my key
               </button>
@@ -289,12 +256,13 @@ export default function EncryptionKeySection({
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       className="w-40 rounded-md border border-gray-300 px-2 py-1 font-mono text-base tracking-widest uppercase dark:border-gray-700 dark:bg-gray-900"
-                      value={typedCodes[request.id] ?? ''}
+                      value={codeFor(state, request.id)}
                       onChange={(event) =>
-                        setTypedCodes((current) => ({
-                          ...current,
-                          [request.id]: event.target.value,
-                        }))
+                        dispatch({
+                          type: 'code-changed',
+                          requestId: request.id,
+                          value: event.target.value,
+                        })
                       }
                       placeholder="ABCDE-FGHIJ"
                       aria-label="The code the other device shows"
@@ -304,11 +272,7 @@ export default function EncryptionKeySection({
                     <button
                       type="button"
                       className={primary}
-                      disabled={
-                        busy ||
-                        deviceHasKey !== true ||
-                        (typedCodes[request.id] ?? '').trim().length === 0
-                      }
+                      disabled={!canApprove(state, request.id)}
                       onClick={() => void decide(request.id, true)}
                     >
                       Approve

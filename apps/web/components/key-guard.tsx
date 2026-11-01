@@ -24,7 +24,7 @@
  * that read as "key not connected" comes back without a reload.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { askedAtText, describeUserAgent, type KeyStatusView } from '@/lib/keys/shared';
 import {
@@ -44,41 +44,41 @@ import {
   fetchKeyStatus,
   parseTypedKey,
   pollDeviceAsk,
-  type DeviceAsk,
-  type FlowFailure,
   type UnknownInstance,
 } from '@/lib/keys/browser/flows';
 import { formatUserKey } from '@renkei/crypto/browser';
 import Modal from './modal';
+import {
+  approvalRechecks,
+  canApprove,
+  canSubmitPassphrase,
+  canSubmitTypedKey,
+  checkStep,
+  codeFor,
+  delegationStops,
+  dialogOpen,
+  initialKeyGuard,
+  keyGuardReducer,
+  statusUsable,
+  type EnrollAnswer,
+  type FlowAnswer,
+} from './key-guard.model';
 
 const CHECK_MS = 60_000;
 const ASK_POLL_MS = 3_000;
 
-type Banner =
-  | { kind: 'none' }
-  | { kind: 'write-down'; shown: string }
-  | { kind: 'needs-key' }
-  | { kind: 'passphrase' }
-  | { kind: 'approve'; requests: KeyStatusView['pendingDevices'] }
-  /** A delegate instance this browser has not sealed to before: confirm its fingerprint first. */
-  | { kind: 'trust'; unknown: UnknownInstance[] }
-  | { kind: 'unavailable' };
+function enrollAnswer(result: Awaited<ReturnType<typeof enrollInBrowser>>): EnrollAnswer {
+  return result.ok ? { ok: true, shown: result.outcome.shown } : result;
+}
 
 export default function KeyGuard() {
   const router = useRouter();
-  const [banner, setBanner] = useState<Banner>({ kind: 'none' });
   // The attention-demanding states open front and center as a dialog.
   // Dismissing one (the key is needed, but not for this page) leaves a
   // banner with a way back; the shown-once key cannot be dismissed, only
-  // confirmed written down.
-  const [dismissed, setDismissed] = useState<Banner['kind'] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
-  const [typed, setTyped] = useState('');
-  const [passphrase, setPassphrase] = useState('');
-  const [ask, setAsk] = useState<DeviceAsk | null>(null);
-  /** What the person typed off each asking device's screen, by request id. */
-  const [typedCodes, setTypedCodes] = useState<Record<string, string>>({});
+  // confirmed written down. The rules are key-guard.model.ts's.
+  const [state, dispatch] = useReducer(keyGuardReducer, initialKeyGuard);
+  const { banner, busy, failure, typed, passphrase, ask } = state;
   const statusRef = useRef<KeyStatusView | null>(null);
   const checking = useRef(false);
 
@@ -96,82 +96,57 @@ export default function KeyGuard() {
     router.refresh();
   }, [router]);
 
-  /** An `untrusted_instances` failure becomes the trust dialog; anything else is left to the caller. */
-  const untrusted = useCallback((failure: FlowFailure): boolean => {
-    if (failure.code !== 'untrusted_instances' || !failure.unknown) return false;
-    setBanner({ kind: 'trust', unknown: failure.unknown });
-    return true;
-  }, []);
-
   const check = useCallback(async () => {
     if (checking.current) return;
     checking.current = true;
     try {
       const status = await fetchKeyStatus();
       statusRef.current = status;
-      if (!status || status.unavailable) {
-        setBanner((current) => (current.kind === 'write-down' ? current : { kind: 'unavailable' }));
+      if (!statusUsable(status)) {
+        dispatch({ type: 'status-unavailable' });
         return;
       }
       const deviceKey = await loadUserKey();
-      if (!status.enrolled) {
-        if (status.legacy && status.legacyNeedsPassphrase) {
-          setBanner({ kind: 'passphrase' });
-          return;
-        }
+      const step = checkStep(status, deviceKey !== null, Date.now());
+      if (step.kind === 'passphrase') {
+        dispatch({ type: 'passphrase-needed' });
+        return;
+      }
+      if (step.kind === 'enroll') {
         const enrolled = await enrollInBrowser(status, {
           automationDays: status.automationDays,
         });
-        if (!enrolled.ok) {
-          if (untrusted(enrolled.failure)) return;
-          setFailure(enrolled.failure.error);
-          setBanner({ kind: 'unavailable' });
-          return;
-        }
-        setBanner({ kind: 'write-down', shown: enrolled.outcome.shown });
-        settle();
+        dispatch({ type: 'enroll-answered', answer: enrollAnswer(enrolled) });
+        if (enrolled.ok) settle();
         return;
       }
-      if (deviceKey) {
-        if (!status.sessionDelegated) {
-          const delegated = await delegateInBrowser(status, deviceKey, {
-            automationDays: status.automationDays,
-          });
-          if (delegated.ok) settle();
-          else if (untrusted(delegated.failure)) return;
-          else if (delegated.failure.code === 'wrong_key') {
-            // The key on this device is not this account's any more (a rotation elsewhere).
-            setBanner({ kind: 'needs-key' });
-            return;
-          }
-        } else if (
-          status.automationUntil &&
-          new Date(status.automationUntil).getTime() - Date.now() <
-            (status.automationDays * 24 * 60 * 60_000) / 2
-        ) {
-          // Signing in extends the window (decision 4): renew when half of it has passed.
-          void delegateInBrowser(status, deviceKey, {
-            automationDays: status.automationDays,
-          });
-        }
-        if (status.pendingDevices.length > 0) {
-          setBanner({ kind: 'approve', requests: status.pendingDevices });
-          return;
-        }
-        if (!(await keyAcknowledged())) {
-          setBanner({ kind: 'write-down', shown: formatUserKey(deviceKey) });
-          return;
-        }
-        setBanner({ kind: 'none' });
+      if (step.kind === 'no-device-key' || !deviceKey) {
+        dispatch({ type: 'device-without-key', sessionDelegated: status.sessionDelegated });
         return;
       }
-      // Enrolled, and this device has no key. Fine while this session is
-      // delegated (another browser did it); otherwise the person must bring it.
-      setBanner(status.sessionDelegated ? { kind: 'none' } : { kind: 'needs-key' });
+      if (step.delegate) {
+        const delegated: FlowAnswer = await delegateInBrowser(status, deviceKey, {
+          automationDays: status.automationDays,
+        });
+        dispatch({ type: 'delegate-answered', answer: delegated });
+        if (delegated.ok) settle();
+        else if (delegationStops(delegated)) return;
+      } else if (step.renew) {
+        void delegateInBrowser(status, deviceKey, {
+          automationDays: status.automationDays,
+        });
+      }
+      const acknowledged = status.pendingDevices.length > 0 || (await keyAcknowledged());
+      dispatch({
+        type: 'device-checked',
+        pendingDevices: status.pendingDevices,
+        acknowledged,
+        shown: formatUserKey(deviceKey),
+      });
     } finally {
       checking.current = false;
     }
-  }, [settle, untrusted]);
+  }, [settle]);
 
   useEffect(() => {
     void check();
@@ -192,24 +167,20 @@ export default function KeyGuard() {
       void (async () => {
         const answer = await pollDeviceAsk(ask);
         if (cancelled || answer === null) return;
-        if (answer === 'expired' || answer === 'gone') {
-          setAsk(null);
-          setFailure(
-            answer === 'expired' ? 'The request expired; ask again.' : 'The request was declined.'
-          );
+        if (answer === 'expired') {
+          dispatch({ type: 'ask-expired' });
+          return;
+        }
+        if (answer === 'gone') {
+          dispatch({ type: 'ask-declined' });
           return;
         }
         const status = statusRef.current;
         if (!status) return;
         const adopted = await adoptKeyInBrowser(status, answer);
-        setAsk(null);
-        if (!adopted.ok) {
-          setFailure(adopted.failure.error);
-          return;
-        }
-        await saveUserKey(answer, { acknowledged: true });
-        setBanner({ kind: 'none' });
-        settle();
+        if (adopted.ok) await saveUserKey(answer, { acknowledged: true });
+        dispatch({ type: 'ask-adopted', answer: adopted });
+        if (adopted.ok) settle();
       })();
     }, ASK_POLL_MS);
     return () => {
@@ -223,94 +194,70 @@ export default function KeyGuard() {
     if (!status) return;
     const parsed = parseTypedKey(typed);
     if (!parsed.ok) {
-      setFailure(parsed.error);
+      dispatch({ type: 'typed-key-refused', error: parsed.error });
       return;
     }
-    setBusy(true);
-    setFailure(null);
+    dispatch({ type: 'typed-key-sent' });
     const adopted = await adoptKeyInBrowser(status, parsed.bytes);
-    setBusy(false);
-    if (!adopted.ok) {
-      if (untrusted(adopted.failure)) return;
-      setFailure(adopted.failure.error);
-      return;
-    }
-    setTyped('');
-    setBanner({ kind: 'none' });
-    settle();
+    dispatch({ type: 'typed-key-answered', answer: adopted });
+    if (adopted.ok) settle();
   }
 
   async function startAsk(): Promise<void> {
-    setFailure(null);
+    dispatch({ type: 'ask-requested' });
     const started = await askOtherDevices();
     if (!started.ok) {
-      setFailure(started.failure.error);
+      dispatch({ type: 'ask-refused', error: started.failure.error });
       return;
     }
-    setAsk(started.ask);
+    dispatch({ type: 'ask-opened', ask: started.ask });
   }
 
   async function submitPassphrase(): Promise<void> {
     const status = statusRef.current;
     if (!status) return;
-    setBusy(true);
-    setFailure(null);
+    dispatch({ type: 'passphrase-sent' });
     const enrolled = await enrollInBrowser(status, {
       passphrase,
       automationDays: status.automationDays,
     });
-    setBusy(false);
-    if (!enrolled.ok) {
-      setFailure(enrolled.failure.error);
-      return;
-    }
-    setPassphrase('');
-    setBanner({ kind: 'write-down', shown: enrolled.outcome.shown });
-    settle();
+    dispatch({ type: 'passphrase-answered', answer: enrollAnswer(enrolled) });
+    if (enrolled.ok) settle();
   }
 
   async function decideAsk(requestId: string, approve: boolean): Promise<void> {
-    setBusy(true);
-    setFailure(null);
+    const code = codeFor(state, requestId);
+    dispatch({ type: 'decision-sent' });
     if (approve) {
       const deviceKey = await loadUserKey();
       if (deviceKey) {
-        const approved = await approveDeviceAsk(
-          requestId,
-          typedCodes[requestId] ?? '',
-          deviceKey
-        );
+        const approved = await approveDeviceAsk(requestId, code, deviceKey);
         if (!approved.ok) {
-          setFailure(approved.failure.error);
-          setBusy(false);
+          dispatch({ type: 'approval-refused', failure: approved.failure });
           // A closed request (too many wrong codes) leaves the list on the next check.
-          if (approved.failure.code === 'wrong_code' && !/closed/.test(approved.failure.error))
-            return;
-          await check();
+          if (approvalRechecks(approved.failure)) await check();
           return;
         }
       }
     } else {
       await denyDeviceAsk(requestId);
     }
-    setBusy(false);
+    dispatch({ type: 'decision-done' });
     await check();
   }
 
   async function confirmWrittenDown(): Promise<void> {
     await acknowledgeKey();
-    setBanner({ kind: 'none' });
+    dispatch({ type: 'written-down' });
   }
 
   /** The person compared the fingerprints and says this is their key service. */
   async function trustAndContinue(unknown: UnknownInstance[]): Promise<void> {
     const status = statusRef.current;
     if (!status) return;
-    setBusy(true);
+    dispatch({ type: 'trust-sent' });
     await confirmInstanceTrust(status, unknown);
-    setBusy(false);
-    setBanner({ kind: 'none' });
-    setDismissed(null);
+    dispatch({ type: 'trust-confirmed' });
     await check();
   }
 
@@ -320,8 +267,9 @@ export default function KeyGuard() {
     'rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50';
   const quietButtonClass =
     'rounded-md border border-gray-300 px-3 py-1 text-sm hover:bg-white/50 disabled:opacity-50 dark:border-gray-600';
-  const open = dismissed !== banner.kind;
-  const dismiss = () => setDismissed(banner.kind);
+  const open = dialogOpen(state);
+  const dismiss = () => dispatch({ type: 'dismissed' });
+  const reopen = () => dispatch({ type: 'reopened' });
 
   const unlockForm = (
     <div className="space-y-4 text-sm" data-testid="key-unlock">
@@ -334,7 +282,7 @@ export default function KeyGuard() {
           className="w-full rounded-md border border-gray-300 p-2 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"
           rows={3}
           value={typed}
-          onChange={(event) => setTyped(event.target.value)}
+          onChange={(event) => dispatch({ type: 'typed-changed', value: event.target.value })}
           placeholder="abcd-efgh-ijkl-…"
           autoComplete="off"
           spellCheck={false}
@@ -342,7 +290,7 @@ export default function KeyGuard() {
         <button
           type="button"
           className={buttonClass}
-          disabled={busy || typed.trim().length === 0}
+          disabled={!canSubmitTypedKey(state)}
           data-testid="key-unlock-submit"
           onClick={() => void submitTypedKey()}
         >
@@ -437,7 +385,7 @@ export default function KeyGuard() {
             <span className="font-medium">This device does not have your encryption key.</span> Your
             chats and connectors stay closed here until it does.
           </span>
-          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+          <button type="button" className={buttonClass} onClick={reopen}>
             Add my key
           </button>
         </div>
@@ -455,14 +403,16 @@ export default function KeyGuard() {
               type="password"
               className="w-full rounded-md border border-gray-300 p-2 dark:border-gray-700 dark:bg-gray-900"
               value={passphrase}
-              onChange={(event) => setPassphrase(event.target.value)}
+              onChange={(event) =>
+                dispatch({ type: 'passphrase-changed', value: event.target.value })
+              }
               autoComplete="current-password"
               aria-label="Passphrase"
             />
             <button
               type="button"
               className={buttonClass}
-              disabled={busy || passphrase.length === 0}
+              disabled={!canSubmitPassphrase(state)}
               onClick={() => void submitPassphrase()}
             >
               Move my data
@@ -481,7 +431,7 @@ export default function KeyGuard() {
             <span className="font-medium">Finish setting up your encryption key.</span> Your earlier
             key was passphrase-protected; enter it once to move your data to the new key.
           </span>
-          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+          <button type="button" className={buttonClass} onClick={reopen}>
             Continue
           </button>
         </div>
@@ -504,12 +454,13 @@ export default function KeyGuard() {
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       className="w-40 rounded-md border border-gray-300 px-2 py-1 font-mono text-base tracking-widest uppercase dark:border-gray-700 dark:bg-gray-900"
-                      value={typedCodes[request.id] ?? ''}
+                      value={codeFor(state, request.id)}
                       onChange={(event) =>
-                        setTypedCodes((current) => ({
-                          ...current,
-                          [request.id]: event.target.value,
-                        }))
+                        dispatch({
+                          type: 'code-changed',
+                          requestId: request.id,
+                          value: event.target.value,
+                        })
                       }
                       placeholder="ABCDE-FGHIJ"
                       aria-label="The code the other device shows"
@@ -519,7 +470,7 @@ export default function KeyGuard() {
                     <button
                       type="button"
                       className={buttonClass}
-                      disabled={busy || (typedCodes[request.id] ?? '').trim().length === 0}
+                      disabled={!canApprove(state, request.id)}
                       onClick={() => void decideAsk(request.id, true)}
                     >
                       Approve
@@ -549,7 +500,7 @@ export default function KeyGuard() {
           <span>
             <span className="font-medium">Another device is asking for your encryption key.</span>
           </span>
-          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+          <button type="button" className={buttonClass} onClick={reopen}>
             Review
           </button>
         </div>
@@ -597,7 +548,7 @@ export default function KeyGuard() {
             <span className="font-medium">Your key is not connected.</span> This browser has not
             confirmed the key service it would hand your key to.
           </span>
-          <button type="button" className={buttonClass} onClick={() => setDismissed(null)}>
+          <button type="button" className={buttonClass} onClick={reopen}>
             Review
           </button>
         </div>
