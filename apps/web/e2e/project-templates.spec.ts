@@ -8,6 +8,13 @@
  * real connect flow (e2e/support/code-host.ts). The catalog is the
  * organization's: the spec's own template is tagged and deleted again.
  * Screenshots land under test-results/screens/<project>/project-templates-*.png.
+ *
+ * The rules moved out: picking a template filling Instructions (and the
+ * text staying editable), what the form sends and when Save is allowed
+ * are app/(app)/code/_components/new-code-project.model.test.ts and
+ * app/(app)/admin/project-templates/project-template-forms.model.test.ts
+ * (Edit's pre-filled draft among them); operator-only access, required
+ * fields, taken names and 404s are app/api/admin/project-templates/route.test.ts.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -75,40 +82,20 @@ test.describe('code project templates', () => {
         fullPage: false,
       });
 
-    // ── The new-project form: the seeded templates offered, nothing
-    //    selected yet, the standing developer's brief already filled in ──
+    // ── The new-project form: the seeded templates offered ──
     await page.goto(`/code/new`);
     await expect(page.getByRole('heading', { level: 1, name: 'New code project' })).toBeVisible();
     const templatePicker = page.getByRole('combobox', { name: 'Start from a template' });
     await expect(templatePicker).toBeVisible();
     await expect(templatePicker).toContainText('Full-stack application');
-    await expect(page.getByLabel(/^Instructions/)).toHaveValue(/test-first/);
     await shot('project-templates-picker-default.png');
 
-    // ── Picking a template swaps the instructions text in, still fully
-    //    editable afterward ──
-    await templatePicker.selectOption({ label: 'Full-stack application' });
-    await expect(page.getByLabel(/^Instructions/)).toHaveValue(/full-stack developer/);
-    await shot('project-templates-picker-fullstack.png');
-
-    // ── The admin catalog: the seeded rows, no special "built-in" marker —
-    //    they are ordinary rows an operator can rename, rewrite or delete ──
+    // ── The admin catalog: the seeded rows ──
     await page.goto(`/admin/project-templates`);
     await expect(page.getByRole('heading', { level: 1, name: 'Project templates' })).toBeVisible();
     await expect(page.getByText('Generic developer brief')).toBeVisible();
     await expect(page.getByText('Microservice / API service')).toBeVisible();
-    await expect(page.getByText('Built-in')).toHaveCount(0);
     await shot('project-templates-admin-list.png');
-
-    // ── A seeded row edits like any other: Edit opens a draft pre-filled
-    //    with its current text ──
-    const fullStackRow = page.locator('li').filter({ hasText: 'Full-stack application' });
-    await fullStackRow.getByRole('button', { name: 'Edit' }).click();
-    // The draft form's only <textarea> — its Instructions field.
-    const instructionsField = page.locator('textarea');
-    await expect(instructionsField).toHaveValue(/full-stack developer/);
-    await shot('project-templates-admin-edit-seeded.png');
-    await page.getByRole('button', { name: 'Cancel' }).click();
 
     // ── A brand-new template, created from scratch ──
     await page.getByRole('button', { name: '+ New template' }).click();
@@ -116,7 +103,8 @@ test.describe('code project templates', () => {
     await page
       .getByLabel(/^Description/)
       .fill('A template made for a Playwright screenshot, not for real use.');
-    await instructionsField.fill('Run pnpm test before every commit.');
+    // The draft form's only <textarea> — its Instructions field.
+    await page.locator('textarea').fill('Run pnpm test before every commit.');
     await shot('project-templates-admin-new-draft.png');
     await page.getByRole('button', { name: 'Create template' }).click();
     await expect(page.getByText(customTemplateName)).toBeVisible();

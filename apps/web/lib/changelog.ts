@@ -56,6 +56,18 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'fixed',
+        title: 'Commit dialog: files you untick stay unticked',
+        detail:
+          "In the code pane's Commit dialog, a file you had unticked was ticked again whenever the list of changed files refreshed (a save, or the chat finishing a turn), so it could end up in a commit you meant to leave it out of. Only files that newly appear start ticked now.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Switch branch: a refused switch always says why',
+        detail:
+          "When switching a code chat's branch failed for a reason the server did not label (an error on its side, or no connection), the Switch branch dialog showed nothing and the branch simply stayed. It now shows the reason; a failed discard on a dirty checkout also keeps its message and the offer to try again.",
+      },
+      {
+        kind: 'fixed',
         title:
           "Agent models: picking another model from the provider's list clears an earlier test result",
         detail:

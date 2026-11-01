@@ -5,42 +5,34 @@
  * plus one draft form serving both create and edit. Every tenant starts
  * with a few rows seeded by migration (114-code-project-templates); from
  * here they are ordinary rows like any other — rename, rewrite or delete.
+ * When Save is allowed and what it sends are project-template-forms.model.ts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { getJson, sendJson } from '@/lib/fetch-json';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-interface TemplateRow {
-  id: string;
-  name: string;
-  description: string | null;
-  instructions: string;
-}
-
-interface Draft {
-  id: string | null;
-  name: string;
-  description: string;
-  instructions: string;
-}
-
-const EMPTY_DRAFT: Draft = { id: null, name: '', description: '', instructions: '' };
+import {
+  canSave,
+  initialTemplates,
+  saveLabel,
+  saveRequest,
+  templatesReducer,
+  type TemplateRow,
+} from './project-template-forms.model';
 
 export default function ProjectTemplateForms() {
-  const [templates, setTemplates] = useState<TemplateRow[]>([]);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(templatesReducer, initialTemplates);
+  const { templates, draft, busy, error } = state;
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ templates: TemplateRow[] }>(
       `/api/admin/project-templates`
     );
-    if (loadError) setError(loadError);
-    else setTemplates(data?.templates ?? []);
+    if (loadError) dispatch({ type: 'loadFailed', error: loadError });
+    else dispatch({ type: 'loaded', templates: data?.templates ?? [] });
   }, []);
 
   useEffect(() => {
@@ -48,39 +40,26 @@ export default function ProjectTemplateForms() {
   }, [load]);
 
   const save = async () => {
-    if (!draft || !draft.name.trim() || !draft.instructions.trim()) return;
-    setBusy(true);
-    setError(null);
-    const payload = {
-      name: draft.name.trim(),
-      description: draft.description.trim() || null,
-      instructions: draft.instructions.trim(),
-    };
-    const saveError = draft.id
-      ? await sendJson(`/api/admin/project-templates/${draft.id}`, 'PUT', payload)
-      : await sendJson(`/api/admin/project-templates`, 'POST', payload);
-    setBusy(false);
+    const request = saveRequest(state);
+    if (!request) return;
+    dispatch({ type: 'sent' });
+    const saveError = await sendJson(request.url, request.method, request.body);
     if (saveError) {
-      setError(saveError);
+      dispatch({ type: 'failed', error: saveError });
       return;
     }
-    setDraft(null);
+    dispatch({ type: 'saved' });
     await load();
   };
 
   const remove = async (templateId: string) => {
-    setBusy(true);
-    setError(null);
-    const removeError = await sendJson(
-      `/api/admin/project-templates/${templateId}`,
-      'DELETE'
-    );
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const removeError = await sendJson(`/api/admin/project-templates/${templateId}`, 'DELETE');
     if (removeError) {
-      setError(removeError);
+      dispatch({ type: 'failed', error: removeError });
       return;
     }
-    if (draft?.id === templateId) setDraft(null);
+    dispatch({ type: 'removed', id: templateId });
     await load();
   };
 
@@ -105,14 +84,7 @@ export default function ProjectTemplateForms() {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() =>
-                    setDraft({
-                      id: template.id,
-                      name: template.name,
-                      description: template.description ?? '',
-                      instructions: template.instructions,
-                    })
-                  }
+                  onClick={() => dispatch({ type: 'edit', template })}
                   className="text-sm text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Edit
@@ -140,7 +112,9 @@ export default function ProjectTemplateForms() {
               value={draft.name}
               maxLength={200}
               placeholder="e.g. Microservice / API service"
-              onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+              onChange={(event) =>
+                dispatch({ type: 'draftChanged', field: 'name', value: event.target.value })
+              }
             />
           </label>
           <label className="block text-sm font-medium">
@@ -150,7 +124,9 @@ export default function ProjectTemplateForms() {
               value={draft.description}
               maxLength={300}
               placeholder="A short line describing when to pick this one"
-              onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+              onChange={(event) =>
+                dispatch({ type: 'draftChanged', field: 'description', value: event.target.value })
+              }
             />
           </label>
           <label className="block text-sm font-medium">
@@ -158,7 +134,9 @@ export default function ProjectTemplateForms() {
             <textarea
               className={`${inputClass} mt-1 font-mono`}
               value={draft.instructions}
-              onChange={(event) => setDraft({ ...draft, instructions: event.target.value })}
+              onChange={(event) =>
+                dispatch({ type: 'draftChanged', field: 'instructions', value: event.target.value })
+              }
               rows={14}
               maxLength={20_000}
             />
@@ -166,15 +144,15 @@ export default function ProjectTemplateForms() {
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={busy || !draft.name.trim() || !draft.instructions.trim()}
+              disabled={!canSave(state)}
               onClick={() => void save()}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {draft.id ? 'Save template' : 'Create template'}
+              {saveLabel(state)}
             </button>
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={() => dispatch({ type: 'draftCancelled' })}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Cancel
@@ -184,7 +162,7 @@ export default function ProjectTemplateForms() {
       ) : (
         <button
           type="button"
-          onClick={() => setDraft(EMPTY_DRAFT)}
+          onClick={() => dispatch({ type: 'newTemplate' })}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
           + New template

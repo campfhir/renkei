@@ -16,12 +16,8 @@ import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { Spinner } from '@/components/skeleton';
 import UploadTable, { type UploadFilter } from './upload-table';
-import {
-  batchProgress,
-  isBatchFinished,
-  useOptionalUploadQueue,
-  type UploadBatch,
-} from './upload-queue';
+import { useOptionalUploadQueue } from './upload-queue';
+import { indicatorView, isBatchFinished, type UploadBatch } from './upload-queue.model';
 
 export default function UploadIndicator({
   className = '',
@@ -33,38 +29,16 @@ export default function UploadIndicator({
 }) {
   const queue = useOptionalUploadQueue();
   const [open, setOpen] = useState(false);
-  const empty = !queue || queue.batches.length === 0;
+  const view = queue ? indicatorView(queue.batches) : null;
+  const empty = view === null;
   // The last batch dismissed closes the dialog for good: the pill is gone
   // with it, and the next batch must not find the dialog already open.
   useEffect(() => {
     if (empty) setOpen(false);
   }, [empty]);
-  if (empty) return null;
-  const totals = queue.batches.map(batchProgress).reduce(
-    (sum, progress) => ({
-      total: sum.total + progress.total,
-      done: sum.done + progress.done,
-      failed: sum.failed + progress.failed,
-      loaded: sum.loaded + progress.loaded,
-      bytes: sum.bytes + progress.bytes,
-    }),
-    { total: 0, done: 0, failed: 0, loaded: 0, bytes: 0 }
-  );
-  const running = queue.active > 0;
-  const percent = totals.bytes > 0 ? Math.min(100, (totals.loaded / totals.bytes) * 100) : 0;
-  const current = Math.min(totals.done + 1, totals.total);
-  const label = running
-    ? `Uploading ${current} of ${totals.total}`
-    : totals.failed > 0
-      ? `${totals.failed} upload${totals.failed === 1 ? '' : 's'} failed`
-      : `Uploaded ${totals.total}`;
-  const shown = compact
-    ? running
-      ? `${current}/${totals.total}`
-      : totals.failed > 0
-        ? `${totals.failed} failed`
-        : `${totals.total}`
-    : label;
+  if (!view) return null;
+  const { running, label, percent } = view;
+  const shown = compact ? view.compact : label;
   return (
     <>
       <button
@@ -74,7 +48,7 @@ export default function UploadIndicator({
         title={label}
         data-testid="upload-indicator"
         className={`flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-medium ${
-          !running && totals.failed > 0
+          view.failed
             ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300'
             : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900'
         } ${className}`}
@@ -82,10 +56,7 @@ export default function UploadIndicator({
         {running ? (
           <Spinner size={3} />
         ) : (
-          <Icon
-            path={totals.failed > 0 ? ICONS.close : ICONS.check}
-            className="h-3.5 w-3.5 shrink-0"
-          />
+          <Icon path={view.failed ? ICONS.close : ICONS.check} className="h-3.5 w-3.5 shrink-0" />
         )}
         <span className="flex flex-col items-start leading-none">
           <span>{shown}</span>

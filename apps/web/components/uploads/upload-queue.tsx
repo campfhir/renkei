@@ -18,6 +18,10 @@
  * later; one with failures stays until dismissed, so the reasons can be
  * read. `onItem` fires as each file lands (a tree reloads the folder),
  * `onDone` once per batch.
+ *
+ * What the rows say at each step, which file goes next and when a batch
+ * clears itself are upload-queue.model.ts; this file holds the files,
+ * runs the sends and keeps the timers.
  */
 
 import {
@@ -30,10 +34,21 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import {
+  activeCount,
+  clearsItself,
+  isBatchFinished,
+  nextQueued,
+  queueReducer,
+  thrownOutcome,
+  type QueueAction,
+  type UploadBatch,
+  type UploadJob,
+  type UploadOutcome,
+} from './upload-queue.model';
 
-export type UploadStatus = 'queued' | 'uploading' | 'done' | 'failed' | 'cancelled';
-
-export type UploadOutcome = { ok: true } | { ok: false; error: string };
+export type { UploadBatch, UploadJob, UploadOutcome, UploadStatus } from './upload-queue.model';
+export { batchProgress, isBatchFinished } from './upload-queue.model';
 
 /** Sends one file; reports bytes as they go; stops when `signal` aborts. */
 export type UploadSender = (
@@ -47,27 +62,6 @@ export interface UploadItemInput {
   /** Where it goes, as the table shows it — a path in the checkout, say. */
   label: string;
   send: UploadSender;
-}
-
-export interface UploadJob {
-  id: string;
-  name: string;
-  size: number;
-  label: string;
-  status: UploadStatus;
-  /** Bytes sent so far. */
-  loaded: number;
-  error: string | null;
-}
-
-export interface UploadBatch {
-  id: string;
-  /** What the batch is, for the indicator and its dialog: "Add files to acme/billing". */
-  title: string;
-  /** Where the files go, in a word: "checkout", "artifacts". */
-  destination: string;
-  jobs: UploadJob[];
-  startedAt: number;
 }
 
 export interface EnqueueInput {
@@ -101,38 +95,6 @@ const CLEAR_AFTER_MS = 4_000;
 
 const UploadQueueContext = createContext<UploadQueue | null>(null);
 
-/** Counts a batch has: what is left to do, what failed. */
-export function batchProgress(batch: UploadBatch): {
-  total: number;
-  done: number;
-  failed: number;
-  pending: number;
-  loaded: number;
-  bytes: number;
-} {
-  let done = 0;
-  let failed = 0;
-  let pending = 0;
-  let loaded = 0;
-  let bytes = 0;
-  for (const job of batch.jobs) {
-    bytes += job.size;
-    if (job.status === 'done') {
-      done += 1;
-      loaded += job.size;
-    } else if (job.status === 'failed' || job.status === 'cancelled') failed += 1;
-    else {
-      pending += 1;
-      loaded += Math.min(job.loaded, job.size);
-    }
-  }
-  return { total: batch.jobs.length, done, failed, pending, loaded, bytes };
-}
-
-export function isBatchFinished(batch: UploadBatch): boolean {
-  return batch.jobs.every((job) => job.status !== 'queued' && job.status !== 'uploading');
-}
-
 let nextId = 0;
 const id = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${(nextId++).toString(36)}`;
 
@@ -159,26 +121,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   const runtimes = useRef(new Map<string, BatchRuntime>());
   const clearTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-  const update = useCallback((change: (current: UploadBatch[]) => UploadBatch[]) => {
-    batchesRef.current = change(batchesRef.current);
+  const apply = useCallback((action: QueueAction) => {
+    batchesRef.current = queueReducer(batchesRef.current, action);
     setBatches(batchesRef.current);
   }, []);
-
-  const patchJob = useCallback(
-    (batchId: string, jobId: string, patch: Partial<UploadJob>) => {
-      update((current) =>
-        current.map((batch) =>
-          batch.id === batchId
-            ? {
-                ...batch,
-                jobs: batch.jobs.map((job) => (job.id === jobId ? { ...job, ...patch } : job)),
-              }
-            : batch
-        )
-      );
-    },
-    [update]
-  );
 
   const dismiss = useCallback(
     (batchId: string) => {
@@ -188,9 +134,9 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       const batch = batchesRef.current.find((entry) => entry.id === batchId);
       for (const job of batch?.jobs ?? []) jobs.current.delete(job.id);
       runtimes.current.delete(batchId);
-      update((current) => current.filter((entry) => entry.id !== batchId));
+      apply({ type: 'dismissed', batchId });
     },
-    [update]
+    [apply]
   );
 
   /** One lane: takes queued jobs of the batch until none are left. */
@@ -203,40 +149,34 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         for (;;) {
           if (runtime.cancelled) return;
           const batch = batchesRef.current.find((entry) => entry.id === batchId);
-          const next = batch?.jobs.find((job) => job.status === 'queued');
+          const next = nextQueued(batch);
           if (!batch || !next) return;
           const job = jobs.current.get(next.id);
           if (!job) {
-            patchJob(batchId, next.id, { status: 'failed', error: 'The file is gone.' });
+            apply({ type: 'lost', batchId, jobId: next.id });
             continue;
           }
           const controller = new AbortController();
           job.controller = controller;
-          patchJob(batchId, next.id, { status: 'uploading', loaded: 0, error: null });
+          apply({ type: 'started', batchId, jobId: next.id });
           let outcome: UploadOutcome;
           try {
             outcome = await job.send(
               job.file,
-              (loaded) => patchJob(batchId, next.id, { loaded }),
+              (loaded) => apply({ type: 'progressed', batchId, jobId: next.id, loaded }),
               controller.signal
             );
           } catch (error) {
-            outcome =
-              error instanceof DOMException && error.name === 'AbortError'
-                ? { ok: false, error: 'Cancelled.' }
-                : {
-                    ok: false,
-                    error: error instanceof Error ? error.message : 'The upload failed.',
-                  };
+            outcome = thrownOutcome(error);
           }
           job.controller = null;
-          if (controller.signal.aborted) {
-            patchJob(batchId, next.id, { status: 'cancelled', error: 'Cancelled.' });
-          } else if (outcome.ok) {
-            patchJob(batchId, next.id, { status: 'done', loaded: job.file.size, error: null });
-          } else {
-            patchJob(batchId, next.id, { status: 'failed', error: outcome.error });
-          }
+          apply({
+            type: 'finished',
+            batchId,
+            jobId: next.id,
+            outcome,
+            aborted: controller.signal.aborted,
+          });
           const after = batchesRef.current.find((entry) => entry.id === batchId);
           const finished = after?.jobs.find((entry) => entry.id === next.id);
           if (after && finished) runtime.onItem?.(finished, after);
@@ -247,7 +187,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           const batch = batchesRef.current.find((entry) => entry.id === batchId);
           if (batch && isBatchFinished(batch)) {
             runtime.onDone?.(batch);
-            if (batchProgress(batch).failed === 0) {
+            if (clearsItself(batch)) {
               const timer = setTimeout(() => dismiss(batchId), CLEAR_AFTER_MS);
               clearTimers.current.set(batchId, timer);
             }
@@ -255,31 +195,16 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         }
       }
     },
-    [patchJob, dismiss]
+    [apply, dismiss]
   );
 
   const enqueue = useCallback(
     (input: EnqueueInput): string => {
       const batchId = id('batch');
-      const batch: UploadBatch = {
-        id: batchId,
-        title: input.title,
-        destination: input.destination,
-        startedAt: Date.now(),
-        jobs: input.items.map((item) => {
-          const jobId = id('job');
-          jobs.current.set(jobId, { file: item.file, send: item.send, controller: null });
-          return {
-            id: jobId,
-            name: item.file.name,
-            size: item.file.size,
-            label: item.label,
-            status: 'queued',
-            loaded: 0,
-            error: null,
-          };
-        }),
-      };
+      const items = input.items.map((item) => ({ item, jobId: id('job') }));
+      for (const { item, jobId } of items) {
+        jobs.current.set(jobId, { file: item.file, send: item.send, controller: null });
+      }
       const concurrency = Math.max(1, input.concurrency ?? DEFAULT_CONCURRENCY);
       runtimes.current.set(batchId, {
         concurrency,
@@ -288,13 +213,25 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         lanes: 0,
         cancelled: false,
       });
-      update((current) => [...current, batch]);
-      for (let lane = 0; lane < Math.min(concurrency, batch.jobs.length); lane += 1) {
+      apply({
+        type: 'enqueued',
+        id: batchId,
+        title: input.title,
+        destination: input.destination,
+        startedAt: Date.now(),
+        jobs: items.map(({ item, jobId }) => ({
+          id: jobId,
+          name: item.file.name,
+          size: item.file.size,
+          label: item.label,
+        })),
+      });
+      for (let lane = 0; lane < Math.min(concurrency, items.length); lane += 1) {
         void runLane(batchId);
       }
       return batchId;
     },
-    [update, runLane]
+    [apply, runLane]
   );
 
   const retry = useCallback(
@@ -304,10 +241,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       runtime.cancelled = false;
       const timer = clearTimers.current.get(batchId);
       if (timer) clearTimeout(timer);
-      patchJob(batchId, jobId, { status: 'queued', loaded: 0, error: null });
+      apply({ type: 'retried', batchId, jobId });
       if (runtime.lanes < runtime.concurrency) void runLane(batchId);
     },
-    [patchJob, runLane]
+    [apply, runLane]
   );
 
   const cancel = useCallback(
@@ -316,27 +253,14 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       if (runtime) runtime.cancelled = true;
       const batch = batchesRef.current.find((entry) => entry.id === batchId);
       for (const job of batch?.jobs ?? []) {
-        if (job.status === 'queued') {
-          patchJob(batchId, job.id, { status: 'cancelled', error: 'Cancelled.' });
-        } else if (job.status === 'uploading') {
-          jobs.current.get(job.id)?.controller?.abort();
-        }
+        if (job.status === 'uploading') jobs.current.get(job.id)?.controller?.abort();
       }
+      apply({ type: 'cancelled', batchId });
     },
-    [patchJob]
+    [apply]
   );
 
-  const active = useMemo(
-    () =>
-      batches.reduce(
-        (sum, batch) =>
-          sum +
-          batch.jobs.filter((job) => job.status === 'queued' || job.status === 'uploading')
-            .length,
-        0
-      ),
-    [batches]
-  );
+  const active = useMemo(() => activeCount(batches), [batches]);
 
   // Leaving the page would drop every send still running.
   useEffect(() => {
