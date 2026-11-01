@@ -1,5 +1,12 @@
 import { Kysely, sql } from 'kysely';
-import { isRecord } from '@renkei/guards';
+
+// A migration is compiled on its own (packages/db/scripts/build-migrations.js,
+// bundle: false) and run by the migrate image, which holds no workspace
+// package sources: it keeps its own copy rather than importing
+// @renkei/guards (packages/db/src/migrations-self-contained.test.ts).
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 /**
  * Agents become instructions: the step document (a tree of actions,
