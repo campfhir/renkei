@@ -7,44 +7,45 @@
  * the arrow keys and Enter pick a result. The chats searched are the whole
  * history, fetched on first focus (the menu only carries the recent window);
  * what was said is found through the search route, debounced.
+ *
+ * What the box finds, ranks and opens is omni-search.model.ts's; this
+ * component keeps the focus, the debounce, the calls and the scroll.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
-import type { LibraryItem } from '@/lib/chat/artifact-library';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
-import { CHAT_SEARCH_MIN_CHARS, normalizeQuery } from '@/lib/chat/search-text';
-import type { ChatListItem } from '@/lib/chat/views';
-import { matchPlaces, type AppPlace } from '@/lib/app-index';
+import { matchPlaces } from '@/lib/app-index';
 import { scrollToHash } from '@/lib/hash-scroll';
 import { formatShortcut, matchesShortcut } from '@/lib/shortcuts';
 import { usePlatform } from '@/lib/use-platform';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import {
+  buildSections,
+  currentArtifacts,
+  currentHits,
+  currentIndex,
+  enterTarget,
+  initialOmni,
+  isSearchable,
+  omniReducer,
+  queryText,
+  saidPending as isSaidPending,
+  showing as isShowing,
+  type OmniPage,
+} from './omni-search.model';
 
-/** A place in the app's menu, from the menu's own list so the two agree. */
-export interface OmniPage {
-  label: string;
-  href: string;
-  icon: string;
-}
+export type { OmniPage };
 
-interface Result {
-  href: string;
-  label: string;
-  /** A second line: the project a chat sits in, or the line it was found by. */
-  detail?: string;
-  icon: string;
-}
-
-interface Section {
-  title: string;
-  results: Result[];
-}
-
-const LIMITS = { pages: 6, places: 6, projects: 5, artifacts: 5, chats: 8 };
+const RESULT_ICONS = {
+  chat: ICONS.chat,
+  pages: ICONS.pages,
+  code: ICONS.code,
+  artifact: ICONS.layers,
+};
 
 export function OmniSearch({
   pages,
@@ -59,74 +60,54 @@ export function OmniSearch({
   const platform = usePlatform();
   const searchAnchor = useCoachAnchor('nav-search');
   const router = useRouter();
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
-  // On a phone the field is folded into a magnifier button until asked for.
-  const [expanded, setExpanded] = useState(false);
+  const [state, dispatch] = useReducer(omniReducer, initialOmni);
+  const { query, expanded, allChats } = state;
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  useDismiss(open, ref, () => setOpen(false));
+  useDismiss(state.open, ref, () => dispatch({ type: 'dismiss' }));
   useEffect(() => {
     if (expanded) inputRef.current?.focus();
   }, [expanded]);
 
   // The whole history, once a person first reaches for the search; until
   // it arrives the menu's recent window stands in.
-  const [allChats, setAllChats] = useState<ChatListItem[] | null>(null);
   const loadingAll = useRef(false);
   const loadAll = () => {
     if (allChats !== null || loadingAll.current) return;
     loadingAll.current = true;
     void chatClient.sidebar().then((result) => {
       loadingAll.current = false;
-      if (result.data) setAllChats(result.data.chats);
+      if (result.data) dispatch({ type: 'all-chats', chats: result.data.chats });
     });
   };
 
-  // What was said: asked of the server once the box holds enough to scan,
-  // and kept only for the text it was asked for, so fast typing cannot
-  // show a stale line under a newer query.
-  const text = normalizeQuery(query);
-  const needle = text.toLowerCase();
-  const searchable = text.length >= CHAT_SEARCH_MIN_CHARS;
-  const [said, setSaid] = useState<{ query: string; hits: Map<string, string> }>({
-    query: '',
-    hits: new Map(),
-  });
+  // What was said, and the artifacts that hold the words: asked of the
+  // server once the box holds enough to scan, and kept only for the text
+  // they were asked for, so fast typing cannot show a stale line under a
+  // newer query.
+  const text = queryText(state);
+  const searchable = isSearchable(text);
   useEffect(() => {
     if (!searchable) return;
     const handle = setTimeout(async () => {
       const result = await chatClient.searchChats(text);
-      setSaid({
-        query: text,
-        hits: new Map((result.data?.hits ?? []).map((hit) => [hit.chatId, hit.snippet])),
-      });
+      dispatch({ type: 'said', query: text, hits: result.data?.hits ?? [] });
     }, 300);
     return () => clearTimeout(handle);
   }, [text, searchable]);
-  const hits = said.query === text ? said.hits : new Map<string, string>();
-  // Artifacts by what they hold, through the library's own search.
-  const [found, setFound] = useState<{ query: string; items: LibraryItem[] }>({
-    query: '',
-    items: [],
-  });
   useEffect(() => {
     if (!searchable) return;
     const handle = setTimeout(async () => {
       const result = await chatClient.findArtifacts(text);
-      setFound({ query: text, items: result.data?.artifacts ?? [] });
+      dispatch({ type: 'found', query: text, items: result.data?.artifacts ?? [] });
     }, 300);
     return () => clearTimeout(handle);
   }, [text, searchable]);
-  const artifacts = found.query === text ? found.items : [];
-  const saidPending = searchable && said.query !== text;
+  const saidPending = isSaidPending(state);
 
   // Clicking through a result leaves the page the box was used on.
   useEffect(() => {
-    setQuery('');
-    setOpen(false);
-    setExpanded(false);
+    dispatch({ type: 'navigated' });
   }, [pathname]);
 
   // Ctrl/⌘K from anywhere in the app.
@@ -135,7 +116,7 @@ export function OmniSearch({
       if (matchesShortcut('search', event, platform)) {
         event.preventDefault();
         inputRef.current?.focus();
-        setOpen(true);
+        dispatch({ type: 'focus' });
         loadAll();
       }
     };
@@ -144,24 +125,22 @@ export function OmniSearch({
   }, [allChats, platform]);
 
   const sections = buildSections({
-    needle,
     query: text,
-    isOperator,
-    artifacts,
+    artifacts: currentArtifacts(state),
     pages,
     // Chat projects and code projects come in separate lists from the sidebar.
     projects: [...(chats?.projects ?? []), ...(chats?.code.projects ?? [])],
     chats: allChats ?? chats?.chats ?? [],
-    hits,
+    hits: currentHits(state),
+    places: matchPlaces(text, isOperator),
+    icons: RESULT_ICONS,
   });
   const flat = sections.flatMap((section) => section.results);
-  const showing = open && needle.length > 0;
-  const current = Math.min(active, Math.max(flat.length - 1, 0));
+  const showing = isShowing(state);
+  const current = currentIndex(state, flat.length);
 
   const closeSearch = () => {
-    setQuery('');
-    setOpen(false);
-    setExpanded(false);
+    dispatch({ type: 'close' });
     inputRef.current?.blur();
   };
 
@@ -179,8 +158,7 @@ export function OmniSearch({
         type="button"
         aria-label="Search"
         onClick={() => {
-          setExpanded(true);
-          setOpen(true);
+          dispatch({ type: 'magnifier' });
           loadAll();
         }}
         className={`ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-600 hover:bg-gray-100 sm:hidden dark:text-gray-300 dark:hover:bg-gray-900 ${expanded ? 'hidden' : ''}`}
@@ -205,28 +183,26 @@ export function OmniSearch({
             aria-controls="omni-search-results"
             value={query}
             onFocus={() => {
-              setOpen(true);
+              dispatch({ type: 'focus' });
               loadAll();
             }}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setOpen(true);
-              setActive(0);
-            }}
+            onChange={(event) => dispatch({ type: 'type', value: event.target.value })}
             onKeyDown={(event) => {
-              if (event.key === 'ArrowDown') {
+              const target = enterTarget(state, flat);
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
-                setActive((value) => (flat.length ? (value + 1) % flat.length : 0));
-              } else if (event.key === 'ArrowUp') {
+                dispatch({
+                  type: 'move',
+                  delta: event.key === 'ArrowDown' ? 1 : -1,
+                  count: flat.length,
+                });
+              } else if (event.key === 'Enter' && target) {
                 event.preventDefault();
-                setActive((value) => (flat.length ? (value - 1 + flat.length) % flat.length : 0));
-              } else if (event.key === 'Enter' && flat[current]) {
-                event.preventDefault();
-                choose(flat[current].href);
+                choose(target);
               } else if (event.key === 'Escape') {
-                if (query) setQuery('');
-                else closeSearch();
-                setOpen(false);
+                // With nothing typed, Escape leaves the box altogether.
+                if (!query) inputRef.current?.blur();
+                dispatch({ type: 'escape' });
               }
             }}
             placeholder="Search chats, projects, settings…"
@@ -276,7 +252,7 @@ export function OmniSearch({
                       type="button"
                       role="option"
                       aria-selected={selected}
-                      onMouseEnter={() => setActive(position)}
+                      onMouseEnter={() => dispatch({ type: 'hover', index: position })}
                       onClick={() => choose(result.href)}
                       className={`flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm ${
                         selected ? 'bg-gray-100 dark:bg-gray-900' : ''
@@ -301,100 +277,4 @@ export function OmniSearch({
       </div>
     </>
   );
-}
-
-/** The same address with the search's words added, so the page can use them. */
-function withFind(href: string, query: string): string {
-  const [path, hash] = href.split('#');
-  const search = new URLSearchParams({ find: query }).toString();
-  return `${path}?${search}${hash ? `#${hash}` : ''}`;
-}
-
-function buildSections({
-  needle,
-  query,
-  isOperator,
-  artifacts,
-  pages,
-  projects,
-  chats,
-  hits,
-}: {
-  needle: string;
-  query: string;
-  isOperator: boolean;
-  artifacts: LibraryItem[];
-  pages: OmniPage[];
-  projects: ChatSidebarData['projects'];
-  chats: ChatListItem[];
-  hits: Map<string, string>;
-}): Section[] {
-  if (!needle) return [];
-  const has = (text: string | null | undefined) => (text ?? '').toLowerCase().includes(needle);
-
-  const pageResults = pages
-    .filter((page) => has(page.label))
-    .slice(0, LIMITS.pages)
-    .map((page) => ({ href: page.href, label: page.label, icon: page.icon }));
-
-  const projectResults = projects
-    .filter((project) => has(project.name))
-    .slice(0, LIMITS.projects)
-    .map((project) => ({
-      href: project.repoFullName ? `/code/${project.id}` : `/chat/projects/${project.id}`,
-      label: project.name,
-      detail: project.repoFullName ?? 'Chat project',
-      icon: project.repoFullName ? ICONS.code : ICONS.pages,
-    }));
-
-  // A chat matches by its title or its project's name, or by a line said
-  // in it. Title matches come first; a chat found only by what was said
-  // shows that line under its title.
-  const chatResult = (chat: ChatListItem, detail: string | undefined): Result => ({
-    href: `/chat/${chat.id}`,
-    label: chat.title ?? 'New chat',
-    detail,
-    icon: chat.projectKind === 'code' ? ICONS.code : chat.projectId ? ICONS.pages : ICONS.chat,
-  });
-  const byTitle = chats
-    .filter((chat) => has(chat.title ?? 'New chat') || has(chat.projectName))
-    .map((chat) => chatResult(chat, chat.projectName ?? undefined));
-  const bySaid = chats
-    .filter((chat) => hits.has(chat.id) && !byTitle.some((r) => r.href === `/chat/${chat.id}`))
-    .map((chat) => chatResult(chat, hits.get(chat.id)));
-
-  // Settings, connectors and organization settings, each down to the
-  // element that holds them; the organization's only for operators.
-  const placeResults = (section: AppPlace['section']) =>
-    matchPlaces(needle, isOperator)
-      .filter((place) => place.section === section)
-      .slice(0, LIMITS.places)
-      .map((place): Result => ({
-        // A connector not on the page is searched for in the catalog.
-        href: section === 'Connectors' ? withFind(place.href, query) : place.href,
-        label: place.title,
-        detail: place.where,
-        icon: place.icon,
-      }));
-
-  // The artifacts the library found for the words, each opened where it is.
-  const artifactResults: Result[] = [
-    ...artifacts.slice(0, LIMITS.artifacts).map((item): Result => ({
-      href: `/chat/artifacts?artifact=${item.id}`,
-      label: item.filename,
-      detail: item.summary ?? item.chat?.title ?? 'Artifact',
-      icon: ICONS.layers,
-    })),
-  ];
-
-  const sections: Section[] = [
-    { title: 'Chats', results: [...byTitle, ...bySaid].slice(0, LIMITS.chats) },
-    { title: 'Artifacts', results: artifactResults },
-    { title: 'Projects', results: projectResults },
-    { title: 'Pages', results: pageResults },
-    { title: 'Organization', results: placeResults('Organization') },
-    { title: 'Connectors', results: placeResults('Connectors') },
-    { title: 'Settings', results: placeResults('Settings') },
-  ];
-  return sections.filter((section) => section.results.length > 0);
 }
