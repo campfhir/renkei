@@ -11,12 +11,14 @@
  * now, read-only (switching a code chat's worktree to another
  * branch is "Switch branch" in the title bar's own overflow menu —
  * branch-switcher.tsx's `BranchPickerModal` — not anything rendered
- * here). An optional `tag` sits beside the name.
+ * here). An optional `tag` sits beside the name. When the field opens and
+ * what leaving it saves are chat-title.model.ts's, tested beside it.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import Link from 'next/link';
 import { Icon, ICONS } from '@/components/icons';
+import { chatTitleReducer, commitRename, initChatTitle } from './chat-title.model';
 
 export default function ChatTitle({
   title,
@@ -33,9 +35,8 @@ export default function ChatTitle({
   /** Saves the new name; resolves to the name as stored, or null on failure. */
   onRename: ((title: string) => Promise<string | null>) | null;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(title);
-  const [saving, setSaving] = useState(false);
+  const [state, dispatch] = useReducer(chatTitleReducer, title, initChatTitle);
+  const { editing, draft, saving } = state;
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -43,21 +44,20 @@ export default function ChatTitle({
   }, [editing]);
 
   const start = () => {
-    if (!canRename || !onRename) return;
-    setDraft(title);
-    setEditing(true);
+    if (!onRename) return;
+    dispatch({ type: 'start', title, canRename });
   };
   const save = async () => {
-    if (!onRename || saving) return;
-    const next = draft.trim();
-    if (!next || next === title) {
-      setEditing(false);
+    if (!onRename) return;
+    const outcome = commitRename(state, title);
+    if (outcome.kind === 'ignore') return;
+    if (outcome.kind === 'close') {
+      dispatch({ type: 'cancel' });
       return;
     }
-    setSaving(true);
-    await onRename(next);
-    setSaving(false);
-    setEditing(false);
+    dispatch({ type: 'save-started' });
+    await onRename(outcome.title);
+    dispatch({ type: 'save-finished' });
   };
 
   return (
@@ -66,14 +66,14 @@ export default function ChatTitle({
         <input
           ref={inputRef}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => dispatch({ type: 'type', draft: event.target.value })}
           onBlur={() => void save()}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault();
               void save();
             } else if (event.key === 'Escape') {
-              setEditing(false);
+              dispatch({ type: 'cancel' });
             }
           }}
           maxLength={200}

@@ -33,7 +33,7 @@ import type {
  * unchanged tool_result as live Confirm/Cancel buttons for something
  * already decided.
  */
-function withResolvedWidgets(
+export function withResolvedWidgets(
   blocks: ChatBlock[],
   decisions: Map<string, WidgetDecisionState>
 ): ChatBlock[] {

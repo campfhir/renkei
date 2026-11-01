@@ -1,9 +1,9 @@
 /**
  * A code chat's sub-agent and the model it ran on: the orchestrator sent
  * it on a cheaper model of the org's (`code_delegate`'s `model`,
- * lib/code/delegate.ts), so its card in the thread says which, and the
- * run's transcript (lib/chat/subagent-runs.ts, migration 118) names the
- * model that actually answered, by the config's label.
+ * lib/code/delegate.ts), and the run's transcript
+ * (lib/chat/subagent-runs.ts, migration 118) names the model that
+ * actually answered, by the config's label, with where its time went.
  *
  * All of it runs for real on the in-memory app: the project and chat are
  * the test's own person's (e2e/support/code-host.ts), the org's two models
@@ -11,6 +11,10 @@
  * calls the tools the prompt scripts — the orchestrator `code_delegate`
  * on the "fast" model, the sub-agent `code_grep` in the checkout — before
  * each answers with its fixed reply. Also a viewport pass at phone width.
+ *
+ * What the card says — "on <model>" from the delegation's input,
+ * read-only when the task says so, "Sub-agent reported" — is
+ * message-list.model.test.ts's.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -34,7 +38,7 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-test('the card names the model the orchestrator picked; the transcript names what answered', async ({
+test('a code chat’s sub-agent transcript names the model that answered', async ({
   page,
   request,
   person: _person,
@@ -85,14 +89,10 @@ test('the card names the model the orchestrator picked; the transcript names wha
     await page.goto(`/chat/${chatId}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
 
-    // ── The sub-agent's card, folded: the model it was sent on, beside
-    //    its read-only mark and the first line of its report ──
+    // ── The sub-agent's card unfolds to its report ──
     const subagent = main.locator('details[data-subagent]');
     await expect(subagent).toContainText('Sub-agent reported');
-    await expect(subagent).toContainText('read-only');
-    await expect(subagent.locator('[data-subagent-model]')).toHaveText(`on ${fastModelLabel}`);
     await subagent.locator('> summary').click();
-    await expect(subagent).toHaveAttribute('open', '');
     await expect(subagent.getByText(LLM_STUB_REPLY, { exact: false })).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-subagent-card.png');
@@ -121,12 +121,11 @@ test('the card names the model the orchestrator picked; the transcript names wha
     await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(dialog).toHaveCount(0);
 
-    // ── Phone width: the same card and the same line, nothing overflowing ──
+    // ── Phone width: the same card, nothing overflowing ──
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await expect(main.getByText(PROMPT)).toBeVisible();
-    const narrow = main.locator('details[data-subagent]');
-    await expect(narrow.locator('[data-subagent-model]')).toHaveText(`on ${fastModelLabel}`);
+    await expect(main.locator('details[data-subagent]')).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-chat-subagent-mobile.png');
   } finally {

@@ -17,9 +17,10 @@
  * memory). A connector-wide "all" for each answer sits at the top of its
  * fold. Nothing is saved until Save, like the notifications form: a
  * person working through a connector should not fire a request per click.
+ * Those rules are tool-permissions-form.model.ts's, tested beside it.
  */
 
-import { useMemo, useState } from 'react';
+import { useMemo, useReducer } from 'react';
 import ConnectorIcon from '@/components/connector-icon';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
@@ -28,13 +29,19 @@ import { chatClient } from '@/lib/chat/client';
 import {
   CHAT_OWN_TOOLS_KEY,
   CODE_TOOLS_KEY,
-  parseChatToolPermissionPrefs,
   ruleFor,
-  withRule,
   type ActToolGroup,
   type ChatToolPermissionPrefs,
   type ToolPermissionRule,
 } from '@/lib/chat/permission-rules';
+import {
+  canSave,
+  groupSummary,
+  initToolPermissions,
+  saveBody,
+  toolPermissionsReducer,
+  unlistedDecisions,
+} from './tool-permissions-form.model';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 const RULES: readonly { rule: ToolPermissionRule; label: string; hint: string }[] = [
@@ -50,49 +57,17 @@ export default function ToolPermissionsForm({
   groups: ActToolGroup[];
   initial: ChatToolPermissionPrefs;
 }) {
-  const [prefs, setPrefs] = useState<ChatToolPermissionPrefs>(initial);
-  const [saved, setSaved] = useState<ChatToolPermissionPrefs>(initial);
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
-
-  const dirty = useMemo(
-    () =>
-      prefs.alwaysAllow.join('\n') !== saved.alwaysAllow.join('\n') ||
-      prefs.alwaysDeny.join('\n') !== saved.alwaysDeny.join('\n'),
-    [prefs, saved]
-  );
-
-  function update(next: ChatToolPermissionPrefs) {
-    setPrefs(next);
-    setStatus('idle');
-  }
-
-  function setAll(group: ActToolGroup, rule: ToolPermissionRule) {
-    let next = prefs;
-    for (const tool of group.tools) next = withRule(next, tool.name, rule);
-    update(next);
-  }
+  const [state, dispatch] = useReducer(toolPermissionsReducer, initial, initToolPermissions);
+  const { prefs, status } = state;
 
   async function save() {
-    setStatus('saving');
-    const result = await chatClient.setToolPermissions(prefs);
-    if (result.data) {
-      const stored = parseChatToolPermissionPrefs(result.data);
-      setPrefs(stored);
-      setSaved(stored);
-      setStatus('saved');
-    } else {
-      setStatus('failed');
-    }
+    dispatch({ type: 'save-started' });
+    const result = await chatClient.setToolPermissions(saveBody(state));
+    if (result.data) dispatch({ type: 'save-succeeded', stored: result.data });
+    else dispatch({ type: 'save-failed' });
   }
 
-  // Decisions saved for tools this build no longer lists (a connector
-  // turned off, a tool renamed) — kept, and said, rather than silently
-  // dropped on the next Save.
-  const listed = useMemo(
-    () => new Set(groups.flatMap((group) => group.tools.map((tool) => tool.name))),
-    [groups]
-  );
-  const unlisted = [...prefs.alwaysAllow, ...prefs.alwaysDeny].filter((name) => !listed.has(name));
+  const unlisted = useMemo(() => unlistedDecisions(groups, prefs), [groups, prefs]);
 
   const anchor = useCoachAnchor('prefs-permissions');
   return (
@@ -115,14 +90,7 @@ export default function ToolPermissionsForm({
 
       <div className="space-y-1.5 border-t border-gray-200 px-4 py-3 dark:border-gray-800">
         {groups.map((group) => {
-          const allowed = group.tools.filter((tool) => ruleFor(prefs, tool.name) === 'allow');
-          const blocked = group.tools.filter((tool) => ruleFor(prefs, tool.name) === 'deny');
-          const summary = [
-            allowed.length > 0 ? `${allowed.length} allowed` : null,
-            blocked.length > 0 ? `${blocked.length} blocked` : null,
-          ]
-            .filter((part) => part !== null)
-            .join(', ');
+          const summary = groupSummary(group, prefs);
           return (
             <details
               key={group.key}
@@ -137,9 +105,7 @@ export default function ToolPermissionsForm({
                   <ConnectorIcon capabilityKey={group.key} label={group.label} size={16} />
                 )}
                 <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
-                <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
-                  {summary || `${group.tools.length} ask`}
-                </span>
+                <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">{summary}</span>
                 <span aria-hidden="true" className="shrink-0 text-gray-400">
                   ▾
                 </span>
@@ -152,7 +118,7 @@ export default function ToolPermissionsForm({
                     <button
                       key={rule}
                       type="button"
-                      onClick={() => setAll(group, rule)}
+                      onClick={() => dispatch({ type: 'set-all', group, rule })}
                       className={
                         rule === 'deny'
                           ? 'text-red-600 hover:underline dark:text-red-400'
@@ -203,7 +169,9 @@ export default function ToolPermissionsForm({
                                   // two tools can share a title within a connector.
                                   aria-label={`${tool.label} (${tool.name}) — ${label}`}
                                   checked={current === rule}
-                                  onChange={() => update(withRule(prefs, tool.name, rule))}
+                                  onChange={() =>
+                                    dispatch({ type: 'set-rule', name: tool.name, rule })
+                                  }
                                 />
                               </td>
                             ))}
@@ -220,14 +188,14 @@ export default function ToolPermissionsForm({
         {unlisted.length > 0 ? (
           <p className="px-1 pt-1 text-xs text-gray-500 dark:text-gray-400">
             Also decided, for tools not offered to you right now:{' '}
-            {unlisted.map((name, index) => (
+            {unlisted.map(({ name, rule }, index) => (
               <span key={name}>
                 {index > 0 ? ', ' : ''}
                 <code className="font-mono">{name}</code>
-                {prefs.alwaysDeny.includes(name) ? ' (blocked)' : ' (allowed)'}
+                {rule === 'deny' ? ' (blocked)' : ' (allowed)'}
                 <button
                   type="button"
-                  onClick={() => update(withRule(prefs, name, 'ask'))}
+                  onClick={() => dispatch({ type: 'set-rule', name, rule: 'ask' })}
                   className="ml-1 text-blue-600 hover:underline dark:text-blue-400"
                 >
                   ask again
@@ -242,7 +210,7 @@ export default function ToolPermissionsForm({
         <button
           type="button"
           onClick={() => void save()}
-          disabled={status === 'saving' || !dirty}
+          disabled={!canSave(state)}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {status === 'saving' ? 'Saving…' : 'Save'}

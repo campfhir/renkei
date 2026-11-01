@@ -1,14 +1,22 @@
 /**
- * A chat parked behind a tool call: the turn carries the ask and the
- * thread shows it inline — the card with Allow once / Always allow /
- * Deny, the fold's "Waiting for permission" line. Answering lets the
- * runner carry on, and puts "always" on the person's list, which the
- * Preferences page then shows with a way to take it back. The
- * notification the ask raised is opened from the feed in the same tab.
+ * A chat parked behind a tool call, on the real server: the thread draws
+ * the ask inline, Always allow lets the runner carry on, and the
+ * Preferences page then shows the tool allowed and saves a change. The
+ * notification the ask raised opens the chat in the same tab.
  *
  * The turn really runs: the scripted stand-in model (e2e/support/stub-model.ts)
  * calls chat_memory_remember — one of the chat's own tools that acts, so the
  * runner parks on it — and, once allowed, answers.
+ *
+ * The card's rules (its words for the owner and for anyone else, what it
+ * will send, the buttons off and "Allowing…" while an answer is on its
+ * way, a refusal shown) and the fold's "Waiting for permission" line are
+ * message-list.model.test.ts's; the Preferences form's (a fold's "1
+ * allowed, 1 blocked", "all", Save on only when something changed) are
+ * preferences/tool-permissions-form.model.test.ts's; the route's (Always
+ * allow stored, the ask's notification read, a second answer a 409, owner
+ * only, Save replacing both lists) are
+ * app/api/chat/chats/[chatId]/turns/[turnId]/permission/route.test.ts's.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -103,7 +111,7 @@ async function permissionNotification(
   );
 }
 
-test('a parked turn shows the ask inline, and Always allow records the tool', async ({
+test('a parked turn shows the ask inline, and Always allow lands on the Preferences page', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -112,44 +120,19 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
     await page.goto(`/chat/${parked.chatId}`);
     await expect(page.getByRole('heading', { level: 1, name: parked.title })).toBeVisible();
 
-    // The fold says what the turn is waiting on, and the card carries the
-    // three answers plus what the call would send.
-    await expect(page.getByText('Waiting for permission to call').first()).toBeVisible();
+    // The card, drawn where the reply stopped; Stop is still there.
     const card = page.getByRole('group', { name: 'Permission needed' });
-    await expect(card).toBeVisible();
     await expect(card.getByText('Allow this?')).toBeVisible();
-    await expect(card.getByRole('button', { name: 'Allow once' })).toBeVisible();
-    await expect(card.getByRole('button', { name: 'Always allow' })).toBeVisible();
-    await expect(card.getByRole('button', { name: 'Deny' })).toBeVisible();
-    await card.getByText('What it will send').click();
-    await expect(card.getByText(/Rotate the Zoom webhook secret/)).toBeVisible();
-    // Stop is still there: a parked turn can be cancelled.
     await expect(page.getByRole('button', { name: /stop/i })).toBeVisible();
     await shot(page, testInfo, 'chat-permission-ask.png');
 
-    // Always allow: the turn carries on, the person's list gets the tool.
+    // Always allow: the answer reaches the turn, the runner carries on, the card goes.
     await card.getByRole('button', { name: 'Always allow' }).click();
     await expect(page.getByText('Noted for next time.')).toBeVisible({ timeout: 15_000 });
     await expect(card).toBeHidden();
-    await expect
-      .poll(() => toolPermissions(page.request), { timeout: 10_000 })
-      .toEqual({ alwaysAllow: [TOOL], alwaysDeny: [] });
-    // ...and the notification the ask raised is read.
-    await expect
-      .poll(async () => (await permissionNotification(page.request, parked.chatId))?.readAt ?? null)
-      .not.toBeNull();
 
-    // A second answer is refused: the turn is no longer waiting on it.
-    const again = await page.request.post(
-      `/api/chat/chats/${parked.chatId}/turns/${parked.turnId}/permission`,
-      { data: { toolUseId: parked.toolUseId, decision: 'deny' } }
-    );
-    expect(again.status()).toBe(409);
-    expect(await toolPermissions(page.request)).toEqual({ alwaysAllow: [TOOL], alwaysDeny: [] });
-
-    // Preferences shows the decision in the chat's own fold — Allow for the
-    // tool just allowed — with Ask and Block beside it, and the system-
-    // notification click preference sits with the other switches.
+    // Preferences shows the decision in the chat's own fold, and the
+    // system-notification click preference sits with the other switches.
     await page.goto(`/preferences`);
     const section = page.getByRole('region', { name: 'What a chat may do' });
     await expect(section).toBeVisible();
@@ -160,20 +143,16 @@ test('a parked turn shows the ask inline, and Always allow records the tool', as
     await expect(own.locator('summary')).toContainText('1 allowed');
     await own.locator('summary').click();
     await expect(own.getByRole('radio', { name: `${TOOL}) — Allow`, exact: false })).toBeChecked();
-
-    // Block a tool that has never been called, so the chat never sees it.
-    await own.getByRole('radio', { name: 'chat_memory_forget) — Block', exact: false }).check();
-    await expect(own.locator('summary')).toContainText('1 allowed, 1 blocked');
     await section.scrollIntoViewIfNeeded();
     await shot(page, testInfo, 'preferences-tool-permissions.png');
 
-    // Back to asking for the allowed one; the block stays.
-    await own.getByRole('radio', { name: `${TOOL}) — Ask`, exact: false }).check();
+    // One Save end to end: block a tool, and the stored lists say so.
+    await own.getByRole('radio', { name: 'chat_memory_forget) — Block', exact: false }).check();
     await section.getByRole('button', { name: 'Save' }).click();
     await expect(section.getByText('Saved.')).toBeVisible();
     await expect
       .poll(() => toolPermissions(page.request))
-      .toEqual({ alwaysAllow: [], alwaysDeny: ['chat_memory_forget'] });
+      .toEqual({ alwaysAllow: [TOOL], alwaysDeny: ['chat_memory_forget'] });
   } finally {
     await removeModel(page.request, parked.modelId);
   }

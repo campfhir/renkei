@@ -1,10 +1,14 @@
 /**
- * chat_rename's place in the thread: a rename the person asked for is an
- * ordinary tool call — its own fold, its result, and the new title in the
- * heading and the sidebar. The turn really runs: the scripted stand-in
- * model (e2e/support/stub-model.ts) calls chat_rename, the app's own tool
- * renames the chat, and the model answers. The automatic first-prompt
- * title is covered by the unit tests in lib/chat/titles.test.ts.
+ * chat_rename end to end: the person asks, the scripted stand-in model
+ * (e2e/support/stub-model.ts) calls chat_rename, the app's own tool
+ * renames the chat, and the new title shows in the heading and the
+ * sidebar on the real server.
+ *
+ * That the rename reads as an ordinary call in the reply's fold (not a
+ * card), with its pencil and its line, is message-list.model.test.ts's;
+ * renaming from the title bar (the field, Escape, an empty or unchanged
+ * name) is chat-title.model.test.ts's; the automatic first-prompt title is
+ * lib/chat/titles.test.ts's.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -17,7 +21,7 @@ test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const PROMPT = 'Call this chat something about the budget review.';
 
-test('chat rename: the tool call shows as an ordinary call, the new title sticks', async ({
+test('chat rename: the new title the tool wrote shows in the heading and the sidebar', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -39,16 +43,6 @@ test('chat rename: the tool call shows as an ordinary call, the new title sticks
     await expect(
       page.getByRole('navigation', { name: 'Chats' }).getByRole('link', { name: title })
     ).toBeVisible();
-
-    // The rename is a tool call in the thread like any other: a fold naming
-    // it, inside the reply's work fold (as chat.spec.ts's tool call is).
-    const work = page.locator('details.chat-fold', { hasText: /rename/i }).first();
-    await expect(work).toBeVisible();
-    await work.locator('> summary').click();
-    const call = work.locator('details.chat-fold', { hasText: /rename/i }).first();
-    await expect(call).toBeVisible();
-    await call.locator('> summary').click();
-    await expect(call.getByText(/Renamed the chat to/)).toBeVisible();
     await expect(page.getByText('Done — this chat is now called')).toBeVisible();
   } finally {
     await removeModel(page.request, modelId);
