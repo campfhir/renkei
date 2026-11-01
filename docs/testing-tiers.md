@@ -46,7 +46,7 @@ only tier that flakes.
 
 ## What moved
 
-Four waves, each a set of screens migrated in parallel and gated by the
+Five waves, each a set of screens migrated in parallel and gated by the
 full unit suite and the full browser suite before the next began, plus a
 track of specs that were really server tests.
 
@@ -57,25 +57,27 @@ track of specs that were really server tests.
 | 3: admin forms        | `model-forms` (the model roster), `salesforce-form`, the Salesforce change actions, `app-registration-form` (Atlassian and Entra), `audience-control`, the AD Manager and file share forms, `image-rule-forms`, `settings-form`, size requests, `chat-archive-form`, Outlook indexing, the Microsoft connect body and product card                                                                                                                                                                                        | `llm-models` (8 tests to 2), `salesforce`, `salesforce-admin`, `jira-admin`, `entra-developer`, `connector-audience-hint`, `admanager`, `file-shares`, `code-services`, `organization-name`, `sandbox-size-requests`, `chat-archive`, `outlook-indexing`, `microsoft-teams-onenote`; removed `phi-covered-model`, `sandbox-settings`, `agent-approval-policy`                                                              |
 | 4: lists and builders | the artifacts library (six models), `notifications-list`, `preferences-form`, `cards`, `approval-actions`, `agent-builder`, `tool-picker`, `question-actions`, `run-timeline`, the coach marks provider and overlay, `image-card`, `image-model-form`, `context-meter`, `svg-save-buttons`, the code screens (`repo-tree`, `add-files-modal`, `upload-queue`, `branch-switcher`, `commit-dialog`, `new-code-project`, `pipelines-page`, `pr-subscribe`, `services-page`, `commits-page`, `pulls-page`, project templates) | `artifacts` (12 tests to 8), `code-project-artifacts`, `notifications`, `chat-notifications`, `actionable-cards`, `agent-instructions`, `coach-marks`, `coach-marks-off`, `image-generation`, `svg-save`, `chat-context-meter`, `code-file-management`, `code-uploads`, `branch-switcher`, `project-templates`, `code`, `code-pipelines`, `pr-subscriptions`, `project-pulls-commits`, `issue-cards`, `code-services-page` |
 | Server answers        | the Jira Administration change actions (a model); route, action and lib tests for the rest                                                                                                                                                                                                                                                                                                                                                                                                                                | `jira-admin-changes`, `-fields`, `-spaces`, `-work-types`, `-automation`, `admin-change-queue`, `my-usage`, `activity-logs`, `code-concurrent-chats`, `access-revoke-sessions`, `oauth-consent`, `about-changelog-dates`; removed `security-headers`                                                                                                                                                                       |
+| 5: the rest           | the Connectors page (`connectors-page`, `scope-connect-panel`, `scope-picker`, `disconnect-control`), the encryption key (`key-guard`, `encryption-key-section`, `shred-key-button`), `tools-dialog`, the chat list (`chat-nav`), `usage-viewer`, `mcp-servers-list`; route tests for MCP servers and the project download                                                                                                                                                                                                | `connectors`, `keys`, `project-tools-popover`, `nav-return-refresh`, `mcp-servers` (3 tests to 2), `code-downloads`, and the last two `waitForTimeout`s in `screenshots`                                                                                                                                                                                                                                                   |
 
-In numbers, from the start to the end of wave 4:
+In numbers, from the start to the end of wave 5:
 
-- 77 models with about 1,460 model tests, and new route tests beside the
+- 88 models with about 1,660 model tests, and new route tests beside the
   routes the specs had been reaching through pages; the web app's unit
-  suite went from 4,400 to 6,400 tests and still runs in under 40 seconds.
-- The browser suite went from 343 tests to 289, and its specs lost about
-  3,350 lines. Gone with them: every `waitForTimeout`, the retry loops in
+  suite went from 4,400 to 6,600 tests and still runs in under 40 seconds.
+- The browser suite went from 343 tests to 287, and its specs lost about
+  3,900 lines. Gone with them: every `waitForTimeout`, the retry loops in
   `global-shortcuts`, `agent-instructions`, `admanager` and
   `coach-marks-off`, most `pointerReaches`, and three specs that flipped
   an organization-wide switch other specs read.
-- Moving the rules found nine bugs nobody had reported, each fixed with a
+- Moving the rules found ten bugs nobody had reported, each fixed with a
   test and a changelog entry: an event's end time read in the viewer's
   time zone; Fit to width returning to a stale scroll spot; files chosen
   during the mass-upload question uploading at once; a deleted knowledge
   note staying selected; the commit dialog re-ticking unticked files; a
   branch switch failing silently; a refused pull request subscription
   looking saved; a refused notification delete looking done; a partly
-  failed artifact delete retrying files already gone.
+  failed artifact delete retrying files already gone; Connect with every
+  capability unticked asking for all of them.
 
 What a spec gave up is in its header: each says which model or route test
 now owns its rules, and the wave commits list the browser coverage that
@@ -88,7 +90,18 @@ Fifteen browser tests tagged `@smoke` and the page crawl gate a merge
 (`pnpm --filter renkei e2e:smoke`, about a minute and a half); the full
 suite runs beside them as advisory signal. A screen not listed above
 still has its rules inline: it gets its model the next time those rules
-change (AGENTS.md, "When you change a screen").
+change (AGENTS.md, "When you change a screen"). What is left in the
+browser suite is the smoke paths, layout and visual checks
+(`nav-shell`, `nav-chat-scroll`, `code-mobile`, `code-chat-width`,
+`artifact-inline`, `about-sticky-footer`, `preferences-widths`,
+`connector-logos`, `chat-row-menu-flip`, `voice-webkit`, the screenshot
+gallery) and one press-through per migrated screen.
+
+About fifteen specs still hold one `toPass` each, nearly all a press that
+can land before the page hydrates. A page that says when its handlers are
+attached (as `global-shortcuts` does with `data-shortcuts` on the root)
+lets a spec wait once instead; that is the next step for the suite, not a
+model's.
 
 ## Decisions to revisit
 
