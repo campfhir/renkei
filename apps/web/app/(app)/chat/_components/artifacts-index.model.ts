@@ -17,6 +17,7 @@
 import type { LibraryItem } from '@/lib/chat/artifact-library';
 import type { LibraryFilters, LibraryQuery } from '@/lib/chat/artifact-library-params';
 import type { LibraryPage } from '@/lib/chat/artifact-library-query';
+import { canRunOcr, isPicture } from './artifact-ocr-panel.model';
 
 export type Dialog = 'share' | 'delete' | 'copy' | 'rename' | 'attach' | 'replace';
 export type Bulk = 'add' | 'delete';
@@ -247,9 +248,6 @@ export function emptyMessage(libraryCount: number, query: string, digests: boole
     : 'Nothing matches.';
 }
 
-/** A file OCR can read that has no read in flight (artifact-ocr-panel.model.ts says the same). */
-const canRunOcr = (item: LibraryItem) => item.ocrSupported && item.ocr === null;
-
 export interface Toolbar {
   /** "2 selected", or the hint while nothing is. */
   label: string;
@@ -300,8 +298,6 @@ export function seenReading(
   for (const item of items) if (item.ocr !== null) next.add(item.id);
   return next;
 }
-
-const isPicture = (contentType: string) => contentType.startsWith('image/');
 
 /** What the digest's state says in the details, or null when it says nothing worth a line. */
 export function digestLabel(

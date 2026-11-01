@@ -76,7 +76,13 @@ export function ocrProgress(
   };
 }
 
-const isPicture = (contentType: string) => contentType.startsWith('image/');
+/**
+ * A picture is described from its own bytes, so it is never "waiting for
+ * OCR" as far as the person is concerned: OCR only adds any text in it.
+ */
+export function isPicture(contentType: string): boolean {
+  return contentType.startsWith('image/');
+}
 
 export interface OcrOffer {
   /** "Read 2 pages by OCR.", once a read has finished. */
