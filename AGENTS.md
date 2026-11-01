@@ -49,8 +49,8 @@ not a press.
 
 Two tiers (`.github/workflows/ci.yml`): the tests tagged `@smoke` in their
 title (`pnpm --filter renkei e2e:smoke`), one critical path per area and
-the page crawl, gate a merge as `e2e (memory store)`; the full suite runs
-beside them on every pull request and on main as an advisory signal.
+the page crawl, gate a pull request as `e2e (memory store)`; the full
+suite runs when a change merges (every push to main).
 Tag a test `@smoke` only for a new critical path no smoke test walks.
 `llm-models.spec.ts` shows the harness end to end (empty state, a form, a
 vendor call answered with `page.route`, a real save, a saved-state
@@ -71,7 +71,8 @@ screenshot, a phone-width pass); its form's rules are
   once (`pnpm e2e:build`, with the server's environment from
   `e2e/server-env.ts`) and runs the `@smoke` tier on that build
   (`E2E_PREBUILT=1` starts `.next` as it is), which `e2e (memory store)`
-  requires, beside the full suite in three advisory `--shard=i/3` jobs. The suite runs Playwright's full
+  requires; on a push to main the full suite runs too, in three
+  `--shard=i/3` jobs on the same build. The suite runs Playwright's full
   Chromium build headless (`channel: 'chromium'`), never its headless
   shell, which routes a redirected navigation past `page.route` and
   denies notifications. On a box whose Chromium doesn't match

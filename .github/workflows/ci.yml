@@ -118,9 +118,9 @@ jobs:
   #
   # Behaviour is gated by the unit tests in `checks` (a screen's rules live in
   # its *.model.ts, tested beside it: AGENTS.md, "UI models"). Of the browser
-  # suite only the smoke tier gates a merge: the tests tagged @smoke, one
-  # critical path per area, that only a browser can show. The full suite runs
-  # on every pull request and on main as an advisory signal.
+  # suite only the smoke tier gates a pull request: the tests tagged @smoke,
+  # one critical path per area, that only a browser can show. The full suite
+  # runs when a change merges (a push to main).
   e2e-build:
     name: e2e build (memory store)
     runs-on: ubuntu-latest
@@ -196,12 +196,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-  # The full browser suite, advisory: a failure here is visible on the pull
-  # request and on main, and is triaged (a regression the smoke tier and the
-  # unit tests missed is a missing model test), but it does not block a merge.
+  # The full browser suite, on merge: every push to main runs it in three
+  # shards on the same build. A failure there is triaged at once (a
+  # regression the smoke tier and the unit tests missed is a missing model
+  # test or smoke path); pull requests run the smoke tier only.
   e2e-shard:
     name: e2e shard ${{ matrix.shard }}/3 (memory store)
     needs: e2e-build
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

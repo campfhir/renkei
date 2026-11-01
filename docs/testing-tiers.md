@@ -14,12 +14,12 @@ changes") holds the rules; this is how it was done and what moved.
 
 ## The tiers
 
-| Tier                  | What it shows                                                          | Where                                                 | Gates a merge                         |
-| --------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------- | ------------------------------------- |
-| Model tests           | What a screen does with each input and answer                          | `*.model.test.ts` beside the component                | yes (`checks`)                        |
-| Route and store tests | What the server answers, stores and refuses                            | `app/api/**/route.test.ts`, `lib/**`, store scenarios | yes (`checks`, `data store`)          |
-| Browser smoke         | The app renders, routes and keeps one path per area working end to end | `e2e/*.spec.ts`, tests tagged `@smoke`                | yes (`e2e (memory store)`)            |
-| Full browser suite    | Everything else in `e2e/`: layout, screenshots, more paths end to end  | `e2e/*.spec.ts`                                       | no: advisory, on every PR and on main |
+| Tier                  | What it shows                                                          | Where                                                 | Gates a merge                      |
+| --------------------- | ---------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------- |
+| Model tests           | What a screen does with each input and answer                          | `*.model.test.ts` beside the component                | yes (`checks`)                     |
+| Route and store tests | What the server answers, stores and refuses                            | `app/api/**/route.test.ts`, `lib/**`, store scenarios | yes (`checks`, `data store`)       |
+| Browser smoke         | The app renders, routes and keeps one path per area working end to end | `e2e/*.spec.ts`, tests tagged `@smoke`                | yes (`e2e (memory store)`)         |
+| Full browser suite    | Everything else in `e2e/`: layout, screenshots, more paths end to end  | `e2e/*.spec.ts`                                       | runs on merge (every push to main) |
 
 The cost difference is the point: the web app's `pnpm test` runs 6,400
 tests in about 36 seconds (under 6 ms each); the browser suite spends about
@@ -86,9 +86,9 @@ Jira and Outlook argument cards on the real server, and the like).
 
 ## Where it stands
 
-Fifteen browser tests tagged `@smoke` and the page crawl gate a merge
+Fifteen browser tests tagged `@smoke` and the page crawl gate a pull request
 (`pnpm --filter renkei e2e:smoke`, about a minute and a half); the full
-suite runs beside them as advisory signal. A screen not listed above
+suite runs when a change merges to main. A screen not listed above
 still has its rules inline: it gets its model the next time those rules
 change (AGENTS.md, "When you change a screen"). What is left in the
 browser suite is the smoke paths, layout and visual checks
@@ -104,11 +104,6 @@ lets a spec wait once instead; that is the next step for the suite, not a
 model's.
 
 ## Decisions to revisit
-
-- **The full suite on pull requests.** It was kept on every pull request
-  as advisory signal while the waves ran. With them done, it can move to
-  main and a nightly run, which saves three shards' minutes on every pull
-  request; the smoke tier and the unit suite stay the gate either way.
 
 - **Branch protection** must require `checks` and `e2e (memory store)`
   (now the smoke tier) and not the `e2e shard i/3` jobs, or the full
