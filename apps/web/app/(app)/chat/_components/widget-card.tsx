@@ -19,46 +19,25 @@
  * `allow-same-origin` (sandbox="allow-scripts" alone forces an opaque
  * origin whatever its `src`), so nothing but that specific frame can ever
  * satisfy the check, whatever origin claims to send a message.
+ *
+ * What each message means — the replies, the calls, the decision a
+ * receipt maps to, the height clamp — is widget-card.model.ts, tested in
+ * node (widget-card.model.test.ts); this component carries it out.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatClient } from '@/lib/chat/client';
-import type { ChatBlock, WidgetDecisionState } from '@/lib/chat/views';
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
-import { recordOrNull } from '@renkei/guards';
-
-type ToolResultBlock = Extract<ChatBlock, { type: 'tool_result' }>;
-
-interface RpcMessage {
-  jsonrpc: '2.0';
-  id?: number | string;
-  method?: string;
-  params?: Record<string, unknown>;
-}
-
-function isRpcMessage(value: unknown): value is RpcMessage {
-  return recordOrNull(value)?.jsonrpc === '2.0';
-}
-
-function textContentOf(content: string): { type: string; text: string }[] {
-  return content ? [{ type: 'text', text: content }] : [];
-}
-
-/** The text of an `ui/update-model-context` call's `content` param. */
-function joinedText(content: unknown): string {
-  if (!Array.isArray(content)) return '';
-  return content
-    .flatMap((block) => {
-      if (typeof block !== 'object' || block === null) return [];
-      const entry: { type?: unknown; text?: unknown } = block;
-      return entry.type === 'text' && typeof entry.text === 'string' ? [entry.text] : [];
-    })
-    .join('\n');
-}
-
-const MIN_HEIGHT = 48;
-const MAX_HEIGHT = 2000;
-const DEFAULT_HEIGHT = 96;
+import {
+  DEFAULT_HEIGHT,
+  hostEffects,
+  resolvedKeyOf,
+  toolCallReply,
+  toolResultNotification,
+  type HostEffect,
+  type Outgoing,
+  type ToolResultBlock,
+} from './widget-card.model';
 
 export default function WidgetCard({
   chatId,
@@ -98,27 +77,9 @@ export default function WidgetCard({
   // waiting to be handed over at `ui/notifications/initialized`.
   const initializedRef = useRef(false);
 
-  const post = useCallback((message: Record<string, unknown>) => {
+  const post = useCallback((message: Outgoing) => {
     iframeRef.current?.contentWindow?.postMessage({ jsonrpc: '2.0', ...message }, '*');
   }, []);
-
-  const toolResultNotification = useCallback(
-    (block: ToolResultBlock) => ({
-      method: 'ui/notifications/tool-result',
-      params: {
-        isError: block.isError === true,
-        content: textContentOf(block.content),
-        ...('structuredContent' in block
-          ? {
-              structuredContent: block.resolved
-                ? { ...recordOrNull(block.structuredContent), resolved: block.resolved }
-                : block.structuredContent,
-            }
-          : {}),
-      },
-    }),
-    []
-  );
 
   // A decision that arrives AFTER the card rendered — the model marking
   // it decided on the person's word (chat_widget_resolve, carried by the
@@ -129,110 +90,66 @@ export default function WidgetCard({
   // buttons give way to the receipt without a reload. Keyed on the
   // receipt's content, not the block's identity, so a re-render that
   // leaves the decision as it was posts nothing.
-  const resolved = result.resolved;
-  const resolvedKey = resolved ? JSON.stringify(resolved) : null;
+  const resolvedKey = resolvedKeyOf(result);
   const latestResult = useRef(result);
   latestResult.current = result;
   useEffect(() => {
     if (!resolvedKey || !initializedRef.current) return;
     post(toolResultNotification(latestResult.current));
-  }, [resolvedKey, post, toolResultNotification]);
+  }, [resolvedKey, post]);
 
   useEffect(() => {
+    // What the card's message means is widget-card.model.ts's to decide;
+    // carrying it out (the frame, the server, a new tab) is this one's.
+    const run = (effect: HostEffect) => {
+      switch (effect.type) {
+        case 'post':
+          post(effect.message);
+          return;
+        case 'initialized':
+          initializedRef.current = true;
+          return;
+        case 'call-tool':
+          void chatClient
+            .confirmWidgetTool(chatId, effect.name, effect.args, effect.stateKey)
+            .then((answer) => post(toolCallReply(effect.id, answer)));
+          return;
+        case 'report-decision':
+          void chatClient.reportWidgetDecision(
+            chatId,
+            effect.stateKey,
+            effect.decision,
+            effect.state
+          );
+          return;
+        case 'open-link':
+          window.open(effect.url, '_blank', 'noopener');
+          return;
+        case 'model-context':
+          // Best-effort, same as the card's own bridge treats it: a note
+          // the server could not write at all is simply lost.
+          void chatClient
+            .appendWidgetModelContext(chatId, effect.text, effect.stateKey)
+            .then(({ data }) => {
+              if (data?.message) onModelContext?.(data);
+            });
+          return;
+        case 'resize':
+          setHeight(effect.height);
+          return;
+      }
+    };
     const onMessage = (event: MessageEvent) => {
       const frame = iframeRef.current;
       if (!frame || event.source !== frame.contentWindow) return;
-      const message: unknown = event.data;
-      if (!isRpcMessage(message)) return;
-      const { id, method, params } = message;
-
-      switch (method) {
-        case 'ui/initialize': {
-          if (id === undefined) return;
-          const theme =
-            document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-          post({ id, result: { hostContext: { theme } } });
-          return;
-        }
-        case 'ui/notifications/initialized':
-          initializedRef.current = true;
-          post({ method: 'ui/notifications/tool-input', params: { arguments: toolInput ?? {} } });
-          post(toolResultNotification(result));
-          return;
-        case 'tools/call': {
-          if (id === undefined) return;
-          const name = typeof params?.name === 'string' ? params.name : '';
-          const args = recordOrNull(params?.arguments) ?? {};
-          const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : undefined;
-          void chatClient
-            .confirmWidgetTool(chatId, name, args, stateKey)
-            .then(({ data, error }) => {
-              if (error || !data) {
-                post({
-                  id,
-                  error: { code: -32000, message: error ?? 'The tool could not be reached.' },
-                });
-                return;
-              }
-              post({ id, result: data.result });
-            });
-          return;
-        }
-        case 'ui/report-decision': {
-          if (id === undefined) return;
-          post({ id, result: {} });
-          const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : '';
-          const state = recordOrNull(params?.state);
-          const decision = state?.icon === 'sent' ? 'confirmed' : 'cancelled';
-          // Best-effort, same as ui/update-model-context: a dropped request
-          // costs cross-device sync, never the decision itself, which the
-          // card already rendered locally before sending this.
-          if (!stateKey || !state) return;
-          void chatClient.reportWidgetDecision(
-            chatId,
-            stateKey,
-            decision,
-            // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-            state as unknown as WidgetDecisionState
-          );
-          return;
-        }
-        case 'ui/open-link': {
-          if (id === undefined) return;
-          const url = typeof params?.url === 'string' ? params.url : '';
-          post({ id, result: {} });
-          if (url) window.open(url, '_blank', 'noopener');
-          return;
-        }
-        case 'ui/update-model-context': {
-          if (id === undefined) return;
-          post({ id, result: {} });
-          const text = joinedText(params?.content);
-          const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : undefined;
-          // Best-effort, same as the card's own bridge treats it: a note
-          // the server could not write at all (no usable model on a chat
-          // this isn't, so effectively never) is simply lost.
-          if (!text) return;
-          void chatClient.appendWidgetModelContext(chatId, text, stateKey).then(({ data }) => {
-            if (data?.message) onModelContext?.(data);
-          });
-          return;
-        }
-        case 'ui/notifications/size-changed': {
-          const raw = params?.height;
-          if (typeof raw === 'number' && Number.isFinite(raw)) {
-            setHeight(Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, Math.ceil(raw))));
-          }
-          return;
-        }
-        default:
-          return;
-      }
+      const theme =
+        document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      hostEffects(event.data, { theme, toolInput, result }).forEach(run);
     };
     window.addEventListener('message', onMessage);
     setReady(true);
     return () => window.removeEventListener('message', onMessage);
-  }, [post, toolResultNotification, toolInput, result, chatId, onModelContext]);
+  }, [post, toolInput, result, chatId, onModelContext]);
 
   return (
     <div className="my-2 max-w-md overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">

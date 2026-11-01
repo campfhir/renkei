@@ -9,6 +9,16 @@
  * preview, the real widget bundle; the sandbox stub answers the desk's
  * request type form (e2e/sandbox-stub.mjs). Only the confirm button's
  * `tools/call` is answered at the browser edge.
+ *
+ * Kept here: one press through the real card — pick in labels, confirm,
+ * and the ids go out — plus what only a browser shows (the search box
+ * drawn above the chips, the card at a phone's width). The rules moved:
+ * what the preview holds (labels resolved to ids, "(required)", the desk
+ * and type by name) is lib/mcp-tools/jira-service-management/jsm.test.ts;
+ * what the card makes of it — pick lists, chips offered and added, the
+ * ids each pick sends, a blank required field — is lib/mcp-widgets/src/
+ * issue-preview.model.test.ts, and the chips box's own rules are
+ * chips.model.test.ts.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -83,7 +93,7 @@ async function openCard(page: Page, testInfo: TestInfo): Promise<string> {
   return chatId;
 }
 
-test('the card shows the type by name, asks for required fields as pick lists, and confirms ids', async ({
+test('picking in labels on the card confirms the ids behind them', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -104,44 +114,24 @@ test('the card shows the type by name, asks for required fields as pick lists, a
 
   const frame = cardFrame(page);
   await expect(frame.locator('.card-title')).toHaveText('Create service desk request', COLD);
-  // The request type reads as its name, never an id or a generic label.
-  await expect(frame.locator('.card-subtitle').first()).toHaveText(
-    'Help desk · Report an incident'
-  );
-  await expect(frame.locator('.field-value', { hasText: 'Report an incident' })).toBeVisible();
-
-  // The form's required field is a pick list in labels, still unanswered.
   const impact = frame.locator('.field', { hasText: 'Impact (required)' });
-  await expect(impact.locator('select')).toBeVisible();
   await expect(impact.locator('option')).toHaveText(['—', 'Single user', 'Whole site']);
-
-  // Components: a combo box with chips, not a checkbox per option. The
-  // model passed a NAME; the card shows it as a chip, and the list offers
-  // only what is not yet chosen.
   // Scoped to the visible copy: a built card can hold a hidden twin of a field, and a
   // press lands on what is drawn, so a click on the hidden one leaves the chip in place.
   const components = frame.locator('.field', { hasText: 'Components' }).filter({ visible: true });
-  await expect(components).toHaveCount(1);
-  await expect(components.getByRole('checkbox')).toHaveCount(0);
   await expect(components.locator('.chip')).toHaveText(['Billing×']);
-  await expect(components.locator('datalist option')).toHaveCount(1);
   // The search sits above the chips.
   const searchBox = await components.getByRole('combobox', { name: 'Components' }).boundingBox();
   const chipBox = await components.locator('.chip').first().boundingBox();
   expect(searchBox!.y + searchBox!.height).toBeLessThanOrEqual(chipBox!.y);
 
-  // Priority is offered even though nobody asked for one.
-  const priority = frame.locator('.field', { hasText: 'Priority' });
-  await expect(priority.locator('option')).toHaveText(['—', 'High', 'Medium']);
-
   await impact.locator('select').selectOption({ label: 'Whole site' });
-  await priority.locator('select').selectOption({ label: 'High' });
-  // Typing an option's name adds it (the rest of the combo box's rules —
-  // taking a chip off, Backspace, partial words — are chips.model.test.ts's).
+  await frame.locator('.field', { hasText: 'Priority' }).locator('select').selectOption({
+    label: 'High',
+  });
   const search = components.getByRole('combobox', { name: 'Components' });
   await search.fill('Platform');
   await expect(components.locator('.chip')).toHaveText(['Billing×', 'Platform×']);
-  await expect(components.locator('datalist option')).toHaveCount(0);
   // Out of the box, so Chrome's suggestion popup for it is closed before
   // the next press: a press while it is open only dismisses it.
   await search.blur();

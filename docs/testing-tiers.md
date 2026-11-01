@@ -51,6 +51,18 @@ selection surviving a single delete, now fixed).
 `act-preview.model.ts` (the act preview card; `act-preview.spec.ts` lost
 its cancel test, and moving it found an event's end time read by the
 viewer's time zone, now fixed).
+`issue-preview.model.ts` (the Jira/JSM card) and `widget-card.model.ts`
+(the chat's host for every card) took the rules out of
+`widget-card.spec.ts`, `widget-card-resolve.spec.ts` and
+`jsm-create-request-card.spec.ts`; the stale-card refusal and the
+two-cards-one-turn rule are route tests beside `widget/tool-call` and
+`widget/model-context`.
+`directory-action-preview.model.ts` and the discard rules in
+`email-compose.model.ts` shrank `directory-action-preview.spec.ts` and
+`email-card-discard.spec.ts`. `mockup-viewer.model.ts` and
+`mockup-card.model.ts` took zoom, widths and pan out of `mockups.spec.ts`
+(the mockup route's headers are a route test now), and found Fit to width
+returning to a stale scroll spot, now fixed. With those, wave 1 is done.
 
 ## The order
 
