@@ -16,7 +16,15 @@
  * chooses which states the list shows.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -27,16 +35,17 @@ import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
 import ShareModal from './share-modal';
-
-function dayGroup(iso: string, now: Date): string {
-  const date = new Date(iso);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const day = 86_400_000;
-  if (date.getTime() >= startOfToday) return 'Today';
-  if (date.getTime() >= startOfToday - day) return 'Yesterday';
-  if (date.getTime() >= startOfToday - 7 * day) return 'This week';
-  return 'Earlier';
-}
+import {
+  canLoadMore,
+  chatListReducer,
+  chatListView,
+  initialChatListState,
+  isCustomFilter,
+  listedChats,
+  rowActions,
+  stateCounts,
+  type ChatStates,
+} from './chat-nav.model';
 
 const rowClass =
   'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-900';
@@ -44,78 +53,45 @@ const activeClass = 'bg-gray-100 font-medium dark:bg-gray-900';
 
 export function ChatList({ data }: { data: ChatSidebarData }) {
   const currentPath = usePathname();
-  // Which states the list shows; active only, until the funnel says otherwise.
-  const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
-    active: true,
-    archived: false,
-  });
   /*
     The server only loads activity from the last CHAT_SIDEBAR_ACTIVE_DAYS
     (see lib/chat/sidebar.ts) into `data`. "Load more" pages older owned
-    chats in on top of that, kept here rather than in `data` because a
-    server refresh (any mutation below, or anything else on the page that
-    calls router.refresh()) only ever re-fetches that same recent window.
-    A chat touched again — renamed, archived, moved — falls back inside
-    the window and reappears in `data.chats` on the next refresh, at which
-    point it's dropped from here so the fresh copy wins; one deleted while
-    it lived only here is dropped by `onDeleted` since no refresh can do
-    that for us.
+    chats in on top of that, kept in the model rather than in `data`
+    because a server refresh only ever re-fetches that same recent window
+    (chat-nav.model.ts says what the list holds after one).
   */
-  const [extraChats, setExtraChats] = useState<ChatListItem[]>([]);
-  const [moreBefore, setMoreBefore] = useState(data.moreChatsBefore);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [state, dispatch] = useReducer(chatListReducer, data, initialChatListState);
+  const { states, moreBefore, loadingMore } = state;
   useEffect(() => {
-    // Only follow the server's cursor while nothing has been paged in yet —
-    // once "Load more" has advanced it, a fresh `data` prop (the window
-    // never moves) must not rewind it back and re-offer already-loaded rows.
-    if (extraChats.length === 0) setMoreBefore(data.moreChatsBefore);
-  }, [data.moreChatsBefore, extraChats.length]);
-  const windowChats = useMemo(() => {
-    const freshIds = new Set(data.chats.map((chat) => chat.id));
-    return [...data.chats, ...extraChats.filter((chat) => !freshIds.has(chat.id))];
-  }, [data.chats, extraChats]);
+    dispatch({ type: 'serverCursor', moreChatsBefore: data.moreChatsBefore });
+  }, [data.moreChatsBefore, state.extraChats.length]);
+  const allChats = useMemo(() => listedChats(data.chats, state), [data.chats, state]);
   const removeExtraChat = useCallback((chatId: string) => {
-    setExtraChats((current) => current.filter((chat) => chat.id !== chatId));
+    dispatch({ type: 'chatDeleted', chatId });
   }, []);
   const loadMore = useCallback(async () => {
-    if (!moreBefore || loadingMore) return;
-    setLoadingMore(true);
+    if (!canLoadMore(state) || !moreBefore) return;
+    dispatch({ type: 'loadMoreStarted' });
     const result = await chatClient.moreChats(moreBefore);
-    setLoadingMore(false);
     if (result.data) {
-      setExtraChats((current) => [...current, ...result.data!.chats]);
-      setMoreBefore(result.data.nextBefore);
+      dispatch({
+        type: 'loadMoreAnswered',
+        chats: result.data.chats,
+        nextBefore: result.data.nextBefore,
+      });
+    } else {
+      dispatch({ type: 'loadMoreFailed' });
     }
-  }, [moreBefore, loadingMore]);
-  const allChats = windowChats;
-  const counts = useMemo(
-    () => ({
-      active: allChats.filter((chat) => !chat.archived).length,
-      archived: allChats.filter((chat) => chat.archived).length,
-    }),
-    [allChats]
+  }, [state, moreBefore]);
+  const counts = useMemo(() => stateCounts(allChats), [allChats]);
+  const setStates = useCallback(
+    (next: ChatStates) => dispatch({ type: 'statesChanged', states: next }),
+    []
   );
-  const shown = useCallback(
-    (chat: ChatListItem) => (chat.archived ? states.archived : states.active),
-    [states]
+  const { groups, shared, empty } = useMemo(
+    () => chatListView(allChats, state, new Date()),
+    [allChats, state]
   );
-  const mine = useMemo(
-    () => allChats.filter((chat) => chat.via === 'owner' && shown(chat)),
-    [allChats, shown]
-  );
-  const shared = useMemo(
-    () => allChats.filter((chat) => chat.via !== 'owner' && shown(chat)),
-    [allChats, shown]
-  );
-  const groups = useMemo(() => {
-    const now = new Date();
-    const out = new Map<string, ChatListItem[]>();
-    for (const chat of mine) {
-      const key = dayGroup(chat.updatedAt, now);
-      out.set(key, [...(out.get(key) ?? []), chat]);
-    }
-    return [...out.entries()];
-  }, [mine]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
@@ -124,17 +100,7 @@ export function ChatList({ data }: { data: ChatSidebarData }) {
         <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
       <nav aria-label="Chats" className="min-h-0 flex-1 overflow-y-auto">
-        {groups.length === 0 && shared.length === 0 ? (
-          <p className="px-2 text-xs text-gray-500">
-            {allChats.length === 0 && moreBefore === null
-              ? 'Your chats will appear here.'
-              : !states.active && !states.archived
-                ? 'Nothing to show — pick Active or Archived.'
-                : states.active
-                  ? 'No active chats.'
-                  : 'No archived chats.'}
-          </p>
-        ) : null}
+        {empty ? <p className="px-2 text-xs text-gray-500">{empty}</p> : null}
         {groups.map(([label, dayChats]) => (
           <div key={label} className="mb-3">
             <SectionTitle>{label}</SectionTitle>
@@ -188,15 +154,15 @@ function StateFilter({
   onChange,
   counts,
 }: {
-  states: { active: boolean; archived: boolean };
-  onChange: (states: { active: boolean; archived: boolean }) => void;
+  states: ChatStates;
+  onChange: (states: ChatStates) => void;
   counts: { active: number; archived: number };
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
-  const custom = !states.active || states.archived;
+  const custom = isCustomFilter(states);
   const option = (key: 'active' | 'archived', label: string) => (
     <button
       type="button"
@@ -307,13 +273,7 @@ function ChatRow({
   }, [menuOpen]);
   const isOwner = chat.via === 'owner';
   const mark = kindOf(chat);
-  // A chat in a code project belongs to its repository: it is not moved
-  // into a chat project from here.
-  const actions: ('rename' | 'move' | 'share' | 'archive' | 'delete')[] =
-    // A temporary chat stands outside projects (lib/chat/temporary.ts).
-    mark.kind === 'code' || chat.temporary
-      ? ['rename', 'share', 'archive', 'delete']
-      : ['rename', 'move', 'share', 'archive', 'delete'];
+  const actions = rowActions(chat);
 
   const run = async (action: () => Promise<{ error: string | null }>) => {
     setBusy(true);

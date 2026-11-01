@@ -20,19 +20,29 @@
  * box above the list narrows it by name as you type.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
-import type { ConnectorOption } from '@/lib/chat/tool-surface';
-import { CONNECTOR_CATALOG } from '@/lib/connector-catalog';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
-
-/** Catalog label for a capability key, falling back to the key itself. */
-function connectorLabel(key: string): string {
-  return CONNECTOR_CATALOG.find((entry) => entry.capabilityKey === key)?.label ?? key;
-}
+import {
+  connectorLabel,
+  effectiveTools,
+  explanation as explanationFor,
+  footer as footerFor,
+  hasConnectors,
+  initialToolsDialogState,
+  isLocked as isLockedKey,
+  listView,
+  missingLocked as missingLockedFor,
+  needsConnectors,
+  saveDefaultConnectors,
+  toggledTools,
+  toolsDialogReducer,
+  triggerCount,
+  type ToolsDialogProps,
+} from './tools-dialog.model';
 
 const footerButton =
   'rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900';
@@ -104,91 +114,52 @@ export default function ToolsDialog({
     else setOwnOpen(next);
   };
   const toolsAnchor = useCoachAnchor('chat-tools');
-  const [options, setOptions] = useState<ConnectorOption[] | null>(null);
-  const [core, setCore] = useState<string[]>([]);
-  const [codeDefault, setCodeDefault] = useState<string[]>([]);
-  const [userDefault, setUserDefault] = useState<string[] | null>(null);
-  const [userCodeDefault, setUserCodeDefault] = useState<string[] | null>(null);
-  const [savingDefault, setSavingDefault] = useState(false);
-  const [savedWord, setSavedWord] = useState<string | null>(null);
-  const [filter, setFilter] = useState('');
+  const [state, dispatch] = useReducer(toolsDialogReducer, undefined, initialToolsDialogState);
+  const model: ToolsDialogProps = {
+    selected,
+    context,
+    kind,
+    saveDefault,
+    projectDefault,
+    locked: locked ?? [],
+  };
 
+  const loadNeeded = needsConnectors(state, open);
   useEffect(() => {
-    if (!open || options !== null) return;
+    if (!loadNeeded) return;
     void chatClient.connectors().then((result) => {
-      if (result.data) {
-        setOptions(result.data.connectors);
-        setCore(result.data.core);
-        setCodeDefault(result.data.codeDefault ?? []);
-        setUserDefault(result.data.userDefault?.connectors ?? null);
-        setUserCodeDefault(result.data.userCodeDefault?.connectors ?? null);
-      } else {
-        setOptions([]);
-      }
+      if (result.data) dispatch({ type: 'connectorsLoaded', answer: result.data });
+      else dispatch({ type: 'connectorsFailed' });
     });
-  }, [open, options]);
+  }, [loadNeeded]);
 
   // The search and the "Saved" word are for one opening of the dialog.
   useEffect(() => {
-    if (!open) {
-      setFilter('');
-      setSavedWord(null);
-    }
+    if (!open) dispatch({ type: 'closed' });
   }, [open]);
 
-  const lockedKeys = locked ?? [];
-  const personal = kind === 'code' ? userCodeDefault : userDefault;
-  const setPersonal = kind === 'code' ? setUserCodeDefault : setUserDefault;
-  const fallback = projectDefault ?? personal ?? (kind === 'code' ? codeDefault : core);
-  const effective = new Set([...(selected ?? fallback), ...lockedKeys]);
-  const offersDefault = saveDefault ?? context === 'chat';
-  const count = selected ? selected.length : null;
-  // A required connector the person has not linked: nothing in the catalog
-  // for it, so no row below would mention it — and it is the one the chat
-  // most needs to say something about.
-  const missingLocked = lockedKeys.filter(
-    (key) => options !== null && !options.some((option) => option.key === key)
-  );
-  const shown = useMemo(() => {
-    if (!options) return null;
-    const needle = filter.trim().toLowerCase();
-    if (!needle) return options;
-    return options.filter(
-      (option) =>
-        connectorLabel(option.key).toLowerCase().includes(needle) ||
-        option.key.toLowerCase().includes(needle)
-    );
-  }, [options, filter]);
-
-  const explanation =
-    context === 'project'
-      ? kind === 'code'
-        ? 'Connectors chats in this project start with, unless a chat picks its own — from your default for code projects, or the code default.'
-        : 'Connectors chats in this project start with, unless a chat picks its own.'
-      : kind === 'code'
-        ? 'Connectors the assistant may use in this chat. A code project’s chat starts from the project’s toolset, else your default for code projects, else the code default.'
-        : projectDefault
-          ? 'Connectors the assistant may use in this chat. Starts from this project’s toolset, unless you pick your own.'
-          : 'Connectors the assistant may use in this chat.';
+  const effective = effectiveTools(state, model);
+  const count = triggerCount(model);
+  const missingLocked = missingLockedFor(state, model);
+  const list = listView(state);
+  const foot = footerFor(state, model);
+  const explanation = explanationFor(model);
 
   const saveAsDefault = () => {
-    setSavingDefault(true);
-    setSavedWord(null);
-    void chatClient.setDefaultTools([...effective].sort(), kind).then((result) => {
-      if (result.data) {
-        setPersonal(result.data.userDefault?.connectors ?? null);
-        setSavedWord('Saved as your default.');
-      }
-      setSavingDefault(false);
+    dispatch({ type: 'saveDefaultStarted' });
+    void chatClient.setDefaultTools(saveDefaultConnectors(state, model), kind).then((result) => {
+      dispatch({
+        type: 'saveDefaultAnswered',
+        kind,
+        ok: Boolean(result.data),
+        connectors: result.data?.userDefault?.connectors ?? null,
+      });
     });
   };
   const clearDefault = () => {
-    setSavingDefault(true);
-    setSavedWord(null);
+    dispatch({ type: 'clearDefaultStarted' });
     void chatClient.setDefaultTools(null, kind).then(() => {
-      setPersonal(null);
-      setSavedWord('Your default is cleared.');
-      setSavingDefault(false);
+      dispatch({ type: 'clearDefaultAnswered', kind });
     });
   };
 
@@ -215,11 +186,13 @@ export default function ToolsDialog({
           <div className="flex max-h-[75vh] flex-col text-sm" data-testid="tools-dialog">
             <p className="mb-2 text-xs text-gray-500">{explanation}</p>
             {/* A fresh look each time: the box empties when the dialog closes. */}
-            {options !== null && options.length > 0 ? (
+            {hasConnectors(state) ? (
               <input
                 type="search"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
+                value={state.filter}
+                onChange={(event) =>
+                  dispatch({ type: 'filterChanged', filter: event.target.value })
+                }
                 placeholder="Search connectors"
                 aria-label="Search connectors"
                 autoComplete="off"
@@ -231,19 +204,19 @@ export default function ToolsDialog({
               className="min-h-0 flex-1 overflow-y-auto rounded-md border border-gray-200 p-1 dark:border-gray-800"
               data-testid="tools-dialog-list"
             >
-              {options === null ? (
+              {list.kind === 'loading' ? (
                 <LoadingLine size="xs" className="px-1 py-1" label="Loading connectors…" />
-              ) : options.length === 0 ? (
+              ) : list.kind === 'nothing-connected' ? (
                 <p className="px-1 py-1 text-xs text-gray-500">
                   Nothing connected yet — link a connector on the Connectors page.
                 </p>
-              ) : shown && shown.length === 0 ? (
+              ) : list.kind === 'no-match' ? (
                 <p className="px-1 py-1 text-xs text-gray-500">
-                  No connector matches “{filter.trim()}”.
+                  No connector matches “{list.filter}”.
                 </p>
               ) : (
-                (shown ?? []).map((option) => {
-                  const isLocked = lockedKeys.includes(option.key);
+                list.rows.map((option) => {
+                  const isLocked = isLockedKey(model, option.key);
                   return (
                     <label
                       key={option.key}
@@ -261,12 +234,9 @@ export default function ToolsDialog({
                             ? `${connectorLabel(option.key)} (always on in a code project)`
                             : undefined
                         }
-                        onChange={(event) => {
-                          const next = new Set(effective);
-                          if (event.target.checked) next.add(option.key);
-                          else next.delete(option.key);
-                          onChange([...next].sort());
-                        }}
+                        onChange={(event) =>
+                          onChange(toggledTools(state, model, option.key, event.target.checked))
+                        }
                       />
                       <span className="flex-1">{connectorLabel(option.key)}</span>
                       {isLocked ? (
@@ -303,11 +273,14 @@ export default function ToolsDialog({
                 </div>
               ))}
             </div>
-            {context === 'project' && !offersDefault && options !== null && options.length > 0 ? (
+            {foot.projectNote ? (
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                 Saved on the project as soon as you toggle it. Your personal default for new chats
                 outside this project lives in{' '}
-                <a href={`/preferences`} className="text-blue-600 hover:underline dark:text-blue-400">
+                <a
+                  href={`/preferences`}
+                  className="text-blue-600 hover:underline dark:text-blue-400"
+                >
                   Preferences
                 </a>
                 .
@@ -317,12 +290,12 @@ export default function ToolsDialog({
               className="mt-3 flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 pt-3 dark:border-gray-800"
               data-testid="tools-dialog-footer"
             >
-              {savedWord ? (
+              {state.savedWord ? (
                 <span role="status" className="text-xs text-green-700 dark:text-green-400">
-                  {savedWord}
+                  {state.savedWord}
                 </span>
               ) : null}
-              {selected ? (
+              {foot.reset ? (
                 <button
                   type="button"
                   onClick={() => onChange(null)}
@@ -332,31 +305,25 @@ export default function ToolsDialog({
                 </button>
               ) : null}
               <span className="ml-auto flex flex-wrap items-center justify-end gap-2">
-                {offersDefault && options !== null && options.length > 0 ? (
-                  <>
-                    {personal ? (
-                      <button
-                        type="button"
-                        disabled={savingDefault}
-                        onClick={clearDefault}
-                        className={footerButton}
-                      >
-                        Clear my default
-                      </button>
-                    ) : null}
-                    <button
-                      type="button"
-                      disabled={savingDefault}
-                      onClick={saveAsDefault}
-                      className={footerButton}
-                    >
-                      {savingDefault
-                        ? 'Saving…'
-                        : kind === 'code'
-                          ? 'Save as my default for code projects'
-                          : 'Save as my default'}
-                    </button>
-                  </>
+                {foot.clear ? (
+                  <button
+                    type="button"
+                    disabled={foot.clear.disabled}
+                    onClick={clearDefault}
+                    className={footerButton}
+                  >
+                    Clear my default
+                  </button>
+                ) : null}
+                {foot.save ? (
+                  <button
+                    type="button"
+                    disabled={foot.save.disabled}
+                    onClick={saveAsDefault}
+                    className={footerButton}
+                  >
+                    {foot.save.label}
+                  </button>
                 ) : null}
                 <button
                   type="button"
