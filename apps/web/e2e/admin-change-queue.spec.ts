@@ -48,6 +48,7 @@ import {
 import { createPerson, signIn, type Person } from './support/person';
 import { addStubModel, removeModel } from './support/stub-model';
 import { test, expect } from './fixtures';
+import { steady } from './support/settle';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -193,18 +194,16 @@ test('an operator finds the waiting changes from the menu; a person who asked ha
   await page.setViewportSize(MOBILE_VIEWPORT);
   await expect(row).toBeVisible();
   await noHorizontalOverflow(page);
-  await expect(async () => {
-    const rowBox = await row.boundingBox();
-    const titleColumn = await row
-      .getByTestId('change-row-title')
-      .locator('xpath=../..')
-      .boundingBox();
-    const pill = await row.getByTestId('change-state').boundingBox();
-    expect(rowBox && titleColumn && pill).toBeTruthy();
-    if (!rowBox || !titleColumn || !pill) return;
-    expect(titleColumn.width).toBeGreaterThan(rowBox.width * 0.75);
-    expect(pill.y).toBeGreaterThanOrEqual(titleColumn.y + titleColumn.height);
-  }).toPass();
+  // Measured once the row has reflowed to the new width and holds still.
+  const { rowBox, titleColumn, pill } = await steady(page, async () => ({
+    rowBox: await row.boundingBox(),
+    titleColumn: await row.getByTestId('change-row-title').locator('xpath=../..').boundingBox(),
+    pill: await row.getByTestId('change-state').boundingBox(),
+  }));
+  expect(rowBox && titleColumn && pill).toBeTruthy();
+  if (!rowBox || !titleColumn || !pill) return;
+  expect(titleColumn.width).toBeGreaterThan(rowBox.width * 0.75);
+  expect(pill.y).toBeGreaterThanOrEqual(titleColumn.y + titleColumn.height);
   await shot(page, testInfo, 'admin-change-queue-14-changes-inbox-mobile');
   await page.setViewportSize({ width: 1280, height: 900 });
 

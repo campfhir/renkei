@@ -15,6 +15,8 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { test, expect } from './fixtures';
+import { runSettled } from './support/agents';
+import { hydrated } from './support/settle';
 import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel } from './support/stub-model';
 
@@ -46,15 +48,16 @@ test('Run now runs the agent to the end, and its page shows the finished run @sm
 
     await page.goto(`/agents/${agentId}`);
     await expect(page.getByRole('heading', { name: `Stub runner ${tag}` })).toBeVisible();
+    await hydrated(page);
     await page.getByRole('button', { name: 'Run now' }).click();
     await page.getByRole('link', { name: 'Run started — open it' }).click();
     await expect(page).toHaveURL(new RegExp(`/agents/${agentId}/runs/[0-9a-f-]+$`));
+    const runId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
 
-    // The run page follows the run live; reload until it is no longer in flight.
-    await expect(async () => {
-      await page.reload();
-      await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
+    // The run page follows the run live: once the run has settled (its
+    // stream closes then), the open page shows how it ended, no reload.
+    expect(await runSettled(page.request, agentId, runId)).toBe('succeeded');
+    await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible();
     await expect(page.getByText('Succeeded', { exact: true }).first()).toBeVisible();
     await page.screenshot({
       path: path.join(RESULTS, 'screens', testInfo.project.name, 'agent-run-01-finished.png'),

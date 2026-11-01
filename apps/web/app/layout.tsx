@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
+import HydrationMark from '@/components/hydration-mark';
 import ScrollActivity from '@/components/scroll-activity';
 import './globals.css';
 
@@ -86,6 +87,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col">
+        <HydrationMark />
         <ScrollActivity />
         {children}
       </body>

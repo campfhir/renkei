@@ -54,6 +54,31 @@ export async function runAgent(request: APIRequestContext, agentId: string): Pro
   return runId;
 }
 
+/**
+ * Wait for a run to finish and answer its final status, as the run page's
+ * own live view learns it: the run's stream route sends the run on each
+ * change and closes once it settles, so its body is complete when the run
+ * is.
+ */
+export async function runSettled(
+  request: APIRequestContext,
+  agentId: string,
+  runId: string,
+  timeout = 60_000
+): Promise<string> {
+  const response = await request.get(`/api/agents/${agentId}/runs/${runId}/stream`, { timeout });
+  expect(response.ok(), `run stream: ${response.status()}`).toBe(true);
+  const events = (await response.text())
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map((line): unknown => JSON.parse(line.slice('data: '.length)));
+  const last = events.at(-1);
+  const run = typeof last === 'object' && last !== null ? Reflect.get(last, 'run') : undefined;
+  const status = typeof run === 'object' && run !== null ? Reflect.get(run, 'status') : undefined;
+  expect(typeof status, `no run in the stream's last event`).toBe('string');
+  return String(status);
+}
+
 export interface FeedItem {
   id: string;
   kind: string;

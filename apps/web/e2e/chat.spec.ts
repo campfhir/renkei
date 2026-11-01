@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { hydrated, redirectLanded } from './support/settle';
 import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
 import { createChat, send } from './support/chat';
@@ -276,16 +277,16 @@ test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
     const copy = tsBlock.getByRole('button', { name: 'Copy' });
     await expect(copy).toBeVisible();
     // What Copy does is fill the clipboard; its "Copied" label lasts 1.5s,
-    // too short to watch for on a starved CPU. The button is drawn by the
-    // server, so a press before hydration does nothing: copying is harmless
-    // to repeat, so press until the clipboard holds the block.
+    // too short to watch for on a starved CPU. Pressed from the keyboard once
+    // the thread has hydrated: the thread can still scroll as late content
+    // settles, and a pointer press goes to whatever is under the point by
+    // then, while Enter goes to the focused button wherever it now sits.
     await page.evaluate(() => navigator.clipboard.writeText(''));
-    await expect(async () => {
-      await copy.click({ timeout: 2_000 });
-      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-        "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
-      );
-    }).toPass({ timeout: 15_000 });
+    await hydrated(page, 'chat-thread');
+    await copy.press('Enter');
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("const carried = issues.filter((issue) => issue.status !== 'Done');\n");
     await shot(page, testInfo, 'chat-code-blocks.png');
 
     // At phone width a table row is a card; a cell mixing text and inline
@@ -454,13 +455,20 @@ test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
 
     await shot(page, testInfo, 'chat-thread.png');
 
-    // "Chat" lands on the most recent chat; "+ New" on an empty one.
+    // "Chat" lands on the most recent chat; "+ New" on an empty one. Both
+    // redirect mid-stream, which the browser finishes with a second load a
+    // moment after goto returns: wait for that to land before the next goto
+    // (one started sooner is aborted by it).
     await page.goto(`/chat`);
     await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`));
+    await redirectLanded(page);
+    await hydrated(page, 'chat-thread');
     // "+ New" creates the empty chat up front and lands on its own address,
     // so the first Send never has to move the page.
     await page.goto(`/chat/new`);
     await expect(page).toHaveURL(new RegExp(`/chat/[0-9a-f-]{36}$`));
+    await redirectLanded(page);
+    await hydrated(page, 'chat-thread');
     await expect(page.getByRole('heading', { level: 1, name: 'New chat' })).toBeVisible();
     const newChatId = page.url().match(/\/chat\/([0-9a-f-]{36})$/)?.[1] ?? null;
     expect(newChatId).not.toBeNull();

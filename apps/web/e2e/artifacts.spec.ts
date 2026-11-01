@@ -47,7 +47,7 @@ import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { LLM_STUB_PICTURE, SANDBOX_STUB_URL } from './constants';
 import { createPerson, type Person } from './support/person';
-import { addStubModel, removeModel, scripted, stubScript, toolStep } from './support/stub-model';
+import { addStubModel, scripted, stubScript, toolStep } from './support/stub-model';
 import { createChat, send } from './support/chat';
 
 // Staging turns on org-wide switches (summaries, OCR, the default model).
@@ -123,10 +123,10 @@ async function upload(
  * side; one that makes a default of its own and deletes it leaves the org
  * without one, so this checks on every call). It then proves an upload
  * really is summarized and a scan read — by a person of its own, so no
- * test's library or usage counts the probe — and goes round again if
- * another worker was swapping the default model at that moment (the
- * suite reads settings and the roster afresh: RENKEI_CONFIG_CACHE_TTL_MS).
- * Answers the model's id.
+ * test's library or usage counts the probe. Two workers can add the stand-in
+ * at once; both copies are the same stub, so whichever ends up the default
+ * summarizes alike, and neither is ever deleted (another test may be
+ * chatting with it). Answers the model's id.
  */
 async function digestsReady(request: APIRequestContext): Promise<string> {
   const operator = await createPerson(request, {
@@ -149,52 +149,43 @@ async function digestsReady(request: APIRequestContext): Promise<string> {
     },
   });
   expect(ocr.ok(), await ocr.text()).toBe(true);
-  let modelId = '';
-  await expect(async () => {
-    const roster = await request.get('/api/admin/llm-models', { headers });
-    const { models }: { models: { id: string; label: string; isDefault: boolean }[] } =
-      await roster.json();
-    const ours = models.filter((model) => model.label === DEFAULT_MODEL_LABEL);
-    const current = ours.find((model) => model.isDefault);
-    // A copy left behind when two workers added it at once: never the default,
-    // so taking it away moves nothing. (The request context carries the
-    // operator's cookie too: signing in set it.)
-    for (const stale of ours) if (!stale.isDefault) await removeModel(request, stale.id);
-    // Added only when no copy is the default: making another default would
-    // move the default under a digest another test is waiting on (the suite
-    // reads the roster afresh on every request).
-    modelId =
-      current?.id ??
-      (await addStubModel(request, 'default', {
-        label: DEFAULT_MODEL_LABEL,
-        isDefault: true,
-      }));
-    const probe = await upload(
-      request,
-      { name: 'probe.md', type: 'text/markdown', body: '# Probe\n\nA probe.\n' },
-      {},
-      headers
-    );
-    await expect
-      .poll(
-        async () =>
-          field(
-            await (await request.get(`/api/chat/artifacts/${probe}`, { headers })).json(),
-            'artifact',
-            'summary'
-          ),
-        { timeout: 5_000 }
+  const roster = await request.get('/api/admin/llm-models', { headers });
+  const { models }: { models: { id: string; label: string; isDefault: boolean }[] } =
+    await roster.json();
+  const current = models.find((model) => model.label === DEFAULT_MODEL_LABEL && model.isDefault);
+  // Added only when no copy is the default: making another default would
+  // move the default under a digest another test is waiting on (the suite
+  // reads the roster afresh on every request).
+  const modelId =
+    current?.id ??
+    (await addStubModel(request, 'default', {
+      label: DEFAULT_MODEL_LABEL,
+      isDefault: true,
+    }));
+  const probe = await upload(
+    request,
+    { name: 'probe.md', type: 'text/markdown', body: '# Probe\n\nA probe.\n' },
+    {},
+    headers
+  );
+  // The summary is written after the upload answers: wait for it.
+  await expect
+    .poll(async () =>
+      field(
+        await (await request.get(`/api/chat/artifacts/${probe}`, { headers })).json(),
+        'artifact',
+        'summary'
       )
-      .toBe('Stub summary: # Probe');
-    const scan = await upload(
-      request,
-      { name: 'probe.png', type: 'image/png', body: 'probe scan\n' },
-      {},
-      headers
-    );
-    const read = await request.post(`/api/chat/artifacts/${scan}/ocr`, { headers, data: {} });
-    expect(read.status()).not.toBe(503);
-  }).toPass({ timeout: 60_000, intervals: [500] });
+    )
+    .toBe('Stub summary: # Probe');
+  const scan = await upload(
+    request,
+    { name: 'probe.png', type: 'image/png', body: 'probe scan\n' },
+    {},
+    headers
+  );
+  const read = await request.post(`/api/chat/artifacts/${scan}/ocr`, { headers, data: {} });
+  expect(read.status()).not.toBe(503);
   return modelId;
 }
 

@@ -29,6 +29,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { devices, type Browser, type Page, type TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { steady } from './support/settle';
 import { MEMORY_BASE_URL } from './constants';
 import { signIn, type Person } from './support/person';
 import { toolStep, removeModel, scripted } from './support/stub-model';
@@ -792,13 +793,12 @@ test.describe('code projects', () => {
     // ── Hover asks the server; its answer is the hover card ──
     // Monaco keeps two hover widgets (the text's and the glyph margin's);
     // the one that shows is the text's. A hover that lands while the editor
-    // is still settling is dropped, so the pointer moves off and back.
+    // is still laying out is dropped: hover once the word holds still.
     const hover = page.locator('.monaco-hover:not(.hidden)');
-    await expect(async () => {
-      await page.mouse.move(0, 0);
-      await editor.getByText('MAX_ATTEMPTS').first().hover();
-      await expect(hover).toBeVisible({ timeout: 4_000 });
-    }).toPass({ timeout: 40_000 });
+    const word = editor.getByText('MAX_ATTEMPTS').first();
+    await steady(page, () => word.boundingBox());
+    await word.hover();
+    await expect(hover).toBeVisible({ timeout: 20_000 });
     await expect(hover).toContainText('From the stub language server');
     await shot('code-pane-lsp-hover.png');
 

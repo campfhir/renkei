@@ -170,13 +170,10 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
   // --- The person's cards: one per org, and the sandbox's connect link. ---
   await addConnectors(page.request, ['salesforce-admin']);
   const cards = page.locator('[data-coach="card-salesforce-admin"]').filter({ visible: true });
-  // The connectors page reads the config through a 60-second cache
-  // (@renkei/connector-config) that a save in another module instance does
-  // not clear: a run soon after the last one may first see its leftovers.
-  await expect(async () => {
-    await page.goto('/connectors');
-    await expect(cards).toHaveCount(2, { timeout: 2_000 });
-  }).toPass({ timeout: 90_000, intervals: [5_000] });
+  // The suite runs with the config cache off (RENKEI_CONFIG_CACHE_TTL_MS=0,
+  // e2e/server-env.ts), so the page reads both orgs as just saved.
+  await page.goto('/connectors');
+  await expect(cards).toHaveCount(2);
   const uat = cards.filter({ has: page.getByRole('heading', { name: /Salesforce Admin · UAT/ }) });
   await expect(uat.getByText('Sandbox', { exact: true })).toBeVisible();
   const connectLink = uat.getByRole('link', { name: 'Connect Salesforce Admin · UAT' });
