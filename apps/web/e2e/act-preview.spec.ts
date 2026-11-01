@@ -11,11 +11,15 @@
  * browser edge, since for real it would reach Jira; the note and the
  * model's reply after it are real.
  *
- * Proves:
- *  - a comment card shows the comment where it will land, lets the person
- *    rewrite the words, and the confirm button sends THEIR words to the
- *    tool's `_confirm` twin with the rest of the arguments unchanged;
- *  - Cancel runs nothing;
+ * The card's rules — which words are a box and which read-only, what the
+ * twin is sent (the person's words over the model's, an emptied box
+ * keeping the model's), the receipt after confirm or cancel, a refused
+ * confirm, and the line the model is told — are act-preview.model.ts's,
+ * tested in lib/mcp-widgets/src/act-preview.model.test.ts. This spec keeps
+ * what only a browser shows:
+ *  - one press through: the comment card renders in its iframe, a rewrite
+ *    and Post comment reach the route as the `_confirm` twin's call, the
+ *    receipt is drawn and the decision opens a turn the model answers;
  *  - every kind of card draws (a gallery of one card per layout, screenshot
  *    for review) and none overflows a phone-width viewport.
  */
@@ -28,7 +32,6 @@ import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel, scripted } from './support/stub-model';
 import { createChat } from './support/tool-cards';
 import { previewChat } from './support/preview-cards';
-import { pointerReaches } from './support/settle';
 import {
   addConnectors,
   connectJira,
@@ -378,34 +381,6 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
     ).toBeVisible(COLD);
     // The decision opened a turn of its own, and the model answered it.
     await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
-  } finally {
-    if (modelId) await removeModel(page.request, modelId);
-  }
-});
-
-test('cancelling a card runs nothing', async ({ page, person: _person }, testInfo) => {
-  test.setTimeout(150_000);
-  let modelId: string | null = null;
-  try {
-    let confirmed = false;
-    await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
-      confirmed = true;
-      await route.abort();
-    });
-    ({ modelId } = await openCommentChat(page, testInfo));
-    const frame = page.getByRole('main').frameLocator('iframe[title="Preview card"]');
-    await expect(frame.locator('.card-title')).toHaveText('Comment on PROJ-12', COLD);
-    // The card has only just been drawn inside its frame: Chrome routes a
-    // press by what it last drew, so the pointer has to reach the button
-    // first or the click can be lost (AGENTS.md, "Pitfalls").
-    const cancel = frame.getByRole('button', { name: 'Cancel' });
-    await pointerReaches(page, cancel);
-    await cancel.click();
-    await expect(frame.locator('.done-headline')).toHaveText('Cancelled', COLD);
-    await expect(
-      noteLine(page, 'The user cancelled "Comment on PROJ-12" from the preview card')
-    ).toBeVisible(COLD);
-    expect(confirmed).toBe(false);
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }

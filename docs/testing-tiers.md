@@ -48,6 +48,9 @@ Done so far: `chips.model.ts` and `email-compose.model.ts` (preview cards;
 `schedule-card.spec.ts` lost its rules test) and
 `knowledge-panel.model.ts` (the first React panel; moving it found a stale
 selection surviving a single delete, now fixed).
+`act-preview.model.ts` (the act preview card; `act-preview.spec.ts` lost
+its cancel test, and moving it found an event's end time read by the
+viewer's time zone, now fixed).
 
 ## The order
 

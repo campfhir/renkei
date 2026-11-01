@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-01',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Event previews show the right end time in every time zone',
+        detail:
+          'An action preview for a calendar event now shortens the end to just its time only when the event starts and ends on the same day as written. Before, depending on your own time zone, an overnight event could lose its end date, or a same-day event could repeat it.',
+      },
+    ],
+  },
+  {
     date: '2026-10-31',
     entries: [
       {

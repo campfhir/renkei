@@ -14,9 +14,12 @@
  * Cancel runs nothing. Either way the card collapses to a receipt, kept
  * across devices by the host (bridge.reportDecision) and in this browser
  * (rememberDone) so it can never offer a live button for a decided act.
+ *
+ * What the card decides — which words are a box, what the twin is sent,
+ * the receipt and the model's line — is act-preview.model.ts's, tested in
+ * act-preview.model.test.ts; this file draws it and makes the calls.
  */
 
-import type { ActCard, Editable } from './act-card';
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   icon,
@@ -26,6 +29,17 @@ import {
   toneClass,
   type RenderContext,
 } from './act-render';
+import {
+  cancelDecision,
+  confirmArgs,
+  confirmLabel,
+  confirmOutcome,
+  decisionKey,
+  editableFields,
+  readCard,
+  unpreparedCard,
+  wordsView,
+} from './act-preview.model';
 import {
   cardActions,
   doneStateOf,
@@ -40,16 +54,6 @@ import {
 } from './ui';
 import { asRecord } from '@renkei/guards';
 
-/** The card, if this is one; a result from an older server or an error is not. */
-function readCard(value: unknown): ActCard | null {
-  const record = asRecord(value);
-  if (record.kind !== 'act') return null;
-  const body = asRecord(record.body);
-  if (typeof body.kind !== 'string' || typeof record.confirmTool !== 'string') return null;
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return record as unknown as ActCard;
-}
-
 function render(bridge: WidgetBridge, result: ToolResult): void {
   const root = document.getElementById('root');
   if (!root) return;
@@ -59,9 +63,10 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
 
   const shell = el('div', 'card');
   if (result.isError || !card) {
+    const unprepared = unpreparedCard(result.structuredContent, resultText(result));
     shell.append(
-      el('div', 'card-title', str(preview.title) || 'Action'),
-      el('div', 'status error', resultText(result) || 'The preview could not be prepared.')
+      el('div', 'card-title', unprepared.title),
+      el('div', 'status error', unprepared.error)
     );
     root.append(shell);
     return;
@@ -70,7 +75,7 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // Keyed by the id minted for THIS card (issue-preview.ts explains why not
   // by content): a second preview of the same act must not recall the first
   // one's receipt.
-  const stateKey = card.previewId ? `renkei-preview:${card.previewId}` : '';
+  const stateKey = decisionKey(card);
   const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
   if (remembered) {
     renderDone(root, remembered);
@@ -84,19 +89,17 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     renderDone(root, state);
   };
 
-  const editable: Editable[] = Array.isArray(card.editable) ? card.editable : [];
+  const editable = editableFields(card);
   const readers = new Map<string, () => string>();
   const context: RenderContext = {
     words(key, text, label) {
-      if (text === undefined && !key) return null;
-      const value = text ?? '';
-      const spec = key ? editable.find((entry) => entry.key === key) : undefined;
-      if (!key || !spec) return value ? readOnlyWords(value) : null;
-      const input =
-        spec.multiline === false ? el('input', 'a-words-edit') : el('textarea', 'a-words-edit');
-      input.value = value;
-      input.setAttribute('aria-label', spec.label || label || key);
-      readers.set(key, () => input.value);
+      const view = wordsView(editable, key, text, label);
+      if (view.kind === 'none') return null;
+      if (view.kind === 'read') return readOnlyWords(view.text);
+      const input = view.singleLine ? el('input', 'a-words-edit') : el('textarea', 'a-words-edit');
+      input.value = view.value;
+      input.setAttribute('aria-label', view.label);
+      readers.set(view.key, () => input.value);
       return input;
     },
   };
@@ -118,52 +121,30 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   }
 
   const cancelButton = el('button', undefined, 'Cancel');
-  const confirmButton = el(
-    'button',
-    'primary',
-    str(card.confirmLabel) || str(card.verb) || 'Confirm'
-  );
+  const confirmButton = el('button', 'primary', confirmLabel(card));
   if (card.tone === 'danger') confirmButton.classList.add('is-danger');
   const footer = cardActions([cancelButton, confirmButton]);
   shell.append(footer.actions);
   root.append(shell);
 
-  const original = asRecord(card.confirmArgs);
-  const gatherArgs = (): Record<string, unknown> => {
-    const args: Record<string, unknown> = { ...original };
-    for (const [key, read] of readers) {
-      const value = read().trim();
-      // An emptied box means "leave it as the model proposed", never "send
-      // an empty required argument".
-      if (value) args[key] = value;
-      else if (original[key] === undefined) delete args[key];
-    }
-    return args;
-  };
-
   footer.run(confirmButton, async () => {
-    const confirmed = await bridge.callTool(card.confirmTool, gatherArgs(), stateKey);
+    const edits = new Map([...readers].map(([key, read]) => [key, read()]));
+    const confirmed = await bridge.callTool(card.confirmTool, confirmArgs(card, edits), stateKey);
     const reply = resultText(confirmed);
-    if (confirmed.isError) throw new Error(reply || 'The action failed');
-    const links = parseLinks(reply);
-    finishDone({
-      icon: 'sent',
-      headline: reply.split('\n')[0] || 'Done',
-      detail: str(card.title),
-      ...(links.length > 0 ? { links } : {}),
+    const outcome = confirmOutcome(card, {
+      isError: confirmed.isError,
+      text: reply,
+      links: parseLinks(reply),
     });
-    bridge.updateModelContext(
-      `The user confirmed "${str(card.title)}" on the preview card. Result: ${reply}`,
-      stateKey
-    );
+    if (!outcome.ok) throw new Error(outcome.error);
+    finishDone(outcome.done);
+    bridge.updateModelContext(outcome.modelContext, stateKey);
   });
 
   footer.run(cancelButton, async () => {
-    finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing changed.' });
-    bridge.updateModelContext(
-      `The user cancelled "${str(card.title)}" from the preview card. Nothing changed.`,
-      stateKey
-    );
+    const decision = cancelDecision(card);
+    finishDone(decision.done);
+    bridge.updateModelContext(decision.modelContext, stateKey);
   });
 }
 
