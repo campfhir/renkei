@@ -34,7 +34,7 @@ milliseconds in `pnpm test`, and gates every merge.
 - **When you change a screen**, change or add its model and model tests in
   the same change. A component with rules still inline (`useState` and
   handlers deciding things) gets its model when you next change those
-  rules; the order the rest move in is `docs/testing-tiers.md`.
+  rules; `docs/testing-tiers.md` lists what has moved.
 
 # UI changes: the browser suite shows what only a browser can
 
@@ -53,8 +53,9 @@ the page crawl, gate a merge as `e2e (memory store)`; the full suite runs
 beside them on every pull request and on main as an advisory signal.
 Tag a test `@smoke` only for a new critical path no smoke test walks.
 `llm-models.spec.ts` shows the harness end to end (empty state, a form, a
-vendor call answered with `page.route`, a saved-state screenshot, a
-phone-width pass); its form rules are next to move into a model.
+vendor call answered with `page.route`, a real save, a saved-state
+screenshot, a phone-width pass); its form's rules are
+`admin/llm-models/model-forms.model.test.ts`'s.
 
 - **The suite** (`apps/web/playwright.config.ts`) runs the web app on the
   in-memory data store (`RENKEI_DATA_STORE=memory`, no Postgres) with its
@@ -68,9 +69,9 @@ phone-width pass); its form rules are next to move into a model.
   four workers. It runs in CI as a production build, as
   `env -u DATABASE_URL CI=1 npx playwright test` does locally: CI builds
   once (`pnpm e2e:build`, with the server's environment from
-  `e2e/server-env.ts`) and runs three `--shard=i/3` jobs on that build
-  (`E2E_PREBUILT=1` starts `.next` as it is); `e2e (memory store)`
-  passes when every shard does. The suite runs Playwright's full
+  `e2e/server-env.ts`) and runs the `@smoke` tier on that build
+  (`E2E_PREBUILT=1` starts `.next` as it is), which `e2e (memory store)`
+  requires, beside the full suite in three advisory `--shard=i/3` jobs. The suite runs Playwright's full
   Chromium build headless (`channel: 'chromium'`), never its headless
   shell, which routes a redirected navigation past `page.route` and
   denies notifications. On a box whose Chromium doesn't match
