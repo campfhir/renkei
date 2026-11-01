@@ -1,16 +1,26 @@
 /**
- * The organization's name (admin → Settings → Organization): what the
- * consent page and the sign-in flow call the deployment. An operator renames
- * it, saves, and the name is what the org-settings route answers and what
- * the consent page an MCP client's user sees would print; the spec puts the
- * default back, since the one organization's settings are shared with every
- * other spec on the server.
+ * Admin → Settings in a browser: the page renders on the real server, one
+ * Save goes through end to end (an operator renames the organization, the
+ * PUT reaches the org-settings route, "Saved." is drawn and the route
+ * answers the trimmed name), the sections' screenshots in both themes, and
+ * the page at a phone's width without sideways scrolling.
  *
- * Organization settings are one row per key for the whole server, and two
- * projects renaming it at once would each read the other's name back, so
- * the flow runs once, in desktop-light, and the dark theme is a screenshot
- * of the same page under `emulateMedia` rather than a second concurrent
- * writer. Pinned Chromium; mobile is a viewport resize.
+ * Where the rest went: the form's rules (Save off until something changed,
+ * only the changed fields sent, the server's clamped answer adopted, a
+ * refusal kept on screen, the GB/MB fields, a half-typed size) are
+ * settings-form.model.test.ts; what the route stores, refuses with a 400
+ * and clamps — a blank name, the AD Manager product name, the PHI
+ * covered-model switch, the sandbox switches and container ceilings, the
+ * approval policy, the checkout limit — is
+ * app/api/admin/org-settings/route.test.ts. That took the whole of
+ * phi-covered-model.spec.ts, sandbox-settings.spec.ts and
+ * agent-approval-policy.spec.ts; their sections are still photographed
+ * here.
+ *
+ * Organization settings are one row per key for the whole server, so the
+ * flow runs once, in desktop-light, the dark theme a screenshot under
+ * `emulateMedia`, and the default name is put back afterwards. Pinned
+ * Chromium; mobile is a viewport resize.
  */
 
 import path from 'node:path';
@@ -47,54 +57,53 @@ test('an operator names the organization', async ({ page, person: _person }, tes
   const name = `Acme Health (${testInfo.project.name})`;
 
   await page.goto('/admin/settings');
-  const field = page.getByRole('textbox', { name: 'Organization name' });
+  const main = page.getByRole('main');
+  const field = main.getByRole('textbox', { name: 'Organization name' });
   await expect(field).toBeVisible();
   await field.scrollIntoViewIfNeeded();
   await shot(page, testInfo, '01-default');
 
+  // The sections whose specs became route tests, as they look.
+  for (const [control, label] of [
+    [main.getByRole('switch', { name: 'Require a BAA-covered model for PHI connectors' }), 'phi'],
+    [main.getByLabel('agentActStepsRequireApproval'), 'approval-policy'],
+    [main.getByRole('switch', { name: 'Charts' }), 'sandbox'],
+  ] as const) {
+    await expect(control).toBeVisible();
+    await control.scrollIntoViewIfNeeded();
+    await shot(page, testInfo, `01-section-${label}`);
+  }
+
   try {
-    // ── Rename, save; the API answers the trimmed name ──
+    // ── Rename, save: the press reaches the route, which answers the trimmed name ──
     await field.fill(`  ${name}  `);
-    await page.getByRole('button', { name: 'Save settings' }).click();
-    await expect(page.getByText('Saved.')).toBeVisible();
+    await main.getByRole('button', { name: 'Save settings' }).click();
+    await expect(main.getByText('Saved.')).toBeVisible();
     expect((await settings(page)).organizationName).toBe(name);
+    // The form adopts the server's answer.
+    await expect(field).toHaveValue(name);
     await shot(page, testInfo, '02-saved');
     await page.emulateMedia({ colorScheme: 'dark' });
     await shot(page, testInfo, '02-saved-dark');
     await page.emulateMedia({ colorScheme: 'light' });
 
-    // ── The API takes a name, not a blank ──
-    const refused = await page.request.put('/api/admin/org-settings', {
-      data: { organizationName: '   ' },
-    });
-    expect(refused.status()).toBe(400);
-    expect((await settings(page)).organizationName).toBe(name);
-
-    // ── The AD Manager product name, the other name the organization owns ──
-    const product = page.getByRole('textbox', { name: 'AD Manager product name' });
-    await expect(product).toHaveValue('Renkei');
-    await product.fill('Renkei E2E');
-    await page.getByRole('button', { name: 'Save settings' }).click();
-    await expect(page.getByText('Saved.')).toBeVisible();
-    expect((await settings(page)).admanagerProductName).toBe('Renkei E2E');
-
-    // ── Phone width: the field still sits in its section. (The page reads
-    //    settings through its own one-minute cache, so what it shows after a
-    //    save is not asserted — the API was.) ──
+    // ── Phone width: the page fits, the field still sits in its section ──
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/admin/settings');
-    const narrow = page.getByRole('textbox', { name: 'Organization name' });
+    const narrow = page.getByRole('main').getByRole('textbox', { name: 'Organization name' });
     await expect(narrow).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
     await narrow.scrollIntoViewIfNeeded();
     await shot(page, testInfo, '03-mobile');
   } finally {
     // The default back for everyone else on the server.
     const restored = await page.request.put('/api/admin/org-settings', {
-      data: { organizationName: DEFAULT_NAME, admanagerProductName: DEFAULT_NAME },
+      data: { organizationName: DEFAULT_NAME },
     });
     expect(restored.ok()).toBe(true);
   }
-  const after = await settings(page);
-  expect(after.organizationName).toBe(DEFAULT_NAME);
-  expect(after.admanagerProductName).toBe(DEFAULT_NAME);
+  expect((await settings(page)).organizationName).toBe(DEFAULT_NAME);
 });

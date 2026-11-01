@@ -8,12 +8,23 @@
  *
  * The organization's chat retention is the ceiling. Past it the chat would be
  * deleted rather than archived, so the field refuses anything longer, and the
- * server checks the same thing again on save.
+ * server checks the same thing again on save. What the form decides is
+ * chat-archive-form.model.ts.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import type { ChatArchivePrefs } from '@renkei/user-prefs/prefs';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  archiveRequest,
+  canSave,
+  chatArchiveReducer,
+  initChatArchive,
+  parseArchiveDays,
+  refusalWords,
+  retentionNote,
+  saveLabel,
+} from './chat-archive-form.model';
 
 export default function ChatArchiveForm({
   initial,
@@ -26,62 +37,31 @@ export default function ChatArchiveForm({
   /** The longest window the field accepts. */
   maxDays: number;
 }) {
-  const [input, setInput] = useState<string>(
-    initial.afterDays === null ? '' : String(initial.afterDays)
-  );
-  const [saved, setSaved] = useState<string>(input);
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
-  const [problem, setProblem] = useState<string | null>(null);
-
-  /** The days to save, or a message saying why the entry cannot be saved. */
-  function parse(): { days: number | null } | { error: string } {
-    const trimmed = input.trim();
-    if (trimmed === '') return { days: null };
-    const days = Number(trimmed);
-    if (!Number.isInteger(days) || days < 1) {
-      return { error: 'Enter a whole number of days, or leave it empty to never archive.' };
-    }
-    if (days > maxDays) {
-      return { error: `Enter ${maxDays} days or fewer.` };
-    }
-    return { days };
-  }
+  const [state, dispatch] = useReducer(chatArchiveReducer, initial.afterDays, initChatArchive);
 
   async function save() {
-    const parsed = parse();
+    const parsed = parseArchiveDays(state.input, maxDays);
     if ('error' in parsed) {
-      setProblem(parsed.error);
-      setStatus('failed');
+      dispatch({ type: 'failed', problem: parsed.error });
       return;
     }
-    setProblem(null);
-    setStatus('saving');
+    dispatch({ type: 'sent' });
     try {
       const response = await fetch(`/api/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chatArchive: { afterDays: parsed.days } }),
+        body: JSON.stringify(archiveRequest(parsed.days)),
       });
       if (response.ok) {
-        setSaved(input.trim());
-        setStatus('saved');
+        dispatch({ type: 'stored' });
       } else {
-        const body: unknown = await response.json().catch(() => null);
-        const message =
-          typeof body === 'object' && body !== null ? Reflect.get(body, 'error') : undefined;
-        reportFetchFailure(
-          'PUT',
-          '/api/preferences',
-          response.status,
-          typeof message === 'string' ? message : 'Could not save.'
-        );
-        setProblem(typeof message === 'string' ? message : 'Could not save.');
-        setStatus('failed');
+        const problem = refusalWords(await response.json().catch(() => null));
+        reportFetchFailure('PUT', '/api/preferences', response.status, problem);
+        dispatch({ type: 'failed', problem });
       }
     } catch (error) {
       reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
-      setProblem('Could not save.');
-      setStatus('failed');
+      dispatch({ type: 'failed', problem: 'Could not save.' });
     }
   }
 
@@ -108,33 +88,27 @@ export default function ChatArchiveForm({
         max={maxDays}
         step={1}
         placeholder="Never"
-        value={input}
-        onChange={(event) => {
-          setInput(event.target.value);
-          setProblem(null);
-          setStatus('idle');
-        }}
+        value={state.input}
+        onChange={(event) => dispatch({ type: 'typed', input: event.target.value })}
         className="mt-1 w-full max-w-[10rem] rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
       />
       <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        {retentionDays > 0
-          ? `Your organization keeps chats for ${retentionDays} days, so this can be at most ${retentionDays}. Chats are deleted after that, whatever this is set to.`
-          : 'Leave it empty to keep every chat in the list until you archive it yourself.'}
+        {retentionNote(retentionDays)}
       </p>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={() => void save()}
-          disabled={status === 'saving' || input.trim() === saved}
+          disabled={!canSave(state)}
           className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {status === 'saving' ? 'Saving…' : 'Save'}
+          {saveLabel(state)}
         </button>
-        {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
-        {status === 'failed' ? (
+        {state.status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
+        {state.status === 'failed' ? (
           <span className="text-sm text-red-600 dark:text-red-400">
-            {problem ?? 'Could not save.'}
+            {state.problem ?? 'Could not save.'}
           </span>
         ) : null}
       </div>

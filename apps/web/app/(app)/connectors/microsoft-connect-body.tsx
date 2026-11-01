@@ -9,19 +9,28 @@
  * Split out of microsoft-connector.tsx so that file can be a server
  * component for its header and description — the parts that only ever
  * depend on server-known `connected`/`displayName`, not on anything a click
- * changes.
+ * changes. What the card decides is microsoft-connect-body.model.ts.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useReducer, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { MICROSOFT_SCOPE_OPTIONS } from '@/lib/microsoft-scopes';
-import { MICROSOFT_PRODUCTS, groupsOfProduct, optionsOfProduct } from '@/lib/microsoft-products';
-import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import { recordOrNull } from '@renkei/guards';
+import { groupsOfProduct, optionsOfProduct } from '@/lib/microsoft-products';
 import WatchManager from './watch-manager';
 import OutlookIndexingPrefs from './outlook-indexing-prefs';
 import MicrosoftProductCard from './microsoft-product-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  authorizeUrl,
+  disconnectRefusal,
+  initMicrosoftCard,
+  microsoftCardReducer,
+  offersSharePointWatches,
+  reauthorize,
+  selectionSummary,
+  shownProducts,
+} from './microsoft-connect-body.model';
 
 export default function MicrosoftConnectBody({
   connected,
@@ -41,80 +50,33 @@ export default function MicrosoftConnectBody({
    */
   shownKeys: string[];
 }) {
-  const shown = new Set(shownKeys);
-  const products = MICROSOFT_PRODUCTS.filter((product) => shown.has(product.capabilityKey));
+  const products = shownProducts(shownKeys);
   const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  // Only catalog options count as choices; required scopes (openid, profile,
-  // email, offline_access, User.Read) ride along server-side and are not
-  // offered here.
-  const ceilingSet = new Set(ceiling);
-  const pickable = MICROSOFT_SCOPE_OPTIONS.filter((option) => optionWithin(option, ceilingSet));
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
-    const prior = priorScopes === null ? null : new Set(priorScopes);
-    const seed = prior
-      ? pickable.filter((option) => optionWithin(option, prior)).map((option) => option.id)
-      : [];
-    return new Set(seed.length > 0 ? seed : pickable.map((option) => option.id));
-  });
+  const context = { connected, ceiling, priorScopes };
+  const [state, dispatch] = useReducer(microsoftCardReducer, context, initMicrosoftCard);
+  const href = authorizeUrl(state);
+  const control = reauthorize(state, context);
 
   function toggleOption(optionId: string, on: boolean) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (on) next.add(optionId);
-      else next.delete(optionId);
-      return next;
-    });
+    dispatch({ type: 'toggled', optionId, on });
   }
 
-  // The union, always — see the note on lifting selection state above.
-  const authorizeUrl = `/api/microsoft/authorize?scopes=${encodeURIComponent(
-    scopesOfOptions(MICROSOFT_SCOPE_OPTIONS, selectedIds).join(' ')
-  )}`;
-
-  /**
-   * Whether any panel's selection has diverged from what Microsoft actually
-   * holds. Computed across ALL products, because the button is one button:
-   * a change made in SharePoint has to light up a control four panels below
-   * it, or the checkbox looks like a setting that saved itself.
-   *
-   * A null priorScopes is a grant from before scopes were recorded — there is
-   * nothing to diff against, so nothing is claimed to have changed.
-   */
-  const held = new Set(priorScopes ?? []);
-  const grantedOptions = pickable.filter((option) => optionWithin(option, held));
-  const selectedOptions = pickable.filter((option) => selectedIds.has(option.id));
-  const pending =
-    connected &&
-    priorScopes !== null &&
-    (selectedOptions.length !== grantedOptions.length ||
-      selectedOptions.some((option) => !grantedOptions.includes(option)));
-
   async function disconnect() {
-    setBusy(true);
-    setNotice(null);
+    dispatch({ type: 'disconnectSent' });
     try {
       const response = await fetch(`/api/microsoft/grant`, { method: 'DELETE' });
-      const data = await response.json().catch(() => ({}));
+      const data: unknown = await response.json().catch(() => ({}));
       if (!response.ok) {
-        reportFetchFailure(
-          'DELETE',
-          '/api/microsoft/grant',
-          response.status,
-          data.error ?? 'Could not disconnect'
-        );
-        setNotice(data.error ?? 'Could not disconnect');
+        const notice = disconnectRefusal(recordOrNull(data)?.error);
+        reportFetchFailure('DELETE', '/api/microsoft/grant', response.status, notice);
+        dispatch({ type: 'disconnectFailed', notice });
         return;
       }
-      setConfirming(false);
+      dispatch({ type: 'disconnected' });
       router.refresh();
     } catch (error) {
       reportFetchFailure('DELETE', '/api/microsoft/grant', 0, 'Could not reach the server', error);
-      setNotice('Could not reach the server');
-    } finally {
-      setBusy(false);
+      dispatch({ type: 'disconnectFailed', notice: 'Could not reach the server' });
     }
   }
 
@@ -131,10 +93,7 @@ export default function MicrosoftConnectBody({
     // end in a 403. Absent priorScopes means a grant from before scopes were
     // recorded — show it, and let the picker's own error do the explaining,
     // rather than hiding the feature from everyone on an old grant.
-    sharepoint:
-      connected && (priorScopes === null || priorScopes.includes('Sites.Read.All')) ? (
-        <WatchManager provider="sharepoint" />
-      ) : null,
+    sharepoint: offersSharePointWatches(context) ? <WatchManager provider="sharepoint" /> : null,
 
     // Said plainly because the absence is otherwise indistinguishable from a
     // bug: the tools reach these files fine, so a user reasonably expects
@@ -181,7 +140,7 @@ export default function MicrosoftConnectBody({
             ceiling={ceiling}
             connected={connected}
             authorized={priorScopes}
-            checked={selectedIds}
+            checked={state.selected}
             onToggle={toggleOption}
           >
             {extras[product.id]}
@@ -196,26 +155,26 @@ export default function MicrosoftConnectBody({
         them.
       */}
       <div className="mt-4 border-t border-gray-200 pt-3 dark:border-gray-800">
-        {notice && (
-          <p className="mb-3 rounded-md bg-gray-100 p-2 text-sm dark:bg-gray-900">{notice}</p>
+        {state.notice && (
+          <p className="mb-3 rounded-md bg-gray-100 p-2 text-sm dark:bg-gray-900">{state.notice}</p>
         )}
 
         {!connected && (
           <>
             <a
               {...connectAnchor}
-              href={authorizeUrl}
+              href={href}
               className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
               Connect Microsoft 365
             </a>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {selectedIds.size} of {pickable.length} capabilities selected across all products.
+              {selectionSummary(state, context)}
             </p>
           </>
         )}
 
-        {connected && confirming && (
+        {connected && state.confirming && (
           <div className="rounded-lg border border-red-300 p-3 dark:border-red-800">
             <p className="mb-3 text-sm">
               Disconnect your Microsoft 365 account? Every product above stops working — Outlook,
@@ -224,14 +183,14 @@ export default function MicrosoftConnectBody({
             <div className="flex gap-3">
               <button
                 onClick={() => void disconnect()}
-                disabled={busy}
+                disabled={state.busy}
                 className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
               >
-                {busy ? 'Disconnecting…' : 'Yes, disconnect'}
+                {state.busy ? 'Disconnecting…' : 'Yes, disconnect'}
               </button>
               <button
-                onClick={() => setConfirming(false)}
-                disabled={busy}
+                onClick={() => dispatch({ type: 'disconnectKept' })}
+                disabled={state.busy}
                 className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700"
               >
                 Keep it
@@ -240,32 +199,28 @@ export default function MicrosoftConnectBody({
           </div>
         )}
 
-        {connected && !confirming && (
+        {connected && !state.confirming && (
           <>
             <div className="flex flex-wrap items-center gap-3">
               <a
                 {...connectAnchor}
-                href={authorizeUrl}
+                href={href}
                 className={`inline-block rounded-lg px-4 py-2 text-sm font-medium ${
-                  pending
+                  control.emphasized
                     ? 'bg-blue-600 text-white hover:bg-blue-700'
                     : 'border border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900'
                 }`}
               >
-                {pending ? 'Approve changes' : 'Re-authorize'}
+                {control.label}
               </a>
               <button
-                onClick={() => setConfirming(true)}
+                onClick={() => dispatch({ type: 'disconnectAsked' })}
                 className="rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
               >
                 Disconnect
               </button>
             </div>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              {pending
-                ? 'You changed what a product may do. Microsoft still has the previous permissions until you approve.'
-                : 'Re-authorizing sends your current selections as one consent. Nothing already indexed is removed.'}
-            </p>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{control.hint}</p>
           </>
         )}
       </div>
