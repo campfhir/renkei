@@ -8,9 +8,9 @@ setting another reads fails a merge that changed nothing near it. And the
 rules it checks — what Save sends, what a refused delete leaves selected —
 are slow and indirect to reach through a page.
 
-So behaviour moves into reducers tested in node, and the browser suite
-shrinks to what only a browser can show. AGENTS.md ("UI models", "UI
-changes") holds the rules; this is the plan and its progress.
+So behaviour moved into reducers tested in node, and the browser suite
+shrank to what only a browser can show. AGENTS.md ("UI models", "UI
+changes") holds the rules; this is how it was done and what moved.
 
 ## The tiers
 
@@ -19,12 +19,12 @@ changes") holds the rules; this is the plan and its progress.
 | Model tests           | What a screen does with each input and answer                          | `*.model.test.ts` beside the component                | yes (`checks`)                        |
 | Route and store tests | What the server answers, stores and refuses                            | `app/api/**/route.test.ts`, `lib/**`, store scenarios | yes (`checks`, `data store`)          |
 | Browser smoke         | The app renders, routes and keeps one path per area working end to end | `e2e/*.spec.ts`, tests tagged `@smoke`                | yes (`e2e (memory store)`)            |
-| Full browser suite    | Everything else in `e2e/`, while it still exists                       | `e2e/*.spec.ts`                                       | no: advisory, on every PR and on main |
+| Full browser suite    | Everything else in `e2e/`: layout, screenshots, more paths end to end  | `e2e/*.spec.ts`                                       | no: advisory, on every PR and on main |
 
-The cost difference is the point: `pnpm test` runs 4,400 tests in 40
-seconds (about 9 ms each); the browser suite spends about 2 seconds of a
-busy worker per test, roughly 200 times as much, and is the only tier that
-flakes.
+The cost difference is the point: the web app's `pnpm test` runs 6,400
+tests in about 36 seconds (under 6 ms each); the browser suite spends about
+2 seconds of a busy worker per test, hundreds of times as much, and is the
+only tier that flakes.
 
 ## How a screen moves
 
@@ -44,104 +44,58 @@ flakes.
    entirely once the model and route tests cover them; the crawl
    (`e2e/crawl/`) still opens its page.
 
-Done so far: `chips.model.ts` and `email-compose.model.ts` (preview cards;
-`schedule-card.spec.ts` lost its rules test) and
-`knowledge-panel.model.ts` (the first React panel; moving it found a stale
-selection surviving a single delete, now fixed).
-`act-preview.model.ts` (the act preview card; `act-preview.spec.ts` lost
-its cancel test, and moving it found an event's end time read by the
-viewer's time zone, now fixed).
-`issue-preview.model.ts` (the Jira/JSM card) and `widget-card.model.ts`
-(the chat's host for every card) took the rules out of
-`widget-card.spec.ts`, `widget-card-resolve.spec.ts` and
-`jsm-create-request-card.spec.ts`; the stale-card refusal and the
-two-cards-one-turn rule are route tests beside `widget/tool-call` and
-`widget/model-context`.
-`directory-action-preview.model.ts` and the discard rules in
-`email-compose.model.ts` shrank `directory-action-preview.spec.ts` and
-`email-card-discard.spec.ts`. `mockup-viewer.model.ts` and
-`mockup-card.model.ts` took zoom, widths and pan out of `mockups.spec.ts`
-(the mockup route's headers are a route test now), and found Fit to width
-returning to a stale scroll spot, now fixed. With those, wave 1 is done.
+## What moved
 
-## The order
+Four waves, each a set of screens migrated in parallel and gated by the
+full unit suite and the full browser suite before the next began, plus a
+track of specs that were really server tests.
 
-From a read of every spec (what share of its assertions are rules, server
-answers, or browser-only) and how often it has flaked in CI. Each wave is
-a set of independent pull requests, one screen each.
+| Wave                  | Screens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Specs shrunk or removed                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1: preview cards      | `act-preview`, `issue-preview` (Jira and JSM), `email-compose`, `directory-action-preview`, `chips`; the chat's card host `widget-card`; `mockup-viewer`, `mockup-card`                                                                                                                                                                                                                                                                                                                                                   | `act-preview`, `jsm-create-request-card`, `email-card-discard`, `schedule-card`, `directory-action-preview`, `widget-card`, `widget-card-resolve`, `mockups`                                                                                                                                                                                                                                                               |
+| 2: the chat           | `composer`, `composer-tools-menu`, `draft-sync`, `chat-thread` (its send path), `message-list`, `chat-title`, `tool-permissions-form`, `voice-mode`, `voice-picker`, `voice-menu`, both voice forms, `global-shortcuts`, `omni-search`                                                                                                                                                                                                                                                                                    | `mass-upload`, `chat-compaction`, `composer-tools-menu`, `chat-draft`, `chat-temporary`, `chat-copy`, `host-tool-cards`, `chat-subagent`, `code-subagent`, `chat-title`, `chat-permission`, `voice`, `voice-barge-in`, `voice-pickers`, `global-shortcuts`, `omni-deep-search`                                                                                                                                             |
+| 3: admin forms        | `model-forms` (the model roster), `salesforce-form`, the Salesforce change actions, `app-registration-form` (Atlassian and Entra), `audience-control`, the AD Manager and file share forms, `image-rule-forms`, `settings-form`, size requests, `chat-archive-form`, Outlook indexing, the Microsoft connect body and product card                                                                                                                                                                                        | `llm-models` (8 tests to 2), `salesforce`, `salesforce-admin`, `jira-admin`, `entra-developer`, `connector-audience-hint`, `admanager`, `file-shares`, `code-services`, `organization-name`, `sandbox-size-requests`, `chat-archive`, `outlook-indexing`, `microsoft-teams-onenote`; removed `phi-covered-model`, `sandbox-settings`, `agent-approval-policy`                                                              |
+| 4: lists and builders | the artifacts library (six models), `notifications-list`, `preferences-form`, `cards`, `approval-actions`, `agent-builder`, `tool-picker`, `question-actions`, `run-timeline`, the coach marks provider and overlay, `image-card`, `image-model-form`, `context-meter`, `svg-save-buttons`, the code screens (`repo-tree`, `add-files-modal`, `upload-queue`, `branch-switcher`, `commit-dialog`, `new-code-project`, `pipelines-page`, `pr-subscribe`, `services-page`, `commits-page`, `pulls-page`, project templates) | `artifacts` (12 tests to 8), `code-project-artifacts`, `notifications`, `chat-notifications`, `actionable-cards`, `agent-instructions`, `coach-marks`, `coach-marks-off`, `image-generation`, `svg-save`, `chat-context-meter`, `code-file-management`, `code-uploads`, `branch-switcher`, `project-templates`, `code`, `code-pipelines`, `pr-subscriptions`, `project-pulls-commits`, `issue-cards`, `code-services-page` |
+| Server answers        | the Jira Administration change actions (a model); route, action and lib tests for the rest                                                                                                                                                                                                                                                                                                                                                                                                                                | `jira-admin-changes`, `-fields`, `-spaces`, `-work-types`, `-automation`, `admin-change-queue`, `my-usage`, `activity-logs`, `code-concurrent-chats`, `access-revoke-sessions`, `oauth-consent`, `about-changelog-dates`; removed `security-headers`                                                                                                                                                                       |
 
-**Wave 1: preview cards in iframes** (the flakiest group: presses in
-frames, `pointerReaches`, retry loops)
+In numbers, from the start to the end of wave 4:
 
-- `lib/mcp-widgets/src/act-render.ts` / `act-card.ts`: editable rewrite,
-  confirm and cancel, confirm arguments, JSM pick lists → shrinks
-  `act-preview`, `jsm-create-request-card`, `directory-action-preview`.
-- `email-compose.ts`, the rest: discard and still-editable state →
-  `email-card-discard`.
-- `issue-preview.ts` with `widget-card.tsx`: decided, cancelled, stale,
-  receipt → `widget-card`, `widget-card-resolve` (keep the one confirm
-  path tagged `@smoke`).
-- `mockup-viewer.tsx`: zoom, width and pan state (`clampZoom` and
-  `stepped` are already pure) → `mockups`; its CSP checks become a route
-  test.
+- 77 models with about 1,460 model tests, and new route tests beside the
+  routes the specs had been reaching through pages; the web app's unit
+  suite went from 4,400 to 6,400 tests and still runs in under 40 seconds.
+- The browser suite went from 343 tests to 289, and its specs lost about
+  3,350 lines. Gone with them: every `waitForTimeout`, the retry loops in
+  `global-shortcuts`, `agent-instructions`, `admanager` and
+  `coach-marks-off`, most `pointerReaches`, and three specs that flipped
+  an organization-wide switch other specs read.
+- Moving the rules found nine bugs nobody had reported, each fixed with a
+  test and a changelog entry: an event's end time read in the viewer's
+  time zone; Fit to width returning to a stale scroll spot; files chosen
+  during the mass-upload question uploading at once; a deleted knowledge
+  note staying selected; the commit dialog re-ticking unticked files; a
+  branch switch failing silently; a refused pull request subscription
+  looking saved; a refused notification delete looking done; a partly
+  failed artifact delete retrying files already gone.
 
-**Wave 2: the chat** (most used, most specs)
+What a spec gave up is in its header: each says which model or route test
+now owns its rules, and the wave commits list the browser coverage that
+went (a mockup pan drag, a discarded card's receipt across a redraw, the
+Jira and Outlook argument cards on the real server, and the like).
 
-- `composer.tsx` (19 `useState`): the queue, Stop vs Queue, attachment
-  staging and the mass-upload threshold, the time zone sent, dictation →
-  `chat-compaction`, `mass-upload`, `chat-time-zone`, parts of
-  `artifacts` and `voice`.
-- `message-list.tsx` / `lib/chat/chat-view.ts`: copy formats, folds and
-  milestones, sub-agent and permission cards → `chat-copy`,
-  `host-tool-cards`, `chat-subagent`, `code-subagent`, `chat-title`,
-  `chat-permission`.
-- `voice-mode.tsx`, `voice-picker.tsx`, `voice-menu.tsx`: the voice
-  session's phases and barge-in queue → `voice`, `voice-barge-in`,
-  `voice-pickers` (keep one round trip).
-- `global-shortcuts.tsx`: switcher order and walk, key caps per OS →
-  `global-shortcuts` (keep keyboard routing).
+## Where it stands
 
-**Wave 3: admin forms** (rich rules, rarely flaky, slow)
-
-- `admin/llm-models/model-forms.tsx`: the surface and provider field
-  matrix, token counts, default rules → `llm-models`.
-- `admin/connectors/forms/salesforce-form.tsx`, `atlassian-forms.tsx`,
-  `entra-developer-form.tsx`, `voice-form.tsx`, the AD Manager and file
-  share forms → `salesforce`, `salesforce-admin`, `bitbucket-webhook-hint`,
-  `entra-developer`, `admanager`, `file-shares`, `code-services`.
-- `admin/settings/settings-form.tsx` → `organization-name`,
-  `phi-covered-model`, `sandbox-settings`, `agent-approval-policy`,
-  `sandbox-size-requests` (mostly route tests).
-
-**Wave 4: lists, libraries and builders**
-
-- The artifacts library (`artifacts-index`, `artifact-dialogs`,
-  `artifact-bulk-dialogs`, `artifacts-card`) → `artifacts` (the largest
-  spec, 1,100 lines), `code-project-artifacts`.
-- `notifications-list.tsx` → `notifications`, `chat-notifications`.
-- `agents/builder/agent-builder.tsx` (28 `useState`) and
-  `question-actions.tsx` → `agent-instructions`.
-- The coach marks provider and overlay (route them through the already
-  tested `lib/coach-marks/select.ts`) → `coach-marks`, `coach-marks-off`.
-- Code: `repo-tree`, `add-files-modal`, `upload-queue`, `pipelines-page`,
-  `branch-switcher`, `new-code-project` → `code-file-management`,
-  `code-uploads`, `code-pipelines`, `branch-switcher`, `code`.
-
-**Alongside: server answers checked through a page.** These specs are
-mostly what a route returns or stores, and move to route tests on the
-memory store with no component change: the `jira-admin-*` family,
-`my-usage`, `security-headers`, `activity-logs`, `code-concurrent-chats`,
-`oauth-consent`'s PKCE refusals, `access-revoke-sessions`, `chat-archive`.
-
-## Where it ends
-
-About fifteen browser tests tagged `@smoke` and the page crawl gate a
-merge (that is where it starts, too: `pnpm --filter renkei e2e:smoke`), plus
-a handful of layout and visual sweeps (`preferences-widths`,
-`nav-chat-scroll`, `screenshots`) that never gate. When waves 1 and 2 are
-done, the full suite moves off pull requests to main and a nightly run.
+Fifteen browser tests tagged `@smoke` and the page crawl gate a merge
+(`pnpm --filter renkei e2e:smoke`, about a minute and a half); the full
+suite runs beside them as advisory signal. A screen not listed above
+still has its rules inline: it gets its model the next time those rules
+change (AGENTS.md, "When you change a screen").
 
 ## Decisions to revisit
+
+- **The full suite on pull requests.** It was kept on every pull request
+  as advisory signal while the waves ran. With them done, it can move to
+  main and a nightly run, which saves three shards' minutes on every pull
+  request; the smoke tier and the unit suite stay the gate either way.
 
 - **Branch protection** must require `checks` and `e2e (memory store)`
   (now the smoke tier) and not the `e2e shard i/3` jobs, or the full
