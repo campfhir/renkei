@@ -223,10 +223,13 @@ describe('a mass upload', () => {
     expect(confirmed.keepChoice).toBe(true);
   });
 
-  it('files chosen while the warning is up join the held batch when they too cross the line', () => {
+  it('files chosen while the warning is up join the held batch, however few', () => {
     const held = choose(initialComposer(undefined), files(14));
-    const more = choose(held, files(11, 'more'));
-    expect(more.pendingBatch).toHaveLength(25);
+    expect(choose(held, files(11, 'more')).pendingBatch).toHaveLength(25);
+    // A couple more do not slip past the warning and upload on their own.
+    const two = choose(held, files(2, 'late'));
+    expect(two.pendingBatch).toHaveLength(16);
+    expect(two.uploading).toBe(0);
   });
 
   it('scanned files are read with OCR after they upload, at most twelve per request', () => {

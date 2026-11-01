@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Files added while the large-upload question is open wait for your answer',
+        detail:
+          'If you chose a few more files while Renkei was asking whether to go ahead with a large upload, they used to start uploading straight away. They now join the files waiting on your answer.',
+      },
+      {
+        kind: 'fixed',
         title: 'Event previews show the right end time in every time zone',
         detail:
           'An action preview for a calendar event now shortens the end to just its time only when the event starts and ends on the same day as written. Before, depending on your own time zone, an overnight event could lose its end date, or a same-day event could repeat it.',

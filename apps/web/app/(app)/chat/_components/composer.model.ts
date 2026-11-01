@@ -351,7 +351,9 @@ export function proceedWith<F extends NamedFile>(
   keep: boolean,
   threshold: number
 ): ComposerAction<F> {
-  if (state.attachments.length + state.uploading + files.length > threshold) {
+  // While a mass upload waits on the warning, more files join it: the
+  // warning is about everything chosen, not only what came first.
+  if (state.pendingBatch || state.attachments.length + state.uploading + files.length > threshold) {
     return { type: 'batchHeld', files, keep };
   }
   return { type: 'uploadStarted', files, keep };
