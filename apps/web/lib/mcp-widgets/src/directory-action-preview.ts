@@ -25,74 +25,37 @@
  * Every field here is read-only on the card — the technician chose these
  * values (or reviewed a generated password) before the preview ever
  * rendered; there is nothing to edit in place, only to confirm or cancel.
+ *
+ * What the card shows, what Confirm sends and what each decision leaves
+ * behind are decided in directory-action-preview.model.ts (tested beside
+ * it); this file draws that and makes the calls.
  */
 
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   avatar,
   cardActions,
-  doneStateOf,
   el,
   injectStyle,
-  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
-  str,
-  strings,
   type DoneState,
 } from './ui';
-import { asRecord } from '@renkei/guards';
-
-interface FieldRow {
-  label: string;
-  value: string;
-  oldValue?: string;
-}
-
-interface GroupList {
-  label: string;
-  groups: string[];
-  tone?: 'add' | 'remove' | 'muted';
-}
-
-const TONE_CLASS: Record<string, string> = {
-  positive: 'done',
-  caution: 'warn',
-  neutral: 'progress',
-};
-
-const GROUP_TONE_CLASS: Record<string, string> = {
-  add: 'done',
-  remove: 'urgent',
-  muted: 'neutral',
-};
-
-function fieldRows(value: unknown): FieldRow[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((row) => {
-    const record = asRecord(row);
-    return {
-      label: str(record.label),
-      value: str(record.value),
-      ...(str(record.oldValue) ? { oldValue: str(record.oldValue) } : {}),
-    };
-  });
-}
-
-function groupLists(value: unknown): GroupList[] {
-  if (!Array.isArray(value)) return [];
-  return value.map((entry) => {
-    const record = asRecord(entry);
-    return {
-      label: str(record.label),
-      groups: strings(record.groups),
-      ...(record.tone === 'add' || record.tone === 'remove' || record.tone === 'muted'
-        ? { tone: record.tone }
-        : {}),
-    };
-  });
-}
+import {
+  COPY_FEEDBACK_MS,
+  REVIEW_NOTE,
+  cancelOutcome,
+  confirmCall,
+  confirmOutcome,
+  copyLabel,
+  copyReducer,
+  openingReceipt,
+  readPreview,
+  type CopyAction,
+  type CopyState,
+  type GroupList,
+} from './directory-action-preview.model';
 
 function personRow(name: string, detail: string, sub?: HTMLElement): HTMLElement {
   const row = el('div', 'person');
@@ -104,36 +67,31 @@ function personRow(name: string, detail: string, sub?: HTMLElement): HTMLElement
   return row;
 }
 
-function chipRow(groups: string[], tone: 'add' | 'remove' | 'muted' = 'muted'): HTMLElement {
+function chipRow(list: GroupList): HTMLElement {
   const row = el('div', 'chip-row');
-  const chipClass = GROUP_TONE_CLASS[tone];
-  for (const group of groups) row.append(el('span', `chip ${chipClass}`, group));
+  for (const group of list.groups) row.append(el('span', `chip ${list.chipClass}`, group));
   return row;
 }
 
 /** Best-effort clipboard copy — a sandboxed iframe may deny it outright. */
 function copyButton(value: string): HTMLButtonElement {
-  const button = el('button', 'link', 'Copy');
+  let state: CopyState = 'idle';
+  const button = el('button', 'link', copyLabel(state));
   button.type = 'button';
-  const reset = () => {
-    button.textContent = 'Copy';
+  const dispatch = (action: CopyAction) => {
+    state = copyReducer(state, action);
+    button.textContent = copyLabel(state);
+    if (action.type !== 'reset') setTimeout(() => dispatch({ type: 'reset' }), COPY_FEEDBACK_MS);
   };
   button.addEventListener('click', () => {
     const clipboard = navigator.clipboard;
     if (!clipboard) {
-      button.textContent = 'Select to copy';
-      setTimeout(reset, 1500);
+      dispatch({ type: 'refused' });
       return;
     }
     clipboard.writeText(value).then(
-      () => {
-        button.textContent = 'Copied';
-        setTimeout(reset, 1500);
-      },
-      () => {
-        button.textContent = 'Select to copy';
-        setTimeout(reset, 1500);
-      }
+      () => dispatch({ type: 'copied' }),
+      () => dispatch({ type: 'refused' })
     );
   });
   return button;
@@ -153,30 +111,23 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   if (!root) return;
   root.textContent = '';
 
-  const preview = asRecord(result.structuredContent);
-  const confirmTool = str(preview.confirmTool);
-  const confirmArgs = asRecord(preview.confirmArgs);
-
+  const preview = readPreview(
+    result.structuredContent,
+    Boolean(result.isError),
+    resultText(result)
+  );
   const card = el('div', 'card');
-  if (result.isError || !confirmTool) {
-    card.append(
-      el('div', 'card-title', str(preview.title) || 'Directory action'),
-      el('div', 'status error', resultText(result) || 'The preview could not be prepared.')
-    );
+  if (!preview.ok) {
+    card.append(el('div', 'card-title', preview.title), el('div', 'status error', preview.error));
     root.append(card);
     return;
   }
 
-  // Keyed by the id the preview tool minted for THIS card — see
-  // issue-preview.ts's identical comment for why: content-based keys let a
-  // second preview of the same kind recall the first one's receipt.
-  const previewId = str(preview.previewId);
-  const stateKey = previewId ? `renkei-preview:${previewId}` : '';
-  // A decision made on another device (chat-view.ts's `resolved`, joined
-  // in from chat_widget_decisions) outranks this browser's own localStorage
-  // receipt — it is the newer, durable record; recallDone is only ever a
-  // same-device fallback for an older server that sends no `resolved`.
-  const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
+  const { stateKey } = preview;
+  const remembered = openingReceipt(
+    result.structuredContent,
+    stateKey ? recallDone(stateKey) : null
+  );
   if (remembered) {
     renderDone(root, remembered);
     return;
@@ -190,89 +141,69 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   };
 
   const titleRow = el('div', 'title-row');
-  titleRow.append(el('div', 'card-title', str(preview.title)));
-  const action = str(preview.action);
-  if (action) {
-    const toneClass = TONE_CLASS[str(preview.tone)] ?? 'neutral';
-    titleRow.append(el('span', `chip ${toneClass}`, action));
+  titleRow.append(el('div', 'card-title', preview.title));
+  if (preview.action) {
+    titleRow.append(el('span', `chip ${preview.action.chipClass}`, preview.action.label));
   }
   card.append(titleRow);
-  if (str(preview.subtitle)) card.append(el('div', 'card-subtitle', str(preview.subtitle)));
-  card.append(el('div', 'card-subtitle', 'Review — nothing changes until you confirm.'));
+  if (preview.subtitle) card.append(el('div', 'card-subtitle', preview.subtitle));
+  card.append(el('div', 'card-subtitle', REVIEW_NOTE));
 
-  const person = asRecord(preview.person);
-  if (str(person.name)) card.append(personRow(str(person.name), str(person.detail)));
+  if (preview.person) card.append(personRow(preview.person.name, preview.person.detail));
 
-  const secondaryPerson = asRecord(preview.secondaryPerson);
-  if (str(secondaryPerson.name)) {
-    const label = str(secondaryPerson.label) || 'Also involved';
+  const secondary = preview.secondaryPerson;
+  if (secondary) {
     card.append(
-      personRow(
-        str(secondaryPerson.name),
-        str(secondaryPerson.detail),
-        el('div', 'person-detail', label)
-      )
+      personRow(secondary.name, secondary.detail, el('div', 'person-detail', secondary.label))
     );
   }
 
-  for (const row of fieldRows(preview.fields)) {
+  for (const row of preview.fields) {
     const field = el('div', 'field');
     field.append(el('div', 'field-label', row.label), el('div', 'field-value', row.value));
     if (row.oldValue) field.append(el('div', 'card-subtitle', `was: ${row.oldValue}`));
     card.append(field);
   }
 
-  const secret = asRecord(preview.secret);
-  if (str(secret.value)) {
-    card.append(secretField(str(secret.label) || 'Password', str(secret.value), str(secret.note)));
+  if (preview.secret) {
+    card.append(secretField(preview.secret.label, preview.secret.value, preview.secret.note));
   }
 
-  for (const list of groupLists(preview.groupLists)) {
-    if (list.groups.length === 0) continue;
+  for (const list of preview.groupLists) {
     const field = el('div', 'field');
     const label = el('div', 'field-label');
-    label.append(
-      document.createTextNode(list.label),
-      el('span', 'group-count', ` (${list.groups.length})`)
-    );
+    label.append(document.createTextNode(list.label), el('span', 'group-count', list.count));
     // Capped and scrollable (ui.ts's .chip-row), not just wrapping: a
     // technician copying membership from a long-tenured account can be
     // looking at dozens or hundreds of groups, and an unbounded pill grid
     // would either blow the card past a reviewable height or, worse,
     // silently truncate the list the confirm button is about to act on.
-    field.append(label, chipRow(list.groups, list.tone));
+    field.append(label, chipRow(list));
     card.append(field);
   }
 
   const cancelButton = el('button', undefined, 'Cancel');
-  const confirmButton = el('button', 'primary', str(preview.confirmLabel) || 'Confirm');
+  const confirmButton = el('button', 'primary', preview.confirmLabel);
   const footer = cardActions([cancelButton, confirmButton]);
   card.append(footer.actions);
   root.append(card);
 
   footer.run(confirmButton, async () => {
-    const confirmed = await bridge.callTool(confirmTool, confirmArgs, stateKey);
-    const text = resultText(confirmed);
-    if (confirmed.isError) throw new Error(text || 'The action failed');
-    const links = parseLinks(text);
-    finishDone({
-      icon: 'sent',
-      headline: text.split('\n')[0] || 'Done',
-      detail: str(preview.subtitle) || str(preview.title),
-      ...(links.length > 0 ? { links } : {}),
+    const call = confirmCall(preview);
+    const confirmed = await bridge.callTool(call.name, call.args, stateKey);
+    const outcome = confirmOutcome(preview, {
+      isError: Boolean(confirmed.isError),
+      text: resultText(confirmed),
     });
-    bridge.updateModelContext(
-      `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`,
-      stateKey
-    );
+    if (!outcome.ok) throw new Error(outcome.error);
+    finishDone(outcome.done);
+    bridge.updateModelContext(outcome.context, stateKey);
   });
 
   footer.run(cancelButton, async () => {
-    finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing changed.' });
-    bridge.updateModelContext(
-      `The user cancelled "${str(preview.title)}" from the preview card. Nothing changed.`,
-      stateKey
-    );
+    const outcome = cancelOutcome(preview);
+    finishDone(outcome.done);
+    bridge.updateModelContext(outcome.context, stateKey);
   });
 }
 

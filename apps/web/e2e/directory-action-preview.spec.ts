@@ -9,15 +9,18 @@
  * button's `tools/call` is answered there too (for real it would reach
  * ADManager); the note and the model's reply after it are real.
  *
- * Two things this card needed to prove beyond widget-card.spec.ts's coverage
- * of the shared preview mechanics (which already covers confirm/cancel/
- * model-context/receipt-recall generically):
- *  - it renders its own person-identity/secret/group-pill shape, not the
- *    generic issue-preview fields list;
+ * The card's rules — what a preview shows (whose account, the second
+ * person, every group and its count, a password, a changed attribute),
+ * which receipt it opens on, exactly what Confirm sends, and the receipt
+ * and model note that confirming or cancelling leaves — are in
+ * lib/mcp-widgets/src/directory-action-preview.model.ts and its
+ * .model.test.ts. What is left here is what only a browser shows:
  *  - a group list with dozens or hundreds of entries (copying membership
  *    from a long-tenured account) stays inside a bounded, scrollable region
- *    instead of blowing the card past a reviewable height or silently
- *    dropping groups the confirm button is about to act on.
+ *    in the real iframe, and the frame shrinks back once decided;
+ *  - it fits a phone's width;
+ *  - one Confirm press end to end: the full list reaches the server and
+ *    the decision opens a turn the model answers.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -165,23 +168,11 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
       'Copy groups from Sam Source to Jane Doe',
       COLD
     );
-    // The card shows who it's for and who it's copying from — not a
-    // generic fields list.
-    await expect(frame.locator('.person-name').first()).toHaveText('Jane Doe');
-    await expect(frame.locator('.person-name', { hasText: 'Sam Source' })).toBeVisible();
-    await expect(frame.getByText('Copying groups from')).toBeVisible();
-
-    // The count is visible without scrolling...
-    await expect(frame.getByText('Groups to add')).toBeVisible();
+    // The count is visible without scrolling, and every one of the 120
+    // pills is drawn (nothing silently dropped to keep the card short)
+    // even though only a handful are in view at once.
     await expect(frame.locator('.group-count')).toHaveText('(120)');
-
-    // ...and every one of the 120 pills is actually in the DOM (nothing
-    // silently dropped to keep the card short) even though only a handful
-    // are in view at once.
-    const chips = frame.locator('.chip-row .chip');
-    await expect(chips).toHaveCount(120);
-    await expect(chips.first()).toHaveText('Dept-001');
-    await expect(chips.last()).toHaveText('Dept-120');
+    await expect(frame.locator('.chip-row .chip')).toHaveCount(120);
 
     // The list is bounded, not free to grow the card past a reviewable
     // height: the pill container's rendered height is capped well short
@@ -205,11 +196,12 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
     await waitForCardHeightBelow(page, 150);
     await shot(page, testInfo, 'directory-action-preview-done.png');
 
-    // The confirm call still carries the full, unclipped list — the
+    // The press reached the server with the full, unclipped list — the
     // scroll region is presentation only.
-    expect(confirmCall.value).not.toBeNull();
-    expect(confirmCall.value?.name).toBe('admanager_add_user_to_groups_confirm');
-    expect(confirmCall.value?.arguments).toMatchObject({ groupNames: MANY_GROUPS });
+    expect(confirmCall.value).toMatchObject({
+      name: 'admanager_add_user_to_groups_confirm',
+      arguments: { groupNames: MANY_GROUPS },
+    });
 
     const note = noteLine(
       page,

@@ -1,12 +1,15 @@
 /**
  * The email card's rules (email-compose.ts), with no DOM and no clock of
- * its own: what Send later pre-fills, when Send reads Schedule, what is
- * refused before any call, and exactly what `outlook_send_draft_confirm`
- * is sent. The card reads its fields, passes them and the time in, and
- * renders what comes back. Tested in email-compose.model.test.ts.
+ * its own: what a preview shows and which fields the person can change,
+ * what Send later pre-fills, when Send reads Schedule, what is refused
+ * before any call, exactly what `outlook_send_draft_confirm` and
+ * `outlook_discard_draft_confirm` are sent, and the receipt and model note
+ * each answer leaves. The card reads its fields, passes them and the time
+ * in, and renders what comes back. Tested in email-compose.model.test.ts.
  */
 
-import { splitAddresses } from './ui';
+import { asRecord } from '@renkei/guards';
+import { doneStateOf, parseLinks, splitAddresses, str, strings, type DoneState } from './ui';
 
 /** How far ahead a scheduled send has to be, at the least. */
 export const MIN_LEAD_MS = 60_000;
@@ -130,5 +133,159 @@ export function planSend(draft: EmailDraft, fields: EmailFields, now: number): S
     when,
     to,
     subject: fields.subject,
+  };
+}
+
+/** The card's title for each kind of draft. */
+export const KIND_TITLES: Record<string, string> = {
+  compose: 'New email',
+  reply: 'Reply',
+  replyAll: 'Reply all',
+  forward: 'Forward',
+};
+
+/** The draft a preview tool's result shows, as the card reads it. */
+export interface PreviewedDraft extends EmailDraft {
+  bcc: string;
+  /** The server's rendering of the body, shown where the text is read-only. */
+  bodyHtml: string;
+  /** The send time the model suggested (an instant), or ''. */
+  sendAt: string;
+  /** Where this draft's decision is kept: one draft, one key. */
+  stateKey: string;
+  /** The receipt the server holds for this draft, if it was decided (on any device). */
+  resolved: DoneState | null;
+}
+
+export type DraftRead = { ok: true; draft: PreviewedDraft } | { ok: false; error: string };
+
+/**
+ * What a preview tool's result shows: the draft, or — when the tool failed
+ * or made no draft — only the line saying why. `errorText` is the result's
+ * own text.
+ */
+export function readDraft(
+  structuredContent: unknown,
+  isError: boolean,
+  errorText: string
+): DraftRead {
+  const draft = asRecord(structuredContent);
+  const draftId = str(draft.draftId);
+  if (isError || !draftId) {
+    return { ok: false, error: errorText || 'The draft could not be created.' };
+  }
+  return {
+    ok: true,
+    draft: {
+      draftId,
+      kind: str(draft.kind) || 'compose',
+      messageId: str(draft.messageId),
+      to: strings(draft.to).join(', '),
+      cc: strings(draft.cc).join(', '),
+      bcc: strings(draft.bcc).join(', '),
+      subject: str(draft.subject),
+      body: str(draft.body),
+      bodyHtml: str(draft.bodyHtml),
+      sendAt: str(draft.sendAt),
+      stateKey: `renkei-email:${draftId}`,
+      resolved: doneStateOf(draft.resolved),
+    },
+  };
+}
+
+/**
+ * The receipt a card opens on instead of its form: its own draft's, from
+ * the server first, else from this browser. Keyed by the draft, so
+ * deciding one card never turns another into a receipt — the next draft
+ * in the chat opens as a live form.
+ */
+export function openingReceipt(
+  draft: Pick<PreviewedDraft, 'resolved'>,
+  remembered: DoneState | null
+): DoneState | null {
+  return draft.resolved ?? remembered;
+}
+
+/** Which fields the card draws, and which of them the person can change. */
+export interface EmailLayout {
+  title: string;
+  /** To and Subject are always editable; Cc only when the draft has one. */
+  ccEditable: boolean;
+  /** Shown read-only, or null for none. */
+  bcc: string | null;
+  /** The editable text's label, or null where the text is read-only. */
+  textLabel: 'Body' | 'Note' | null;
+  /** The read-only body: the server's rendering where it sent one, else the plain text. */
+  readonlyBody: { html: string } | { text: string } | null;
+  /** A reply or forward: the quoted thread goes out under the person's text. */
+  quotedThreadNote: boolean;
+}
+
+export function emailLayout(draft: PreviewedDraft): EmailLayout {
+  const editable = textEditable(draft);
+  return {
+    title: KIND_TITLES[draft.kind] ?? 'Email',
+    ccEditable: draft.cc !== '',
+    bcc: draft.bcc || null,
+    textLabel: !editable ? null : draft.kind === 'forward' ? 'Note' : 'Body',
+    readonlyBody: editable
+      ? null
+      : draft.bodyHtml
+        ? { html: draft.bodyHtml }
+        : { text: draft.body },
+    quotedThreadNote: draft.kind !== 'compose',
+  };
+}
+
+export type Outcome =
+  | { ok: true; done: DoneState; context: string }
+  /** The line the card shows; its buttons come back so the person can try again. */
+  | { ok: false; error: string };
+
+type PlannedSend = Extract<SendPlan, { ok: true }>;
+
+/** What the send tool's answer leaves: a receipt and a note to the model, or why it failed. */
+export function sendOutcome(
+  kind: string,
+  plan: PlannedSend,
+  answer: { isError: boolean; text: string }
+): Outcome {
+  const { when } = plan;
+  if (answer.isError) {
+    return { ok: false, error: answer.text || (when ? 'Scheduling failed' : 'Send failed') };
+  }
+  const sentTo = plan.to.join(', ');
+  const what = `To ${sentTo}${plan.subject ? ` — “${plan.subject}”` : ''}`;
+  const links = parseLinks(answer.text);
+  const card = KIND_TITLES[kind] ?? 'email';
+  return {
+    ok: true,
+    done: {
+      icon: 'sent',
+      ...(links.length > 0 ? { links } : {}),
+      headline: when ? 'Scheduled' : 'Sent',
+      detail: when ? `${what} — sends ${when.toLocaleString()}` : what,
+    },
+    context: when
+      ? `The user reviewed the ${card} preview and scheduled it to ${sentTo} for ${when.toISOString()}.`
+      : `The user reviewed the ${card} preview and sent it to ${sentTo}.`,
+  };
+}
+
+/** Discard deletes the draft, whatever the fields say: it sends only the draft's id. */
+export function discardCall(draft: Pick<EmailDraft, 'draftId'>): {
+  name: 'outlook_discard_draft_confirm';
+  args: { draftId: string };
+} {
+  return { name: 'outlook_discard_draft_confirm', args: { draftId: draft.draftId } };
+}
+
+/** What the discard tool's answer leaves: a receipt and a note to the model, or why it failed. */
+export function discardOutcome(answer: { isError: boolean; text: string }): Outcome {
+  if (answer.isError) return { ok: false, error: answer.text || 'Discard failed' };
+  return {
+    ok: true,
+    done: { icon: 'cancelled', headline: 'Discarded', detail: 'Nothing was sent.' },
+    context: 'The user discarded the email draft from the preview card. Nothing was sent.',
   };
 }
