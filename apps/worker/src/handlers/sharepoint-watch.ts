@@ -37,6 +37,7 @@ import { enqueueKnowledgeEvent } from '../enqueue';
 import { logger } from '../logger';
 import { TitleList } from '../log-titles';
 import type { MicrosoftAccess } from './microsoft-access';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'sharepoint/watch';
 
@@ -66,10 +67,6 @@ export interface DriveSyncResult {
   /** The names of the enqueued documents, bounded — see log-titles.ts. */
   titles: string[];
   cursor: string | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

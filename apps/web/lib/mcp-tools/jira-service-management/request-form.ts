@@ -16,6 +16,7 @@
  */
 
 import { matchComponents, type ComponentOption } from './components';
+import { isRecord } from '@renkei/guards';
 
 /** Fields the create already has an argument of its own for, or cannot take. */
 const HANDLED_ELSEWHERE = new Set([
@@ -38,10 +39,6 @@ export interface FormField {
   /** `jiraSchema.items` for an array: option, component, version, user, string. */
   itemType: string;
   options: ComponentOption[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

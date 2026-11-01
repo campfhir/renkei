@@ -49,6 +49,7 @@ import {
   type RunInput,
 } from './workspaces';
 import { logger } from './logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'worker-sandbox/lsp';
 const REAP_INTERVAL_MS = 30_000;
@@ -155,10 +156,6 @@ export function frame(body: string): Buffer {
     Buffer.from(`Content-Length: ${bytes.byteLength}\r\n\r\n`, 'ascii'),
     bytes,
   ]);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

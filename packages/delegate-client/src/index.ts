@@ -32,11 +32,11 @@ import type {
 import {
   DelegateTransport,
   delegateConfigFromEnv,
-  isRecord,
   type DelegateCallError,
   type DelegateTransportError,
   type FetchLike,
 } from './transport';
+import { isRecord } from '@renkei/guards';
 
 export {
   DelegateTransport,

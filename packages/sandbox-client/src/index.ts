@@ -23,6 +23,7 @@
  */
 
 import { getOrgSettings } from '@renkei/settings';
+import { isRecord } from '@renkei/guards';
 
 export interface WireSandboxFile {
   id: string;
@@ -56,10 +57,6 @@ export interface SandboxTarget {
 }
 
 const REQUEST_TIMEOUT_MS = 90_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -1816,7 +1813,7 @@ function imageRulesOf(value: unknown): WireImageRule[] | null {
 }
 
 export async function sbImageRulesList(): Promise<ClientResult<WireImageRule[]>> {
-  const result = await callJson('services/rules/list', { });
+  const result = await callJson('services/rules/list', {});
   if (!result.ok) return result;
   const rules = imageRulesOf(result.val);
   return rules ? { ok: true, val: rules } : malformed();
@@ -1829,16 +1826,14 @@ export async function sbImageRulesList(): Promise<ClientResult<WireImageRule[]>>
  * `clearCredential` removes it. `dropped` says what the worker took off
  * the pattern (a tag, a digest) to make a rule of it.
  */
-export async function sbImageRuleSet(
-  input: {
-    id?: string;
-    pattern: string;
-    note?: string | null;
-    registryUsername?: string;
-    registrySecret?: string;
-    clearCredential?: boolean;
-  }
-): Promise<ClientResult<{ rule: WireImageRule; dropped: string | null }>> {
+export async function sbImageRuleSet(input: {
+  id?: string;
+  pattern: string;
+  note?: string | null;
+  registryUsername?: string;
+  registrySecret?: string;
+  clearCredential?: boolean;
+}): Promise<ClientResult<{ rule: WireImageRule; dropped: string | null }>> {
   const result = await callJson('services/rules/set', { ...input });
   if (!result.ok) return result;
   const rule = isRecord(result.val) ? imageRuleOf(result.val.rule) : null;
@@ -1849,9 +1844,7 @@ export async function sbImageRuleSet(
   };
 }
 
-export async function sbImageRuleDelete(
-  id: string
-): Promise<ClientResult<{ id: string }>> {
+export async function sbImageRuleDelete(id: string): Promise<ClientResult<{ id: string }>> {
   const result = await callJson('services/rules/delete', { id });
   if (!result.ok) return result;
   if (!isRecord(result.val) || !result.val.deleted) return malformed();
@@ -1859,9 +1852,10 @@ export async function sbImageRuleDelete(
 }
 
 /** Put the seeded public images back, leaving what the organization added or kept. */
-export async function sbImageRulesRestore(
-): Promise<ClientResult<{ added: number; rules: WireImageRule[] }>> {
-  const result = await callJson('services/rules/restore', { });
+export async function sbImageRulesRestore(): Promise<
+  ClientResult<{ added: number; rules: WireImageRule[] }>
+> {
+  const result = await callJson('services/rules/restore', {});
   if (!result.ok) return result;
   const rules = imageRulesOf(result.val);
   if (!rules || !isRecord(result.val)) return malformed();

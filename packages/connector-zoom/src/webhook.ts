@@ -15,6 +15,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { isRecord } from '@renkei/guards';
 
 /** Zoom's documented replay window: reject deliveries older than 5 minutes. */
 const REPLAY_WINDOW_MS = 300_000;
@@ -72,10 +73,6 @@ export interface ZoomWebhookEvent {
   downloadToken: string | null;
   /** The raw `payload.object`, kept whole on the event row. */
   data: Record<string, unknown>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function optionalString(value: unknown): string | null {

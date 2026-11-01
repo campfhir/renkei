@@ -12,6 +12,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
+import { isRecord } from '@renkei/guards';
 
 export type DeltaKind = 'mail-inbox' | 'calendar' | 'todo' | 'drive';
 
@@ -108,10 +109,6 @@ const DELTA_PAGE_SIZE = 25;
  * latency on the retry. Distinct from the client's 15s interactive default.
  */
 const DELTA_TIMEOUT_MS = 60_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Run one delta round: follow nextLinks up to the page cap, return the

@@ -12,12 +12,9 @@ import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
 import { executeCreateIssue, readCreateIssueAction } from '@/lib/actionable-items';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 const PROJECT_KEY_SHAPE = /^[A-Z][A-Z0-9_]*$/;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function POST(
   request: NextRequest,

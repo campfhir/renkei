@@ -21,6 +21,7 @@
 
 import { flattenFormFields, parseFormNodes, type FormNode } from './question-form';
 import type { QuestionField, QuestionFieldType } from './question-field';
+import { isRecord } from '@renkei/guards';
 
 export const MAX_ASKED_QUESTIONS = 10;
 export const MAX_QUESTION_CHARS = 300;
@@ -40,10 +41,6 @@ const CATCH_ALL =
   /^(something else|other|others|none of (these|the above)|other \(.*\)|something else.*)$/i;
 
 const ANSWER_TYPES = new Set(['text', 'longtext', 'choice', 'multi', 'number', 'date', 'yesno']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function replyField(): FormNode {
   return {

@@ -108,6 +108,7 @@ import {
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { logger } from './logger';
 import { logErrorResponse } from './request-log';
+import { isRecord } from '@renkei/guards';
 
 export interface WorkspaceHandlerDeps {
   /** Whether this worker can run commands for a caller at all (features.ts); off answers every verb 503. */
@@ -133,10 +134,6 @@ type Body = Record<string, unknown>;
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
@@ -789,7 +786,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
           if (code === 0) response.end();
           else response.destroy();
         } else if (code === 12) {
-          sendError(response, 404, 'not_found', `${path.path || 'The checkout'} has no files to download.`);
+          sendError(
+            response,
+            404,
+            'not_found',
+            `${path.path || 'The checkout'} has no files to download.`
+          );
         } else {
           sendError(
             response,

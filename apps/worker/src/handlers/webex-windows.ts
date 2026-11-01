@@ -32,6 +32,7 @@ import {
 import type { EventHandler } from '../handlers';
 import { resolveWebexUserAccessBySubject } from './webex-linked-user';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'knowledge/webex-window';
 
@@ -169,10 +170,6 @@ export async function deleteLegacyMessageRows(roomId: string, day: string): Prom
     from: start,
     to: end,
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

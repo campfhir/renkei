@@ -28,10 +28,7 @@ import {
 import { documentPipelineConfig } from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import { nextRunAtFor } from '@/lib/batch-jobs/schedule-next-run';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export async function GET(
   request: NextRequest,

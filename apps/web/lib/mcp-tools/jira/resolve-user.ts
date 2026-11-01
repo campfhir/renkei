@@ -22,6 +22,7 @@
  */
 
 import { granularJiraScopes, type JiraAuth } from './jira-auth';
+import { isRecord, isString } from '@renkei/guards';
 
 export type UserResolution = { ok: true; id: string } | { ok: false; reason: string };
 
@@ -35,14 +36,6 @@ export type UserResolution = { ok: true; id: string } | { ok: false; reason: str
  */
 export function looksLikeAccountId(value: string): boolean {
   return !value.includes('@') && /^[0-9a-zA-Z:_-]{16,128}$/.test(value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
 }
 
 /** How a candidate should be described when there is more than one. */

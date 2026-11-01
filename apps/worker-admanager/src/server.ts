@@ -51,7 +51,7 @@ import {
   type SubjectTarget,
 } from '@renkei/connector-admanager';
 import type { Result } from '@campfhir/safe-functions/types';
-import { createJsonRpcServer, isRecord, sendJson, str } from '@renkei/worker-kit';
+import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
 import { logger } from './logger';
 import {
   dialUpstream,
@@ -60,6 +60,7 @@ import {
   type UpstreamDialer,
   type UpstreamResponse,
 } from './upstream';
+import { isRecord } from '@renkei/guards';
 
 export interface AdManagerServerDeps {
   /** Accepted bearer keys; empty means every request is refused. */

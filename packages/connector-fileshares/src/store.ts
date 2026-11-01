@@ -20,6 +20,7 @@ import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { isShareProtocol, isToolAccess } from './types';
 import type { ShareConnection, ShareSummary } from './types';
+import { isRecord } from '@renkei/guards';
 
 export type StoreError = 'DB_ERROR' | 'MALFORMED_ROW';
 
@@ -28,10 +29,6 @@ export interface ShareRow {
   settings: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function summaryFromRecord(row: FileShareRecord): ShareSummary | null {

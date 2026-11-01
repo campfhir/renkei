@@ -14,22 +14,14 @@ import { issueLinkTargets, issueLinksMarkdown } from './issue-urls';
 import { checkJql, describeJqlProblem, JQL_PARAMETER_DESCRIPTION } from './jql';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { sprintProgress, sprintWindow } from './sprint-window';
+import { isRecord, isString } from '@renkei/guards';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
 }
 
-// Type guard functions
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
 }
 
 function isNumber(value: unknown): value is number {

@@ -167,6 +167,15 @@ phone-width pass); its form rules are next to move into a model.
   `CrawlPage` entry in `e2e/crawl/<area>.ts` (the crawl is the floor for
   pages no spec opens: it renders, no error page, its data shows).
 
+# Type guards: `@renkei/guards`
+
+Narrowing an `unknown` (a JSON body, a vendor's answer, a postMessage, an
+error's cause) uses `isRecord`, `asRecord`, `recordOrNull` and `isString`
+from `@renkei/guards` (`packages/guards`), in every app and package, the
+preview cards' bundles included. `isRecord` is an object that is not null
+and not an array. A local copy fails `packages/guards/src/no-copies.test.ts`;
+a new general guard goes into the package with a test, not into a module.
+
 # The data store seam: pages read through `getDataStore()`
 
 `@renkei/db` exposes a data store (`packages/db/src/store/`): domain-shaped

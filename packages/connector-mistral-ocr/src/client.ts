@@ -39,6 +39,7 @@
 
 import { secure } from '@campfhir/bored-logs';
 import type { MistralOcrConfig, MistralOcrError, MistralOcrPage, MistralOcrResult } from './types';
+import { isRecord } from '@renkei/guards';
 
 const REQUEST_TIMEOUT_MS = 120_000;
 
@@ -85,10 +86,6 @@ export interface MistralOcrCallOptions {
    * to debug (admin → Settings → Data & logs) to see it.
    */
   logger?: MistralOcrLogger;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

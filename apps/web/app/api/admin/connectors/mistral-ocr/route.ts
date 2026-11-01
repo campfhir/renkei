@@ -17,14 +17,9 @@ import {
 } from '@renkei/connector-config';
 import { MISTRAL_OCR_CONNECTOR, DEFAULT_MISTRAL_OCR_MODEL } from '@renkei/connector-mistral-ocr';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -61,9 +56,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

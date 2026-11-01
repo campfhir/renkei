@@ -35,6 +35,7 @@ import {
 } from '../widgets';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { resolveUserId } from './resolve-user';
+import { isRecord, isString } from '@renkei/guards';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -53,14 +54,6 @@ async function resolveAssigneeId(
   value: string
 ): Promise<{ ok: true; id: string } | { ok: false; reason: string }> {
   return resolveUserId(auth, value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
 }
 
 function isArray(value: unknown): value is unknown[] {

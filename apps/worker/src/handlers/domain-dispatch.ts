@@ -35,6 +35,7 @@ import { markWebexWindowDirty, windowDayOf } from './webex-windows';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const queue = agentJobsQueue();
 
@@ -43,10 +44,6 @@ interface DomainPayload {
   provider: string;
   data: Record<string, unknown>;
   occurredAt?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function payloadOf(event: ClaimedEvent): DomainPayload | null {

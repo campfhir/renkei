@@ -26,6 +26,8 @@
  * so this package stays free of the key store.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** The fields of a turn's detail that are content, and so sealed. */
 export const SEALED_DETAIL_FIELDS = [
   /** The user message that opened this turn's conversation: the run's input, or a resume note. */
@@ -53,10 +55,6 @@ interface ToolCallOutline {
   isError?: unknown;
   durationMs?: unknown;
   resultChars?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Tool calls stripped to their outline — names and numbers, never previews. */

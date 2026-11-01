@@ -24,6 +24,7 @@
 
 import { isTriggerDraft, triggerDraftIssue, type TriggerDraft } from '@renkei/agents';
 import type { TriggerPayload } from '@/lib/agents/store';
+import { isRecord } from '@renkei/guards';
 
 export type TriggerOperation =
   /** Append a trigger; the server mints its id (and any API key). */
@@ -118,10 +119,6 @@ export function applyTriggerPatch(
   }
 
   return { ok: true, triggers };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

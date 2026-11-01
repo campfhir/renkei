@@ -7,19 +7,14 @@
 
 import { getDataStore } from '@renkei/db';
 import type { AttachmentView, QueuedSend } from './views';
+import { recordOrNull } from '@renkei/guards';
 
 const MAX_ITEMS = 50;
 const MAX_TEXT_CHARS = 200_000;
 const MAX_ATTACHMENTS = 50;
 
-/** A plain object's entries as a record, or null for anything else. */
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  return Object.fromEntries(Object.entries(value));
-}
-
 function parseAttachment(value: unknown): AttachmentView | null {
-  const v = asRecord(value);
+  const v = recordOrNull(value);
   if (!v) return null;
   if (
     typeof v.id !== 'string' ||
@@ -44,14 +39,14 @@ export function parseQueue(value: unknown): QueuedSend[] | null {
   if (!Array.isArray(value) || value.length > MAX_ITEMS) return null;
   const queue: QueuedSend[] = [];
   for (const raw of value) {
-    const item = asRecord(raw);
+    const item = recordOrNull(raw);
     if (!item) return null;
     if (typeof item.id !== 'number' || !Number.isSafeInteger(item.id)) return null;
     if (item.kind === 'compact') {
       queue.push({ id: item.id, kind: 'compact' });
       continue;
     }
-    const input = asRecord(item.input);
+    const input = recordOrNull(item.input);
     if (item.kind !== 'message' || !input) return null;
     if (typeof input.text !== 'string' || input.text.length > MAX_TEXT_CHARS) return null;
     if (!Array.isArray(input.attachments) || input.attachments.length > MAX_ATTACHMENTS) {

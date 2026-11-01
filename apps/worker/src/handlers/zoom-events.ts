@@ -22,6 +22,7 @@ import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { resolveZoomHostAccess } from './zoom-access';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'zoom/ingest';
 
@@ -157,9 +158,6 @@ export function createZoomTranscriptHandler(
     });
   };
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

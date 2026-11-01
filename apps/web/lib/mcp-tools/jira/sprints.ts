@@ -10,13 +10,11 @@ import { sprintUrl, getCachedDisplayName } from '../common';
 import { loadFieldSchema, lookupField } from './field-schema';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import { isRecord } from '@renkei/guards';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const nameOf = (value: unknown): string =>
   isRecord(value) && typeof value.name === 'string' ? value.name : '';

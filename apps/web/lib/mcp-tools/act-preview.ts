@@ -55,6 +55,7 @@ import {
   newPreviewId,
   previewToolMeta,
 } from './widgets';
+import { isRecord } from '@renkei/guards';
 
 type RegisterToolArgs = Parameters<McpServer['registerTool']>;
 
@@ -155,9 +156,6 @@ function whatOf(name: string, title: unknown): string {
   const tail = text.split(' — ').slice(1).join(' — ');
   return tail || name;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export interface ActPreviewServer {
   server: McpServer;

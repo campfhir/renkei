@@ -15,12 +15,9 @@ import type { BatchJobRow } from '../batch-jobs/store';
 import { enqueueItem } from '../batch-jobs/enqueue';
 import { announceBatchFinished, announceBatchStarted } from '../batch-jobs/lifecycle';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'batch-jobs/run';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

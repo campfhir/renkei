@@ -16,9 +16,9 @@ import {
   DelegateTransport,
   delegateConfigFromEnv,
   isConnectionFailure,
-  isRecord,
   type FetchLike,
 } from './transport';
+import { isRecord } from '@renkei/guards';
 
 /** Whose grant a request rides on. One of subject, accountId or pending is required. */
 

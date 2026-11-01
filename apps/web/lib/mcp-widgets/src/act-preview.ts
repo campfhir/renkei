@@ -38,11 +38,7 @@ import {
   str,
   type DoneState,
 } from './ui';
-
-function asRecord(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
+import { asRecord } from '@renkei/guards';
 
 /** The card, if this is one; a result from an older server or an error is not. */
 function readCard(value: unknown): ActCard | null {

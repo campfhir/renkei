@@ -70,6 +70,7 @@ import { GITHUB } from '@renkei/provider-grants';
 import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { codeDelegateTool, type SubagentModelChoice } from './delegate';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
+import { isRecord } from '@renkei/guards';
 
 /** How much of a file's diff rides back on a write or edit, for the model and the page. */
 const TOOL_DIFF_MAX_CHARS = 24_000;
@@ -509,10 +510,6 @@ function serviceTools(
       },
     },
   ];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function stringRecord(value: Record<string, unknown>): Record<string, string> {

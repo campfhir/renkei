@@ -13,7 +13,6 @@ import type { Server } from 'node:http';
 import { EventEmitter } from 'node:events';
 import {
   authorized,
-  isRecord,
   matchApiKey,
   parseNamedApiKeys,
   readBody,
@@ -22,18 +21,6 @@ import {
   createJsonRpcServer,
   KEEP_ALIVE_TIMEOUT_MS,
 } from './http';
-
-describe('isRecord', () => {
-  it('accepts a plain object, rejects everything else', () => {
-    expect(isRecord({})).toBe(true);
-    expect(isRecord({ a: 1 })).toBe(true);
-    expect(isRecord([])).toBe(false);
-    expect(isRecord(null)).toBe(false);
-    expect(isRecord('x')).toBe(false);
-    expect(isRecord(1)).toBe(false);
-    expect(isRecord(undefined)).toBe(false);
-  });
-});
 
 describe('str', () => {
   it('passes a string through and coerces everything else to empty', () => {

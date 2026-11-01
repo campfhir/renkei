@@ -10,13 +10,10 @@ import type { MCPToolContext } from '../common';
 import { getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
+import { isRecord } from '@renkei/guards';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');

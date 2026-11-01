@@ -110,8 +110,8 @@ jest.mock('@renkei/connector-zoom', () => ({
   },
   vttToText: (vtt: string) => vtt,
   parseZoomWebhookPayload: (payload: unknown) => {
-    const isRecord = (value: unknown): value is Record<string, unknown> =>
-      typeof value === 'object' && value !== null;
+    // A mock factory is hoisted above the imports: it loads what it uses.
+    const { isRecord } = jest.requireActual<typeof import('@renkei/guards')>('@renkei/guards');
     const record = isRecord(payload) ? payload : {};
     const data = isRecord(record.data) ? record.data : {};
     return {

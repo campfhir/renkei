@@ -14,6 +14,7 @@ import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { jiraFetch } from '@/lib/mcp-tools/common';
 import { markdownToAdf } from '@/lib/mcp-tools/jira/markdown';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 export interface CreateIssueArgs {
   summary: string;
@@ -23,10 +24,6 @@ export interface CreateIssueArgs {
 
 export type ExecutionResult =
   { ok: true; issueKey: string; url: string } | { ok: false; error: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Narrow a stored suggested_action to jira_create_issue args. The pipeline wrote

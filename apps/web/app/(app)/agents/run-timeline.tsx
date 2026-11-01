@@ -17,6 +17,7 @@ import { statusLabel } from '@/lib/agents/run-labels';
 import type { ActionBatchView, AttemptView, RunDetail } from '@/lib/agents/runs-view';
 import { formatDurationMs } from '@/lib/duration';
 import { toolResultText } from '@/lib/agents/tool-result';
+import { isRecord } from '@renkei/guards';
 
 function statusTone(status: string): string {
   switch (status) {
@@ -84,10 +85,6 @@ function ClampedText({ label, text }: { label: string; text: string }) {
   );
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** How a finishing turn said the run ended. */
 function finishWording(finish: unknown): string | null {
   switch (finish) {
@@ -117,7 +114,9 @@ function batchVerdict(batch: ActionBatchView): string {
         ? 'Accepted automatically — being carried out.'
         : 'Accepted — being carried out.';
     case 'completed':
-      return batch.acceptedBy === 'auto' ? 'Accepted automatically and carried out.' : 'Accepted and carried out.';
+      return batch.acceptedBy === 'auto'
+        ? 'Accepted automatically and carried out.'
+        : 'Accepted and carried out.';
     default:
       return batch.status;
   }
@@ -155,25 +154,36 @@ export function BatchBlock({ batch }: { batch: ActionBatchView }) {
       </p>
       {batch.summary !== undefined ? (
         <>
-          {batch.summary ? <p className="mt-1 whitespace-pre-wrap break-words">{batch.summary}</p> : null}
+          {batch.summary ? (
+            <p className="mt-1 whitespace-pre-wrap break-words">{batch.summary}</p>
+          ) : null}
           <ol className="mt-1 space-y-1">
             {(batch.actions ?? []).map((action, index) => {
               const result = batch.results?.[index];
               return (
-                <li key={`${index}-${action.tool}`} className="rounded bg-white/70 p-1.5 dark:bg-gray-900/60">
+                <li
+                  key={`${index}-${action.tool}`}
+                  className="rounded bg-white/70 p-1.5 dark:bg-gray-900/60"
+                >
                   <p>
                     <span className="mr-1 text-gray-400">{index + 1}.</span>
                     <span className="font-medium" title={action.tool}>
                       {friendlyToolName(action.tool, null)}
                     </span>
                     {result ? (
-                      <span className={`ml-1.5 ${outcomeTone(result.outcome)}`}>{result.outcome}</span>
+                      <span className={`ml-1.5 ${outcomeTone(result.outcome)}`}>
+                        {result.outcome}
+                      </span>
                     ) : null}
                   </p>
                   <p className="text-gray-500">{action.reason}</p>
                   <details>
-                    <summary className="cursor-pointer text-blue-600 dark:text-blue-400">Arguments</summary>
-                    <p className="mt-0.5 break-all font-mono text-[0.65rem]">{JSON.stringify(action.args)}</p>
+                    <summary className="cursor-pointer text-blue-600 dark:text-blue-400">
+                      Arguments
+                    </summary>
+                    <p className="mt-0.5 break-all font-mono text-[0.65rem]">
+                      {JSON.stringify(action.args)}
+                    </p>
                   </details>
                   {result?.text ? <ClampedText label="Result" text={result.text} /> : null}
                 </li>

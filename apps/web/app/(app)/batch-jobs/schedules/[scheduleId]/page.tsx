@@ -8,13 +8,10 @@ import { parseScheduleConfig, type ScheduleConfig } from '@renkei/agents';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
 import EditScheduleForm, { type SourceValue } from './edit-schedule-form';
 import { afterProcessingValueOf, skipProcessedOf } from '@/lib/batch-jobs/pipeline-form-value';
+import { isRecord } from '@renkei/guards';
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function sourceValueOf(config: Record<string, unknown>): SourceValue {

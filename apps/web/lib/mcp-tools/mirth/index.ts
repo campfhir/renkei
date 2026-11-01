@@ -35,7 +35,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import {
-  isRecord,
   mirthPermission,
   textOf,
   toMirthDate,
@@ -74,6 +73,7 @@ import {
   type Directory,
   type RefKind,
 } from './resolve';
+import { isRecord } from '@renkei/guards';
 
 /** The connector key the Mirth capabilities register under. */
 export const MIRTH_MCP_CONNECTOR = 'mirth';

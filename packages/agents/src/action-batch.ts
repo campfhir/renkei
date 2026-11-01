@@ -26,6 +26,7 @@
  */
 
 import { untrustedBlock } from './untrusted';
+import { isRecord } from '@renkei/guards';
 
 /** How many actions one batch may hold. A batch is a plan, not a bulk job. */
 export const MAX_STAGED_ACTIONS = 20;
@@ -79,10 +80,6 @@ export interface ActionResult {
   /** The tool's reply (clipped), or why it failed / was skipped. */
   text: string;
   durationMs: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

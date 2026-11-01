@@ -40,6 +40,7 @@ import { webexBotClient } from '@/lib/webex-bot';
 import { logger } from '@/lib/logger';
 import { timeoutSignal, UPLOAD_TIMEOUT_MS, isTimeoutError } from '@/lib/mcp-tools/fetch-guard';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
+import { isRecord } from '@renkei/guards';
 
 /** Graph's simple-PUT ceiling for drive items; past it → upload session. */
 const DRIVE_SIMPLE_UPLOAD_MAX = 4 * 1024 * 1024;
@@ -60,10 +61,6 @@ export interface UploadSlotRow {
 export interface UploadOutcome {
   ok: boolean;
   detail: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function destinationOf(slot: UploadSlotRow): Record<string, unknown> {

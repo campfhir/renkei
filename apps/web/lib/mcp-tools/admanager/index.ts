@@ -69,6 +69,7 @@ import {
 } from '../widgets';
 import { NO_SUCH_INSTANCE } from './admanager-auth';
 import type { AdManagerAuth } from './admanager-auth';
+import { isRecord } from '@renkei/guards';
 
 /** A person's identity for the preview card — name plus a detail line (logon name/domain). */
 interface CardPerson {
@@ -118,10 +119,6 @@ function errText(text: string): ToolResult {
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function toStringArray(value: unknown): string[] {

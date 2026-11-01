@@ -11,14 +11,9 @@ import { parseBaseUrl } from '@renkei/connector-admanager';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { admanagerClientFailure, admanagerProbe } from '@/lib/admanager/service-client';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
@@ -50,12 +45,16 @@ export async function POST(
   if (!probed.ok) {
     const failure = admanagerClientFailure(probed.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('ADManager Plus request failed ({status}): {error}', {
-        component: 'api/admin/admanager/probe',
-        operation: 'probed',
-        status: failure.status,
-        error: 'message' in probed.err && probed.err.message ? probed.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'ADManager Plus request failed ({status}): {error}',
+        {
+          component: 'api/admin/admanager/probe',
+          operation: 'probed',
+          status: failure.status,
+          error:
+            'message' in probed.err && probed.err.message ? probed.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }

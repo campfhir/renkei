@@ -25,6 +25,7 @@
 
 import { createCipheriv, createDecipheriv, randomBytes, randomInt, scryptSync } from 'node:crypto';
 import { isBlockedIP } from './egress-guard';
+import { isRecord } from '@renkei/guards';
 
 export const SECRET_NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const SECRET_FIELD_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -173,10 +174,6 @@ export function openSecretFields(
 
 type Validated<T> = { ok: true } & T;
 type Refused = { ok: false; message: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export function validateSecretName(value: unknown): Validated<{ name: string }> | Refused {
   const name = typeof value === 'string' ? value.trim().toLowerCase() : '';

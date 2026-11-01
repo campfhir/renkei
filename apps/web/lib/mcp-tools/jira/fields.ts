@@ -9,9 +9,7 @@
  */
 
 import { adfToMarkdown } from './adf';
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+import { isRecord } from '@renkei/guards';
 
 /** Fields `jira_get_issue` always prints, and so always asks for. */
 export const STANDARD_ISSUE_FIELDS = [

@@ -11,6 +11,8 @@
  * just the request shape, its limits, and the media types.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** Longer than any diagram worth drawing in one go; a novel of Mermaid is a mistake. */
 export const CHART_SOURCE_MAX_CHARS = 50_000;
 
@@ -71,10 +73,6 @@ export interface ChartRequest {
 }
 
 export type ChartRequestRefusal = { ok: false; type: 'bad_request'; message: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export function isChartFormat(value: unknown): value is ChartFormat {
   return typeof value === 'string' && CHART_FORMATS.some((format) => format === value);

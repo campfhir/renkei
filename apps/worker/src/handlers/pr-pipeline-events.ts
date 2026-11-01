@@ -38,12 +38,9 @@ import {
   type PipelineConclusion,
 } from './repo-host-lite';
 import { insertChatNote } from './chat-note';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'repo/pr-pipeline-events';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function rec(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};

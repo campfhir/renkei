@@ -31,6 +31,7 @@ import type { AuthedFetch } from '@renkei/delegate-client';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'mailjobs/run';
 
@@ -46,10 +47,6 @@ const FAILURES_KEPT = 20;
 interface JobFailure {
   id: string;
   error: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

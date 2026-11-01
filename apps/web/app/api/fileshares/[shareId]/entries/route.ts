@@ -20,10 +20,7 @@ import {
   fsRenameEntry,
 } from '@/lib/file-shares/service-client';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export async function DELETE(
   request: NextRequest,
@@ -38,14 +35,18 @@ export async function DELETE(
   if (!removed.ok) {
     const failure = clientFailure(removed.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('File share request failed ({status}): {error}', {
-        component: 'api/fileshares/entries',
-        subject: session.subject,
-        shareId,
-        operation: 'removed',
-        status: failure.status,
-        error: 'message' in removed.err && removed.err.message ? removed.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'File share request failed ({status}): {error}',
+        {
+          component: 'api/fileshares/entries',
+          subject: session.subject,
+          shareId,
+          operation: 'removed',
+          status: failure.status,
+          error:
+            'message' in removed.err && removed.err.message ? removed.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
@@ -78,14 +79,17 @@ export async function POST(
   if (!moved.ok) {
     const failure = clientFailure(moved.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('File share request failed ({status}): {error}', {
-        component: 'api/fileshares/entries',
-        subject: session.subject,
-        shareId,
-        operation: 'moved',
-        status: failure.status,
-        error: 'message' in moved.err && moved.err.message ? moved.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'File share request failed ({status}): {error}',
+        {
+          component: 'api/fileshares/entries',
+          subject: session.subject,
+          shareId,
+          operation: 'moved',
+          status: failure.status,
+          error: 'message' in moved.err && moved.err.message ? moved.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }

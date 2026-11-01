@@ -27,7 +27,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { getOrgSettings } from '@renkei/settings';
-import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { authorized, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
   parseShareCredentials,
   type ShareCredentials,
@@ -44,6 +44,7 @@ import {
 } from '@renkei/connector-fileshares';
 import type { ServiceDeps, ServiceError, SubjectTarget } from '@renkei/connector-fileshares';
 import { logger } from './logger';
+import { isRecord } from '@renkei/guards';
 
 export interface FileshareServerDeps {
   /** Accepted bearer keys; empty means every request is refused. */

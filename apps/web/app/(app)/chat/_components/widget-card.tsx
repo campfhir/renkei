@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatBlock, WidgetDecisionState } from '@/lib/chat/views';
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
+import { recordOrNull } from '@renkei/guards';
 
 type ToolResultBlock = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -35,16 +36,8 @@ interface RpcMessage {
   params?: Record<string, unknown>;
 }
 
-/** A JSON object or nothing — narrowed without an assertion. */
-function plainObject(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) out[key] = entry;
-  return out;
-}
-
 function isRpcMessage(value: unknown): value is RpcMessage {
-  return plainObject(value)?.jsonrpc === '2.0';
+  return recordOrNull(value)?.jsonrpc === '2.0';
 }
 
 function textContentOf(content: string): { type: string; text: string }[] {
@@ -118,7 +111,7 @@ export default function WidgetCard({
         ...('structuredContent' in block
           ? {
               structuredContent: block.resolved
-                ? { ...plainObject(block.structuredContent), resolved: block.resolved }
+                ? { ...recordOrNull(block.structuredContent), resolved: block.resolved }
                 : block.structuredContent,
             }
           : {}),
@@ -169,7 +162,7 @@ export default function WidgetCard({
         case 'tools/call': {
           if (id === undefined) return;
           const name = typeof params?.name === 'string' ? params.name : '';
-          const args = plainObject(params?.arguments) ?? {};
+          const args = recordOrNull(params?.arguments) ?? {};
           const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : undefined;
           void chatClient
             .confirmWidgetTool(chatId, name, args, stateKey)
@@ -189,7 +182,7 @@ export default function WidgetCard({
           if (id === undefined) return;
           post({ id, result: {} });
           const stateKey = typeof params?.stateKey === 'string' ? params.stateKey : '';
-          const state = plainObject(params?.state);
+          const state = recordOrNull(params?.state);
           const decision = state?.icon === 'sent' ? 'confirmed' : 'cancelled';
           // Best-effort, same as ui/update-model-context: a dropped request
           // costs cross-device sync, never the decision itself, which the

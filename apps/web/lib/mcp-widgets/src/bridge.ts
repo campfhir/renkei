@@ -13,6 +13,7 @@
  */
 
 import type { DoneState } from './ui';
+import { asRecord } from '@renkei/guards';
 
 type Json = Record<string, unknown>;
 
@@ -210,11 +211,6 @@ export class WidgetBridge {
     new ResizeObserver(report).observe(document.body);
     report();
   }
-}
-
-function asRecord(value: unknown): Json {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Json) : {};
 }
 
 /** Host theme + style variables onto the document, re-applied on change. */

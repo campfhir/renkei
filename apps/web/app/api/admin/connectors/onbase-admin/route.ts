@@ -25,10 +25,9 @@ import {
 } from '@renkei/connector-config';
 import { ONBASE_ADMIN_CONNECTOR } from '@/lib/onbase-app';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -44,10 +43,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(
-    ONBASE_ADMIN_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await getConnectorConfig(ONBASE_ADMIN_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read connector config: {error}', {
       component: 'api/admin/connectors/onbase-admin',
@@ -76,10 +72,6 @@ export async function GET(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 /** An absolute http(s) URL; https unless the operator allows insecure HTTP. */
 function validBaseUrl(value: unknown, allowInsecureHttp: boolean): value is string {
   if (typeof value !== 'string' || value.length === 0) return false;
@@ -93,9 +85,7 @@ function validBaseUrl(value: unknown, allowInsecureHttp: boolean): value is stri
   return url.protocol === 'https:' || (allowInsecureHttp && url.protocol === 'http:');
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

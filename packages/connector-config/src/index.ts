@@ -14,6 +14,7 @@ import { configCacheTtlMs as storeConfigCacheTtlMs, getDataStore } from '@renkei
 import { encrypt, decrypt } from '@renkei/crypto';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { isRecord } from '@renkei/guards';
 
 export interface ConnectorConfig {
   connector: string;
@@ -25,10 +26,6 @@ export interface ConnectorConfig {
 }
 
 export type ConnectorConfigError = 'DB_ERROR' | 'DECRYPTION_ERROR';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function readStringRecord(value: unknown): Record<string, string> {
   if (!isRecord(value)) return {};

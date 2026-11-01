@@ -49,6 +49,7 @@
     "@renkei/email-sanitizer": "workspace:*",
     "@renkei/fileshares-client": "workspace:*",
     "@renkei/gates": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/knowledge": "workspace:*",
     "@renkei/mcp-client": "workspace:*",
     "@renkei/notifications": "workspace:*",

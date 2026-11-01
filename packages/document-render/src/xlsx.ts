@@ -18,6 +18,7 @@
 
 import ExcelJS from 'exceljs';
 import { parseMarkdown, plainText, type Block, type Inline } from './markdown-blocks';
+import { isRecord } from '@renkei/guards';
 
 export interface Formula {
   /** The formula without its leading `=`, as Excel stores it. */
@@ -166,10 +167,6 @@ export function parseCsv(text: string): string[][] {
   while (first < last && isBlank(rows[first]!)) first += 1;
   while (last > first && isBlank(rows[last - 1]!)) last -= 1;
   return rows.slice(first, last);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isRowArray(value: unknown[]): value is unknown[][] {

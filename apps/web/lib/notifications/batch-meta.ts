@@ -11,6 +11,8 @@
  * Pure and client-safe: no database, no Node imports.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** The row kinds the batch-jobs worker writes. */
 export const BATCH_NOTIFICATION_KINDS = [
   'batch_started',
@@ -37,10 +39,6 @@ export interface BatchNotificationMeta {
   scheduleId: string | null;
   startedAt: string | null;
   finishedAt: string | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 const str = (value: unknown): string => (typeof value === 'string' ? value : '');

@@ -25,6 +25,7 @@ import { withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 import { opsScopes, type JsmOpsAuth } from './ops-auth';
+import { isRecord } from '@renkei/guards';
 
 function textResult(value: string) {
   return { content: [{ type: 'text' as const, text: value }] };
@@ -32,10 +33,6 @@ function textResult(value: string) {
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function str(value: unknown): string {

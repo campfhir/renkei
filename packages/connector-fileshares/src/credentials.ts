@@ -11,16 +11,14 @@
  * guess at what was meant.
  */
 
+import { isRecord } from '@renkei/guards';
+
 export type ShareCredentials =
   | { protocol: 'smb'; username: string; password: string; domain?: string }
   | { protocol: 'sftp'; username: string; password: string }
   | { protocol: 'sftp'; username: string; privateKey: string; passphrase?: string };
 
 export type CredentialError = 'DECRYPTION_ERROR' | 'MALFORMED_CREDENTIALS';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;

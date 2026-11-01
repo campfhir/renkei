@@ -13,6 +13,7 @@ import {
   type McpServer,
   type McpTransport,
 } from '@renkei/connector-mcp';
+import { isRecord } from '@renkei/guards';
 
 export const MAX_CONTEXT_CHARS = 4000;
 
@@ -29,10 +30,6 @@ export interface ServerInput {
   clientSecret: string | null;
   clearClientSecret: boolean;
   enabled: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function text(value: unknown): string {

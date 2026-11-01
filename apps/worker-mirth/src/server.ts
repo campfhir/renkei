@@ -49,7 +49,7 @@ import {
   type SubjectTarget,
 } from '@renkei/connector-mirth';
 import type { Result } from '@campfhir/safe-functions/types';
-import { createJsonRpcServer, isRecord, sendJson, str } from '@renkei/worker-kit';
+import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
 import { logger } from './logger';
 import { forgetSession, rememberSession, sessionCookie } from './sessions';
 import {
@@ -60,6 +60,7 @@ import {
   type UpstreamDialer,
   type UpstreamResponse,
 } from './upstream';
+import { isRecord } from '@renkei/guards';
 
 export interface MirthServerDeps {
   /** Accepted bearer keys; empty means every request is refused. */

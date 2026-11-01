@@ -59,6 +59,7 @@ import {
   type DoneState,
   type FieldOption,
 } from './ui';
+import { asRecord } from '@renkei/guards';
 
 interface FieldEdit {
   path: string[];
@@ -72,11 +73,6 @@ interface FieldRow {
   value: string;
   oldValue?: string;
   editable?: FieldEdit;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
 }
 
 function strings(value: unknown): string[] {

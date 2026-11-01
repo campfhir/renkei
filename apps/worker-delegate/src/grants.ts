@@ -41,7 +41,7 @@ import {
   type GrantLogger,
   type ProviderGrant,
 } from '@renkei/provider-grants';
-import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { readBody, sendJson, str } from '@renkei/worker-kit';
 import { onbaseWorkerCall, refreshedOf } from './onbase-worker';
 import { isExpiredSession, salesforceSoapRequest } from './salesforce-soap';
 import {
@@ -55,6 +55,7 @@ import {
   tokenEndpointFor,
   type ProviderSpec,
 } from './providers';
+import { isRecord } from '@renkei/guards';
 
 /** Refresh ahead of expiry by this much, as every resolver did before. */
 const COMPONENT = 'worker-delegate/grants';

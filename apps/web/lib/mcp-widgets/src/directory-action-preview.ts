@@ -42,6 +42,7 @@ import {
   strings,
   type DoneState,
 } from './ui';
+import { asRecord } from '@renkei/guards';
 
 interface FieldRow {
   label: string;
@@ -66,11 +67,6 @@ const GROUP_TONE_CLASS: Record<string, string> = {
   remove: 'urgent',
   muted: 'neutral',
 };
-
-function asRecord(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
 
 function fieldRows(value: unknown): FieldRow[] {
   if (!Array.isArray(value)) return [];

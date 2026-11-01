@@ -25,6 +25,7 @@ import { voiceForLocale } from '@/lib/voice/catalog';
 import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 import { encodedDurationMs, recordVoiceUsage } from '@/lib/voice/usage';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
 export const SPEECH_MAX_CHARS = 3_000;
@@ -33,10 +34,6 @@ const LIMITS = {
   perClient: { limit: 120, windowMs: 60_000 },
   global: { limit: 2_000, windowMs: 60_000 },
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function POST(request: NextRequest): Promise<Response> {
   const session = await getSessionFromRequest(request);

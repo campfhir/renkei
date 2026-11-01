@@ -24,6 +24,8 @@
  * plan (apps/worker-sandbox), the web app validates it before staging.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** Pages one crawl may visit. */
 export const CRAWL_MAX_PAGES = 200;
 /** Pages a crawl visits when the call does not say. */
@@ -68,10 +70,6 @@ export interface CrawlRecipe {
 
 export type CrawlPlanResult =
   { ok: true; recipe: CrawlRecipe; seeds: string[] } | { ok: false; error: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function stringList(value: unknown): string[] | null {
   if (value === undefined) return [];

@@ -45,6 +45,7 @@ import {
 } from '../domain-events';
 import { logger } from '../logger';
 import type { MicrosoftAccess } from './microsoft-access';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'microsoft/sync';
 
@@ -68,9 +69,6 @@ function subscriptionRowOf(record: WebhookSubscriptionSyncRecord): SubscriptionR
     delta_link: record.deltaLink,
   };
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
