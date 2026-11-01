@@ -17,39 +17,34 @@
  * `<CoachTarget>` around the whole block instead (see connector-shell.tsx's
  * doc comment on `useCoachAnchor` vs `CoachTarget`).
  *
+ * What the selection decides (what is offered and ticked, the summary, the
+ * authorize URL) is scope-connect-panel.model.ts's.
+ *
  * Microsoft's card does NOT use this: its selection is a single union across
  * several product panels feeding one link, not one catalog per card.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import ScopePicker from '@/components/scope-picker';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
-import { optionWithin, scopesOfOptions, type ScopeGroup, type ScopeOption } from '@/lib/scope-catalog';
+import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
+import {
+  authorizeHref,
+  initScopeSelection,
+  overUrlBudget,
+  scopeSelectionReducer,
+  selectionSummary,
+  type ScopeSelectionContext,
+} from './scope-connect-panel.model';
 
-/** The ceiling filtering, seeded selection state, and authorize URL both panels need. */
-function useScopeSelection(options: ScopeOption[], ceiling: string[], priorScopes: string[] | null) {
-  const ceilingSet = new Set(ceiling);
-  const pickable = options.filter((option) => optionWithin(option, ceilingSet));
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => {
-    const prior = priorScopes === null ? null : new Set(priorScopes);
-    const seed = prior
-      ? pickable.filter((option) => optionWithin(option, prior)).map((option) => option.id)
-      : [];
-    return new Set(seed.length > 0 ? seed : pickable.map((option) => option.id));
-  });
-
-  function toggleOption(optionId: string, on: boolean) {
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (on) next.add(optionId);
-      else next.delete(optionId);
-      return next;
-    });
-  }
-
-  const selectedScopeString = scopesOfOptions(options, selectedIds).join(' ');
-  return { pickable, selectedIds, toggleOption, selectedScopeString };
+/** The selection both panels hold (scope-connect-panel.model.ts decides it). */
+function useScopeSelection(context: ScopeSelectionContext) {
+  const [state, dispatch] = useReducer(scopeSelectionReducer, context, initScopeSelection);
+  return {
+    state,
+    toggleOption: (optionId: string, on: boolean) => dispatch({ type: 'toggled', optionId, on }),
+  };
 }
 
 interface CatalogProps {
@@ -87,15 +82,10 @@ export function ConnectScopePanel({
   /** Atlassian's consent-URL length warning; omit for connectors that don't hit it. */
   urlBudget?: { baseChars: number; limit: number; message: React.ReactNode };
 }) {
-  const { pickable, selectedIds, toggleOption, selectedScopeString } = useScopeSelection(
-    options,
-    ceiling,
-    priorScopes
-  );
-  const authorizeUrl = `${authorizePath}?scopes=${encodeURIComponent(selectedScopeString)}`;
-  const overBudget = urlBudget
-    ? urlBudget.baseChars + encodeURIComponent(selectedScopeString).length > urlBudget.limit
-    : false;
+  const context = { options, ceiling, priorScopes };
+  const { state, toggleOption } = useScopeSelection(context);
+  const authorizeUrl = authorizeHref(authorizePath, state, context);
+  const overBudget = overUrlBudget(urlBudget, state, context);
 
   const detailsAnchor = useCoachAnchor(scopesAnchor);
   const linkAnchor = useCoachAnchor(connectAnchor);
@@ -107,13 +97,13 @@ export function ConnectScopePanel({
         className="mb-3 rounded-lg border border-gray-200 p-3 dark:border-gray-800"
       >
         <summary className="cursor-pointer text-sm font-medium">
-          What Renkei may do ({selectedIds.size} of {pickable.length} capabilities)
+          {selectionSummary(state, context)}
         </summary>
         <div className="mt-3">
           <ScopePicker
             groups={groups}
             options={options}
-            checked={selectedIds}
+            checked={state.selected}
             onToggle={toggleOption}
             available={ceiling}
             audience="user"
@@ -121,8 +111,8 @@ export function ConnectScopePanel({
           <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
             {pickerNote ?? (
               <>
-                Your organization allows at most these. Uncheck anything you don&apos;t want
-                Renkei to have — you can reconnect later to change it.
+                Your organization allows at most these. Uncheck anything you don&apos;t want Renkei
+                to have — you can reconnect later to change it.
                 {extraPickerNote}
               </>
             )}
@@ -153,19 +143,16 @@ export function ReconnectScopePanel({
   authorizePath,
   approveLabel = 'Approve updated permissions',
 }: CatalogProps & { approveLabel?: string }) {
-  const { selectedIds, toggleOption, selectedScopeString } = useScopeSelection(
-    options,
-    ceiling,
-    priorScopes
-  );
-  const authorizeUrl = `${authorizePath}?scopes=${encodeURIComponent(selectedScopeString)}`;
+  const context = { options, ceiling, priorScopes };
+  const { state, toggleOption } = useScopeSelection(context);
+  const authorizeUrl = authorizeHref(authorizePath, state, context);
 
   return (
     <>
       <ScopePicker
         groups={groups}
         options={options}
-        checked={selectedIds}
+        checked={state.selected}
         onToggle={toggleOption}
         available={ceiling}
         audience="user"
