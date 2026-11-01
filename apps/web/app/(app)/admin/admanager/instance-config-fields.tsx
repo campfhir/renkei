@@ -10,82 +10,21 @@
  */
 
 import { useId } from 'react';
-import { MAX_TEMPLATE_NAME_LENGTH, parseBaseUrl } from '@renkei/connector-admanager/pure';
+import { MAX_TEMPLATE_NAME_LENGTH } from '@renkei/connector-admanager/pure';
+import { caPlaceholder, urlPreview, type InstanceDraft } from './instance-list.model';
 
 export const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
-
-export interface InstanceDraft {
-  name: string;
-  environment: string;
-  baseUrl: string;
-  tlsVerify: boolean;
-  /** The PEM to store; empty keeps what is stored on edit and stores nothing on create. */
-  caPem: string;
-  /** Whether the edit form should clear a stored CA (an explicit choice). */
-  clearCa: boolean;
-  hasCustomCa: boolean;
-  allowInsecureHttp: boolean;
-  /** The ADManager Plus template the reset-password tool applies; empty means none. */
-  resetPasswordTemplateName: string;
-  enabled: boolean;
-}
-
-export function emptyDraft(): InstanceDraft {
-  return {
-    name: '',
-    environment: 'prod',
-    baseUrl: '',
-    tlsVerify: true,
-    caPem: '',
-    clearCa: false,
-    hasCustomCa: false,
-    allowInsecureHttp: false,
-    resetPasswordTemplateName: '',
-    enabled: true,
-  };
-}
-
-/** What the admin routes accept. */
-export function draftPayload(draft: InstanceDraft): Record<string, unknown> {
-  return {
-    name: draft.name,
-    environment: draft.environment,
-    baseUrl: draft.baseUrl,
-    tlsVerify: draft.tlsVerify,
-    // Absent keeps the stored CA; null clears it; text replaces it.
-    ...(draft.clearCa ? { caPem: null } : draft.caPem.trim() ? { caPem: draft.caPem } : {}),
-    allowInsecureHttp: draft.allowInsecureHttp,
-    // Blank is sent as null so an edit can clear a stored template.
-    resetPasswordTemplateName: draft.resetPasswordTemplateName.trim() || null,
-    enabled: draft.enabled,
-  };
-}
-
-/** The live normalization the server will apply to the URL. */
-export function urlPreview(draft: InstanceDraft): { text: string; error: boolean } {
-  if (!draft.baseUrl.trim())
-    return { text: 'The REST API is reached at <server URL>/api/v1 and /api/v2.', error: false };
-  const parsed = parseBaseUrl(draft.baseUrl, draft.allowInsecureHttp);
-  if (!parsed) {
-    return {
-      text: draft.allowInsecureHttp
-        ? 'Not a usable URL (no credentials, query or fragment).'
-        : 'Must be an https URL — or allow insecure HTTP below for a plaintext lab server.',
-      error: true,
-    };
-  }
-  return { text: `REST API at ${parsed}/api/v1 and ${parsed}/api/v2`, error: false };
-}
 
 export default function InstanceConfigFields({
   draft,
   onChange,
 }: {
   draft: InstanceDraft;
-  onChange: (draft: InstanceDraft) => void;
+  /** A change to the draft; the model's editDraft applies it. */
+  onChange: (patch: Partial<InstanceDraft>) => void;
 }) {
-  const set = (patch: Partial<InstanceDraft>) => onChange({ ...draft, ...patch });
+  const set = onChange;
   const preview = urlPreview(draft);
   // The template help is a description, not part of the field's name —
   // kept outside the <label> so the accessible name stays the short
@@ -143,21 +82,17 @@ export default function InstanceConfigFields({
           Verify the server certificate
         </label>
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          ADManager Plus often ships behind a self-signed or internal-CA certificate. Prefer
-          pasting your internal CA below and keeping verification on; switching it off is
-          recorded as your decision for this instance.
+          ADManager Plus often ships behind a self-signed or internal-CA certificate. Prefer pasting
+          your internal CA below and keeping verification on; switching it off is recorded as your
+          decision for this instance.
         </p>
         <label className="block text-sm font-medium">
           Internal CA certificate (PEM, optional)
           <textarea
             className={`${inputClass} mt-1 block h-24 w-full font-mono text-xs`}
-            placeholder={
-              draft.hasCustomCa && !draft.clearCa
-                ? 'A CA certificate is stored — paste a new one to replace it'
-                : '-----BEGIN CERTIFICATE-----'
-            }
+            placeholder={caPlaceholder(draft)}
             value={draft.caPem}
-            onChange={(event) => set({ caPem: event.target.value, clearCa: false })}
+            onChange={(event) => set({ caPem: event.target.value })}
           />
         </label>
         {draft.hasCustomCa ? (
@@ -165,7 +100,7 @@ export default function InstanceConfigFields({
             <input
               type="checkbox"
               checked={draft.clearCa}
-              onChange={(event) => set({ clearCa: event.target.checked, caPem: '' })}
+              onChange={(event) => set({ clearCa: event.target.checked })}
             />
             Remove the stored CA certificate
           </label>

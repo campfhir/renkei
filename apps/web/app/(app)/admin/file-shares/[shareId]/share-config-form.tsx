@@ -6,57 +6,35 @@
  * is also where a connection gets proven against the live server.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJson } from '@/lib/fetch-json';
-import ShareConfigFields, { draftPayload, emptyDraft } from '../share-config-fields';
-import type { ShareDraft } from '../share-config-fields';
+import ShareConfigFields from '../share-config-fields';
+import { draftPayload } from '../share-config-fields.model';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
-
-interface ShareResponse {
-  share: {
-    id: string;
-    name: string;
-    protocol: 'smb' | 'sftp';
-    host: string;
-    port: number | null;
-    shareName: string | null;
-    rootPath: string;
-    caseInsensitive: boolean;
-    enabled: boolean;
-    hostKeyFingerprint: string | null;
-  };
-}
+import {
+  DELETE_CONFIRMATION,
+  hostKeyStatus,
+  initialShareForm,
+  shareFormReducer,
+  type StoredShare,
+} from './share-config-form.model';
 
 export default function ShareConfigForm({ shareId }: { shareId: string }) {
   const router = useRouter();
-  const [draft, setDraft] = useState<ShareDraft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
-  /** What the server has on file — shown so an admin can confirm a key recorded on first use. */
-  const [recordedHostKey, setRecordedHostKey] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(shareFormReducer, initialShareForm);
+  const { draft, busy, status } = state;
+  const hostKey = hostKeyStatus(state);
 
   const load = useCallback(async () => {
-    const { data, error } = await getJson<ShareResponse>(
+    const { data, error } = await getJson<{ share: StoredShare }>(
       `/api/admin/file-shares/${shareId}`
     );
     if (error || !data) {
-      setStatus({ kind: 'error', text: error ?? 'Could not load the share' });
+      dispatch({ type: 'load-failed', error: error ?? 'Could not load the share' });
       return;
     }
-    setDraft({
-      ...emptyDraft(),
-      name: data.share.name,
-      protocol: data.share.protocol,
-      host: data.share.host,
-      port: data.share.port === null ? '' : String(data.share.port),
-      shareName: data.share.shareName ?? '',
-      rootPath: data.share.rootPath,
-      caseInsensitive: data.share.caseInsensitive,
-      enabled: data.share.enabled,
-      hostKeyFingerprint: data.share.hostKeyFingerprint ?? '',
-    });
-    setRecordedHostKey(data.share.hostKeyFingerprint);
+    dispatch({ type: 'loaded', share: data.share });
   }, [shareId]);
 
   useEffect(() => {
@@ -72,31 +50,23 @@ export default function ShareConfigForm({ shareId }: { shareId: string }) {
   }
 
   const save = async () => {
-    setBusy(true);
-    setStatus(null);
-    const error = await sendJson(
-      `/api/admin/file-shares/${shareId}`,
-      'PATCH',
-      draftPayload(draft)
-    );
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const error = await sendJson(`/api/admin/file-shares/${shareId}`, 'PATCH', draftPayload(draft));
     if (error) {
-      setStatus({ kind: 'error', text: error });
+      dispatch({ type: 'failed', error });
       return;
     }
-    setStatus({ kind: 'ok', text: 'Saved.' });
+    dispatch({ type: 'saved' });
     router.refresh();
     await load();
   };
 
   const remove = async () => {
-    if (!window.confirm("Delete this share? Everyone's stored connections to it go with it."))
-      return;
-    setBusy(true);
+    if (!window.confirm(DELETE_CONFIRMATION)) return;
+    dispatch({ type: 'sent' });
     const error = await sendJson(`/api/admin/file-shares/${shareId}`, 'DELETE');
-    setBusy(false);
     if (error) {
-      setStatus({ kind: 'error', text: error });
+      dispatch({ type: 'failed', error });
       return;
     }
     router.push(`/admin/file-shares`);
@@ -104,18 +74,18 @@ export default function ShareConfigForm({ shareId }: { shareId: string }) {
 
   return (
     <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
-      {draft.protocol === 'sftp' ? (
+      {hostKey ? (
         <p
           data-testid="host-key-status"
           className={`mb-3 rounded-md border px-3 py-2 text-sm ${
-            recordedHostKey
+            hostKey.kind === 'on-file'
               ? 'border-green-200 bg-green-50 text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-300'
               : 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300'
           }`}
         >
-          {recordedHostKey ? (
+          {hostKey.kind === 'on-file' ? (
             <>
-              SSH host key on file: <code className="font-mono">{recordedHostKey}</code>. Every
+              SSH host key on file: <code className="font-mono">{hostKey.fingerprint}</code>. Every
               connection is refused unless the server presents this key. Confirm it matches{' '}
               <code>ssh-keygen -lf</code> on the server, or replace it below after a key rotation.
             </>
@@ -128,12 +98,12 @@ export default function ShareConfigForm({ shareId }: { shareId: string }) {
           )}
         </p>
       ) : null}
-      <ShareConfigFields draft={draft} onChange={setDraft} />
+      <ShareConfigFields draft={draft} onChange={(patch) => dispatch({ type: 'edit', patch })} />
       <label className="mt-3 flex items-center gap-2 text-sm font-medium">
         <input
           type="checkbox"
           checked={draft.enabled}
-          onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+          onChange={(event) => dispatch({ type: 'edit', patch: { enabled: event.target.checked } })}
         />
         Enabled — disabling hides the share from everyone immediately
       </label>

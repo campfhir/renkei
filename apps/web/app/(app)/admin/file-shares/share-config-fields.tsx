@@ -12,90 +12,27 @@
  */
 
 import {
-  normalizeHostKeyFingerprint,
-  normalizePath,
-  windowsToUnix,
-} from '@renkei/connector-fileshares/pure';
+  hostKeyPreview,
+  pathPreview,
+  portPlaceholder,
+  rootPathPlaceholder,
+  visibleFields,
+  type ShareDraft,
+} from './share-config-fields.model';
 
 export const inputClass =
   'rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
-
-export interface ShareDraft {
-  name: string;
-  protocol: 'smb' | 'sftp';
-  host: string;
-  port: string;
-  shareName: string;
-  rootPath: string;
-  caseInsensitive: boolean;
-  enabled: boolean;
-  /** SFTP: the server's SHA256 host-key fingerprint; empty records it on first connection. */
-  hostKeyFingerprint: string;
-}
-
-export function emptyDraft(): ShareDraft {
-  return {
-    name: '',
-    protocol: 'smb',
-    host: '',
-    port: '',
-    shareName: '',
-    rootPath: '/',
-    caseInsensitive: true,
-    enabled: true,
-    hostKeyFingerprint: '',
-  };
-}
-
-/** What the admin routes accept. */
-export function draftPayload(draft: ShareDraft): Record<string, unknown> {
-  return {
-    name: draft.name,
-    protocol: draft.protocol,
-    host: draft.host,
-    port: draft.port ? Number(draft.port) : null,
-    shareName: draft.shareName || undefined,
-    rootPath: draft.rootPath,
-    caseInsensitive: draft.caseInsensitive,
-    enabled: draft.enabled,
-    hostKeyFingerprint: draft.protocol === 'sftp' ? draft.hostKeyFingerprint : null,
-  };
-}
-
-/** The live verdict on a pasted fingerprint, with the same function the server validates with. */
-export function hostKeyPreview(raw: string): { text: string; error: boolean } {
-  const normalized = normalizeHostKeyFingerprint(raw);
-  if (normalized === undefined) {
-    return { text: 'Not a SHA256 fingerprint — paste what `ssh-keygen -lf` prints.', error: true };
-  }
-  if (normalized === null) {
-    return {
-      text: 'Empty: the key the server presents on the first successful connection is recorded here for you to confirm. Pin it now to refuse any other key from the start.',
-      error: false,
-    };
-  }
-  return {
-    text: `Pinned as ${normalized}; a server presenting any other key is refused.`,
-    error: false,
-  };
-}
-
-/** The live translation the server will apply to the root path. */
-export function pathPreview(raw: string): { text: string; error: boolean } {
-  const normalized = normalizePath(windowsToUnix(raw || '/'));
-  if (!normalized.ok)
-    return { text: 'This path climbs upward ("..") and will be rejected.', error: true };
-  return { text: `Stored as ${normalized.val}`, error: false };
-}
 
 export default function ShareConfigFields({
   draft,
   onChange,
 }: {
   draft: ShareDraft;
-  onChange: (draft: ShareDraft) => void;
+  /** A change to the draft; the model's editDraft applies it. */
+  onChange: (patch: Partial<ShareDraft>) => void;
 }) {
-  const set = (patch: Partial<ShareDraft>) => onChange({ ...draft, ...patch });
+  const set = onChange;
+  const shows = visibleFields(draft.protocol);
   const preview = pathPreview(draft.rootPath);
   const hostKey = hostKeyPreview(draft.hostKeyFingerprint);
 
@@ -116,13 +53,7 @@ export default function ShareConfigFields({
           <select
             className={`${inputClass} mt-1 block w-full`}
             value={draft.protocol}
-            onChange={(event) =>
-              set(
-                event.target.value === 'sftp'
-                  ? { protocol: 'sftp', caseInsensitive: false }
-                  : { protocol: 'smb', caseInsensitive: true }
-              )
-            }
+            onChange={(event) => set({ protocol: event.target.value === 'sftp' ? 'sftp' : 'smb' })}
           >
             <option value="smb">SMB (Windows share, \\host\share)</option>
             <option value="sftp">SFTP</option>
@@ -142,11 +73,11 @@ export default function ShareConfigFields({
           <input
             className={`${inputClass} mt-1 block w-full`}
             value={draft.port}
-            placeholder={draft.protocol === 'smb' ? '445 (default)' : '22 (default)'}
+            placeholder={portPlaceholder(draft.protocol)}
             onChange={(event) => set({ port: event.target.value })}
           />
         </label>
-        {draft.protocol === 'smb' ? (
+        {shows.shareName ? (
           <label className="block text-sm font-medium">
             Share name
             <input
@@ -162,7 +93,7 @@ export default function ShareConfigFields({
           <input
             className={`${inputClass} mt-1 block w-full`}
             value={draft.rootPath}
-            placeholder={draft.protocol === 'smb' ? '\\ or a subfolder' : '/srv/data'}
+            placeholder={rootPathPlaceholder(draft.protocol)}
             onChange={(event) => set({ rootPath: event.target.value })}
           />
           <span
@@ -171,7 +102,7 @@ export default function ShareConfigFields({
             {preview.text} — Windows paths (\\server\share\folder, C:\folder) are translated.
           </span>
         </label>
-        {draft.protocol === 'sftp' ? (
+        {shows.hostKey ? (
           <label className="block text-sm font-medium sm:col-span-2">
             Host key fingerprint (SHA256)
             <input

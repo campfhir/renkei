@@ -1,9 +1,14 @@
 /**
- * The Bitbucket connector form's webhook instructions: the copy an
- * administrator follows when registering a repository webhook by hand. It
- * must name the `X-Renkei-Webhook-Secret` header as the way to carry the
- * shared secret (lib/bitbucket-webhook.ts), with the URL form mentioned
- * only as the legacy fallback. Read-only — nothing is saved.
+ * The Bitbucket connector form's webhook instructions, as an administrator
+ * reads them on the real server and at a phone's width: the copy names
+ * the `X-Renkei-Webhook-Secret` header as the way to carry the shared
+ * secret (lib/bitbucket-webhook.ts), with the URL form mentioned only as
+ * the legacy fallback. Read-only — nothing is saved.
+ *
+ * The rules behind it — the instructions while no secret is stored, the
+ * "stored" note once one is, the header matching the one the webhook
+ * route reads, the secret sent only when typed — are
+ * app/(app)/admin/connectors/forms/app-registration-form.model.test.ts.
  */
 
 import { test, expect } from './fixtures';
