@@ -21,7 +21,7 @@
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",
-    "@types/node": "^24.19.2",
+    "@types/node": "^26.6.5",
     "@types/pg": "^8.23.1",
     "esbuild": "^0.28.2",
     "jest": "^30.5.2",
