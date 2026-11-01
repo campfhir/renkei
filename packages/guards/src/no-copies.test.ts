@@ -43,7 +43,11 @@ function sources(dir: string): string[] {
 const scanned = ['apps', 'packages']
   .flatMap((group) => sources(join(REPO, group)))
   .map((path) => relative(REPO, path).split(sep).join('/'))
-  .filter((path) => !path.startsWith('packages/guards/'));
+  .filter((path) => !path.startsWith('packages/guards/'))
+  // A migration is compiled on its own and run by the migrate image, which
+  // holds no workspace package sources: it keeps its own copy
+  // (packages/db/src/migrations-self-contained.test.ts).
+  .filter((path) => !/^packages\/db\/src\/migrations\/\d{3}-/.test(path));
 
 describe('the guards have one home', () => {
   it('scans the repository', () => {

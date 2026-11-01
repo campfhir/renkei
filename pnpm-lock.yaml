@@ -1372,9 +1372,6 @@ importers:
       '@campfhir/safe-functions':
         specifier: ^0.1.3
         version: 0.1.3(eslint@10.13.0(jiti@2.7.0))(typescript@5.9.3)
-      '@renkei/guards':
-        specifier: workspace:*
-        version: link:../guards
       kysely:
         specifier: ^0.29.7
         version: 0.29.7
