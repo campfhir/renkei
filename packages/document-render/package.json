@@ -21,7 +21,7 @@
     "@renkei/document-text": "workspace:*",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.19.2",
-    "@types/pdfkit": "^0.17.6",
+    "@types/pdfkit": "^0.17.7",
     "jest": "^30.5.2",
     "ts-jest": "^29.4.15",
     "typescript": "^5.9.3"
