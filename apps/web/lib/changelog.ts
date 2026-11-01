@@ -54,6 +54,12 @@ export const CHANGELOG: ChangelogRelease[] = [
         detail:
           'An action preview for a calendar event now shortens the end to just its time only when the event starts and ends on the same day as written. Before, depending on your own time zone, an overnight event could lose its end date, or a same-day event could repeat it.',
       },
+      {
+        kind: 'fixed',
+        title: 'Mockup viewer: Fit to width always goes back to the top',
+        detail:
+          'After a zoom that could go no further (at 25% or 400%, or Reset at 100%), Fit to width or a new width button could leave the fullscreen mockup scrolled to an old spot instead of its top left. It now always starts from the top.',
+      },
     ],
   },
   {
