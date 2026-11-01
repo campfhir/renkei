@@ -14,6 +14,7 @@
  */
 
 import { useEffect, type RefObject } from 'react';
+import { isRecord } from '@renkei/guards';
 import { MOCKUP_MESSAGE_SOURCE } from '@/lib/mockups/message';
 
 export type FrameMessage =
@@ -23,18 +24,9 @@ export type FrameMessage =
   | { type: 'escape' };
 
 /** How short and how tall a frame may be made to fit its document. */
-export const FRAME_HEIGHT_MIN = 80;
-export const FRAME_HEIGHT_MAX = 6000;
-
-export function clampFrameHeight(height: number): number {
-  return Math.max(FRAME_HEIGHT_MIN, Math.min(FRAME_HEIGHT_MAX, Math.ceil(height)));
-}
-
 export function parseFrameMessage(data: unknown): FrameMessage | null {
-  if (typeof data !== 'object' || data === null) return null;
-  const { source, type, height, deltaY, direction }: Record<string, unknown> = Object.fromEntries(
-    Object.entries(data)
-  );
+  if (!isRecord(data)) return null;
+  const { source, type, height, deltaY, direction } = data;
   if (source !== MOCKUP_MESSAGE_SOURCE) return null;
   if (type === 'size' && typeof height === 'number' && Number.isFinite(height)) {
     return { type: 'size', height };
