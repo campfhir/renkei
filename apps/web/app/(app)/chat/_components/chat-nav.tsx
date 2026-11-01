@@ -34,6 +34,7 @@ import { useDismiss } from '@/lib/use-dismiss';
 import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
+import { useHydrated } from '@/components/hydration-mark';
 import ShareModal from './share-modal';
 import {
   canLoadMore,
@@ -52,6 +53,7 @@ const rowClass =
 const activeClass = 'bg-gray-100 font-medium dark:bg-gray-900';
 
 export function ChatList({ data }: { data: ChatSidebarData }) {
+  const hydrated = useHydrated();
   const currentPath = usePathname();
   /*
     The server only loads activity from the last CHAT_SIDEBAR_ACTIVE_DAYS
@@ -94,7 +96,10 @@ export function ChatList({ data }: { data: ChatSidebarData }) {
   );
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
+    <div
+      className="relative flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800"
+      data-hydrated={hydrated ? 'chat-list' : undefined}
+    >
       {/* On the top heading's row, above the list, so it is there while the history scrolls. */}
       <div className="absolute top-2 right-2 z-20 rounded-md bg-white dark:bg-gray-950">
         <StateFilter states={states} onChange={setStates} counts={counts} />

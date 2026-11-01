@@ -51,6 +51,7 @@ import { createPerson, signIn, type Person } from './support/person';
 import { addStubModel, removeModel } from './support/stub-model';
 import { LLM_STUB_REPLY } from './constants';
 import { test, expect } from './fixtures';
+import { settled as turnSettled } from './support/chat';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -165,12 +166,11 @@ async function chatOf(page: Page, modelId: string, title: string): Promise<strin
     data: { text: PROMPT_TEXT, llmModelId: modelId },
   });
   expect(asked.status(), await asked.text()).toBe(202);
-  await expect(async () => {
-    await page.goto(`/chat/${chatId}`);
-    await expect(page.getByRole('main').getByText(LLM_STUB_REPLY).first()).toBeVisible({
-      timeout: 2_000,
-    });
-  }).toPass({ timeout: 30_000 });
+  // The reply is written by the turn on the server: wait for it to finish,
+  // then open the chat once.
+  await turnSettled(page.request, chatId);
+  await page.goto(`/chat/${chatId}`);
+  await expect(page.getByRole('main').getByText(LLM_STUB_REPLY).first()).toBeVisible();
   return chatId;
 }
 

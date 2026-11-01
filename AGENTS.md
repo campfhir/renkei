@@ -125,8 +125,18 @@ screenshot, a phone-width pass); its form's rules are
   configs and model roster are cached for a minute in each server bundle
   in production; the suite sets `RENKEI_CONFIG_CACHE_TTL_MS=0`, so a
   switch a spec flips shows on the next request — assert it, don't poll
-  for it. No `waitForTimeout`: wait for a response, a locator state, or
-  `settled`/`painted`/`steady` (`e2e/support/settle.ts`). A model reply
+  for it. No `waitForTimeout`, and no `toPass` press-until-it-takes loop:
+  wait for a response, a locator state, or `settled`/`painted`/`steady`
+  (`e2e/support/settle.ts`). Before the first press, fill or `<details>`
+  tap on a freshly loaded page, wait for it to hydrate — `hydrated(page)`
+  for the shell, `hydrated(page, 'chat-thread')` (or `'chat-list'`,
+  `'notifications'`, a section's `data-hydrated="section"`) for a surface
+  that streams in later (`components/hydration-mark.tsx`); a new surface a
+  spec presses in sets its own mark with `useHydrated()`. Work done on the
+  server (a turn, an agent run) is waited for through its route —
+  `settled(request, chatId)` in `e2e/support/chat.ts`, `runSettled` in
+  `e2e/support/agents.ts` — then the page is loaded once, never reloaded
+  until it shows. A model reply
   that must stay in flight while the test looks holds `until` a key the
   test lets go with `releaseStub`, rather than a long `delayMs`.
 - **No motion to wait out.** The suite runs with the OS's reduce-motion

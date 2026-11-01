@@ -97,11 +97,13 @@ browser suite is the smoke paths, layout and visual checks
 `connector-logos`, `chat-row-menu-flip`, `voice-webkit`, the screenshot
 gallery) and one press-through per migrated screen.
 
-About fifteen specs still hold one `toPass` each, nearly all a press that
-can land before the page hydrates. A page that says when its handlers are
-attached (as `global-shortcuts` does with `data-shortcuts` on the root)
-lets a spec wait once instead; that is the next step for the suite, not a
-model's.
+No spec retries a press any more. A page says when React has taken it
+over (`data-hydrated` on `<html>`, and on each surface that streams in
+later: `components/hydration-mark.tsx`), and a spec waits for that once
+before its first press; work done on the server is waited for through its
+route, and the page loaded once. The last `toPass` loops went with it, as
+did a config-cache wait the suite's `RENKEI_CONFIG_CACHE_TTL_MS=0` had
+already made pointless.
 
 ## Decisions to revisit
 

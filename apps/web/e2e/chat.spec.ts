@@ -14,6 +14,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { hydrated } from './support/settle';
 import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
 import { createChat, send } from './support/chat';
@@ -277,15 +278,14 @@ test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
     await expect(copy).toBeVisible();
     // What Copy does is fill the clipboard; its "Copied" label lasts 1.5s,
     // too short to watch for on a starved CPU. The button is drawn by the
-    // server, so a press before hydration does nothing: copying is harmless
-    // to repeat, so press until the clipboard holds the block.
+    // server: press it once the thread has hydrated, then read the clipboard
+    // the write lands in.
     await page.evaluate(() => navigator.clipboard.writeText(''));
-    await expect(async () => {
-      await copy.click({ timeout: 2_000 });
-      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-        "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
-      );
-    }).toPass({ timeout: 15_000 });
+    await hydrated(page, 'chat-thread');
+    await copy.click();
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toBe("const carried = issues.filter((issue) => issue.status !== 'Done');\n");
     await shot(page, testInfo, 'chat-code-blocks.png');
 
     // At phone width a table row is a card; a cell mixing text and inline

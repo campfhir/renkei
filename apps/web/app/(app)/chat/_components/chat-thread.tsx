@@ -101,6 +101,7 @@ import type { ChatNote } from '@/lib/code/note-text';
 import CodePane from '../../code/_components/code-pane';
 import { useCodePane } from '../../code/_components/use-code-pane';
 import UploadIndicator from '@/components/uploads/upload-indicator';
+import { useHydrated } from '@/components/hydration-mark';
 import { clientLogger } from '@/lib/client-logger';
 
 interface ThreadProps {
@@ -183,6 +184,7 @@ export default function ChatThread({
   voice,
 }: ThreadProps) {
   const router = useRouter();
+  const hydrated = useHydrated();
   const [chat, setChat] = useState<ChatView>(initialChat);
   const [state, dispatch] = useReducer(
     applyStreamEvent,
@@ -1065,7 +1067,11 @@ export default function ChatThread({
     (lastTurn?.status === 'failed' || lastTurn?.status === 'interrupted');
 
   return (
-    <div ref={frameRef} className="flex h-full min-h-0 min-w-0">
+    <div
+      ref={frameRef}
+      className="flex h-full min-h-0 min-w-0"
+      data-hydrated={hydrated ? 'chat-thread' : undefined}
+    >
       {codePane && paneMode === 'split' && paneOpen ? (
         <>
           <div

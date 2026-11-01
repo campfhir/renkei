@@ -13,6 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './fixtures';
+import { settled as turnSettled } from './support/chat';
 import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel } from './support/stub-model';
 
@@ -41,10 +42,11 @@ test('a sealed chat opens for its enrolled owner @smoke', async ({
     });
     expect(asked.status(), await asked.text()).toBe(202);
 
-    await expect(async () => {
-      await page.goto(`/chat/${chatId}`);
-      await expect(page.getByText(LLM_STUB_REPLY)).toBeVisible({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000 });
+    // The reply is written by the turn on the server: wait for it to finish,
+    // then open the chat once.
+    await turnSettled(page.request, chatId);
+    await page.goto(`/chat/${chatId}`);
+    await expect(page.getByText(LLM_STUB_REPLY)).toBeVisible();
     await expect(page.getByText(QUESTION)).toBeVisible();
     await expect(page.getByText(title).filter({ visible: true }).first()).toBeVisible();
     // Nothing for the KeyGuard to ask: the key is delegated for this session.

@@ -29,6 +29,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
+import { hydrated } from './support/settle';
 import { connectJira } from './support/connectors';
 import { addStubModel, removeModel, scripted, toolStep } from './support/stub-model';
 import { ISSUE_INPUT, preview, previewChat } from './support/preview-cards';
@@ -105,6 +106,9 @@ async function resolveFromTheComposer(
   // chat_widget_resolve with the card's id — a tool that acts, so the
   // turn parks on the permission card first, like any other write.
   const box = page.getByRole('textbox', { name: 'Message' });
+  // Typed once the thread has hydrated: text filled into the server's HTML
+  // is lost. The permission card that follows is drawn by React itself.
+  await hydrated(page, 'chat-thread');
   await box.fill(
     scripted('I already filed that one by hand.', [
       toolStep('chat_widget_resolve', {
@@ -121,12 +125,8 @@ async function resolveFromTheComposer(
   await expect(ask).toBeVisible(COLD);
   await expect(page.getByText('chat_widget_resolve').first()).toBeVisible();
   await shot(page, testInfo, screens.ask);
-  // Clicked again until it takes: a card that streamed in before the page
-  // hydrated can miss the first click.
-  await expect(async () => {
-    await ask.getByRole('button', { name: 'Allow once' }).click({ timeout: 2_000 });
-    await expect(ask).toBeHidden({ timeout: 2_000 });
-  }).toPass({ timeout: 20_000 });
+  await ask.getByRole('button', { name: 'Allow once' }).click();
+  await expect(ask).toBeHidden();
 
   // The tool ran: the card flips to the receipt in place — no reload, the
   // same iframe — and its buttons are gone.
