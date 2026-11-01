@@ -38,7 +38,6 @@ import type {
   ChatMessageView,
   ChatView,
   ModelOption,
-  QueuedSend,
   ToolPermissionDecision,
 } from '@/lib/chat/views';
 import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
@@ -62,6 +61,23 @@ import ChatTitle from './chat-title';
 import { BranchPickerModal } from '../../code/_components/branch-switcher';
 import { DialogFooter } from './chat-nav';
 import Composer, { type ComposerSubmit } from './composer';
+import {
+  connectorsPatch,
+  initialModelId,
+  initialThreadSend,
+  isCompactCommand,
+  lastQueueId,
+  nextToSend,
+  promptActionsOffered,
+  promptTextOf,
+  queueView as queueViewOf,
+  renameRequest,
+  resendRequest,
+  resentPrompt,
+  submitRoute,
+  threadSendReducer,
+  turnRequest,
+} from './chat-thread.model';
 import MessageList from './message-list';
 import ModelSelect from './model-select';
 import ContextMeter from './context-meter';
@@ -103,15 +119,6 @@ interface ThreadProps {
 /** A code project's page lives under Code; a chat project's under Chat. */
 function projectHref(projectId: string, kind: 'chat' | 'code' | null): string {
   return kind === 'code' ? `/code/${projectId}` : `/chat/projects/${projectId}`;
-}
-
-/** The typed text of a prompt row, without the attachment excerpts the model saw. */
-function promptTextOf(message: ChatMessageView): string {
-  return message.blocks
-    .flatMap((block) => (block.type === 'text' ? [block.text] : []))
-    .join('\n')
-    .replace(/<attachment [^>]*>[\s\S]*?<\/attachment>/g, '')
-    .trim();
 }
 
 function parseEvent(data: string): ChatStreamEvent | null {
@@ -187,15 +194,19 @@ export default function ChatThread({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
-  const [manageDialog, setManageDialog] = useState<'rename' | 'delete' | 'branch' | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
-  const [manageBusy, setManageBusy] = useState(false);
-  const [manageError, setManageError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<ChatMessageView | null>(null);
-  const [confirmResend, setConfirmResend] = useState<ChatMessageView | null>(null);
-  const [modelId, setModelId] = useState<string | null>(
-    initialChat.llmModelId ?? models.find((model) => model.isDefault)?.id ?? models[0]?.id ?? null
-  );
+  // The send path's state (chat-thread.model.ts): the queue, the prompt
+  // being edited or resent, and the rename / delete / branch dialogs.
+  const [sendState, sendDispatch] = useReducer(threadSendReducer, initialChat, initialThreadSend);
+  const {
+    queue,
+    editing,
+    confirmResend,
+    dialog: manageDialog,
+    renameDraft,
+    manageBusy,
+    manageError,
+  } = sendState;
+  const [modelId, setModelId] = useState<string | null>(() => initialModelId(initialChat, models));
   const [thinking, setThinking] = useState(initialChat.thinkingEnabled);
   const [autoMode, setAutoMode] = useState(initialChat.autoMode);
   const [connectors, setConnectors] = useState<string[] | null>(
@@ -543,17 +554,12 @@ export default function ChatThread({
       // A slash command, not a message — /compact runs the same fold a
       // person could ask the model for in plain language, directly rather
       // than waiting on the model to decide to call the tool.
-      if (input.text.trim().toLowerCase() === '/compact') {
+      if (isCompactCommand(input.text)) {
         return (await forceCompact()) ? { userMessageId: '' } : null;
       }
       setError(null);
       setSending(true);
-      const started = await chatClient.sendTurn(chat.id, {
-        text: input.text,
-        attachmentIds: input.attachments.map((attachment) => attachment.id),
-        llmModelId: modelId,
-        ...(input.voice ? { voice: true } : {}),
-      });
+      const started = await chatClient.sendTurn(chat.id, turnRequest(input, modelId));
       setSending(false);
       if (started.error || !started.data) {
         setError(started.error ?? 'The message could not be sent.');
@@ -578,12 +584,11 @@ export default function ChatThread({
    * Each item keeps its own id so the composer can list them and let the
    * person remove any one, not just clear the whole queue.
    */
-  type QueuedItem = QueuedSend;
   // Held server-side (queued-sends.ts) so a reload, or the chat opened
   // elsewhere, still finds what is waiting: seeded from the page's load,
-  // rewritten below on every change.
-  const [queue, setQueue] = useState<QueuedItem[]>(initialChat.queue);
-  const nextQueueId = useRef(initialChat.queue.reduce((max, item) => Math.max(max, item.id), 0));
+  // rewritten below on every change. Ids are drawn here, at once: a voice
+  // ticket names its queue place before the reducer has run.
+  const nextQueueId = useRef(lastQueueId(initialChat.queue));
   const savedQueue = useRef(JSON.stringify(initialChat.queue));
   const queueWrites = useRef<Promise<unknown>>(Promise.resolve());
   useEffect(() => {
@@ -604,7 +609,7 @@ export default function ChatThread({
     (input: ComposerSubmit): Promise<boolean> => {
       if (!running) return submit(input);
       nextQueueId.current += 1;
-      setQueue((current) => [...current, { id: nextQueueId.current, kind: 'message', input }]);
+      sendDispatch({ type: 'messageQueued', id: nextQueueId.current, input });
       return Promise.resolve(true);
     },
     [running, submit]
@@ -612,11 +617,11 @@ export default function ChatThread({
   const queueOrCompact = useCallback((): Promise<boolean> => {
     if (!running) return forceCompact();
     nextQueueId.current += 1;
-    setQueue((current) => [...current, { id: nextQueueId.current, kind: 'compact' }]);
+    sendDispatch({ type: 'compactQueued', id: nextQueueId.current });
     return Promise.resolve(true);
   }, [running, forceCompact]);
   const removeQueued = useCallback((id: number) => {
-    setQueue((current) => current.filter((item) => item.id !== id));
+    sendDispatch({ type: 'queuedRemoved', id });
   }, []);
   // A reply still being read aloud counts as running for the queue: a
   // turn that starts while the voice is mid-sentence would silence it
@@ -625,18 +630,20 @@ export default function ChatThread({
   // not to cut the answer short.
   const readingReply = speech.owner === LIVE_REPLY_OWNER && speech.state !== 'idle';
   useEffect(() => {
-    if (running || queue.length === 0) return;
     // Asked of the queue itself, not of the state mirrored from it: the
     // reply's reading begins in an effect of this same commit
     // (useReplySpeech, declared above), one render before the mirror
     // knows — and the turn's end and its last words arrive together.
     // `readingReply` is in the dependencies so the reading's end runs
     // this again.
-    if (speechQueue && speechQueue.owner === LIVE_REPLY_OWNER && speechQueue.state !== 'idle') {
-      return;
-    }
-    const [next, ...rest] = queue;
-    setQueue(rest);
+    const next = nextToSend(queue, {
+      running,
+      readingReply: Boolean(
+        speechQueue && speechQueue.owner === LIVE_REPLY_OWNER && speechQueue.state !== 'idle'
+      ),
+    });
+    if (!next) return;
+    sendDispatch({ type: 'queuedSent', id: next.id });
     if (next.kind === 'compact') void forceCompact();
     else {
       void send(next.input).then((started) => {
@@ -644,17 +651,7 @@ export default function ChatThread({
       });
     }
   }, [running, readingReply, speechQueue, queue, send, forceCompact]);
-  const queueView = queue.map((item) => ({
-    id: item.id,
-    isCompact: item.kind === 'compact',
-    label:
-      item.kind === 'compact'
-        ? 'Compact this conversation'
-        : item.input.text.trim() ||
-          (item.input.attachments.length > 0
-            ? `${item.input.attachments.length} file${item.input.attachments.length === 1 ? '' : 's'}`
-            : 'Message'),
-  }));
+  const queueView = queueViewOf(queue);
 
   /**
    * Resend a prompt as it was, or with the text now in the box: the server
@@ -665,23 +662,15 @@ export default function ChatThread({
     async (message: ChatMessageView, input: ComposerSubmit | null): Promise<boolean> => {
       setError(null);
       setSending(true);
-      const resent = await chatClient.resend(chat.id, message.id, {
-        text: input ? input.text : null,
-        attachmentIds: input ? input.attachments.map((attachment) => attachment.id) : [],
-        llmModelId: modelId,
-        ...(input?.voice ? { voice: true } : {}),
-      });
+      const resent = await chatClient.resend(chat.id, message.id, resendRequest(input, modelId));
       setSending(false);
       if (resent.error || !resent.data) {
         setError(resent.error ?? 'The message could not be resent.');
         return false;
       }
-      const prompt: ComposerSubmit = {
-        text: input ? input.text : promptTextOf(message),
-        attachments: [...message.attachments, ...(input?.attachments ?? [])],
-      };
+      const prompt = resentPrompt(message, input);
       lastPrompt.current = prompt;
-      setEditing(null);
+      sendDispatch({ type: 'resent' });
       dispatch({
         type: 'truncate',
         fromSeq: resent.data.fromSeq,
@@ -694,8 +683,11 @@ export default function ChatThread({
   );
 
   const onComposerSubmit = useCallback(
-    (input: ComposerSubmit) => (editing ? resend(editing, input) : queueOrSend(input)),
-    [editing, resend, queueOrSend]
+    (input: ComposerSubmit) =>
+      editing && submitRoute(sendState, running) === 'resend'
+        ? resend(editing, input)
+        : queueOrSend(input),
+    [editing, sendState, running, resend, queueOrSend]
   );
 
   const rename = useCallback(
@@ -714,15 +706,13 @@ export default function ChatThread({
   );
 
   const runManage = useCallback(async (action: () => Promise<{ error: string | null }>) => {
-    setManageBusy(true);
-    setManageError(null);
+    sendDispatch({ type: 'manageStarted' });
     const result = await action();
-    setManageBusy(false);
     if (result.error) {
-      setManageError(result.error);
+      sendDispatch({ type: 'manageFailed', error: result.error });
       return;
     }
-    setManageDialog(null);
+    sendDispatch({ type: 'manageDone' });
   }, []);
 
   const toggleArchive = useCallback(() => {
@@ -795,7 +785,7 @@ export default function ChatThread({
       if (running) {
         nextQueueId.current += 1;
         const id = nextQueueId.current;
-        setQueue((current) => [...current, { id, kind: 'message', input }]);
+        sendDispatch({ type: 'messageQueued', id, input });
         return { queued: id };
       }
       const started = await send(input);
@@ -811,13 +801,7 @@ export default function ChatThread({
         const sentAs = queuedSent.current.get(ticket.queued);
         if (!sentAs) {
           // Still waiting its turn: only the words change.
-          setQueue((current) =>
-            current.map((item) =>
-              item.id === ticket.queued && item.kind === 'message'
-                ? { ...item, input: { ...item.input, text } }
-                : item
-            )
-          );
+          sendDispatch({ type: 'queuedTextCorrected', id: ticket.queued, text });
           return;
         }
         messageId = sentAs;
@@ -878,9 +862,7 @@ export default function ChatThread({
   const changeConnectors = useCallback(
     async (next: string[] | null) => {
       setConnectors(next);
-      await chatClient.updateChat(chat.id, {
-        toolConfig: next ? { connectors: next } : null,
-      });
+      await chatClient.updateChat(chat.id, connectorsPatch(next));
     },
     [chat.id]
   );
@@ -976,7 +958,7 @@ export default function ChatThread({
       overflow.push({
         label: 'Switch branch',
         icon: ICONS.gitBranch,
-        onSelect: () => setManageDialog('branch'),
+        onSelect: () => sendDispatch({ type: 'branchOpened' }),
       });
     }
   }
@@ -985,11 +967,7 @@ export default function ChatThread({
     overflow.push({
       label: 'Rename',
       icon: ICONS.pencil,
-      onSelect: () => {
-        setRenameDraft(chat.title ?? '');
-        setManageError(null);
-        setManageDialog('rename');
-      },
+      onSelect: () => sendDispatch({ type: 'renameOpened', title: chat.title }),
     });
     overflow.push({
       label: chat.archived ? 'Unarchive' : 'Archive',
@@ -1000,10 +978,7 @@ export default function ChatThread({
       label: 'Delete',
       icon: ICONS.trash,
       danger: true,
-      onSelect: () => {
-        setManageError(null);
-        setManageDialog('delete');
-      },
+      onSelect: () => sendDispatch({ type: 'deleteOpened' }),
     });
   }
   const lastTurn = state.turn;
@@ -1270,8 +1245,11 @@ export default function ChatThread({
               turn={state.turn}
               compaction={state.compaction}
               promptActions={
-                isOwner && !running && !sending
-                  ? { onResend: setConfirmResend, onEdit: setEditing }
+                promptActionsOffered({ isOwner, running, sending })
+                  ? {
+                      onResend: (message) => sendDispatch({ type: 'resendAsked', message }),
+                      onEdit: (message) => sendDispatch({ type: 'editStarted', message }),
+                    }
                   : null
               }
               permission={
@@ -1358,13 +1336,13 @@ export default function ChatThread({
                 running={running}
                 queue={queueView}
                 onRemoveQueued={removeQueued}
-                onClearQueue={() => setQueue([])}
+                onClearQueue={() => sendDispatch({ type: 'queueCleared' })}
                 uploads={uploadsEnabled}
                 massUploadThreshold={massUploadThreshold}
                 onSubmit={onComposerSubmit}
                 onCompact={queueOrCompact}
                 editing={editing ? { text: promptTextOf(editing) } : null}
-                onCancelEdit={() => setEditing(null)}
+                onCancelEdit={() => sendDispatch({ type: 'editCancelled' })}
                 project={
                   chat.projectId
                     ? { id: chat.projectId, name: chat.projectName ?? 'this project' }
@@ -1490,7 +1468,10 @@ export default function ChatThread({
         />
       ) : null}
       {confirmResend ? (
-        <Modal title="Resend this message?" onClose={() => setConfirmResend(null)}>
+        <Modal
+          title="Resend this message?"
+          onClose={() => sendDispatch({ type: 'resendDismissed' })}
+        >
           <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
             The message is sent again as it was. Every reply after it, and any files those replies
             produced, are removed.
@@ -1499,10 +1480,10 @@ export default function ChatThread({
             busy={sending}
             error={null}
             label="Resend"
-            onCancel={() => setConfirmResend(null)}
+            onCancel={() => sendDispatch({ type: 'resendDismissed' })}
             onConfirm={() => {
               const message = confirmResend;
-              setConfirmResend(null);
+              sendDispatch({ type: 'resendDismissed' });
               void resend(message, null);
             }}
           />
@@ -1517,14 +1498,14 @@ export default function ChatThread({
         />
       ) : null}
       {manageDialog === 'rename' ? (
-        <Modal title="Rename chat" onClose={() => setManageDialog(null)}>
+        <Modal title="Rename chat" onClose={() => sendDispatch({ type: 'dialogClosed' })}>
           <form
             onSubmit={(event) => {
               event.preventDefault();
               void runManage(async () => {
-                const next = renameDraft.trim();
-                if (!next) return { error: 'The name can’t be empty.' };
-                const saved = await rename(next);
+                const request = renameRequest(renameDraft);
+                if ('error' in request) return request;
+                const saved = await rename(request.title);
                 return { error: saved ? null : 'The chat could not be renamed.' };
               });
             }}
@@ -1533,7 +1514,7 @@ export default function ChatThread({
             <input
               autoFocus
               value={renameDraft}
-              onChange={(event) => setRenameDraft(event.target.value)}
+              onChange={(event) => sendDispatch({ type: 'renameTyped', text: event.target.value })}
               maxLength={200}
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
@@ -1541,13 +1522,13 @@ export default function ChatThread({
               busy={manageBusy}
               error={manageError}
               label="Rename"
-              onCancel={() => setManageDialog(null)}
+              onCancel={() => sendDispatch({ type: 'dialogClosed' })}
             />
           </form>
         </Modal>
       ) : null}
       {manageDialog === 'delete' ? (
-        <Modal title="Delete chat" onClose={() => setManageDialog(null)}>
+        <Modal title="Delete chat" onClose={() => sendDispatch({ type: 'dialogClosed' })}>
           <p className="mb-3 text-sm text-gray-600 dark:text-gray-400">
             This deletes the chat, its messages and its files for everyone it was shared with.
           </p>
@@ -1556,7 +1537,7 @@ export default function ChatThread({
             error={manageError}
             label="Delete"
             danger
-            onCancel={() => setManageDialog(null)}
+            onCancel={() => sendDispatch({ type: 'dialogClosed' })}
             onConfirm={deleteChat}
           />
         </Modal>
@@ -1566,7 +1547,7 @@ export default function ChatThread({
           projectId={codeProjectId}
           chatId={chat.id}
           branch={branch}
-          onClose={() => setManageDialog(null)}
+          onClose={() => sendDispatch({ type: 'dialogClosed' })}
           onSwitched={setBranchOverride}
         />
       ) : null}

@@ -2,11 +2,18 @@
  * The composer row of a code project at phone width: prompt libraries, the
  * microphone and the speaker fold into one button with a two-level menu
  * (composer-tools-menu.tsx) so the model and Auto switch keep their room.
- * Driven end to end: the first level, Prompt libraries opening the picker,
- * Dictate turning the button into the microphone (and one tap stopping
- * it), and Voice opening the speaker panel as the second level with a way
- * back. Also that the row fits the screen, and that at desktop width the
- * separate buttons are still there and the merged one is not.
+ * Here only what a browser shows: at phone width the one button stands in
+ * for three and the row fits the screen, at desktop width the separate
+ * buttons are back, the voice panel fits the phone, Escape closes the
+ * menu, and one walk through the real menu — Voice and back, then Dictate
+ * on Chromium's fake microphone, turning the button into the microphone
+ * and one tap stopping it.
+ *
+ * The menu's rules are composer-tools-menu.model.test.ts's: which items the
+ * first level lists, every press starting on the first level, an item
+ * closing the menu, a tap while dictating stopping it; the box's
+ * placeholder while dictating is composer.model.test.ts's. Opening the
+ * voice conversation from the panel is the voice specs'.
  *
  * "Phone width" is a resized Chromium viewport, not a device descriptor.
  * The code project and its chat are the test's own person's
@@ -121,36 +128,20 @@ test('phone: prompts, dictation and voice fold into one two-level menu', async (
   await expectRowFits(page);
   await shot(page, testInfo, 'tools-menu-01-row', false);
 
-  // First level.
+  // First level, then the voice panel as the second, fitting the phone, and back.
   await tools.click();
   const menu = page.getByRole('menu', { name: 'Prompts and voice' });
-  await expect(menu.getByRole('menuitem', { name: 'Prompt libraries' })).toBeVisible();
-  await expect(menu.getByRole('menuitem', { name: 'Dictate' })).toBeVisible();
-  await expect(menu.getByRole('menuitem', { name: 'Voice' })).toBeVisible();
+  await expect(menu).toBeVisible();
   await shot(page, testInfo, 'tools-menu-02-first-level', false);
-
-  // Second level: the voice panel, and back.
   await menu.getByRole('menuitem', { name: 'Voice' }).click();
-  await expect(menu).toBeHidden();
   await expect(page.getByRole('combobox').filter({ hasText: 'Sonia' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Close voice menu' })).toBeVisible();
   const panel = await page.getByRole('menu').boundingBox();
   expect(panel?.x ?? -1).toBeGreaterThanOrEqual(0);
   expect((panel?.x ?? 0) + (panel?.width ?? Infinity)).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
   await shot(page, testInfo, 'tools-menu-03-voice-level', false);
   await page.getByRole('button', { name: 'Back to tools' }).click();
-  await expect(menu).toBeVisible();
-
-  // Prompt libraries opens the picker and closes the menu.
-  await menu.getByRole('menuitem', { name: 'Prompt libraries' }).click();
-  await expect(menu).toBeHidden();
-  await expect(page.getByRole('dialog', { name: 'Insert a prompt' })).toBeVisible();
-  await shot(page, testInfo, 'tools-menu-04-prompts', false);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Insert a prompt' })).toBeHidden();
 
   // Dictate: the button becomes the microphone, and one tap stops it.
-  await tools.click();
   await menu.getByRole('menuitem', { name: 'Dictate' }).click();
   await expect(composer(page)).toHaveAttribute('placeholder', /Speak, then pause/);
   const stop = page.getByRole('button', { name: 'Stop dictating' });
@@ -159,16 +150,6 @@ test('phone: prompts, dictation and voice fold into one two-level menu', async (
   await stop.click();
   await expect(page.getByRole('button', { name: 'Prompts and voice' })).toBeVisible();
   await expect(composer(page)).not.toHaveAttribute('placeholder', /Speak, then pause/);
-});
-
-test('phone: the voice conversation is reachable and Escape closes the menu', async ({ page }) => {
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await openChat(page);
-  await page.getByRole('button', { name: 'Prompts and voice' }).click();
-  await page.getByRole('menuitem', { name: 'Voice' }).click();
-  await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
-  await expect(page.getByRole('dialog', { name: 'Voice conversation' })).toBeVisible();
-  await expect(page.getByRole('menu')).toBeHidden();
 });
 
 test('phone: Escape closes the tools menu', async ({ page }) => {
