@@ -74,6 +74,12 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'fixed',
+        title: 'A refused pull request subscription no longer looks saved',
+        detail:
+          "When subscribing to a pull request's pipeline outcomes (or turning on its fix or merge option) was refused, the checkbox stayed ticked beside the error as if it had worked. It now goes back to what is actually saved.",
+      },
+      {
+        kind: 'fixed',
         title:
           "Agent models: picking another model from the provider's list clears an earlier test result",
         detail:

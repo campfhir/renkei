@@ -7,17 +7,18 @@
  * never touched one. Fetched per row rather than carried in the
  * project's own initial data, since it means reading that chat's own
  * transcript — capped by the caller to the rows actually worth asking
- * (the most recent chats), not every chat a project has ever had.
+ * (the most recent chats), not every chat a project has ever had. What
+ * the answer shows is chat-pr-badge.model.ts.
  */
 
 import { useEffect, useState } from 'react';
 import { getJson } from '@/lib/fetch-json';
+import { badgeOf, chatPullRequestOf, type ChatPullRequest } from './chat-pr-badge.model';
 
-interface ChatPullRequest {
-  number: number;
-  state: 'open' | 'merged';
-  host: 'github' | 'bitbucket';
-}
+const TONES = {
+  purple: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300',
+  green: 'bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300',
+};
 
 export default function ChatPrBadge({ chatId }: { chatId: string }) {
   const [pullRequest, setPullRequest] = useState<ChatPullRequest | null>(null);
@@ -25,10 +26,8 @@ export default function ChatPrBadge({ chatId }: { chatId: string }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const result = await getJson<{ pullRequest: ChatPullRequest | null }>(
-        `/api/chat/chats/${chatId}/pr-summary`
-      );
-      if (!cancelled && result.data) setPullRequest(result.data.pullRequest);
+      const result = await getJson<unknown>(`/api/chat/chats/${chatId}/pr-summary`);
+      if (!cancelled && result.data) setPullRequest(chatPullRequestOf(result.data));
     })();
     return () => {
       cancelled = true;
@@ -36,17 +35,14 @@ export default function ChatPrBadge({ chatId }: { chatId: string }) {
   }, [chatId]);
 
   if (!pullRequest) return null;
-  const tone =
-    pullRequest.state === 'merged'
-      ? 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-300'
-      : 'bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300';
+  const badge = badgeOf(pullRequest);
   return (
     <span
       data-testid="chat-pr-badge"
-      className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${tone}`}
-      title={`Pull request #${pullRequest.number} — ${pullRequest.state}`}
+      className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium ${TONES[badge.tone]}`}
+      title={badge.title}
     >
-      #{pullRequest.number}
+      {badge.text}
     </span>
   );
 }
