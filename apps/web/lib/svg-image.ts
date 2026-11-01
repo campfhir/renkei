@@ -33,18 +33,22 @@ function pixels(value: string | null): number | null {
 }
 
 /**
- * The size the image is drawn at: the root's width and height when they are
- * pixels, else the viewBox's, else a square. One missing side follows the
- * viewBox's aspect ratio.
+ * The size the image is drawn at, from the root's attributes: its width and
+ * height when they are pixels, else the viewBox's, else a square. One
+ * missing side follows the viewBox's aspect ratio.
  */
-function sizeOf(root: Element): { width: number; height: number } {
-  const box = (root.getAttribute('viewBox') ?? '')
+export function drawnSize(attributes: {
+  width: string | null;
+  height: string | null;
+  viewBox: string | null;
+}): { width: number; height: number } {
+  const box = (attributes.viewBox ?? '')
     .trim()
     .split(/[\s,]+/)
     .map(Number);
   const view = box.length === 4 && box[2] > 0 && box[3] > 0 ? { w: box[2], h: box[3] } : null;
-  const width = pixels(root.getAttribute('width'));
-  const height = pixels(root.getAttribute('height'));
+  const width = pixels(attributes.width);
+  const height = pixels(attributes.height);
   if (width && height) return { width, height };
   if (view) {
     if (width) return { width, height: (width * view.h) / view.w };
@@ -67,7 +71,11 @@ export function prepareSvg(source: string): PreparedSvg | null {
   ) {
     return null;
   }
-  const { width, height } = sizeOf(root);
+  const { width, height } = drawnSize({
+    width: root.getAttribute('width'),
+    height: root.getAttribute('height'),
+    viewBox: root.getAttribute('viewBox'),
+  });
   root.setAttribute('width', String(width));
   root.setAttribute('height', String(height));
   return { markup: new XMLSerializer().serializeToString(root), width, height };
@@ -93,17 +101,32 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 /**
+ * The PNG's pixel size: `scale`× the drawing, shrunk so neither side passes
+ * MAX_SIDE, and never less than a pixel.
+ */
+export function pngPixels(
+  svg: { width: number; height: number },
+  scale = 2
+): { width: number; height: number } {
+  const fit = Math.min(scale, MAX_SIDE / svg.width, MAX_SIDE / svg.height);
+  return {
+    width: Math.max(1, Math.round(svg.width * fit)),
+    height: Math.max(1, Math.round(svg.height * fit)),
+  };
+}
+
+/**
  * Draws the SVG to a PNG at `scale`× its size (2 by default, for a sharp
  * result on a dense screen), on a transparent background.
  */
 export async function svgToPng(svg: PreparedSvg, scale = 2): Promise<Blob> {
-  const fit = Math.min(scale, MAX_SIDE / svg.width, MAX_SIDE / svg.height);
+  const size = pngPixels(svg, scale);
   const url = URL.createObjectURL(new Blob([svg.markup], { type: 'image/svg+xml' }));
   try {
     const image = await loadImage(url);
     const canvas = document.createElement('canvas');
-    canvas.width = Math.max(1, Math.round(svg.width * fit));
-    canvas.height = Math.max(1, Math.round(svg.height * fit));
+    canvas.width = size.width;
+    canvas.height = size.height;
     const context = canvas.getContext('2d');
     if (!context) throw new Error('This browser cannot draw to a canvas.');
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
@@ -131,10 +154,12 @@ export function downloadBlob(blob: Blob, filename: string): void {
 
 export type SvgSaveFormat = 'png' | 'svg';
 
+export const NOT_AN_SVG = 'This is not a complete, valid SVG, so it can’t be saved as an image.';
+
 /** Saves the SVG source as `<name>.png` or `<name>.svg`; rejects with a message fit to show. */
 export async function saveSvg(source: string, name: string, format: SvgSaveFormat): Promise<void> {
   const svg = prepareSvg(source);
-  if (!svg) throw new Error('This is not a complete, valid SVG, so it can’t be saved as an image.');
+  if (!svg) throw new Error(NOT_AN_SVG);
   const stem = fileStem(name);
   if (format === 'svg') {
     downloadBlob(new Blob([svg.markup], { type: 'image/svg+xml' }), `${stem}.svg`);

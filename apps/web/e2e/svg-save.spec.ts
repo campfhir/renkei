@@ -1,11 +1,17 @@
 /**
  * Saving an SVG the model wrote as an image: a fenced ```svg block gets
- * "Save as PNG / SVG" under it (a non-SVG block and a truncated SVG do not
- * save), and an svg mockup carries the same on its card and in the
- * fullscreen viewer. Nothing is mocked — the reply is the scripted
- * stand-in model's (e2e/support/stub-model.ts), the mockup is the app's
- * own chat_show_mockup, the browser rasterises the real markup, and the
- * download's bytes are checked.
+ * "Save as PNG / SVG" under it (a truncated SVG does not save), and an
+ * svg mockup carries the same on its card and in the fullscreen viewer.
+ * Nothing is mocked — the reply is the scripted stand-in model's
+ * (e2e/support/stub-model.ts), the mockup is the app's own
+ * chat_show_mockup, the browser parses and rasterises the real markup,
+ * and the download's bytes are checked.
+ *
+ * The rules are in node: which blocks count as SVG (and so get the
+ * buttons), the size drawn, the PNG's pixels and the file's name are
+ * lib/svg-image.test.ts; what the buttons say, that a running save takes
+ * no second press, and what a failure leaves are
+ * app/(app)/chat/_components/svg-save-buttons.model.test.ts.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -103,7 +109,7 @@ function pngSize(bytes: Buffer): { width: number; height: number } {
   return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
-test('a fenced svg block saves as a PNG or an .svg file; other blocks and broken SVG do not', async ({
+test('a fenced svg block saves as a PNG or an .svg file; a broken SVG does not', async ({
   page,
 }, testInfo) => {
   await page.goto(`/chat/${ids.chatId}`);
@@ -111,10 +117,8 @@ test('a fenced svg block saves as a PNG or an .svg file; other blocks and broken
   await expect(blocks).toHaveCount(3, COLD);
   const [badge, broken, plain] = [blocks.nth(0), blocks.nth(1), blocks.nth(2)];
 
-  // Only the SVG blocks offer to save; the JS block has just Copy.
+  // The SVG block offers to save; the JS block (lib/svg-image.test.ts) has just Copy.
   await expect(badge.getByRole('button', { name: 'Save as PNG' })).toBeVisible();
-  await expect(badge.getByRole('button', { name: 'Save as SVG' })).toBeVisible();
-  await expect(plain.getByRole('button', { name: /^Save as/ })).toHaveCount(0);
   await expect(plain.getByRole('button', { name: 'Copy' })).toBeVisible();
   await shot(page, testInfo, 'svg-save-code-block.png');
 

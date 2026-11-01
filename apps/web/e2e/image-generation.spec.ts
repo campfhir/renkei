@@ -18,6 +18,18 @@
  *   - My usage and Organization usage count the pictures: how many, how much
  *     space, the tokens billed, and who has the most.
  *
+ * What the card and the Preferences section decide is in node: the
+ * caption for each state of a call, worded for a picture or an animation,
+ * no outline while waiting for permission, the error and the notices, and
+ * the KB/MB line are app/(app)/chat/_components/image-card.model.test.ts
+ * and file-caption.model.test.ts; the outline's shape for a `size` or an
+ * `aspectRatio` is lib/chat/image-size.test.ts (`skeletonRatio`); the
+ * picker's options, Save on or off and what it sends (null for the
+ * organization default) are app/(app)/preferences/image-model-form.model.test.ts.
+ * This file keeps what only a browser shows: the picture loaded and fitted,
+ * the outline's drawn shape, downloads and the iOS share sheet, the GIF
+ * playing, phone widths, and one save of the preference reaching the route.
+ *
  * The person's message steers the stand-in image model (llm-stub.mjs):
  * `[refuse 1024x1024]` refuses a square, `[slow]` holds a picture back so
  * the call can be seen waiting.
@@ -148,8 +160,6 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   await expect(cards).toHaveCount(2, COLD);
   const drawn = cards.nth(0);
   await expect(drawn).toHaveAttribute('data-state', 'done');
-  await expect(drawn).toContainText('Generated image');
-  await expect(drawn).toContainText(/\d+(\.\d)?s|\d+ms/);
 
   // The picture itself, loaded — the file this call kept, not the other's.
   const picture = drawn.getByRole('img', { name: 'cute_polar_bear.png' });
@@ -159,7 +169,6 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   // Right under the picture, the same line as every file a reply made: name, size, Download.
   const caption = drawn.getByTestId('file-caption');
   await expect(caption).toContainText('cute_polar_bear.png', COLD);
-  await expect(caption).toContainText(/\d+(\.\d)? KB/);
   const pictureBox = await drawn.getByTestId('image-card-picture').boundingBox();
   const captionBox = await caption.boundingBox();
   expect(captionBox?.y ?? 0).toBeGreaterThanOrEqual(
@@ -198,7 +207,6 @@ test('a picture the model drew is shown inline in its call, with its own icon, a
   // The call the image model refused: the reason, no picture.
   const refused = cards.nth(1);
   await expect(refused).toHaveAttribute('data-state', 'failed');
-  await expect(refused).toContainText('Image could not be generated');
   await expect(refused.getByTestId('image-card-error')).toContainText('safety system refused');
   await expect(refused.getByRole('img')).toHaveCount(0);
   await shot(page, testInfo, 'image-card-done.png');
@@ -372,18 +380,16 @@ async function stop(request: APIRequestContext, waiting: { chatId: string; turnI
     .catch(() => undefined);
 }
 
-test('a call waiting on permission shows no outline; once approved it is an outline in the shape asked for', async ({
+test('a call waiting on permission is parked; once approved it is an outline drawn in the shape asked for', async ({
   page,
 }, testInfo) => {
   test.slow();
   const portrait = { filename: 'bear.png', size: '1024x1536' };
-  const wide = { filename: 'bear.png', aspectRatio: '16:9' };
-  const square = { filename: 'bear.png' };
   const landscape = { filename: 'bear.png', size: '1536x1024' };
   const chatModel = await models(page.request);
   const card = page.getByTestId('image-card').filter({ visible: true });
 
-  // Parked on the permission ask: nothing is being drawn, so no outline — only the caption.
+  // Parked on the permission ask: the card says it waits (what it then shows is the model's).
   const parked = await waitingChat(page.request, chatModel, portrait, { parked: true });
   await page.goto(`/chat/${parked.chatId}`);
   await expect(
@@ -391,8 +397,6 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   ).toBeVisible();
   await expect(card).toBeVisible(COLD);
   await expect(card).toHaveAttribute('data-state', 'waiting');
-  await expect(card).toContainText('Waiting for permission to generate an image');
-  await expect(card.getByTestId('image-card-skeleton')).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'Permission needed' })).toBeVisible();
   await shot(page, testInfo, 'image-card-waiting-no-outline.png');
   await stop(page.request, parked);
@@ -401,7 +405,6 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   const drawing = await waitingChat(page.request, chatModel, portrait, { parked: false });
   await page.goto(`/chat/${drawing.chatId}`);
   await expect(card).toHaveAttribute('data-state', 'pending', COLD);
-  await expect(card).toContainText('Generating image');
   const skeleton = card.getByTestId('image-card-skeleton');
   await expect(skeleton).toBeVisible();
   await expect(card).toHaveAttribute('data-ratio', '0.667');
@@ -410,19 +413,7 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   await shot(page, testInfo, 'image-card-generating-portrait.png');
   await stop(page.request, drawing);
 
-  // A ratio instead of pixels: 16:9 landscape.
-  const ratio = await waitingChat(page.request, chatModel, wide, { parked: false });
-  await page.goto(`/chat/${ratio.chatId}`);
-  await expect(card).toHaveAttribute('data-ratio', /^1\.7/, COLD);
-  const widescreen = await card.getByTestId('image-card-skeleton').boundingBox();
-  expect((widescreen?.width ?? 0) / (widescreen?.height ?? 1)).toBeCloseTo(16 / 9, 1);
-  await stop(page.request, ratio);
-
-  // Nothing asked: a square.
-  const plain = await waitingChat(page.request, chatModel, square, { parked: false });
-  await page.goto(`/chat/${plain.chatId}`);
-  await expect(card).toHaveAttribute('data-ratio', '1.000', COLD);
-  await stop(page.request, plain);
+  // A ratio instead of pixels, or nothing asked, is skeletonRatio's (lib/chat/image-size.test.ts).
 
   // Phone width: the outline keeps its shape and fits the screen.
   const phone = await waitingChat(page.request, chatModel, landscape, { parked: false });
@@ -436,23 +427,9 @@ test('a call waiting on permission shows no outline; once approved it is an outl
   await stop(page.request, phone);
 });
 
-test('an animated GIF is worded as an animation while it is made, and plays inline once it is', async ({
-  page,
-}, testInfo) => {
+test('an animated GIF plays inline once it is made', async ({ page }, testInfo) => {
   test.slow();
-  const slowGif = { filename: 'ball.gif', aspectRatio: '16:9' };
   const chatModel = await models(page.request);
-
-  // Being made: an animation, in the 16:9 shape asked for.
-  const waiting = await waitingChat(page.request, chatModel, slowGif, { parked: false });
-  await page.goto(`/chat/${waiting.chatId}`);
-  const pending = page.getByTestId('image-card').filter({ visible: true });
-  await expect(pending).toHaveAttribute('data-state', 'pending', COLD);
-  await expect(pending).toHaveAttribute('data-kind', 'animation');
-  await expect(pending).toContainText('Generating animation');
-  await expect(pending).toHaveAttribute('data-ratio', /^1\.7/);
-  await shot(page, testInfo, 'image-card-generating-animation.png');
-  await stop(page.request, waiting);
 
   // Made: four frames, each its own picture, encoded into a looping GIF.
   const chatId = await createChat(page.request, { llmModelId: chatModel, title: 'Bouncing ball' });
@@ -469,7 +446,6 @@ test('an animated GIF is worded as an animation while it is made, and plays inli
   const card = page.getByTestId('image-card').filter({ visible: true });
   await expect(card).toHaveAttribute('data-state', 'done', COLD);
   await expect(card).toHaveAttribute('data-kind', 'animation');
-  await expect(card).toContainText('Generated animation');
   const picture = card.getByRole('img', { name: 'ball.gif' });
   await expect(picture).toBeVisible();
   // 16:9, as asked.
@@ -518,7 +494,8 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   await expect(page.getByRole('heading', { name: 'Preferences', level: 1 })).toBeVisible(COLD);
   await expect(page.getByRole('heading', { name: 'Image generation' })).toHaveCount(0);
 
-  // Two image models: the picker, defaulting to the org's first by name.
+  // Two image models: the picker, defaulting to the org's first by name (the
+  // server's order; the labels and Save's rules are the form model's).
   const painterId = await model(page.request, {
     label: 'Painter',
     image: { apiSurface: 'images', model: 'gpt-image-1' },
@@ -529,13 +506,7 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   await expect(select).toBeVisible(COLD);
   await expect(select).toHaveValue('');
   await expect(select.locator('option').first()).toHaveText('Organization default (Fox)');
-  await expect(select.locator('option')).toHaveText([
-    'Organization default (Fox)',
-    'Fox · FLUX.2-flex',
-    'Painter · gpt-image-1',
-  ]);
   const section = page.locator('section', { has: select });
-  await expect(section.getByRole('button', { name: 'Save' })).toBeDisabled();
 
   await select.selectOption({ label: 'Painter · gpt-image-1' });
   await section.getByRole('button', { name: 'Save' }).click();
@@ -547,11 +518,6 @@ test('Preferences offers the org’s image models, saves the person’s pick, an
   await expect(page.getByLabel('Preferred image model')).toHaveValue(painterId);
   const stored = await page.request.get('/api/preferences');
   expect((await stored.json()).image).toEqual({ modelId: painterId });
-
-  // Back to the organization default clears it.
-  await page.getByLabel('Preferred image model').selectOption('');
-  await section.getByRole('button', { name: 'Save' }).click();
-  await expect(section.getByText('Saved.')).toBeVisible(COLD);
 
   // Phone width.
   await page.setViewportSize(MOBILE_VIEWPORT);

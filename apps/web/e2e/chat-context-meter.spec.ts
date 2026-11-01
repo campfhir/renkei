@@ -3,10 +3,13 @@
  * the model's recorded context window, as a small ring. The reply's usage
  * is the model's own: the scripted stand-in model
  * (e2e/support/stub-model.ts) reports 40k in, 2k out, 30k of it cached,
- * and the turn engine records it as a finished turn does. Cases: a model
- * with a window (the ring), a model without one (nothing shown), a
- * compaction since the reply (the ring falls to the estimate), and a
- * phone-width pass.
+ * and the turn engine records it as a finished turn does. Here: that
+ * usage reaches the ring on the real server, a compaction since the reply
+ * drops it to the estimate, and a phone-width pass.
+ *
+ * What the ring shows for a count — the percentage, the colour, the
+ * tooltip's wording, and no ring for a model with no recorded window — is
+ * app/(app)/chat/_components/context-meter.model.test.ts.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -38,7 +41,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 }
 
 test.describe('chat context meter', () => {
-  test('shows used / limit with a bar when the model has a window, and the count alone when not', async ({
+  test("shows the last reply's usage against the window, and falls after a compaction", async ({
     page,
     person: _person,
   }, testInfo) => {
@@ -46,18 +49,14 @@ test.describe('chat context meter', () => {
     const limitedModel = await addStubModel(page.request, `${tag}-limited`, {
       contextWindow: 200_000,
     });
-    const openModel = await addStubModel(page.request, `${tag}-open`);
     try {
       const limitedTitle = `Context meter limited ${tag}`;
-      const openTitle = `Context meter open ${tag}`;
       const foldedTitle = `Context meter compacted ${tag}`;
       const limitedChat = await createChat(page.request, {
         llmModelId: limitedModel,
         title: limitedTitle,
       });
       await send(page.request, limitedChat, HELLO, limitedModel);
-      const openChat = await createChat(page.request, { llmModelId: openModel, title: openTitle });
-      await send(page.request, openChat, HELLO, openModel);
       // Long enough that a compaction pass has something to fold
       // (compaction.ts keeps the last 20 messages and folds at least 6).
       const foldedChat = await createChat(page.request, {
@@ -73,18 +72,12 @@ test.describe('chat context meter', () => {
       await expect(page.getByRole('heading', { level: 1, name: limitedTitle })).toBeVisible();
       const meter = page.getByTestId('context-meter').filter({ visible: true });
       await expect(meter).toHaveAttribute('aria-valuenow', '21');
-      await expect(meter).toHaveAttribute('title', 'Context: 42k of 200k tokens (21%)');
       await shot(page, testInfo, 'chat-context-meter-limited');
 
       await page.setViewportSize({ width: 390, height: 844 });
       await expect(meter).toBeVisible();
       await shot(page, testInfo, 'chat-context-meter-limited-mobile');
       await page.setViewportSize({ width: 1440, height: 900 });
-
-      // No recorded window: nothing to measure against, so nothing shown.
-      await page.goto(`/chat/${openChat}`);
-      await expect(page.getByRole('heading', { level: 1, name: openTitle })).toBeVisible();
-      await expect(page.getByTestId('context-meter').filter({ visible: true })).toHaveCount(0);
 
       // Before the compaction the last reply's usage is the measure.
       await page.goto(`/chat/${foldedChat}`);
@@ -111,7 +104,6 @@ test.describe('chat context meter', () => {
       await shot(page, testInfo, 'chat-context-meter-after-compaction');
     } finally {
       await removeModel(page.request, limitedModel);
-      await removeModel(page.request, openModel);
     }
   });
 });

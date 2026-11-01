@@ -8,18 +8,28 @@
  * preference: the chat takes the org's first image model by name. A model
  * the admin has since disabled quietly falls back to that too, so a stale
  * pick never blocks a picture.
+ *
+ * What it decides — Save on or off, what Save sends, what the picker
+ * offers — is image-model-form.model.ts, tested in node.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import type { ImagePrefs } from '@renkei/user-prefs/prefs';
 import { reportFetchFailure } from '@/lib/fetch-json';
 import { logFailedResponse } from '@/lib/client-logger';
+import {
+  canSave,
+  imageModelFormReducer,
+  initImageModelForm,
+  pickerHint,
+  pickerOptions,
+  pickerValue,
+  requestBody,
+  saveLabel,
+  type ImageModelOption,
+} from './image-model-form.model';
 
-export interface ImageModelOption {
-  id: string;
-  label: string;
-  model: string;
-}
+export type { ImageModelOption } from './image-model-form.model';
 
 export default function ImageModelForm({
   initial,
@@ -28,34 +38,33 @@ export default function ImageModelForm({
   initial: ImagePrefs;
   models: ImageModelOption[];
 }) {
-  // A saved id the org no longer offers reads as no preference, as the chat treats it.
-  const known = (id: string | null) => (id && models.some((m) => m.id === id) ? id : null);
-  const [modelId, setModelId] = useState<string | null>(known(initial.modelId));
-  const [saved, setSaved] = useState<string | null>(known(initial.modelId));
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [state, dispatch] = useReducer(
+    imageModelFormReducer,
+    { initial, models },
+    initImageModelForm
+  );
 
   async function save() {
-    setStatus('saving');
+    const body = requestBody(state);
+    dispatch({ type: 'saving' });
     try {
       const response = await fetch(`/api/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image: { modelId } }),
+        body: JSON.stringify(body),
       });
       if (response.ok) {
-        setSaved(modelId);
-        setStatus('saved');
+        dispatch({ type: 'saved', modelId: body.image.modelId });
       } else {
         await logFailedResponse('preferences', 'could not save the image model', response);
-        setStatus('failed');
+        dispatch({ type: 'save-failed' });
       }
     } catch (error) {
       reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
-      setStatus('failed');
+      dispatch({ type: 'save-failed' });
     }
   }
 
-  const first = models[0];
   return (
     <section
       aria-labelledby="image-model-heading"
@@ -73,37 +82,29 @@ export default function ImageModelForm({
       </label>
       <select
         id="image-model-select"
-        value={modelId ?? ''}
-        onChange={(event) => {
-          setModelId(event.target.value || null);
-          setStatus('idle');
-        }}
+        value={pickerValue(state)}
+        onChange={(event) => dispatch({ type: 'picked', value: event.target.value })}
         className="mt-1 w-full max-w-md rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
       >
-        <option value="">Organization default{first ? ` (${first.label})` : ''}</option>
-        {models.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.label} · {model.model}
+        {pickerOptions(models).map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
           </option>
         ))}
       </select>
-      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-        {models.length > 1
-          ? 'Your chats use this model for every picture. If an administrator turns it off, they fall back to the organization default.'
-          : 'Your organization has one image model, so every picture comes from it.'}
-      </p>
+      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">{pickerHint(models)}</p>
 
       <div className="mt-3 flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={() => void save()}
-          disabled={status === 'saving' || modelId === saved}
+          disabled={!canSave(state)}
           className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {status === 'saving' ? 'Saving…' : 'Save'}
+          {saveLabel(state)}
         </button>
-        {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
-        {status === 'failed' ? (
+        {state.status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
+        {state.status === 'failed' ? (
           <span className="text-sm text-red-600 dark:text-red-400">Could not save.</span>
         ) : null}
       </div>
