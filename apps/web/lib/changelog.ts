@@ -68,6 +68,12 @@ export const CHANGELOG: ChangelogRelease[] = [
       },
       {
         kind: 'fixed',
+        title: 'Deleting several artifacts again after a partial failure',
+        detail:
+          'When some of the files ticked for deletion could not be removed, pressing Delete again now retries only those files, instead of trying the ones already gone and reporting them as failures.',
+      },
+      {
+        kind: 'fixed',
         title:
           "Agent models: picking another model from the provider's list clears an earlier test result",
         detail:
