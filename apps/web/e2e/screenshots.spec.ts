@@ -21,6 +21,13 @@
  * Jira tool in the picker becomes Renkei's own card tool. "My usage"'s
  * voice card is not captured: it shows only with a voice service
  * configured (a vendor, org-wide) or voice usage on record.
+ *
+ * The gallery waits on what pages say, never the clock. Rules a screenshot
+ * passes through are tested in node: which cleaner scripts TypeScript
+ * underlines against the editor's declarations (a wrong field, a wrong
+ * type, per-kind narrowing) is lib/email-sanitizer/cleaner-types.test.ts's;
+ * Organization usage's toggles, period and person requests, headline tiles
+ * and top users board are app/(app)/admin/usage/usage-viewer.model.test.ts's.
  */
 
 import path from 'node:path';
@@ -350,59 +357,36 @@ test('admin — cleaner script editor with types', async ({ page, sweep: _sweep 
   await expect(page.getByRole('heading', { name: 'Cleaner scripts' })).toBeVisible();
 
   // Monaco is client-only and lazily imported, so it arrives after hydration.
-  await page.locator('.monaco-editor').first().waitFor();
-  await page.waitForTimeout(2_000);
-  await page.locator('.view-lines').first().click();
+  const editor = page.locator('.monaco-editor').first();
+  await editor.locator('.view-lines').click();
+  await expect(page.locator('.monaco-editor.focused')).toHaveCount(1);
 
-  // insertText rather than type(): key events race with auto-closing
-  // brackets and completion, which corrupts the input and produces errors
-  // that belong to the test rather than to the code under test.
-  const write = async (code: string) => {
+  // Which scripts TypeScript underlines against the cleaner declarations
+  // (a wrong field, a wrong type, the per-kind narrowing) is checked in
+  // node: lib/email-sanitizer/cleaner-types.test.ts. What only the browser
+  // shows is that the editor really loads those declarations and its
+  // language service: correct code underlines nothing and a typo is
+  // underlined. If the declarations failed to load, both would be.
+  //
+  // The underlines land a moment after a change, so each count is waited
+  // for from a state whose count differs: a stale count can never pass.
+  // insertText over the selection rather than type(): one edit, without
+  // key events that race auto-closing brackets and completion.
+  const squiggles = page.locator('.squiggly-error');
+  const write = async (code: string, errors: number) => {
     await page.keyboard.press('Control+A');
-    await page.keyboard.press('Delete');
+    await page.keyboard.insertText(errors === 0 ? "const reset: number = '';" : '// reset');
+    await expect(squiggles).toHaveCount(errors === 0 ? 1 : 0);
+    await page.keyboard.press('Control+A');
     await page.keyboard.insertText(code);
-    await page.waitForTimeout(3_500);
+    await expect(squiggles).toHaveCount(errors);
   };
-  const errors = () => page.locator('.squiggly-error').count();
 
-  // The whole point of the editor is that these three differ. If the
-  // ambient CleanerEmail declarations failed to load, correct code would
-  // report errors too and all three counts would be equal — which is
-  // exactly the silent failure this asserts against.
-  await write('function clean(email: CleanerEmail): string {\n  return email.text.trim();');
-  expect(await errors()).toBe(0);
-
-  await write('function clean(email: CleanerEmail): string {\n  return email.nope;');
-  expect(await errors()).toBe(1);
-
-  await write(
-    'function clean(email: CleanerEmail): string {\n  const n: number = email.subject;\n  return email.text;'
-  );
-  expect(await errors()).toBe(1);
-
-  // Per-kind types: a calendar script reaches the invite fields...
-  await write(
-    "function clean(event: CleanerEvent): string {\n  return event.attendees.join(', ');"
-  );
-  expect(await errors()).toBe(0);
-
-  // ...and a message script does not, which is the point of narrowing —
-  // `attendees` on an email is always an empty array, so a script reading
-  // it would silently do nothing.
-  await write(
-    "function clean(email: CleanerMessage): string {\n  return email.attendees.join(', ');"
-  );
-  expect(await errors()).toBe(1);
-
-  // The discriminated union narrows on `kind`, so one script can serve
-  // several kinds and still reach what each really has.
-  await write(
-    "function clean(item: CleanerItem): string {\n  if (item.kind !== 'evt') return item.text;\n  return item.attendees.join(', ');"
-  );
-  expect(await errors()).toBe(0);
+  await write('function clean(email: CleanerEmail): string {\n  return email.nope;', 1);
+  await write('function clean(email: CleanerEmail): string {\n  return email.text.trim();', 0);
 
   // Completion comes from our own type, not from word-matching the buffer.
-  await write('function clean(email: CleanerEmail): string {\n  return email.att');
+  await write('function clean(email: CleanerEmail): string {\n  return email.att', 1);
   await page.keyboard.press('Control+Space');
   const suggestions = page.locator('.suggest-widget');
   await expect(suggestions).toBeVisible();

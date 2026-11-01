@@ -11,10 +11,14 @@
  * only place a mistake can be made loud.
  *
  * Monaco is self-hosted and configured once for the app (lib/monaco/setup.ts).
+ * What it underlines is TypeScript's verdict on the script against
+ * `CLEANER_TYPES` under the options below, not a rule of ours;
+ * lib/email-sanitizer/cleaner-types.test.ts type-checks scripts the same
+ * way in node.
  */
 
 import Editor, { type Monaco } from '@monaco-editor/react';
-import { CLEANER_TYPES } from '@/lib/email-sanitizer/cleaner-types';
+import { CLEANER_IGNORED_DIAGNOSTICS, CLEANER_TYPES } from '@/lib/email-sanitizer/cleaner-types';
 import { LoadingLine } from '@/components/skeleton';
 import { configureMonacoOnce, MONACO_THEME } from '@/lib/monaco/setup';
 import { useMonacoDark } from '@/lib/monaco/use-dark-theme';
@@ -55,7 +59,7 @@ export default function ScriptEditor({
       noSyntaxValidation: false,
       // "Declared but never read" on the one function being authored is
       // noise: nothing in the file calls it, by design.
-      diagnosticCodesToIgnore: [6133, 6196],
+      diagnosticCodesToIgnore: [...CLEANER_IGNORED_DIAGNOSTICS],
     });
     ts.typescriptDefaults.setExtraLibs([
       { content: CLEANER_TYPES, filePath: 'file:///renkei/cleaner-email.d.ts' },

@@ -125,3 +125,11 @@ export const CALENDAR_ONLY_FIELDS: readonly string[] = [
   'endsAt',
   'isOnline',
 ];
+
+/**
+ * Diagnostics the editor does not underline: "declared but never read" on
+ * the one function being authored is noise, since nothing in the file
+ * calls it, by design. The editor (script-editor.tsx) and the test that
+ * type-checks scripts against `CLEANER_TYPES` both read this.
+ */
+export const CLEANER_IGNORED_DIAGNOSTICS: readonly number[] = [6133, 6196];

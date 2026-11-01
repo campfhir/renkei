@@ -1,20 +1,22 @@
 /**
- * Copies of a code project to keep: the whole checkout as a zip from the
- * project page's Download button (beside Share) — ignored files such as
- * node_modules in it, since an offline copy is meant to work without a
- * network — a folder as a zip and a file as itself from a tree row's
- * "⋯" menu in the chat. Real routes and the real (stubbed) sandbox
- * worker: sandbox-stub.mjs's `download` verb zips the same fixture and
- * overlay the tree lists. The project is the test's own person's, made
- * through the Code routes after connecting Bitbucket
- * (e2e/support/code-host.ts), its first chat's turn cloning it.
+ * Copies of a code project to keep, in a browser: the project page's
+ * Download button (beside Share) opens its dialog, and the zip link saves
+ * a real download named for the repository; a tree row's "⋯" menu in the
+ * chat offers a folder as a zip; a project not cloned yet says there is
+ * nothing to copy. Real routes and the real (stubbed) sandbox worker. The
+ * project is the test's own person's, made through the Code routes after
+ * connecting Bitbucket (e2e/support/code-host.ts), its first chat's turn
+ * cloning it.
+ *
+ * What is in a download — the whole checkout with node_modules, a folder
+ * as a zip of only that folder, a file as its own bytes, each named for
+ * the browser, a chat's worktree rather than the base clone — is
+ * app/api/code/projects/[projectId]/archive/route.test.ts's.
  */
 
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import JSZip from 'jszip';
-import type { Download, Page, TestInfo } from '@playwright/test';
+import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { removeModel } from './support/stub-model';
 import { setUpCode, stageCodeProject } from './support/code-host';
@@ -36,13 +38,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-async function zipEntries(download: Download): Promise<string[]> {
-  const file = await download.path();
-  const zip = await JSZip.loadAsync(await readFile(file));
-  return Object.keys(zip.files).filter((name) => !zip.files[name]!.dir).sort();
-}
-
-test('a project, a folder and a file download as a zip, a zip and itself', async ({
+test('a project downloads as a zip, and the tree offers a folder as one', async ({
   page,
   request,
   person: _person,
@@ -82,20 +78,10 @@ test('a project, a folder and a file download as a zip, a zip and itself', async
     await link.click();
     const whole = await projectDownload;
     expect(whole.suggestedFilename()).toBe('billing-service.zip');
-    const entries = await zipEntries(whole);
-    expect(entries).toEqual(
-      expect.arrayContaining([
-        'README.md',
-        'package.json',
-        'src/billing.ts',
-        'src/index.ts',
-        'node_modules/.keep',
-        'node_modules/left-pad/index.js',
-      ])
-    );
+    expect(await whole.failure()).toBeNull();
     await dialog.getByRole('button', { name: 'Done' }).click();
 
-    // ── A folder and a file, from the tree's row menu in the chat ──
+    // ── A folder, from the tree's row menu in the chat ──
     await page.goto(`/chat/${chatIds[0]}`);
     const tree = main.getByRole('tree', { name: 'Files' });
     await expect(tree.getByText('package.json')).toBeVisible({ timeout: 30_000 });
@@ -103,22 +89,6 @@ test('a project, a folder and a file download as a zip, a zip and itself', async
     const srcMenu = page.getByRole('menu', { name: 'More for src' });
     await expect(srcMenu.getByRole('menuitem', { name: 'Download as zip' })).toBeVisible();
     await shot(page, testInfo, 'code-tree-download-menu.png');
-    const folderDownload = page.waitForEvent('download');
-    await srcMenu.getByRole('menuitem', { name: 'Download as zip' }).click();
-    const folder = await folderDownload;
-    expect(folder.suggestedFilename()).toBe('src.zip');
-    expect(await zipEntries(folder)).toEqual(['src/billing.ts', 'src/index.ts']);
-
-    await tree.getByRole('button', { name: 'More for package.json' }).click();
-    const fileDownload = page.waitForEvent('download');
-    await page
-      .getByRole('menu', { name: 'More for package.json' })
-      .getByRole('menuitem', { name: 'Download', exact: true })
-      .click();
-    const file = await fileDownload;
-    expect(file.suggestedFilename()).toBe('package.json');
-    const text = await readFile((await file.path())!, 'utf8');
-    expect(text).toContain('"name": "billing-service"');
 
     // ── Nothing cloned, nothing to copy: a fresh project says so ──
     const { projectId: bare } = await stageCodeProject(page.request, {

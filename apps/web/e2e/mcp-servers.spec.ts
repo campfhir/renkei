@@ -16,6 +16,17 @@
  *   4. Disconnect ends the grant;
  *   5. the same page at phone width.
  *
+ * What the servers' routes answer is theirs to test, on the memory store:
+ * a legacy SSE server and an open one kept and listed back as added, a
+ * taken prefix refused (app/api/admin/mcp-servers/route.test.ts); their
+ * tools listed over the chosen transport, as the person, and cached per
+ * person (app/api/mcp-servers/[serverId]/tools/route.test.ts). The SSE
+ * transport and its list_changed notice are
+ * packages/connector-mcp/src/client.test.ts's. What the Connectors card
+ * shows — the SSE / open / connected badges, Connect or Disconnect, an open
+ * server listing its tools on first sight, what a refresh or a disconnect
+ * leaves — is app/(app)/connectors/mcp-servers-list.model.test.ts's.
+ *
  * The person is the test's own; `mcp_servers` and the model roster are
  * organization-wide, so the servers carry distinctive `e2e_` prefixes and
  * the model a tag, and both are removed through the console's own DELETE
@@ -90,26 +101,21 @@ async function stubState(): Promise<{
   return (await fetch(`${STUB}/__state`)).json();
 }
 
-async function adminAddsTheServer(
-  page: Page,
-  testInfo: TestInfo,
-  name = SERVER_NAME,
-  options: { path?: string; transport?: 'sse'; open?: boolean; slug?: string } = {}
-) {
+async function adminAddsTheServer(page: Page, testInfo: TestInfo) {
   await page.goto('/admin/mcp');
   await expect(page.getByRole('heading', { name: 'MCP servers' })).toBeVisible(COLD);
   await page.getByRole('button', { name: '+ Add MCP server' }).click();
-  await page.getByLabel('Name', { exact: true }).fill(name);
-  await page.getByLabel('Server URL', { exact: true }).fill(`${STUB}${options.path ?? '/mcp'}`);
-  if (options.transport) await page.getByLabel('Transport').selectOption(options.transport);
-  if (options.open) await page.getByLabel('Sign-in').selectOption('none');
+  await page.getByLabel('Name', { exact: true }).fill(SERVER_NAME);
+  await page.getByLabel('Server URL', { exact: true }).fill(`${STUB}/mcp`);
   await page.getByLabel(/^Context/).fill(CONTEXT);
-  if (options.slug) await page.getByLabel(/^Tool prefix/).fill(options.slug);
   await shot(page, testInfo, 'mcp-01-admin-form');
   await page.getByRole('button', { name: 'Add server' }).click();
-  const row = page.getByTestId('mcp-server-list').getByRole('listitem').filter({ hasText: name });
+  const row = page
+    .getByTestId('mcp-server-list')
+    .getByRole('listitem')
+    .filter({ hasText: SERVER_NAME });
   await expect(row).toBeVisible();
-  await expect(row.getByText(`${options.slug ?? SLUG}__*`)).toBeVisible();
+  await expect(row.getByText(`${SLUG}__*`)).toBeVisible();
   await expect(row.getByText(CONTEXT)).toBeVisible();
   return row;
 }
@@ -265,62 +271,12 @@ test('an admin lists a server, a person connects it through the server’s own s
   }
 });
 
-test('the legacy SSE transport and an open server work the same way', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  // A server on the legacy HTTP+SSE transport: signs people in like any other.
-  const sseRow = await adminAddsTheServer(page, testInfo, 'E2E Legacy SSE', {
-    path: '/sse',
-    transport: 'sse',
-    slug: 'e2e_legacy',
-  });
-  await expect(sseRow.getByText('SSE', { exact: true })).toBeVisible();
-  // An open server: no sign-in at all.
-  const openRow = await adminAddsTheServer(page, testInfo, 'E2E Open Docs', {
-    path: '/open/mcp',
-    open: true,
-    slug: 'e2e_open',
-  });
-  await expect(openRow.getByText('no sign-in')).toBeVisible();
-
-  await page.goto('/connectors');
-  const legacy = page.getByRole('main').getByTestId('mcp-server-e2e_legacy');
-  await expect(legacy.getByText('SSE', { exact: true })).toBeVisible(COLD);
-  await legacy.getByRole('link', { name: 'Connect' }).click();
-  await page.waitForURL('**/connectors', COLD);
-  const legacyConnected = page.getByRole('main').getByTestId('mcp-server-e2e_legacy');
-  await expect(legacyConnected.getByText('connected')).toBeVisible(COLD);
-  // The tool list came over the SSE stream.
-  await expect(legacyConnected.getByRole('button', { name: 'Tools (2)' })).toBeVisible();
-
-  // The legacy stream carries the change notice too.
-  const legacyId = await serverIdOf(page, 'e2e_legacy');
-  await fetch(`${STUB}/__tools`, { method: 'POST' });
-  await expect
-    .poll(
-      async () => {
-        const answer = await page.request.get(`/api/mcp-servers/${legacyId}/tools`);
-        return (await answer.json()).tools.length;
-      },
-      { timeout: 30_000 }
-    )
-    .toBe(3);
-
-  // The open server needs no connect: its tools are listed on first sight.
-  const open = page.getByRole('main').getByTestId('mcp-server-e2e_open');
-  await expect(open.getByText('open', { exact: true })).toBeVisible();
-  await expect(open.getByRole('button', { name: 'Tools (2)' })).toBeVisible(COLD);
-  await expect(open.getByRole('button', { name: 'Disconnect' })).toHaveCount(0);
-  await shot(page, testInfo, 'mcp-10-transports');
-});
-
 test('the admin list and the connect card at phone width', async ({
   page,
   person: _person,
 }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await adminAddsTheServer(page, testInfo, 'E2E Acme Docs');
+  await adminAddsTheServer(page, testInfo);
   await shot(page, testInfo, 'mcp-08-admin-mobile');
 
   await page.goto('/connectors');
