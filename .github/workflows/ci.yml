@@ -44,8 +44,10 @@ jobs:
           # eslint.config.js) builds one TS program across every workspace
           # package. That now outgrows Node's default old-space ceiling
           # (~4GB) and OOM-kills the runner; raise it well under the
-          # runner's 16GB before that ceiling gets hit again.
-          NODE_OPTIONS: --max-old-space-size=8192
+          # runner's 16GB before that ceiling gets hit again. 8GB was hit
+          # once each screen's rules got their own *.model.test.ts (peak
+          # resident set ~9.2GB for the whole program); 12GB leaves room.
+          NODE_OPTIONS: --max-old-space-size=12288
 
       - name: Typecheck
         run: pnpm typecheck
