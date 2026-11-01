@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useReducer } from 'react';
 import {
   useConnectorConfig,
   putJson,
@@ -13,24 +13,15 @@ import {
 } from './shared';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 import { reportFetchFailure } from '@/lib/fetch-json';
-
-/* ----------------------------------------------------------------------- */
-
-interface VoiceConfigView {
-  configured: boolean;
-  enabled: boolean;
-  provider: string;
-  providers: string[];
-  region: string | null;
-  endpoint: string | null;
-  defaultVoice: string;
-  defaultLocale: string;
-  hasApiKey: boolean;
-}
-
-const PROVIDER_LABELS: Record<string, string> = {
-  'azure-speech': 'Azure AI Speech',
-};
+import {
+  PROVIDER_LABELS,
+  canTest,
+  initialVoiceForm,
+  saveBody,
+  testOutcome,
+  voiceFormReducer,
+  type VoiceConfigView,
+} from './voice-form.model';
 
 /**
  * The voice connector: the speech service that reads replies aloud and
@@ -41,82 +32,39 @@ const PROVIDER_LABELS: Record<string, string> = {
 export function VoiceForm() {
   const url = `/api/admin/connectors/voice`;
   const [state, reload] = useConnectorConfig<VoiceConfigView>(url);
-  const [provider, setProvider] = useState('azure-speech');
-  const [region, setRegion] = useState('');
-  const [endpoint, setEndpoint] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [defaultVoice, setDefaultVoice] = useState('');
-  const [defaultLocale, setDefaultLocale] = useState('');
-  const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [form, dispatch] = useReducer(voiceFormReducer, initialVoiceForm);
+  const { busy, testing, notice, error } = form;
+  const { provider, region, endpoint, apiKey, defaultVoice, defaultLocale, enabled } = form.fields;
 
   useEffect(() => {
-    if (!state.data) return;
-    setProvider(state.data.provider);
-    setRegion(state.data.region ?? '');
-    setEndpoint(state.data.endpoint ?? '');
-    setDefaultVoice(state.data.defaultVoice);
-    setDefaultLocale(state.data.defaultLocale);
-    setEnabled(state.data.configured ? state.data.enabled : true);
+    if (state.data) dispatch({ type: 'loaded', config: state.data });
   }, [state.data]);
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setNotice(null);
-    setError(null);
-    const failure = await putJson(url, {
-      provider,
-      region: region.trim(),
-      endpoint: endpoint.trim(),
-      // Blank means keep the stored key — omit it from the payload.
-      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      defaultVoice: defaultVoice.trim(),
-      defaultLocale: defaultLocale.trim(),
-      enabled,
-    });
-    setBusy(false);
+    dispatch({ type: 'saving' });
+    const failure = await putJson(url, saveBody(form.fields));
     if (failure) {
-      setError(failure);
+      dispatch({ type: 'save-failed', error: failure });
       return;
     }
-    setApiKey('');
-    setNotice('Saved');
+    dispatch({ type: 'saved' });
     reload();
   }
 
   async function test() {
-    setTesting(true);
-    setNotice(null);
-    setError(null);
+    dispatch({ type: 'testing' });
     try {
       const response = await fetch(`${url}/test`, { method: 'POST' });
       const body: unknown = await response.json().catch(() => null);
-      const record: Record<string, unknown> =
-        typeof body === 'object' && body !== null ? { ...body } : {};
-      if (!response.ok) {
-        const message =
-          typeof record.error === 'string' ? record.error : `Test failed (${response.status})`;
-        reportFetchFailure('POST', `${url}/test`, response.status, message);
-        setError(message);
-        return;
+      const outcome = testOutcome(response.status, response.ok, body);
+      if (outcome.type === 'test-failed') {
+        reportFetchFailure('POST', `${url}/test`, response.status, outcome.error);
       }
-      const voices = typeof record.voices === 'number' ? record.voices : 0;
-      const locales = typeof record.locales === 'number' ? record.locales : 0;
-      setNotice(
-        `Connected: ${voices} voices in ${locales} languages.` +
-          (record.defaultVoiceKnown === false
-            ? ' The default voice is not one of them — check its name.'
-            : '')
-      );
+      dispatch(outcome);
     } catch (error) {
       reportFetchFailure('POST', `${url}/test`, 0, 'Could not reach the server', error);
-      setError('Could not reach the server');
-    } finally {
-      setTesting(false);
+      dispatch({ type: 'test-failed', error: 'Could not reach the server' });
     }
   }
 
@@ -159,7 +107,7 @@ export function VoiceForm() {
             id="voice-provider"
             className={inputClass}
             value={provider}
-            onChange={(e) => setProvider(e.target.value)}
+            onChange={(e) => dispatch({ type: 'edit', patch: { provider: e.target.value } })}
           >
             {(config?.providers ?? ['azure-speech']).map((kind) => (
               <option key={kind} value={kind}>
@@ -179,7 +127,7 @@ export function VoiceForm() {
             <input
               id="voice-region"
               value={region}
-              onChange={(e) => setRegion(e.target.value)}
+              onChange={(e) => dispatch({ type: 'edit', patch: { region: e.target.value } })}
               placeholder="eastus"
               className={`${inputClass} font-mono`}
             />
@@ -195,7 +143,7 @@ export function VoiceForm() {
             <input
               id="voice-endpoint"
               value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
+              onChange={(e) => dispatch({ type: 'edit', patch: { endpoint: e.target.value } })}
               placeholder="https://{resource}.cognitiveservices.azure.com"
               className={`${inputClass} font-mono`}
             />
@@ -213,7 +161,7 @@ export function VoiceForm() {
             type="password"
             required={!config?.hasApiKey}
             value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            onChange={(e) => dispatch({ type: 'edit', patch: { apiKey: e.target.value } })}
             placeholder={config?.hasApiKey ? 'Stored — leave blank to keep' : ''}
             className={`${inputClass} font-mono`}
           />
@@ -229,7 +177,7 @@ export function VoiceForm() {
             <input
               id="voice-default"
               value={defaultVoice}
-              onChange={(e) => setDefaultVoice(e.target.value)}
+              onChange={(e) => dispatch({ type: 'edit', patch: { defaultVoice: e.target.value } })}
               placeholder="en-US-AvaMultilingualNeural"
               className={`${inputClass} font-mono`}
             />
@@ -244,7 +192,7 @@ export function VoiceForm() {
             <input
               id="voice-locale"
               value={defaultLocale}
-              onChange={(e) => setDefaultLocale(e.target.value)}
+              onChange={(e) => dispatch({ type: 'edit', patch: { defaultLocale: e.target.value } })}
               placeholder="en-US"
               className={`${inputClass} font-mono`}
             />
@@ -255,7 +203,11 @@ export function VoiceForm() {
           </div>
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={enabled}
+            onChange={(e) => dispatch({ type: 'edit', patch: { enabled: e.target.checked } })}
+          />
           Enabled
         </label>
         <div className="flex flex-wrap items-center gap-3">
@@ -264,7 +216,7 @@ export function VoiceForm() {
             <button
               type="button"
               onClick={() => void test()}
-              disabled={testing || busy}
+              disabled={!canTest(form, config ?? null)}
               className="mt-4 rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
             >
               {testing ? 'Testing…' : 'Test connection'}

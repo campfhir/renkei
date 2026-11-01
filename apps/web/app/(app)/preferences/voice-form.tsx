@@ -10,16 +10,31 @@
  * setting with nothing behind it.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState } from 'react';
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
 import type { VoiceInfo } from '@renkei/voice';
 import { LoadingLine } from '@/components/skeleton';
-import { localeLabel, previewLocale, voiceSpeaks } from '@/lib/voice/catalog';
+import { localeLabel, previewLocale } from '@/lib/voice/catalog';
 import { voiceClient } from '@/lib/voice/client';
 import { useVoicePreview } from '@/lib/voice/use-voice-preview';
 import { LanguagePicker, VoicePicker } from '../chat/_components/voice-picker';
 import { WAVE_ACCENTS } from '../chat/_components/voice-wave';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import {
+  catalogFrom,
+  chooseLocale as choosingLocale,
+  chooseVoice as choosingVoice,
+  effectiveLocale,
+  localesOnOffer,
+} from '../chat/_components/voice-picker.model';
+import { hearingChosen } from '../chat/_components/voice-menu.model';
+import {
+  canSave,
+  initVoicePrefsForm,
+  languageHint,
+  speedLabel,
+  voicePrefsFormReducer,
+} from './voice-form.model';
 
 export default function VoiceForm({
   initial,
@@ -28,78 +43,33 @@ export default function VoiceForm({
   initial: VoicePrefs;
   defaults: { voice: string; locale: string };
 }) {
-  const [prefs, setPrefs] = useState<VoicePrefs>(initial);
-  const [saved, setSaved] = useState<VoicePrefs>(initial);
+  const [form, dispatch] = useReducer(voicePrefsFormReducer, initial, initVoicePrefsForm);
+  const { prefs, status } = form;
   const [voices, setVoices] = useState<VoiceInfo[] | null>(null);
   const [voicesError, setVoicesError] = useState<string | null>(null);
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const sample = useVoicePreview({ rate: prefs.rate });
 
   useEffect(() => {
     void voiceClient.status().then((result) => {
-      if (!result.data) {
-        setVoices([]);
-        setVoicesError(result.error);
-        return;
-      }
-      setVoices(result.data.voices);
-      setVoicesError(result.data.voicesError ?? null);
+      const catalog = catalogFrom(result);
+      setVoices(catalog.voices);
+      setVoicesError(catalog.error);
     });
   }, []);
 
-  const locale = prefs.locale ?? defaults.locale;
-  const locales = useMemo(() => {
-    const set = new Set((voices ?? []).map((voice) => voice.locale));
-    set.add(defaults.locale);
-    if (prefs.locale) set.add(prefs.locale);
-    return [...set];
-  }, [voices, defaults.locale, prefs.locale]);
-  const chosenVoice = useMemo(
-    () => (prefs.voice ? ((voices ?? []).find((voice) => voice.id === prefs.voice) ?? null) : null),
-    [voices, prefs.voice]
-  );
-  const dirty = JSON.stringify(prefs) !== JSON.stringify(saved);
-  const playing = sample.previewing === (prefs.voice ?? '');
+  const locale = effectiveLocale(prefs, defaults);
+  const locales = useMemo(() => localesOnOffer(voices, prefs, defaults), [voices, prefs, defaults]);
+  const playing = hearingChosen(sample.previewing, prefs.voice);
 
-  function change(next: VoicePrefs) {
-    setPrefs(next);
-    setStatus('idle');
-  }
-
-  function chooseLocale(next: string) {
-    change({
-      ...prefs,
-      locale: next === defaults.locale ? null : next,
-      // A voice that cannot speak the new language is dropped with it; a
-      // multilingual one stays.
-      voice: chosenVoice && voiceSpeaks(chosenVoice, next) ? prefs.voice : null,
-    });
-  }
-
-  function chooseVoice(voice: VoiceInfo | null) {
-    if (!voice) {
-      change({ ...prefs, voice: null });
-      return;
-    }
-    // A voice of another language brings its language along, since that
-    // is what it will be speaking.
-    const nextLocale = voiceSpeaks(voice, locale) ? locale : voice.locale;
-    change({
-      ...prefs,
-      voice: voice.id,
-      locale: nextLocale === defaults.locale ? null : nextLocale,
-    });
-  }
+  const change = (next: VoicePrefs) => dispatch({ type: 'changed', prefs: next });
+  const chooseLocale = (next: string) => change(choosingLocale(prefs, next, voices, defaults));
+  const chooseVoice = (voice: VoiceInfo | null) => change(choosingVoice(prefs, voice, defaults));
 
   async function save() {
-    setStatus('saving');
-    const result = await voiceClient.savePrefs(prefs);
-    if (result.error) {
-      setStatus('failed');
-      return;
-    }
-    setSaved(prefs);
-    setStatus('saved');
+    const sent = prefs;
+    dispatch({ type: 'saving' });
+    const result = await voiceClient.savePrefs(sent);
+    dispatch(result.error ? { type: 'save-failed' } : { type: 'saved', prefs: sent });
   }
 
   // "Saved." and the disclaimer share the line below the buttons; the
@@ -107,7 +77,7 @@ export default function VoiceForm({
   // covering the disclaimer indefinitely.
   useEffect(() => {
     if (status !== 'saved') return;
-    const timeout = setTimeout(() => setStatus('idle'), 2000);
+    const timeout = setTimeout(() => dispatch({ type: 'saved-shown' }), 2000);
     return () => clearTimeout(timeout);
   }, [status]);
 
@@ -177,9 +147,7 @@ export default function VoiceForm({
             size="md"
           />
           <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
-            {prefs.detectLanguage
-              ? 'The language replies are spoken in, which voices lead the list, and what is listened for when your language cannot be told.'
-              : 'The language replies are spoken in and voice mode listens for, and which voices lead the list.'}
+            {languageHint(prefs.detectLanguage)}
           </span>
         </div>
         <div className="block text-sm">
@@ -209,7 +177,7 @@ export default function VoiceForm({
       </div>
 
       <label className="mt-3 block text-sm">
-        <span className="block font-medium">Speed: {prefs.rate.toFixed(2)}×</span>
+        <span className="block font-medium">{speedLabel(prefs.rate)}</span>
         <input
           type="range"
           min={0.5}
@@ -273,7 +241,7 @@ export default function VoiceForm({
         <button
           type="button"
           onClick={() => void save()}
-          disabled={status === 'saving' || !dirty}
+          disabled={!canSave(form)}
           className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {status === 'saving' ? 'Saving…' : 'Save'}
@@ -298,8 +266,8 @@ export default function VoiceForm({
       ) : (
         <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
           Preview plays a sample sentence in {localeLabel(locale)}. Voices and samples are
-          synthesized by our speech vendor, so pronunciation and accent can vary by language,
-          voice, and dialect, and may not sound the way you expect.
+          synthesized by our speech vendor, so pronunciation and accent can vary by language, voice,
+          and dialect, and may not sound the way you expect.
         </p>
       )}
     </section>
