@@ -6,6 +6,9 @@
  * staged them, with who accepted them and how each action went), and how
  * it finished.
  *
+ * What it says (finish and batch wording, the times line, when a detail is
+ * clamped) is run-timeline.model.ts, tested in node.
+ *
  * REDACTION IS NOT DONE HERE: a turn without `detail` (or a batch without
  * its actions) renders as hidden, and this component has no way to
  * un-hide anything, which is the point of doing the split at the query
@@ -18,6 +21,16 @@ import type { ActionBatchView, AttemptView, RunDetail } from '@/lib/agents/runs-
 import { formatDurationMs } from '@/lib/duration';
 import { toolResultText } from '@/lib/agents/tool-result';
 import { isRecord } from '@renkei/guards';
+import {
+  batchHeading,
+  batchVerdict,
+  batchesByTurn as groupBatchesByTurn,
+  clampOf,
+  compactionHeading,
+  finishWording,
+  reviewReasonWording,
+  runTimesLine,
+} from './run-timeline.model';
 
 function statusTone(status: string): string {
   switch (status) {
@@ -58,10 +71,9 @@ export function StatusPill({ status, errorKind }: { status: string; errorKind?: 
  * base64) from stretching the page sideways. Pure CSS (`group-open`), so
  * this stays a server component.
  */
-const CLAMP_CHARS = 280;
-
 function ClampedText({ label, text }: { label: string; text: string }) {
-  if (text.length <= CLAMP_CHARS) {
+  const clamp = clampOf(text);
+  if (!clamp) {
     return (
       <p className="whitespace-pre-wrap break-words">
         {label ? <span className="font-medium">{label}:</span> : null} {text}
@@ -72,65 +84,15 @@ function ClampedText({ label, text }: { label: string; text: string }) {
     <details className="group">
       <summary className="cursor-pointer list-none">
         {label ? <span className="font-medium">{label}:</span> : null}{' '}
-        <span className="break-all group-open:hidden">{text.slice(0, CLAMP_CHARS)}…</span>
+        <span className="break-all group-open:hidden">{clamp.preview}</span>
         <span className="ml-1 whitespace-nowrap text-blue-600 dark:text-blue-400">
-          <span className="group-open:hidden">
-            Show all ({text.length.toLocaleString()} characters)
-          </span>
+          <span className="group-open:hidden">{clamp.showAll}</span>
           <span className="hidden group-open:inline">Show less</span>
         </span>
       </summary>
       <p className="mt-0.5 whitespace-pre-wrap break-all">{text}</p>
     </details>
   );
-}
-
-/** How a finishing turn said the run ended. */
-function finishWording(finish: unknown): string | null {
-  switch (finish) {
-    case 'done':
-      return 'Finished — the goal was met.';
-    case 'nothing_to_do':
-      return 'Finished — there was nothing to do for this input.';
-    case 'failed':
-      return 'Gave up — the agent could not reach its goal.';
-    default:
-      return null;
-  }
-}
-
-/** Who (or what) let a batch through, or why it never ran. */
-function batchVerdict(batch: ActionBatchView): string {
-  switch (batch.status) {
-    case 'proposed':
-      return 'Waiting for your go-ahead.';
-    case 'declined':
-      return 'Declined — none of these were made.';
-    case 'expired':
-      return 'Nobody accepted it in time — none of these were made.';
-    case 'accepted':
-    case 'executing':
-      return batch.acceptedBy === 'auto'
-        ? 'Accepted automatically — being carried out.'
-        : 'Accepted — being carried out.';
-    case 'completed':
-      return batch.acceptedBy === 'auto'
-        ? 'Accepted automatically and carried out.'
-        : 'Accepted and carried out.';
-    default:
-      return batch.status;
-  }
-}
-
-function reviewReasonWording(reason: string | null): string | null {
-  switch (reason) {
-    case 'high-risk':
-      return 'Needed a person: it includes a high-risk action.';
-    case 'policy':
-      return 'Needed a person: your organization requires it for this run.';
-    default:
-      return null;
-  }
 }
 
 function outcomeTone(outcome: string): string {
@@ -147,9 +109,7 @@ export function BatchBlock({ batch }: { batch: ActionBatchView }) {
       className="rounded-md border border-amber-200 bg-amber-50/40 p-2 dark:border-amber-900 dark:bg-amber-950/20"
     >
       <p className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-gray-800 dark:text-gray-200">
-          Proposed {batch.actionCount} change{batch.actionCount === 1 ? '' : 's'}
-        </span>
+        <span className="font-medium text-gray-800 dark:text-gray-200">{batchHeading(batch)}</span>
         <StatusPill status={batch.status} />
       </p>
       {batch.summary !== undefined ? (
@@ -242,10 +202,7 @@ function TurnDetail({ turn, batches }: { turn: AttemptView; batches: ActionBatch
           data-testid="turn-compaction"
           className="rounded border border-dashed border-gray-300 p-2 dark:border-gray-700"
         >
-          <p className="font-medium">
-            {detail.compaction.through === 1 ? 'Turn 1' : `Turns 1–${detail.compaction.through}`}{' '}
-            folded into notes to fit the model&rsquo;s context
-          </p>
+          <p className="font-medium">{compactionHeading(detail.compaction.through)}</p>
           <ClampedText label="" text={detail.compaction.summary} />
         </div>
       ) : null}
@@ -315,23 +272,11 @@ function TurnDetail({ turn, batches }: { turn: AttemptView; batches: ActionBatch
 }
 
 export function RunTimeline({ run }: { run: RunDetail }) {
-  const wallMs =
-    run.startedAt && run.finishedAt
-      ? new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime()
-      : null;
-  // A batch belongs to the turn that staged it; one whose turn this
-  // audience cannot see still shows (its status is content-free).
-  const batchesByTurn = new Map<number, ActionBatchView[]>();
-  for (const batch of run.batches) {
-    batchesByTurn.set(batch.turn, [...(batchesByTurn.get(batch.turn) ?? []), batch]);
-  }
+  const batchesByTurn = groupBatchesByTurn(run.batches);
   return (
     <div className="space-y-3">
       <p className="text-xs text-gray-500 dark:text-gray-400" data-testid="run-times">
-        {run.attempts.length} turn{run.attempts.length === 1 ? '' : 's'} · active time{' '}
-        {formatDurationMs(run.activeMs)}
-        {wallMs !== null ? ` · wall time ${formatDurationMs(wallMs)}` : ''}
-        {' — time spent waiting on you is not counted against the run.'}
+        {runTimesLine(run)}
       </p>
       <ol className="space-y-3">
         {run.attempts.map((turn) => (

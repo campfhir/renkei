@@ -1,18 +1,29 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useReducer } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 import {
   REPLY_FIELD,
-  checkQuestionAnswers,
-  otherAnswer,
-  otherAnswerText,
   flattenFormFields,
   type FormNode,
   type QuestionAnswerValue,
   type QuestionField,
 } from '@renkei/agents';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  checkBeforeSend,
+  initialQuestion,
+  isPicked,
+  otherChoiceOf,
+  pickedOption,
+  questionNumber,
+  questionReducer,
+  sendLabel,
+  sendOutcomeOf,
+  showsSkipHint,
+  toggledOther,
+  withOtherAnswer,
+} from './question-actions.model';
 
 /**
  * The decision controls of a QUESTION card — an `ask_person` call's form,
@@ -25,6 +36,9 @@ import { reportFetchFailure } from '@/lib/fetch-json';
  * under the control that holds it rather than as a banner after a round
  * trip. The server still checks: this copy is for the pointing, never for
  * the trust — and it is why the 422 path below can also mark fields.
+ *
+ * What the card decides (answers, marks, what a send's answer leaves on
+ * screen) is question-actions.model.ts, tested in node.
  *
  * A 502 still refreshes: the answer is durably recorded and the worker's
  * sweep resumes the run on its own — the warning is about latency, not
@@ -39,86 +53,41 @@ export default function QuestionActions({
 }): React.ReactNode {
   const { refresh, pending } = useRefresh();
   const fields = flattenFormFields(form);
-  const [answers, setAnswers] = useState<Record<string, QuestionAnswerValue>>({});
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [{ answers, fieldErrors, busy, notice, error }, dispatch] = useReducer(
+    questionReducer,
+    initialQuestion
+  );
 
   const setField = (field: QuestionField, value: QuestionAnswerValue): void => {
-    setAnswers((current) => ({ ...current, [field.name]: value }));
-    setFieldErrors((current) => {
-      if (!current[field.name]) return current;
-      const { [field.name]: _cleared, ...rest } = current;
-      return rest;
-    });
+    dispatch({ type: 'answered', name: field.name, value });
   };
 
   async function submit(): Promise<void> {
-    if (fields.length > 0) {
-      const checked = checkQuestionAnswers(fields, answers);
-      if (!checked.ok) {
-        setFieldErrors(
-          Object.fromEntries(checked.issues.map((issue) => [issue.name, issue.message]))
-        );
-        return;
-      }
+    const marks = checkBeforeSend(fields, answers);
+    if (marks) {
+      dispatch({ type: 'checkFailed', fieldErrors: marks });
+      return;
     }
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    setFieldErrors({});
+    dispatch({ type: 'sent' });
+    const url = `/api/actionable-items/${itemId}/question`;
     try {
-      const response = await fetch(`/api/actionable-items/${itemId}/question`, {
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ answers }),
       });
       const body: unknown = await response.json().catch(() => null);
-      const record: Record<string, unknown> =
-        typeof body === 'object' && body !== null ? { ...body } : {};
-      if (response.status === 502 && typeof record.warning === 'string') {
-        reportFetchFailure(
-          'POST',
-          `/api/actionable-items/${itemId}/question`,
-          response.status,
-          record.warning
-        );
-        setNotice(record.warning);
-        refresh();
-        return;
-      }
-      if (!response.ok) {
-        // The server checked the form too, and it is the one whose answer
-        // counts — mark whatever it named, wherever this copy disagreed.
-        const issues = Array.isArray(record.issues) ? record.issues : [];
-        if (issues.length > 0) {
-          setFieldErrors(
-            Object.fromEntries(
-              issues.flatMap((issue) => {
-                const entry: { name?: unknown; message?: unknown } =
-                  typeof issue === 'object' && issue !== null ? { ...issue } : {};
-                return typeof entry.name === 'string' && typeof entry.message === 'string'
-                  ? [[entry.name, entry.message]]
-                  : [];
-              })
-            )
-          );
-        }
-        const message =
-          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
-        reportFetchFailure(
-          'POST',
-          `/api/actionable-items/${itemId}/question`,
-          response.status,
-          message
-        );
-        setError(message);
+      const outcome = sendOutcomeOf(response.status, body);
+      dispatch({ type: 'outcome', outcome });
+      if (outcome.kind === 'saved-late') {
+        reportFetchFailure('POST', url, response.status, outcome.warning);
+      } else if (outcome.kind === 'refused') {
+        reportFetchFailure('POST', url, response.status, outcome.error);
         return;
       }
       refresh();
     } finally {
-      setBusy(false);
+      dispatch({ type: 'settled' });
     }
   }
 
@@ -133,7 +102,7 @@ export default function QuestionActions({
           onChange={setField}
         />
       ))}
-      {fields.length > 1 && fields.every((field) => !field.required) ? (
+      {showsSkipHint(fields) ? (
         <p className="text-xs text-gray-500 dark:text-gray-400">
           Leave any question blank to skip it.
         </p>
@@ -144,7 +113,7 @@ export default function QuestionActions({
           disabled={busy || pending}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {fields.length > 0 ? 'Send the answers' : 'Send'}
+          {sendLabel(fields)}
         </button>
       </div>
       {notice && <p className="text-sm text-amber-700 dark:text-amber-300">{notice}</p>}
@@ -231,18 +200,17 @@ function FormFieldControl({
       .filter(Boolean)
       .join(' ') || undefined;
   // A batch question (q1, q2, …) reads as a numbered question.
-  const numbered = /^q(\d+)$/.exec(field.name);
+  const numbered = questionNumber(field.name);
   const border = error
     ? 'border-red-400 dark:border-red-700'
     : 'border-gray-300 dark:border-gray-700';
   const text = typeof value === 'string' ? value : '';
-  const picks = Array.isArray(value) ? value : [];
   const choices = field.type === 'choice' || field.type === 'multi';
 
   return (
     <div>
       <label htmlFor={choices ? undefined : controlId} className="block text-sm font-medium">
-        {numbered ? <span className="mr-1.5 text-gray-500">{numbered[1]}.</span> : null}
+        {numbered ? <span className="mr-1.5 text-gray-500">{numbered}.</span> : null}
         {field.label}
         {field.required ? (
           <span className="ml-1 text-red-600 dark:text-red-400" aria-hidden="true">
@@ -301,7 +269,7 @@ function FormFieldControl({
           <legend className="sr-only">{field.label}</legend>
           {(field.options ?? []).map((option) => {
             const many = field.type === 'multi';
-            const checked = many ? picks.includes(option) : text === option;
+            const checked = isPicked(field, value, option);
             return (
               <label key={option} className="flex cursor-pointer items-start gap-2 text-sm">
                 <input
@@ -309,28 +277,14 @@ function FormFieldControl({
                   name={controlId}
                   className="mt-0.5"
                   checked={checked}
-                  onChange={() => {
-                    if (!many) {
-                      onChange(option);
-                      return;
-                    }
-                    onChange(
-                      checked ? picks.filter((pick) => pick !== option) : [...picks, option]
-                    );
-                  }}
+                  onChange={() => onChange(pickedOption(field, value, option))}
                 />
                 <span>{option}</span>
               </label>
             );
           })}
           {field.other ? (
-            <OtherChoice
-              field={field}
-              controlId={controlId}
-              text={text}
-              picks={picks}
-              onChange={onChange}
-            />
+            <OtherChoice field={field} controlId={controlId} value={value} onChange={onChange} />
           ) : null}
         </fieldset>
       ) : (
@@ -369,33 +323,17 @@ function FormFieldControl({
 function OtherChoice({
   field,
   controlId,
-  text,
-  picks,
+  value,
   onChange,
 }: {
   field: QuestionField;
   controlId: string;
-  text: string;
-  picks: string[];
+  value: QuestionAnswerValue | undefined;
   onChange: (value: QuestionAnswerValue) => void;
 }): React.ReactNode {
   const other = field.other ?? '';
   const many = field.type === 'multi';
-  const current = many
-    ? picks.find((pick) => otherAnswerText(field, pick) !== null)
-    : otherAnswerText(field, text) !== null
-      ? text
-      : undefined;
-  const checked = current !== undefined;
-  const own = current !== undefined ? (otherAnswerText(field, current) ?? '') : '';
-  const write = (next: string | null) => {
-    if (!many) {
-      onChange(next === null ? '' : otherAnswer(other, next));
-      return;
-    }
-    const rest = picks.filter((pick) => pick !== current);
-    onChange(next === null ? rest : [...rest, otherAnswer(other, next)]);
-  };
+  const { checked, own } = otherChoiceOf(field, value);
   return (
     <div>
       <label className="flex cursor-pointer items-start gap-2 text-sm">
@@ -404,7 +342,7 @@ function OtherChoice({
           name={controlId}
           className="mt-0.5"
           checked={checked}
-          onChange={() => write(checked && many ? null : own)}
+          onChange={() => onChange(toggledOther(field, value))}
         />
         <span>{other}</span>
       </label>
@@ -416,7 +354,7 @@ function OtherChoice({
             rows={2}
             maxLength={2_000}
             autoFocus
-            onChange={(event) => write(event.target.value)}
+            onChange={(event) => onChange(withOtherAnswer(field, value, event.target.value))}
             className={`${CONTROL_CLASS} border-gray-300 dark:border-gray-700`}
           />
         </div>

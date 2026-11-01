@@ -7,6 +7,11 @@
  * document editor: the structured instructions, the tool selection, when it
  * runs, and the few switches around it.
  *
+ * What the builder decides — what a draft fills in, whether Save is on,
+ * what Save and "Draft it for me" send, what a refused save leaves on
+ * screen — is agent-builder.model.ts (tested in node); this component makes
+ * the calls, runs the timers and renders.
+ *
  * Validation runs the SAME @renkei/agents function the server treats as
  * authority, here only for inline hints; the server's answer (422 +
  * issues) renders identically, so the client check being bypassed changes
@@ -14,33 +19,49 @@
  * deliberate act there.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  INSTRUCTION_SECTIONS,
-  MAX_INSTRUCTIONS_CHARS,
-  instructionsSkeleton,
-  isTriggerDraft,
-  triggerVariableDescriptors,
-  validateAgentDraft,
-  type AgentDraft,
-  type ValidationIssue,
-} from '@renkei/agents';
+import { INSTRUCTION_SECTIONS, MAX_INSTRUCTIONS_CHARS } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
-import type { MintedApiKey, StoredAgent } from '@/lib/agents/store';
-import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
+import type { StoredAgent } from '@/lib/agents/store';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { EditorPanel } from './editor-panel';
 import RemoveButton from '@/components/remove-button';
 import { GuardrailsPanel } from './guardrails-panel';
 import { FieldIssues, fieldClass } from './field-issues';
-import { TriggerList, summaryOf, type AgentChoice, type BuilderTrigger } from './trigger-node';
+import { TriggerList, summaryOf, type AgentChoice } from './trigger-node';
 import { TriggerChooser, TriggerEditor } from './trigger-editor';
 import type { CalendarOption } from './schedule-picker';
 import { SaveConfirmPanel } from './review-panel';
 import { ToolPicker } from './tool-picker';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { clientLogger } from '@/lib/client-logger';
+import {
+  autoAcceptNote,
+  builderReducer,
+  canDraft,
+  canSave,
+  clientIssuesOf,
+  defaultModelLabel,
+  draftButtonLabel,
+  draftRequestOf,
+  draftStatus,
+  hasSection,
+  initBuilder,
+  instructionIssuesOf,
+  issuesAt as issuesAtOf,
+  isUsableDraft,
+  overviewHref,
+  saveAsksFirst,
+  saveLabel,
+  saveRequestOf,
+  saveSummary as saveSummaryOf,
+  selectedTriggerOf,
+  shownIssues,
+  triggerValuesOf,
+  type ActApprovalPolicy,
+  type SaveResponse,
+} from './agent-builder.model';
 
 export interface AgentBuilderProps {
   tools: ToolDescriptor[];
@@ -53,48 +74,14 @@ export interface AgentBuilderProps {
   /** The org's hard limits on every run. */
   runLimits: { minutes: number; toolCalls: number };
   /** When the org makes a person accept staged actions anyway. */
-  actApprovalPolicy: 'externally_triggered' | 'all' | 'off';
+  actApprovalPolicy: ActApprovalPolicy;
   /** Present in edit mode. */
   existing?: StoredAgent;
 }
 
-interface SaveResponse {
-  agentId?: string;
-  apiKeys?: MintedApiKey[];
-  descriptionPending?: boolean;
-  agent?: StoredAgent;
-  issues?: ValidationIssue[];
-}
-
-type Selection = { type: 'trigger'; index: number } | { type: 'new-trigger' };
-
-function notesOf(agent: StoredAgent | undefined | null): ReviewNote[] {
-  return parseReviewNotes(agent?.reviewNotes);
-}
-
-function stringsOf(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
-    : [];
-}
-
-/** Whether a `## Heading` for the section is present in the text. */
-function hasSection(instructions: string, heading: string): boolean {
-  return new RegExp(`^##\\s+${heading}\\b`, 'mi').test(instructions);
-}
-
-/** The copy beside the auto-accept switch: what it can and cannot skip. */
-function autoAcceptNote(policy: AgentBuilderProps['actApprovalPolicy']): string {
-  const base =
-    'Changes from high-risk tools (sending mail, deleting or sharing documents, merging code) always wait for you.';
-  switch (policy) {
-    case 'all':
-      return `Your organization requires a person to accept every agent’s changes, so this has no effect right now. ${base}`;
-    case 'off':
-      return base;
-    case 'externally_triggered':
-      return `Runs started by an email, a message or an API call still wait for you — your organization requires it. ${base}`;
-  }
+/** The zone a drafted schedule with none stated is read in: the person's own. */
+function localTimezone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 }
 
 export function AgentBuilder({
@@ -111,56 +98,36 @@ export function AgentBuilder({
   const nameAnchor = useCoachAnchor('builder-name');
   const canvasAnchor = useCoachAnchor('builder-canvas');
   const saveAnchor = useCoachAnchor('builder-save');
-  const [agentId, setAgentId] = useState<string | null>(existing?.id ?? null);
-  const [name, setName] = useState(existing?.name ?? '');
-  const [instructions, setInstructions] = useState(
-    existing?.instructions ?? instructionsSkeleton()
-  );
-  const [selectedTools, setSelectedTools] = useState<string[]>(existing?.tools ?? []);
-  const [triggers, setTriggers] = useState<BuilderTrigger[]>(
-    existing?.triggers.map((trigger) => ({
-      id: trigger.id,
-      draft: trigger.draft,
-      enabled: trigger.enabled,
-      keyHint: trigger.keyHint,
-      lastError: trigger.lastError,
-    })) ?? []
-  );
-  const [selection, setSelection] = useState<Selection | null>(null);
-  // The builder never flips this: saves keep the agent on or off as it
-  // is, and the agents list's toggle is the enable/disable surface.
-  const enabled = existing?.enabled ?? false;
-  const [llmModelId, setLlmModelId] = useState<string | null>(existing?.llmModelId ?? null);
-  const [guardrails, setGuardrails] = useState(existing?.guardrails ?? '');
-  const [canAskQuestions, setCanAskQuestions] = useState(existing?.canAskQuestions ?? false);
-  const [autoAcceptActions, setAutoAcceptActions] = useState(
-    existing?.autoAcceptActions ?? false
-  );
-  const [saving, setSaving] = useState(false);
-  const [serverIssues, setServerIssues] = useState<ValidationIssue[]>([]);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  // Edit flow: Update opens the confirm stage WITHOUT saving; the modal's
-  // Save button is what persists. The keys stage shows once-only API keys
-  // a successful save minted.
-  const [saveModal, setSaveModal] = useState<
-    { stage: 'confirm' } | { stage: 'keys'; apiKeys: MintedApiKey[] } | null
-  >(null);
-  const [checkNotes, setCheckNotes] = useState<ReviewNote[]>(notesOf(existing));
-  const [checking, setChecking] = useState(false);
-  // The "describe it" box — open by default on create, behind a link on
-  // edit (there it REVISES the current instructions, a bigger act).
-  const [prose, setProse] = useState('');
-  const [proseOpen, setProseOpen] = useState(!existing);
-  const [drafting, setDrafting] = useState(false);
-  const [draftError, setDraftError] = useState<string | null>(null);
-  const [draftDetail, setDraftDetail] = useState<string | null>(null);
-  const [draftSeconds, setDraftSeconds] = useState(0);
-  const [draftMode, setDraftMode] = useState<'create' | 'revise'>('create');
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [pendingDraft, setPendingDraft] = useState<{ id: string; createdAt: string } | null>(null);
-  const [drafted, setDrafted] = useState(false);
-  const [draftQuestions, setDraftQuestions] = useState<string[]>([]);
-  const [draftNotes, setDraftNotes] = useState<string[]>([]);
+  const [state, dispatch] = useReducer(builderReducer, existing, initBuilder);
+  const {
+    agentId,
+    enabled,
+    name,
+    instructions,
+    tools: selectedTools,
+    triggers,
+    selection,
+    llmModelId,
+    guardrails,
+    canAskQuestions,
+    autoAcceptActions,
+    saving,
+    saveError,
+    saveModal,
+    checkNotes,
+    checking,
+    prose,
+    proseOpen,
+    drafting,
+    draftError,
+    draftDetail,
+    draftMode,
+    draftId,
+    pendingDraft,
+    drafted,
+    draftQuestions,
+    draftNotes,
+  } = state;
 
   /** Watch a running draft — two seconds; the job outlives this page. */
   useEffect(() => {
@@ -180,23 +147,23 @@ export function AgentBuilder({
       if (!draft || draft.status === 'queued' || draft.status === 'running') return;
 
       clearInterval(timer);
-      setDraftId(null);
-      setDrafting(false);
-
       if (draft.status === 'failed' || !draft.result) {
         clientLogger.warn('agents/builder', 'drafting failed', draft.error ?? undefined, {
           draftId,
           status: draft.status,
         });
-        setDraftError(draft.error ?? 'Drafting failed — try again.');
-        if (draft.errorDetail) setDraftDetail(draft.errorDetail);
+        dispatch({
+          type: 'draftFailed',
+          error: draft.error ?? null,
+          detail: draft.errorDetail ?? null,
+        });
         return;
       }
-      if (!applyRef.current(draft.result)) {
+      dispatch({ type: 'draftArrived', result: draft.result, localTimezone: localTimezone() });
+      if (!isUsableDraft(draft.result)) {
         clientLogger.error('agents/builder', 'draft result has an unrecognised shape', undefined, {
           draftId,
         });
-        setDraftError('The draft came back in a shape this build does not understand.');
         return;
       }
       // Taken, so it is not offered again on the next open.
@@ -217,7 +184,8 @@ export function AgentBuilder({
         `/api/agents/draft${query}`
       );
       if (cancelled || !result.data?.draft) return;
-      setPendingDraft({ id: result.data.draft.id, createdAt: result.data.draft.createdAt });
+      const { id, createdAt } = result.data.draft;
+      dispatch({ type: 'pendingDraftFound', draft: { id, createdAt } });
     })();
     return () => {
       cancelled = true;
@@ -226,61 +194,9 @@ export function AgentBuilder({
 
   useEffect(() => {
     if (!drafting) return;
-    setDraftSeconds(0);
-    const timer = setInterval(() => setDraftSeconds((seconds) => seconds + 1), 1_000);
+    const timer = setInterval(() => dispatch({ type: 'draftTick' }), 1_000);
     return () => clearInterval(timer);
   }, [drafting]);
-
-  const draftStatus = (() => {
-    if (draftSeconds < 3) return 'Sending your description to your org’s model…';
-    if (draftSeconds < 20)
-      return draftMode === 'revise'
-        ? 'Revising the instructions — applying the change you described…'
-        : 'Writing the instructions and picking the tools…';
-    return (
-      `Still working (${draftSeconds}s). This runs in the background — you can leave this page ` +
-      'and the draft will be waiting when you come back.'
-    );
-  })();
-
-  /**
-   * Put a drafted agent into the builder — shared by the poll and the
-   * on-open offer, so both land identically.
-   */
-  const applyDraftResult = (data: Record<string, unknown>): boolean => {
-    if (typeof data.instructions !== 'string' || !data.instructions.trim()) return false;
-    setInstructions(data.instructions);
-    setSelectedTools(stringsOf(data.tools));
-    setDraftQuestions(stringsOf(data.questions));
-    setDraftNotes(stringsOf(data.notes));
-    // A proposed guardrails doc only ever fills an empty panel.
-    if (!guardrails.trim() && typeof data.guardrails === 'string') {
-      setGuardrails(data.guardrails);
-    }
-    // Drafting only ever turns questions on: the instructions ask the owner something.
-    if (data.canAskQuestions === true) setCanAskQuestions(true);
-    if (!name.trim() && typeof data.name === 'string' && data.name) setName(data.name);
-    if (triggers.length === 0 && Array.isArray(data.triggers)) {
-      // A drafted schedule with no stated timezone means "the prose never
-      // said" — the user's own zone is the only sensible reading.
-      const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-      const draftedTriggers = data.triggers.filter(isTriggerDraft);
-      if (draftedTriggers.length > 0) {
-        setTriggers(
-          draftedTriggers.map((draftTrigger) => ({
-            draft:
-              draftTrigger.kind === 'schedule' && !draftTrigger.timezone
-                ? { ...draftTrigger, timezone: localTimezone }
-                : draftTrigger,
-            enabled: true,
-          }))
-        );
-      }
-    }
-    setDrafted(true);
-    setServerIssues([]);
-    return true;
-  };
 
   const loadPendingDraft = async () => {
     const waiting = pendingDraft;
@@ -288,70 +204,41 @@ export function AgentBuilder({
     const result = await getJson<{ draft?: { result?: Record<string, unknown> | null } }>(
       `/api/agents/draft/${waiting.id}`
     );
-    const draftResult = result.data?.draft?.result;
-    if (!draftResult || !applyDraftResult(draftResult)) {
+    const draftResult = result.data?.draft?.result ?? null;
+    dispatch({ type: 'pendingDraftLoaded', result: draftResult, localTimezone: localTimezone() });
+    if (!isUsableDraft(draftResult)) {
       clientLogger.warn('agents/builder', 'pending draft could not be loaded', undefined, {
         draftId: waiting.id,
       });
-      setDraftError('That draft could not be loaded.');
-      setPendingDraft(null);
       return;
     }
-    setPendingDraft(null);
     void fetch(`/api/agents/draft/${waiting.id}/consume`, { method: 'POST' });
   };
 
-  // The poll must not re-subscribe every keystroke, nor call a stale
-  // applier: a ref holds the current one.
-  const applyRef = useRef(applyDraftResult);
-  applyRef.current = applyDraftResult;
-
-  const skeleton = useMemo(() => instructionsSkeleton(), []);
-  const hasRealInstructions = instructions.trim() !== skeleton.trim() && instructions.trim() !== '';
-
   const draftFromProse = async () => {
-    if (drafting || prose.trim().length < 10) return;
-    // With real instructions present this is a REVISION: they go along as
-    // context and the model applies the described change.
-    const revising = hasRealInstructions;
+    if (!canDraft(state)) return;
+    const { revising, body } = draftRequestOf(state);
     if (
       revising &&
       !window.confirm('Revise the current instructions and tools based on this description?')
     ) {
       return;
     }
-    setDraftMode(revising ? 'revise' : 'create');
-    setDrafting(true);
-    setDraftError(null);
-    setDraftDetail(null);
-    setDraftQuestions([]);
-    setDraftNotes([]);
-    const result = await sendJsonFull<{ draftId?: string }>(`/api/agents/draft`, 'POST', {
-      text: prose,
-      guardrails: guardrails.trim() ? guardrails : null,
-      current: revising ? { instructions, tools: selectedTools } : null,
-      // Trigger suggestions only while NONE are configured.
-      ...(triggers.length === 0 ? { suggestTriggers: true } : {}),
-      triggerVars: triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)).map(
-        ({ name: varName, description }) => ({ name: varName, description })
-      ),
-      ...(agentId ? { agentId } : {}),
-    });
+    dispatch({ type: 'draftStarted', mode: revising ? 'revise' : 'create' });
+    const result = await sendJsonFull<{ draftId?: string }>(`/api/agents/draft`, 'POST', body);
     if (result.error || !result.data?.draftId) {
-      setDrafting(false);
-      setDraftError(result.error ?? 'Drafting could not be started — try again.');
+      dispatch({ type: 'draftStartFailed', error: result.error ?? null });
       return;
     }
-    setDraftId(result.data.draftId);
+    dispatch({ type: 'draftQueued', draftId: result.data.draftId });
   };
 
   const recheck = async () => {
     if (!agentId || checking) return;
-    setChecking(true);
+    dispatch({ type: 'recheckStarted' });
     const started = await sendJsonFull(`/api/agents/${agentId}/describe`, 'POST');
     if (started.error) {
-      setSaveError(started.error);
-      setChecking(false);
+      dispatch({ type: 'recheckFailed', error: started.error });
       return;
     }
     for (let polls = 0; polls < 22; polls += 1) {
@@ -359,25 +246,16 @@ export function AgentBuilder({
       const result = await getJson<{ agent: StoredAgent }>(`/api/agents/${agentId}`);
       const agent = result.data?.agent;
       if (agent && agent.descriptionStatus !== 'stale') {
-        setCheckNotes(notesOf(agent));
-        break;
+        dispatch({ type: 'recheckDone', agent });
+        return;
       }
     }
-    setChecking(false);
+    dispatch({ type: 'recheckDone', agent: null });
   };
 
-  const draft: AgentDraft = useMemo(
-    () => ({
-      name,
-      instructions,
-      tools: selectedTools,
-      triggers: triggers.map((trigger) => trigger.draft),
-      enabled,
-      llmModelId,
-      guardrails: guardrails.trim() ? guardrails : null,
-      canAskQuestions,
-      autoAcceptActions,
-    }),
+  const clientIssues = useMemo(
+    () => clientIssuesOf(state, tools),
+    // The check reads only the agent's own fields, not the drafting clock.
     [
       name,
       instructions,
@@ -388,120 +266,52 @@ export function AgentBuilder({
       guardrails,
       canAskQuestions,
       autoAcceptActions,
+      tools,
     ]
   );
-
-  const clientIssues = useMemo(() => validateAgentDraft(draft, tools), [draft, tools]);
-  const issues = serverIssues.length > 0 ? serverIssues : clientIssues;
-  const issuesAt = (prefix: string) =>
-    issues
-      .filter((issue) => issue.path === prefix || issue.path.startsWith(`${prefix}.`))
-      .map((issue) => issue.message);
-
-  // An untouched skeleton is not an error yet — it is where you start. The
-  // missing-content issue still blocks Save; it just is not shown in red.
-  const instructionIssues =
-    hasRealInstructions || serverIssues.length > 0 ? issuesAt('instructions') : [];
-
-  const triggerValues = useMemo(
-    () => triggerVariableDescriptors(triggers.map((trigger) => trigger.draft)),
-    [triggers]
-  );
-
-  const persist = async (): Promise<SaveResponse | 'invalid' | 'error'> => {
-    setSaveError(null);
-    const payload = {
-      name,
-      instructions,
-      tools: selectedTools,
-      triggers,
-      enabled,
-      llmModelId,
-      guardrails: guardrails.trim() ? guardrails : null,
-      canAskQuestions,
-      autoAcceptActions,
-      // Every save is content the owner may have changed — rewrite the
-      // summary in the background (see the PUT route).
-      refreshDescription: true,
-    };
-    const url = agentId ? `/api/agents/${agentId}` : `/api/agents`;
-    const result = await sendJsonFull<SaveResponse>(url, agentId ? 'PUT' : 'POST', payload);
-    if (result.status === 422 && result.data?.issues) {
-      setServerIssues(result.data.issues);
-      return 'invalid';
-    }
-    if (result.error || !result.data) {
-      setSaveError(result.error ?? 'The agent could not be saved.');
-      return 'error';
-    }
-    setServerIssues([]);
-    return result.data;
-  };
+  const issues = shownIssues(state, clientIssues);
+  const issuesAt = (prefix: string) => issuesAtOf(issues, prefix);
+  const instructionIssues = instructionIssuesOf(state, issues);
+  const triggerValues = useMemo(() => triggerValuesOf(state), [triggers]);
 
   /** Persist and finish: navigate to the overview, or show minted keys. */
   const persistAndFinish = async () => {
-    setSaving(true);
-    const saved = await persist();
-    if (saved === 'invalid') {
-      setSaving(false);
-      setSaveModal(null);
+    dispatch({ type: 'saveSent' });
+    const { url, method, body } = saveRequestOf(state);
+    const result = await sendJsonFull<SaveResponse>(url, method, body);
+    if (result.status === 422 && result.data?.issues) {
+      dispatch({ type: 'saveRefused', issues: result.data.issues });
       return;
     }
-    if (saved === 'error') {
-      setSaving(false);
+    if (result.error || !result.data) {
+      dispatch({ type: 'saveFailed', error: result.error ?? null });
       return;
     }
-    const savedId = saved.agentId ?? saved.agent?.id ?? agentId;
-    if (savedId) setAgentId(savedId);
-    const storedTriggers = saved.agent?.triggers;
-    if (storedTriggers) {
-      setTriggers(
-        storedTriggers.map((trigger) => ({
-          id: trigger.id,
-          draft: trigger.draft,
-          enabled: trigger.enabled,
-          keyHint: trigger.keyHint,
-          lastError: trigger.lastError,
-        }))
-      );
-    }
-    const mintedKeys = saved.apiKeys ?? [];
-    if (mintedKeys.length > 0) {
-      setSaving(false);
-      setSaveModal({ stage: 'keys', apiKeys: mintedKeys });
-      return;
-    }
+    const saved = result.data;
+    dispatch({ type: 'saved', response: saved });
+    if ((saved.apiKeys ?? []).length > 0) return;
     // `saving` stays on until the overview page takes over.
-    router.push(savedId ? `/agents/${savedId}` : `/agents`);
+    router.push(overviewHref(saved.agentId ?? saved.agent?.id ?? agentId));
   };
 
   const handleSave = () => {
-    if (agentId !== null) {
-      setSaveError(null);
-      setSaveModal({ stage: 'confirm' });
+    if (saveAsksFirst(state)) {
+      dispatch({ type: 'confirmOpened' });
       return;
     }
     void persistAndFinish();
   };
 
-  const selectedTrigger =
-    selection?.type === 'trigger' ? (triggers[selection.index] ?? null) : null;
-
-  const addSection = (heading: string) => {
-    setInstructions((current) => `${current.replace(/\s+$/, '')}\n\n## ${heading}\n\n`);
-  };
+  const selectedTrigger = selectedTriggerOf(state);
+  const saveDisabled = !canSave(state, clientIssues);
 
   const editorPanels = (
     <>
       {selection?.type === 'new-trigger' ? (
-        <EditorPanel title="Add a trigger" onClose={() => setSelection(null)}>
+        <EditorPanel title="Add a trigger" onClose={() => dispatch({ type: 'panelClosed' })}>
           <TriggerChooser
             otherAgents={otherAgents}
-            onChoose={(draftTrigger) => {
-              setTriggers((current) => [...current, { draft: draftTrigger, enabled: true }]);
-              setSelection({ type: 'trigger', index: triggers.length });
-              setServerIssues([]);
-            }}
+            onChoose={(draftTrigger) => dispatch({ type: 'triggerChosen', draft: draftTrigger })}
           />
         </EditorPanel>
       ) : null}
@@ -509,15 +319,11 @@ export function AgentBuilder({
       {selectedTrigger && selection?.type === 'trigger' ? (
         <EditorPanel
           title={summaryOf(selectedTrigger.draft, otherAgents)}
-          onClose={() => setSelection(null)}
+          onClose={() => dispatch({ type: 'panelClosed' })}
           headerAction={
             <RemoveButton
               label="Remove trigger"
-              onClick={() => {
-                const index = selection.index;
-                setTriggers((current) => current.filter((_, at) => at !== index));
-                setSelection(null);
-              }}
+              onClick={() => dispatch({ type: 'triggerRemoved' })}
             />
           }
         >
@@ -525,14 +331,7 @@ export function AgentBuilder({
             trigger={selectedTrigger}
             otherAgents={otherAgents}
             calendars={calendars}
-            onChange={(draftTrigger) => {
-              const index = selection.index;
-              setTriggers((current) =>
-                current.map((entry, at) =>
-                  at === index ? { ...entry, draft: draftTrigger } : entry
-                )
-              );
-            }}
+            onChange={(draftTrigger) => dispatch({ type: 'triggerEdited', draft: draftTrigger })}
           />
         </EditorPanel>
       ) : null}
@@ -545,7 +344,7 @@ export function AgentBuilder({
         <p>
           <button
             type="button"
-            onClick={() => setProseOpen(true)}
+            onClick={() => dispatch({ type: 'proseOpened' })}
             className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
             ✨ Revise from a description…
@@ -563,7 +362,7 @@ export function AgentBuilder({
               <button
                 type="button"
                 aria-label="Close"
-                onClick={() => setProseOpen(false)}
+                onClick={() => dispatch({ type: 'proseClosed' })}
                 className="rounded p-1 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
               >
                 ✕
@@ -577,7 +376,7 @@ export function AgentBuilder({
           </p>
           <textarea
             value={prose}
-            onChange={(event) => setProse(event.target.value)}
+            onChange={(event) => dispatch({ type: 'proseChanged', value: event.target.value })}
             rows={4}
             maxLength={8000}
             aria-label="Describe the agent"
@@ -587,7 +386,7 @@ export function AgentBuilder({
           <div className="mt-2 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              disabled={drafting || prose.trim().length < 10}
+              disabled={!canDraft(state)}
               onClick={() => void draftFromProse()}
               className="flex items-center gap-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
@@ -597,12 +396,10 @@ export function AgentBuilder({
                     aria-hidden="true"
                     className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-blue-300 border-t-white"
                   />
-                  Drafting…
+                  {draftButtonLabel(state)}
                 </>
-              ) : drafted ? (
-                'Draft again'
               ) : (
-                'Draft it for me'
+                draftButtonLabel(state)
               )}
             </button>
             {drafted && !drafting ? (
@@ -620,7 +417,7 @@ export function AgentBuilder({
           </div>
           {drafting ? (
             <p aria-live="polite" className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-              {draftStatus}
+              {draftStatus(state)}
             </p>
           ) : null}
           {pendingDraft && !drafting ? (
@@ -637,7 +434,7 @@ export function AgentBuilder({
               </button>
               <button
                 type="button"
-                onClick={() => setPendingDraft(null)}
+                onClick={() => dispatch({ type: 'pendingDraftDismissed' })}
                 className="text-blue-700 hover:underline dark:text-blue-300"
               >
                 Not now
@@ -682,12 +479,7 @@ export function AgentBuilder({
     </>
   );
 
-  const saveSummary =
-    issues.length > 0
-      ? `${issues.length} thing${issues.length === 1 ? '' : 's'} to fix before saving`
-      : enabled
-        ? 'This agent is on.'
-        : 'Saved agents start turned off — you review, then turn them on.';
+  const saveSummary = saveSummaryOf(state, issues);
 
   return (
     <div data-wide-page className="pb-24 lg:pb-4">
@@ -709,7 +501,7 @@ export function AgentBuilder({
                   value={name}
                   maxLength={200}
                   placeholder="e.g. Ticket from urgent email"
-                  onChange={(event) => setName(event.target.value)}
+                  onChange={(event) => dispatch({ type: 'nameChanged', value: event.target.value })}
                 />
                 <FieldIssues messages={issuesAt('name')} />
               </div>
@@ -721,8 +513,8 @@ export function AgentBuilder({
                 className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400"
               >
                 Each run: up to <strong>{runLimits.toolCalls} tool calls</strong> and{' '}
-                <strong>{runLimits.minutes} minutes</strong> of active time — waiting on you
-                doesn’t count. The agent stops as soon as its goal is met.
+                <strong>{runLimits.minutes} minutes</strong> of active time — waiting on you doesn’t
+                count. The agent stops as soon as its goal is met.
               </section>
 
               <div className="space-y-3">
@@ -732,13 +524,19 @@ export function AgentBuilder({
                     type="checkbox"
                     className="mt-0.5"
                     checked={canAskQuestions}
-                    onChange={(event) => setCanAskQuestions(event.target.checked)}
+                    onChange={(event) =>
+                      dispatch({
+                        type: 'flagChanged',
+                        flag: 'canAskQuestions',
+                        value: event.target.checked,
+                      })
+                    }
                   />
                   <label htmlFor="agent-can-ask-questions" className="text-sm">
                     <span className="font-medium">Can ask me questions</span>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      The agent may pause and ask you something instead of guessing. Its clock
-                      stops while it waits.
+                      The agent may pause and ask you something instead of guessing. Its clock stops
+                      while it waits.
                     </p>
                   </label>
                 </div>
@@ -748,14 +546,20 @@ export function AgentBuilder({
                     type="checkbox"
                     className="mt-0.5"
                     checked={autoAcceptActions}
-                    onChange={(event) => setAutoAcceptActions(event.target.checked)}
+                    onChange={(event) =>
+                      dispatch({
+                        type: 'flagChanged',
+                        flag: 'autoAcceptActions',
+                        value: event.target.checked,
+                      })
+                    }
                   />
                   <label htmlFor="agent-auto-accept" className="text-sm">
                     <span className="font-medium">Accept proposed actions automatically</span>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      The agent never changes anything itself — it proposes a batch of actions,
-                      and a separate process carries them out once accepted. With this on, you
-                      skip the card. {autoAcceptNote(actApprovalPolicy)}
+                      The agent never changes anything itself — it proposes a batch of actions, and
+                      a separate process carries them out once accepted. With this on, you skip the
+                      card. {autoAcceptNote(actApprovalPolicy)}
                     </p>
                   </label>
                 </div>
@@ -763,10 +567,7 @@ export function AgentBuilder({
 
               <GuardrailsPanel
                 guardrails={guardrails}
-                onGuardrailsChange={(next) => {
-                  setGuardrails(next);
-                  setServerIssues([]);
-                }}
+                onGuardrailsChange={(next) => dispatch({ type: 'guardrailsChanged', value: next })}
                 issues={issuesAt('guardrails')}
               />
 
@@ -781,15 +582,12 @@ export function AgentBuilder({
                   <select
                     id="agent-model"
                     value={llmModelId ?? ''}
-                    onChange={(event) => setLlmModelId(event.target.value || null)}
+                    onChange={(event) =>
+                      dispatch({ type: 'modelChanged', llmModelId: event.target.value || null })
+                    }
                     className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs dark:border-gray-700 dark:bg-gray-900"
                   >
-                    <option value="">
-                      Organization default
-                      {models.find((model) => model.isDefault)
-                        ? ` (${models.find((model) => model.isDefault)?.label})`
-                        : ''}
-                    </option>
+                    <option value="">{defaultModelLabel(models)}</option>
                     {models.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.label}
@@ -855,7 +653,7 @@ export function AgentBuilder({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => router.push(agentId ? `/agents/${agentId}` : `/agents`)}
+                onClick={() => router.push(overviewHref(agentId))}
                 className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700"
               >
                 Cancel
@@ -863,11 +661,11 @@ export function AgentBuilder({
               <button
                 type="button"
                 onClick={handleSave}
-                disabled={saving || clientIssues.length > 0}
+                disabled={saveDisabled}
                 className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
                 {...saveAnchor}
               >
-                {saving ? 'Saving…' : agentId ? 'Update' : 'Save'}
+                {saveLabel(state)}
               </button>
             </div>
           </div>
@@ -895,10 +693,9 @@ export function AgentBuilder({
               <textarea
                 id="agent-instructions"
                 value={instructions}
-                onChange={(event) => {
-                  setInstructions(event.target.value);
-                  setServerIssues([]);
-                }}
+                onChange={(event) =>
+                  dispatch({ type: 'instructionsChanged', value: event.target.value })
+                }
                 rows={22}
                 spellCheck
                 aria-invalid={instructionIssues.length > 0 || undefined}
@@ -917,7 +714,9 @@ export function AgentBuilder({
                         <span className="flex items-center gap-1.5">
                           <span
                             aria-hidden="true"
-                            className={present ? 'text-green-600' : 'text-gray-300 dark:text-gray-600'}
+                            className={
+                              present ? 'text-green-600' : 'text-gray-300 dark:text-gray-600'
+                            }
                           >
                             {present ? '✓' : '○'}
                           </span>
@@ -925,7 +724,9 @@ export function AgentBuilder({
                           {!present ? (
                             <button
                               type="button"
-                              onClick={() => addSection(section.heading)}
+                              onClick={() =>
+                                dispatch({ type: 'sectionAdded', heading: section.heading })
+                              }
                               className="ml-auto text-blue-600 hover:underline dark:text-blue-400"
                             >
                               Add
@@ -961,10 +762,7 @@ export function AgentBuilder({
           <ToolPicker
             tools={tools}
             selected={selectedTools}
-            onChange={(next) => {
-              setSelectedTools(next);
-              setServerIssues([]);
-            }}
+            onChange={(next) => dispatch({ type: 'toolsChanged', tools: next })}
             issues={issuesAt('tools')}
           />
 
@@ -973,8 +771,8 @@ export function AgentBuilder({
             otherAgents={otherAgents}
             selectedIndex={selection?.type === 'trigger' ? selection.index : null}
             issues={issuesAt('triggers')}
-            onSelect={(index) => setSelection({ type: 'trigger', index })}
-            onAdd={() => setSelection({ type: 'new-trigger' })}
+            onSelect={(index) => dispatch({ type: 'triggerOpened', index })}
+            onAdd={() => dispatch({ type: 'triggerAddOpened' })}
           />
         </div>
       </div>
@@ -994,7 +792,7 @@ export function AgentBuilder({
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => router.push(agentId ? `/agents/${agentId}` : `/agents`)}
+              onClick={() => router.push(overviewHref(agentId))}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm dark:border-gray-700"
             >
               Cancel
@@ -1002,10 +800,10 @@ export function AgentBuilder({
             <button
               type="button"
               onClick={handleSave}
-              disabled={saving || clientIssues.length > 0}
+              disabled={saveDisabled}
               className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
             >
-              {saving ? 'Saving…' : agentId ? 'Update' : 'Save'}
+              {saveLabel(state)}
             </button>
           </div>
         </div>
@@ -1018,8 +816,8 @@ export function AgentBuilder({
           saving={saving}
           saveError={saveError}
           onSave={() => void persistAndFinish()}
-          onKeepEditing={() => setSaveModal(null)}
-          onDone={() => router.push(agentId ? `/agents/${agentId}` : `/agents`)}
+          onKeepEditing={() => dispatch({ type: 'modalClosed' })}
+          onDone={() => router.push(overviewHref(agentId))}
         />
       ) : null}
     </div>
