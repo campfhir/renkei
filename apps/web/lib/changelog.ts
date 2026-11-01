@@ -50,6 +50,13 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title:
+          "Agent models: picking another model from the provider's list clears an earlier test result",
+        detail:
+          'On the Agent models form, choosing a different model id from "List available models" left the previous "Test connection" success on screen, as if the new model had answered. It now clears, the same as typing a new model id does.',
+      },
+      {
+        kind: 'fixed',
         title: 'Files added while the large-upload question is open wait for your answer',
         detail:
           'If you chose a few more files while Renkei was asking whether to go ahead with a large upload, they used to start uploading straight away. They now join the files waiting on your answer.',

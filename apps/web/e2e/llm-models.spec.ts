@@ -1,20 +1,25 @@
 /**
- * The org's model roster, end to end in a browser, on the in-memory data
- * store: the empty state, adding a model, "List available models" and
- * "Test connection" (both mocked at the browser edge — no real provider
- * key in e2e), and the saved row.
+ * The org's model roster in a browser, on the in-memory data store: one
+ * walk of the page end to end, and the form's fit at a phone's width.
  *
- * "Test connection" is worth its own coverage beyond the unit tests in
- * packages/agent-llm: it is the one place a person watches the exact wording
- * of a success or failure, and the one place a typo in the wiring between
- * the form and the route would go unnoticed by a type checker.
+ * Where the rules went:
+ *   - the form's behaviour — which fields the provider and API surface
+ *     show, the Images/FLUX surfaces disabling "Organization default" and
+ *     Test connection, the Responses API opt-in, the reasoning-effort hint
+ *     per provider, typed token counts (200k, 1m, 4k, 8000) and what is
+ *     refused, what makes a test or a model list stale, what Save, List
+ *     and Test send (isDefault never for an image model), the row badges
+ *     ("Not BAA-covered", "Retention unknown", "Image generation") and the
+ *     first model defaulting to organization default — is
+ *     app/(app)/admin/llm-models/model-forms.model.ts, tested in
+ *     model-forms.model.test.ts;
+ *   - what the server stores and refuses — settings round-tripping through
+ *     POST/PUT and GET, an image model never stored as the default, the
+ *     image surface refused on Anthropic, keys sealed and kept — is
+ *     app/api/admin/llm-models/route.test.ts and [modelId]/route.test.ts.
  *
- * Every save goes through the real route (no mock on save) into the
- * server's store, sealed under its real TOKEN_ENCRYPTION_KEY — the "tokens
- * can save" question this feature exists to answer.
- *
- * The worked example of a spec on the memory store (AGENTS.md, "UI
- * changes"):
+ * What stays is what only a browser shows. The first test is the worked
+ * example of a spec on the memory store (AGENTS.md, "UI changes"):
  *   - each test signs in as a person of its own (`person`,
  *     e2e/fixtures.ts: signed in through the test sign-in route,
  *     enrolled through the real delegate) — here an operator;
@@ -22,9 +27,12 @@
  *     shares one server: a test names its rows distinctively (`tagged`),
  *     scopes each assertion to its own row (`modelRow`), and removes its
  *     rows afterwards through the roster's own DELETE route. It can never
- *     assume the table is empty,
- *     so the empty state is the list route answered empty at the browser
- *     edge (`page.route`), the way a vendor call is answered;
+ *     assume the table is empty, so the empty state is the list route
+ *     answered empty at the browser edge (`page.route`), the way a vendor
+ *     call ("Test connection") is answered;
+ *   - the save goes through the real route (no mock on save) into the
+ *     server's store, sealed under its real TOKEN_ENCRYPTION_KEY; only the
+ *     organization default, one slot every spec shares, is kept out of it;
  *   - "mobile" is a resized Chromium viewport, not a device descriptor.
  */
 
@@ -90,11 +98,6 @@ async function saveModel(page: Page): Promise<void> {
   await reloaded;
 }
 
-/** Open the edit form of one's own model. */
-async function editModel(page: Page, label: string): Promise<void> {
-  await modelRow(page, label).getByRole('button', { name: 'Edit' }).click();
-}
-
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
     path: path.join(RESULTS, 'screens', testInfo.project.name, `${name}.png`),
@@ -102,14 +105,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-async function openNewModel(page: Page, label: string, provider?: string): Promise<void> {
-  await page.goto('/admin/llm-models');
-  await page.getByRole('button', { name: '+ Add a model' }).click();
-  await page.getByLabel('Display name').fill(label);
-  if (provider) await page.getByLabel('Provider').selectOption(provider);
-}
-
-test('admin: the model roster, listing, testing, and saving', async ({
+test('admin: the model roster, testing, and saving', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -132,56 +128,25 @@ test('admin: the model roster, listing, testing, and saving', async ({
   await page.getByRole('textbox', { name: 'API key' }).fill('sk-ant-e2e-fake-key');
   await shot(page, testInfo, 'llm-models-02-draft-filled');
 
-  // "List available models": proves the key can reach the provider's
-  // models endpoint. Mocked — no real Anthropic key in e2e.
-  await page.route('**/api/admin/**/llm-models/available', async (route) => {
-    await route.fulfill({
-      json: {
-        models: [
-          { id: 'claude-sonnet-5', displayName: 'Claude Sonnet 5' },
-          { id: 'claude-opus-5', displayName: 'Claude Opus 5' },
-        ],
-      },
-    });
-  });
-  await page.getByRole('button', { name: 'List available models' }).click();
-  await expect(page.getByRole('button', { name: 'claude-sonnet-5' })).toBeVisible();
-  await shot(page, testInfo, 'llm-models-03-listed');
-
-  // "Test connection": one real chat completion in production; here, a
-  // mocked success so the exact success copy is what's under test.
+  // "Test connection": one real chat completion in production; here the
+  // vendor's answer at the browser edge, so the request the form sends and
+  // the success it draws are what's under test.
+  let tested: unknown = null;
   await page.route('**/api/admin/**/llm-models/test', async (route) => {
+    tested = route.request().postDataJSON();
     await route.fulfill({ json: { ok: true, model: 'claude-sonnet-5', reply: 'ok' } });
   });
   await page.getByRole('button', { name: 'Test connection' }).click();
   await expect(page.getByText('The model responded: “ok”')).toBeVisible();
+  expect(tested).toMatchObject({
+    provider: 'anthropic',
+    model: 'claude-sonnet-5',
+    apiKey: 'sk-ant-e2e-fake-key',
+  });
   await shot(page, testInfo, 'llm-models-04-tested-ok');
 
-  // Editing the model id invalidates the stale test result (a real
-  // completion answers for the settings it was sent with, not new ones).
-  await page.getByLabel('Model id').fill('claude-sonnet-5-typo');
-  await expect(page.getByText('The model responded: “ok”')).toHaveCount(0);
-
-  // The failure path: a bad model id / deployment name, worded distinctly
-  // from an auth failure so an operator knows what to fix.
-  await page.unroute('**/api/admin/**/llm-models/test');
-  await page.route('**/api/admin/**/llm-models/test', async (route) => {
-    await route.fulfill({
-      status: 400,
-      json: {
-        error: 'The provider did not understand the request — check the model id and base URL.',
-      },
-    });
-  });
-  await page.getByRole('button', { name: 'Test connection' }).click();
-  await expect(
-    page.getByText('The provider did not understand the request — check the model id and base URL.')
-  ).toBeVisible();
-  await shot(page, testInfo, 'llm-models-05-tested-error');
-
-  // Fix the model id and actually save — the real POST route, the real
-  // store, the real encrypt-at-rest.
-  await page.getByLabel('Model id').fill('claude-sonnet-5');
+  // Actually save — the real POST route, the real store, the real
+  // encrypt-at-rest.
   await page.getByRole('checkbox', { name: 'Organization default' }).check();
   // The organization default is one slot every spec shares (artifacts.spec.ts
   // keeps its stub there for summaries): the form must ask for it, but the
@@ -223,8 +188,7 @@ test('admin: the model roster, listing, testing, and saving', async ({
   await expect(row).toBeVisible();
   await expect(row.getByText('key stored')).toBeVisible();
   await expect(row.getByText('Default', { exact: true })).toBeVisible();
-  // Nothing was said about data handling, so the roster warns: a row an
-  // operator has not confirmed a BAA for must not look like one they have.
+  // Drawn from the stored row: nothing was said about data handling.
   await expect(row.getByText('Not BAA-covered')).toBeVisible();
   await shot(page, testInfo, 'llm-models-06-saved');
   await page.unroute('**/api/admin/llm-models');
@@ -233,281 +197,40 @@ test('admin: the model roster, listing, testing, and saving', async ({
   // "does the form fit and stay usable", which a viewport size answers.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await shot(page, testInfo, 'llm-models-07-mobile-list');
-  await editModel(page, label);
+  await row.getByRole('button', { name: 'Edit' }).click();
   // The edit form is a modal dialog over the roster, not a block at its foot.
   const editDialog = page.getByRole('dialog', { name: 'Edit model' });
   await expect(editDialog).toBeVisible();
+  // Reopened from the stored row: the real save kept what was typed.
+  await expect(editDialog.getByLabel('Model id')).toHaveValue('claude-sonnet-5');
   await shot(page, testInfo, 'llm-models-08-mobile-edit');
   await editDialog.getByRole('button', { name: 'Cancel' }).click();
   await expect(editDialog).toHaveCount(0);
   await expect(row).toBeVisible();
 });
 
-test('admin: reasoning effort is free text — no fixed value list — and round-trips through save', async ({
+test('admin: the token fields fit a phone — typed as text, max output level with temperature', async ({
   page,
   person: _person,
 }, testInfo) => {
-  const label = tagged('Astra Reasoning');
-  await openNewModel(page, label, 'openai');
-  await page.getByLabel('Model id').fill('gpt-6-astra-1');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-e2e-fake-key');
-
-  // Which reasoning_effort values a model accepts is entirely the
-  // provider's call and varies by model, so the field takes any value.
-  await page.getByLabel('Reasoning effort').fill('xhigh');
-  // The context window the chat's usage meter measures against.
-  await page.getByLabel('Context window (tokens)').fill('400000');
-  await shot(page, testInfo, 'llm-models-reasoning-effort-freetext');
-
-  await saveModel(page);
-  await expect(modelRow(page, label)).toBeVisible();
-
-  // Round-trips through the real save route and store.
-  await editModel(page, label);
-  await expect(page.getByLabel('Reasoning effort')).toHaveValue('xhigh');
-  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('400000');
-});
-
-test('admin: reasoning effort is offered for a Claude row too, with its own hint, and round-trips', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  const label = tagged('Sonnet quick');
+  await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto('/admin/llm-models');
   await page.getByRole('button', { name: '+ Add a model' }).click();
-  // Anthropic is the default provider: the field is there without switching.
-  await expect(page.getByLabel('Provider')).toHaveValue('anthropic');
-  const reasoningEffort = page.getByLabel('Reasoning effort');
-  await expect(reasoningEffort).toBeVisible();
-  // The Claude hint, not the GPT one.
-  await expect(page.getByText('output_config.effort')).toBeVisible();
-  await expect(page.getByText('GPT-5 family')).toHaveCount(0);
+  const form = page.getByRole('dialog', { name: 'Add a model' });
+  await expect(form).toBeVisible();
 
-  await page.getByLabel('Display name').fill(label);
-  await page.getByLabel('Model id').fill('claude-sonnet-5');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-ant-e2e-fake-key');
-  await reasoningEffort.fill('low');
-  await shot(page, testInfo, 'llm-models-reasoning-effort-claude');
-
-  await saveModel(page);
-  await expect(modelRow(page, label)).toBeVisible();
-
-  await editModel(page, label);
-  await expect(page.getByLabel('Reasoning effort')).toHaveValue('low');
-
-  // Phone width: the field and its hint still fit the form.
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await expect(page.getByLabel('Reasoning effort')).toBeVisible();
-  await shot(page, testInfo, 'llm-models-reasoning-effort-claude-mobile');
-});
-
-test('admin: API surface can opt an OpenAI-compatible model into the Responses API', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  const label = tagged('Astra Responses');
-  await page.goto('/admin/llm-models');
-
-  // Anthropic (the default provider) never shows the toggle.
-  await page.getByRole('button', { name: '+ Add a model' }).click();
-  await expect(page.getByLabel('API surface')).toHaveCount(0);
-
-  await page.getByLabel('Display name').fill(label);
-  await page.getByLabel('Provider').selectOption('openai');
-  await expect(page.getByLabel('API surface')).toBeVisible();
-  await page.getByLabel('Model id').fill('gpt-6-astra-1');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-e2e-fake-key');
-  await page.getByLabel('API surface').selectOption('responses');
-  await shot(page, testInfo, 'llm-models-api-surface-responses-selected');
-
-  await saveModel(page);
-  await expect(modelRow(page, label)).toBeVisible();
-
-  await editModel(page, label);
-  await expect(page.getByLabel('API surface')).toHaveValue('responses');
-});
-
-test('admin: the Images API surface makes an image generation model — never the default, no chat test', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  const label = tagged('Painter');
-  await page.goto('/admin/llm-models');
-  await page.getByRole('button', { name: '+ Add a model' }).click();
-
-  // The Images API is OpenAI's: Anthropic has no such surface to pick.
-  await expect(page.getByLabel('API surface')).toHaveCount(0);
-
-  await page.getByLabel('Display name').fill(label);
-  await page.getByLabel('Provider').selectOption('openai');
-  await page.getByLabel('Model id').fill('gpt-image-1');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-e2e-fake-key');
-
-  // The Images surface takes the model out of the chat-only choices.
-  const defaultBox = page.getByRole('checkbox', { name: 'Organization default' });
-  await defaultBox.check();
-  await page.getByLabel('API surface').selectOption('images');
-  await expect(page.getByTestId('image-surface-hint')).toBeVisible();
-  await expect(defaultBox).toBeDisabled();
-  await expect(defaultBox).not.toBeChecked();
-  await expect(page.getByRole('button', { name: 'Test connection' })).toBeDisabled();
-  await expect(page.getByText('cannot be tested here')).toBeVisible();
-  await expect(page.getByText('Some reasoning-model deployments')).toHaveCount(0);
-  await shot(page, testInfo, 'llm-models-image-model-form');
-
-  // FLUX is an image surface too, with its own endpoint guidance.
-  await page.getByLabel('API surface').selectOption('flux');
-  await expect(page.getByTestId('image-surface-hint')).toContainText('providers/blackforestlabs');
-  await expect(defaultBox).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Test connection' })).toBeDisabled();
-  await page.getByLabel('API surface').selectOption('images');
-  await expect(page.getByTestId('image-surface-hint')).toContainText('gpt-image');
-
-  // Back to a chat surface restores the chat test and the default box.
-  await page.getByLabel('API surface').selectOption('');
-  await expect(defaultBox).toBeEnabled();
-  await page.getByLabel('API surface').selectOption('images');
-
-  await saveModel(page);
-  const row = modelRow(page, label);
-  await expect(row).toBeVisible();
-  // The row says what it is, and it is not the default.
-  await expect(row.getByText('Image generation', { exact: true })).toBeVisible();
-  await expect(row.getByText('Default', { exact: true })).toHaveCount(0);
-
-  await editModel(page, label);
-  await expect(page.getByLabel('API surface')).toHaveValue('images');
-
-  // Switching the provider to Anthropic drops the surface: it has no Images API.
-  await page.getByLabel('Provider').selectOption('anthropic');
-  await expect(page.getByLabel('API surface')).toHaveCount(0);
-  await page.getByLabel('Provider').selectOption('openai');
-  await expect(page.getByLabel('API surface')).toHaveValue('');
-  await page.getByLabel('API surface').selectOption('images');
-
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await expect(page.getByLabel('API surface')).toBeVisible();
-  await shot(page, testInfo, 'llm-models-image-model-form-mobile');
-});
-
-test('admin: data handling — residency, retention and the BAA flag round-trip and clear the warning', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  const label = tagged('Covered Claude');
-  await openNewModel(page, label);
-  await page.getByLabel('Model id').fill('claude-sonnet-5');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-ant-e2e-fake-key');
-  // A BAA without a retention term is still a warning.
-  await page.getByRole('checkbox', { name: /Business Associate Agreement/ }).check();
-  await saveModel(page);
-  const row = modelRow(page, label);
-  await expect(row).toBeVisible();
-  await expect(row.getByText('Retention unknown')).toBeVisible();
-  await shot(page, testInfo, 'llm-models-data-handling-01-retention-unknown');
-
-  await editModel(page, label);
-  await expect(page.getByRole('checkbox', { name: /Business Associate Agreement/ })).toBeChecked();
-  await page.getByLabel('Data residency').fill('Azure East US, DataZone');
-  await page.getByLabel('Data retention').selectOption('none');
-  await page.getByLabel('Notes').fill('BAA signed 2026-01; zero retention confirmed.');
-  await shot(page, testInfo, 'llm-models-data-handling-02-filled');
-  await saveModel(page);
-  await expect(row).toBeVisible();
-  await expect(row.getByText('Retention unknown')).toHaveCount(0);
-  await expect(row.getByText('Not BAA-covered')).toHaveCount(0);
-  await shot(page, testInfo, 'llm-models-data-handling-03-covered');
-
-  // Through the real save route and the stored settings, back into the form.
-  await editModel(page, label);
-  await expect(page.getByLabel('Data residency')).toHaveValue('Azure East US, DataZone');
-  await expect(page.getByLabel('Data retention')).toHaveValue('none');
-  await expect(page.getByLabel('Notes')).toHaveValue(
-    'BAA signed 2026-01; zero retention confirmed.'
-  );
-
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await shot(page, testInfo, 'llm-models-data-handling-04-mobile-edit');
-});
-
-test('admin: context window takes a typed count — 200k, 1m — and refuses what is not one', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  const label = tagged('Long Context');
-  await openNewModel(page, label);
-  await page.getByLabel('Model id').fill('claude-sonnet-5');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-ant-e2e-fake-key');
-
-  // Not a number field: the suffixes people actually write are accepted.
-  const contextWindow = page.getByLabel('Context window (tokens)');
-  await expect(contextWindow).toHaveAttribute('placeholder', '200k');
-  await contextWindow.fill('lots');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(
-    page.getByText('Context window must be a token count, such as 200k or 1m.')
-  ).toBeVisible();
-  await shot(page, testInfo, 'llm-models-context-window-01-refused');
-
-  await contextWindow.fill('1m');
-  await saveModel(page);
-  await expect(modelRow(page, label)).toBeVisible();
-
-  // Stored as the whole count, shown back as a plain number to edit.
-  await editModel(page, label);
-  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('1000000');
-  await page.getByLabel('Context window (tokens)').fill('200k');
-  await saveModel(page);
-  await expect(page.getByLabel('Context window (tokens)')).toHaveCount(0);
-  await editModel(page, label);
-  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('200000');
-  await shot(page, testInfo, 'llm-models-context-window-02-saved');
-
-  // A phone's numeric keypad has no "k" or "m", so the field must not ask for it.
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await expect(page.getByLabel('Context window (tokens)')).not.toHaveAttribute(
-    'inputmode',
-    'numeric'
-  );
-  await page.getByLabel('Context window (tokens)').fill('1m');
-  await expect(page.getByLabel('Context window (tokens)')).toHaveValue('1m');
-  await shot(page, testInfo, 'llm-models-context-window-03-mobile');
-});
-
-test('admin: max output tokens takes 4k and 8000, sits level with temperature on a phone', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  const label = tagged('Verbose');
-  await openNewModel(page, label);
-  await page.getByLabel('Model id').fill('claude-sonnet-5');
-  await page.getByRole('textbox', { name: 'API key' }).fill('sk-ant-e2e-fake-key');
-
-  // A typed count like the context window's, not a number field.
-  const maxOutput = page.getByLabel('Max output tokens');
-  await expect(maxOutput).toHaveAttribute('placeholder', '4k');
-  await maxOutput.fill('lots');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(
-    page.getByText('Max output tokens must be a token count, such as 4k or 8000.')
-  ).toBeVisible();
-
-  await maxOutput.fill('4k');
-  await saveModel(page);
-  await expect(modelRow(page, label)).toBeVisible();
-
-  await editModel(page, label);
-  await expect(page.getByLabel('Max output tokens')).toHaveValue('4000');
-  await page.getByLabel('Max output tokens').fill('8000');
-  await saveModel(page);
-  await expect(page.getByLabel('Max output tokens')).toHaveCount(0);
-  await editModel(page, label);
-  await expect(page.getByLabel('Max output tokens')).toHaveValue('8000');
+  // A phone's numeric keypad has no "k" or "m", so neither count asks for it.
+  for (const name of ['Context window (tokens)', 'Max output tokens']) {
+    const field = form.getByLabel(name);
+    await expect(field).toHaveAttribute('type', 'text');
+    await expect(field).not.toHaveAttribute('inputmode', 'numeric');
+  }
+  await form.getByLabel('Context window (tokens)').fill('1m');
+  await expect(form.getByLabel('Context window (tokens)')).toHaveValue('1m');
 
   // The two inputs share a top edge even when the label wraps at phone width.
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  const outputBox = await page.getByLabel('Max output tokens').boundingBox();
-  const temperatureBox = await page.getByLabel('Temperature').boundingBox();
+  const outputBox = await form.getByLabel('Max output tokens').boundingBox();
+  const temperatureBox = await form.getByLabel('Temperature').boundingBox();
   expect(outputBox?.y).toBeCloseTo(temperatureBox?.y ?? NaN, 0);
   await shot(page, testInfo, 'llm-models-max-output-mobile');
 });

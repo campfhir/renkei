@@ -325,3 +325,73 @@ describe('GET .../llm-models', () => {
     expect(body.models.find((m) => m.label === 'No key')!.hasApiKey).toBe(false);
   });
 });
+
+describe('POST then GET: what the form saves is what it opens with again', () => {
+  it('round-trips the reasoning effort, counts, surface and data handling as the form sent them', async () => {
+    fakeDb([]);
+
+    const response = await POST(
+      reqOf({
+        label: 'Astra',
+        provider: 'openai',
+        model: 'gpt-6-astra-1',
+        apiKey: 'sk-x',
+        reasoningEffort: 'xhigh',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 4000,
+        apiSurface: 'responses',
+        dataResidency: 'Azure East US, DataZone',
+        providerRetention: 'none',
+        baaCovered: true,
+        notes: 'BAA signed 2026-01; zero retention confirmed.',
+        enabled: true,
+        isDefault: false,
+      })
+    );
+    expect(response.status).toBe(201);
+    const { id }: { id: string } = await response.json();
+
+    const listed = await GET(new NextRequest('http://x/api/admin/llm-models'));
+    const body: { models: Record<string, unknown>[] } = await listed.json();
+    expect(body.models.find((model) => model.id === id)).toEqual({
+      id,
+      label: 'Astra',
+      provider: 'openai',
+      model: 'gpt-6-astra-1',
+      baseUrl: null,
+      settings: {
+        reasoningEffort: 'xhigh',
+        contextWindow: 1_000_000,
+        maxOutputTokens: 4000,
+        apiSurface: 'responses',
+        dataResidency: 'Azure East US, DataZone',
+        providerRetention: 'none',
+        baaCovered: true,
+        notes: 'BAA signed 2026-01; zero retention confirmed.',
+      },
+      enabled: true,
+      isDefault: false,
+      hasApiKey: true,
+    });
+  });
+
+  it('a model saved with nothing said about data handling stores none, so its row warns', async () => {
+    fakeDb([]);
+
+    const response = await POST(
+      reqOf({
+        label: 'Plain',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        apiKey: 'sk-x',
+        baaCovered: false,
+      })
+    );
+    const { id }: { id: string } = await response.json();
+
+    const listed = await GET(new NextRequest('http://x/api/admin/llm-models'));
+    const body: { models: { id: string; settings: Record<string, unknown> }[] } =
+      await listed.json();
+    expect(body.models.find((model) => model.id === id)!.settings).toEqual({});
+  });
+});
