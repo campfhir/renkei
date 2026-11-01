@@ -9,6 +9,7 @@ import type { ScopeOption } from '@/lib/scope-catalog';
 import { DEFAULT_ZOOM_SCOPES, ZOOM_SCOPE_OPTIONS } from '@/lib/zoom-scopes';
 import {
   authorizeHref,
+  connectBlockedReason,
   initScopeSelection,
   overUrlBudget,
   pickableOptions,
@@ -128,6 +129,23 @@ describe('the connect card scope selection', () => {
     expect(overUrlBudget(undefined, state, ctx)).toBe(false);
     expect(overUrlBudget({ baseChars: 100, limit: 100 + length }, state, ctx)).toBe(false);
     expect(overUrlBudget({ baseChars: 101, limit: 100 + length }, state, ctx)).toBe(true);
+  });
+
+  it('cannot connect with nothing ticked, which would ask for everything instead', () => {
+    const ctx = context();
+    expect(connectBlockedReason(after(ctx))).toBeNull();
+    const none = after(
+      ctx,
+      { type: 'toggled', optionId: 'meetings', on: false },
+      { type: 'toggled', optionId: 'recordings', on: false },
+      { type: 'toggled', optionId: 'schedule', on: false }
+    );
+    expect(connectBlockedReason(none)).toBe(
+      'Tick at least one thing Renkei may do before connecting.'
+    );
+    // Ticking one back lets it go again.
+    const one = scopeSelectionReducer(none, { type: 'toggled', optionId: 'schedule', on: true });
+    expect(connectBlockedReason(one)).toBeNull();
   });
 
   it("Zoom's default ceiling offers and ticks every Zoom capability", () => {

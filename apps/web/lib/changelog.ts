@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Connect with every capability unticked no longer asks for all of them',
+        detail:
+          "On a connector's card, unticking every capability and pressing Connect used to take you to the vendor asking for everything your organization allows. Connect now stays off until at least one capability is ticked, and says so.",
+      },
+      {
+        kind: 'fixed',
         title: 'A notification delete or Mark all as read the server refused no longer looks done',
         detail:
           'On the notifications page, a delete the server turned down used to hide the notifications anyway, and a refused Mark all as read hid the button as if everything were read. Now the delete dialog stays open to try again, and Mark all as read stays on screen.',

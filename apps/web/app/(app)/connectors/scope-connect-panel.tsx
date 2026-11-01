@@ -31,6 +31,7 @@ import type { CoachAnchor } from '@/lib/coach-marks/anchors';
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 import {
   authorizeHref,
+  connectBlockedReason,
   initScopeSelection,
   overUrlBudget,
   scopeSelectionReducer,
@@ -86,6 +87,7 @@ export function ConnectScopePanel({
   const { state, toggleOption } = useScopeSelection(context);
   const authorizeUrl = authorizeHref(authorizePath, state, context);
   const overBudget = overUrlBudget(urlBudget, state, context);
+  const blocked = connectBlockedReason(state);
 
   const detailsAnchor = useCoachAnchor(scopesAnchor);
   const linkAnchor = useCoachAnchor(connectAnchor);
@@ -124,13 +126,27 @@ export function ConnectScopePanel({
           )}
         </div>
       </details>
-      <a
-        {...linkAnchor}
-        href={authorizeUrl}
-        className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-      >
-        {connectLabel}
-      </a>
+      {blocked ? (
+        <>
+          <button
+            {...linkAnchor}
+            type="button"
+            disabled
+            className="inline-block cursor-not-allowed rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white opacity-50"
+          >
+            {connectLabel}
+          </button>
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{blocked}</p>
+        </>
+      ) : (
+        <a
+          {...linkAnchor}
+          href={authorizeUrl}
+          className="inline-block rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          {connectLabel}
+        </a>
+      )}
     </div>
   );
 }
@@ -146,6 +162,7 @@ export function ReconnectScopePanel({
   const context = { options, ceiling, priorScopes };
   const { state, toggleOption } = useScopeSelection(context);
   const authorizeUrl = authorizeHref(authorizePath, state, context);
+  const blocked = connectBlockedReason(state);
 
   return (
     <>
@@ -157,12 +174,25 @@ export function ReconnectScopePanel({
         available={ceiling}
         audience="user"
       />
-      <a
-        href={authorizeUrl}
-        className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
-      >
-        {approveLabel}
-      </a>
+      {blocked ? (
+        <>
+          <button
+            type="button"
+            disabled
+            className="mt-3 inline-block cursor-not-allowed rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium opacity-50 dark:border-gray-700"
+          >
+            {approveLabel}
+          </button>
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{blocked}</p>
+        </>
+      ) : (
+        <a
+          href={authorizeUrl}
+          className="mt-3 inline-block rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
+        >
+          {approveLabel}
+        </a>
+      )}
     </>
   );
 }

@@ -84,6 +84,18 @@ export function authorizeHref(
   return `${authorizePath}?scopes=${encodeURIComponent(selectedScopeString(state, context))}`;
 }
 
+/**
+ * Why Connect cannot be pressed, or null when it can. With nothing ticked
+ * the link would send an empty selection, which the authorize routes read
+ * as "nothing narrowed" and answer by asking for the organization's whole
+ * ceiling — everything the person had just unticked.
+ */
+export function connectBlockedReason(state: ScopeSelectionState): string | null {
+  return state.selected.size === 0
+    ? 'Tick at least one thing Renkei may do before connecting.'
+    : null;
+}
+
 /** The picker's summary line: "What Renkei may do (N of M capabilities)". */
 export function selectionSummary(
   state: ScopeSelectionState,
