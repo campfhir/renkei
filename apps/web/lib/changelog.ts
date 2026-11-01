@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'A notification delete or Mark all as read the server refused no longer looks done',
+        detail:
+          'On the notifications page, a delete the server turned down used to hide the notifications anyway, and a refused Mark all as read hid the button as if everything were read. Now the delete dialog stays open to try again, and Mark all as read stays on screen.',
+      },
+      {
+        kind: 'fixed',
         title:
           "Agent models: picking another model from the provider's list clears an earlier test result",
         detail:
