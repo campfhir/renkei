@@ -1,22 +1,19 @@
 /**
- * My usage, end to end: the same buckets Organization usage charts (tokens
- * by surface, the activity calendar, tokens by model, top agents, top
- * tools) read for the signed-in person alone, and none of the org's
- * rankings of other people.
+ * My usage renders on the real server: the same buckets Organization usage
+ * charts (tokens by surface, the activity calendar, tokens by model, top
+ * agents, top tools) for the signed-in person, one chat of theirs end to
+ * end onto the model board, the chart's series switch, a longer window
+ * re-read, and the phone-width fit.
  *
- * Scope is the session's, decided server side: a second person spends
- * millions of tokens on the same server, and nothing of it reaches this
- * page — not in a figure, not as a name on a board. The person is an
- * operator on purpose: the one caller who can see everyone on
- * Organization usage still gets only themselves here.
+ * That the report is the session's alone — another person's millions of
+ * tokens reach no figure, no name and no ranking, even for an operator —
+ * is app/(app)/utilization/actions.test.ts on the memory store.
  */
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { MEMORY_BASE_URL } from './constants';
-import { createPerson } from './support/person';
 import { createChat, send } from './support/chat';
 import { addStubModel, removeModel, scripted } from './support/stub-model';
 
@@ -39,11 +36,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('my usage charts my own buckets and ranks nobody else', async ({
-  page,
-  request,
-  person: _person,
-}, testInfo) => {
+test('my usage charts my own buckets', async ({ page, person: _person }, testInfo) => {
   const tag = `${testInfo.project.name.replace('desktop-', '')}-${randomUUID().slice(0, 6)}`;
   const modelId = await addStubModel(page.request, tag, { label: `Usage model ${tag}` });
   try {
@@ -56,32 +49,6 @@ test('my usage charts my own buckets and ranks nobody else', async ({
       modelId
     );
 
-    // Somebody else's: nine million tokens out, in a chat of their own.
-    const other = await createPerson(request, { displayName: `Heavy Spender ${tag}` });
-    const theirs = await request.post(`${MEMORY_BASE_URL}/api/chat/chats`, {
-      headers: other.headers,
-      data: { llmModelId: modelId },
-    });
-    expect(theirs.status(), await theirs.text()).toBe(201);
-    const { chatId } = await theirs.json();
-    const asked = await request.post(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}/turns`, {
-      headers: other.headers,
-      data: {
-        text: scripted('spend', [{ text: 'Done.', usage: { input: 1, output: 9_000_000 } }]),
-        llmModelId: modelId,
-      },
-    });
-    expect(asked.status(), await asked.text()).toBe(202);
-    // Let their reply land before looking, so its absence means something.
-    await expect
-      .poll(async () => {
-        const view = await request.get(`${MEMORY_BASE_URL}/api/chat/chats/${chatId}`, {
-          headers: other.headers,
-        });
-        return (await view.json()).chat.activeTurn;
-      }, COLD)
-      .toBeNull();
-
     await page.goto('/utilization');
     const main = page.getByRole('main');
     await expect(main.getByRole('heading', { name: 'My usage' })).toBeVisible(COLD);
@@ -92,7 +59,7 @@ test('my usage charts my own buckets and ranks nobody else', async ({
     await expect(main.getByRole('heading', { name: 'Tokens by model' })).toBeVisible();
     await expect(main.getByRole('heading', { name: 'Top agents' })).toBeVisible();
     await expect(main.getByRole('heading', { name: 'Top tools' })).toBeVisible();
-    // My model is on the board with my tokens; nobody else's spend is in it.
+    // My model is on the board.
     const models = main.locator('section, div').filter({
       has: page.getByRole('heading', { name: 'Tokens by model' }),
     });
@@ -114,18 +81,9 @@ test('my usage charts my own buckets and ranks nobody else', async ({
     );
     await chart.getByRole('button', { name: 'Tokens', exact: true }).click();
 
-    // Other people's spend is nowhere: not in the tiles, not as a name, not as a ranking.
-    await expect(main).not.toContainText(/\b9(\.\d)?M\b/);
-    await expect(main).not.toContainText('Heavy Spender');
-    for (const heading of ['Top users', 'Top listeners', 'Top speakers', 'Top image creators']) {
-      await expect(main.getByRole('heading', { name: heading })).toHaveCount(0);
-    }
-    await expect(main.getByLabel('Person')).toHaveCount(0);
-
     // A longer window re-reads in the same scope.
     await main.getByRole('button', { name: '90 days' }).click();
     await expect(main.getByText('Over the last 90 days')).toBeVisible();
-    await expect(main).not.toContainText('Heavy Spender');
     await shot(page, testInfo, 'my-usage-buckets.png');
 
     // Phone width.

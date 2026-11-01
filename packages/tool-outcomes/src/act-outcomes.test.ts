@@ -160,6 +160,19 @@ describe('actsByConnector', () => {
     }
   });
 
+  it('gives Jira Administration a group of its own, apart from everyday Jira, where a proposal creates something', () => {
+    // An agent's proposal can page its owner: jira-admin-changes.spec.ts
+    // found this group's "Creates something" switch on Preferences.
+    const groups = actsByConnector();
+    const admin = groups.find((group) => group.connector === 'jira-admin');
+    const jira = groups.find((group) => group.connector === 'jira');
+    expect(admin?.acts.map((act) => act.tool)).toContain('jira_admin_propose_option_changes');
+    expect(
+      admin?.acts.find((act) => act.tool === 'jira_admin_propose_option_changes')?.category
+    ).toBe('created');
+    expect(jira?.acts.some((act) => act.tool.startsWith('jira_admin_'))).toBe(false);
+  });
+
   it('gives the two document namespaces the same acts under different names', () => {
     const groups = actsByConnector();
     const suffixes = (key: string) =>

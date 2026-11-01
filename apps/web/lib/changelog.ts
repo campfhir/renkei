@@ -2706,3 +2706,33 @@ export function buildLabel(packageVersion: string): string {
   const commit = process.env.GIT_COMMIT;
   return commit ? `${packageVersion}+${commit}` : packageVersion;
 }
+
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/**
+ * A release's heading on the About page: `2026-08-25` → `25 August 2026`,
+ * with no timezone in sight.
+ *
+ * Deliberately not LocalTime: a release date is a CALENDAR date, not an
+ * instant. Parsing it as midnight UTC and rendering it in the viewer's zone
+ * shows the day before for anyone west of Greenwich, which is both wrong and
+ * the kind of wrong nobody reports.
+ */
+export function releaseDate(iso: string): string {
+  const [year, month, day] = iso.split('-').map(Number);
+  const name = MONTHS[month - 1];
+  return name ? `${day} ${name} ${year}` : iso;
+}

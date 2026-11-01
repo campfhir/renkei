@@ -12,17 +12,24 @@
  * and their options from the stand-in Jira (its "Source" select list, with
  * a context of OPS's own and a global one).
  *
- * Then the refusals, each of which must leave the request pending and
- * Jira untouched: a connection without the scope the writes need (the
- * person reconnects with a narrower choice), a proposal for another Jira
- * site (someone else's, made in theirs), and that request before a person
- * who is not an operator. And a proposal Jira moved
- * underneath — an option added by hand since — stops at that operation
- * and runs nothing after it.
- *
- * Not reachable here: an expired proposal (requests live a day, and
- * nothing moves the server's clock). The audit trail's row is not read back: no
- * page lists it.
+ * The refusals moved out of the browser, each where it is decided:
+ * - a proposal Jira moved underneath (an option renamed by hand since)
+ *   stops at that operation and runs nothing after it —
+ *   lib/jira-admin/field-options.test.ts;
+ * - a global context called out before anyone applies it —
+ *   lib/jira-admin/field-options.test.ts, lib/mcp-tools/jira-admin/changes.test.ts;
+ * - a connection without the scope the writes need, Apply off and saying
+ *   why — lib/jira-admin/apply.test.ts (the reason),
+ *   app/api/jira-admin/changes/[changeId]/apply/route.test.ts (the 403),
+ *   change-actions.model.test.ts beside the review page (the button);
+ * - declining with a note — the cancel route test and the model;
+ * - someone else's proposal, from another Jira site — resolveApplyAccess in
+ *   lib/jira-admin/apply-job.test.ts and the apply route's 409; and a
+ *   person who is not an operator gets not-found — mayView in
+ *   lib/jira-admin/change-requests.test.ts, the apply route's 403 and the
+ *   cancel route's 404;
+ * - Jira Administration's own notification group, where a proposal
+ *   "creates something" — packages/tool-outcomes/src/act-outcomes.test.ts.
  *
  * Each person works in a Jira site of their own, so the stub's options
  * start fresh for every test. An operator sees everyone's requests, and
@@ -42,7 +49,6 @@ import {
   prepareJiraAdministration,
   proposeInChat,
 } from './support/jira-admin';
-import { createPerson, signIn } from './support/person';
 import { addStubModel, removeModel } from './support/stub-model';
 import { test, expect } from './fixtures';
 
@@ -197,173 +203,4 @@ test('a proposal waits for review, and applying it changes Jira exactly as shown
   await expect(main(page).getByTestId('change-title')).toBeVisible();
   await noHorizontalOverflow(page);
   await shot(page, testInfo, 'jira-admin-changes-04-mobile');
-});
-
-test('a stale or refused proposal changes nothing, and says why', async ({
-  browser,
-  page,
-  request,
-  person,
-}, testInfo) => {
-  test.setTimeout(180_000);
-  const cloudId = fakeJiraSite(person.subject).cloudId;
-
-  // --- Jira moved underneath: an option this renames was renamed by hand since. ---
-  const stale = await proposeInChat(page, modelId, 'jira_admin_propose_option_changes', {
-    field: 'Source',
-    space: 'OPS',
-    add: ['Vendor'],
-    rename: [{ from: 'Partner', to: 'Reseller' }],
-    disable: ['Legacy'],
-  });
-  const renamed = await fetch(
-    `${JIRA_STUB}/${cloudId}/rest/api/3/field/${FIELD_ID}/context/${CONTEXT_ID}/option`,
-    {
-      method: 'PUT',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ options: [{ id: '10002', value: 'Channel partner' }] }),
-    }
-  );
-  expect(renamed.ok).toBe(true);
-  await page.goto(`/jira-admin/changes/${stale}`);
-  const results = main(page).getByTestId('change-operations').getByRole('listitem');
-  await expect(results).toHaveCount(3);
-  await page.getByRole('button', { name: 'Apply these 3 changes to Jira' }).click();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Partly applied', {
-    timeout: 30_000,
-  });
-  // The add ran; the rename stops where Jira moved, and the disable after it does not run.
-  await expect(results.nth(0)).toContainText('Done');
-  await expect(results.nth(1)).toContainText('Failed');
-  await expect(results.nth(1)).toContainText('Partner');
-  await expect(results.nth(2)).toContainText('Not run');
-  expect(await liveOptions(person.subject)).toEqual([
-    'Customer',
-    'Channel partner',
-    'Legacy',
-    'Vendor',
-  ]);
-  await shot(page, testInfo, 'jira-admin-changes-05-partial');
-
-  // --- A global context is called out before anyone applies it. ---
-  const global = await proposeInChat(page, modelId, 'jira_admin_propose_option_changes', {
-    field: 'Source',
-    context: 'Default Configuration Scheme for Source',
-    add: ['Vendor'],
-  });
-  await page.goto(`/jira-admin/changes/${global}`);
-  await expect(main(page).getByTestId('change-reach')).toContainText(
-    'it reaches every space that has no context of its own'
-  );
-  await shot(page, testInfo, 'jira-admin-changes-06-global');
-
-  // --- The connection lost the scope the writes need: Apply is off, and says why. ---
-  // The person reconnects with a narrower choice (the card's picker), so the
-  // grant no longer carries manage:jira-configuration.
-  await connectJiraAdministration(page, ['read:jira-user', 'read:jira-work']);
-  await page.goto(`/jira-admin/changes/${global}`);
-  await expect(main(page).getByText(/does not include manage:jira-configuration/)).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Apply this change to Jira' })).toBeDisabled();
-  const refused = await page.request.post(`/api/jira-admin/changes/${global}/apply`);
-  expect(refused.status()).toBe(403);
-  await expect(main(page).getByTestId('change-state')).toHaveText('Waiting for review');
-  await shot(page, testInfo, 'jira-admin-changes-07-refused');
-
-  // --- Declining closes it. ---
-  await page.getByRole('button', { name: 'Decline it' }).click();
-  await page.getByRole('button', { name: 'Send the decline' }).click();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Cancelled', { timeout: 30_000 });
-  await expect(page.getByRole('button', { name: 'Send the decline' })).toHaveCount(0);
-
-  // --- Someone else's: an operator reviews it; anyone else cannot see it. ---
-  // Another operator: proposing is an operator's (a person without the role asks in words).
-  const someone = await createPerson(request, {
-    displayName: 'Sam Someone',
-    roles: ['renkei-user', 'renkei-operator'],
-  });
-  const ordinary = await createPerson(request, { displayName: 'Ola Ordinary' });
-  const someoneContext = await browser.newContext({ reducedMotion: 'reduce' });
-  const ordinaryContext = await browser.newContext({ reducedMotion: 'reduce' });
-  try {
-    await signIn(someoneContext, someone);
-    const someonePage = await someoneContext.newPage();
-    await connectJiraAdministration(someonePage);
-    const theirs = await proposeInChat(someonePage, modelId, 'jira_admin_propose_option_changes', {
-      field: 'Source',
-      space: 'OPS',
-      add: ['Vendor'],
-    });
-    // The operator reconnects with every box ticked again.
-    await connectJiraAdministration(page);
-    await page.goto(`/jira-admin/changes/${theirs}`);
-    await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible();
-    await expect(main(page).getByTestId('change-requester')).toContainText('by Sam Someone');
-    // Sam works in a Jira site of his own (no shared email domain): this
-    // operator's connection is on another, so approving is refused, with
-    // the reason, and the request stays pending.
-    await page.getByRole('button', { name: 'Approve and apply this change to Jira' }).click();
-    // Filtered: Next's route announcer is a role="alert" too.
-    await expect(page.getByRole('alert').filter({ hasText: /different Jira site/ })).toBeVisible();
-    await page.reload();
-    await expect(main(page).getByTestId('change-state')).toHaveText('Waiting for review');
-
-    // A person who is not an operator gets not-found, on the page and at the
-    // routes (the approval itself is an operator's: refused outright).
-    await signIn(ordinaryContext, ordinary);
-    const ordinaryPage = await ordinaryContext.newPage();
-    // The page streams behind the layout's loading state, so its not-found
-    // arrives as content rather than a 404 status — assert on that.
-    await ordinaryPage.goto(`/jira-admin/changes/${theirs}`);
-    await expect(
-      ordinaryPage.getByRole('heading', { name: 'This page could not be found.' })
-    ).toBeVisible();
-    await expect(
-      ordinaryPage.getByRole('heading', { name: 'Review a Jira admin change' })
-    ).toHaveCount(0);
-    const cannotApprove = await ordinaryPage.request.post(
-      `/api/jira-admin/changes/${theirs}/apply`
-    );
-    expect(cannotApprove.status()).toBe(403);
-    const cannotSee = await ordinaryPage.request.post(`/api/jira-admin/changes/${theirs}/cancel`);
-    expect(cannotSee.status()).toBe(404);
-    // Still waiting, for the operator.
-    await page.reload();
-    await expect(main(page).getByTestId('change-state')).toHaveText('Waiting for review');
-    // Theirs is in their own site, untouched too.
-    expect(await liveOptions(someone.subject)).toEqual(['Customer', 'Partner', 'Legacy']);
-  } finally {
-    await someoneContext.close();
-    await ordinaryContext.close();
-  }
-
-  // Nothing any refusal touched reached Jira: only the stale one's first step ran.
-  expect(await liveOptions(person.subject)).toEqual([
-    'Customer',
-    'Channel partner',
-    'Legacy',
-    'Vendor',
-  ]);
-});
-
-test('an agent’s proposal can page its owner: Jira Administration has its own notification group', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  await page.goto(`/preferences`);
-  const notifications = page.getByRole('region', { name: 'Notifications' });
-  const summary = notifications.locator('summary').filter({ hasText: 'Jira Administration' });
-  await expect(summary).toHaveCount(1);
-  await summary.click();
-  // A proposal files under "Creates something"; its switch is its own,
-  // apart from everyday Jira's.
-  await expect(
-    notifications.getByRole('checkbox', { name: 'Jira Administration Creates something — App' })
-  ).toBeVisible();
-  await shot(page, testInfo, 'jira-admin-changes-08-notifications');
-
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await expect(
-    notifications.getByRole('checkbox', { name: 'Jira Administration Creates something — App' })
-  ).toBeVisible();
-  await noHorizontalOverflow(page);
 });

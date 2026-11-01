@@ -5,6 +5,10 @@
  * the client can exchange (with its PKCE verifier) for tokens, and the
  * same page at phone width still reads.
  *
+ * A request without an S256 PKCE challenge never reaching the consent
+ * page (sent back to the client with invalid_request, nothing recorded) is
+ * app/api/mcp/oauth/authorize/route.test.ts on the memory store.
+ *
  * The client registers itself the way an MCP client does (dynamic
  * registration, e2e/support/mcp-client.ts — the org setting that opens it
  * is put back as it was), once per project, under a name of its own. The person who
@@ -153,33 +157,4 @@ test('an MCP client must be allowed on the consent page before it gets a code @s
   await expect(page.getByRole('button', { name: 'Allow' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Deny' })).toBeVisible();
   await shot(page, testInfo, 'oauth-consent-02-mobile');
-});
-
-test('a request without PKCE never reaches the consent page', async ({
-  page,
-  request,
-  person: _person,
-}, testInfo) => {
-  const client = await clientFor(request, testInfo);
-
-  // Asked the way the browser would (same cookies), but without following
-  // the redirect: what matters is where the server sends it and with what.
-  const query = new URLSearchParams({
-    response_type: 'code',
-    client_id: client.clientId,
-    redirect_uri: CALLBACK,
-    state: 'no-pkce',
-  });
-  const response = await page.request.get(`/api/mcp/oauth/authorize?${query.toString()}`, {
-    maxRedirects: 0,
-  });
-  expect(response.status()).toBe(303);
-  const landed = new URL(response.headers()['location']);
-  expect(landed.origin).toBe(new URL(CALLBACK).origin);
-  expect(landed.searchParams.get('error')).toBe('invalid_request');
-  expect(landed.searchParams.get('error_description')).toMatch(/code_challenge/);
-  expect(landed.searchParams.get('state')).toBe('no-pkce');
-  expect(landed.searchParams.get('code')).toBeNull();
-  // No consent request was opened: the client went back, not to the page.
-  expect(landed.pathname).not.toContain('/oauth/consent');
 });

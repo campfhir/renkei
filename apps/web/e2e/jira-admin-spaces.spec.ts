@@ -1,22 +1,25 @@
 /**
  * Jira space templates and new spaces, end to end in a browser: an
  * organization's templates listed from the Jira Administration card, a
- * new space proposed from one reviewed with every scheme it will run on
- * and every access change labelled, then applied — creating the space,
- * filling its roles and adding its components and versions in the
+ * new space proposed from one reviewed with the schemes it will run on and
+ * its access changes labelled, then applied — the space now exists in the
  * stand-in Jira of e2e/sandbox-stub.mjs (reached through
- * JIRA_ADMIN_API_BASE_URL), without adding a member Jira already put in.
- * A key taken between proposal and apply stops everything before anything
- * is created, and a connection without the components permission is told
- * to reconnect rather than offered an Apply that would fail half-way.
+ * JIRA_ADMIN_API_BASE_URL).
+ *
+ * What each step says, what applying sends (the space on the stored
+ * scheme ids, its roles filled without a member Jira already put in, its
+ * components and versions) and what stops it (a key taken since, a role
+ * Jira refuses) are lib/jira-admin/space-creation.test.ts; that a space
+ * with components waits for a connection with manage:jira-project is
+ * lib/jira-admin/apply.test.ts (the reason) and change-actions.model.test.ts
+ * beside the review page (Apply off, saying why).
  *
  * The person connects Jira Administration through its real connect flow
  * (the in-memory app's fake OAuth, e2e/support/jira-admin.ts), and the
  * template and the proposal are their assistant's: chat turns on the
  * stand-in model calling jira_admin_save_space_template (which reads OPS's
  * schemes, roles and components from the stand-in Jira) and
- * jira_admin_propose_space. The audit trail's row is not read back: no
- * page lists it.
+ * jira_admin_propose_space.
  *
  * Each person works in a Jira site of their own, so the stub's spaces
  * start fresh for every test. Templates are the organization's, shared by
@@ -42,9 +45,6 @@ import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-/** Every box but "Space components, versions and screens" (manage:jira-project). */
-const WITHOUT_COMPONENTS = ['read:jira-user', 'read:jira-work', 'manage:jira-configuration'];
-
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 /** A space as the stand-in Jira holds it, or null. */
@@ -156,24 +156,6 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   );
   const operations = main(page).getByTestId('change-operations').locator(':scope > li');
   await expect(operations).toHaveCount(5);
-  await expect(operations.nth(0)).toContainText(
-    'Create the software space FIN — “Finance” — led by Dana Admin, on the schemes of ' +
-      `template “${template}”`
-  );
-  await expect(operations.nth(0).getByTestId('operation-details')).toContainText(
-    'Workflows: “OPS workflows” — shared with 2 spaces'
-  );
-  await expect(operations.nth(0).getByTestId('operation-details')).toContainText(
-    'Permissions: “Internal permissions”'
-  );
-  await expect(operations.nth(1)).toContainText(
-    'Add group “ops-admins”, Dana Admin to the Administrators role'
-  );
-  await expect(operations.nth(3)).toContainText('Add 2 components: Backend, Reports');
-  await expect(operations.nth(3).getByTestId('operation-details')).toContainText(
-    'Reports (its issues go to the space lead)'
-  );
-  await expect(operations.nth(4)).toContainText('Add 1 version: FY27');
   // The creation and role steps change who can see or do what, and say so;
   // components and versions do not.
   await expect(
@@ -182,61 +164,18 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   expect(await stubSpace(person.subject, 'FIN')).toBeNull();
   await shot(page, testInfo, 'jira-admin-spaces-02-review');
 
-  // --- Applied: the space exists on the stored schemes, its roles filled once. ---
+  // --- Applied: every step ran, and the space is in Jira. ---
   await page.getByRole('button', { name: 'Apply these 5 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Applied', { timeout: 30_000 });
   await expect(operations).toHaveCount(5);
   await expect(operations.nth(0)).toContainText('Done');
   await expect(operations.nth(0)).toContainText(`${site}/browse/FIN`);
-  // Jira's default put ops-admins in already; only Dana was added.
-  await expect(operations.nth(1)).toContainText('1 already in the role.');
-  await expect(operations.nth(2)).toContainText('Done');
-  await expect(operations.nth(3)).toContainText('Done');
-  await expect(operations.nth(4)).toContainText('Done');
+  for (const index of [2, 3, 4]) {
+    await expect(operations.nth(index)).toContainText('Done');
+  }
 
   const created = await stubSpace(person.subject, 'FIN');
-  expect(created?.created).toMatchObject({
-    key: 'FIN',
-    name: 'Finance',
-    leadAccountId: 'acct-dana',
-    projectTypeKey: 'software',
-    assigneeType: 'UNASSIGNED',
-    issueTypeScheme: 11,
-    issueTypeScreenScheme: 12,
-    workflowScheme: 13,
-    permissionScheme: 15,
-    notificationScheme: 16,
-  });
-  expect(created?.roles).toEqual({
-    10002: [
-      {
-        type: 'atlassian-group-role-actor',
-        actorGroup: { name: 'ops-admins', displayName: 'ops-admins', groupId: 'g-admins' },
-      },
-      { type: 'atlassian-user-role-actor', actorUser: { accountId: 'acct-dana' } },
-    ],
-    10001: [
-      { type: 'atlassian-group-role-actor', actorGroup: { groupId: 'g-users', name: 'g-users' } },
-    ],
-  });
-  expect(created?.components).toEqual([
-    expect.objectContaining({
-      project: 'FIN',
-      name: 'Backend',
-      description: 'Services and jobs',
-      assigneeType: 'PROJECT_DEFAULT',
-    }),
-    expect.objectContaining({ project: 'FIN', name: 'Reports', assigneeType: 'PROJECT_LEAD' }),
-  ]);
-  // Versions go to the id Jira gave the new space.
-  expect(created?.versions).toEqual([
-    expect.objectContaining({
-      projectId: Number(created?.id),
-      name: 'FY27',
-      startDate: '2026-10-01',
-      releaseDate: '2027-09-30',
-    }),
-  ]);
+  expect(created?.created).toMatchObject({ key: 'FIN', name: 'Finance' });
   await shot(page, testInfo, 'jira-admin-spaces-03-applied');
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
@@ -248,56 +187,4 @@ test('a template’s new space is reviewed scheme by scheme, then created with i
   );
   await noHorizontalOverflow(page);
   await shot(page, testInfo, 'jira-admin-spaces-04-mobile');
-});
-
-test('a key taken since the proposal stops it before anything is created', async ({
-  page,
-  person,
-}, testInfo) => {
-  await connectJiraAdministration(page);
-  await saveTemplate(page);
-  const id = await proposeSpace(page, 'TAKEN');
-  // Someone made TAKEN by hand in Jira after the proposal.
-  await fetch(`${JIRA_STUB}/${fakeJiraSite(person.subject).cloudId}/rest/api/3/project`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ key: 'TAKEN', name: 'Made by hand' }),
-  });
-
-  await page.goto(`/jira-admin/changes/${id}`);
-  await page.getByRole('button', { name: 'Apply these 5 changes to Jira' }).click();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Failed', { timeout: 30_000 });
-  const operations = main(page).getByTestId('change-operations').locator(':scope > li');
-  await expect(operations.nth(0)).toContainText(
-    'TAKEN cannot be used now: A project with that project key already exists.'
-  );
-  for (const index of [1, 2, 3, 4]) {
-    await expect(operations.nth(index)).toContainText('Not run');
-  }
-  // The hand-made space is untouched: nothing was created or added.
-  const space = await stubSpace(person.subject, 'TAKEN');
-  expect(space?.name).toBe('Made by hand');
-  await shot(page, testInfo, 'jira-admin-spaces-05-key-taken');
-});
-
-test('a new space with components waits for a connection that can add them', async ({
-  page,
-  person,
-}, testInfo) => {
-  // Connected without the components permission (the card's picker left it out).
-  await connectJiraAdministration(page, WITHOUT_COMPONENTS);
-  await saveTemplate(page);
-  const id = await proposeSpace(page, 'FIN');
-
-  await page.goto(`/jira-admin/changes/${id}`);
-  await expect(
-    main(page).getByText(
-      'Your Jira Administration connection does not include manage:jira-project. Reconnect ' +
-        'it with Space components, versions and screens ticked (if it is not offered, an ' +
-        'organization admin allows it under Connector setup first).'
-    )
-  ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Apply these 5 changes to Jira' })).toBeDisabled();
-  expect(await stubSpace(person.subject, 'FIN')).toBeNull();
-  await shot(page, testInfo, 'jira-admin-spaces-06-needs-reconnect');
 });

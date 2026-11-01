@@ -1,12 +1,15 @@
 /**
  * A field for a space, end to end in a browser: a proposal to create a
- * "Vendor" select list for OPS, reviewed with every step in plain words —
- * and, in the warning colour, the screen another space (HR) shows too —
- * then applied against the stand-in Jira of e2e/sandbox-stub.mjs (reached
- * through JIRA_ADMIN_API_BASE_URL): the field is created, OPS gets a
- * context of its own with the options, and the field lands on each screen
- * tab. A field of the same name made between proposal and apply stops it
- * before a second one is created.
+ * "Vendor" select list for OPS, reviewed — with, in the warning colour,
+ * the screen another space (HR) shows too — then applied against the
+ * stand-in Jira of e2e/sandbox-stub.mjs (reached through
+ * JIRA_ADMIN_API_BASE_URL), where the field now exists.
+ *
+ * What each step says, what applying sends to Jira (the field, OPS's own
+ * context with its options, each screen tab) and what stops it (a field of
+ * the same name made since, a context OPS was given since, a tab that is
+ * gone) are lib/jira-admin/space-field.test.ts; the review page's buttons
+ * are change-actions.model.test.ts beside it.
  *
  * The person connects Jira Administration through its real connect flow
  * (the in-memory app's fake OAuth, e2e/support/jira-admin.ts), and the
@@ -25,8 +28,6 @@ import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import {
   connectJiraAdministration,
-  fakeJiraSite,
-  JIRA_STUB,
   jiraStub,
   prepareJiraAdministration,
   proposeInChat,
@@ -88,7 +89,7 @@ async function proposeVendor(page: Page): Promise<string> {
   });
 }
 
-test('a new field is reviewed with the screen another space shows, then created, scoped and placed', async ({
+test('a new field is reviewed with the screen another space shows, then created in Jira', async ({
   page,
   person,
 }, testInfo) => {
@@ -106,22 +107,10 @@ test('a new field is reviewed with the screen another space shows, then created,
   await expect(reach).toHaveClass(/bg-amber-50/);
   const operations = main(page).getByTestId('change-operations').locator(':scope > li');
   await expect(operations).toHaveCount(4);
-  await expect(operations.nth(0)).toContainText(
-    'Create the custom field “Vendor”, a select list (single choice)'
-  );
-  await expect(operations.nth(1)).toContainText(
-    'Give “Vendor” a context of its own for OPS, offering “Acme”, “Globex”'
-  );
-  await expect(operations.nth(3)).toContainText(
-    'Put “Vendor” on the screen “Shared bug screen”, tab “Details”'
-  );
-  await expect(operations.nth(3).getByTestId('operation-details')).toContainText(
-    'Also shown by HR — the field appears there too'
-  );
   expect(await jiraStub(person.subject, '/rest/api/3/field/search?query=Vendor')).toEqual([]);
   await shot(page, testInfo, 'jira-admin-fields-01-review');
 
-  // --- Applied: the field, OPS's own context with its options, and each screen tab. ---
+  // --- Applied: every step done, and the field is in Jira. ---
   await page.getByRole('button', { name: 'Apply these 4 changes to Jira' }).click();
   await expect(main(page).getByTestId('change-state')).toHaveText('Applied', { timeout: 30_000 });
   await expect(operations.nth(0)).toContainText(/Created as customfield_\d+\./);
@@ -131,65 +120,11 @@ test('a new field is reviewed with the screen another space shows, then created,
 
   const fields = await jiraStub(person.subject, '/rest/api/3/field/search?query=Vendor');
   expect(fields).toHaveLength(1);
-  const fieldId = String(fields[0]?.id);
-  expect(fields[0]).toMatchObject({
-    name: 'Vendor',
-    description: 'Who supplies it',
-    schema: { custom: 'com.atlassian.jira.plugin.system.customfieldtypes:select' },
-    searcherKey: 'com.atlassian.jira.plugin.system.customfieldtypes:multiselectsearcher',
-  });
-  const mappings = await jiraStub(
-    person.subject,
-    `/rest/api/3/field/${fieldId}/context/projectmapping`
-  );
-  const own = mappings.find((mapping) => mapping.projectId === '10000');
-  expect(own).toBeDefined();
-  const options = await jiraStub(
-    person.subject,
-    `/rest/api/3/field/${fieldId}/context/${String(own?.contextId)}/option`
-  );
-  expect(options.map((option) => option.value)).toEqual(['Acme', 'Globex']);
-  expect(await jiraStub(person.subject, '/rest/api/3/screens/41/tabs/410/fields')).toEqual([
-    { id: fieldId, name: 'Vendor' },
-  ]);
-  expect(await jiraStub(person.subject, '/rest/api/3/screens/42/tabs/420/fields')).toEqual([
-    { id: fieldId, name: 'Vendor' },
-  ]);
+  expect(fields[0]).toMatchObject({ name: 'Vendor' });
   await shot(page, testInfo, 'jira-admin-fields-02-applied');
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await noHorizontalOverflow(page);
   await shot(page, testInfo, 'jira-admin-fields-03-mobile');
-});
-
-test('a field of the same name made since stops it before a second is created', async ({
-  page,
-  person,
-}, testInfo) => {
-  const id = await proposeVendor(page);
-  // Someone made a Vendor field by hand in Jira after the proposal.
-  await fetch(`${JIRA_STUB}/${fakeJiraSite(person.subject).cloudId}/rest/api/3/field`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      name: 'Vendor',
-      type: 'com.atlassian.jira.plugin.system.customfieldtypes:textfield',
-    }),
-  });
-
-  await page.goto(`/jira-admin/changes/${id}`);
-  await page.getByRole('button', { name: 'Apply these 4 changes to Jira' }).click();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Failed', { timeout: 30_000 });
-  const operations = main(page).getByTestId('change-operations').locator(':scope > li');
-  await expect(operations.nth(0)).toContainText(
-    /A custom field named “Vendor” exists now \(customfield_\d+\), so another was not created\./
-  );
-  for (const index of [1, 2, 3]) {
-    await expect(operations.nth(index)).toContainText('Not run');
-  }
-  // Still the one made by hand, and on no screen.
-  expect(await jiraStub(person.subject, '/rest/api/3/field/search?query=Vendor')).toHaveLength(1);
-  expect(await jiraStub(person.subject, '/rest/api/3/screens/41/tabs/410/fields')).toEqual([]);
-  await shot(page, testInfo, 'jira-admin-fields-04-name-taken');
 });
