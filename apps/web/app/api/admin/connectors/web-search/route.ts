@@ -27,19 +27,14 @@ import {
   parseReasoningEffort,
 } from '@/lib/mcp-tools/web-search/config';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 function settingString(settings: Record<string, unknown> | undefined, key: string): string | null {
   const value = settings?.[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -106,9 +101,7 @@ function validateDomains(
   return { ok: true, domains };
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

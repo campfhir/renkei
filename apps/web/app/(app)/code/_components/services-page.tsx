@@ -18,16 +18,40 @@
  * code_service_logs), from the page: a person can have the database up
  * before asking for the work, and see and clean up what a chat started
  * without asking it. One column of cards at every width — a service is
- * a card, never a table row — so a phone gets the same page.
+ * a card, never a table row — so a phone gets the same page. What the
+ * page and its tail decide is services-page.model.ts.
  */
 
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import BackLink from '@/components/back-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type { WireService, WireServiceLogEntry } from '@renkei/sandbox-client';
 import type { ServicesView } from '@/lib/code/services';
+import {
+  canStart,
+  clockOf,
+  emptyTailText,
+  imageSuggestion,
+  initialServices,
+  initialTail,
+  nextCursor,
+  polls,
+  runningPill,
+  serviceReachable,
+  servicesReducer,
+  serviceStatusPill,
+  showsServiceName,
+  shownEntries,
+  startRequest,
+  stopQuestion,
+  tailQuery,
+  tailReducer,
+  toneIndex,
+  variablesSet,
+  type StartDraft,
+} from './services-page.model';
 
 const cardClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -35,26 +59,13 @@ const inputClass =
 const linkButtonClass =
   'text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
 
-interface StartDraft {
-  name: string;
-  image: string;
-  env: string;
-  exports: string;
-}
-
-const EMPTY_START: StartDraft = {
-  name: 'db',
-  image: 'postgres:16',
-  env: 'POSTGRES_PASSWORD=test\nPOSTGRES_DB=app',
-  exports: 'DATABASE_URL=postgres://postgres:test@{host}:{port}/app',
-};
-
-/** `db` → `SERVICE_DB`, as the worker names a service's variables. */
-function envPrefix(name: string): string {
-  return `SERVICE_${name.toUpperCase().replace(/-/g, '_')}`;
-}
-
-export default function ServicesPage({ projectId, projectName, repoFullName, enabled, canEdit }: {
+export default function ServicesPage({
+  projectId,
+  projectName,
+  repoFullName,
+  enabled,
+  canEdit,
+}: {
   projectId: string;
   projectName: string;
   repoFullName: string;
@@ -63,20 +74,13 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
   canEdit: boolean;
 }) {
   const url = `/api/code/projects/${projectId}/services`;
-  const [view, setView] = useState<ServicesView | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState<StartDraft | null>(null);
-  /** The service just started from here, named until the next change. */
-  const [started, setStarted] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(servicesReducer, initialServices);
+  const { view, loadError, error, busy, draft, started } = state;
 
   const reload = useCallback(async () => {
     const result = await getJson<ServicesView>(url);
-    if (result.data) {
-      setView(result.data);
-      setLoadError(null);
-    } else setLoadError(result.error ?? 'The services could not be read.');
+    if (result.data) dispatch({ type: 'loaded', view: result.data });
+    else dispatch({ type: 'loadFailed', error: result.error ?? 'The services could not be read.' });
   }, [url]);
 
   useEffect(() => {
@@ -85,42 +89,30 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
 
   const start = async () => {
     if (!draft) return;
-    setBusy(true);
-    setError(null);
-    setStarted(null);
-    const result = await sendJsonFull<{ service: WireService }>(url, 'POST', {
-      name: draft.name.trim(),
-      image: draft.image.trim(),
-      env: draft.env,
-      exports: draft.exports,
-    });
-    if (result.error) setError(result.error);
-    else {
-      setStarted(result.data?.service.name ?? draft.name.trim());
-      setDraft(null);
-      await reload();
+    dispatch({ type: 'sent' });
+    const result = await sendJsonFull<{ service: WireService }>(url, 'POST', startRequest(draft));
+    if (result.error) {
+      dispatch({ type: 'failed', error: result.error });
+      return;
     }
-    setBusy(false);
+    await reload();
+    dispatch({ type: 'startDone', name: result.data?.service.name ?? null });
   };
 
   const stop = async (service: WireService) => {
-    if (
-      !window.confirm(
-        `Stop ${service.name}? The container is removed with its data; the name is free again.`
-      )
-    )
-      return;
-    setBusy(true);
-    setError(null);
-    setStarted(null);
+    if (!window.confirm(stopQuestion(service))) return;
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull(`${url}/${encodeURIComponent(service.name)}`, 'DELETE');
-    if (result.error) setError(result.error);
-    else await reload();
-    setBusy(false);
+    if (result.error) {
+      dispatch({ type: 'failed', error: result.error });
+      return;
+    }
+    await reload();
+    dispatch({ type: 'stopDone' });
   };
 
   const services = view?.services ?? [];
-  const runningCount = services.filter((service) => service.status === 'running').length;
+  const heading = runningPill(services);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -129,11 +121,7 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
         <div className="min-w-0 flex-1">
           <h1 className="flex items-center gap-2 text-sm font-semibold">
             <span className="truncate">Services</span>
-            {view ? (
-              <Pill tone={runningCount ? 'green' : 'gray'}>
-                {runningCount ? `${runningCount} running` : 'None running'}
-              </Pill>
-            ) : null}
+            {view ? <Pill tone={heading.tone}>{heading.label}</Pill> : null}
           </h1>
           <p className="truncate text-xs text-gray-500">
             {projectName} · <span className="font-mono">{repoFullName}</span>
@@ -193,7 +181,7 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
                   <button
                     type="button"
                     disabled={busy}
-                    onClick={() => setDraft(EMPTY_START)}
+                    onClick={() => dispatch({ type: 'startOpened' })}
                     className={`ml-auto ${linkButtonClass}`}
                   >
                     Start a service
@@ -210,9 +198,10 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
                 <StartForm
                   draft={draft}
                   busy={busy}
+                  canStart={canStart(state)}
                   allowed={view.allowed}
-                  onChange={setDraft}
-                  onCancel={() => setDraft(null)}
+                  onChange={(field, value) => dispatch({ type: 'draftChanged', field, value })}
+                  onCancel={() => dispatch({ type: 'draftCancelled' })}
                   onSubmit={() => void start()}
                 />
               ) : null}
@@ -248,7 +237,7 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-gray-500">
-                        {service.status === 'running' && service.host ? (
+                        {serviceReachable(service) ? (
                           <>
                             At <span className="font-mono">{service.host}</span>
                             {service.ports.length ? (
@@ -259,15 +248,7 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
                               </>
                             ) : null}
                             {' · sets '}
-                            <span className="font-mono">
-                              {[
-                                `${envPrefix(service.name)}_HOST`,
-                                ...(service.ports.length
-                                  ? [`${envPrefix(service.name)}_PORT`]
-                                  : []),
-                                ...service.exportNames,
-                              ].join(', ')}
-                            </span>
+                            <span className="font-mono">{variablesSet(service).join(', ')}</span>
                             {' for every command'}
                           </>
                         ) : (
@@ -332,6 +313,7 @@ export default function ServicesPage({ projectId, projectName, repoFullName, ena
 function StartForm({
   draft,
   busy,
+  canStart,
   allowed,
   onChange,
   onCancel,
@@ -339,8 +321,10 @@ function StartForm({
 }: {
   draft: StartDraft;
   busy: boolean;
+  /** Start can be pressed. */
+  canStart: boolean;
   allowed: string[];
-  onChange: (draft: StartDraft) => void;
+  onChange: (field: keyof StartDraft, value: string) => void;
   onCancel: () => void;
   onSubmit: () => void;
 }) {
@@ -362,7 +346,7 @@ function StartForm({
             maxLength={32}
             pattern="[a-z][a-z0-9-]{0,31}"
             placeholder="db"
-            onChange={(event) => onChange({ ...draft, name: event.target.value })}
+            onChange={(event) => onChange('name', event.target.value)}
           />
         </label>
         <label className="block text-xs font-medium">
@@ -373,14 +357,11 @@ function StartForm({
             maxLength={512}
             list="allowed-images"
             placeholder="postgres:16"
-            onChange={(event) => onChange({ ...draft, image: event.target.value })}
+            onChange={(event) => onChange('image', event.target.value)}
           />
           <datalist id="allowed-images">
             {allowed.map((pattern) => (
-              <option
-                key={pattern}
-                value={pattern.endsWith('/*') ? pattern.slice(0, -1) : pattern}
-              />
+              <option key={pattern} value={imageSuggestion(pattern)} />
             ))}
           </datalist>
         </label>
@@ -392,7 +373,7 @@ function StartForm({
           value={draft.env}
           rows={3}
           spellCheck={false}
-          onChange={(event) => onChange({ ...draft, env: event.target.value })}
+          onChange={(event) => onChange('env', event.target.value)}
         />
       </label>
       <label className="block text-xs font-medium">
@@ -402,7 +383,7 @@ function StartForm({
           value={draft.exports}
           rows={2}
           spellCheck={false}
-          onChange={(event) => onChange({ ...draft, exports: event.target.value })}
+          onChange={(event) => onChange('exports', event.target.value)}
         />
       </label>
       <div className="flex items-center justify-end gap-2">
@@ -418,7 +399,7 @@ function StartForm({
         </button>
         <button
           type="submit"
-          disabled={busy || !draft.name.trim() || !draft.image.trim()}
+          disabled={!canStart}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {busy ? 'Starting…' : 'Start'}
@@ -430,8 +411,6 @@ function StartForm({
 
 /** How often a following tail asks for what came after its last line. */
 const TAIL_POLL_MS = 3_000;
-/** Lines kept on the page; the oldest go as new ones arrive. */
-const TAIL_KEEP = 2_000;
 /** One colour per service, by its place in the list, so a mixed stream reads at a glance. */
 const SERVICE_TONES = [
   'text-blue-700 dark:text-blue-300',
@@ -440,11 +419,6 @@ const SERVICE_TONES = [
   'text-fuchsia-700 dark:text-fuchsia-300',
   'text-cyan-700 dark:text-cyan-300',
 ];
-
-function clockOf(at: string): string {
-  const time = at.slice(11, 23);
-  return time.endsWith('.') ? time.slice(0, -1) : time;
-}
 
 /**
  * Every service's lines in one stream, as `docker logs -f` would show
@@ -464,38 +438,30 @@ function LogsTail({
   /** Changes when the set of services does — a start or a stop — to read the past again. */
   generation: string;
 }) {
-  const [entries, setEntries] = useState<WireServiceLogEntry[]>([]);
-  const [follow, setFollow] = useState(true);
-  const [filter, setFilter] = useState<string>('');
-  const [truncated, setTruncated] = useState(false);
-  const [unreadable, setUnreadable] = useState<string[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const [tail, dispatch] = useReducer(tailReducer, initialTail);
+  const { entries, follow, filter, truncated, unreadable, error } = tail;
   const cursor = useRef<string | null>(null);
   const pane = useRef<HTMLPreElement>(null);
 
   const read = useCallback(
     async (since: string | null) => {
-      const query = since ? `?since=${encodeURIComponent(since)}` : '?lines=200';
       const result = await getJson<{
         entries: WireServiceLogEntry[];
         truncated: boolean;
         unreadable: string[];
-      }>(`${url}${query}`);
+      }>(`${url}${tailQuery(since)}`);
       if (result.error || !result.data) {
-        setError(result.error ?? 'The logs could not be read.');
+        dispatch({ type: 'readFailed', error: result.error ?? 'The logs could not be read.' });
         return;
       }
-      setError(null);
-      const fresh = result.data.entries;
-      if (fresh.length) cursor.current = fresh[fresh.length - 1]!.at;
-      setEntries((current) => {
-        const next = since ? [...current, ...fresh] : fresh;
-        return next.length > TAIL_KEEP ? next.slice(next.length - TAIL_KEEP) : next;
+      cursor.current = nextCursor(cursor.current, result.data.entries);
+      dispatch({
+        type: 'read',
+        since: since !== null,
+        entries: result.data.entries,
+        truncated: result.data.truncated,
+        unreadable: result.data.unreadable,
       });
-      if (!since) setTruncated(result.data.truncated);
-      setUnreadable(result.data.unreadable);
-      setLoaded(true);
     },
     [url]
   );
@@ -507,20 +473,21 @@ function LogsTail({
   }, [read, generation]);
 
   // Following: what came after the last line, every few seconds.
+  const polling = polls(tail, services);
   useEffect(() => {
-    if (!follow || services.length === 0) return;
+    if (!polling) return;
     const timer = setInterval(() => void read(cursor.current), TAIL_POLL_MS);
     return () => clearInterval(timer);
-  }, [follow, services.length, read]);
+  }, [polling, read]);
 
   // Kept at the end while following, as a terminal would.
   useEffect(() => {
     if (follow && pane.current) pane.current.scrollTop = pane.current.scrollHeight;
   }, [entries, follow]);
 
-  const shown = filter ? entries.filter((entry) => entry.service === filter) : entries;
+  const shown = shownEntries(tail);
   const toneOf = (service: string) =>
-    SERVICE_TONES[Math.max(0, services.indexOf(service)) % SERVICE_TONES.length];
+    SERVICE_TONES[toneIndex(services, service, SERVICE_TONES.length)];
 
   return (
     <section className={cardClass} aria-labelledby="services-logs">
@@ -532,14 +499,14 @@ function LogsTail({
           <input
             type="checkbox"
             checked={follow}
-            onChange={(event) => setFollow(event.target.checked)}
+            onChange={(event) => dispatch({ type: 'followChanged', follow: event.target.checked })}
           />
           Follow
         </label>
         <select
           aria-label="Show logs of"
           value={filter}
-          onChange={(event) => setFilter(event.target.value)}
+          onChange={(event) => dispatch({ type: 'filterChanged', filter: event.target.value })}
           className="rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900"
         >
           <option value="">All services</option>
@@ -551,7 +518,7 @@ function LogsTail({
         </select>
         <button
           type="button"
-          onClick={() => setEntries([])}
+          onClick={() => dispatch({ type: 'cleared' })}
           className={`ml-auto ${linkButtonClass}`}
         >
           Clear
@@ -578,20 +545,12 @@ function LogsTail({
       >
         {truncated ? <span className="text-gray-500">[the start was cut]{'\n'}</span> : null}
         {shown.length === 0 ? (
-          <span className="text-gray-500">
-            {!loaded
-              ? 'Reading…'
-              : services.length === 0
-                ? '(no services)'
-                : filter
-                  ? `(nothing from ${filter} yet)`
-                  : '(nothing yet)'}
-          </span>
+          <span className="text-gray-500">{emptyTailText(tail, services)}</span>
         ) : (
           shown.map((entry, index) => (
             <span key={`${entry.at}-${index}`} className="block">
               <span className="text-gray-400">{clockOf(entry.at)}</span>{' '}
-              {filter ? null : (
+              {!showsServiceName(tail) ? null : (
                 <>
                   <span className={`font-semibold ${toneOf(entry.service)}`}>
                     {entry.service}
@@ -608,15 +567,7 @@ function LogsTail({
 }
 
 export function ServiceStatusPill({ status }: { status: WireService['status'] }) {
-  const tone =
-    status === 'running'
-      ? 'green'
-      : status === 'starting'
-        ? 'blue'
-        : status === 'failed'
-          ? 'red'
-          : 'gray';
-  const label = status.charAt(0).toUpperCase() + status.slice(1);
+  const { tone, label } = serviceStatusPill(status);
   return <Pill tone={tone}>{label}</Pill>;
 }
 

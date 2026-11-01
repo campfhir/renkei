@@ -8,6 +8,8 @@
  * `data-theme` stamped by the bridge, falling back to prefers-color-scheme.
  */
 
+import { chipLabel, chipsReducer, initialChips, offeredOptions, type ChipsAction } from './chips.model';
+
 const STYLE = `
 :root {
   --card-bg: #ffffff;
@@ -373,41 +375,34 @@ export function chipsField(
   input.setAttribute('aria-label', label);
   input.placeholder = 'Search to add…';
   input.autocomplete = 'off';
-  const labelFor = (value: string) =>
-    options.find((option) => option.value === value)?.label ?? value;
-  const chosen: string[] = [];
+  let state = initialChips(options, values);
+  const dispatch = (action: ChipsAction) => {
+    const next = chipsReducer(state, action);
+    if (next === state) return false;
+    state = next;
+    refresh();
+    return true;
+  };
 
-  const refresh = () => {
+  function refresh() {
     row.textContent = '';
-    for (const value of chosen) {
-      const chip = el('span', 'chip', labelFor(value));
+    for (const value of state.chosen) {
+      const chip = el('span', 'chip', chipLabel(state, value));
       const remove = el('button', undefined, '×');
       remove.type = 'button';
-      remove.setAttribute('aria-label', `Remove ${labelFor(value)}`);
+      remove.setAttribute('aria-label', `Remove ${chipLabel(state, value)}`);
       remove.addEventListener('click', () => {
-        chosen.splice(chosen.indexOf(value), 1);
-        refresh();
+        dispatch({ type: 'remove', value });
         input.focus();
       });
       chip.append(remove);
       row.append(chip);
     }
     list.textContent = '';
-    for (const option of options) {
-      if (!chosen.includes(option.value)) list.append(new Option(option.label, option.label));
-    }
-  };
+    for (const option of offeredOptions(state)) list.append(new Option(option.label, option.label));
+  }
   const take = () => {
-    const typed = input.value.trim().toLowerCase();
-    if (!typed) return;
-    const match = options.find(
-      (option) => option.label.toLowerCase() === typed || option.value.toLowerCase() === typed
-    );
-    if (match && !chosen.includes(match.value)) {
-      chosen.push(match.value);
-      input.value = '';
-      refresh();
-    }
+    if (dispatch({ type: 'typed', text: input.value })) input.value = '';
   };
   // A pick from the list fires `input` with the full label; typing a
   // prefix does not match, so a half-typed word never adds a chip.
@@ -417,16 +412,14 @@ export function chipsField(
     if (event.key === 'Enter') {
       event.preventDefault();
       take();
-    } else if (event.key === 'Backspace' && !input.value && chosen.length > 0) {
-      chosen.pop();
-      refresh();
+    } else if (event.key === 'Backspace' && !input.value) {
+      dispatch({ type: 'backspace' });
     }
   });
-  for (const value of values) if (!chosen.includes(value)) chosen.push(value);
   box.append(input, list, row);
   refresh();
   field.append(el('div', 'field-label', label), box);
-  return { field, getValues: () => [...chosen] };
+  return { field, getValues: () => [...state.chosen] };
 }
 
 /**

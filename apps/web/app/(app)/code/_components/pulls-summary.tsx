@@ -11,26 +11,26 @@
  * (matching pipelines-summary.tsx's own error-surfacing card, not
  * hiding it: "GitHub is not connected. Connect it on the Connectors
  * page, then try again." is exactly the thing a person needs to see,
- * not silence).
+ * not silence). What the card shows when is pulls-summary.model.ts.
  */
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer } from 'react';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import { getJson } from '@/lib/fetch-json';
-import type { HostPullRequest } from '@/lib/code/repo-host';
 import Pill from './pill';
 import PrSubscribe from './pr-subscribe';
+import {
+  initialPullsSummary,
+  openCountPill,
+  pullsSummaryReducer,
+  summaryView,
+  type Summary,
+} from './pulls-summary.model';
 
 const sectionClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
-
-interface Summary {
-  openCount: number;
-  hasMore: boolean;
-  mostRecent: HostPullRequest | null;
-}
 
 export default function PullsSummary({
   href,
@@ -40,18 +40,16 @@ export default function PullsSummary({
   href: string;
   projectId: string;
 }) {
-  const [summary, setSummary] = useState<Summary | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(pullsSummaryReducer, initialPullsSummary);
+  const { summary, error } = state;
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const result = await getJson<Summary>(
-        `/api/code/projects/${projectId}/pulls?view=summary`
-      );
+      const result = await getJson<Summary>(`/api/code/projects/${projectId}/pulls?view=summary`);
       if (cancelled) return;
-      if (result.data) setSummary(result.data);
-      else setError(result.error ?? 'Pull requests could not be read.');
+      if (result.data) dispatch({ type: 'loaded', summary: result.data });
+      else dispatch({ type: 'loadFailed', error: result.error });
     })();
     return () => {
       cancelled = true;
@@ -64,10 +62,7 @@ export default function PullsSummary({
         <div className="flex items-center gap-2">
           <h2 className="text-sm font-semibold">Pull requests</h2>
           {summary ? (
-            <Pill tone={summary.openCount > 0 ? 'green' : 'gray'}>
-              {summary.openCount}
-              {summary.hasMore ? '+' : ''} open
-            </Pill>
+            <Pill tone={openCountPill(summary).tone}>{openCountPill(summary).label}</Pill>
           ) : null}
           <Link
             href={href}
@@ -79,7 +74,7 @@ export default function PullsSummary({
         </div>
         <p className="text-xs text-gray-500">Open on the project's repository.</p>
       </div>
-      {error ? (
+      {summaryView(state) === 'error' ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
         </p>

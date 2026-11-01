@@ -165,6 +165,71 @@ describe('PUT .../llm-models/[modelId]', () => {
   });
 });
 
+describe('PUT then the stored row: an edit replaces the settings the form sent', () => {
+  it('stores the new counts and data handling, and drops what the form left blank', async () => {
+    const db = fakeDb([
+      { ...baseRow, settings: { reasoningEffort: 'low', apiVersion: 'preview' } },
+    ]);
+
+    const response = await PUT(
+      reqOf({
+        label: 'Prod Claude',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        contextWindow: 200_000,
+        maxOutputTokens: 8000,
+        providerRetention: 'none',
+        baaCovered: true,
+      }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.rows[0]!.settings).toEqual({
+      contextWindow: 200_000,
+      maxOutputTokens: 8000,
+      providerRetention: 'none',
+      baaCovered: true,
+    });
+  });
+
+  it('an edit that turns a row into an image model takes the default away', async () => {
+    const db = fakeDb([{ ...baseRow, provider: 'openai', is_default: true }]);
+
+    const response = await PUT(
+      reqOf({
+        label: 'Prod Claude',
+        provider: 'openai',
+        model: 'gpt-image-1',
+        apiSurface: 'images',
+        isDefault: true,
+      }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(200);
+    expect(db.rows[0]!.is_default).toBe(false);
+    expect(db.rows[0]!.settings).toEqual({ apiSurface: 'images' });
+  });
+
+  it('refuses an image surface on Anthropic and leaves the row as it was', async () => {
+    const db = fakeDb([{ ...baseRow }]);
+
+    const response = await PUT(
+      reqOf({
+        label: 'Prod Claude',
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
+        apiSurface: 'images',
+      }),
+      { params: paramsOf() }
+    );
+
+    expect(response.status).toBe(400);
+    expect(db.rows[0]!.settings).toEqual({});
+  });
+});
+
 describe('DELETE .../llm-models/[modelId]', () => {
   it('removes the row', async () => {
     const db = fakeDb([{ ...baseRow }]);

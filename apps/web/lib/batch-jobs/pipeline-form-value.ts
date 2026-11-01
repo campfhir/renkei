@@ -7,6 +7,7 @@
  */
 
 import type { AfterProcessing } from './start-document-ocr-pipeline';
+import { isRecord } from '@renkei/guards';
 
 export type AfterProcessingAction = 'keep' | 'move' | 'delete';
 
@@ -26,10 +27,6 @@ export const KEEP_AFTER_PROCESSING: AfterProcessingValue = {
   shareId: '',
   path: '/',
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

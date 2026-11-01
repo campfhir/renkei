@@ -29,7 +29,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('the shell carries the person and moves between pages from the menu', async ({
+test('the shell carries the person and moves between pages from the menu @smoke', async ({
   page,
   request,
   person,
@@ -69,7 +69,9 @@ test('a saved theme preference sets the page theme', async ({ page, person: _per
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
-test('a visitor without a session is sent to sign in, and back here after', async ({ request }) => {
+test('a visitor without a session is sent to sign in, and back here after @smoke', async ({
+  request,
+}) => {
   const response = await request.get('/notifications', { maxRedirects: 0 });
   expect(response.status()).toBe(307);
   const location = new URL(response.headers().location ?? '', 'http://127.0.0.1');

@@ -17,72 +17,55 @@
  * Bodies are Markdown. The editable textarea holds the Markdown source
  * (what the confirm tool renders on send); a read-only body shows the
  * server's rendering of it, so the user sees the email as it will arrive.
+ *
+ * What the card shows, which fields are editable, what Send and Discard
+ * call and what each answer leaves are decided in email-compose.model.ts
+ * (tested beside it); this file draws that, reads the fields and the
+ * clock, and makes the calls.
  */
 
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import {
   cardActions,
-  doneStateOf,
   el,
   htmlField,
   injectStyle,
   inputField,
   readonlyField,
-  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
-  splitAddresses,
-  str,
-  strings,
   textField,
   type DoneState,
 } from './ui';
-
-const KIND_TITLES: Record<string, string> = {
-  compose: 'New email',
-  reply: 'Reply',
-  replyAll: 'Reply all',
-  forward: 'Forward',
-};
-
-const pad = (n: number) => String(n).padStart(2, '0');
-
-/** A moment's local calendar day, as a date input holds it (`YYYY-MM-DD`). */
-function localDateValue(at: Date): string {
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
-}
-
-/** A moment's local clock time, as a time input holds it (`HH:mm`). */
-function localTimeValue(at: Date): string {
-  return `${pad(at.getHours())}:${pad(at.getMinutes())}`;
-}
+import {
+  discardCall,
+  discardOutcome,
+  emailLayout,
+  openingReceipt,
+  planSend,
+  readDraft,
+  sendLabel,
+  sendOutcome,
+  suggestedSendFields,
+} from './email-compose.model';
 
 function render(bridge: WidgetBridge, result: ToolResult): void {
   const root = document.getElementById('root');
   if (!root) return;
   root.textContent = '';
 
-  const draft =
-    typeof result.structuredContent === 'object' && result.structuredContent !== null
-      ? // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-        (result.structuredContent as Record<string, unknown>)
-      : {};
-  const draftId = str(draft.draftId);
-  const kind = str(draft.kind) || 'compose';
-
+  const read = readDraft(result.structuredContent, Boolean(result.isError), resultText(result));
   const card = el('div', 'card');
-  if (result.isError || !draftId) {
-    card.append(
-      el('div', 'card-title', 'Email preview'),
-      el('div', 'status error', resultText(result) || 'The draft could not be created.')
-    );
+  if (!read.ok) {
+    card.append(el('div', 'card-title', 'Email preview'), el('div', 'status error', read.error));
     root.append(card);
     return;
   }
+  const { draft } = read;
+  const { stateKey } = draft;
 
-  const stateKey = `renkei-email:${draftId}`;
-  const remembered = doneStateOf(draft.resolved) ?? recallDone(stateKey);
+  const remembered = openingReceipt(draft, recallDone(stateKey));
   if (remembered) {
     renderDone(root, remembered);
     return;
@@ -93,46 +76,34 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     renderDone(root, state);
   };
 
+  const layout = emailLayout(draft);
   card.append(
-    el('div', 'card-title', KIND_TITLES[kind] ?? 'Email'),
+    el('div', 'card-title', layout.title),
     el('div', 'card-subtitle', 'Review before it goes out — nothing is sent until you confirm.')
   );
 
-  const compose = kind === 'compose';
-  // A reply's own text is rebuilt around the quoted thread from the message
-  // it answers; a card from before previews carried that id keeps its text
-  // read-only (its recipients and subject are still a plain PATCH).
-  const messageId = str(draft.messageId);
-  const commentEditable = !compose && messageId !== '';
-  const to = strings(draft.to).join(', ');
-  const cc = strings(draft.cc).join(', ');
-  const bcc = strings(draft.bcc).join(', ');
-  const subject = str(draft.subject);
-  const body = str(draft.body);
-  const bodyHtml = str(draft.bodyHtml);
-
-  const toInput = inputField('To', to);
-  const ccInput = cc ? inputField('Cc', cc) : null;
-  const subjectInput = inputField('Subject', subject);
-  const bodyInput = compose
-    ? textField('Body', body)
-    : commentEditable
-      ? textField(kind === 'forward' ? 'Note' : 'Body', body)
-      : null;
+  const toInput = inputField('To', draft.to);
+  const ccInput = layout.ccEditable ? inputField('Cc', draft.cc) : null;
+  const subjectInput = inputField('Subject', draft.subject);
+  const bodyInput = layout.textLabel ? textField(layout.textLabel, draft.body) : null;
 
   card.append(toInput.field);
   if (ccInput) card.append(ccInput.field);
-  if (bcc) card.append(readonlyField('Bcc', bcc));
+  if (layout.bcc) card.append(readonlyField('Bcc', layout.bcc));
   card.append(subjectInput.field);
   if (bodyInput) {
     card.append(bodyInput.field);
     card.append(
       el('div', 'card-subtitle', 'Markdown: **bold**, *italic*, "- " bullets, "1. " numbered.')
     );
-  } else {
-    card.append(bodyHtml ? htmlField('Body', bodyHtml) : readonlyField('Body', body));
+  } else if (layout.readonlyBody) {
+    card.append(
+      'html' in layout.readonlyBody
+        ? htmlField('Body', layout.readonlyBody.html)
+        : readonlyField('Body', layout.readonlyBody.text)
+    );
   }
-  if (kind !== 'compose') {
+  if (layout.quotedThreadNote) {
     card.append(
       el('div', 'card-subtitle', 'The quoted thread below your text is included on send.')
     );
@@ -141,108 +112,65 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
   // A time the model picked arrives as a UTC instant; the picker works in the
   // viewer's local clock, so it is shown there. A time that has already
   // passed is left off rather than pre-filled into a refusal.
-  const suggested = str(draft.sendAt) ? new Date(str(draft.sendAt)) : null;
-  const suggestedAt =
-    suggested && !Number.isNaN(suggested.getTime()) && suggested.getTime() >= Date.now() + 60_000
-      ? suggested
-      : null;
+  const suggested = suggestedSendFields(draft.sendAt, Date.now());
   // Date and time are two inputs: a native date-time control is wider than a
   // phone column and is hard to fill by hand, while each half is a plain field.
-  const sendDate = inputField('Send date (optional)', suggestedAt ? localDateValue(suggestedAt) : '');
+  const sendDate = inputField('Send date (optional)', suggested?.day ?? '');
   sendDate.input.type = 'date';
-  const sendTime = inputField('Time', suggestedAt ? localTimeValue(suggestedAt) : '');
+  const sendTime = inputField('Time', suggested?.clock ?? '');
   sendTime.input.type = 'time';
   const sendLaterRow = el('div', 'field-row');
   sendLaterRow.append(sendDate.field, sendTime.field);
   card.append(sendLaterRow);
   const discardButton = el('button', undefined, 'Discard');
-  const sendButton = el('button', 'primary', suggestedAt ? 'Schedule' : 'Send');
+  const sendButton = el(
+    'button',
+    'primary',
+    sendLabel(suggested?.day ?? '', suggested?.clock ?? '')
+  );
   const footer = cardActions([discardButton, sendButton]);
   card.append(footer.actions);
   root.append(card);
   const syncSendButton = () => {
-    sendButton.textContent = sendDate.input.value || sendTime.input.value ? 'Schedule' : 'Send';
+    sendButton.textContent = sendLabel(sendDate.input.value, sendTime.input.value);
   };
   sendDate.input.addEventListener('input', syncSendButton);
   sendTime.input.addEventListener('input', syncSendButton);
 
   footer.run(sendButton, async () => {
-    const finalTo = splitAddresses(toInput.input.value);
-    const finalCc = ccInput ? splitAddresses(ccInput.input.value) : [];
-    const finalSubject = subjectInput.input.value;
-    let args: Record<string, unknown>;
-    if (compose) {
-      args = {
-        overrides: {
-          to: finalTo,
-          cc: finalCc,
-          subject: finalSubject,
-          body: bodyInput?.input.value ?? body,
-        },
-      };
-    } else {
-      // A reply goes out as previewed unless something on it changed; only
-      // a changed text needs the draft rebuilt (`replyTo`).
-      const comment = bodyInput ? bodyInput.input.value : body;
-      const textEdited = commentEditable && comment.trim() !== body.trim();
-      if (textEdited && !comment.trim() && kind !== 'forward') {
-        throw new Error('Write the reply, or discard it.');
-      }
-      const overrides = {
-        ...(finalTo.join(', ') !== to ? { to: finalTo } : {}),
-        ...(ccInput && finalCc.join(', ') !== cc ? { cc: finalCc } : {}),
-        ...(finalSubject.trim() !== subject.trim() ? { subject: finalSubject } : {}),
-        ...(textEdited ? { comment } : {}),
-      };
-      args = {
-        ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
-        ...(textEdited ? { replyTo: { messageId, kind } } : {}),
-      };
-    }
-    if (finalTo.length === 0) throw new Error('Add someone to send it to.');
-    let when: Date | null = null;
-    const dateValue = sendDate.input.value;
-    const timeValue = sendTime.input.value;
-    if (dateValue || timeValue) {
-      if (!dateValue || !timeValue) throw new Error('Pick both a send date and a time.');
-      // No offset in the string: the browser reads it as the viewer's local time.
-      when = new Date(`${dateValue}T${timeValue}`);
-      if (Number.isNaN(when.getTime()) || when.getTime() < Date.now() + 60_000) {
-        throw new Error('Pick a send time at least a minute from now.');
-      }
-    }
-    const sent = await bridge.callTool(
-      'outlook_send_draft_confirm',
-      { draftId, ...args, ...(when ? { sendAt: when.toISOString() } : {}) },
-      stateKey
+    const plan = planSend(
+      draft,
+      {
+        to: toInput.input.value,
+        cc: ccInput ? ccInput.input.value : null,
+        subject: subjectInput.input.value,
+        body: bodyInput ? bodyInput.input.value : null,
+        day: sendDate.input.value,
+        clock: sendTime.input.value,
+      },
+      Date.now()
     );
-    if (sent.isError) {
-      throw new Error(resultText(sent) || (when ? 'Scheduling failed' : 'Send failed'));
-    }
-    const sentTo = finalTo.join(', ');
-    const what = `To ${sentTo}${finalSubject ? ` — “${finalSubject}”` : ''}`;
-    finishDone({
-      icon: 'sent',
-      ...(parseLinks(resultText(sent)).length > 0 ? { links: parseLinks(resultText(sent)) } : {}),
-      headline: when ? 'Scheduled' : 'Sent',
-      detail: when ? `${what} — sends ${when.toLocaleString()}` : what,
+    if (!plan.ok) throw new Error(plan.error);
+    const sent = await bridge.callTool('outlook_send_draft_confirm', plan.args, stateKey);
+    const outcome = sendOutcome(draft.kind, plan, {
+      isError: Boolean(sent.isError),
+      text: resultText(sent),
     });
-    bridge.updateModelContext(
-      when
-        ? `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and scheduled it to ${sentTo} for ${when.toISOString()}.`
-        : `The user reviewed the ${KIND_TITLES[kind] ?? 'email'} preview and sent it to ${sentTo}.`,
-      stateKey
-    );
+    if (!outcome.ok) throw new Error(outcome.error);
+    finishDone(outcome.done);
+    bridge.updateModelContext(outcome.context, stateKey);
   });
 
   footer.run(discardButton, async () => {
-    const discarded = await bridge.callTool('outlook_discard_draft_confirm', { draftId }, stateKey);
-    if (discarded.isError) throw new Error(resultText(discarded) || 'Discard failed');
-    finishDone({ icon: 'cancelled', headline: 'Discarded', detail: 'Nothing was sent.' });
-    bridge.updateModelContext(
-      'The user discarded the email draft from the preview card. Nothing was sent.',
-      stateKey
-    );
+    const call = discardCall(draft);
+    const discarded = await bridge.callTool(call.name, call.args, stateKey);
+    const outcome = discardOutcome({
+      isError: Boolean(discarded.isError),
+      text: resultText(discarded),
+    });
+    if (!outcome.ok) throw new Error(outcome.error);
+    finishDone(outcome.done);
+    bridge.updateModelContext(outcome.context, stateKey);
   });
 }
 

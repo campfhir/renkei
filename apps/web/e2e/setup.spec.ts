@@ -47,7 +47,7 @@ async function expectStillUnconfigured(page: Page): Promise<void> {
   expect(await response.text()).toContain('Save and continue');
 }
 
-test('a deployment with no identity provider is set up from the setup page', async ({
+test('a deployment with no identity provider is set up from the setup page @smoke', async ({
   page,
 }, testInfo) => {
   test.setTimeout(240_000);

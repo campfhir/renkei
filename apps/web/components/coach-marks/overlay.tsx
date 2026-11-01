@@ -40,122 +40,42 @@ import { useMediaQuery } from '@/lib/use-media-query';
 import { usePlatform } from '@/lib/use-platform';
 import { expandShortcutTokens } from '@/lib/shortcuts';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
-import type { CoachMarkPlacement, CoachMarkTour } from '@/lib/coach-marks/types';
+import type { CoachMarkTour } from '@/lib/coach-marks/types';
+import {
+  cardStyleFor,
+  isTall,
+  keyAction,
+  narrowEdgeFor,
+  placeCard,
+  sameBox,
+  spotlightFor,
+  stepControls,
+  topBarCorrection,
+  type Box,
+} from './overlay.model';
 import { isVisible } from './visible';
 
-interface Box {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
-
-const SPOT_PAD = 6;
-const GAP = 12;
-const MARGIN = 16;
-/** The sticky top bar (nav.tsx's h-14) that a target scrolled to the top must clear. */
-const TOP_BAR = 56;
 /** How long a step waits for its target to register before showing the card centred. */
 const LOOK_FOR_MS = 2000;
 
 function boxOf(element: Element): Box {
   const rect = element.getBoundingClientRect();
-  return {
-    top: rect.top - SPOT_PAD,
-    left: rect.left - SPOT_PAD,
-    width: rect.width + SPOT_PAD * 2,
-    height: rect.height + SPOT_PAD * 2,
-  };
+  return spotlightFor({ top: rect.top, left: rect.left, width: rect.width, height: rect.height });
 }
 
-const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
+const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
 
 /**
  * Bring a found target into view. Centred, as a rule; a target taller than
- * the screen (a settings grid, the console's areas) is brought to the
- * top instead, just under the top bar, so what it starts with — its
- * heading — is what is read, rather than its middle.
+ * the screen is brought to the top instead, just under the top bar
+ * (overlay.model.ts's `isTall`).
  */
 function scrollTo(element: Element): void {
-  const tall = element.getBoundingClientRect().height > window.innerHeight - TOP_BAR - MARGIN;
+  const tall = isTall(element.getBoundingClientRect().height, window.innerHeight);
   element.scrollIntoView({ block: tall ? 'start' : 'center', inline: 'nearest' });
   if (!tall) return;
-  const top = element.getBoundingClientRect().top;
-  if (top < TOP_BAR + MARGIN) window.scrollBy({ top: top - TOP_BAR - MARGIN });
-}
-
-/**
- * On a narrow screen the card spans the width at the top or the bottom
- * edge. The bottom, as a rule — the top of a target is its heading, and
- * a card there hides what the target is — unless the bottom would cover
- * more than twice as much of the spotlight (the Chat group in the
- * drawer, which runs on down the screen).
- */
-function narrowEdgeFor(spot: Box, cardHeight: number): 'top' | 'bottom' {
-  const vh = window.innerHeight;
-  const bottom = spot.top + spot.height;
-  const atTop = Math.max(0, Math.min(bottom, MARGIN + cardHeight) - Math.max(spot.top, MARGIN));
-  const atBottom = Math.max(
-    0,
-    Math.min(bottom, vh - MARGIN) - Math.max(spot.top, vh - MARGIN - cardHeight)
-  );
-  return atTop * 2 < atBottom ? 'top' : 'bottom';
-}
-
-/**
- * Where the card goes beside its spotlight: the preferred side when it
- * fits, otherwise the first of the others that does, otherwise below,
- * clamped into the viewport either way.
- */
-function placeCard(
-  spot: Box,
-  card: { width: number; height: number },
-  preferred: CoachMarkPlacement
-): { top: number; left: number } {
-  const vw = window.innerWidth;
-  const vh = window.innerHeight;
-  const order: CoachMarkPlacement[] = ['bottom', 'top', 'right', 'left'];
-  const sides =
-    preferred === 'auto' ? order : [preferred, ...order.filter((side) => side !== preferred)];
-  const centreX = spot.left + spot.width / 2;
-  const centreY = spot.top + spot.height / 2;
-  const maxLeft = Math.max(MARGIN, vw - MARGIN - card.width);
-  const maxTop = Math.max(MARGIN, vh - MARGIN - card.height);
-
-  for (const side of sides) {
-    switch (side) {
-      case 'bottom': {
-        const top = spot.top + spot.height + GAP;
-        if (top + card.height <= vh - MARGIN) {
-          return { top, left: clamp(centreX - card.width / 2, MARGIN, maxLeft) };
-        }
-        break;
-      }
-      case 'top': {
-        const top = spot.top - GAP - card.height;
-        if (top >= MARGIN) return { top, left: clamp(centreX - card.width / 2, MARGIN, maxLeft) };
-        break;
-      }
-      case 'right': {
-        const left = spot.left + spot.width + GAP;
-        if (left + card.width <= vw - MARGIN) {
-          return { top: clamp(centreY - card.height / 2, MARGIN, maxTop), left };
-        }
-        break;
-      }
-      case 'left': {
-        const left = spot.left - GAP - card.width;
-        if (left >= MARGIN) return { top: clamp(centreY - card.height / 2, MARGIN, maxTop), left };
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  return {
-    top: clamp(spot.top + spot.height + GAP, MARGIN, maxTop),
-    left: clamp(centreX - card.width / 2, MARGIN, maxLeft),
-  };
+  const correction = topBarCorrection(element.getBoundingClientRect().top);
+  if (correction !== 0) window.scrollBy({ top: correction });
 }
 
 export default function CoachMarkOverlay({
@@ -181,7 +101,7 @@ export default function CoachMarkOverlay({
   onMute: (() => void) | null;
 }) {
   const step = tour.steps[index];
-  const isLast = index === tour.steps.length - 1;
+  const controls = stepControls(index, tour.steps.length);
   const titleId = useId();
   const bodyId = useId();
   const cardRef = useRef<HTMLDivElement>(null);
@@ -247,13 +167,7 @@ export default function CoachMarkOverlay({
     }
     setSpot((current) => {
       const next = boxOf(element);
-      return current &&
-        current.top === next.top &&
-        current.left === next.left &&
-        current.width === next.width &&
-        current.height === next.height
-        ? current
-        : next;
+      return current && sameBox(current, next) ? current : next;
     });
   }, [look]);
   useEffect(() => {
@@ -276,11 +190,16 @@ export default function CoachMarkOverlay({
     const rect = cardRef.current.getBoundingClientRect();
     if (narrow) {
       setCardPos(null);
-      setNarrowEdge(narrowEdgeFor(spot, rect.height));
+      setNarrowEdge(narrowEdgeFor(spot, rect.height, window.innerHeight));
       return;
     }
     setCardPos(
-      placeCard(spot, { width: rect.width, height: rect.height }, step.placement ?? 'auto')
+      placeCard(
+        spot,
+        { width: rect.width, height: rect.height },
+        step.placement ?? 'auto',
+        viewport()
+      )
     );
   }, [spot, narrow, step.placement, index]);
 
@@ -293,16 +212,12 @@ export default function CoachMarkOverlay({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        onSkip();
-      } else if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        onNext();
-      } else if (event.key === 'ArrowLeft' && index > 0) {
-        event.preventDefault();
-        onBack();
-      }
+      const action = keyAction(event.key, index);
+      if (!action) return;
+      event.preventDefault();
+      if (action === 'skip') onSkip();
+      else if (action === 'next') onNext();
+      else onBack();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -324,15 +239,7 @@ export default function CoachMarkOverlay({
   }
 
   const centred = spot === null;
-  const cardStyle = centred
-    ? undefined
-    : narrow
-      ? narrowEdge === 'top'
-        ? { left: MARGIN, right: MARGIN, top: MARGIN }
-        : { left: MARGIN, right: MARGIN, bottom: MARGIN }
-      : cardPos
-        ? { top: cardPos.top, left: cardPos.left }
-        : { top: MARGIN, left: MARGIN, visibility: 'hidden' as const };
+  const cardStyle = cardStyleFor({ spot, narrow, narrowEdge, cardPos });
 
   const card = (
     <div
@@ -350,8 +257,8 @@ export default function CoachMarkOverlay({
     >
       <div className="mb-2 flex items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
         <span className="truncate">{tour.title}</span>
-        <span className="shrink-0" aria-label={`Step ${index + 1} of ${tour.steps.length}`}>
-          {index + 1} of {tour.steps.length}
+        <span className="shrink-0" aria-label={controls.counterLabel}>
+          {controls.counter}
         </span>
       </div>
       <h2 id={titleId} className="text-base font-semibold">
@@ -369,7 +276,7 @@ export default function CoachMarkOverlay({
           Skip tour
         </button>
         <div className="ml-auto flex items-center gap-2">
-          {index > 0 ? (
+          {controls.showBack ? (
             <button
               type="button"
               onClick={onBack}
@@ -383,8 +290,8 @@ export default function CoachMarkOverlay({
             onClick={onNext}
             className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
           >
-            {isLast ? 'Finish' : 'Next'}
-            {isLast ? null : <Icon path={ICONS.arrowRight} className="h-3.5 w-3.5" />}
+            {controls.primary}
+            {controls.isLast ? null : <Icon path={ICONS.arrowRight} className="h-3.5 w-3.5" />}
           </button>
         </div>
       </div>

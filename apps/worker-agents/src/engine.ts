@@ -140,6 +140,7 @@ import {
 } from '@renkei/agents/memory';
 import { recordAgentRunOutcome, recordLlmCall } from '@renkei/agents/runs';
 import { logger, secure } from './logger';
+import { isRecord } from '@renkei/guards';
 
 /** The step_id every turn row carries: a run has turns, not steps. */
 export const TURN_STEP_ID = 'turn';
@@ -341,10 +342,6 @@ function clipSubAgentReport(text: string): string {
   if (text.length <= SUB_AGENT_REPORT_CHARS) return text;
   const dropped = text.length - SUB_AGENT_REPORT_CHARS;
   return `${text.slice(0, SUB_AGENT_REPORT_CHARS)}\n… [REPORT TRUNCATED: ${dropped} more characters were cut because the report was unusually long; what follows the cut is lost — give the sub-agent a narrower task if you need it]`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function argsOf(input: unknown): Record<string, unknown> {

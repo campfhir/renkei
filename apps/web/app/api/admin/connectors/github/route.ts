@@ -14,10 +14,9 @@ import {
 } from '@renkei/connector-config';
 import { GITHUB_CONNECTOR, DEFAULT_GITHUB_SCOPES } from '@/lib/github-app';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -58,13 +57,7 @@ export async function GET(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

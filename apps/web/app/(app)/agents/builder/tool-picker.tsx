@@ -11,10 +11,19 @@
  */
 
 import { useMemo, useState } from 'react';
-import { MAX_AGENT_TOOLS } from '@renkei/agents';
 import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { friendlyToolName } from '@/lib/tool-name';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import {
+  emptyListMessage,
+  groupHeading,
+  missingTools,
+  offeredTools,
+  toggledTools,
+  toolCount,
+  toolGroups,
+  toolKindLabel,
+} from './tool-picker.model';
 
 export function ToolPicker({
   tools,
@@ -29,47 +38,11 @@ export function ToolPicker({
 }) {
   const [filter, setFilter] = useState('');
   const chosen = useMemo(() => new Set(selected), [selected]);
-  const offered = useMemo(() => tools.filter((tool) => !tool.appOnly && !tool.previewOf), [tools]);
-  const known = useMemo(() => new Set(offered.map((tool) => tool.name)), [offered]);
-
-  const groups = useMemo(() => {
-    const query = filter.trim().toLowerCase();
-    const matches = query
-      ? offered.filter(
-          (tool) =>
-            tool.name.toLowerCase().includes(query) ||
-            friendlyToolName(tool.name, tool.title).toLowerCase().includes(query) ||
-            (tool.description ?? '').toLowerCase().includes(query) ||
-            (tool.connector ?? '').toLowerCase().includes(query)
-        )
-      : offered;
-    const byConnector = new Map<string, ToolDescriptor[]>();
-    for (const tool of matches) {
-      const key = tool.connector ?? 'other';
-      byConnector.set(key, [...(byConnector.get(key) ?? []), tool]);
-    }
-    return [...byConnector.entries()]
-      .map(([connector, list]) => ({
-        connector,
-        list: [...list].sort(
-          (a, b) =>
-            Number(chosen.has(b.name)) - Number(chosen.has(a.name)) || a.name.localeCompare(b.name)
-        ),
-        picked: list.filter((tool) => chosen.has(tool.name)).length,
-      }))
-      .sort(
-        (a, b) =>
-          Number(b.picked > 0) - Number(a.picked > 0) || a.connector.localeCompare(b.connector)
-      );
-  }, [offered, filter, chosen]);
-
-  const toggle = (name: string) => {
-    onChange(chosen.has(name) ? selected.filter((tool) => tool !== name) : [...selected, name]);
-  };
-  // A saved selection naming a tool the owner no longer has: shown so it
-  // can be removed, since the save will refuse it.
-  const missing = selected.filter((name) => !known.has(name));
-  const over = selected.length > MAX_AGENT_TOOLS;
+  const offered = useMemo(() => offeredTools(tools), [tools]);
+  const groups = useMemo(() => toolGroups(offered, filter, selected), [offered, filter, selected]);
+  const toggle = (name: string) => onChange(toggledTools(selected, name));
+  const missing = missingTools(selected, offered);
+  const count = toolCount(selected);
 
   const toolsAnchor = useCoachAnchor('builder-tools');
   return (
@@ -82,9 +55,9 @@ export function ToolPicker({
         <h2 className="text-sm font-semibold">Tools</h2>
         <span
           data-testid="tool-count"
-          className={`text-xs ${over ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}
+          className={`text-xs ${count.over ? 'text-red-600 dark:text-red-400' : 'text-gray-500 dark:text-gray-400'}`}
         >
-          {selected.length} of at most {MAX_AGENT_TOOLS} selected
+          {count.text}
         </span>
       </div>
       <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
@@ -118,19 +91,12 @@ export function ToolPicker({
       ) : null}
       <div className="mt-2 max-h-96 space-y-3 overflow-y-auto rounded-md border border-gray-200 p-2 dark:border-gray-800">
         {groups.length === 0 ? (
-          <p className="px-1 py-0.5 text-xs text-gray-400">
-            {offered.length === 0
-              ? 'Connect an account to give your agents tools.'
-              : 'No tools match.'}
-          </p>
+          <p className="px-1 py-0.5 text-xs text-gray-400">{emptyListMessage(offered.length)}</p>
         ) : (
           groups.map((group) => (
             <div key={group.connector}>
               <p className="px-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500">
-                {group.connector.startsWith('mcp-')
-                  ? `${group.connector.slice(4)} (MCP server)`
-                  : group.connector}
-                {group.picked > 0 ? ` · ${group.picked} selected` : ''}
+                {groupHeading(group)}
               </p>
               <ul className="mt-0.5 space-y-0.5">
                 {group.list.map((tool) => (
@@ -161,7 +127,7 @@ export function ToolPicker({
                             : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
                         }`}
                       >
-                        {tool.kind === 'read' ? 'reads' : 'changes — staged'}
+                        {toolKindLabel(tool.kind)}
                       </span>
                     </label>
                   </li>

@@ -19,19 +19,32 @@
  * leaves them running, and the title bar's indicator shows them; a
  * reload is asked about first. `onUploaded` fires as each file lands in
  * the checkout so the tree beside the chat reads the folder again.
+ *
+ * What a pick adds, each file's path, the button's words and the batch
+ * Add sends are add-files-modal.model.ts.
  */
 
-import { useRef, useState, type DragEvent } from 'react';
+import { useReducer, useRef, useState, type DragEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import { reportFetchFailure } from '@/lib/fetch-json';
 import { uploadFile } from '@/lib/upload-file';
-import UploadTable, { sizeLabel, type UploadFilter } from '@/components/uploads/upload-table';
+import UploadTable, { sizeLabel } from '@/components/uploads/upload-table';
 import { useUploadQueue, type UploadSender } from '@/components/uploads/upload-queue';
+import {
+  addFilesReducer,
+  addLabel,
+  batchPlan,
+  canAdd,
+  countLabel,
+  initialAddFiles,
+  listedAs,
+} from './add-files-modal.model';
 
-export type AddFilesDestination = 'checkout' | 'artifacts';
+export type { AddFilesDestination } from './add-files-modal.model';
+export { checkoutPath } from './add-files-modal.model';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -68,12 +81,6 @@ export function artifactSender(projectId: string): UploadSender {
   };
 }
 
-/** The path a file lands at in the checkout: its name under the folder, if any. */
-export function checkoutPath(folder: string, name: string): string {
-  const prefix = folder.trim().replace(/^\/+|\/+$/g, '');
-  return prefix ? `${prefix}/${name}` : name;
-}
-
 export default function AddFilesModal({
   base,
   projectId,
@@ -91,22 +98,13 @@ export default function AddFilesModal({
 }) {
   const queue = useUploadQueue();
   const router = useRouter();
-  const [destination, setDestination] = useState<AddFilesDestination>('checkout');
-  const [folder, setFolder] = useState('');
-  const [files, setFiles] = useState<File[]>([]);
+  const [state, dispatch] = useReducer(addFilesReducer<File>, undefined, initialAddFiles<File>);
+  const { destination, folder, files, batchId, filter } = state;
   const [dragging, setDragging] = useState(false);
-  const [batchId, setBatchId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<UploadFilter>('all');
   const input = useRef<HTMLInputElement>(null);
 
   const take = (list: FileList | File[] | null) => {
-    if (!list) return;
-    const incoming = [...list];
-    if (incoming.length === 0) return;
-    setFiles((current) => {
-      const names = new Set(current.map((file) => file.name));
-      return [...current, ...incoming.filter((file) => !names.has(file.name))];
-    });
+    if (list) dispatch({ type: 'picked', files: [...list] });
   };
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
@@ -116,21 +114,17 @@ export default function AddFilesModal({
   };
 
   const start = () => {
-    if (files.length === 0) return;
-    const toCheckout = destination === 'checkout';
+    if (!canAdd(state)) return;
+    const plan = batchPlan(state, projectName);
+    const toCheckout = plan.destination === 'checkout';
     const id = queue.enqueue({
-      title: toCheckout
-        ? `Add files to the checkout of ${projectName}`
-        : `Add artifacts to ${projectName}`,
-      destination: toCheckout ? 'checkout' : 'artifacts',
-      items: files.map((file) => {
-        const path = checkoutPath(folder, file.name);
-        return {
-          file,
-          label: toCheckout ? path : `${file.name} → artifacts`,
-          send: toCheckout ? checkoutSender(`${base}/files`, path) : artifactSender(projectId),
-        };
-      }),
+      title: plan.title,
+      destination: plan.destination,
+      items: plan.items.map(({ file, label, path }) => ({
+        file,
+        label,
+        send: toCheckout ? checkoutSender(`${base}/files`, path) : artifactSender(projectId),
+      })),
       onItem: (job) => {
         if (job.status === 'done' && toCheckout) onUploaded?.(job.label);
       },
@@ -139,8 +133,7 @@ export default function AddFilesModal({
         if (!toCheckout) router.refresh();
       },
     });
-    setBatchId(id);
-    setFiles([]);
+    dispatch({ type: 'started', batchId: id });
   };
 
   const batch = batchId ? (queue.batches.find((entry) => entry.id === batchId) ?? null) : null;
@@ -157,7 +150,7 @@ export default function AddFilesModal({
               <UploadTable
                 batch={batch}
                 filter={filter}
-                onFilter={setFilter}
+                onFilter={(next) => dispatch({ type: 'filter', filter: next })}
                 onRetry={(job) => queue.retry(batch.id, job.id)}
               />
             ) : (
@@ -173,10 +166,7 @@ export default function AddFilesModal({
             ) : null}
             <button
               type="button"
-              onClick={() => {
-                setBatchId(null);
-                setFilter('all');
-              }}
+              onClick={() => dispatch({ type: 'addMore' })}
               className={footerButton}
             >
               Add more
@@ -205,7 +195,7 @@ export default function AddFilesModal({
                 type="radio"
                 name="add-files-destination"
                 checked={destination === 'checkout'}
-                onChange={() => setDestination('checkout')}
+                onChange={() => dispatch({ type: 'destination', destination: 'checkout' })}
                 className="mt-1"
               />
               <span>
@@ -221,7 +211,7 @@ export default function AddFilesModal({
                 type="radio"
                 name="add-files-destination"
                 checked={destination === 'artifacts'}
-                onChange={() => setDestination('artifacts')}
+                onChange={() => dispatch({ type: 'destination', destination: 'artifacts' })}
                 className="mt-1"
               />
               <span>
@@ -272,7 +262,7 @@ export default function AddFilesModal({
               </span>
               <input
                 value={folder}
-                onChange={(event) => setFolder(event.target.value)}
+                onChange={(event) => dispatch({ type: 'folder', folder: event.target.value })}
                 placeholder="docs/assets"
                 autoComplete="off"
                 spellCheck={false}
@@ -288,12 +278,12 @@ export default function AddFilesModal({
               {files.map((file) => (
                 <li key={file.name} className="flex items-center gap-2 py-1">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs">
-                    {destination === 'checkout' ? checkoutPath(folder, file.name) : file.name}
+                    {listedAs(state, file.name)}
                   </span>
                   <span className="text-xs text-gray-500">{sizeLabel(file.size)}</span>
                   <button
                     type="button"
-                    onClick={() => setFiles((current) => current.filter((entry) => entry !== file))}
+                    onClick={() => dispatch({ type: 'removed', file })}
                     className="text-xs text-gray-500 hover:underline"
                   >
                     Remove
@@ -304,22 +294,19 @@ export default function AddFilesModal({
           ) : null}
         </div>
         <div className="mt-3 flex shrink-0 items-center justify-end gap-2 border-t border-gray-200 pt-3 dark:border-gray-800">
-          {files.length > 0 ? (
-            <span className="mr-auto text-xs text-gray-500">
-              {files.length} file{files.length === 1 ? '' : 's'}
-            </span>
+          {countLabel(state) ? (
+            <span className="mr-auto text-xs text-gray-500">{countLabel(state)}</span>
           ) : null}
           <button type="button" onClick={onClose} className={footerButton}>
             Cancel
           </button>
           <button
             type="button"
-            disabled={files.length === 0}
+            disabled={!canAdd(state)}
             onClick={start}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
-            {destination === 'checkout' ? 'Add to repository' : 'Add to artifacts'}
-            {files.length > 1 ? ` (${files.length})` : ''}
+            {addLabel(state)}
           </button>
         </div>
       </div>

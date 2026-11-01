@@ -16,11 +16,9 @@
 import { developerNameOf, isDeveloperName, packageXml, type PackageMember } from './metadata';
 import { metadataFile } from './metadata-xml';
 import type { ChangeRow } from './changes';
+import { isRecord } from '@renkei/guards';
 
 type Json = Record<string, unknown>;
-
-const isRecord = (value: unknown): value is Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 

@@ -1,13 +1,17 @@
 /**
- * The search in the top bar: one box that finds a page or setting in the
- * menu, and moves to it from the keyboard. Chats are searched there too
- * (chat.spec.ts covers what was said in one).
+ * The search in the top bar, in a browser: Ctrl+K reaching the box from
+ * the page, a result opening its page, Escape and the arrows on the real
+ * field, and on a phone the magnifier that unfolds a full-width field.
+ *
+ * What a query finds, in which sections and order, what the arrows pick,
+ * what Enter opens and what Escape clears are omni-search.model.test.ts's;
+ * what was said in a chat is chat.spec.ts's, end to end.
  */
 
 import path from 'node:path';
 import { test, expect } from './fixtures';
 
-test('top bar search: Ctrl+K focuses it, a setting is found and opened', async ({
+test('top bar search: Ctrl+K focuses it, a setting is found and opened @smoke', async ({
   page,
   person: _person,
 }, testInfo) => {

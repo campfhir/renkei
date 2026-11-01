@@ -46,8 +46,92 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-01',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Connect with every capability unticked no longer asks for all of them',
+        detail:
+          "On a connector's card, unticking every capability and pressing Connect used to take you to the vendor asking for everything your organization allows. Connect now stays off until at least one capability is ticked, and says so.",
+      },
+      {
+        kind: 'fixed',
+        title: 'A notification delete or Mark all as read the server refused no longer looks done',
+        detail:
+          'On the notifications page, a delete the server turned down used to hide the notifications anyway, and a refused Mark all as read hid the button as if everything were read. Now the delete dialog stays open to try again, and Mark all as read stays on screen.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Commit dialog: files you untick stay unticked',
+        detail:
+          "In the code pane's Commit dialog, a file you had unticked was ticked again whenever the list of changed files refreshed (a save, or the chat finishing a turn), so it could end up in a commit you meant to leave it out of. Only files that newly appear start ticked now.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Switch branch: a refused switch always says why',
+        detail:
+          "When switching a code chat's branch failed for a reason the server did not label (an error on its side, or no connection), the Switch branch dialog showed nothing and the branch simply stayed. It now shows the reason; a failed discard on a dirty checkout also keeps its message and the offer to try again.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Deleting several artifacts again after a partial failure',
+        detail:
+          'When some of the files ticked for deletion could not be removed, pressing Delete again now retries only those files, instead of trying the ones already gone and reporting them as failures.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A refused pull request subscription no longer looks saved',
+        detail:
+          "When subscribing to a pull request's pipeline outcomes (or turning on its fix or merge option) was refused, the checkbox stayed ticked beside the error as if it had worked. It now goes back to what is actually saved.",
+      },
+      {
+        kind: 'fixed',
+        title:
+          "Agent models: picking another model from the provider's list clears an earlier test result",
+        detail:
+          'On the Agent models form, choosing a different model id from "List available models" left the previous "Test connection" success on screen, as if the new model had answered. It now clears, the same as typing a new model id does.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Files added while the large-upload question is open wait for your answer',
+        detail:
+          'If you chose a few more files while Renkei was asking whether to go ahead with a large upload, they used to start uploading straight away. They now join the files waiting on your answer.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Event previews show the right end time in every time zone',
+        detail:
+          'An action preview for a calendar event now shortens the end to just its time only when the event starts and ends on the same day as written. Before, depending on your own time zone, an overnight event could lose its end date, or a same-day event could repeat it.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Mockup viewer: Fit to width always goes back to the top',
+        detail:
+          'After a zoom that could go no further (at 25% or 400%, or Reset at 100%), Fit to width or a new width button could leave the fullscreen mockup scrolled to an old spot instead of its top left. It now always starts from the top.',
+      },
+    ],
+  },
+  {
     date: '2026-10-31',
     entries: [
+      {
+        kind: 'fixed',
+        title: 'Deleting a knowledge note clears it from the selection',
+        detail:
+          "On an agent's Knowledge panel, deleting a note you had ticked no longer leaves the toolbar counting it as selected.",
+      },
+      {
+        kind: 'fixed',
+        title: 'The chat stays at the bottom as a preview card grows',
+        detail:
+          'When you are at the end of a chat, a preview card that grows to fit its form keeps the end of the chat in view, instead of the chat jumping later when the next message arrives.',
+      },
+      {
+        kind: 'changed',
+        title: 'Reduce motion is respected everywhere',
+        detail:
+          'With your device set to reduce motion, Renkei no longer slides, fades or spins anything: panels, toasts and preview cards appear in place, and jumping to a section no longer scrolls smoothly.',
+      },
       {
         kind: 'changed',
         title: 'My usage charts the same breakdowns as Organization usage',
@@ -2633,4 +2717,34 @@ export const CHANGELOG: ChangelogRelease[] = [
 export function buildLabel(packageVersion: string): string {
   const commit = process.env.GIT_COMMIT;
   return commit ? `${packageVersion}+${commit}` : packageVersion;
+}
+
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/**
+ * A release's heading on the About page: `2026-08-25` → `25 August 2026`,
+ * with no timezone in sight.
+ *
+ * Deliberately not LocalTime: a release date is a CALENDAR date, not an
+ * instant. Parsing it as midnight UTC and rendering it in the viewer's zone
+ * shows the day before for anyone west of Greenwich, which is both wrong and
+ * the kind of wrong nobody reports.
+ */
+export function releaseDate(iso: string): string {
+  const [year, month, day] = iso.split('-').map(Number);
+  const name = MONTHS[month - 1];
+  return name ? `${day} ${name} ${year}` : iso;
 }

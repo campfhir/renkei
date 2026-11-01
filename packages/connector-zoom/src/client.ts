@@ -14,6 +14,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { isRecord } from '@renkei/guards';
 
 const API_BASE = 'https://api.zoom.us/v2';
 /**
@@ -40,10 +41,6 @@ const limiter = new LaneLimiter({
   interactive: { capacity: 20, refillPerSecond: 10 },
   background: { capacity: 5, refillPerSecond: 5 },
 });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function optionalString(value: unknown): string | null {
   return typeof value === 'string' ? value : null;

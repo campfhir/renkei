@@ -69,7 +69,7 @@ async function mockPushManager(page: Page): Promise<void> {
 const isPush = (request: Request, path: 'subscribe' | 'unsubscribe') =>
   request.method() === 'POST' && new URL(request.url()).pathname === `/api/push/${path}`;
 
-test('flipping the switch on subscribes this device and records it, off removes it', async ({
+test('flipping the switch on subscribes this device and records it, off removes it @smoke', async ({
   page,
   context,
   person: _person,

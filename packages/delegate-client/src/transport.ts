@@ -17,6 +17,7 @@
 
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Err, Result } from '@campfhir/safe-functions/types';
+import { isRecord } from '@renkei/guards';
 
 export interface DelegateConfig {
   url: string;
@@ -158,10 +159,6 @@ export function delegateConfigFromEnv(
   let base = url;
   while (base.endsWith('/')) base = base.slice(0, -1);
   return { url: base, apiKey };
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;

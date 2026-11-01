@@ -77,12 +77,12 @@ import {
   apiJson,
   displayName,
   errText,
-  isRecord,
   namedList,
   str,
   textResult,
   type NamedThing,
 } from './index';
+import { isRecord } from '@renkei/guards';
 
 type AdminCatalogKind =
   | 'document-types'

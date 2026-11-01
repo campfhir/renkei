@@ -58,6 +58,7 @@ import {
 } from '../widgets';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { resolveProject, type ResolvedProjectRecord } from './work-types';
+import { isRecord } from '@renkei/guards';
 
 const TOOL = 'jira_move_issues';
 const STATUS_TOOL = 'jira_get_bulk_operation';
@@ -99,10 +100,6 @@ const IGNORED_CUSTOM_TYPE_SUFFIXES = [
 
 /** Required on every create screen and set by the move itself. */
 const REQUIRED_BY_THE_MOVE = new Set(['project', 'issuetype', 'summary', 'reporter', 'issuekey']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : typeof value === 'number' ? String(value) : '';

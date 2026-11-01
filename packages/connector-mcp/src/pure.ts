@@ -5,6 +5,8 @@
  * import it freely.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** The `provider_grants.provider` a server's per-person tokens are stored under. */
 export const MCP_PROVIDER_PREFIX = 'mcp:';
 
@@ -117,10 +119,6 @@ export function sameOrigin(a: string, b: string): boolean {
 }
 
 // ── authorization discovery (RFC 9728 / RFC 8414 / RFC 7591) ───────────────
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];

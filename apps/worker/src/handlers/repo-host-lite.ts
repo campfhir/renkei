@@ -13,15 +13,12 @@
  */
 
 import type { AuthedFetch } from '@renkei/delegate-client';
+import { isRecord } from '@renkei/guards';
 
 export type PipelineConclusion = 'success' | 'failure' | 'running' | 'pending' | 'other';
 
 interface RepoTarget {
   fullName: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function rec(value: unknown): Record<string, unknown> {

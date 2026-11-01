@@ -10,6 +10,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@renkei/guards": "workspace:*",
     "docx": "^9.13.0",
     "exceljs": "^4.4.0",
     "marked": "18.1.1",

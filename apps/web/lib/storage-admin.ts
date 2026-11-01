@@ -17,6 +17,7 @@ import {
   blobStoreFor,
   blobStoreConfig,
 } from '@renkei/blob-store';
+import { isRecord } from '@renkei/guards';
 
 export interface StorageView {
   /** A row exists for the org. */
@@ -29,10 +30,6 @@ export interface StorageView {
   hasKey: boolean;
   /** The deployment's environment carries a store the org falls back to. */
   environmentFallback: boolean;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function encryptionKey(): Buffer | null {

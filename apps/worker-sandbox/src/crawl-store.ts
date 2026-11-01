@@ -16,6 +16,7 @@ import { getDataStore, type SandboxCrawlRecipeRecord, type SandboxCrawlRecord } 
 import { decrypt, encrypt } from '@renkei/crypto';
 import type { CrawlRecipe } from '@renkei/connector-sandbox';
 import type { CrawledTable } from './crawl-page-script';
+import { isRecord } from '@renkei/guards';
 
 export interface CrawlTarget {
   subject: string;
@@ -147,10 +148,6 @@ export function openPageContent(sealed: string, key: Buffer): PageContent | null
   } catch {
     return null;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isPageContent(value: unknown): value is PageContent {

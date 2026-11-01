@@ -14,6 +14,7 @@ import type { JiraAuth } from '../jira/jira-auth';
 import type { ConfluenceAuth } from '../confluence/confluence-auth';
 import type { ConfluenceAccess } from '../confluence/client';
 import { authedFetch } from '@renkei/delegate-client';
+import { isRecord } from '@renkei/guards';
 
 export interface SandboxCredentials {
   email: string;
@@ -38,10 +39,6 @@ export function sandboxCredentials(): SandboxCredentials | null {
 
 function authHeader(creds: SandboxCredentials): string {
   return `Basic ${Buffer.from(`${creds.email}:${creds.apiToken}`).toString('base64')}`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 /**

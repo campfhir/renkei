@@ -1,8 +1,14 @@
 /**
- * The notifications page on the in-memory data store: the feed in order,
- * the unread total, "Mark all as read" and a per-card "Mark as unread"
- * going through the real route to the store and surviving a reload, and
- * the empty state for somebody with nothing yet.
+ * The notifications page on the in-memory data store: the feed renders on
+ * the real server, and one press goes end to end — "Mark all as read" in,
+ * the POST through the real route to the store, and a reload that shows
+ * it stuck.
+ *
+ * Its rules moved out of the browser: what the feed shows and each press
+ * sends (the unread count, mark read and unread, select and delete, the
+ * empty feed) are app/(app)/notifications/notifications-list.model.test.ts;
+ * the feed newest first and somebody else's rows never shown are
+ * app/api/notifications/route.test.ts.
  *
  * The notifications are the app's own: a colleague shares agents with the
  * person through each agent's access route (e2e/support/share-agents.ts),
@@ -11,12 +17,11 @@
 
 import path from 'node:path';
 import { test, expect } from './fixtures';
-import { createPerson } from './support/person';
 import { shareAgentsWith } from './support/share-agents';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 
-test('the feed, newest first, marked read and unread again', async ({
+test('the feed renders, and Mark all as read sticks', async ({
   page,
   request,
   person,
@@ -59,25 +64,5 @@ test('the feed, newest first, marked read and unread again', async ({
   }).toPass({ timeout: 30_000 });
   await page.reload();
   await expect(unread('2 unread')).toHaveCount(0);
-  await expect(page.getByLabel(/unread notification/)).toHaveCount(0);
-
-  await page.getByRole('button', { name: `Actions for "${middle.headline}"` }).click();
-  await page.getByRole('menuitem', { name: 'Mark as unread' }).click();
-  await expect(unread('1 unread')).toBeVisible();
-  await page.reload();
-  await expect(unread('1 unread')).toBeVisible();
-});
-
-test('somebody with no notifications sees none, and no one else’s', async ({
-  page,
-  request,
-  person: _person,
-}) => {
-  // Somebody else gets a notification; this person gets nothing.
-  const somebodyElse = await createPerson(request);
-  const [{ headline }] = await shareAgentsWith(request, somebodyElse, ['Somebody else’s news']);
-  await page.goto('/notifications');
-  await expect(page.getByRole('heading', { name: 'Notifications', level: 1 })).toBeVisible();
-  await expect(page.getByText(headline)).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Mark all as read' })).toHaveCount(0);
 });

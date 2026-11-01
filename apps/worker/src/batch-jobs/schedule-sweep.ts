@@ -21,13 +21,10 @@ import {
   type BlackoutEntry,
 } from '@renkei/agents';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'worker/batch-jobs-schedule';
 const MAX_PER_PASS = 25;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Same calendar overlay the agent schedule sweep applies — see its own comment. */
 async function calendarDatesOf(calendarId: string): Promise<BlackoutEntry[]> {

@@ -4,12 +4,7 @@ import { Icon, ICONS } from '@/components/icons';
 import DownloadLink from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
-
-function sizeOf(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { sizeOf } from './composer.model';
 
 export default function AttachmentChip({
   attachment,

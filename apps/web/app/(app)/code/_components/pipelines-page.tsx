@@ -22,23 +22,58 @@
  * The layout is one column of cards on a phone (where the runs are
  * cards too, not a table) and two on a wide screen, runs beside setup
  * and variables; a GitHub Actions variant would fill the same frame
- * from its own reader.
+ * from its own reader. What the page decides — the requests, when they
+ * can be sent, what a save takes away, the words after each change — is
+ * pipelines-page.model.ts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
 import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import type {
   PipelineRun,
-  PipelineSetup,
   PipelineVariable,
   VariablesApplied,
 } from '@/lib/code/bitbucket-pipelines';
-import { renderVariableText } from '@/lib/code/pipeline-variables-text';
 import type { PipelineTemplate } from '@/lib/code/pipeline-templates';
 import Pill from './pill';
+import {
+  branchLabel as labelOfBranch,
+  canCommit,
+  canRun,
+  canSetVariables as mayVariables,
+  canStartRun,
+  committedReminder,
+  draftFor,
+  duration,
+  environmentHint,
+  fileRequest,
+  initialPipelines,
+  outcomeFor,
+  outcomeLines,
+  outcomeOf,
+  pipelinesReducer,
+  pipelinesUrl as urlOfPipelines,
+  removalQuestion,
+  runRequest,
+  runStatePill,
+  templateBlankOption,
+  templateOptionLabel,
+  textRows,
+  variableShown,
+  variablesButtonLabel,
+  variablesGoing,
+  variablesRequest,
+  type Committed,
+  type Draft,
+  type Outcome,
+  type PipelinesAction,
+  type RunDraft,
+  type Scope,
+  type Setup,
+} from './pipelines-page.model';
 
 const cardClass = 'rounded-lg border border-gray-200 p-4 dark:border-gray-800';
 const inputClass =
@@ -46,43 +81,13 @@ const inputClass =
 const linkButtonClass =
   'text-xs font-medium whitespace-nowrap text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400';
 
-interface Setup extends PipelineSetup {
-  access: {
-    /** Why the switch cannot be flipped from here; null when it can. */
-    configureNeeds: string | null;
-    /** Why variables cannot be set from here; null when they can. */
-    variablesNeeds: string | null;
-  };
-}
-
-/** Which set a box writes to: the repository's, or one environment's. */
-type Scope = { environmentUuid?: string };
-
-/** One set being edited as text. */
-interface Draft extends Scope {
-  text: string;
-}
-
-/** What the last save of a set did, shown under it until the next edit. */
-interface Outcome extends Scope, VariablesApplied {
-  problems: string[];
-}
-
-/** The pipeline file being written: its text, the commit message, and which template filled it. */
-interface FileDraft {
-  text: string;
-  message: string;
-  templateId: string;
-}
-
-/** The "Run pipeline" form: where, and which pipeline. */
-interface RunDraft {
-  ref: string;
-  refType: 'branch' | 'tag';
-  pattern: string;
-}
-
-export default function PipelinesPage({ projectId, projectName, repoFullName, branch, canEdit }: {
+export default function PipelinesPage({
+  projectId,
+  projectName,
+  repoFullName,
+  branch,
+  canEdit,
+}: {
   projectId: string;
   projectName: string;
   repoFullName: string;
@@ -91,43 +96,53 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
   canEdit: boolean;
 }) {
   const url = `/api/code/projects/${projectId}/pipelines`;
-  const [setup, setSetup] = useState<Setup | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [outcome, setOutcome] = useState<Outcome | null>(null);
-  const [runDraft, setRunDraft] = useState<RunDraft | null>(null);
-  /** The run just started from here, named until the next change. */
-  const [started, setStarted] = useState<PipelineRun | null>(null);
-  const [fileDraft, setFileDraft] = useState<FileDraft | null>(null);
-  const [templates, setTemplates] = useState<PipelineTemplate[] | null>(null);
-  /** Where the file just committed from here went, until the next change. */
-  const [committed, setCommitted] = useState<{ ref: string; url: string } | null>(null);
+  const [state, dispatch] = useReducer(pipelinesReducer, initialPipelines);
+  const {
+    setup,
+    loadError,
+    error,
+    busy,
+    draft,
+    runDraft,
+    started,
+    fileDraft,
+    templates,
+    committed,
+  } = state;
 
   const reload = useCallback(async () => {
     const result = await getJson<Setup>(url);
-    if (result.data) {
-      setSetup(result.data);
-      setLoadError(null);
-    } else setLoadError(result.error ?? 'The pipelines could not be read.');
+    if (result.data) dispatch({ type: 'loaded', setup: result.data });
+    else
+      dispatch({ type: 'loadFailed', error: result.error ?? 'The pipelines could not be read.' });
   }, [url]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  const act = async (work: () => Promise<{ error: string | null }>) => {
-    setBusy(true);
-    setError(null);
+  /** Send a change; on success read the setup again before saying it is done. */
+  const act = async (
+    what: 'flip' | 'variables' | 'run' | 'file',
+    work: () => Promise<{ error: string | null }>,
+    done: () => PipelinesAction
+  ) => {
+    dispatch({ type: 'sent', what });
     const result = await work();
-    if (result.error) setError(result.error);
-    else await reload();
-    setBusy(false);
-    return !result.error;
+    if (result.error) {
+      dispatch({ type: 'failed', error: result.error });
+      return;
+    }
+    await reload();
+    dispatch(done());
   };
 
-  const flip = (enabled: boolean) => void act(async () => sendJsonFull(url, 'PUT', { enabled }));
+  const flip = (enabled: boolean) =>
+    void act(
+      'flip',
+      async () => sendJsonFull(url, 'PUT', { enabled }),
+      () => ({ type: 'flipped' })
+    );
 
   /**
    * Save one set from its text. Keys about to disappear are named first:
@@ -135,56 +150,27 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
    */
   const saveVariables = async (current: PipelineVariable[]) => {
     if (!draft) return;
-    const keysInText = new Set(
-      draft.text
-        .split(/\r?\n/)
-        .map(
-          (line) =>
-            /^\s*(?:secret|secured)?\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*[=:]/i.exec(
-              line
-            )?.[1]
-        )
-        .filter((key): key is string => Boolean(key))
-    );
-    const going = current.filter((variable) => !keysInText.has(variable.key));
-    if (
-      going.length > 0 &&
-      !window.confirm(
-        `Remove ${going.map((variable) => variable.key).join(', ')}? Pipeline runs will no longer see ${going.length === 1 ? 'it' : 'them'}.`
-      )
-    ) {
-      return;
-    }
-    setOutcome(null);
+    const question = removalQuestion(variablesGoing(draft.text, current));
+    if (question && !window.confirm(question)) return;
     let result: Outcome | null = null;
-    const saved = await act(async () => {
-      const response = await sendJsonFull<VariablesApplied & { problems: string[] }>(
-        `${url}/variables`,
-        'PUT',
-        {
-          text: draft.text,
-          ...(draft.environmentUuid ? { environmentUuid: draft.environmentUuid } : {}),
-        }
-      );
-      if (response.data && !response.error) {
-        result = {
-          ...response.data,
-          ...(draft.environmentUuid ? { environmentUuid: draft.environmentUuid } : {}),
-        };
-      }
-      return response;
-    });
-    if (saved) {
-      setDraft(null);
-      setOutcome(result);
-    }
+    await act(
+      'variables',
+      async () => {
+        const response = await sendJsonFull<VariablesApplied & { problems: string[] }>(
+          `${url}/variables`,
+          'PUT',
+          variablesRequest(draft)
+        );
+        if (response.data && !response.error) result = outcomeOf(draft, response.data);
+        return response;
+      },
+      () => ({ type: 'variablesSaved', outcome: result })
+    );
   };
 
   /** Open the file editor: the file as it is on the branch, or empty for a template to fill. */
   const openFile = async () => {
-    setError(null);
-    setCommitted(null);
-    setBusy(true);
+    dispatch({ type: 'fileOpening' });
     const [file, catalog] = await Promise.all([
       getJson<{ ref: string; text: string | null }>(`${url}/config-file`),
       templates
@@ -193,64 +179,56 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
             `/api/code/pipeline-templates?provider=atlassian-bitbucket`
           ),
     ]);
-    setBusy(false);
     if (file.error) {
-      setError(file.error);
+      dispatch({ type: 'fileOpenFailed', error: file.error });
       return;
     }
-    setTemplates(catalog.data?.templates ?? []);
-    const existing = file.data?.text ?? null;
-    setFileDraft({
-      text: existing ?? '',
-      message: existing === null ? 'Add bitbucket-pipelines.yml' : 'Update bitbucket-pipelines.yml',
-      templateId: '',
+    dispatch({
+      type: 'fileOpened',
+      text: file.data?.text ?? null,
+      templates: catalog.data?.templates ?? [],
     });
   };
 
   const commitFile = async () => {
     if (!fileDraft) return;
-    let result: { ref: string; url: string } | null = null;
-    const ok = await act(async () => {
-      const response = await sendJsonFull<{ ref: string; url: string }>(
-        `${url}/config-file`,
-        'PUT',
-        { text: fileDraft.text, message: fileDraft.message.trim() }
-      );
-      result = response.data && !response.error ? response.data : null;
-      return response;
-    });
-    if (ok) {
-      setFileDraft(null);
-      setCommitted(result);
-    }
+    let result: Committed | null = null;
+    await act(
+      'file',
+      async () => {
+        const response = await sendJsonFull<Committed>(
+          `${url}/config-file`,
+          'PUT',
+          fileRequest(fileDraft)
+        );
+        result = response.data && !response.error ? response.data : null;
+        return response;
+      },
+      () => ({ type: 'fileCommitted', committed: result })
+    );
   };
 
   const startRun = async () => {
     if (!runDraft) return;
-    setStarted(null);
     let run: PipelineRun | null = null;
-    const ok = await act(async () => {
-      const result = await sendJsonFull<{ run: PipelineRun }>(`${url}/runs`, 'POST', {
-        ref: runDraft.ref.trim(),
-        refType: runDraft.refType,
-        pattern: runDraft.pattern.trim(),
-      });
-      run = result.data?.run ?? null;
-      return result;
-    });
-    if (ok) {
-      setRunDraft(null);
-      setStarted(run);
-    }
+    await act(
+      'run',
+      async () => {
+        const result = await sendJsonFull<{ run: PipelineRun }>(
+          `${url}/runs`,
+          'POST',
+          runRequest(runDraft)
+        );
+        run = result.data?.run ?? null;
+        return result;
+      },
+      () => ({ type: 'runStarted', run })
+    );
   };
 
-  const [workspace, repoSlug] = repoFullName.split('/');
-  const pipelinesUrl =
-    workspace && repoSlug
-      ? `https://bitbucket.org/${encodeURIComponent(workspace)}/${encodeURIComponent(repoSlug)}/pipelines`
-      : null;
-  const branchLabel = branch || 'the default branch';
-  const canSetVariables = canEdit && setup?.access.variablesNeeds === null;
+  const pipelinesUrl = urlOfPipelines(repoFullName);
+  const branchLabel = labelOfBranch(branch);
+  const canSetVariables = mayVariables(state, canEdit);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -311,10 +289,11 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
               <RunsCard
                 runs={setup.runs}
                 error={setup.runsError}
-                canRun={canEdit && setup.enabled !== false}
+                canRun={canRun(state, canEdit)}
+                canStart={canStartRun(state)}
                 busy={busy}
                 draft={runDraft}
-                setDraft={setRunDraft}
+                dispatch={dispatch}
                 defaultRef={branch || 'main'}
                 onStart={startRun}
                 started={started}
@@ -406,23 +385,14 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
                         <select
                           value={fileDraft.templateId}
                           onChange={(event) => {
-                            const next = event.target.value;
-                            const template = templates.find((entry) => entry.id === next);
-                            setFileDraft({
-                              ...fileDraft,
-                              templateId: next,
-                              ...(template ? { text: template.body } : {}),
-                            });
+                            dispatch({ type: 'templatePicked', templateId: event.target.value });
                           }}
                           className={`mt-0.5 ${inputClass}`}
                         >
-                          <option value="">
-                            {fileDraft.text ? 'Keep what is here' : 'Pick a template…'}
-                          </option>
+                          <option value="">{templateBlankOption(fileDraft)}</option>
                           {templates.map((template) => (
                             <option key={template.id} value={template.id}>
-                              {template.name}
-                              {template.description ? ` — ${template.description}` : ''}
+                              {templateOptionLabel(template)}
                             </option>
                           ))}
                         </select>
@@ -430,8 +400,10 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
                     ) : null}
                     <textarea
                       value={fileDraft.text}
-                      onChange={(event) => setFileDraft({ ...fileDraft, text: event.target.value })}
-                      rows={Math.max(8, Math.min(28, fileDraft.text.split('\n').length + 1))}
+                      onChange={(event) =>
+                        dispatch({ type: 'fileChanged', field: 'text', value: event.target.value })
+                      }
+                      rows={textRows(fileDraft.text, 8, 28)}
                       spellCheck={false}
                       aria-label="bitbucket-pipelines.yml"
                       placeholder={
@@ -444,7 +416,11 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
                       <input
                         value={fileDraft.message}
                         onChange={(event) =>
-                          setFileDraft({ ...fileDraft, message: event.target.value })
+                          dispatch({
+                            type: 'fileChanged',
+                            field: 'message',
+                            value: event.target.value,
+                          })
                         }
                         maxLength={500}
                         className={`mt-0.5 ${inputClass}`}
@@ -457,14 +433,14 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
                       </p>
                       <button
                         type="button"
-                        onClick={() => setFileDraft(null)}
+                        onClick={() => dispatch({ type: 'fileCancelled' })}
                         className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
-                        disabled={busy || !fileDraft.text.trim()}
+                        disabled={!canCommit(state)}
                         className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                       >
                         {busy ? 'Committing…' : 'Commit'}
@@ -478,7 +454,7 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
                     <ExternalLink href={committed.url} className="underline">
                       Open on Bitbucket
                     </ExternalLink>
-                    {setup.enabled === false ? ' Turn Pipelines on above to run it.' : ''}
+                    {committedReminder(state)}
                   </p>
                 ) : null}
               </section>
@@ -492,25 +468,25 @@ export default function PipelinesPage({ projectId, projectName, repoFullName, br
                 canEdit={canSetVariables}
                 needs={canEdit ? setup.access.variablesNeeds : null}
                 busy={busy}
-                draft={draft}
-                setDraft={setDraft}
-                outcome={outcome}
+                open={draftFor(state, {})}
+                last={outcomeFor(state, {})}
+                dispatch={dispatch}
                 onSave={saveVariables}
               />
               {setup.environments.map((environment) => (
                 <VariableGroup
                   key={environment.uuid}
                   title={environment.name}
-                  hint={`Runs deploying to this ${environment.type ? environment.type.toLowerCase() + ' ' : ''}environment get these as well.`}
+                  hint={environmentHint(environment)}
                   variables={environment.variables}
                   error={environment.error}
                   scope={{ environmentUuid: environment.uuid }}
                   canEdit={canSetVariables}
                   needs={null}
                   busy={busy}
-                  draft={draft}
-                  setDraft={setDraft}
-                  outcome={outcome}
+                  open={draftFor(state, { environmentUuid: environment.uuid })}
+                  last={outcomeFor(state, { environmentUuid: environment.uuid })}
+                  dispatch={dispatch}
                   onSave={saveVariables}
                 />
               ))}
@@ -531,9 +507,10 @@ function RunsCard({
   runs,
   error,
   canRun,
+  canStart,
   busy,
   draft,
-  setDraft,
+  dispatch,
   defaultRef,
   onStart,
   started,
@@ -542,9 +519,11 @@ function RunsCard({
   error: string | null;
   /** An editor, with Pipelines not known to be off. */
   canRun: boolean;
+  /** Start run can be pressed. */
+  canStart: boolean;
   busy: boolean;
   draft: RunDraft | null;
-  setDraft: (draft: RunDraft | null) => void;
+  dispatch: Dispatch<PipelinesAction>;
   /** What the form starts with: the project's branch. */
   defaultRef: string;
   onStart: () => Promise<void>;
@@ -561,7 +540,7 @@ function RunsCard({
           <button
             type="button"
             disabled={busy}
-            onClick={() => setDraft({ ref: defaultRef, refType: 'branch', pattern: '' })}
+            onClick={() => dispatch({ type: 'runOpened', defaultRef })}
             className={`ml-auto ${linkButtonClass}`}
           >
             Run pipeline
@@ -585,7 +564,9 @@ function RunsCard({
               <span className="text-gray-500">Branch or tag</span>
               <input
                 value={draft.ref}
-                onChange={(event) => setDraft({ ...draft, ref: event.target.value })}
+                onChange={(event) =>
+                  dispatch({ type: 'runChanged', field: 'ref', value: event.target.value })
+                }
                 spellCheck={false}
                 autoComplete="off"
                 className={`mt-0.5 font-mono ${inputClass}`}
@@ -596,7 +577,7 @@ function RunsCard({
               <select
                 value={draft.refType}
                 onChange={(event) =>
-                  setDraft({ ...draft, refType: event.target.value === 'tag' ? 'tag' : 'branch' })
+                  dispatch({ type: 'runTypeChanged', value: event.target.value })
                 }
                 className={`mt-0.5 ${inputClass}`}
               >
@@ -608,7 +589,9 @@ function RunsCard({
               <span className="text-gray-500">Custom pipeline (optional)</span>
               <input
                 value={draft.pattern}
-                onChange={(event) => setDraft({ ...draft, pattern: event.target.value })}
+                onChange={(event) =>
+                  dispatch({ type: 'runChanged', field: 'pattern', value: event.target.value })
+                }
                 spellCheck={false}
                 autoComplete="off"
                 placeholder="the ref’s default"
@@ -623,14 +606,14 @@ function RunsCard({
             </p>
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={() => dispatch({ type: 'runCancelled' })}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Cancel
             </button>
             <button
               type="submit"
-              disabled={busy || !draft.ref.trim()}
+              disabled={!canStart}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
               {busy ? 'Starting…' : 'Start run'}
@@ -733,27 +716,9 @@ function RunsCard({
   );
 }
 
-function duration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
-
 /** A run's state as a pill: green when it passed, red when it failed, blue while it runs. */
 export function RunStatePill({ state }: { state: string }) {
-  const upper = state.toUpperCase();
-  const tone =
-    upper === 'SUCCESSFUL' || upper === 'PASSED'
-      ? 'green'
-      : upper === 'FAILED' || upper === 'ERROR'
-        ? 'red'
-        : upper === 'IN_PROGRESS' || upper === 'RUNNING' || upper === 'PENDING'
-          ? 'blue'
-          : 'gray';
-  const label = state
-    ? state.charAt(0) + state.slice(1).toLowerCase().replace(/_/g, ' ')
-    : 'Unknown';
+  const { tone, label } = runStatePill(state);
   return <Pill tone={tone}>{label}</Pill>;
 }
 
@@ -772,9 +737,9 @@ function VariableGroup({
   canEdit,
   needs,
   busy,
-  draft,
-  setDraft,
-  outcome,
+  open,
+  last,
+  dispatch,
   onSave,
 }: {
   title: string;
@@ -786,23 +751,15 @@ function VariableGroup({
   /** Why an editor still cannot set variables, shown once on the first group. */
   needs: string | null;
   busy: boolean;
-  draft: Draft | null;
-  setDraft: (draft: Draft | null) => void;
-  outcome: Outcome | null;
+  /** The open box, when it is this set's. */
+  open: Draft | null;
+  /** The last save's outcome, when it was this set's. */
+  last: Outcome | null;
+  dispatch: Dispatch<PipelinesAction>;
   onSave: (current: PipelineVariable[]) => Promise<void>;
 }) {
-  const here = <T extends Scope>(candidate: T | null): candidate is T =>
-    candidate !== null && (candidate.environmentUuid ?? '') === (scope.environmentUuid ?? '');
-  const open = here(draft) ? draft : null;
-  const last = here(outcome) ? outcome : null;
   const groupId = `pipeline-variables-${scope.environmentUuid ?? 'repository'}`;
-  const summary = last
-    ? [
-        last.added.length ? `added ${last.added.join(', ')}` : '',
-        last.changed.length ? `changed ${last.changed.join(', ')}` : '',
-        last.removed.length ? `removed ${last.removed.join(', ')}` : '',
-      ].filter(Boolean)
-    : [];
+  const lines = last ? outcomeLines(last) : null;
   return (
     <section className={cardClass} aria-labelledby={groupId}>
       <div className="flex items-center gap-2">
@@ -813,10 +770,10 @@ function VariableGroup({
           <button
             type="button"
             disabled={busy}
-            onClick={() => setDraft({ ...scope, text: renderVariableText(variables) })}
+            onClick={() => dispatch({ type: 'variablesOpened', scope, variables })}
             className={`ml-auto ${linkButtonClass}`}
           >
-            {variables.length ? 'Edit variables' : 'Add variables'}
+            {variablesButtonLabel(variables)}
           </button>
         ) : null}
       </div>
@@ -827,22 +784,23 @@ function VariableGroup({
         <p className="mt-1 text-sm text-gray-500">No variables.</p>
       ) : (
         <ul className="mt-1 divide-y divide-gray-200 text-sm dark:divide-gray-800">
-          {variables.map((variable) => (
-            <li key={variable.uuid} className="flex items-center gap-2 py-1.5">
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-mono">{variable.key}</span>
-                {variable.secured ? (
-                  <span className="ml-2">
-                    <Pill tone="gray">Secured</Pill>
-                  </span>
-                ) : (
-                  <span className="ml-2 font-mono text-xs text-gray-500">
-                    {variable.value || '(empty)'}
-                  </span>
-                )}
-              </span>
-            </li>
-          ))}
+          {variables.map((variable) => {
+            const shown = variableShown(variable);
+            return (
+              <li key={variable.uuid} className="flex items-center gap-2 py-1.5">
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-mono">{variable.key}</span>
+                  {'secured' in shown ? (
+                    <span className="ml-2">
+                      <Pill tone="gray">Secured</Pill>
+                    </span>
+                  ) : (
+                    <span className="ml-2 font-mono text-xs text-gray-500">{shown.value}</span>
+                  )}
+                </span>
+              </li>
+            );
+          })}
         </ul>
       )}
       {needs ? <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">{needs}</p> : null}
@@ -857,8 +815,8 @@ function VariableGroup({
         >
           <textarea
             value={open.text}
-            onChange={(event) => setDraft({ ...open, text: event.target.value })}
-            rows={Math.max(4, Math.min(16, open.text.split('\n').length + 1))}
+            onChange={(event) => dispatch({ type: 'variablesChanged', text: event.target.value })}
+            rows={textRows(open.text, 4, 16)}
             spellCheck={false}
             aria-label={`${title} as text`}
             placeholder={'API_BASE_URL=https://api.example.test\nsecret DEPLOY_TOKEN=…'}
@@ -874,7 +832,7 @@ function VariableGroup({
           <div className="flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={() => dispatch({ type: 'variablesCancelled' })}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Cancel
@@ -889,26 +847,27 @@ function VariableGroup({
           </div>
         </form>
       ) : null}
-      {last ? (
+      {lines ? (
         <div className="mt-2 space-y-1 text-xs">
-          {summary.length ? (
-            <p role="status" className="text-green-700 dark:text-green-400">
-              {summary.join(' · ')}.
-            </p>
-          ) : last.errors.length === 0 && last.problems.length === 0 ? (
-            <p role="status" className="text-gray-500">
-              Nothing changed.
+          {lines.status ? (
+            <p
+              role="status"
+              className={
+                lines.status === 'Nothing changed.'
+                  ? 'text-gray-500'
+                  : 'text-green-700 dark:text-green-400'
+              }
+            >
+              {lines.status}
             </p>
           ) : null}
-          {last.errors.length ? (
+          {lines.notApplied ? (
             <p role="alert" className="text-red-600 dark:text-red-400">
-              Not applied: {last.errors.join('; ')}
+              {lines.notApplied}
             </p>
           ) : null}
-          {last.problems.length ? (
-            <p className="text-amber-700 dark:text-amber-400">
-              Not read as variables: {last.problems.join('; ')}.
-            </p>
+          {lines.notRead ? (
+            <p className="text-amber-700 dark:text-amber-400">{lines.notRead}</p>
           ) : null}
         </div>
       ) : null}

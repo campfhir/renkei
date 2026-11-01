@@ -66,7 +66,6 @@ import {
 } from '@renkei/user-keys';
 import {
   createJsonRpcServer,
-  isRecord,
   sendJson,
   str,
   type CallContext,
@@ -83,6 +82,7 @@ import { Forwarder } from './forward';
 import { GitTickets, type GitDialer } from './git';
 import { scopedLogger, withLogSubject } from './log-scope';
 import type { InstanceSigner } from './signing';
+import { isRecord } from '@renkei/guards';
 
 export interface DelegateServerDeps {
   /** TOKEN_ENCRYPTION_KEY: opens the org-wide connector configs a refresh needs. */

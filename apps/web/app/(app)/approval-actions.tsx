@@ -1,8 +1,14 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useReducer } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  approvalOutcome,
+  approvalReducer,
+  approvalRequest,
+  initialApproval,
+} from './approval-actions.model';
 
 /**
  * The decision controls of an APPROVAL card — a batch of actions an agent
@@ -19,56 +25,34 @@ import { reportFetchFailure } from '@/lib/fetch-json';
  * worker's sweep resumes the run on its own — the warning is about
  * latency, not loss.
  */
-export default function ApprovalActions({
-  itemId,
-}: {
-  itemId: string;
-}): React.ReactNode {
+export default function ApprovalActions({ itemId }: { itemId: string }): React.ReactNode {
   const { refresh, pending } = useRefresh();
-  const [comment, setComment] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [{ comment, busy, notice, error }, dispatch] = useReducer(approvalReducer, initialApproval);
 
   async function decide(decision: 'approve' | 'decline'): Promise<void> {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
+    const path = `/api/actionable-items/${itemId}/approval`;
+    dispatch({ type: 'sent' });
     try {
-      const response = await fetch(`/api/actionable-items/${itemId}/approval`, {
+      const response = await fetch(path, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision, comment: comment.trim() }),
+        body: JSON.stringify(approvalRequest(decision, comment)),
       });
       const body: unknown = await response.json().catch(() => null);
-      const record: Record<string, unknown> =
-        typeof body === 'object' && body !== null ? { ...body } : {};
-      if (response.status === 502 && typeof record.warning === 'string') {
+      const outcome = approvalOutcome(response.status, body);
+      if (outcome.kind !== 'decided') {
         reportFetchFailure(
           'POST',
-          `/api/actionable-items/${itemId}/approval`,
+          path,
           response.status,
-          record.warning
+          outcome.kind === 'delayed' ? outcome.warning : outcome.error
         );
-        setNotice(record.warning);
-        refresh();
-        return;
       }
-      if (!response.ok) {
-        const message =
-          typeof record.error === 'string' ? record.error : `Request failed (${response.status})`;
-        reportFetchFailure(
-          'POST',
-          `/api/actionable-items/${itemId}/approval`,
-          response.status,
-          message
-        );
-        setError(message);
-        return;
-      }
-      refresh();
-    } finally {
-      setBusy(false);
+      dispatch({ type: 'answered', outcome });
+      if (outcome.kind !== 'refused') refresh();
+    } catch (failure) {
+      reportFetchFailure('POST', path, 0, 'Could not reach the server', failure);
+      dispatch({ type: 'unreachable' });
     }
   }
 
@@ -76,7 +60,7 @@ export default function ApprovalActions({
     <div className="space-y-2">
       <textarea
         value={comment}
-        onChange={(event) => setComment(event.target.value)}
+        onChange={(event) => dispatch({ type: 'commentChanged', value: event.target.value })}
         rows={2}
         maxLength={10_000}
         placeholder="Add a note for the agent (optional)"

@@ -26,6 +26,7 @@ import { getServer } from '@renkei/connector-mcp';
 import type { MCPToolContext } from '../common';
 import { callRemoteTool, refreshInBackground } from '@/lib/mcp-servers/remote';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 /** What registration needs to know about a connected server. */
 export interface McpServerRegistration {
@@ -41,10 +42,6 @@ export interface McpServerRegistration {
 const MAX_TEXT_CHARS = 100_000;
 
 type Args = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Args {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Accepts any object; the remote server validates. Advertises the server's own schema. */
 export function passthroughSchema(

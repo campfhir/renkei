@@ -23,6 +23,7 @@ import { normalizeFieldId, renderFieldValue } from './fields';
 import { markdownToAdf } from './markdown';
 import { granularJiraScopes, type JiraAuth } from './jira-auth';
 import { createUserResolver, looksLikeAccountId } from './resolve-user';
+import { isRecord } from '@renkei/guards';
 
 /** Field/metadata reads that back every write — same scope regardless of caller. */
 const FIELD_SCHEMA_SCOPES = granularJiraScopes('jira_list_fields', true);
@@ -88,9 +89,6 @@ export function clearFieldSchemaCache(): void {
   enrichmentCache.clear();
   requestTypeCache.clear();
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /**
  * One `/rest/api/3/field` entry, or null when it is not one.

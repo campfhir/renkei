@@ -29,6 +29,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
 import { partsOfSharepointRefId, SHAREPOINT_KNOWLEDGE_PROVIDER } from './drive-refs';
+import { isRecord } from '@renkei/guards';
 
 /**
  * Graph's JSON batch limit. Not a tuning knob — 21 sub-requests is a 400.
@@ -57,10 +58,6 @@ const VERIFY_TIMEOUT_MS = 2_500;
  */
 export interface MicrosoftCredentialLookup {
   (userEmail: string): Promise<{ auth: AuthedFetch } | null>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function chunked<T>(items: readonly T[], size: number): T[][] {

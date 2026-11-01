@@ -19,6 +19,7 @@
 
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { isRecord } from '@renkei/guards';
 
 export const ATLASSIAN_GATEWAY = 'https://api.atlassian.com/ex';
 /**
@@ -132,11 +133,6 @@ export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-/** A type predicate rather than an assertion — this repo bans `as` outright. */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 export function rec(value: unknown): Record<string, unknown> {
-  return isPlainObject(value) ? value : {};
+  return isRecord(value) ? value : {};
 }

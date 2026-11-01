@@ -1,7 +1,8 @@
 /**
- * Auto-detected issue cards beside the project screen's active chat: a
- * Jira issue and a GitHub issue guessed from that chat's most recent
- * pull request title (lib/code/issue-refs.ts) and fetched live.
+ * Auto-detected issue cards beside the project screen's active chat, in a
+ * browser: a Jira issue and a GitHub issue guessed from that chat's most
+ * recent pull request title (lib/code/issue-refs.ts) and fetched live,
+ * drawn on the project page and at phone width.
  *
  * The project is the test's own person's, a GitHub one: they connect
  * GitHub through the real connect flow (the in-memory app's fake OAuth,
@@ -12,9 +13,13 @@
  * …/chats/[chatId]/issues (Jira at api.atlassian.com, which has no
  * stand-in), so — as project-pulls-commits.spec.ts does for its
  * GitHub-backed routes — the browser's request to that route is answered
- * with page.route for a match and for a failed lookup. When nothing
- * matches, the real route answers: the project's branch names no issue
- * and the chat has no pull request yet.
+ * with page.route.
+ *
+ * Where its rules went: nothing shown — and no error — when neither
+ * resolves or the lookup fails, Jira first, what a card reads —
+ * app/(app)/code/_components/issue-cards.model.test.ts; the real route's
+ * empty answer for a branch and chat that name no issue —
+ * app/api/code/projects/[projectId]/chats/[chatId]/issues/route.test.ts.
  */
 
 import path from 'node:path';
@@ -111,38 +116,5 @@ test.describe('issue cards', () => {
     await page.setViewportSize(MOBILE_VIEWPORT);
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toBeVisible();
     await shot(page, testInfo, 'issue-cards-mobile.png');
-  });
-
-  test('renders nothing when the lookup finds neither — no error shown', async ({
-    page,
-  }, testInfo) => {
-    const ids = await stage(page, testInfo);
-    // The real route: main names no issue, and the chat has no pull request.
-    const lookup = page.waitForResponse((response) =>
-      response.url().endsWith(`/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`)
-    );
-    await page.goto(`/code/${ids.projectId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
-    const answer = await lookup;
-    expect(await answer.json()).toEqual({ jira: null, github: null });
-    const main = page.getByRole('main');
-    await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);
-    await expect(main.getByText(/could not be read|error/i)).toHaveCount(0);
-  });
-
-  test('renders nothing on a lookup failure — hidden, not an error', async ({ page }, testInfo) => {
-    const ids = await stage(page, testInfo);
-    await page.route(
-      `**/api/code/projects/${ids.projectId}/chats/${ids.chatId}/issues`,
-      async (route) => {
-        await route.fulfill({ status: 500, contentType: 'application/json', body: '{}' });
-      }
-    );
-
-    await page.goto(`/code/${ids.projectId}`);
-    await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
-    const main = page.getByRole('main');
-    await expect(main.getByRole('link', { name: /PROJ-9/ })).toHaveCount(0);
-    await expect(main.getByText(/could not be read|error/i)).toHaveCount(0);
   });
 });

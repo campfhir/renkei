@@ -1,11 +1,24 @@
 /**
- * The person's encryption key, end to end in a browser
- * (docs/delegate-key-design.md): a first sign-in enrolls the browser
- * without asking, shows the key once and keeps it on the device; a device
- * without the key is told so and takes the key typed in; a lost
- * delegation comes back from the device's key; a rotation keeps the chat
- * readable; a key service this browser has not met is confirmed by
- * fingerprint; and an operator removes a departed person's key.
+ * The person's encryption key, where only a browser shows it
+ * (docs/delegate-key-design.md): a first sign-in enrolls the browser with
+ * real WebCrypto and IndexedDB, shows the key once and keeps it on the
+ * device (@smoke, unchanged); a rotation's new key opens a chat the lost
+ * delegation closed, typed back once; a key service this browser has not
+ * met is named by its real fingerprint and confirmed once; the dialog and
+ * the section fit a phone; and an operator removes a departed person's
+ * key from the Access page, once.
+ *
+ * Where the rules went:
+ *   - the key dialog (which moment shows, dismissing to a banner and back,
+ *     a typed key refused or taken, "Not now" on the trust dialog, asks
+ *     and approvals by code, the earlier passphrase): components/key-guard.model.test.ts;
+ *   - the Preferences section (what is enabled, what pause, forget,
+ *     rotation and approvals leave on screen, an unconfirmed key service):
+ *     app/(app)/preferences/encryption-key-section.model.test.ts;
+ *   - "Remove key" (offered for others only, asked twice, a wrong typed
+ *     name is a no, what a refusal leaves): app/(app)/admin/access/shred-key-button.model.test.ts;
+ *   - the removal route (operator-only, never one's own key, the person's
+ *     sessions end, the key service down): app/api/admin/access/[subject]/keys/route.test.ts.
  *
  * Driven against the real delegate the memory server runs in-process and
  * the real key routes. Each test's person is its own and signs in
@@ -24,7 +37,8 @@
  * spec signed the same person in again with a second session). A session
  * only comes from an OIDC sign-in or the suite's test sign-in route, which
  * makes a new person every time; there is no way to give one person a
- * second browser session.
+ * second browser session. What the approval leaves on screen is the
+ * models'.
  *
  * Pinned Chromium; "mobile" is a resized viewport rather than the `mobile`
  * project's device descriptor, per AGENTS.md.
@@ -178,7 +192,7 @@ async function forgetDevice(page: Page): Promise<void> {
   );
 }
 
-test('a first sign-in enrolls the browser, shows the key once, and keeps it on the device', async ({
+test('a first sign-in enrolls the browser, shows the key once, and keeps it on the device @smoke', async ({
   page,
   request,
 }, testInfo) => {
@@ -275,7 +289,7 @@ test('a first sign-in enrolls the browser, shows the key once, and keeps it on t
     .toBe(true);
 });
 
-test('a chat follows the key: lost delegation, typed key, rotation', async ({
+test('a chat follows the key: a rotation, a lost delegation, the new key typed back', async ({
   page,
   request,
 }, testInfo) => {
@@ -288,32 +302,8 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
   try {
     const chatId = await chatOf(page, modelId, title);
 
-    // Readable through the delegation.
-    await expectChatReadable(page, chatId, title);
-    await expect(page.getByTestId('key-modal-needs-key')).toHaveCount(0);
-
-    // This device lets the key go, and the delegate forgets: the chat says
-    // why, and the page asks for the key.
-    await forgetDevice(page);
-    await dropDelegation(page);
-    await page.goto(`/chat/${chatId}`);
-    const notice = page.getByTestId('chat-key-unavailable-notice');
-    await expect(notice.first()).toBeVisible({ timeout: 30_000 });
-    await expect(notice.first()).toContainText('not connected to this session');
-    await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toHaveCount(0);
-    await shot(page, testInfo, 'keys-05-chat-not-connected');
-    const needsKey = page.getByTestId('key-modal-needs-key');
-    await expect(needsKey).toBeVisible();
-    await page.getByTestId('key-unlock').getByLabel('Type the key you wrote down').fill(userKey);
-    await page.getByTestId('key-unlock-submit').click();
-    await expect(page.getByTestId('key-unlock')).toHaveCount(0);
-    // The page refreshes its server data once the key is back; the chat opens.
-    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(notice).toHaveCount(0);
-
-    // Rotation: a new key, shown once; the chat still opens afterwards.
+    // Rotation (WebCrypto re-wraps under a new key, sealed afresh): shown
+    // once, and the chat still opens through the new delegation.
     await page.goto(`/preferences`);
     const section = page.getByTestId('encryption-key').filter({ visible: true }).first();
     await section.getByTestId('encryption-key-rotate-start').click();
@@ -327,11 +317,20 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
     await section.getByRole('button', { name: 'I have written it down' }).click();
     await expectChatReadable(page, chatId, title);
 
-    // The old key no longer opens anything; the new one does.
+    // This device lets the key go, and the delegate forgets: the chat says
+    // why, and the page asks for the key.
     await forgetDevice(page);
     await dropDelegation(page);
     await page.goto(`/chat/${chatId}`);
-    await expect(page.getByTestId('key-modal-needs-key')).toBeVisible({ timeout: 30_000 });
+    const notice = page.getByTestId('chat-key-unavailable-notice');
+    await expect(notice.first()).toBeVisible({ timeout: 30_000 });
+    await expect(notice.first()).toContainText('not connected to this session');
+    await expect(page.getByRole('main').getByText(PROMPT_TEXT)).toHaveCount(0);
+    await shot(page, testInfo, 'keys-05-chat-not-connected');
+    await expect(page.getByTestId('key-modal-needs-key')).toBeVisible();
+
+    // The old key no longer opens the account's wrappings; the new one
+    // does, and the chat opens without a reload by hand.
     const unlock = page.getByTestId('key-unlock');
     await unlock.getByLabel('Type the key you wrote down').fill(userKey);
     await page.getByTestId('key-unlock-submit').click();
@@ -342,6 +341,7 @@ test('a chat follows the key: lost delegation, typed key, rotation', async ({
     await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
       timeout: 30_000,
     });
+    await expect(notice).toHaveCount(0);
   } finally {
     await removeModel(page.request, modelId).catch(() => removeModel(page.request, modelId));
   }
@@ -352,68 +352,40 @@ test('a key service this browser has not met is confirmed by fingerprint before 
   request,
 }, testInfo) => {
   test.setTimeout(180_000);
-  const tag = tagOf(testInfo);
-  const title = `Sprint slippage ${tag}`;
   await freshPerson(page, request);
-  const userKey = await enrollInBrowser(page);
-  const modelId = await addStubModel(page.request, tag);
-  try {
-    const chatId = await chatOf(page, modelId, title);
+  await enrollInBrowser(page);
 
-    // The live instances, trusted on sight when this browser enrolled: the
-    // device gets the key back by typing it, sealing without a question.
-    await forgetDevice(page);
-    await dropDelegation(page);
-    await page.goto(`/chat/${chatId}`);
-    await expect(page.getByTestId('key-modal-needs-key')).toBeVisible({ timeout: 30_000 });
-    await page.getByTestId('key-unlock').getByLabel('Type the key you wrote down').fill(userKey);
-    await page.getByTestId('key-unlock-submit').click();
-    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
+  // The web app now claims one more instance, with a key the deployment's
+  // signing key never signed — what a compromised web app would do. The
+  // browser names its fingerprint and seals nothing until the person says so.
+  const planted = randomBytes(32).toString('base64');
+  await page.route(`**/api/keys`, async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    json.instances = [...json.instances, { id: randomUUID(), publicKey: planted }];
+    json.sessionDelegated = false;
+    json.instancesMissingSession = [...json.instancesMissingSession, 'planted'];
+    await route.fulfill({ response, json });
+  });
+  await dropDelegation(page);
+  await recheck(page);
+  const trust = page.getByTestId('key-modal-trust');
+  await expect(trust).toBeVisible({ timeout: 30_000 });
+  const fingerprint = (await trust.getByTestId('key-trust-fingerprint').innerText()).trim();
+  expect(fingerprint).toMatch(/^[A-Z2-7]{5}-[A-Z2-7]{5}$/);
+  expect(fingerprint).toBe(deviceCodeOf(Buffer.from(planted, 'base64')));
+  expect((await keyView(page)).sessionDelegated).toBe(false);
+  await shot(page, testInfo, 'keys-09-trust-dialog');
 
-    // The web app now claims one more instance, with a key the deployment's
-    // signing key never signed — what a compromised web app would do. The
-    // browser names its fingerprint and seals nothing until the person says so.
-    const planted = randomBytes(32).toString('base64');
-    await page.route(`**/api/keys`, async (route) => {
-      const response = await route.fetch();
-      const json = await response.json();
-      json.instances = [...json.instances, { id: randomUUID(), publicKey: planted }];
-      json.sessionDelegated = false;
-      json.instancesMissingSession = [...json.instancesMissingSession, 'planted'];
-      await route.fulfill({ response, json });
-    });
-    await dropDelegation(page);
-    await recheck(page);
-    const trust = page.getByTestId('key-modal-trust');
-    await expect(trust).toBeVisible({ timeout: 30_000 });
-    const fingerprint = (await trust.getByTestId('key-trust-fingerprint').innerText()).trim();
-    expect(fingerprint).toMatch(/^[A-Z2-7]{5}-[A-Z2-7]{5}$/);
-    expect(fingerprint).toBe(deviceCodeOf(Buffer.from(planted, 'base64')));
-    expect((await keyView(page)).sessionDelegated).toBe(false);
-    await shot(page, testInfo, 'keys-09-trust-dialog');
-    // Not now: the key stays unsealed and a banner is the way back.
-    await trust.getByRole('button', { name: 'Not now' }).click();
-    await expect(trust).toHaveCount(0);
-    await expect(page.getByTestId('key-banner-trust')).toBeVisible();
-    expect((await keyView(page)).sessionDelegated).toBe(false);
-    // Confirmed: the browser seals (the delegate drops the instance nobody runs) and remembers.
-    await page.getByTestId('key-banner-trust').getByRole('button', { name: 'Review' }).click();
-    await trust.getByTestId('key-trust-confirm').click();
-    await expect
-      .poll(async () => (await keyView(page)).sessionDelegated, { timeout: 30_000 })
-      .toBe(true);
-    await page.unroute(`**/api/keys`);
-    await recheck(page);
-    await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
-    await expect(page.getByRole('main').getByText(PROMPT_TEXT).first()).toBeVisible({
-      timeout: 30_000,
-    });
-  } finally {
-    await removeModel(page.request, modelId).catch(() => removeModel(page.request, modelId));
-  }
+  // Confirmed: the browser seals (the delegate drops the instance nobody
+  // runs) and remembers. "Not now" and its banner are the model's.
+  await trust.getByTestId('key-trust-confirm').click();
+  await expect
+    .poll(async () => (await keyView(page)).sessionDelegated, { timeout: 30_000 })
+    .toBe(true);
+  await page.unroute(`**/api/keys`);
+  await recheck(page);
+  await expect(page.getByTestId('key-modal-trust')).toHaveCount(0);
 });
 
 test('the key dialog and the section at phone width', async ({ page, request }, testInfo) => {
@@ -459,29 +431,22 @@ test('an operator removes a departed person’s key from the Access page, never 
   await expect(button).toBeVisible();
   await shot(page, testInfo, 'keys-admin-01-access');
 
-  // Asked twice: in words, then by typing the name. A wrong name is a no.
+  // Asked twice: in words, then by typing the name (a wrong name is the
+  // model's). The removal reaches the route and the button goes with the key.
   const answers: string[] = [];
   page.on('dialog', (dialog) => {
     answers.push(dialog.type());
-    if (dialog.type() === 'prompt')
-      void dialog.accept(answers.length === 2 ? 'Someone Else' : leaverName);
+    if (dialog.type() === 'prompt') void dialog.accept(leaverName);
     else void dialog.accept();
   });
+  const removed = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'DELETE' &&
+      response.url().endsWith(`/api/admin/access/${encodeURIComponent(leaver.subject)}/keys`)
+  );
   await button.click();
-  await expect.poll(() => answers.length).toBe(2);
-  await expect(button).toBeVisible();
-  expect((await leaverKeys()).enrolled).toBe(true);
-
-  await button.click();
-  await expect.poll(() => answers.length).toBe(4);
+  expect((await removed).status()).toBe(200);
+  expect(answers).toEqual(['confirm', 'prompt']);
   await expect(button).toHaveCount(0, { timeout: 15_000 });
-  // The leaver's key is gone — the Access page no longer lists them as a
-  // key holder, and their sessions ended so a next sign-in enrolls afresh —
-  // and the operator's own is not.
-  await page.reload();
-  await expect(page.getByRole('heading', { name: 'Access' })).toBeVisible();
-  await expect(page.getByTestId(`shred-key-${leaver.subject}`)).toHaveCount(0);
-  expect((await request.get('/api/keys', { headers: leaver.headers })).status()).toBe(401);
-  expect((await keyView(page)).enrolled).toBe(true);
   await shot(page, testInfo, 'keys-admin-02-removed');
 });

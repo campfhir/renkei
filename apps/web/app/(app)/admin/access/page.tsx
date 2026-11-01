@@ -8,6 +8,7 @@ import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import RevokeGrantButton from './revoke-grant-button';
 import ShredKeyButton from './shred-key-button';
+import { removeKeyOffered } from './shred-key-button.model';
 import RevokeSessionsButton from './revoke-sessions-button';
 import CoachTarget from '@/components/coach-marks/anchor';
 
@@ -180,7 +181,11 @@ export default async function AccessPage(): Promise<React.ReactNode> {
                             subject={person.subject}
                             displayName={person.name}
                           />
-                          {keyModeBySubject.has(person.subject) ? (
+                          {removeKeyOffered(
+                            person.subject,
+                            session.subject,
+                            keyModeBySubject.has(person.subject)
+                          ) ? (
                             <ShredKeyButton subject={person.subject} displayName={person.name} />
                           ) : null}
                         </span>

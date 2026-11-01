@@ -1,32 +1,34 @@
 /**
- * Admin change requests as a queue an operator works through, end to end in
- * a browser, on the Jira side (the stand-in Jira in e2e/sandbox-stub.mjs
- * answers, so a change really applies). Salesforce's pages share the same
- * model and are driven in salesforce-admin.spec.ts.
+ * Admin change requests as a queue an operator works through, in a
+ * browser, on the Jira side: what only a page shows.
  *
- * Three people of one organization (their email addresses share a domain,
- * so they work in one Jira site): an operator, Olive; an ordinary person,
- * Arlo, who may ask for a change in words but not approve one; and a
- * second operator, Pat, whose proposal Olive approves. Each connects Jira
- * Administration through the real connect flow (the in-memory app's fake
- * OAuth, e2e/support/jira-admin.ts), and every request is made the way
- * their assistant makes it: a chat turn on the stand-in model calling
+ * - The notification row for a proposal waiting for approval opens its
+ *   review page.
+ * - The menu's Changes row counts what waits and opens the Changes page,
+ *   whose row (connector, who asked, state) opens the connector's own
+ *   review page; at phone width the row's pills wrap under its title. A
+ *   person who is not an operator has no Changes row in the menu.
+ *
+ * The rules moved out of the browser, each where it is decided:
+ * - a person who is not an operator cannot approve (403) and a request in
+ *   words cannot be approved (409): app/api/jira-admin/changes/[changeId]/apply/route.test.ts;
+ * - declining with a reason the requester reads, and withdrawing one's
+ *   own: …/cancel/route.test.ts;
+ * - approving queues the change (202) and the server applies it on the
+ *   approving operator's connection, telling both people: the apply route
+ *   test and lib/jira-admin/apply-job.test.ts;
+ * - which buttons each person sees on the review page:
+ *   app/(app)/jira-admin/changes/[changeId]/change-actions.model.test.ts;
+ * - who sees whose requests on the Changes page, the connector filter and
+ *   the menu's count: lib/admin-changes/sources.test.ts; that every
+ *   operator but the proposer is told one waits: lib/admin-changes/stores.test.ts.
+ *
+ * Two people of one organization (their email addresses share a domain,
+ * so they work in one Jira site), each connected to Jira Administration
+ * through the real connect flow (the in-memory app's fake OAuth,
+ * e2e/support/jira-admin.ts); every request is made the way their
+ * assistant makes it: a chat turn on the stand-in model calling
  * jira_admin_request_change or jira_admin_propose_option_changes.
- *
- * Arlo's requests wait for an operator: he sees them, can withdraw his own,
- * and has no approve button; Olive sees everyone's, with who asked, and
- * declines one with a reason Arlo reads. Approving Pat's proposal queues
- * it: the click answers at once, the server applies it, and Olive can
- * leave the page and find it done on the list; both are told, and the
- * notification rows open the right page. The Changes page gathers every
- * admin connector's requests: Olive reaches it from the menu, where a
- * count says what waits, and filters it by connector; Arlo has no menu
- * row for it and sees only his own there.
- *
- * Not reachable here: a change caught mid-apply ("Running now"). The
- * in-process job finishes against the stub in milliseconds, and nothing
- * holds a change half-applied. The audit trail's row is not read back: no
- * page lists it.
  *
  * Every test's people are of an organization of their own (a tagged email
  * domain), so their Jira site starts fresh; an operator's views count
@@ -40,8 +42,6 @@ import path from 'node:path';
 import type { APIRequestContext, Browser, Page, TestInfo } from '@playwright/test';
 import {
   connectJiraAdministration,
-  fakeJiraSite,
-  JIRA_STUB,
   prepareJiraAdministration,
   proposeInChat,
 } from './support/jira-admin';
@@ -51,8 +51,6 @@ import { test, expect } from './fixtures';
 
 const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
-const FIELD_ID = 'customfield_10100';
-const CONTEXT_ID = '10200';
 
 async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   await page.screenshot({
@@ -68,21 +66,6 @@ async function noHorizontalOverflow(page: Page): Promise<void> {
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
   expect(overflow).toBeLessThanOrEqual(0);
-}
-
-/** What the stand-in Jira holds for Source's OPS context in the organization's site. */
-async function liveOptions(organization: string): Promise<string[]> {
-  const response = await fetch(
-    `${JIRA_STUB}/${fakeJiraSite(organization).cloudId}/rest/api/3/field/${FIELD_ID}/context/${CONTEXT_ID}/option`
-  );
-  const body: unknown = await response.json();
-  const values: unknown[] =
-    typeof body === 'object' && body !== null && 'values' in body && Array.isArray(body.values)
-      ? body.values
-      : [];
-  return values.map((option) =>
-    String(typeof option === 'object' && option !== null ? Reflect.get(option, 'value') : '')
-  );
 }
 
 interface Member {
@@ -109,7 +92,7 @@ async function join(
     email: `${who.name.split(' ')[0]?.toLowerCase()}@${org.domain}`,
     roles: who.operator ? ['renkei-user', 'renkei-operator'] : ['renkei-user'],
   });
-  const context = await browser.newContext();
+  const context = await browser.newContext({ reducedMotion: 'reduce' });
   await signIn(context, person);
   const page = await context.newPage();
   await connectJiraAdministration(page);
@@ -140,180 +123,6 @@ function current(): Organization {
   return org;
 }
 
-test('an ordinary person asks and follows; an operator sees who asked and declines with a reason', async ({
-  browser,
-  request,
-}, testInfo) => {
-  const team = current();
-  const olive = await join(browser, request, team, { name: 'Olive Operator', operator: true });
-  const arlo = await join(browser, request, team, { name: 'Arlo Asker', operator: false });
-  team.modelId = await addStubModel(olive.page.request, `queue-${team.tag}`);
-
-  const vendor = `Queue ${team.tag}: please add a Vendor option`;
-  const reseller = `Queue ${team.tag}: please add a Reseller option`;
-  const asked = await proposeInChat(arlo.page, team.modelId, 'jira_admin_request_change', {
-    title: vendor,
-    description: 'The Source field in OPS needs a Vendor option for procurement tickets.',
-    reason: 'Procurement tags vendor tickets',
-  });
-  const words = await proposeInChat(arlo.page, team.modelId, 'jira_admin_request_change', {
-    title: reseller,
-    description: 'The Source field in OPS needs a Reseller option for partner tickets.',
-  });
-
-  // --- The person who asked: their own, waiting for an operator, nothing to approve. ---
-  const page = arlo.page;
-  await page.goto('/jira-admin/changes');
-  await expect(page.getByRole('heading', { name: 'Waiting for an operator' })).toBeVisible();
-  const waiting = main(page).getByTestId('changes-waiting');
-  await expect(waiting.getByRole('link', { name: new RegExp(vendor) })).toBeVisible();
-  await expect(waiting.getByRole('link', { name: new RegExp(reseller) })).toBeVisible();
-  await shot(page, testInfo, 'admin-change-queue-01-asker-list');
-
-  await waiting.getByRole('link', { name: new RegExp(vendor) }).click();
-  await expect(page.getByRole('heading', { name: 'Review a Jira admin change' })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(main(page).getByTestId('change-requester')).toContainText('by you');
-  await expect(
-    main(page).getByText(/An operator reviews and approves changes to Jira/)
-  ).toBeVisible();
-  await expect(page.getByRole('button', { name: /Approve/ })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Decline it' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Withdraw it' })).toBeVisible();
-  await shot(page, testInfo, 'admin-change-queue-02-asker-review');
-
-  // The route holds the line, whatever the page shows.
-  const refused = await page.request.post(`/api/jira-admin/changes/${asked}/apply`);
-  expect(refused.status()).toBe(403);
-  expect((await refused.json()).error).toMatch(/operator/);
-  await page.reload();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Waiting for review');
-
-  // A request in words says what was asked, and offers nothing to approve.
-  await page.goto(`/jira-admin/changes/${words}`);
-  await expect(main(page).getByTestId('change-request-text')).toContainText(
-    'needs a Reseller option for partner tickets'
-  );
-
-  // Mobile: the same pages at phone width.
-  await page.setViewportSize(MOBILE_VIEWPORT);
-  await noHorizontalOverflow(page);
-  await shot(page, testInfo, 'admin-change-queue-03-asker-request-mobile');
-  await page.setViewportSize({ width: 1280, height: 900 });
-
-  // --- The operator: everyone's, with who asked; a request in words cannot be approved. ---
-  const operator = olive.page;
-  await operator.goto('/jira-admin/changes');
-  await expect(operator.getByRole('heading', { name: 'Waiting for approval' })).toBeVisible();
-  const row = main(operator)
-    .getByTestId('changes-waiting')
-    .getByRole('link', { name: new RegExp(reseller) });
-  await expect(row).toContainText('Requested');
-  await expect(row).toContainText('by Arlo Asker');
-  await shot(operator, testInfo, 'admin-change-queue-04-operator-list');
-
-  await row.click();
-  await expect(main(operator).getByTestId('change-request-text')).toBeVisible({ timeout: 30_000 });
-  await expect(operator.getByRole('button', { name: /Approve/ })).toHaveCount(0);
-  const notApprovable = await operator.request.post(`/api/jira-admin/changes/${words}/apply`);
-  expect(notApprovable.status()).toBe(409);
-  expect((await notApprovable.json()).error).toMatch(/request in words/);
-
-  // --- Declining asks for a reason, and the person who asked reads it. ---
-  await operator.getByRole('button', { name: 'Decline it' }).click();
-  await operator
-    .getByLabel('Why (the requester reads this)')
-    .fill('Use the existing Partner option');
-  await operator.getByRole('button', { name: 'Send the decline' }).click();
-  await expect(main(operator).getByTestId('change-state')).toHaveText('Cancelled', {
-    timeout: 30_000,
-  });
-
-  await page.goto(`/jira-admin/changes/${words}`);
-  await expect(main(page).getByTestId('change-resolution')).toContainText(
-    'Use the existing Partner option'
-  );
-  await shot(page, testInfo, 'admin-change-queue-05-asker-declined');
-
-  // The ordinary person withdraws their other request.
-  await page.goto(`/jira-admin/changes/${asked}`);
-  await page.getByRole('button', { name: 'Withdraw it' }).click();
-  await expect(main(page).getByTestId('change-state')).toHaveText('Cancelled', {
-    timeout: 30_000,
-  });
-});
-
-test('approving queues the change, the server applies it, and the operator need not stay', async ({
-  browser,
-  request,
-}, testInfo) => {
-  const team = current();
-  const olive = await join(browser, request, team, { name: 'Olive Operator', operator: true });
-  const pat = await join(browser, request, team, { name: 'Pat Proposer', operator: true });
-  team.modelId = await addStubModel(olive.page.request, `queue-${team.tag}`);
-  const before = await liveOptions(team.domain);
-
-  const id = await proposeInChat(pat.page, team.modelId, 'jira_admin_propose_option_changes', {
-    field: 'Source',
-    space: 'OPS',
-    add: [`Vendor ${team.tag}`],
-    reason: 'Procurement tags vendor tickets',
-  });
-
-  const page = olive.page;
-  await page.goto(`/jira-admin/changes/${id}`);
-  await expect(main(page).getByTestId('change-requester')).toContainText('by Pat Proposer');
-  await shot(page, testInfo, 'admin-change-queue-06-operator-review');
-
-  // The click answers at once with 202: nothing runs inside the request.
-  const approve = page.waitForResponse(
-    (response) =>
-      response.url().includes(`/api/jira-admin/changes/${id}/apply`) &&
-      response.request().method() === 'POST'
-  );
-  await page.getByRole('button', { name: 'Approve and apply this change to Jira' }).click();
-  expect((await approve).status()).toBe(202);
-  // Queued, so the operator may leave. Against the stub the apply can finish
-  // before the page's refresh lands, and then the page already shows who
-  // approved it instead of the queued notice.
-  await expect(
-    page.getByTestId('change-queued').or(main(page).getByTestId('change-approver'))
-  ).toBeVisible();
-
-  // Leave without waiting: the list follows it to the end by itself.
-  await page.goto('/jira-admin/changes');
-  const ours = main(page).locator(`a[href$="/jira-admin/changes/${id}"]`);
-  await expect(ours.getByTestId('change-state')).toHaveText('Applied', { timeout: 60_000 });
-  // It ran on the organization's site, and Jira really has the option.
-  expect(await liveOptions(team.domain)).toEqual([...before, `Vendor ${team.tag}`]);
-
-  // The page says who asked, who approved, and what ran.
-  await ours.click();
-  await expect(main(page).getByTestId('change-approver')).toContainText('by you');
-  await expect(main(page).getByTestId('change-requester')).toContainText('by Pat Proposer');
-  await expect(main(page).getByTestId('change-operations').getByText('Done')).toHaveCount(1);
-  await shot(page, testInfo, 'admin-change-queue-07-applied');
-
-  // Both were told how it ended; the row opens the review page.
-  await pat.page.goto('/notifications');
-  const note = main(pat.page).getByText(/Your Jira change was applied/);
-  await expect(note).toBeVisible({ timeout: 30_000 });
-  // Its own icon, not Jira's logo: it must not read as another Jira event.
-  await expect(main(pat.page).getByTestId('change-notification-icon').first()).toBeVisible();
-  await shot(pat.page, testInfo, 'admin-change-queue-08-asker-notified');
-  await page.goto('/notifications');
-  await expect(
-    main(page)
-      .getByText(/The Jira change was applied/)
-      .first()
-  ).toBeVisible({
-    timeout: 30_000,
-  });
-  await pat.page.setViewportSize(MOBILE_VIEWPORT);
-  await noHorizontalOverflow(pat.page);
-});
-
 test('the notification row for a waiting proposal opens the right page', async ({
   browser,
   request,
@@ -343,7 +152,7 @@ test('the notification row for a waiting proposal opens the right page', async (
   await expect(main(page).getByTestId('change-title')).toContainText(`Vendor ${team.tag}`);
 });
 
-test('an operator finds every connector’s waiting changes from the menu; others see only their own', async ({
+test('an operator finds the waiting changes from the menu; a person who asked has no menu row', async ({
   browser,
   request,
 }, testInfo) => {
@@ -379,19 +188,6 @@ test('an operator finds every connector’s waiting changes from the menu; other
   await expect(row.getByTestId('change-state')).toHaveText('Waiting for review');
   await shot(page, testInfo, 'admin-change-queue-13-changes-inbox');
 
-  // The connector filter narrows the list, and keeps the request under Jira.
-  const filters = main(page).getByRole('navigation', { name: 'Filter by connector' });
-  await filters.getByRole('link', { name: 'Salesforce' }).click();
-  await expect(page).toHaveURL(/\/changes\?source=salesforce-admin$/);
-  await expect(filters.getByRole('link', { name: 'Salesforce' })).toHaveAttribute(
-    'aria-current',
-    'page'
-  );
-  await expect(main(page).locator(`a[href$="/jira-admin/changes/${id}"]`)).toHaveCount(0);
-  await filters.getByRole('link', { name: 'Jira' }).click();
-  await expect(page).toHaveURL(/\/changes\?source=jira-admin$/);
-  await expect(row).toBeVisible();
-
   // Phone width: the list fits, and the status pills wrap under the title
   // rather than squeezing it into a narrow column beside them.
   await page.setViewportSize(MOBILE_VIEWPORT);
@@ -417,7 +213,7 @@ test('an operator finds every connector’s waiting changes from the menu; other
   await expect(page).toHaveURL(new RegExp(`/jira-admin/changes/${id}$`), { timeout: 30_000 });
   await expect(main(page).getByTestId('change-title')).toContainText(title);
 
-  // --- The person who asked: no Changes row in the menu; the page lists their own. ---
+  // --- The person who asked: no Changes row in the menu. ---
   const asker = arlo.page;
   await asker.goto('/');
   await expect(
@@ -426,11 +222,4 @@ test('an operator finds every connector’s waiting changes from the menu; other
       .filter({ visible: true })
       .getByRole('link', { name: /^Changes/ })
   ).toHaveCount(0);
-  await asker.goto('/changes');
-  await expect(asker.getByRole('heading', { name: 'Waiting for an operator' })).toBeVisible();
-  const own = main(asker)
-    .getByTestId('changes-waiting')
-    .locator(`a[href$="/jira-admin/changes/${id}"]`);
-  await expect(own).toContainText(title);
-  await expect(own).not.toContainText('by Arlo Asker');
 });

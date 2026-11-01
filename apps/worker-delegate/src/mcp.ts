@@ -36,8 +36,9 @@ import {
   type McpServer,
 } from '@renkei/connector-mcp';
 import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
-import { isRecord, sendJson, str } from '@renkei/worker-kit';
+import { sendJson, str } from '@renkei/worker-kit';
 import { silentDelegateLogger, type DelegateLogger } from './grants';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'worker-delegate/mcp';
 const TIMEOUT_MS = 15_000;

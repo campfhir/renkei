@@ -13,6 +13,7 @@
     "test": "jest"
   },
   "dependencies": {
+    "@renkei/guards": "workspace:*",
     "@renkei/settings": "workspace:*"
   },
   "devDependencies": {

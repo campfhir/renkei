@@ -37,19 +37,21 @@
  * a future host cares about) a generic chat host has no reason to read but
  * a decision-shaped host can, without needing to know Jira- or
  * email-specific tool names to tell two buttons apart.
+ *
+ * Those rules — what a preview shows, what a press sends, what each
+ * answer leaves on the card — are issue-preview.model.ts, tested in node
+ * (issue-preview.model.test.ts); this file draws the card and wires it.
  */
 
-import { WidgetBridge, resultText, type ToolResult } from './bridge';
+import { WidgetBridge, type ToolResult } from './bridge';
 import {
   cardActions,
   checkboxGroupField,
   chipsField,
-  doneStateOf,
   el,
   injectStyle,
   inputField,
   numberField,
-  parseLinks,
   recallDone,
   rememberDone,
   renderDone,
@@ -57,119 +59,37 @@ import {
   str,
   textField,
   type DoneState,
-  type FieldOption,
 } from './ui';
-
-interface FieldEdit {
-  path: string[];
-  kind: 'text' | 'text-array' | 'number' | 'select' | 'checkboxes' | 'chips';
-  value: string | string[];
-  options: FieldOption[];
-}
-
-interface FieldRow {
-  label: string;
-  value: string;
-  oldValue?: string;
-  editable?: FieldEdit;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function strings(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((entry): entry is string => typeof entry === 'string')
-    : [];
-}
-
-function fieldOptions(value: unknown): FieldOption[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const record = asRecord(entry);
-    const optionValue = str(record.value);
-    return optionValue ? [{ label: str(record.label) || optionValue, value: optionValue }] : [];
-  });
-}
-
-function fieldEditOf(record: Record<string, unknown>): FieldEdit | undefined {
-  const raw = asRecord(record.editable);
-  const path = strings(raw.path);
-  const kind = raw.kind;
-  if (
-    path.length === 0 ||
-    (kind !== 'text' &&
-      kind !== 'text-array' &&
-      kind !== 'number' &&
-      kind !== 'select' &&
-      kind !== 'checkboxes' &&
-      kind !== 'chips')
-  ) {
-    return undefined;
-  }
-  return {
-    path,
-    kind,
-    value: kind === 'checkboxes' || kind === 'chips' ? strings(raw.value) : str(raw.value),
-    options: fieldOptions(raw.options),
-  };
-}
-
-/**
- * Set `value` at `path` inside `obj`, copying each object the path passes
- * through rather than mutating it in place — `confirmArgs` (and its nested
- * `fields`) stays the object the bridge handed this render, untouched,
- * even though several edits may each set a different path into it.
- */
-function setPath(obj: Record<string, unknown>, path: readonly string[], value: unknown): void {
-  let target = obj;
-  for (let i = 0; i < path.length - 1; i++) {
-    const key = path[i]!;
-    const next = asRecord(target[key]);
-    const copy = { ...next };
-    target[key] = copy;
-    target = copy;
-  }
-  target[path[path.length - 1]!] = value;
-}
+import {
+  descriptionValue,
+  issueCardOf,
+  planPress,
+  settle,
+  summaryValue,
+  type FieldEdit,
+  type IssueInputs,
+  type Press,
+} from './issue-preview.model';
 
 function render(bridge: WidgetBridge, result: ToolResult): void {
   const root = document.getElementById('root');
   if (!root) return;
   root.textContent = '';
 
-  const preview = asRecord(result.structuredContent);
-  const confirmTool = str(preview.confirmTool);
-  const confirmArgs = asRecord(preview.confirmArgs);
-
-  const card = el('div', 'card');
-  if (result.isError || !confirmTool) {
-    card.append(
-      el('div', 'card-title', str(preview.title) || 'Preview'),
-      el('div', 'status error', resultText(result) || 'The preview could not be prepared.')
-    );
+  // What the result shows, and every rule below, is issue-preview.model.ts.
+  const shown = issueCardOf(result, recallDone);
+  if (shown.kind === 'error') {
+    const card = el('div', 'card');
+    card.append(el('div', 'card-title', shown.title), el('div', 'status error', shown.message));
     root.append(card);
     return;
   }
-
-  // Keyed by the id the preview tool minted for THIS card. It used to be
-  // the confirm tool plus a slice of its arguments, so a second preview of
-  // the same kind recalled the first one's receipt and rendered as already
-  // cancelled — no fields, no button, and no way back short of clearing
-  // localStorage.
-  //
-  // No id means an older server: render the live card rather than risk
-  // recalling someone else's outcome. Forgetting a cancellation costs one
-  // extra click; showing a stale one makes the tool unusable.
-  const previewId = str(preview.previewId);
-  const stateKey = previewId ? `renkei-preview:${previewId}` : '';
-  const remembered = doneStateOf(preview.resolved) ?? (stateKey ? recallDone(stateKey) : null);
-  if (remembered) {
-    renderDone(root, remembered);
+  if (shown.kind === 'receipt') {
+    renderDone(root, shown.state);
     return;
   }
+  const preview = shown.preview;
+  const { stateKey } = preview;
   const finishDone = (state: DoneState) => {
     if (stateKey) {
       rememberDone(stateKey, state);
@@ -178,32 +98,19 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
     renderDone(root, state);
   };
 
-  card.append(el('div', 'card-title', str(preview.title)));
-  if (str(preview.subtitle)) card.append(el('div', 'card-subtitle', str(preview.subtitle)));
+  const card = el('div', 'card');
+  card.append(el('div', 'card-title', preview.title));
+  if (preview.subtitle) card.append(el('div', 'card-subtitle', preview.subtitle));
   card.append(el('div', 'card-subtitle', 'Review — nothing is written until you confirm.'));
 
-  const editable = asRecord(preview.editable);
-  const summaryKey = str(editable.summaryKey);
-  const descriptionKey = str(editable.descriptionKey);
-  const summaryInput = summaryKey ? inputField('Summary', str(confirmArgs[summaryKey])) : null;
+  const summary = summaryValue(preview);
+  const summaryInput = summary !== null ? inputField('Summary', summary) : null;
   if (summaryInput) card.append(summaryInput.field);
 
-  const rows: FieldRow[] = Array.isArray(preview.fields)
-    ? preview.fields.map((row) => {
-        const record = asRecord(row);
-        const editable = fieldEditOf(record);
-        return {
-          label: str(record.label),
-          value: str(record.value),
-          ...(str(record.oldValue) ? { oldValue: str(record.oldValue) } : {}),
-          ...(editable ? { editable } : {}),
-        };
-      })
-    : [];
-  // One read() per editable row, gathered on confirm rather than per
+  // One read() per editable row, gathered on a press rather than per
   // keystroke — the control IS the state, this just knows how to read it.
-  const fieldEdits: { path: string[]; read: () => unknown }[] = [];
-  for (const row of rows) {
+  const fieldReads: { edit: FieldEdit; read: () => string | string[] }[] = [];
+  for (const row of preview.rows) {
     if (!row.editable) {
       const field = el('div', 'field');
       field.append(el('div', 'field-label', row.label));
@@ -213,130 +120,71 @@ function render(bridge: WidgetBridge, result: ToolResult): void {
       continue;
     }
     const edit = row.editable;
+    const list = Array.isArray(edit.value) ? edit.value : [];
     let built: { field: HTMLElement };
     if (edit.kind === 'select') {
       const control = selectField(row.label, str(edit.value), edit.options);
       built = control;
-      fieldEdits.push({ path: edit.path, read: () => control.input.value });
+      fieldReads.push({ edit, read: () => control.input.value });
     } else if (edit.kind === 'checkboxes') {
-      const control = checkboxGroupField(
-        row.label,
-        Array.isArray(edit.value) ? edit.value : [],
-        edit.options
-      );
+      const control = checkboxGroupField(row.label, list, edit.options);
       built = control;
-      fieldEdits.push({ path: edit.path, read: () => control.getValues() });
+      fieldReads.push({ edit, read: () => control.getValues() });
     } else if (edit.kind === 'chips') {
-      const control = chipsField(
-        row.label,
-        Array.isArray(edit.value) ? edit.value : [],
-        edit.options
-      );
+      const control = chipsField(row.label, list, edit.options);
       built = control;
-      fieldEdits.push({ path: edit.path, read: () => control.getValues() });
+      fieldReads.push({ edit, read: () => control.getValues() });
     } else if (edit.kind === 'number') {
       const control = numberField(row.label, str(edit.value));
       built = control;
-      fieldEdits.push({
-        path: edit.path,
-        read: () => (control.input.value.trim() ? Number(control.input.value) : null),
-      });
-    } else if (edit.kind === 'text-array') {
-      const control = inputField(row.label, str(edit.value));
-      built = control;
-      fieldEdits.push({
-        path: edit.path,
-        read: () =>
-          control.input.value
-            .split(',')
-            .map((entry) => entry.trim())
-            .filter(Boolean),
-      });
+      fieldReads.push({ edit, read: () => control.input.value });
     } else {
       const control = inputField(row.label, str(edit.value));
       built = control;
-      fieldEdits.push({ path: edit.path, read: () => control.input.value.trim() });
+      fieldReads.push({ edit, read: () => control.input.value });
     }
     if (row.oldValue) built.field.append(el('div', 'card-subtitle', `was: ${row.oldValue}`));
     card.append(built.field);
   }
 
-  const descriptionInput = descriptionKey
-    ? textField('Description (markdown)', str(confirmArgs[descriptionKey]))
-    : null;
+  const description = descriptionValue(preview);
+  const descriptionInput =
+    description !== null ? textField('Description (markdown)', description) : null;
   if (descriptionInput) card.append(descriptionInput.field);
 
-  // Present only when a host wants Cancel to BE a real decision instead of
-  // a purely local dismissal — an approval card's Decline, leveraging the
-  // same button rather than duplicating it (see approval-preview.ts).
-  // Absent (every existing chat preview), Cancel keeps its original,
-  // unconditionally local behavior below — nothing about this changes for
-  // a card that never sets it.
-  const cancelTool = str(preview.cancelTool);
-  const cancelButton = el('button', undefined, str(preview.cancelLabel) || 'Cancel');
-  const confirmButton = el('button', 'primary', str(preview.confirmLabel) || 'Confirm');
+  const cancelButton = el('button', undefined, preview.cancelLabel);
+  const confirmButton = el('button', 'primary', preview.confirmLabel);
   const footer = cardActions([cancelButton, confirmButton]);
   card.append(footer.actions);
   root.append(card);
 
-  const gatherArgs = (): Record<string, unknown> => {
-    const args = { ...confirmArgs };
-    if (summaryInput && summaryKey) {
-      args[summaryKey] = summaryInput.input.value.trim() || str(confirmArgs[summaryKey]);
-    }
-    if (descriptionInput && descriptionKey) {
-      const value = descriptionInput.input.value.trim();
-      if (value) args[descriptionKey] = value;
-      else delete args[descriptionKey];
-    }
-    for (const edit of fieldEdits) setPath(args, edit.path, edit.read());
-    return args;
-  };
-
-  footer.run(confirmButton, async () => {
-    const confirmed = await bridge.callTool(confirmTool, gatherArgs(), stateKey);
-    const text = resultText(confirmed);
-    if (confirmed.isError) throw new Error(text || 'The write failed');
-    // First line only on the card ("Created issue SCRUM-42"); the model gets
-    // the whole result — it needs the key and link for its next reply.
-    // Whatever the confirm tool linked to — the issue, and for a JSM
-    // request the customer portal as well — so the thing just created can
-    // be opened from the card instead of scrolled back for.
-    const links = parseLinks(text);
-    finishDone({
-      icon: 'sent',
-      headline: text.split('\n')[0] || 'Done',
-      detail: str(preview.subtitle) || str(preview.title),
-      ...(links.length > 0 ? { links } : {}),
-    });
-    bridge.updateModelContext(
-      `The user confirmed "${str(preview.title)}" on the preview card. Result: ${text}`,
-      stateKey
-    );
+  const inputs = (): IssueInputs => ({
+    summary: summaryInput ? summaryInput.input.value : null,
+    description: descriptionInput ? descriptionInput.input.value : null,
+    fields: fieldReads.map(({ edit, read }) => ({ edit, raw: read() })),
   });
 
-  footer.run(cancelButton, async () => {
-    if (!cancelTool) {
-      finishDone({ icon: 'cancelled', headline: 'Cancelled', detail: 'Nothing was written.' });
-      bridge.updateModelContext(
-        `The user cancelled "${str(preview.title)}" from the preview card. Nothing was written.`,
-        stateKey
+  const press = async (which: Press) => {
+    const plan = planPress(preview, which, inputs());
+    let outcome;
+    if (plan.kind === 'local') {
+      outcome = plan;
+    } else {
+      // A refusal from the host (another device already decided this
+      // card) rejects here, and cardActions shows its words.
+      const answered = settle(
+        preview,
+        which,
+        await bridge.callTool(plan.name, plan.args, stateKey)
       );
-      return;
+      if (!answered.ok) throw new Error(answered.error);
+      outcome = answered;
     }
-    const declined = await bridge.callTool(cancelTool, gatherArgs(), stateKey);
-    const text = resultText(declined);
-    if (declined.isError) throw new Error(text || 'The request failed');
-    finishDone({
-      icon: 'cancelled',
-      headline: text.split('\n')[0] || 'Cancelled',
-      detail: str(preview.subtitle) || str(preview.title),
-    });
-    bridge.updateModelContext(
-      `The user declined "${str(preview.title)}" from the preview card. Result: ${text}`,
-      stateKey
-    );
-  });
+    finishDone(outcome.receipt);
+    bridge.updateModelContext(outcome.context, stateKey);
+  };
+  footer.run(confirmButton, () => press('confirm'));
+  footer.run(cancelButton, () => press('cancel'));
 }
 
 const bridge = new WidgetBridge('renkei-issue-preview');

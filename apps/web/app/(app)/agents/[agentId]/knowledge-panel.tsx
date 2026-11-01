@@ -14,50 +14,34 @@
  * remove one at a time.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingRegion, SkeletonList } from '@/components/skeleton';
+import {
+  bulkRemoval,
+  canSave,
+  initialKnowledge,
+  knowledgeReducer,
+  preview,
+  saveRequest,
+  selectAllBox,
+  type NoteRow,
+} from './knowledge-panel.model';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-interface NoteRow {
-  noteId: string;
-  title: string;
-  content: string;
-  authoredBy: 'user' | 'agent';
-  sourceAt: string | null;
-}
-
-interface Draft {
-  noteId: string | null;
-  title: string;
-  content: string;
-}
-
-export default function KnowledgePanel({
-  agentId,
-}: {
-  agentId: string;
-}) {
-  // null until the first load answers: "No notes yet." must not flash
-  // at someone whose notes are simply still on their way.
-  const [notes, setNotes] = useState<NoteRow[] | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [purgeArmed, setPurgeArmed] = useState(false);
+export default function KnowledgePanel({ agentId }: { agentId: string }) {
+  const [state, dispatch] = useReducer(knowledgeReducer, initialKnowledge);
+  const { notes, draft, busy, error, selected, purgeArmed } = state;
+  const box = selectAllBox(state);
 
   const base = `/api/agents/${agentId}/knowledge`;
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ notes: NoteRow[] }>(base);
-    if (loadError) setError(loadError);
-    else {
-      setError(null);
-      setNotes(data?.notes ?? []);
-    }
+    if (loadError) dispatch({ type: 'loadFailed', error: loadError });
+    else dispatch({ type: 'loaded', notes: data?.notes ?? [] });
   }, [base]);
 
   useEffect(() => {
@@ -66,58 +50,41 @@ export default function KnowledgePanel({
 
   const save = async () => {
     if (!draft) return;
-    setBusy(true);
-    setError(null);
-    const body = { title: draft.title, content: draft.content };
-    const saveError = draft.noteId
-      ? await sendJson(`${base}/${draft.noteId}`, 'PUT', body)
-      : (await sendJsonFull(base, 'POST', body)).error;
-    setBusy(false);
+    const request = saveRequest(draft);
+    dispatch({ type: 'sent' });
+    const saveError =
+      request.method === 'PUT'
+        ? await sendJson(`${base}${request.path}`, 'PUT', request.body)
+        : (await sendJsonFull(`${base}${request.path}`, 'POST', request.body)).error;
     if (saveError) {
-      setError(saveError);
+      dispatch({ type: 'failed', error: saveError });
       return;
     }
-    setDraft(null);
+    dispatch({ type: 'saved' });
     await load();
-  };
-
-  const toggle = (noteId: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(noteId)) next.delete(noteId);
-      else next.add(noteId);
-      return next;
-    });
   };
 
   /** Delete the selection, or everything when `all`. */
   const removeMany = async (all: boolean) => {
-    setBusy(true);
-    setError(null);
-    const body = all ? { all: true } : { noteIds: [...selected] };
-    const { error: bulkError } = await sendJsonFull<{ deleted: number }>(base, 'DELETE', body);
-    setBusy(false);
-    setPurgeArmed(false);
+    const removal = bulkRemoval(state, all);
+    dispatch({ type: 'sent' });
+    const { error: bulkError } = await sendJsonFull<{ deleted: number }>(base, 'DELETE', removal);
     if (bulkError) {
-      setError(bulkError);
+      dispatch({ type: 'failed', error: bulkError });
       return;
     }
-    // A draft editing something just deleted would save it back.
-    if (draft?.noteId && (all || selected.has(draft.noteId))) setDraft(null);
-    setSelected(new Set());
+    dispatch({ type: 'removed', removal });
     await load();
   };
 
   const remove = async (noteId: string) => {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'sent' });
     const removeError = await sendJson(`${base}/${noteId}`, 'DELETE');
-    setBusy(false);
     if (removeError) {
-      setError(removeError);
+      dispatch({ type: 'failed', error: removeError });
       return;
     }
-    if (draft?.noteId === noteId) setDraft(null);
+    dispatch({ type: 'removed', removal: { noteIds: [noteId] } });
     await load();
   };
 
@@ -143,19 +110,15 @@ export default function KnowledgePanel({
           <label className="flex items-center gap-1.5 text-gray-600 dark:text-gray-400">
             <input
               type="checkbox"
-              checked={selected.size === notes.length && notes.length > 0}
+              checked={box.checked}
               // Indeterminate is the honest state for a partial selection and
               // cannot be expressed as `checked`.
               ref={(input) => {
-                if (input) input.indeterminate = selected.size > 0 && selected.size < notes.length;
+                if (input) input.indeterminate = box.indeterminate;
               }}
-              onChange={() =>
-                setSelected(
-                  selected.size === notes.length ? new Set() : new Set(notes.map((n) => n.noteId))
-                )
-              }
+              onChange={() => dispatch({ type: 'toggleAll' })}
             />
-            {selected.size > 0 ? `${selected.size} selected` : 'Select all'}
+            {box.label}
           </label>
           {selected.size > 0 ? (
             <button
@@ -180,7 +143,7 @@ export default function KnowledgePanel({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPurgeArmed(false)}
+                  onClick={() => dispatch({ type: 'disarmPurge' })}
                   className="text-gray-500 hover:underline"
                 >
                   Keep them
@@ -189,7 +152,7 @@ export default function KnowledgePanel({
             ) : (
               <button
                 type="button"
-                onClick={() => setPurgeArmed(true)}
+                onClick={() => dispatch({ type: 'armPurge' })}
                 className="text-red-600 hover:underline dark:text-red-400"
               >
                 Clear knowledge
@@ -210,7 +173,7 @@ export default function KnowledgePanel({
                 type="checkbox"
                 className="mt-1 shrink-0"
                 checked={selected.has(note.noteId)}
-                onChange={() => toggle(note.noteId)}
+                onChange={() => dispatch({ type: 'toggle', noteId: note.noteId })}
                 aria-label={`Select ${note.title}`}
               />
               <div className="min-w-0 flex-1">
@@ -223,16 +186,14 @@ export default function KnowledgePanel({
                   ) : null}
                 </p>
                 <p className="mt-1 break-words whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-400">
-                  {note.content.length > 300 ? `${note.content.slice(0, 299)}…` : note.content}
+                  {preview(note.content)}
                 </p>
               </div>
               <div className="flex shrink-0 gap-2 text-sm">
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() =>
-                    setDraft({ noteId: note.noteId, title: note.title, content: note.content })
-                  }
+                  onClick={() => dispatch({ type: 'edit', note })}
                   className="text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Edit
@@ -258,19 +219,23 @@ export default function KnowledgePanel({
             className={inputClass}
             placeholder="Title (e.g. Escalation policy)"
             value={draft.title}
-            onChange={(event) => setDraft({ ...draft, title: event.target.value })}
+            onChange={(event) =>
+              dispatch({ type: 'draftChanged', field: 'title', value: event.target.value })
+            }
           />
           <textarea
             aria-label="Note content"
             className={`${inputClass} mt-2 min-h-32`}
             placeholder="What the agent should know…"
             value={draft.content}
-            onChange={(event) => setDraft({ ...draft, content: event.target.value })}
+            onChange={(event) =>
+              dispatch({ type: 'draftChanged', field: 'content', value: event.target.value })
+            }
           />
           <div className="mt-2 flex gap-2">
             <button
               type="button"
-              disabled={busy || !draft.title.trim() || !draft.content.trim()}
+              disabled={!canSave(state)}
               onClick={() => void save()}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
@@ -278,7 +243,7 @@ export default function KnowledgePanel({
             </button>
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={() => dispatch({ type: 'draftCancelled' })}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Cancel
@@ -288,7 +253,7 @@ export default function KnowledgePanel({
       ) : (
         <button
           type="button"
-          onClick={() => setDraft({ noteId: null, title: '', content: '' })}
+          onClick={() => dispatch({ type: 'newNote' })}
           className="mt-2 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
           + Add a note

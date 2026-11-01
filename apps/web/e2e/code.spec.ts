@@ -16,6 +16,13 @@
  * checkout cloned by the chat's first turn — whose stand-in model
  * (e2e/llm-stub.mjs) deletes a file and commits, the steps the transcript
  * shows. desktop-dark runs the old `mobile` project's paths at phone width.
+ *
+ * Rules live beside the components, not here: the new-project form and
+ * "Create repository" (new-code-project.model.test.ts), the Commit dialog
+ * (commit-dialog.model.test.ts), the tree (repo-tree.model.test.ts), Add
+ * files (add-files-modal.model.test.ts) and the branch picker
+ * (branch-switcher.model.test.ts), under app/(app)/code/_components/, and
+ * the upload queue (components/uploads/upload-queue.model.test.ts).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -100,7 +107,11 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
  * viewport and user agent), in a context of its own, signed in as them.
  */
 async function phonePage(browser: Browser, person: Person): Promise<Page> {
-  const context = await browser.newContext({ ...devices['Pixel 7'], baseURL: MEMORY_BASE_URL });
+  const context = await browser.newContext({
+    reducedMotion: 'reduce',
+    ...devices['Pixel 7'],
+    baseURL: MEMORY_BASE_URL,
+  });
   await signIn(context, person);
   return context.newPage();
 }
@@ -127,7 +138,9 @@ test.describe('code projects', () => {
     await removeModel(page.request, ids.modelId);
   });
 
-  test('index, menu, new project, project page, chat, delete', async ({ page }, testInfo) => {
+  test('index, menu, new project, project page, chat, delete @smoke', async ({
+    page,
+  }, testInfo) => {
     // The phone the old `mobile` project was, as a resized viewport.
     const mobile = testInfo.project.name === 'desktop-dark';
     const shot = (name: string) =>
@@ -186,7 +199,9 @@ test.describe('code projects', () => {
     // picker, Bitbucket locked on, dismissed with Escape.
     await main.getByRole('menuitem', { name: 'Tools' }).click();
     const toolsDialog = page.getByRole('dialog', { name: 'Tools' });
-    await expect(toolsDialog.getByText(/Connectors chats in this project start with/)).toBeVisible();
+    await expect(
+      toolsDialog.getByText(/Connectors chats in this project start with/)
+    ).toBeVisible();
     await expect(toolsDialog.getByRole('checkbox', { name: /Bitbucket/ })).toBeChecked();
     await expect(toolsDialog.getByRole('checkbox', { name: /Bitbucket/ })).toBeDisabled();
     await shot('code-project-tools.png');
@@ -401,7 +416,10 @@ test.describe('code projects', () => {
     await filesDialog.getByRole('button', { name: 'Add to repository' }).click();
     // The row itself says it landed; the footer carries no report.
     await expect(
-      filesDialog.getByTestId('upload-table').getByRole('listitem').filter({ hasText: 'docs/notes.md' })
+      filesDialog
+        .getByTestId('upload-table')
+        .getByRole('listitem')
+        .filter({ hasText: 'docs/notes.md' })
     ).toContainText('Added');
     await filesDialog.getByRole('button', { name: 'Done' }).click();
 
@@ -680,20 +698,18 @@ test.describe('code projects', () => {
     await expect(main.getByText(/You edited/)).toBeVisible();
     await expect(main.getByRole('button', { name: 'src/billing.ts', exact: true })).toBeVisible();
 
-    // ── Commit: the changed files with who-changed-what tags, a message,
-    //    then the hash and a push ──
+    // ── Commit: the changed file tagged as edited here, a message, then
+    //    the hash and a push (what the dialog sends, refuses and says is
+    //    commit-dialog.model.test.ts) ──
     await main.getByRole('button', { name: /^Commit/ }).click();
     const dialog = page.getByRole('dialog', { name: 'Commit changes' });
     await expect(dialog.getByText('src/billing.ts')).toBeVisible();
     await expect(dialog.getByText('edited here')).toBeVisible();
-    await expect(dialog.getByText(/Nothing leaves the sandbox until you push/)).toBeVisible();
     await dialog.getByLabel('Message').fill('Note the manual review');
-    await dialog.getByLabel('Description').fill('A comment for the next reader.');
     await shot('code-pane-desktop-commit.png');
     await dialog.getByRole('button', { name: /^Commit 1 file/ }).click();
     const done = page.getByRole('dialog', { name: 'Committed' });
     await expect(done.getByText(/Committed c0ffee/)).toBeVisible();
-    await expect(done.getByText('not pushed')).toBeVisible();
     await done.getByRole('button', { name: 'Push branch' }).click();
     await expect(done.getByText(/pushed to origin\/renkei\//)).toBeVisible();
     await shot('code-pane-desktop-pushed.png');
@@ -859,7 +875,9 @@ test.describe('code projects', () => {
 
     // ── "Create new repository", beside "Choose existing": pick the
     //    workspace and project, name it, and an empty repo appears on
-    //    Bitbucket — used exactly like one the browser would have found ──
+    //    Bitbucket — used exactly like one the browser would have found.
+    //    When Create is allowed, what it says it will make and what the
+    //    form sends are new-code-project.model.test.ts ──
     await page.goto(`/code/new`);
     await page.getByLabel(/^Name/).filter({ visible: true }).fill(ids.createdRepoName);
     await page.getByRole('tab', { name: 'Create new' }).click();
@@ -870,22 +888,15 @@ test.describe('code projects', () => {
     await expect(projectPick).toBeEnabled({ timeout: 15_000 });
     await projectPick.selectOption('NOTIF');
     const createRepo = page.getByRole('button', { name: 'Create repository', exact: true });
-    await expect(createRepo).toBeDisabled();
     await page.getByLabel('Repository name').fill(ids.createdRepoName);
-    await expect(
-      page.getByText(`Creates acme/${ids.createdRepoSlug} — empty and private.`)
-    ).toBeVisible();
     await expect(createRepo).toBeEnabled();
     await shot('code-new-create-repo.png');
     await createRepo.click();
 
     // ── The created repo drops into the same "chosen" slot a browsed one
-    //    would; the rest of the form (branch placeholder, instructions,
-    //    Create project) behaves identically to an existing repository. Its
-    //    initial commit lands on `main`, so that is its main branch ──
+    //    would, and Create project makes the project from it ──
     await expect(page.getByText(`acme/${ids.createdRepoSlug}`)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Choose another' })).toBeVisible();
-    await expect(page.getByLabel('Branch (optional)')).toHaveAttribute('placeholder', 'main');
     const create = page.getByRole('button', { name: 'Create project' });
     await expect(create).toBeEnabled();
     await create.click();

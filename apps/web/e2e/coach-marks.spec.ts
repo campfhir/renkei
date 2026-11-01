@@ -1,10 +1,23 @@
 /**
  * The coach marks, end to end: a newcomer lands on the home page and the
- * welcome tour starts on its own; each step is captured; Finish records
- * a completion and the tour stays away; Skip records a dismissal; the
- * Tutorials page behind the avatar shows every tour's state and replays
- * one; "Don't show tutorials" and the page's switch both stop tours
- * starting unasked; and the operator's report shows the rows.
+ * welcome tour starts on its own; each step is drawn (the spotlight on
+ * its target, the drawer opened for a menu step on a phone) and
+ * captured; the buttons and the arrow keys and Escape drive it; Finish
+ * and Skip reach the coach-mark route; the Tutorials page behind the
+ * avatar shows every tour's state and replays one; "Don't show
+ * tutorials" and the page's switch reach the preference route; and the
+ * operator's report shows the rows.
+ *
+ * The rules live in node: when a tour starts or stays away (settled,
+ * auto-start off, ended on this page, the org switch, a request left by
+ * the Tutorials page or a link), how Next/Back/Skip/Finish move it, what
+ * is reported at which step, and that "Don't show tutorials" is offered
+ * only on a tour that started unasked are
+ * components/coach-marks/provider.model.test.ts (on
+ * lib/coach-marks/select.test.ts and progress.test.ts); where the card
+ * and spotlight go, which key does what and what the card says are
+ * overlay.model.test.ts. This file no longer waits out the auto-start
+ * delay to see that nothing came.
  *
  * One person per project walks the whole file (the tests build on each
  * other's progress), signed in through the suite's sign-in route with
@@ -36,12 +49,6 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
     // The overlay is fixed to the viewport; a full-page resize would move it.
     fullPage: false,
   });
-}
-
-/** A moment longer than the engine's own half-second delay before a tour starts. */
-async function expectNoTour(page: Page): Promise<void> {
-  await page.waitForTimeout(1200);
-  await expect(page.getByTestId(CARD)).toHaveCount(0);
 }
 
 // One person for the whole walk — the tests build on each other's
@@ -162,18 +169,14 @@ test('the welcome tour greets a newcomer on the home page and records a completi
       dismissedCount: 0,
     });
 
-  // Finished means finished: it does not come back. The next home-page
-  // tour (the keyboard shortcuts) takes its place; skip it to leave the
-  // home page tour-free for what follows.
+  // Finished means finished: the next home-page tour (the keyboard
+  // shortcuts) takes its place. Skip it, as the report below counts it.
   await page.reload();
   await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'shortcuts');
   await card.getByRole('button', { name: 'Skip tour' }).click();
   await expect(card).toHaveCount(0);
   await expect.poll(() => progressOf('shortcuts')).toMatchObject({ status: 'dismissed' });
-  await page.reload();
-  await expect(page.getByRole('heading', { level: 1, name: 'Actionable items' })).toBeVisible();
-  await expectNoTour(page);
 });
 
 test('skipping a tour records the dismissal and where it happened', async ({
@@ -185,8 +188,6 @@ test('skipping a tour records the dismissal and where it happened', async ({
   await expect(card).toBeVisible();
   await expect(card).toHaveAttribute('data-coach-tour', 'agents');
   await expect(card).toHaveAttribute('data-coach-step', 'new');
-  // A tour that started unasked offers the way to stop them all.
-  await expect(card.getByRole('button', { name: "Don't show tutorials" })).toBeVisible();
   await shot(page, testInfo, 'coach-agents-1-new');
 
   await card.getByRole('button', { name: 'Next' }).click();
@@ -204,10 +205,6 @@ test('skipping a tour records the dismissal and where it happened', async ({
       completedCount: 0,
       dismissedCount: 1,
     });
-
-  await page.reload();
-  await expect(page.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
-  await expectNoTour(page);
 });
 
 test('Escape skips as well', async ({ page, signedIn: _signedIn }) => {
@@ -248,14 +245,12 @@ test('the Tutorials page lists every tour with its state and replays one', async
   await expect(page.getByRole('switch', { name: 'Show tours automatically' })).toBeChecked();
   await shot(page, testInfo, 'coach-tutorials');
 
-  // Replay: back to the home page, tour running, no "don't show" offer —
-  // they asked for this one.
+  // Replay: back to the home page, tour running.
   await page.getByTestId('tutorial-welcome').getByRole('button', { name: 'Replay' }).click();
   const card = page.getByTestId(CARD);
   await expect(card).toBeVisible();
   await expect(page).toHaveURL(/\/$/);
   await expect(card).toHaveAttribute('data-coach-tour', 'welcome');
-  await expect(card.getByRole('button', { name: "Don't show tutorials" })).toHaveCount(0);
   await shot(page, testInfo, 'coach-replay');
   await card.getByRole('button', { name: 'Skip tour' }).click();
   await expect(card).toHaveCount(0);
@@ -320,12 +315,7 @@ test('"Don\'t show tutorials" and the switch both stop tours starting unasked', 
   await expect(toggle).not.toBeChecked();
   await shot(page, testInfo, 'coach-tutorials-off');
 
-  // Off: a tour never taken (the Preferences page's) stays away.
-  await page.goto(`/preferences`);
-  await expect(page.getByRole('heading', { level: 1, name: 'Preferences' })).toBeVisible();
-  await expectNoTour(page);
-
-  // On again: it comes.
+  // On again: a tour never taken (the Preferences page's) comes.
   await page.goto(`/tutorials`);
   await toggle.click();
   await expect(toggle).toBeChecked();

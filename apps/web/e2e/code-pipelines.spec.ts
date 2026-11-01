@@ -1,21 +1,31 @@
 /**
- * A Bitbucket code project's Pipelines: the card on the project page
- * (off, no file, the last run) opening the project's Pipelines page,
- * where the recent runs are listed, the switch turned on, the pipeline
- * file started from a template and committed, a run started, a secured and a plain repository variable added
- * (the secured value never rendered), a plain one edited and removed,
- * and a deployment environment's variable added — then the page at
- * phone width. Bitbucket is the stub in sandbox-stub.mjs (the app is
- * pointed at it with BITBUCKET_API_BASE_URL), which keeps one pipelines
- * row per repository; each test's person makes a project on a repository
- * of its own (connected through the real connect flow, with the admin and
+ * A Bitbucket code project's Pipelines, in a browser: the card on the
+ * project page (off, no file, the last run) opening the project's
+ * Pipelines page, which renders the recent runs, the setup and the empty
+ * variable sets on the real server; one press through — a secured and a
+ * plain repository variable saved from the text box, the request reaching
+ * the route and the stand-in, the names drawn and the secured value never
+ * on the page; the rest of a set-up repository (the switch on, the file
+ * committed, a run started, an environment's variable) staged through the
+ * routes the page calls and drawn after a reload, on the page and on the
+ * card; then the page at phone width, the runs as cards. Bitbucket is the
+ * stub in sandbox-stub.mjs (the app is pointed at it with
+ * BITBUCKET_API_BASE_URL), which keeps one pipelines row per repository;
+ * each test's person makes a project on a repository of its own
+ * (connected through the real connect flow, with the admin and
  * pipeline-variable scopes the page stands on: e2e/support/code-host.ts),
  * so no two tests share state.
+ *
+ * Where its rules went: what a template does to the file box, the commit
+ * and run requests and when they can be sent, which variables a save
+ * takes away and the question it asks, the words under a saved set, how a
+ * run's state and duration read — app/(app)/code/_components/
+ * pipelines-page.model.test.ts.
  */
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Page, TestInfo } from '@playwright/test';
+import type { APIResponse, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { connectBitbucket, createCodeProject, prepareCodeHost } from './support/code-host';
 
@@ -99,7 +109,7 @@ test.describe('Code project pipelines', () => {
     ids = await stage(page, testInfo);
   });
 
-  test('card, page, runs, switch, variables, environment, phone width', async ({
+  test('card, page, a variable set saved, a set-up repository drawn, phone width', async ({
     page,
   }, testInfo) => {
     const shot = (name: string) =>
@@ -179,62 +189,10 @@ test.describe('Code project pipelines', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-page.png');
 
-    // ── Turn it on ──
-    await setup.getByRole('button', { name: 'Turn on' }).click();
-    await expect(setup.getByText('On', { exact: true })).toBeVisible();
-    await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
-
-    // ── The pipeline file, from a template: the editor fills from the
-    //    picked one, the text is committed to the branch, and the setup
-    //    then says the file is there ──
-    await setup.getByRole('button', { name: 'Start from a template' }).click();
-    const fileForm = setup.getByRole('form', { name: 'Pipeline file' });
-    const fileText = fileForm.getByLabel('bitbucket-pipelines.yml');
-    await expect(fileText).toHaveValue('');
-    const pnpmOption = fileForm.getByRole('option', { name: /^Node with pnpm/ });
-    await fileForm
-      .getByLabel('Start from a template')
-      .selectOption((await pnpmOption.getAttribute('value')) ?? '');
-    await expect(fileText).toHaveValue(/pnpm install --frozen-lockfile/);
-    await fileText.fill((await fileText.inputValue()).replace('pnpm test', 'pnpm test -- --ci'));
-    await expect(fileForm.getByLabel('Commit message')).toHaveValue('Add bitbucket-pipelines.yml');
-    await shot('code-pipelines-file-template.png');
-    await expect(fileForm.getByText(/Commit goes straight to main/)).toBeVisible();
-    await fileForm.getByRole('button', { name: 'Commit', exact: true }).click();
-    await expect(setup.getByRole('status')).toContainText(
-      'Committed bitbucket-pipelines.yml to main'
-    );
-    await expect(
-      setup.getByRole('status').getByRole('link', { name: 'Open on Bitbucket' })
-    ).toHaveAttribute('href', `https://bitbucket.org/${ids.repo}/src/main/bitbucket-pipelines.yml`);
-    await expect(setup.getByText('On main.')).toBeVisible();
-    await expect(setup.getByRole('button', { name: 'Start from a template' })).toHaveCount(0);
-    // Editing it again opens what was committed, as the person left it.
-    await setup.getByRole('button', { name: 'Edit file' }).click();
-    await expect(fileText).toHaveValue(/pnpm test -- --ci/);
-    await expect(fileForm.getByLabel('Commit message')).toHaveValue(
-      'Update bitbucket-pipelines.yml'
-    );
-    await fileForm.getByRole('button', { name: 'Cancel' }).click();
-
-    // ── Start a run: the project's branch is offered, a custom pipeline
-    //    is optional; the run is named and heads the list ──
-    await runs.getByRole('button', { name: 'Run pipeline' }).click();
-    const runForm = runs.getByRole('form', { name: 'Run pipeline' });
-    await expect(runForm.getByLabel('Branch or tag')).toHaveValue('main');
-    await runForm.getByLabel('Custom pipeline (optional)').fill('deploy');
-    await runForm.getByRole('button', { name: 'Start run' }).click();
-    await expect(runs.getByRole('status')).toContainText('Run #3 started on main');
-    await expect(runForm).toHaveCount(0);
-    await expect(rows).toHaveCount(4);
-    await expect(rows.nth(1)).toContainText('#3');
-    await expect(rows.nth(1)).toContainText('Pending');
-    await expect(rows.nth(1)).toContainText('E2E Dev');
-    await shot('code-pipelines-run-started.png');
-
-    // ── The repository's variables, as one text box: a secured line, a
-    //    plain one, and a line that is nothing — the names appear, the
-    //    bad line is reported, the secured value is never on the page ──
+    // ── The one press through: the repository's variables as one text
+    //    box — a secured line, a plain one, and a line that is nothing.
+    //    The names appear, the bad line is reported, the secured value is
+    //    never on the page ──
     await repositoryVariables.getByRole('button', { name: 'Add variables' }).click();
     const repoForm = repositoryVariables.getByRole('form', { name: 'Edit Repository variables' });
     const repoText = repoForm.getByLabel('Repository variables as text');
@@ -255,48 +213,57 @@ test.describe('Code project pipelines', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-variables.png');
 
-    // ── Editing again: the box holds the set, the secured one without its
-    //    value; a changed plain value applies, the secured one is kept ──
-    await repositoryVariables.getByRole('button', { name: 'Edit variables' }).click();
-    await expect(repoText).toHaveValue('API_BASE_URL=https://api.example.test\nsecret NPM_TOKEN=');
-    await repoText.fill('API_BASE_URL=https://api.example.test/v2\nsecret NPM_TOKEN=\n');
-    await repoForm.getByRole('button', { name: 'Save' }).click();
-    await expect(repositoryVariables.getByRole('status')).toHaveText('changed API_BASE_URL.');
-    await expect(apiRow.getByText('https://api.example.test/v2')).toBeVisible();
-    await expect(npmRow.getByText('Secured')).toBeVisible();
+    // ── The rest, staged through the routes the page calls: the switch on,
+    //    the file committed, a run started, the production environment's
+    //    secured variable ──
+    const api = `/api/code/projects/${ids.projectId}/pipelines`;
+    const ok = async (response: Promise<APIResponse>) => {
+      const answered = await response;
+      expect(answered.ok(), await answered.text()).toBe(true);
+      return answered;
+    };
+    await ok(page.request.put(api, { data: { enabled: true } }));
+    await ok(
+      page.request.put(`${api}/config-file`, {
+        data: {
+          text: SEED_PIPELINE_TEMPLATES[0]!.body,
+          message: 'Add bitbucket-pipelines.yml',
+        },
+      })
+    );
+    await ok(
+      page.request.post(`${api}/runs`, {
+        data: { ref: 'main', refType: 'branch', pattern: 'deploy' },
+      })
+    );
+    const read: { environments: { uuid: string; name: string }[] } = await (
+      await ok(page.request.get(api))
+    ).json();
+    const productionUuid = read.environments.find((env) => env.name === 'Production')?.uuid;
+    expect(productionUuid).toBeTruthy();
+    await ok(
+      page.request.put(`${api}/variables`, {
+        data: { text: 'secret DEPLOY_KEY=deploy-key-bytes', environmentUuid: productionUuid },
+      })
+    );
 
-    // ── A line taken out removes its variable, after a confirmation ──
-    await repositoryVariables.getByRole('button', { name: 'Edit variables' }).click();
-    await repoText.fill('secret NPM_TOKEN=\n');
-    page.once('dialog', (dialog) => {
-      expect(dialog.message()).toContain('Remove API_BASE_URL?');
-      void dialog.accept();
-    });
-    await repoForm.getByRole('button', { name: 'Save' }).click();
-    await expect(repositoryVariables.getByRole('status')).toHaveText('removed API_BASE_URL.');
-    await expect(apiRow).toHaveCount(0);
-    await expect(npmRow).toBeVisible();
-
-    // ── A deployment environment's set is its own box ──
-    await production.getByRole('button', { name: 'Add variables' }).click();
-    const productionForm = production.getByRole('form', { name: 'Edit Production' });
-    await productionForm
-      .getByLabel('Production as text')
-      .fill('secret DEPLOY_KEY=deploy-key-bytes');
-    await productionForm.getByRole('button', { name: 'Save' }).click();
-    await expect(production.getByRole('status')).toHaveText('added DEPLOY_KEY.');
+    // ── Drawn after a reload: the stub is the truth, not the page ──
+    await page.reload();
+    await expect(setup.getByText('On', { exact: true })).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
+    await expect(setup.getByText('On main.')).toBeVisible();
+    await expect(setup.getByRole('button', { name: 'Edit file' })).toBeVisible();
+    await expect(rows).toHaveCount(4);
+    await expect(rows.nth(1)).toContainText('#3');
+    await expect(rows.nth(1)).toContainText('Pending');
+    await expect(rows.nth(1)).toContainText('E2E Dev');
+    await expect(repositoryVariables.getByText('NPM_TOKEN')).toBeVisible();
     const deployRow = production.getByRole('listitem').filter({ hasText: 'DEPLOY_KEY' });
     await expect(deployRow.getByText('Secured')).toBeVisible();
     await expect(
       repositoryVariables.getByRole('listitem').filter({ hasText: 'DEPLOY_KEY' })
     ).toHaveCount(0);
     await expect(page.getByText('deploy-key-bytes')).toHaveCount(0);
-
-    // ── It all survives a reload: the stub is the truth, not the page ──
-    await page.reload();
-    await expect(setup.getByRole('button', { name: 'Turn off' })).toBeVisible();
-    await expect(repositoryVariables.getByText('NPM_TOKEN')).toBeVisible();
-    await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await shot('code-pipelines-set.png');
 
     // ── Back on the project page, the card reflects it: on, two variables ──
@@ -304,7 +271,7 @@ test.describe('Code project pipelines', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.name })).toBeVisible();
     await expect(
       card.getByText(
-        /^On · bitbucket-pipelines\.yml on main · 2 variables across the repository and 1 environment/
+        /^On · bitbucket-pipelines\.yml on main · 3 variables across the repository and 1 environment/
       )
     ).toBeVisible();
 
@@ -317,20 +284,18 @@ test.describe('Code project pipelines', () => {
     const runCards = runs.getByRole('listitem');
     await expect(runCards).toHaveCount(3);
     await expect(runCards.nth(0)).toContainText('#3');
-    await expect(runCards.nth(0)).toContainText('Pending');
     await expect(runCards.nth(1)).toContainText('#2');
     await expect(runCards.nth(1)).toContainText('Failed');
     await expect(runCards.nth(1)).toContainText('feature/retry-invoices');
-    await expect(runCards.nth(1)).toContainText('E2E Dev');
     await expect(runCards.nth(1)).toContainText('5m 12s');
-    await expect(runCards.nth(2)).toContainText('Successful');
-    // The form fits the phone too.
+    // The forms fit the phone too.
     await runs.getByRole('button', { name: 'Run pipeline' }).click();
     await expect(runs.getByRole('form', { name: 'Run pipeline' })).toBeVisible();
     await runs.getByRole('button', { name: 'Cancel' }).click();
-    await expect(production.getByText('DEPLOY_KEY')).toBeVisible();
     await production.getByRole('button', { name: 'Edit variables' }).click();
-    await expect(productionForm.getByLabel('Production as text')).toHaveValue('secret DEPLOY_KEY=');
+    await expect(
+      production.getByRole('form', { name: 'Edit Production' }).getByLabel('Production as text')
+    ).toHaveValue('secret DEPLOY_KEY=');
     await expectNoHorizontalOverflow(page);
     await shot('code-pipelines-mobile.png');
   });

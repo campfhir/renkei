@@ -55,6 +55,7 @@ import type { MCPToolContext } from '../common';
 import { createUploadSlot } from '../upload-slots';
 import type { OnBaseAuth } from './onbase-auth';
 import { phiActorOf, recordPhiAccess, type PhiAction } from '@/lib/phi-access';
+import { isRecord } from '@renkei/guards';
 
 /** The connector key the OnBase capabilities register under. */
 export const ONBASE_MCP_CONNECTOR = 'onbase';
@@ -69,10 +70,6 @@ export function errText(text: string) {
 
 export function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A documentId (or any other API-path segment) safe to place in a path. */

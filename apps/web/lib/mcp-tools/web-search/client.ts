@@ -19,6 +19,7 @@
 
 import { weekdayOf } from '@renkei/agents';
 import type { WebSearchConfig, WebSearchLocation } from './config';
+import { isRecord } from '@renkei/guards';
 
 /** A search can be agentic (several searches, page opens) — well past the 15s read budget. */
 export const WEB_SEARCH_TIMEOUT_MS = 90_000;
@@ -71,10 +72,6 @@ export type WebSearchOutcome =
   { ok: true; val: WebSearchResult } | { ok: false; error: WebSearchError };
 
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Tolerate a pasted FULL endpoint: the base may already end in /responses

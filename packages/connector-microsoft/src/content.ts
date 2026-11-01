@@ -31,6 +31,7 @@ import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
 import { graphRequest, GRAPH_BASE_URL } from './client';
 import { graphErrorDetail } from './fetch';
+import { isRecord } from '@renkei/guards';
 
 /**
  * Deliberately separate from client.ts's 15s JSON budget: a 25MB file over a
@@ -69,10 +70,6 @@ export interface GraphContent {
   contentType: string | null;
   /** The item as Graph reported it at download time — cTag, size, name… */
   item: Record<string, unknown>;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** Read a body with a hard ceiling, aborting rather than trusting Content-Length. */

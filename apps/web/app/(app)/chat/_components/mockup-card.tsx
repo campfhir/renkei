@@ -11,20 +11,18 @@
  * The frame loads the route's document (lib/mockups/document.ts), which is
  * laid out at the width the model designed for and measures itself; this
  * scales it by the card's own width, and fits its height to the report.
+ * What the card decides from those (scale, crop, centring) is its model,
+ * mockup-card.model.ts.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import type { MockupRequest } from '@/lib/mockups/request';
-import { clampFrameHeight, useFrameMessages, type FrameMessage } from './mockup-frame';
+import { useFrameMessages, type FrameMessage } from './mockup-frame';
+import { cardLayout, cardReducer, initCard } from './mockup-card.model';
 import MockupViewer from './mockup-viewer';
 import SvgSaveButtons from './svg-save-buttons';
-
-/** How tall the preview may be before it is cropped to its top; the viewer shows the rest. */
-const INLINE_MAX_HEIGHT = 440;
-/** The frame's height until the document reports its own. */
-const INITIAL_FRAME_HEIGHT = 400;
 
 export default function MockupCard({
   chatId,
@@ -35,43 +33,33 @@ export default function MockupCard({
   toolUseId: string;
   request: MockupRequest;
 }) {
-  const [open, setOpen] = useState(false);
+  const [state, dispatch] = useReducer(cardReducer, request, initCard);
   const boxRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [boxWidth, setBoxWidth] = useState(0);
-  const [reported, setReported] = useState<number | null>(null);
   // No `src` on the first render, for the reason widget-card.tsx gives: a
   // frame that loads before this component's listener is attached posts
   // its height into the void and the card stays at its guess. The source
   // is set only once the listener is there.
   const [ready, setReady] = useState(false);
 
-  const fixedHeight = request.height;
-  const onMessage = useCallback(
-    (message: FrameMessage) => {
-      if (message.type === 'size' && fixedHeight === null) {
-        setReported(clampFrameHeight(message.height));
-      }
-    },
-    [fixedHeight]
-  );
+  const onMessage = useCallback((message: FrameMessage) => {
+    if (message.type === 'size') dispatch({ type: 'frame-size', height: message.height });
+  }, []);
   useFrameMessages(frameRef, onMessage);
   useEffect(() => setReady(true), []);
 
   useLayoutEffect(() => {
     const box = boxRef.current;
     if (!box) return;
-    setBoxWidth(box.clientWidth);
-    const observer = new ResizeObserver(() => setBoxWidth(box.clientWidth));
+    dispatch({ type: 'measured', width: box.clientWidth });
+    const observer = new ResizeObserver(() =>
+      dispatch({ type: 'measured', width: box.clientWidth })
+    );
     observer.observe(box);
     return () => observer.disconnect();
   }, []);
 
-  const frameHeight = fixedHeight ?? reported ?? INITIAL_FRAME_HEIGHT;
-  const scale = boxWidth > 0 ? Math.min(1, boxWidth / request.width) : 1;
-  const fullHeight = frameHeight * scale;
-  const shownHeight = Math.min(fullHeight, INLINE_MAX_HEIGHT);
-  const cropped = fullHeight > INLINE_MAX_HEIGHT + 1;
+  const { scale, frameHeight, shownHeight, cropped, left } = cardLayout(state);
   const url = chatClient.mockupUrl(chatId, toolUseId);
 
   return (
@@ -94,7 +82,7 @@ export default function MockupCard({
         ) : null}
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => dispatch({ type: 'open' })}
           aria-label="Open full screen"
           title="Open full screen"
           className="shrink-0 rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-800 dark:hover:text-gray-200"
@@ -119,8 +107,7 @@ export default function MockupCard({
             style={{
               position: 'absolute',
               top: 0,
-              // A design narrower than the card sits in the middle of it.
-              left: Math.max(0, (boxWidth - request.width * scale) / 2),
+              left,
               width: request.width,
               height: frameHeight,
               border: 0,
@@ -139,7 +126,7 @@ export default function MockupCard({
         </div>
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => dispatch({ type: 'open' })}
           aria-label={`Open ${request.title} full screen`}
           className="group absolute inset-0 flex cursor-zoom-in items-end justify-center bg-transparent pb-3 focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-blue-500"
         >
@@ -148,7 +135,9 @@ export default function MockupCard({
           </span>
         </button>
       </div>
-      {open ? <MockupViewer url={url} request={request} onClose={() => setOpen(false)} /> : null}
+      {state.open ? (
+        <MockupViewer url={url} request={request} onClose={() => dispatch({ type: 'close' })} />
+      ) : null}
     </figure>
   );
 }

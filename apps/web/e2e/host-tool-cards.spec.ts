@@ -1,19 +1,18 @@
 /**
- * Which git-host calls stand out in a thread. A reply's tool calls fold
- * into one collapsed line; in a code project's chat the calls a person
- * waits on — a pull request opened or merged, a commit, a branch — are
- * lifted out as cards of their own (lib/code/milestones.ts), while reading
- * a file or listing branches fold with the rest. In an ordinary chat
- * nothing is lifted: a word to GitHub or Bitbucket is a tool call like any
- * other.
+ * Git-host calls in a thread, drawn on the real server at desktop and
+ * phone width: a plain chat whose pull request folds with the reads, and
+ * a chat of a GitHub code project (e2e/support/code-host.ts: the person
+ * connected through the fake OAuth, the project cloned on the sandbox
+ * stub) where the pull request stands as a card with the host's link. The
+ * stand-in model reaches for two host reads, then the pull request; the
+ * sandbox stub answers it as GitHub would (#12).
  *
- * The same turn really runs twice — in a plain chat, and in a chat of a
- * GitHub code project (e2e/support/code-host.ts: the person connected
- * through the fake OAuth, the project cloned on the sandbox stub) — the
- * stand-in model reaching for two host reads and then the pull request.
- * The sandbox stub answers the pull request as GitHub would (#12); the
- * reads find nothing there, which still folds as a call. Also a viewport
- * pass at phone width.
+ * Which calls are lifted and which fold is lib/chat/segment.test.ts's;
+ * what the fold's line and the card say ("3 tool calls", "Opened a pull
+ * request", the headline and link a result gives) is
+ * message-list.model.test.ts's. Left here: both pages render the real
+ * turn, the card unfolds to the host's link, nothing overflows a phone,
+ * and the screenshots.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -63,7 +62,7 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
   expect(overflow).toBeLessThanOrEqual(0);
 }
 
-test('a plain chat folds every host call; a code chat lifts the pull request alone', async ({
+test('host calls render in a plain and a code chat, the pull request card with its link', async ({
   page,
   request,
   person: _person,
@@ -112,36 +111,19 @@ test('a plain chat folds every host call; a code chat lifts the pull request alo
       });
     const main = page.getByRole('main');
 
-    // ── The plain chat: no card at all — the pull request folds with the
-    //    reads, three steps under one line ──
+    // ── The plain chat: the work folds into one line ──
     await page.goto(`/chat/${plainChat}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.getByText(REPLY)).toBeVisible();
-    await expect(main.locator('details[data-milestone]')).toHaveCount(0);
-    const plainWork = main.locator('details.chat-fold').first();
-    await expect(plainWork).toContainText('3 tool calls');
-    await plainWork.locator('> summary').click();
-    await expect(plainWork.locator('ol > li > details.chat-fold')).toHaveCount(3);
+    await expect(main.locator('details.chat-fold').first()).toContainText('3 tool calls');
     await expectNoHorizontalOverflow(page);
     await shot('host-tool-cards-plain.png');
 
-    // ── The code project's chat: the two reads are steps inside the one
-    //    folded line, and the pull request stands on its own with the
+    // ── The code project's chat: the pull request's card unfolds to the
     //    host's link ──
     await page.goto(`/chat/${codeChat}`);
-    await expect(main.getByText(PROMPT)).toBeVisible();
     await expect(main.getByText(REPLY)).toBeVisible();
-    await expect(main.locator('details[data-milestone="github_list_branches"]')).toHaveCount(0);
-    await expect(main.locator('details[data-milestone="github_read_file"]')).toHaveCount(0);
-    // (The first turn's clone folds in a line of its own, above.)
-    const work = main
-      .locator('details.chat-fold:not([data-milestone])', { hasText: '2 tool calls' })
-      .first();
-    await expect(work).toBeVisible();
-    await work.locator('> summary').click();
-    await expect(work.locator('ol > li > details.chat-fold')).toHaveCount(2);
     const card = main.locator('details[data-milestone="github_create_pull_request"]');
-    await expect(card).toHaveCount(1);
     await expect(card).toContainText('Created pull request #12');
     await card.locator('> summary').click();
     await expect(card.getByRole('link', { name: 'Open on GitHub' })).toHaveAttribute(
@@ -155,12 +137,11 @@ test('a plain chat folds every host call; a code chat lifts the pull request alo
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await expect(main.getByText(PROMPT)).toBeVisible();
-    await expect(main.locator('details[data-milestone]')).toHaveCount(1);
+    await expect(card).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('host-tool-cards-code-mobile.png');
     await page.goto(`/chat/${plainChat}`);
     await expect(main.getByText(PROMPT)).toBeVisible();
-    await expect(main.locator('details[data-milestone]')).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
     await shot('host-tool-cards-plain-mobile.png');
   } finally {

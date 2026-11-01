@@ -13,7 +13,30 @@
  */
 
 import { expect, type APIRequestContext, type Page } from '@playwright/test';
-import { DEFAULT_ATLASSIAN_SCOPES } from '../../lib/atlassian-scopes';
+import { DEFAULT_ATLASSIAN_JSM_SCOPES, DEFAULT_ATLASSIAN_SCOPES } from '../../lib/atlassian-scopes';
+
+/** The "Set up request types" box's scopes (lib/atlassian-scopes.ts), off by default. */
+export const JSM_REQUEST_TYPE_SCOPES = [
+  'read:servicedesk:jira-service-management',
+  'read:requesttype:jira-service-management',
+  'write:requesttype:jira-service-management',
+];
+
+/**
+ * The scopes every spec registers the org's Jira Service Management app
+ * with: its defaults and the request-type box. Its admin Save stores the
+ * defaults alone when a save names no scopes, and a spec that authorizes
+ * with the box (jira-admin-work-types) is refused with a 400 while another
+ * spec's save has just taken it away — so every save writes this.
+ */
+export const E2E_JSM_SCOPES = [
+  ...new Set([...DEFAULT_ATLASSIAN_JSM_SCOPES.split(' '), ...JSM_REQUEST_TYPE_SCOPES]),
+].join(' ');
+
+/** Settings every registration of a connector writes, whoever saves it. */
+const SHARED_SETTINGS: Record<string, Record<string, unknown>> = {
+  'atlassian-jsm': { scopes: E2E_JSM_SCOPES },
+};
 
 /** Put each connector on the signed-in person's Connectors page, as its "Add" button does. */
 export async function addConnectors(
@@ -103,7 +126,12 @@ export async function registerConnector(
       )
       .map((key) => [key, before[key]])
   );
-  await saveConnectorConfig(request, connector, { ...data, ...kept, enabled: true });
+  await saveConnectorConfig(request, connector, {
+    ...data,
+    ...SHARED_SETTINGS[connector],
+    ...kept,
+    enabled: true,
+  });
 }
 
 /**

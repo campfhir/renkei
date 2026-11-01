@@ -14,6 +14,7 @@ import {
   isTimeoutError,
   timeoutSignal,
 } from './fetch-guard';
+import { isRecord } from '@renkei/guards';
 
 export interface MCPToolContext {
   accountId: string;
@@ -298,15 +299,6 @@ export function getCachedDisplayName(accountId: string): string | undefined {
   return cached.displayName;
 }
 
-/**
- * Pull a human-readable reason out of an Atlassian error body. Jira returns
- * `{errorMessages: [...], errors: {...}}`, JSM returns `{errorMessage: "..."}`,
- * and a removed endpoint may return HTML or nothing at all.
- */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 interface Failure {
   reason: string;
   /**
@@ -326,9 +318,9 @@ async function describeFailure(response: Response): Promise<Failure> {
 
   try {
     const parsed: unknown = JSON.parse(body);
-    if (isPlainObject(parsed)) {
+    if (isRecord(parsed)) {
       const fieldErrors: Record<string, string> = {};
-      if (isPlainObject(parsed.errors)) {
+      if (isRecord(parsed.errors)) {
         for (const [field, message] of Object.entries(parsed.errors)) {
           fieldErrors[field] = String(message);
         }

@@ -14,9 +14,13 @@
  *
  * The bare key stands down in a text field and over a dialog. The search
  * (⌘/Ctrl K) lives with the search box itself.
+ *
+ * What a key means, the switcher's list and walk, and what the quick chat
+ * sends are global-shortcuts.model.ts's; this component keeps the
+ * listeners, the pause a sequence waits out, the focus and the calls.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
@@ -24,14 +28,10 @@ import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
 import {
-  CHORD_HREFS,
   SEQUENCE_WAIT_MS,
   formatShortcut,
-  isChordId,
   isTypingTarget,
-  matchesShortcut,
   shortcutKeys,
-  stepSequence,
   type SequenceId,
   type ShortcutId,
 } from '@/lib/shortcuts';
@@ -40,8 +40,22 @@ import { CoachAnchorContext } from '@/components/coach-marks/context';
 import { getEchoCancellation, getMicrophone } from '@/lib/voice/device-settings';
 import Composer, { type ComposerSubmit } from './chat/_components/composer';
 import ModelSelect from './chat/_components/model-select';
-
-const SWITCHER_LIMIT = 10;
+import {
+  activeChat,
+  chatHref,
+  chatIcon,
+  initQuickChat,
+  initialShortcuts,
+  noModels,
+  quickChatReducer,
+  quickChatTurn,
+  quickChatView,
+  routeKey,
+  shortcutsReducer,
+  switcherKey,
+  type ShortcutsAction,
+  type SwitcherState,
+} from './global-shortcuts.model';
 
 /** A shortcut drawn as key caps. */
 export function Keys({ id, className = '' }: { id: ShortcutId; className?: string }) {
@@ -61,20 +75,6 @@ export function Keys({ id, className = '' }: { id: ShortcutId; className?: strin
   );
 }
 
-/** The chat a path is on, if it is one. */
-function chatIdOf(pathname: string): string | null {
-  const match = /^\/chat\/([0-9a-f-]{36})(?:\/|$)/i.exec(pathname);
-  return match ? match[1] : null;
-}
-
-/** Most recently talked-in first. */
-function recentChats(chats: ChatListItem[]): ChatListItem[] {
-  return chats
-    .filter((chat) => !chat.archived)
-    .sort((a, b) => (b.lastMessageAt ?? b.updatedAt).localeCompare(a.lastMessageAt ?? a.updatedAt))
-    .slice(0, SWITCHER_LIMIT);
-}
-
 export function GlobalShortcuts({
   chats,
   isOperator,
@@ -84,10 +84,8 @@ export function GlobalShortcuts({
 }) {
   const platform = usePlatform();
   const router = useRouter();
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [switchOpen, setSwitchOpen] = useState(false);
-  const [step, setStep] = useState<{ delta: number; at: number } | null>(null);
   const pathname = usePathname();
+  const [state, dispatch] = useReducer(shortcutsReducer, initialShortcuts);
 
   // The bare keys typed so far, and the pause that settles a key which could
   // begin a longer sequence (`c`, or `c` `h`).
@@ -99,96 +97,95 @@ export function GlobalShortcuts({
     timer.current = null;
   }, []);
 
-  const go = useCallback(
-    (href: string) => {
-      if (href !== pathname) router.push(href);
-    },
-    [pathname, router]
-  );
-
   const run = useCallback((id: SequenceId) => {
     switch (id) {
       case 'new-chat':
-        setSwitchOpen(false);
-        setQuickOpen(true);
+        dispatch({ type: 'new-chat' });
         break;
     }
   }, []);
 
+  // The menu's recent window, as it is when the chord is pressed.
+  const menuChats = chats?.chats;
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      // Chords work everywhere, a text field included.
-      if (matchesShortcut('switch-chat', event, platform, true)) {
-        event.preventDefault();
-        clearTyped();
-        setQuickOpen(false);
-        if (switchOpen) setStep({ delta: event.shiftKey ? -1 : 1, at: Date.now() });
-        else setSwitchOpen(true);
-        return;
+      const route = routeKey(
+        {
+          key: event.key,
+          code: event.code,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
+          repeat: event.repeat,
+          isComposing: event.isComposing,
+          defaultPrevented: event.defaultPrevented,
+          typing: event.target instanceof HTMLElement && isTypingTarget(event.target),
+          dialogOpen: document.querySelector('[role="dialog"]') !== null,
+        },
+        { platform, isOperator, pathname, typed: typed.current }
+      );
+      switch (route.kind) {
+        case 'ignore':
+          return;
+        case 'reset':
+          return clearTyped();
+        case 'switch-chat':
+          event.preventDefault();
+          clearTyped();
+          dispatch({ type: 'switch-chat', back: route.back, chats: menuChats ?? [], pathname });
+          return;
+        case 'go':
+          event.preventDefault();
+          clearTyped();
+          if (route.href) router.push(route.href);
+          return;
+        case 'sequence': {
+          if (timer.current) clearTimeout(timer.current);
+          timer.current = null;
+          const next = route.step;
+          if (next.kind === 'none') {
+            typed.current = [];
+            return;
+          }
+          event.preventDefault();
+          if (next.kind === 'fire') {
+            clearTyped();
+            run(next.id);
+            return;
+          }
+          typed.current = next.buffer;
+          timer.current = setTimeout(() => {
+            clearTyped();
+            if (next.fire) run(next.fire);
+          }, SEQUENCE_WAIT_MS);
+        }
       }
-      for (const [id, href] of Object.entries(CHORD_HREFS)) {
-        if (!isChordId(id) || !matchesShortcut(id, event, platform)) continue;
-        // The Organization is the operators'; for anyone else the keys are free.
-        if (id === 'organization' && !isOperator) continue;
-        event.preventDefault();
-        clearTyped();
-        go(href);
-        return;
-      }
-
-      // Bare keys only count off the keyboard's business: not with a
-      // modifier held, not in a field, not over a dialog (the switcher, a
-      // tour, a confirmation), not as the repeat of a held key.
-      if (event.key === 'Escape') return clearTyped();
-      if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-      if (event.repeat || event.isComposing || event.defaultPrevented) return;
-      if (event.key.length !== 1) return;
-      if (event.target instanceof HTMLElement && isTypingTarget(event.target)) return;
-      if (document.querySelector('[role="dialog"]')) return clearTyped();
-
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = null;
-      const next = stepSequence(typed.current, event.key);
-      if (next.kind === 'none') {
-        typed.current = [];
-        return;
-      }
-      event.preventDefault();
-      if (next.kind === 'fire') {
-        clearTyped();
-        run(next.id);
-        return;
-      }
-      typed.current = next.buffer;
-      timer.current = setTimeout(() => {
-        clearTyped();
-        if (next.fire) run(next.fire);
-      }, SEQUENCE_WAIT_MS);
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [platform, switchOpen, isOperator, go, run, clearTyped]);
+    // Says the keys are listened for, and for which keyboard (a hydrating
+    // page reads 'other' until it has asked the browser): a browser test
+    // presses once, after this, rather than until a key lands.
+    document.documentElement.dataset.shortcuts = platform;
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      delete document.documentElement.dataset.shortcuts;
+    };
+  }, [platform, isOperator, pathname, menuChats, router, run, clearTyped]);
 
   useEffect(() => clearTyped, [clearTyped]);
 
   // Going anywhere closes both.
   useEffect(() => {
     clearTyped();
-    setQuickOpen(false);
-    setSwitchOpen(false);
+    dispatch({ type: 'navigated' });
   }, [pathname, clearTyped]);
 
   return (
     <>
-      {quickOpen ? <QuickChat onClose={() => setQuickOpen(false)} /> : null}
-      {switchOpen ? (
-        <ChatSwitcher
-          chats={chats}
-          step={step}
-          currentChatId={chatIdOf(pathname)}
-          onClose={() => setSwitchOpen(false)}
-        />
-      ) : null}
+      {state.quickOpen ? <QuickChat onClose={() => dispatch({ type: 'quick-close' })} /> : null}
+      {state.switcher ? <ChatSwitcher switcher={state.switcher} dispatch={dispatch} /> : null}
     </>
   );
 }
@@ -201,13 +198,12 @@ type ComposerSetup = Awaited<ReturnType<typeof chatClient.composerSetup>>['data'
  * thread has. Send starts the turn and goes to the thread. A chat nobody
  * sent anything in is deleted again as the box closes.
  */
+type Setup = NonNullable<ComposerSetup>;
+
 function QuickChat({ onClose }: { onClose: () => void }) {
   const router = useRouter();
-  const [chatId, setChatId] = useState<string | null>(null);
-  const [setup, setSetup] = useState<NonNullable<ComposerSetup> | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [modelId, setModelId] = useState<string | null>(null);
-  const [thinking, setThinking] = useState(false);
+  const [state, dispatch] = useReducer(quickChatReducer<Setup>, undefined, initQuickChat<Setup>);
+  const { chatId, setup, error, modelId, thinking } = state;
   const sent = useRef(false);
   const body = useRef<HTMLDivElement>(null);
   // Read once the box is open (there is no storage on the server).
@@ -223,7 +219,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
         chatClient.composerSetup(),
       ]);
       if (created.error || !created.data) {
-        if (!cancelled) setError(created.error ?? 'Could not start a chat');
+        if (!cancelled) dispatch({ type: 'failed', stage: 'create', error: created.error ?? null });
         return;
       }
       made = created.data.chatId;
@@ -232,14 +228,10 @@ function QuickChat({ onClose }: { onClose: () => void }) {
         return;
       }
       if (!loaded.data) {
-        setError(loaded.error ?? 'Could not load the composer');
+        dispatch({ type: 'failed', stage: 'setup', error: loaded.error ?? null });
         return;
       }
-      setSetup(loaded.data);
-      setModelId(
-        loaded.data.models.find((m) => m.isDefault)?.id ?? loaded.data.models[0]?.id ?? null
-      );
-      setChatId(made);
+      dispatch({ type: 'ready', chatId: made, setup: loaded.data });
     })();
     return () => {
       cancelled = true;
@@ -254,14 +246,10 @@ function QuickChat({ onClose }: { onClose: () => void }) {
 
   const submit = async (input: ComposerSubmit): Promise<boolean> => {
     if (!chatId) return false;
-    setError(null);
-    const result = await chatClient.sendTurn(chatId, {
-      text: input.text,
-      attachmentIds: input.attachments.map((attachment) => attachment.id),
-      llmModelId: modelId,
-    });
+    dispatch({ type: 'sending' });
+    const result = await chatClient.sendTurn(chatId, quickChatTurn(state, input));
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'send-failed', error: result.error });
       return false;
     }
     sent.current = true;
@@ -276,7 +264,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
       {/* This composer is not the thread's: its anchors must not bring the chat tour here. */}
       <CoachAnchorContext.Provider value={null}>
         <div ref={body}>
-          {chatId && setup ? (
+          {quickChatView(state) === 'composer' && chatId && setup ? (
             <Composer
               chatId={chatId}
               disabled={models.length === 0}
@@ -297,12 +285,12 @@ function QuickChat({ onClose }: { onClose: () => void }) {
                   models={models}
                   value={modelId}
                   onChange={(id) => {
-                    setModelId(id);
+                    dispatch({ type: 'model', id });
                     void chatClient.updateChat(chatId, { llmModelId: id });
                   }}
                   thinking={thinking}
                   onThinking={(on) => {
-                    setThinking(on);
+                    dispatch({ type: 'thinking', on });
                     void chatClient.updateChat(chatId, { thinkingEnabled: on });
                   }}
                   hasHistory={false}
@@ -321,7 +309,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
                   : null
               }
             />
-          ) : error ? null : (
+          ) : quickChatView(state) === 'error' ? null : (
             <p className="px-5 pb-6 text-center text-sm text-gray-500">Getting ready…</p>
           )}
           {error ? (
@@ -329,7 +317,7 @@ function QuickChat({ onClose }: { onClose: () => void }) {
               {error}
             </p>
           ) : null}
-          {chatId && models.length === 0 ? (
+          {noModels(state) ? (
             <p className="px-5 pb-3 text-sm text-gray-500">
               No model is configured for this organization yet. An administrator can add one under
               Agent models.
@@ -342,69 +330,54 @@ function QuickChat({ onClose }: { onClose: () => void }) {
 }
 
 function ChatSwitcher({
-  chats,
-  step,
-  currentChatId,
-  onClose,
+  switcher,
+  dispatch,
 }: {
-  chats: ChatSidebarData | null;
-  step: { delta: number; at: number } | null;
-  currentChatId: string | null;
-  onClose: () => void;
+  switcher: SwitcherState;
+  dispatch: (action: ShortcutsAction) => void;
 }) {
   const router = useRouter();
-  const [items, setItems] = useState<ChatListItem[]>(() => recentChats(chats?.chats ?? []));
-  // Opens on the chat before this one, as a switcher does.
-  const [active, setActive] = useState(() => {
-    const list = recentChats(chats?.chats ?? []);
-    return list.length > 1 && list[0].id === currentChatId ? 1 : 0;
-  });
+  const { items, active, currentChatId } = switcher;
+  const onClose = () => dispatch({ type: 'switcher-close' });
 
   // The menu only carries the recent window; the full list fills in behind it.
   useEffect(() => {
     let cancelled = false;
     void chatClient.sidebar().then((result) => {
-      if (!cancelled && result.data) setItems(recentChats(result.data.chats));
+      if (!cancelled && result.data)
+        dispatch({ type: 'switcher-loaded', chats: result.data.chats });
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [dispatch]);
 
-  const move = useCallback(
-    (delta: number) =>
-      setActive((value) => (items.length ? (value + delta + items.length) % items.length : 0)),
-    [items.length]
+  const choose = useCallback(
+    (chat: ChatListItem) => {
+      const href = chatHref(switcher, chat);
+      dispatch({ type: 'switcher-close' });
+      if (href) router.push(href);
+    },
+    [switcher, dispatch, router]
   );
-
-  const lastStep = useRef<number | null>(null);
-  useEffect(() => {
-    if (!step || lastStep.current === step.at) return;
-    lastStep.current = step.at;
-    move(step.delta);
-  }, [step, move]);
-
-  const choose = (chat: ChatListItem) => {
-    onClose();
-    if (chat.id !== currentChatId) router.push(`/chat/${chat.id}`);
-  };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowDown') {
+      const command = switcherKey(event.key);
+      if (!command) return;
+      if (command.kind === 'move') {
         event.preventDefault();
-        move(1);
-      } else if (event.key === 'ArrowUp') {
-        event.preventDefault();
-        move(-1);
-      } else if (event.key === 'Enter' && items[active]) {
-        event.preventDefault();
-        choose(items[active]);
+        dispatch({ type: 'switcher-move', delta: command.delta });
+        return;
       }
+      const chat = activeChat(switcher);
+      if (!chat) return;
+      event.preventDefault();
+      choose(chat);
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [items, active, move]);
+  }, [switcher, choose, dispatch]);
 
   const activeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -430,22 +403,13 @@ function ChatSwitcher({
                   type="button"
                   role="option"
                   aria-selected={selected}
-                  onMouseEnter={() => setActive(index)}
+                  onMouseEnter={() => dispatch({ type: 'switcher-hover', index })}
                   onClick={() => choose(chat)}
                   className={`flex w-full min-w-0 items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm ${
                     selected ? 'bg-gray-100 dark:bg-gray-900' : ''
                   }`}
                 >
-                  <Icon
-                    path={
-                      chat.projectKind === 'code'
-                        ? ICONS.code
-                        : chat.projectId
-                          ? ICONS.pages
-                          : ICONS.chat
-                    }
-                    className="h-4 w-4 shrink-0 text-gray-500"
-                  />
+                  <Icon path={ICONS[chatIcon(chat)]} className="h-4 w-4 shrink-0 text-gray-500" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate">{chat.title ?? 'New chat'}</span>
                     {chat.projectName ? (

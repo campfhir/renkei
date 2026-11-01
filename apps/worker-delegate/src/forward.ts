@@ -37,8 +37,9 @@ import {
   type ShareCredentials,
 } from '@renkei/connector-fileshares';
 import { openForSubject } from '@renkei/user-keys';
-import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { readBody, sendJson, str } from '@renkei/worker-kit';
 import { silentDelegateLogger, type DelegateLogger, type Grants } from './grants';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'worker-delegate/forward';
 const MAX_JSON_BYTES = 16 * 1_048_576;

@@ -8,12 +8,20 @@
  *  - a compaction pass already running when the page opens (its summary
  *    call held by the stub) shows the live progress card, then settles
  *    without a reload;
- *  - /compact and the prompt picker's quick action both start a REAL
- *    compaction turn through the actual route and SSE stream, settling to
- *    "nothing to fold" on a chat too small to need one;
- *  - a message sent while another turn is already running queues instead
- *    of being silently dropped, survives a reload, and drains on its own
+ *  - /compact starts a REAL compaction turn through the actual route and
+ *    SSE stream, settling to "nothing to fold" on a chat too small to need
+ *    one;
+ *  - while a reply runs, typing swaps Stop for the queue button (on a
+ *    desktop and at a phone's width), and a compaction pass picked from
+ *    the prompt picker queues, survives a reload, and drains on its own
  *    once the model is free.
+ *
+ * The queue's rules are model tests now: Stop vs Queue and what is in the
+ * box (composer.model.test.ts, "the send slot"), one item inline and more
+ * as a summary whose list closes itself (composer.model.test.ts, "the
+ * queue row"), each item's label, removing one, Clear all, draining oldest
+ * first and only once the model is free, "/compact" as a command
+ * (chat-thread.model.test.ts).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -148,10 +156,7 @@ test.describe('chat compaction', () => {
     }
   });
 
-  test('/compact and the prompt picker each run a real compaction pass', async ({
-    page,
-    person: _person,
-  }, testInfo) => {
+  test('/compact runs a real compaction pass', async ({ page, person: _person }, testInfo) => {
     const tag = tagOf(testInfo);
     const title = `Compaction live check ${tag}`;
     const modelId = await addStubModel(page.request, tag);
@@ -176,27 +181,14 @@ test.describe('chat compaction', () => {
       await expect(box).toHaveValue('');
       await expect(page.getByText(NOTHING)).toBeVisible({ timeout: 10_000 });
 
-      // The prompt picker's quick action — opened on an empty box, since
-      // typing "/" there is the picker's own trigger.
-      await expect(box).toHaveValue('');
-      await box.press('/');
-      const compactAction = page.getByRole('button', { name: /Compact this conversation/ });
-      await expect(compactAction).toBeVisible();
-      await expect(compactAction.locator('svg path').first()).toHaveAttribute('d', PACKAGE_ICON_D);
-      await compactAction.click();
-      // Proves a SECOND pass actually started — the card's settled text is
-      // already showing from the first, so asserting on it alone would pass
-      // even if this click did nothing: two passes were accepted, and the
-      // chat has no turn left running.
-      await expect.poll(() => passes, { timeout: 10_000 }).toEqual([202, 202]);
       await settled(page.request, chatId);
-      await expect(page.getByText(NOTHING).first()).toBeVisible({ timeout: 10_000 });
+      expect(passes).toEqual([202]);
     } finally {
       await removeModel(page.request, modelId);
     }
   });
 
-  test('queued sends are listed individually, can be removed one at a time, and drain on their own once the model is free', async ({
+  test('typing over a running reply swaps Stop for Queue; a queued pass survives a reload and drains on its own', async ({
     page,
     person: _person,
   }, testInfo) => {
@@ -221,8 +213,6 @@ test.describe('chat compaction', () => {
       await expect(page.getByRole('button', { name: 'Queue this message' })).toBeHidden();
       await shot(page, testInfo, 'chat-queue-empty-shows-stop');
 
-      // Queue a plain message. One item stays inline, plain and simple —
-      // no dialog to open for a queue of one.
       const box = page.getByRole('textbox', { name: 'Message' });
       // Typing swaps Stop out of the send slot for the blue queue button:
       // the one place a thumb goes to send must never stop the reply
@@ -251,38 +241,16 @@ test.describe('chat compaction', () => {
       await shot(page, testInfo, 'chat-queue-draft-swaps-stop-mobile');
       await page.setViewportSize({ width: 1440, height: 900 });
 
-      await queueButton.click();
-      await expect(box).toHaveValue('');
+      // Emptied, the slot is Stop again. A compaction pass picked from the
+      // prompt picker (opened by "/" in the empty box) queues behind the
+      // reply and shows inline.
+      await box.fill('');
       await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
-      await expect(page.getByText('Left this for when it is free.')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
-
-      // Queue a second, different kind of send — a compaction pass, picked
-      // from the prompt picker. With more than one, the inline row collapses
-      // to a summary; the individual items move behind "View".
       await box.press('/');
       await page.getByRole('button', { name: /Compact this conversation/ }).click();
-      await expect(page.getByText('2 queued', { exact: false })).toBeVisible();
-      await expect(page.getByText('Left this for when it is free.')).toBeHidden();
-      await page.getByRole('button', { name: 'View' }).click();
-      const dialog = page.getByRole('dialog', { name: 'Queued (2)' });
-      await expect(dialog).toBeVisible();
-      await expect(dialog.getByText('Left this for when it is free.')).toBeVisible();
-      await expect(dialog.getByText('Compact this conversation')).toBeVisible();
-      await expect(dialog.getByRole('button', { name: 'Clear all' })).toBeVisible();
-
-      // Pick and choose: remove just the first one. Back down to one item,
-      // the dialog closes itself and that item returns inline.
-      await dialog
-        .getByRole('button', { name: 'Remove "Left this for when it is free." from the queue' })
-        .click();
-      // By role and prefix: the dialog renames itself to "Queued (1)" before
-      // it closes, which would hide the "Queued (2)" locator early.
-      await expect(page.getByRole('dialog', { name: /^Queued/ })).toBeHidden();
       await expect(
         page.getByText('Compact this conversation').filter({ visible: true })
       ).toBeVisible();
-      await expect(page.getByRole('button', { name: 'View' })).toBeHidden();
 
       // The queue is durable: the server holds it (the chat reads it back),
       // and a reload — which used to drop it — still shows what is waiting.

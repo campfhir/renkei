@@ -31,6 +31,7 @@ import type { BrowserContext } from 'playwright-core';
 import { decrypt, encrypt } from '@renkei/crypto';
 import { envSecretsKey } from './env-secrets';
 import { logger } from './logger';
+import { isRecord } from '@renkei/guards';
 
 export interface BrowserStateTarget {
   subject: string;
@@ -77,12 +78,12 @@ function fileNameFor(domain: string, target: BrowserStateTarget): string {
  * by HKDF. `domain` is the key domain (@renkei/settings getKeyDomain) the
  * saved sessions were first sealed under.
  */
-export function browserStateKey(rootKey: Buffer, domain: string, target: BrowserStateTarget): Buffer {
+export function browserStateKey(
+  rootKey: Buffer,
+  domain: string,
+  target: BrowserStateTarget
+): Buffer {
   return Buffer.from(hkdfSync('sha256', rootKey, HKDF_SALT, `${domain}\n${target.subject}`, 32));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function isSavedState(value: unknown): value is SavedBrowserState {

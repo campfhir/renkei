@@ -8,10 +8,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
 import { upsertClassifierRule, deleteClassifierRule } from '@renkei/email-sanitizer';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export async function PUT(
   request: NextRequest,

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, ReactNode, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useEffect, useMemo, useReducer } from 'react';
 import {
   ATLASSIAN_SCOPE_OPTIONS,
   ATLASSIAN_SCOPE_GROUPS,
@@ -18,7 +18,17 @@ import {
 import type { ScopeGroup, ScopeOption } from '@/lib/scope-catalog';
 import ScopePicker from '@/components/scope-picker';
 import ExternalLink from '@/components/external-link';
-import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import {
+  appRegistrationReducer,
+  BITBUCKET_WEBHOOK_HEADER,
+  BITBUCKET_WEBHOOK_LEGACY_QUERY,
+  initialAppRegistration,
+  saveBody,
+  secretField,
+  webhookSecretField,
+  type AppRegistrationConfig,
+  type AppRegistrationSpec,
+} from './app-registration-form.model';
 import {
   useConnectorConfig,
   putJson,
@@ -33,16 +43,6 @@ import {
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
-
-interface AtlassianConfig {
-  configured: boolean;
-  enabled: boolean;
-  clientId: string | null;
-  scopes: string | null;
-  redirectUri: string | null;
-  hasClientSecret: boolean;
-  hasWebhookSecret?: boolean;
-}
 
 export function AtlassianForm({ origin }: { origin: string | null }) {
   return (
@@ -149,7 +149,17 @@ export function AtlassianBitbucketForm({ origin }: { origin: string | null }) {
  * app), Confluence, Bitbucket and Jira Administration. Each connector stores
  * its own client id/secret and scope ceiling.
  */
-function AtlassianAppForm({ origin, connector, title, groups, options, alwaysScope = ATLASSIAN_OFFLINE_SCOPE, intro, scopeHint, showWebhookSecret = false }: {
+function AtlassianAppForm({
+  origin,
+  connector,
+  title,
+  groups,
+  options,
+  alwaysScope = ATLASSIAN_OFFLINE_SCOPE,
+  intro,
+  scopeHint,
+  showWebhookSecret = false,
+}: {
   origin: string | null;
   connector: string;
   title: string;
@@ -171,68 +181,33 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
   showWebhookSecret?: boolean;
 }) {
   const url = `/api/admin/connectors/${connector}`;
-  const [state, reload] = useConnectorConfig<AtlassianConfig>(url);
-  const [clientId, setClientId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [webhookSecret, setWebhookSecret] = useState('');
-  // Checked capability bundles, offline_access excluded — it is always sent,
-  // never a choice.
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(
-    () => new Set(options.filter((option) => option.defaultChecked).map((option) => option.id))
+  const [state, reload] = useConnectorConfig<AppRegistrationConfig>(url);
+  const spec = useMemo<AppRegistrationSpec>(
+    () => ({
+      options,
+      alwaysScopes: [alwaysScope],
+      redirectUri: true,
+      webhookSecret: showWebhookSecret,
+    }),
+    [options, alwaysScope, showWebhookSecret]
   );
-  const [redirectUri, setRedirectUri] = useState('');
-  const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const reducer = useMemo(() => appRegistrationReducer(spec), [spec]);
+  const [form, dispatch] = useReducer(reducer, spec, initialAppRegistration);
+  const { fields, busy, notice, error } = form;
 
   useEffect(() => {
-    if (!state.data) return;
-    setClientId(state.data.clientId ?? '');
-    if (state.data.configured && state.data.scopes) {
-      // An option is checked when the stored ceiling covers its whole bundle.
-      // A ceiling saved before the granular migration matches nothing —
-      // leave the defaults checked so re-saving lands on sane granular scopes.
-      const stored = new Set(state.data.scopes.split(/\s+/));
-      const matching = options.filter((option) => optionWithin(option, stored));
-      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
-    }
-    setRedirectUri(state.data.redirectUri ?? '');
-    setEnabled(state.data.configured ? state.data.enabled : true);
+    if (state.data) dispatch({ type: 'loaded', config: state.data });
   }, [state.data]);
-
-  function toggleOption(optionId: string, on: boolean) {
-    setCheckedIds((current) => {
-      const next = new Set(current);
-      if (on) next.add(optionId);
-      else next.delete(optionId);
-      return next;
-    });
-  }
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setNotice(null);
-    setError(null);
-    const scopes = [...scopesOfOptions(options, checkedIds), alwaysScope].join(' ');
-    const failure = await putJson(url, {
-      clientId: clientId.trim(),
-      // Blank means keep the stored secret — omit it from the payload.
-      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
-      ...(showWebhookSecret && webhookSecret.trim() ? { webhookSecret: webhookSecret.trim() } : {}),
-      enabled,
-      scopes,
-      ...(redirectUri.trim() ? { redirectUri: redirectUri.trim() } : {}),
-    });
-    setBusy(false);
+    dispatch({ type: 'saving' });
+    const failure = await putJson(url, saveBody(spec, fields));
     if (failure) {
-      setError(failure);
+      dispatch({ type: 'save-failed', error: failure });
       return;
     }
-    setClientSecret('');
-    setWebhookSecret('');
-    setNotice('Saved');
+    dispatch({ type: 'saved' });
     reload();
   }
 
@@ -252,6 +227,8 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
     );
   }
   const config = state.data;
+  const secret = secretField(Boolean(config?.hasClientSecret));
+  const webhook = webhookSecretField(config);
 
   return (
     <Card
@@ -282,8 +259,8 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
           <input
             id={`${connector}-client-id`}
             required
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
+            value={fields.clientId}
+            onChange={(e) => dispatch({ type: 'edit', patch: { clientId: e.target.value } })}
             className={`${inputClass} font-mono`}
           />
         </div>
@@ -294,13 +271,13 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
           <input
             id={`${connector}-client-secret`}
             type="password"
-            required={!config?.hasClientSecret}
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
+            required={secret.required}
+            value={fields.clientSecret}
+            onChange={(e) => dispatch({ type: 'edit', patch: { clientSecret: e.target.value } })}
+            placeholder={secret.placeholder}
             className={`${inputClass} font-mono`}
           />
-          {config?.hasClientSecret && (
+          {secret.storedHint && (
             <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
           )}
         </div>
@@ -312,12 +289,12 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
             <input
               id={`${connector}-webhook-secret`}
               type="password"
-              value={webhookSecret}
-              onChange={(e) => setWebhookSecret(e.target.value)}
-              placeholder={config?.hasWebhookSecret ? 'Stored — leave blank to keep' : ''}
+              value={fields.webhookSecret}
+              onChange={(e) => dispatch({ type: 'edit', patch: { webhookSecret: e.target.value } })}
+              placeholder={webhook.placeholder}
               className={`${inputClass} font-mono`}
             />
-            {config?.hasWebhookSecret ? (
+            {webhook.hint === 'stored' ? (
               <p className={hintClass}>
                 A secret is stored but never shown; leave blank to keep it.
               </p>
@@ -327,9 +304,10 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
                 add one pointing at{' '}
                 <code className="font-mono">/api/webhooks/bitbucket/&lt;tenant id&gt;</code> with a
                 request header{' '}
-                <code className="font-mono">X-Renkei-Webhook-Secret: &lt;this value&gt;</code>) to
-                turn on pull request pipeline subscriptions for Bitbucket repositories. Putting the
-                value in the URL as <code className="font-mono">?secret=</code> still works for
+                <code className="font-mono">{BITBUCKET_WEBHOOK_HEADER}: &lt;this value&gt;</code>)
+                to turn on pull request pipeline subscriptions for Bitbucket repositories. Putting
+                the value in the URL as{' '}
+                <code className="font-mono">{BITBUCKET_WEBHOOK_LEGACY_QUERY}</code> still works for
                 webhooks registered that way, but a URL is copied and logged in more places than a
                 header, so prefer the header.
               </p>
@@ -342,8 +320,8 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
             <ScopePicker
               groups={groups}
               options={options}
-              checked={checkedIds}
-              onToggle={toggleOption}
+              checked={fields.checkedIds}
+              onToggle={(optionId, on) => dispatch({ type: 'toggle', optionId, on })}
             />
             <p className={hintClass}>
               {scopeHint ?? (
@@ -365,14 +343,18 @@ function AtlassianAppForm({ origin, connector, title, groups, options, alwaysSco
           </label>
           <input
             id={`${connector}-redirect`}
-            value={redirectUri}
-            onChange={(e) => setRedirectUri(e.target.value)}
+            value={fields.redirectUri}
+            onChange={(e) => dispatch({ type: 'edit', patch: { redirectUri: e.target.value } })}
             placeholder="Defaults to this origin + /api/oauth/callback"
             className={`${inputClass} font-mono`}
           />
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={fields.enabled}
+            onChange={(e) => dispatch({ type: 'edit', patch: { enabled: e.target.checked } })}
+          />
           Enabled
         </label>
         <SaveRow busy={busy} notice={notice} error={error} />

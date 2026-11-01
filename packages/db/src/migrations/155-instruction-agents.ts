@@ -1,4 +1,5 @@
 import { Kysely, sql } from 'kysely';
+import { isRecord } from '@renkei/guards';
 
 /**
  * Agents become instructions: the step document (a tree of actions,
@@ -29,10 +30,6 @@ import { Kysely, sql } from 'kysely';
  */
 
 type StepNode = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function list(value: unknown): StepNode[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];

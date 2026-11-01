@@ -33,6 +33,7 @@ import {
   type SubscriptionRow,
 } from './microsoft-sync';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'microsoft/events';
 
@@ -49,10 +50,6 @@ function requireString(payload: Record<string, unknown>, key: string): string {
     throw new Error(`microsoft event payload has no ${key}`);
   }
   return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

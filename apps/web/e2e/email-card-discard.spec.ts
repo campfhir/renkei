@@ -1,10 +1,18 @@
 /**
- * Email preview cards in one chat: discarding the first must leave the
- * next one fully editable — its To, Subject and Body are a live form, not
- * the receipt the discarded card shows. And a reply card is just as
- * editable (it used to be shown read-only, which read as exactly this
- * bug): an edited text goes to the confirm tool with the message it
- * answers, so the draft is rebuilt around the quoted thread.
+ * Email preview cards in one chat: discarding one must leave the other a
+ * live form in its own iframe — its To, Subject and Body typeable, not the
+ * receipt the discarded card shows. And a reply card is just as editable
+ * in the browser, at a phone's width too.
+ *
+ * The rules moved to lib/mcp-widgets/src/email-compose.model.ts and its
+ * .model.test.ts: each draft's decision is kept under its own key (so a
+ * discard never turns another card, or the next one in the chat, into a
+ * receipt), which fields a new email, reply, forward or old reply card
+ * makes editable, that Discard sends only the draft id and ends on
+ * "Discarded", what a refused discard or send leaves, and exactly what an
+ * edited reply sends (overrides plus `replyTo`). The one press left here
+ * is a Discard, end to end: the call out, the receipt drawn, the model
+ * answering the note, and the card beside it still a form.
  *
  * The real built email-compose bundle, the real decision and model-context
  * routes, a chat on the stand-in model whose turns run for real. What
@@ -16,8 +24,8 @@
  *
  * Not reached: the discarded card's receipt after a reload. A reload
  * renders the chat from the server's own rows, which hold no card (the
- * card only ever existed at the browser edge), so the first test checks
- * the receipt and the next card on the live page instead.
+ * card only ever existed at the browser edge), so the discard test checks
+ * the receipt and the other card on the live page instead.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -85,31 +93,13 @@ async function openChat(page: Page, testInfo: TestInfo) {
   return { modelId, chatId };
 }
 
-/** The person asks; the reply carries one email card. */
-async function askForEmail(
-  page: Page,
-  chat: { modelId: string; chatId: string },
-  draft: Draft,
-  prompt: string
-): Promise<void> {
-  await sendForCards(page, {
-    ...chat,
-    prompt,
-    assistantText: 'Here’s the draft — nothing is sent until you confirm.',
-    cards: [emailCard(draft)],
-  });
-}
-
-/** Stand in for Graph: discard and send both succeed. Returns what the card called. */
+/** Stand in for Graph: the discard succeeds. Returns what the card called. */
 async function mockGraph(page: Page): Promise<unknown[]> {
   const calls: unknown[] = [];
   await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
     const body: unknown = route.request().postDataJSON();
     calls.push(body);
-    const discard = JSON.stringify(body).includes('outlook_discard_draft_confirm');
-    await route.fulfill({
-      json: { result: { content: [{ type: 'text', text: discard ? 'Discarded.' : 'Sent.' }] } },
-    });
+    await route.fulfill({ json: { result: { content: [{ type: 'text', text: 'Discarded.' }] } } });
   });
   return calls;
 }
@@ -126,34 +116,6 @@ async function expectEditable(page: Page, card: number, text: string): Promise<v
   await expect(subject).toHaveValue('Edited subject');
 }
 
-test('discarding one email card leaves the next card in the chat editable', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  test.setTimeout(150_000);
-  let modelId: string | null = null;
-  try {
-    const chat = await openChat(page, testInfo);
-    modelId = chat.modelId;
-    const calls = await mockGraph(page);
-    await askForEmail(page, chat, draftFor('a'), 'Email the vendor.');
-
-    const first = page.frameLocator('iframe[title="Preview card"]').first();
-    await first.getByRole('button', { name: 'Discard' }).click(COLD);
-    await expect(first.locator('.done-headline')).toHaveText('Discarded', COLD);
-    expect(calls).toEqual([expect.objectContaining({ name: 'outlook_discard_draft_confirm' })]);
-    await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
-
-    // The person asks for another email; it lands as a new turn.
-    await askForEmail(page, chat, draftFor('b'), 'Try another email.');
-    await expect(page.locator('iframe[title="Preview card"]')).toHaveCount(2, COLD);
-    await expect(first.locator('.done-headline')).toHaveText('Discarded', COLD);
-    await expectEditable(page, 1, 'A fresh body the person typed.');
-  } finally {
-    if (modelId) await removeModel(page.request, modelId);
-  }
-});
-
 test('a card already on the page stays editable after another card is discarded', async ({
   page,
   person: _person,
@@ -163,19 +125,26 @@ test('a card already on the page stays editable after another card is discarded'
   try {
     const chat = await openChat(page, testInfo);
     modelId = chat.modelId;
-    await mockGraph(page);
+    const calls = await mockGraph(page);
+    const discarded = draftFor('a');
     // One reply, two drafts: both cards are on the page before either is decided.
     await sendForCards(page, {
       ...chat,
       prompt: 'Email the vendor, and draft one more.',
       assistantText: 'Here are the drafts — nothing is sent until you confirm.',
-      cards: [emailCard(draftFor('a')), emailCard(draftFor('b'))],
+      cards: [emailCard(discarded), emailCard(draftFor('b'))],
     });
 
     await expect(page.locator('iframe[title="Preview card"]')).toHaveCount(2, COLD);
     const first = page.frameLocator('iframe[title="Preview card"]').first();
     await first.getByRole('button', { name: 'Discard' }).click(COLD);
     await expect(first.locator('.done-headline')).toHaveText('Discarded', COLD);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        name: 'outlook_discard_draft_confirm',
+        arguments: { draftId: discarded.draftId },
+      }),
+    ]);
     await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
 
     await expectEditable(page, 1, 'Typed after the other card was discarded.');
@@ -184,7 +153,7 @@ test('a card already on the page stays editable after another card is discarded'
   }
 });
 
-test('a reply card is editable — recipients, subject and text — and an edit is sent with the message it answers', async ({
+test('a reply card is a live form in the browser — recipients, subject and text — at a phone’s width too', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -194,43 +163,30 @@ test('a reply card is editable — recipients, subject and text — and an edit 
   try {
     const chat = await openChat(page, testInfo);
     modelId = chat.modelId;
-    const calls = await mockGraph(page);
-    await askForEmail(page, chat, reply, 'Reply to the vendor.');
+    await sendForCards(page, {
+      ...chat,
+      prompt: 'Reply to the vendor.',
+      assistantText: 'Here’s the draft — nothing is sent until you confirm.',
+      cards: [emailCard(reply)],
+    });
 
     const frame = page.frameLocator('iframe[title="Preview card"]').first();
     await expect(
       frame.getByText('The quoted thread below your text is included on send.')
     ).toBeVisible(COLD);
-    // A reply is as editable as a new email: recipients, subject and text.
     await frame.locator('input').first().fill('vendor@example.com, ap@example.com');
     await frame.locator('input').nth(1).fill('RE: Invoice 1042 — paid');
     const body = frame.locator('textarea');
     await expect(body).toHaveValue(reply.body);
     await body.fill('Thanks — paid today.');
+    await expect(body).toHaveValue('Thanks — paid today.');
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(body).toBeVisible();
+    await expect(frame.getByRole('button', { name: 'Send' })).toBeVisible();
     await page.screenshot({
       path: path.join(RESULTS, 'screens', testInfo.project.name, 'email-reply-editable.png'),
       fullPage: true,
     });
-
-    await frame.getByRole('button', { name: 'Send' }).click();
-    await expect(frame.locator('.done-headline')).toHaveText('Sent', COLD);
-    expect(calls).toEqual([
-      {
-        name: 'outlook_send_draft_confirm',
-        arguments: {
-          draftId: reply.draftId,
-          overrides: {
-            to: ['vendor@example.com', 'ap@example.com'],
-            subject: 'RE: Invoice 1042 — paid',
-            comment: 'Thanks — paid today.',
-          },
-          replyTo: { messageId: reply.replyTo, kind: 'reply' },
-        },
-        stateKey: `renkei-email:${reply.draftId}`,
-      },
-    ]);
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }

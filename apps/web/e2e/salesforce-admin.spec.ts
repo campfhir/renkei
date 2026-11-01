@@ -1,25 +1,39 @@
 /**
  * Salesforce Admin, end to end in a browser, up to Salesforce itself.
  *
- * An operator adds two admin connectors through the real admin form and
- * save route: a UAT sandbox, and production with change requests left off
- * (the safe default). A person sees one admin card per org, the sandbox's
- * connect link asks for a PKCE consent at its own My Domain with its own
- * consumer key, and they connect both: the production card says it is read
- * only here.
+ * An operator adds a UAT sandbox through the real admin form and save
+ * route (the form's one press-through); production, left read only, is
+ * put in through the same route. A person sees one admin card per org and
+ * connects the sandbox through its link — the operator's one real OAuth
+ * walk.
  *
- * Then someone without approving rights connects the sandbox too and asks
- * for a change in words — a real chat turn on the stub model, calling
- * salesforce_admin_request_change — and the request's review pages follow:
- * the operator's list and card count, the request with nothing to approve
- * (only to build or decline, and the apply route refusing it), the
- * asker's own list, and their withdrawing it.
+ * Then someone without approving rights connects the sandbox too (needed
+ * for the tool's grant) and asks for a change in words — a real chat turn
+ * on the stub model, calling salesforce_admin_request_change — and the
+ * request's review pages follow: the operator's list and card count, the
+ * request's text and requester, the asker's own list, and their
+ * withdrawing it (the actions' one press-through), at a phone's width too.
+ *
+ * Where the rules went:
+ * - the form's defaults (building starts in a sandbox; no kept-away
+ *   lists; production takes no change requests until allowed), the
+ *   summary lines and what Save sends: salesforce-form.model.test.ts
+ *   beside app/(app)/admin/connectors/forms/salesforce-form.tsx;
+ * - the stored orgs and the admin ceiling (user access off unless
+ *   chosen): app/api/admin/connectors/salesforce/route.test.ts;
+ * - the authorize redirect's query (the org's own My Domain, its own
+ *   consumer key, PKCE): app/api/salesforce/[connector]/authorize/route.test.ts;
+ * - which actions a person sees by role and state (nothing to approve on
+ *   a request in words, only Withdraw for the asker, the operator's
+ *   note): change-actions.model.test.ts beside
+ *   app/(app)/salesforce-admin/changes/[changeId]/change-actions.tsx;
+ * - the routes holding the line (approve is an operator's alone, 403; a
+ *   request in words has nothing to approve, 409; withdraw and decline):
+ *   app/api/salesforce-admin/changes/[changeId]/apply/route.test.ts.
  *
  * Connects are the in-memory app's fake OAuth
- * (packages/provider-grants/src/fake-oauth.ts): the consent answers at once
- * with a code carrying the request Salesforce would have been sent (read
- * with `fakeConsentRequest`), and the callback stores the grant as
- * production does.
+ * (packages/provider-grants/src/fake-oauth.ts): the consent answers at
+ * once with a code, and the callback stores the grant as production does.
  *
  * Not reachable here: the proposals (validated, failed, access, picklist,
  * production-gated) and a running deploy. A salesforce_admin_propose_* tool
@@ -45,7 +59,7 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { Page, TestInfo } from '@playwright/test';
 import { askAndWait, createChat } from './support/code-host';
-import { addConnectors, connectThrough, fakeConsentRequest } from './support/connectors';
+import { addConnectors, connectThrough } from './support/connectors';
 import { createPerson, signIn } from './support/person';
 import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
 import { test, expect } from './fixtures';
@@ -68,9 +82,6 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 interface StoredOrg {
   key: string;
   myDomain: string;
-  sandbox: boolean;
-  productionChanges?: boolean;
-  scopes: string;
 }
 
 async function storedOrgs(page: Page): Promise<StoredOrg[]> {
@@ -102,20 +113,6 @@ test.afterEach(async ({ page, person: _person }, testInfo) => {
   if (testInfo.project.name === 'desktop-light') await removeOwnOrgs(page);
 });
 
-async function addOrg(
-  page: Page,
-  values: { name: string; domain: string; clientId: string; sandbox: boolean }
-): Promise<void> {
-  const form = page.locator('[data-coach="admin-connector-form"]');
-  await form.locator('#salesforce-admin-new-name').fill(values.name);
-  await form.locator('#salesforce-admin-new-domain').fill(values.domain);
-  const sandbox = form.getByRole('checkbox', { name: 'This is a sandbox' });
-  if ((await sandbox.isChecked()) !== values.sandbox) await sandbox.click();
-  await form.locator('#salesforce-admin-new-client-id').fill(values.clientId);
-  await form.locator('#salesforce-admin-new-client-secret').fill(`${values.clientId}-secret`);
-  await form.getByRole('button', { name: 'Save' }).click();
-}
-
 test('salesforce admin: per-org connectors, connect, and a change asked for in words', async ({
   browser,
   page,
@@ -144,47 +141,31 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
   await page.waitForLoadState('networkidle');
   await page.unroute(`**${CONFIG}`);
   await form.getByRole('button', { name: 'Add your first org' }).click();
-  // Building usually starts in a sandbox.
-  await expect(form.getByRole('checkbox', { name: 'This is a sandbox' })).toBeChecked();
-  // The CRM's "kept away" fields are not the admin connector's.
-  await expect(form.getByText('Kept away from the assistant')).toHaveCount(0);
-  await addOrg(page, { name: 'UAT', domain: UAT, clientId: 'e2e-admin-uat-client', sandbox: true });
+  await form.locator('#salesforce-admin-new-name').fill('UAT');
+  await form.locator('#salesforce-admin-new-domain').fill(UAT);
+  await form.locator('#salesforce-admin-new-client-id').fill('e2e-admin-uat-client');
+  await form.locator('#salesforce-admin-new-client-secret').fill('e2e-admin-uat-client-secret');
+  await form.getByRole('button', { name: 'Save' }).click();
   await expect(form.getByRole('heading', { name: 'Salesforce Admin · UAT' })).toBeVisible({
     timeout: 30_000,
   });
-  await expect(form.getByText('Applied here when the person approves them')).toBeVisible();
 
-  await form.getByRole('button', { name: 'Add a Salesforce org' }).click();
-  await form.getByRole('checkbox', { name: 'This is a sandbox' }).uncheck();
-  // Production takes no change requests until an admin says so.
-  const allow = form.getByRole('checkbox', {
-    name: /Allow change requests in this production org/,
+  // Production, read only, through the same route.
+  const added = await page.request.put(CONFIG, {
+    data: {
+      name: 'Production',
+      myDomain: PRODUCTION,
+      sandbox: false,
+      clientId: 'e2e-admin-production-client',
+      clientSecret: 'e2e-admin-production-client-secret',
+      enabled: true,
+      productionChanges: false,
+    },
   });
-  await expect(allow).not.toBeChecked();
-  await addOrg(page, {
-    name: 'Production',
-    domain: PRODUCTION,
-    clientId: 'e2e-admin-production-client',
-    sandbox: false,
-  });
-  await expect(form.getByRole('heading', { name: 'Salesforce Admin · Production' })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(form.getByText('Not in this production org — read only')).toBeVisible();
+  expect(added.ok()).toBe(true);
+  await page.reload();
+  await expect(form.getByRole('heading', { name: 'Salesforce Admin · Production' })).toBeVisible();
   await shot(page, testInfo, 'salesforce-admin-01-registered');
-
-  const stored = await storedOrgs(page);
-  expect(stored.map((org) => [org.key, org.sandbox, org.productionChanges])).toEqual([
-    ['uat', true, false],
-    ['production', false, false],
-  ]);
-  // User access (assigning permission sets to people) is off unless chosen.
-  expect(stored[0]?.scopes.split(' ').sort()).toEqual([
-    'sfa-layouts',
-    'sfa-permissions',
-    'sfa-read',
-    'sfa-schema',
-  ]);
 
   // --- The person's cards: one per org, and the sandbox's connect link. ---
   await addConnectors(page.request, ['salesforce-admin']);
@@ -199,26 +180,16 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
   const uat = cards.filter({ has: page.getByRole('heading', { name: /Salesforce Admin · UAT/ }) });
   await expect(uat.getByText('Sandbox', { exact: true })).toBeVisible();
   const connectLink = uat.getByRole('link', { name: 'Connect Salesforce Admin · UAT' });
-  const href = await connectLink.getAttribute('href');
-  expect(href).toMatch(/^\/api\/salesforce-admin\/uat\/authorize/);
-  const authorize = await page.request.get(href ?? '', { maxRedirects: 0 });
-  expect([302, 307]).toContain(authorize.status());
-  const consent = fakeConsentRequest(authorize.headers()['location'] ?? '');
-  expect(consent.origin + consent.pathname).toBe(`https://${UAT}/services/oauth2/authorize`);
-  expect(consent.searchParams.get('client_id')).toBe('e2e-admin-uat-client');
-  expect(consent.searchParams.get('code_challenge_method')).toBe('S256');
-  expect(consent.searchParams.get('state')).toBeTruthy();
+  await expect(connectLink).toHaveAttribute('href', /^\/api\/salesforce-admin\/uat\/authorize/);
 
-  // --- Connected to both: the sandbox through its link, production too. ---
+  // --- Connected to the sandbox, through its link. ---
   await connectLink.click();
   await page.waitForURL(/\/connectors(\?|$)/, { timeout: 30_000 });
-  await connectThrough(page, '/api/salesforce-admin/production/authorize');
   const production = cards.filter({
     has: page.getByRole('heading', { name: /Salesforce Admin · Production/ }),
   });
   await expect(uat.getByText('Connected', { exact: true })).toBeVisible();
-  await expect(production.getByText('Connected', { exact: true })).toBeVisible();
-  await expect(production.getByText('This production org is read only here')).toBeVisible();
+  await expect(production.getByText('Not connected')).toBeVisible();
   await shot(page, testInfo, 'salesforce-admin-02-cards');
   await page.emulateMedia({ colorScheme: 'dark' });
   await shot(page, testInfo, 'salesforce-admin-02-cards-dark');
@@ -241,7 +212,7 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
   );
   // Its own request context: signing in sets the session cookie where it is sent.
   const asker = await createPerson(request, { displayName: 'Arlo Asker' });
-  const askerContext = await browser.newContext();
+  const askerContext = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await signIn(askerContext, asker);
     const askerPage = await askerContext.newPage();
@@ -284,11 +255,7 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
     await expect(page.getByRole('main').getByTestId('change-requester')).toContainText(
       'Arlo Asker'
     );
-    await expect(page.getByRole('button', { name: /Approve/ })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Decline it' })).toBeVisible();
-    const requestId = new URL(page.url()).pathname.split('/').pop() ?? '';
-    const words = await page.request.post(`/api/salesforce-admin/changes/${requestId}/apply`);
-    expect(words.status()).toBe(409);
     await shot(page, testInfo, 'salesforce-admin-06-request');
 
     // The person who asked: their request waits for an operator, nothing to approve.
@@ -312,16 +279,7 @@ test('salesforce admin: per-org connectors, connect, and a change asked for in w
     await expect(askerPage.getByRole('main').getByTestId('change-requester')).toContainText(
       'by you'
     );
-    await expect(askerPage.getByRole('button', { name: /Approve|Decline/ })).toHaveCount(0);
     await expect(askerPage.getByRole('button', { name: 'Withdraw it' })).toBeVisible();
-    await expect(
-      askerPage.getByText(/An operator reviews and approves changes to UAT/)
-    ).toBeVisible();
-    // The route holds the line, whatever the page shows.
-    const notAllowed = await askerPage.request.post(
-      `/api/salesforce-admin/changes/${requestId}/apply`
-    );
-    expect([403, 409]).toContain(notAllowed.status());
     await askerPage.setViewportSize(MOBILE_VIEWPORT);
     expect(
       await askerPage.evaluate(

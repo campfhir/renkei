@@ -38,6 +38,7 @@ import {
   readWebhookBody,
   tooManyRequests,
 } from '@/lib/webhook-intake';
+import { isRecord } from '@renkei/guards';
 
 const eventsQueue = webhookEventsQueue();
 
@@ -133,6 +134,3 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   logger.debug('Event accepted', { component: 'zoom/webhook', type: payload.val.type });
   return NextResponse.json({ accepted: true });
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);

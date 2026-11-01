@@ -10,6 +10,8 @@
  * server issues one, is echoed back on subsequent calls.
  */
 
+import { recordOrNull } from '@renkei/guards';
+
 /**
  * A widget's own declared purpose, from `_meta.ui.kind` (widgets.ts):
  * `'approval'` — the card carries a confirm/cancel decision (a preview
@@ -234,10 +236,10 @@ export class HttpMcpClient implements McpClient {
         {
           name: tool.name,
           description: typeof tool.description === 'string' ? tool.description : '',
-          inputSchema: plainObject(tool.inputSchema) ?? { type: 'object' },
+          inputSchema: recordOrNull(tool.inputSchema) ?? { type: 'object' },
           ...(uiResourceUri ? { uiResourceUri } : {}),
           ...(uiKind ? { uiKind } : {}),
-          kind: plainObject(tool.annotations)?.readOnlyHint === true ? 'read' : 'act',
+          kind: recordOrNull(tool.annotations)?.readOnlyHint === true ? 'read' : 'act',
         },
       ];
     });
@@ -269,30 +271,22 @@ export class HttpMcpClient implements McpClient {
     return {
       content,
       isError: shaped.isError === true,
-      meta: plainObject(shaped._meta) ?? {},
+      meta: recordOrNull(shaped._meta) ?? {},
       ...('structuredContent' in shaped ? { structuredContent: shaped.structuredContent } : {}),
     };
   }
 }
 
-/** A JSON object or nothing — narrowed without an assertion. */
-function plainObject(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
-  const out: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) out[key] = entry;
-  return out;
-}
-
 /** `_meta.ui.resourceUri` off a tool's `tools/list` entry (widgets.ts's `previewToolMeta`). */
 function widgetResourceUriOf(meta: unknown): string | undefined {
-  const top = plainObject(meta);
-  const ui = top ? plainObject(top.ui) : null;
+  const top = recordOrNull(meta);
+  const ui = top ? recordOrNull(top.ui) : null;
   return typeof ui?.resourceUri === 'string' ? ui.resourceUri : undefined;
 }
 
 /** `_meta.ui.kind` off a tool's `tools/list` entry (widgets.ts's `previewToolMeta`). */
 function widgetKindOf(meta: unknown): WidgetKind | undefined {
-  const top = plainObject(meta);
-  const ui = top ? plainObject(top.ui) : null;
+  const top = recordOrNull(meta);
+  const ui = top ? recordOrNull(top.ui) : null;
   return ui?.kind === 'approval' || ui?.kind === 'display' ? ui.kind : undefined;
 }

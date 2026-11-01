@@ -17,6 +17,7 @@ import { readConnectorConfigCached } from '@renkei/connector-config';
 import { LaneLimiter, RateLimitTimeoutError, type RequestLane } from '@renkei/rate-limit';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
+import { isRecord } from '@renkei/guards';
 
 export const EMBEDDINGS_CONNECTOR = 'embeddings';
 
@@ -103,10 +104,6 @@ export interface EmbeddingOptions {
   queryPrefix?: string;
   /** Prepended verbatim to every passage text — `passage: `, `search_document: `. */
   passagePrefix?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export class OpenAiCompatibleEmbeddings implements EmbeddingProvider {

@@ -34,10 +34,7 @@ import {
 import { createDelegateServer } from './server';
 import type { GitDialer } from './git';
 import { loadOrCreateSigningKey } from './signing';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 function errorType(json: Record<string, unknown>): string | null {
   return isRecord(json.error) && typeof json.error.type === 'string' ? json.error.type : null;

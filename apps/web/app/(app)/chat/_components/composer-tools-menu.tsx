@@ -7,16 +7,25 @@
  * first names them (Prompt libraries, Dictate, Voice), the second is the
  * voice panel itself, with a way back. Prompt libraries and Dictate act at
  * once; only Voice has more to show. While dictating, the button is the
- * microphone: one tap stops it.
+ * microphone: one tap stops it. Those rules are
+ * composer-tools-menu.model.ts, tested beside it.
  *
  * The composer draws this below the `sm` breakpoint only (its separate
  * buttons come back above it), and only when there is more than the
  * prompt picker to fold in.
  */
 
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useReducer, useRef, type ReactNode } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
+import {
+  buttonLabel,
+  buttonPress,
+  initialToolsMenu,
+  menuItems,
+  shownLevel,
+  toolsMenuReducer,
+} from './composer-tools-menu.model';
 
 export default function ComposerToolsMenu({
   disabled,
@@ -40,14 +49,13 @@ export default function ComposerToolsMenu({
   /** The click that opens the voice level, to unlock playback. */
   onVoiceOpen?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [level, setLevel] = useState<'tools' | 'voice'>('tools');
+  const [state, dispatch] = useReducer(toolsMenuReducer, initialToolsMenu);
   const ref = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => {
-    setOpen(false);
-    setLevel('tools');
-  }, []);
-  useDismiss(open, ref, close);
+  const close = useCallback(() => dispatch({ type: 'closed' }), []);
+  useDismiss(state.open, ref, close);
+  const level = shownLevel(state, Boolean(voicePanel));
+  const items = menuItems({ canDictate, hasVoice: Boolean(voicePanel) });
+  const label = buttonLabel(dictating);
 
   const item =
     'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800';
@@ -57,17 +65,13 @@ export default function ComposerToolsMenu({
       <button
         type="button"
         onClick={() => {
-          if (dictating) {
-            onToggleDictation();
-            return;
-          }
-          setLevel('tools');
-          setOpen((state) => !state);
+          if (buttonPress(dictating) === 'stopDictating') onToggleDictation();
+          else dispatch({ type: 'toggled' });
         }}
         aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={dictating ? 'Stop dictating' : 'Prompts and voice'}
-        title={dictating ? 'Stop dictating' : 'Prompts and voice'}
+        aria-expanded={state.open}
+        aria-label={label}
+        title={label}
         disabled={disabled}
         className={`flex items-center justify-center rounded-md p-1.5 disabled:opacity-40 ${
           dictating
@@ -77,25 +81,27 @@ export default function ComposerToolsMenu({
       >
         {dictating ? wave : <Icon path={ICONS.sparkle} className="h-5 w-5" />}
       </button>
-      {open && level === 'tools' ? (
+      {level === 'tools' ? (
         <div
           role="menu"
           aria-label="Prompts and voice"
           className="absolute bottom-full left-0 z-40 mb-1 w-64 rounded-lg border border-gray-200 bg-white p-1 text-sm shadow-lg dark:border-gray-700 dark:bg-gray-900"
         >
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              close();
-              onPrompts();
-            }}
-            className={item}
-          >
-            <Icon path={ICONS.sparkle} className="h-4 w-4 shrink-0 text-gray-500" />
-            <span className="flex-1">Prompt libraries</span>
-          </button>
-          {canDictate ? (
+          {items.includes('prompts') ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                close();
+                onPrompts();
+              }}
+              className={item}
+            >
+              <Icon path={ICONS.sparkle} className="h-4 w-4 shrink-0 text-gray-500" />
+              <span className="flex-1">Prompt libraries</span>
+            </button>
+          ) : null}
+          {items.includes('dictate') ? (
             <button
               type="button"
               role="menuitem"
@@ -109,14 +115,14 @@ export default function ComposerToolsMenu({
               <span className="flex-1">Dictate</span>
             </button>
           ) : null}
-          {voicePanel ? (
+          {items.includes('voice') ? (
             <button
               type="button"
               role="menuitem"
               aria-haspopup="menu"
               onClick={() => {
                 onVoiceOpen?.();
-                setLevel('voice');
+                dispatch({ type: 'voiceOpened' });
               }}
               className={item}
             >
@@ -127,8 +133,8 @@ export default function ComposerToolsMenu({
           ) : null}
         </div>
       ) : null}
-      {open && level === 'voice' && voicePanel
-        ? voicePanel({ onBack: () => setLevel('tools'), onClose: close })
+      {level === 'voice' && voicePanel
+        ? voicePanel({ onBack: () => dispatch({ type: 'backToTools' }), onClose: close })
         : null}
     </div>
   );

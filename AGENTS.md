@@ -5,14 +5,57 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-# UI changes: add and run Playwright steps
+# UI models: a screen's behaviour is a reducer, tested in node
 
-Whenever a change touches UI (a page, a form, a component with visible
-output), add or update Playwright coverage in `apps/web/e2e/*.spec.ts` as
-part of that change, and actually run it — don't just write the spec and
-assume it passes. `llm-models.spec.ts` is a worked example of the full
-shape: empty state, filling a form, a vendor call answered with
-`page.route`, a saved-state screenshot, and a phone-width pass.
+What a screen does — which fields a form enables, what a card adds or takes
+off, what a list shows after a click, what request Save sends, what an
+error leaves on screen — lives in a `*.model.ts` beside the component: a
+state type, an action union, a reducer, and selectors for what the screen
+derives (`canSave`, the select-all box, the request body). The component
+holds `useReducer(reducer, props, init)`, makes the calls, dispatches what
+the person did and what the server answered, and renders. The model's
+`*.model.test.ts` beside it is the authority on that behaviour, runs in
+milliseconds in `pnpm test`, and gates every merge.
+
+- **Worked examples:** `app/(app)/agents/[agentId]/knowledge-panel.model.ts`
+  (a React panel: list, selection, draft form, deletes) and, for the
+  preview cards drawn in iframes (plain TypeScript, not React),
+  `lib/mcp-widgets/src/email-compose.model.ts` (what Send sends, what is
+  refused) and `chips.model.ts`. `lib/chat/stream-events.ts` is the
+  oldest: the chat thread's stream reducer, shared with the server.
+- **A model is pure.** `lib/ui-models.seam.test.ts` fails a `*.model.ts`
+  that imports React, Next, a component or the data store, touches
+  `window`/`document`/storage, fetches, sets a timer, reads the clock or
+  draws a random id — pass the time or id in an action — or has no
+  `*.model.test.ts` beside it.
+- **Write the test as the screen's spec**, in the words a person would use
+  ("a refused delete keeps the selection and shows why"): a sequence of
+  actions folded through the reducer, then the state or a selector.
+- **When you change a screen**, change or add its model and model tests in
+  the same change. A component with rules still inline (`useState` and
+  handlers deciding things) gets its model when you next change those
+  rules; `docs/testing-tiers.md` lists what has moved.
+
+# UI changes: the browser suite shows what only a browser can
+
+The Playwright suite in `apps/web/e2e/*.spec.ts` is for what a model test
+cannot show: that a page renders on the real server, routes and redirects,
+fits a phone, keeps focus and keyboard where they belong, and that one path
+end to end — a press in, the right request out, the answer drawn — reaches
+the server. Add or update a spec when a change touches one of those, and
+actually run it — don't just write the spec and assume it passes. A rule
+("Save is off until both fields say something") goes in the model test,
+not a press.
+
+Two tiers (`.github/workflows/ci.yml`): the tests tagged `@smoke` in their
+title (`pnpm --filter renkei e2e:smoke`), one critical path per area and
+the page crawl, gate a pull request as `e2e (memory store)`; the full
+suite runs when a change merges (every push to main).
+Tag a test `@smoke` only for a new critical path no smoke test walks.
+`llm-models.spec.ts` shows the harness end to end (empty state, a form, a
+vendor call answered with `page.route`, a real save, a saved-state
+screenshot, a phone-width pass); its form's rules are
+`admin/llm-models/model-forms.model.test.ts`'s.
 
 - **The suite** (`apps/web/playwright.config.ts`) runs the web app on the
   in-memory data store (`RENKEI_DATA_STORE=memory`, no Postgres) with its
@@ -26,9 +69,10 @@ shape: empty state, filling a form, a vendor call answered with
   four workers. It runs in CI as a production build, as
   `env -u DATABASE_URL CI=1 npx playwright test` does locally: CI builds
   once (`pnpm e2e:build`, with the server's environment from
-  `e2e/server-env.ts`) and runs three `--shard=i/3` jobs on that build
-  (`E2E_PREBUILT=1` starts `.next` as it is); `e2e (memory store)`
-  passes when every shard does. The suite runs Playwright's full
+  `e2e/server-env.ts`) and runs the `@smoke` tier on that build
+  (`E2E_PREBUILT=1` starts `.next` as it is), which `e2e (memory store)`
+  requires; on a push to main the full suite runs too, in three
+  `--shard=i/3` jobs on the same build. The suite runs Playwright's full
   Chromium build headless (`channel: 'chromium'`), never its headless
   shell, which routes a redirected navigation past `page.route` and
   denies notifications. On a box whose Chromium doesn't match
@@ -85,6 +129,24 @@ shape: empty state, filling a form, a vendor call answered with
   `settled`/`painted`/`steady` (`e2e/support/settle.ts`). A model reply
   that must stay in flight while the test looks holds `until` a key the
   test lets go with `releaseStub`, rather than a long `delayMs`.
+- **No motion to wait out.** The suite runs with the OS's reduce-motion
+  on (`reducedMotion` in `playwright.config.ts`), and the app ends every
+  transition and animation at once under it (`app/globals.css`), so a
+  slow CI CPU cannot stretch a slide or fade past a step's timeout. A
+  context a spec opens itself (`browser.newContext`) passes
+  `reducedMotion: 'reduce'` too. New motion respects the setting
+  (`motion-safe:`, or `scrollMotion()` from `lib/hash-scroll.ts` for a
+  scripted scroll).
+- **Rules go in model tests, not presses** ("UI models", above). The spec
+  drives only the path end to end: a value in, the right request out.
+  Every press in an iframe is a chance for Chrome to route it by an old
+  frame.
+- **Shared org state is written the same by everyone.** A setting one
+  spec needs and another overwrites (a connector's scopes, the
+  organization default model) is a race, not a slow server: pin it where
+  it is written (`SHARED_SETTINGS` in `e2e/support/connectors.ts`), or
+  leave it untouched and answer the read with `page.route`
+  (`llm-models.spec.ts`'s default badge).
 - **Pitfalls.** A built app can hold hidden copies of a page's
   pieces (a streamed render, a responsive twin): scope to
   `getByRole('main')` or add `.filter({ visible: true })`. Chrome routes
@@ -106,6 +168,15 @@ shape: empty state, filling a form, a vendor call answered with
 - **A new page** either gets a spec that opens and drives it, or a
   `CrawlPage` entry in `e2e/crawl/<area>.ts` (the crawl is the floor for
   pages no spec opens: it renders, no error page, its data shows).
+
+# Type guards: `@renkei/guards`
+
+Narrowing an `unknown` (a JSON body, a vendor's answer, a postMessage, an
+error's cause) uses `isRecord`, `asRecord`, `recordOrNull` and `isString`
+from `@renkei/guards` (`packages/guards`), in every app and package, the
+preview cards' bundles included. `isRecord` is an object that is not null
+and not an array. A local copy fails `packages/guards/src/no-copies.test.ts`;
+a new general guard goes into the package with a test, not into a module.
 
 # The data store seam: pages read through `getDataStore()`
 

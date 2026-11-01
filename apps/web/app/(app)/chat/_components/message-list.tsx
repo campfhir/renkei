@@ -19,17 +19,30 @@
  * auto mode's `task_complete` reads as the task's end. Auto mode's nudge
  * rows (kind 'nudge', the runner telling the model to carry on) show as
  * a small note between replies, never as the person's bubble.
+ *
+ * What all of that says and decides — turns, call states, fold lines,
+ * the cards' words, Copy's choices, the permission card's buttons, when
+ * the reader is at the bottom — is message-list.model.ts's, tested in
+ * message-list.model.test.ts. This file renders it and keeps the
+ * scroller (stick-to-bottom while pinned, through a ResizeObserver), the
+ * clipboard and the timers.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { friendlyToolName } from '@/lib/tool-name';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import type { CompactionProgress, SubagentProgress } from '@/lib/chat/stream-events';
 import { segment, type Segment, type ToolResult, type WorkStep } from '@/lib/chat/segment';
-import { contextCopyText, promptText, replyCalls, replyCopyText } from '@/lib/chat/copy-text';
+import { promptText } from '@/lib/chat/copy-text';
 import { useDismiss } from '@/lib/use-dismiss';
-import { IMAGE_TOOL } from '@/lib/chat/image-size';
 import { imageArtifactFor } from '@/lib/chat/image-artifact';
 import type {
   AttachmentView,
@@ -44,12 +57,42 @@ import { diffTotals, parseUnifiedDiff, splitDiffResult } from '@/lib/code/diff';
 import { formatDurationMs } from '@/lib/duration';
 import { useElapsedMs } from './use-elapsed';
 import { parseNote } from '@/lib/code/note-text';
-import { parseCommitResult } from '@/lib/code/chat-commits';
-import { milestoneSentence, milestoneSummary, type MilestoneState } from '@/lib/code/milestones';
-import { codeToolLabel, gitGlyphFor } from '@/lib/code/tool-labels';
-import { parseTaskCompletion, TASK_COMPLETE_TOOL } from '@/lib/chat/auto-mode';
-import { CHAT_RENAME_TOOL } from '@/lib/chat/titles';
-import { CHAT_DELEGATE_TOOL, isSubagentTool } from '@/lib/chat/subagent-tools';
+import type { MilestoneState } from '@/lib/code/milestones';
+import {
+  askedCall as findAskedCall,
+  callInputText,
+  callLine as callLineOf,
+  cardState,
+  compactionView,
+  COPIED_MS,
+  copyMenu,
+  copyReducer,
+  foldCallState,
+  groupTurns,
+  initialCopyState,
+  initialPermissionCardState,
+  inlineArtifacts,
+  isAtBottom,
+  listenState,
+  milestoneCardView,
+  openCallsOfLatestRow,
+  permissionButtons,
+  permissionCardReducer,
+  permissionCardText,
+  replyCopies,
+  replyEndNote,
+  resultRowsById,
+  resultsById,
+  showsReplyActions,
+  subagentCardView,
+  toolIconFor,
+  turnErrorLine,
+  workFoldView,
+  type Call,
+  type CallLine,
+  type CopyChoice,
+  type MilestoneCardView,
+} from './message-list.model';
 import DiffView, { Counts } from '../../code/_components/diff-view';
 import AttachmentChip from './attachment-chip';
 import ArtifactInline from './artifact-inline';
@@ -61,73 +104,21 @@ import MockupCard from './mockup-card';
 import WidgetCard from './widget-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
-/**
- * A tool call's icon, by name: memory tools get the bookmark, recalling
- * another chat gets the history glyph, everything else the plain wrench —
- * so the two verbs a person actually cares about (something was
- * remembered, an old chat was reached into) stand out from the general
- * run of tool calls at a glance.
- */
-const GIT_ICONS = {
-  clone: ICONS.gitClone,
-  commit: ICONS.gitCommit,
-  push: ICONS.gitPush,
-  pull: ICONS.gitPull,
-  branch: ICONS.gitBranch,
-  checkout: ICONS.gitCheckout,
-  merge: ICONS.gitMerge,
-  rebase: ICONS.gitRebase,
-  stash: ICONS.gitStash,
-  pullRequest: ICONS.gitPullRequest,
-};
-
-function toolIconFor(name: string): string {
-  if (name === 'chat_compact') return ICONS.package;
-  if (name === TASK_COMPLETE_TOOL) return ICONS.check;
-  if (name === CHAT_RENAME_TOOL) return ICONS.pencil;
-  if (name.startsWith('project_memory_') || name.startsWith('chat_memory_')) return ICONS.memory;
-  const git = gitGlyphFor(name);
-  if (git) return GIT_ICONS[git];
-  if (name === 'code_write_file' || name === 'code_edit_file') return ICONS.diff;
-  if (name === 'code_run') return ICONS.terminal;
-  if (isSubagentTool(name)) return ICONS.group;
-  if (name.startsWith('code_')) return ICONS.file;
-  if (name === 'chat_recall_chats') return ICONS.history;
-  if (name === IMAGE_TOOL) return ICONS.image;
-  return ICONS.tool;
-}
-
-/** The tool's name as shown: the code tools' own, else the generic one. */
-function toolLabel(name: string): string {
-  return codeToolLabel(name)?.label ?? friendlyToolName(name, null);
-}
-
-/**
- * One tool call's line: "Calling X", "Called X", "Failed: X", "Waiting to
- * call X" — or, for a step that reads as a sentence (the clone), that
- * sentence.
- */
-function callLine(name: string, state: 'pending' | 'done' | 'failed' | 'waiting'): ReactNode {
-  const own = codeToolLabel(name);
-  const sentence =
-    own &&
-    state !== 'waiting' &&
-    (state === 'pending' ? own.pending : state === 'done' ? own.done : own.failed);
-  if (sentence) return <span className="font-medium">{sentence}</span>;
+/** A call's line as the model words it: a sentence, or a verb and the tool's name. */
+function CallLineText({ line, name }: { line: CallLine; name: string }) {
+  if (line.kind === 'sentence') return <span className="font-medium">{line.text}</span>;
   return (
     <>
-      {state === 'pending'
-        ? 'Calling '
-        : state === 'failed'
-          ? 'Failed: '
-          : state === 'waiting'
-            ? 'Waiting for permission to call '
-            : 'Called '}
+      {line.verb}
       <span className="font-medium" title={name}>
-        {toolLabel(name)}
+        {line.label}
       </span>
     </>
   );
+}
+
+function callLine(name: string, state: MilestoneState): ReactNode {
+  return <CallLineText line={callLineOf(name, state)} name={name} />;
 }
 
 /**
@@ -216,8 +207,11 @@ export default function MessageList({
     element.scrollTop = element.scrollHeight;
   }, [messages, compaction, permission, pinned]);
 
-  // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx);
-  // a reader at the bottom should still be at the bottom afterwards.
+  // The box itself shrinks when a phone's keyboard opens (chat-frame.tsx),
+  // and what is in it grows with no new message (a preview card sizing
+  // itself to its content, an image loading): a reader at the bottom stays
+  // at the bottom as it happens, rather than the next message jumping the
+  // thread under them — and under a press on a card.
   useEffect(() => {
     const element = scroller.current;
     if (!element || !pinned || typeof ResizeObserver === 'undefined') return;
@@ -225,40 +219,24 @@ export default function MessageList({
       element.scrollTop = element.scrollHeight;
     });
     observer.observe(element);
+    if (element.firstElementChild) observer.observe(element.firstElementChild);
     return () => observer.disconnect();
   }, [pinned]);
 
-  const results = useMemo(() => {
-    const map = new Map<string, Extract<ChatBlock, { type: 'tool_result' }>>();
-    for (const message of messages) {
-      for (const block of message.blocks) {
-        if (block.type === 'tool_result') map.set(block.toolUseId, block);
-      }
-    }
-    return map;
-  }, [messages]);
-
+  const results = useMemo(() => resultsById(messages), [messages]);
   // Which tool_results row answered each call: the file a call kept carries
   // that row's id, which is how its picture is found again (image-artifact.ts).
-  const resultRows = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const message of messages) {
-      for (const block of message.blocks) {
-        if (block.type === 'tool_result') map.set(block.toolUseId, message.id);
-      }
-    }
-    return map;
-  }, [messages]);
+  const resultRows = useMemo(() => resultRowsById(messages), [messages]);
 
   const turns = useMemo(() => groupTurns(messages), [messages]);
   const lastTurnKey = turns.length > 0 ? turns[turns.length - 1].key : null;
+  const turnError = turnErrorLine(turn);
 
   return (
     <div
       ref={scroller}
       onScroll={(event) => {
-        const element = event.currentTarget;
-        setPinned(element.scrollHeight - element.scrollTop - element.clientHeight < 48);
+        setPinned(isAtBottom(event.currentTarget));
       }}
       className="relative min-h-0 flex-1 overflow-y-auto px-4 py-4"
     >
@@ -290,9 +268,7 @@ export default function MessageList({
             ) : null}
           </div>
         ))}
-        {turn && turn.status !== 'running' && turn.status !== 'completed' && turn.error ? (
-          <p className="text-xs text-gray-500">{turn.error}</p>
-        ) : null}
+        {turnError ? <p className="text-xs text-gray-500">{turnError}</p> : null}
         {compaction ? <CompactionCard progress={compaction} /> : null}
       </div>
       {!pinned ? (
@@ -312,28 +288,6 @@ export default function MessageList({
   );
 }
 
-interface TurnGroup {
-  key: string;
-  prompts: ChatMessageView[];
-  replies: ChatMessageView[];
-}
-
-/** Consecutive rows of one turn, prompts apart from the reply's rows. */
-function groupTurns(messages: ChatMessageView[]): TurnGroup[] {
-  const groups: TurnGroup[] = [];
-  for (const message of messages) {
-    const key = message.turnId ?? message.id;
-    let group = groups[groups.length - 1];
-    if (!group || group.key !== key) {
-      group = { key, prompts: [], replies: [] };
-      groups.push(group);
-    }
-    if (message.kind === 'prompt') group.prompts.push(message);
-    else group.replies.push(message);
-  }
-  return groups;
-}
-
 export type { ToolResult, Segment, WorkStep };
 
 /**
@@ -344,18 +298,8 @@ export type { ToolResult, Segment, WorkStep };
  * disappearing the moment the turn ends.
  */
 function CompactionCard({ progress }: { progress: CompactionProgress }) {
-  const { status, foldedSoFar, totalToFold } = progress;
-  const pct = totalToFold > 0 ? Math.round((foldedSoFar / totalToFold) * 100) : null;
-  const label =
-    status === 'running'
-      ? pct !== null
-        ? `Compacting the conversation… ${foldedSoFar} of ${totalToFold}`
-        : 'Compacting the conversation…'
-      : status === 'failed'
-        ? 'Compaction failed.'
-        : totalToFold > 0
-          ? `Compacted ${totalToFold} earlier message${totalToFold === 1 ? '' : 's'} into a summary.`
-          : 'Nothing to compact — the conversation is already tight.';
+  const { status } = progress;
+  const { label, percent: pct } = compactionView(progress);
   return (
     <div className="flex max-w-md items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-400">
       <Icon
@@ -431,9 +375,15 @@ function UserMessage({
   );
 }
 
-/** A copy-to-clipboard button that shows its own brief "Copied" confirmation. */
-function useCopyToClipboard(): [boolean, (text: string) => void] {
-  const [copied, setCopied] = useState(false);
+/**
+ * The reply's Copy: the prose alone, which is what most people copy a
+ * reply for. A chevron beside it offers the fuller copies
+ * (message-list.model.ts's `replyCopies`) one click further, so they
+ * never get in the way of the plain copy. The clipboard and the timer
+ * that takes "Copied" away are here; the state is the model's.
+ */
+function CopyButton({ text, more }: { text: string; more: CopyChoice[] }) {
+  const [state, dispatch] = useReducer(copyReducer, initialCopyState);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
@@ -441,35 +391,18 @@ function useCopyToClipboard(): [boolean, (text: string) => void] {
     },
     []
   );
-  const copy = useCallback((text: string) => {
-    if (!text) return;
-    void navigator.clipboard?.writeText(text).then(() => {
-      setCopied(true);
+  const copy = useCallback((value: string) => {
+    if (!value) return;
+    void navigator.clipboard?.writeText(value).then(() => {
+      dispatch({ type: 'copied' });
       if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 1500);
+      timer.current = setTimeout(() => dispatch({ type: 'copied-expired' }), COPIED_MS);
     });
   }, []);
-  return [copied, copy];
-}
-
-/**
- * The reply's Copy: the prose alone, which is what most people copy a
- * reply for. A chevron beside it offers the fuller copies
- * (lib/chat/copy-text.ts) — with each call's input and result between
- * the prose, or with the prompt as well — one click further, so they
- * never get in the way of the plain copy.
- */
-interface CopyChoice {
-  label: string;
-  text: string;
-}
-
-function CopyButton({ text, more }: { text: string; more: CopyChoice[] }) {
-  const [copied, copy] = useCopyToClipboard();
-  const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const close = useCallback(() => setOpen(false), []);
-  useDismiss(open, ref, close);
+  const close = useCallback(() => dispatch({ type: 'close-menu' }), []);
+  useDismiss(state.menuOpen, ref, close);
+  const menu = copyMenu(text, more);
   return (
     <div ref={ref} className="relative flex items-center">
       <button
@@ -477,46 +410,35 @@ function CopyButton({ text, more }: { text: string; more: CopyChoice[] }) {
         onClick={() => copy(text)}
         className="flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
       >
-        <Icon path={copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
-        {copied ? 'Copied' : 'Copy'}
+        <Icon path={state.copied ? ICONS.check : ICONS.copy} className="h-3.5 w-3.5" />
+        {state.copied ? 'Copied' : 'Copy'}
       </button>
-      {more.length > 0 ? (
+      {menu.length > 0 ? (
         <>
           <button
             type="button"
-            onClick={() => setOpen((state) => !state)}
+            onClick={() => dispatch({ type: 'toggle-menu' })}
             aria-haspopup="menu"
-            aria-expanded={open}
+            aria-expanded={state.menuOpen}
             aria-label="More copy options"
             className="rounded-md px-0.5 py-0.5 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-900 dark:hover:text-gray-200"
           >
             <Icon path={ICONS.chevron} className="h-3.5 w-3.5 rotate-90" />
           </button>
-          {open ? (
+          {state.menuOpen ? (
             // Opens upward: the row sits at the foot of a reply, often the
             // last thing above the composer.
             <div
               role="menu"
               className="absolute bottom-full left-0 z-40 mb-1 w-56 rounded-lg border border-gray-200 bg-white p-1 text-sm text-gray-700 shadow-lg dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
             >
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setOpen(false);
-                  copy(text);
-                }}
-                className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
-              >
-                Copy text only
-              </button>
-              {more.map((choice) => (
+              {menu.map((choice) => (
                 <button
                   key={choice.label}
                   type="button"
                   role="menuitem"
                   onClick={() => {
-                    setOpen(false);
+                    dispatch({ type: 'picked' });
                     copy(choice.text);
                   }}
                   className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -573,72 +495,27 @@ function Reply({
     [messages, results, codeProject]
   );
   // The call the ask is about, for the card to show its input.
-  const askedCall = useMemo(() => {
-    if (!permission) return null;
-    for (const message of messages) {
-      for (const block of message.blocks) {
-        if (block.type === 'tool_use' && block.id === permission.pending.toolUseId) return block;
-      }
-    }
-    return null;
-  }, [messages, permission]);
-  const copyText = useMemo(() => replyCopyText(segments), [segments]);
-  // The fuller copies, behind the chevron: the tool calls only when there
-  // were any; the context only when there is a prompt to copy with it.
-  const moreCopies = useMemo(() => {
-    const more: CopyChoice[] = [];
-    if (replyCalls(segments).length > 0) {
-      more.push({
-        label: 'Copy with tool calls',
-        text: replyCopyText(segments, { toolCalls: true }),
-      });
-    }
-    if (prompts.some((prompt) => promptText(prompt) !== '')) {
-      more.push({ label: 'Copy with context', text: contextCopyText(prompts, segments) });
-    }
-    return more;
-  }, [segments, prompts]);
-  // The calls of the latest tool-calling row that have not been answered.
-  // While the turn runs these are still in flight, whatever the stream
-  // said: a snapshot (a reconnect, a phone coming back to the tab) clears
-  // `pendingToolCalls`, and only the LAST segment counts as the tail — so
-  // an earlier sub-agent card, still working beside a later one, would
-  // otherwise read "failed". Calls of an earlier row always have their
-  // results by the time the model went on, so only the latest row can hold
-  // any that are open.
-  const inFlight = useMemo(() => {
-    let open = new Set<string>();
-    for (const message of messages) {
-      if (message.role !== 'assistant') continue;
-      const uses = message.blocks.filter((block) => block.type === 'tool_use');
-      if (uses.length === 0) continue;
-      open = new Set(uses.filter((block) => !results.has(block.id)).map((block) => block.id));
-    }
-    return open;
-  }, [messages, results]);
-  // The files this reply's tool calls kept: each hangs off the tool_results
-  // row that carried it, and is shown under the reply with its Download.
-  // A picture already drawn in its image call's own card is not drawn twice.
-  const produced = useMemo(() => {
-    const rows = new Set(messages.map((message) => message.id));
-    return artifacts.filter((artifact) => artifact.messageId && rows.has(artifact.messageId));
-  }, [messages, artifacts]);
-  const inline = useMemo(() => {
-    const drawn = new Set<string>();
-    for (const part of segments) {
-      if (part.kind !== 'image') continue;
-      const image = imageArtifactFor(
-        part.step.block.id,
-        resultRows,
-        artifacts,
-        part.step.result?.content ?? ''
-      );
-      if (image) drawn.add(image.id);
-    }
-    return produced.filter((artifact) => !drawn.has(artifact.id));
-  }, [segments, produced, resultRows, artifacts]);
+  const askedCall = useMemo(
+    () => (permission ? findAskedCall(messages, permission.pending.toolUseId) : null),
+    [messages, permission]
+  );
+  const { text: copyText, more: moreCopies } = useMemo(
+    () => replyCopies(segments, prompts),
+    [segments, prompts]
+  );
+  // The calls of the latest tool-calling row still open: in flight while
+  // the turn runs, whatever a snapshot did to `pendingToolCalls`.
+  const inFlight = useMemo(() => openCallsOfLatestRow(messages, results), [messages, results]);
+  const inline = useMemo(
+    () => inlineArtifacts(messages, segments, artifacts, resultRows),
+    [messages, segments, artifacts, resultRows]
+  );
   const last = messages[messages.length - 1];
   const lastIndex = segments.length - 1;
+  const endNote = replyEndNote(last);
+  const waitingOn = permission?.pending.toolUseId ?? null;
+  const stateOf = (step: Call, tail: boolean) =>
+    cardState(step, { waitingOn, pendingToolCalls, live: tail, streaming, inFlight });
   return (
     <div className="group min-w-0 text-sm">
       {segments.map((part, index) => {
@@ -665,28 +542,11 @@ function Reply({
             );
           case 'subagent': {
             const step = part.step;
-            const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
-            const pending =
-              !step.result &&
-              !waiting &&
-              (tail ||
-                pendingToolCalls.includes(step.block.id) ||
-                (streaming && inFlight.has(step.block.id)));
             return (
               <SubagentCard
                 key={step.block.id}
                 step={step}
-                state={
-                  waiting
-                    ? 'waiting'
-                    : pending
-                      ? 'pending'
-                      : step.result?.isError
-                        ? 'failed'
-                        : step.result
-                          ? 'done'
-                          : 'failed'
-                }
+                state={stateOf(step, tail)}
                 progress={subagents[step.block.id] ?? null}
                 onShow={onShowSubagent}
               />
@@ -694,28 +554,11 @@ function Reply({
           }
           case 'milestone': {
             const step = part.step;
-            const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
-            const pending =
-              !step.result &&
-              !waiting &&
-              (tail ||
-                pendingToolCalls.includes(step.block.id) ||
-                (streaming && inFlight.has(step.block.id)));
             return (
               <MilestoneCard
                 key={step.block.id}
                 step={step}
-                state={
-                  waiting
-                    ? 'waiting'
-                    : pending
-                      ? 'pending'
-                      : step.result?.isError
-                        ? 'failed'
-                        : step.result
-                          ? 'done'
-                          : 'failed'
-                }
+                state={stateOf(step, tail)}
                 code={code}
               />
             );
@@ -723,29 +566,12 @@ function Reply({
           case 'image': {
             // Same states as a sub-agent's card: asked, running, done, failed.
             const step = part.step;
-            const waiting = !step.result && permission?.pending.toolUseId === step.block.id;
-            const pending =
-              !step.result &&
-              !waiting &&
-              (tail ||
-                pendingToolCalls.includes(step.block.id) ||
-                (streaming && inFlight.has(step.block.id)));
             return (
               <ImageCard
                 key={step.block.id}
                 call={step.block}
                 result={step.result}
-                state={
-                  waiting
-                    ? 'waiting'
-                    : pending
-                      ? 'pending'
-                      : step.result?.isError
-                        ? 'failed'
-                        : step.result
-                          ? 'done'
-                          : 'failed'
-                }
+                state={stateOf(step, tail)}
                 image={imageArtifactFor(
                   step.block.id,
                   resultRows,
@@ -789,7 +615,7 @@ function Reply({
                 modelMs={part.modelMs}
                 pendingToolCalls={pendingToolCalls}
                 live={tail}
-                waitingOn={permission?.pending.toolUseId ?? null}
+                waitingOn={waitingOn}
                 onOpenFile={code?.onOpenFile ?? null}
               />
             );
@@ -800,14 +626,14 @@ function Reply({
         <ArtifactInline key={artifact.id} artifact={artifact} />
       ))}
       {permission ? <PermissionCard prompt={permission} call={askedCall} /> : null}
-      {last.status === 'failed' && last.error ? (
-        <p className="mt-1 text-xs text-red-600 dark:text-red-400">{last.error}</p>
+      {endNote ? (
+        <p
+          className={`mt-1 text-xs ${endNote.tone === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-400'}`}
+        >
+          {endNote.text}
+        </p>
       ) : null}
-      {last.status === 'canceled' ? <p className="mt-1 text-xs text-gray-400">Stopped.</p> : null}
-      {last.status === 'interrupted' ? (
-        <p className="mt-1 text-xs text-gray-400">Interrupted.</p>
-      ) : null}
-      {copyText && !streaming ? (
+      {showsReplyActions(copyText, streaming) ? (
         // Shown on hover where there is a pointer to hover with; always on
         // a touch screen, where there is not.
         <div
@@ -818,9 +644,7 @@ function Reply({
           <CopyButton text={copyText} more={moreCopies} />
           {speech ? (
             <ListenButton
-              state={
-                speech.playingKey !== speechKey ? 'idle' : speech.paused ? 'paused' : 'playing'
-              }
+              state={listenState(speech.playingKey, speech.paused, speechKey)}
               onListen={() => speech.onListen(speechKey, copyText)}
               onPause={speech.onPause}
               onResume={speech.onResume}
@@ -859,56 +683,33 @@ function WorkFold({
   /** Open a changed file in the code pane, from a result's diff. */
   onOpenFile?: ((path: string) => void) | null;
 }) {
-  const shown = steps.filter((step) => step.kind !== 'thinking' || step.text.trim() !== '');
-  const calls = shown.filter((step) => step.kind === 'call');
-  const thought = shown.some((step) => step.kind !== 'call');
-  // Only the most recently resolved call decides the fold's error styling —
-  // an early failure that a later call in the same run superseded shouldn't
-  // keep painting the whole group red.
-  const lastResolvedCall = [...calls].reverse().find((step) => step.result);
-  const failed = lastResolvedCall?.result?.isError ?? false;
-  const isWaiting = (step: Extract<WorkStep, { kind: 'call' }>) =>
-    !step.result && waitingOn === step.block.id;
-  const isPending = (step: Extract<WorkStep, { kind: 'call' }>) =>
-    !step.result && !isWaiting(step) && (live || pendingToolCalls.includes(step.block.id));
-  const current = steps[steps.length - 1];
-
-  let label: ReactNode;
-  if (live && current) {
-    label =
-      current.kind === 'call' && isWaiting(current) ? (
-        callLine(current.block.name, 'waiting')
-      ) : current.kind === 'call' && isPending(current) ? (
-        <>
-          {callLine(current.block.name, 'pending')}
-          <span className="chat-dots" aria-hidden="true" />
-        </>
-      ) : (
-        <>
-          Thinking
-          <span className="chat-dots" aria-hidden="true" />
-        </>
-      );
-  } else {
-    const parts: string[] = [];
-    if (thought) parts.push('Thought');
-    if (calls.length > 0) parts.push(`${calls.length} tool call${calls.length === 1 ? '' : 's'}`);
-    // Where the time went, when the rows kept it: the model's own calls
-    // apart from the tools they waited on, so a slow reply can be read as
-    // "thinking" or "a slow tool" from the line itself.
-    const toolMs = calls.reduce((sum, step) => sum + (step.result?.durationMs ?? 0), 0);
-    const timing: string[] = [];
-    if (modelMs > 0) timing.push(`${formatDurationMs(modelMs)} model`);
-    if (toolMs > 0) timing.push(`${formatDurationMs(toolMs)} tools`);
-    if (timing.length > 0) parts.push(timing.join(', '));
-    label = parts.length > 0 ? parts.join(' · ') : 'Thought';
-  }
+  const context = { waitingOn, pendingToolCalls, live };
+  const view = workFoldView(steps, { ...context, modelMs });
+  const isWaiting = (step: Call) => foldCallState(step, context) === 'waiting';
+  const isPending = (step: Call) => foldCallState(step, context) === 'pending';
+  const { shown, failed } = view;
+  const label: ReactNode =
+    view.label.kind === 'summary' ? (
+      view.label.text
+    ) : view.label.kind === 'waiting' ? (
+      <CallLineText line={view.label.line} name={view.label.name} />
+    ) : view.label.kind === 'pending' ? (
+      <>
+        <CallLineText line={view.label.line} name={view.label.name} />
+        <span className="chat-dots" aria-hidden="true" />
+      </>
+    ) : (
+      <>
+        Thinking
+        <span className="chat-dots" aria-hidden="true" />
+      </>
+    );
 
   const icon = (
-    <Icon path={calls.length === 0 ? ICONS.brain : ICONS.tool} className="h-3.5 w-3.5" />
+    <Icon path={view.icon === 'brain' ? ICONS.brain : ICONS.tool} className="h-3.5 w-3.5" />
   );
 
-  if (shown.length === 0) {
+  if (!view.foldable) {
     return (
       <div className="chat-fold">
         <p className="chat-fold-static">
@@ -980,7 +781,7 @@ export function StepList({
           case 'call': {
             const pending = isPending(step);
             const waiting = isWaiting(step);
-            const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
+            const args = callInputText(step.block);
             // A code tool that changed a file carries the file's diff,
             // fenced; it is shown as a diff, and its counts on the line.
             const split =
@@ -992,7 +793,7 @@ export function StepList({
               <li key={index}>
                 <details className={`chat-fold ${step.result?.isError ? 'chat-fold-error' : ''}`}>
                   <summary>
-                    <Icon path={toolIconFor(step.block.name)} className="h-3.5 w-3.5" />
+                    <Icon path={ICONS[toolIconFor(step.block.name)]} className="h-3.5 w-3.5" />
                     {callLine(
                       step.block.name,
                       waiting
@@ -1076,33 +877,6 @@ function SubagentCard({
   /** Open the run's transcript; absent where the thread cannot show one. */
   onShow: ((toolUseId: string) => void) | null;
 }) {
-  const input =
-    typeof step.block.input === 'object' && step.block.input !== null ? step.block.input : {};
-  const record: { task?: unknown; readOnly?: unknown; instructions?: unknown; model?: unknown } =
-    input;
-  const task = typeof record.task === 'string' ? record.task.trim() : '';
-  const taskLine = task.split('\n').find((line) => line.trim()) ?? '';
-  const instructions = typeof record.instructions === 'string' ? record.instructions.trim() : '';
-  // An ordinary chat's sub-agent only ever reads (chat-delegate.ts); a
-  // code project's says so per task.
-  const readOnly = record.readOnly === true || step.block.name === CHAT_DELEGATE_TOOL;
-  // The model the orchestrator picked for this task, when it picked one;
-  // absent, the sub-agent ran on the chat's own (the transcript says which).
-  const model = typeof record.model === 'string' ? record.model.trim() : '';
-  const resultText = step.result?.content ?? '';
-  const reportLine = step.result ? (resultText.split('\n').find((line) => line.trim()) ?? '') : '';
-  const running = state === 'pending' || state === 'waiting';
-  const sentence =
-    state === 'waiting'
-      ? 'Waiting for permission to start a sub-agent'
-      : state === 'pending'
-        ? readOnly
-          ? 'Sub-agent investigating'
-          : 'Sub-agent working'
-        : state === 'failed'
-          ? 'The sub-agent failed'
-          : 'Sub-agent reported';
-  const live = progress && progress.status === 'running' ? progress : null;
   // How long it has been (or was) at work: ticks while it runs, and keeps
   // its total once it ends.
   const elapsedMs = useElapsedMs(
@@ -1111,11 +885,8 @@ function SubagentCard({
     progress?.status === 'running'
   );
   const elapsed = elapsedMs === null ? null : formatDurationMs(elapsedMs);
-  const inline = live
-    ? `${live.steps}/${live.maxSteps} calls · ${live.toolCalls} tool call${live.toolCalls === 1 ? '' : 's'}${elapsed ? ` · ${elapsed}` : ''}`
-    : !running && reportLine
-      ? reportLine
-      : taskLine;
+  const view = subagentCardView(step, state, progress, elapsed);
+  const { task, instructions, readOnly, model, sentence, live, inline } = view;
   return (
     <details className={`chat-fold ${state === 'failed' ? 'chat-fold-error' : ''}`} data-subagent>
       <summary>
@@ -1151,15 +922,14 @@ function SubagentCard({
         ) : null}
         {live ? (
           <p className="text-gray-600 dark:text-gray-400">
-            {live.steps} of {live.maxSteps} model call{live.maxSteps === 1 ? '' : 's'} ·{' '}
-            {live.toolCalls} tool call{live.toolCalls === 1 ? '' : 's'}
+            {view.liveCounts}
             {elapsed ? (
               <>
                 {' '}
                 · <span data-subagent-elapsed>{elapsed}</span> running
               </>
             ) : null}
-            {live.lastTool ? ` · ${milestoneSentence(live.lastTool, 'pending')}` : ''}
+            {view.lastTool ? ` · ${view.lastTool}` : ''}
           </p>
         ) : null}
         {!live && elapsed ? (
@@ -1182,7 +952,7 @@ function SubagentCard({
             className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 text-xs hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
           >
             <Icon path={ICONS.history} className="h-3.5 w-3.5" />
-            {running ? 'Follow the sub-agent' : 'View transcript'}
+            {view.transcriptLabel}
           </button>
         ) : null}
       </div>
@@ -1277,6 +1047,14 @@ function NudgeNote({ text }: { text: string }) {
   );
 }
 
+const MILESTONE_TONES: Record<MilestoneCardView['tone'], string> = {
+  failed: 'text-red-500',
+  busy: 'text-blue-500',
+  'needs-input': 'text-amber-600 dark:text-amber-400',
+  complete: 'text-green-600 dark:text-green-400',
+  done: 'text-blue-600 dark:text-blue-400',
+};
+
 /**
  * A milestone, lifted out of the fold: a commit, a push, a pull request
  * opened or merged, a pipeline or workflow started — or any other word to the git host,
@@ -1296,51 +1074,18 @@ function MilestoneCard({
   code: CodeActions | null;
 }) {
   const name = step.block.name;
-  const isTaskEnd = name === TASK_COMPLETE_TOOL;
-  const completion = isTaskEnd ? parseTaskCompletion(step.block.input) : null;
-  const resultText = step.result?.content ?? '';
-  const summary = step.result && !step.result.isError ? milestoneSummary(resultText) : null;
-  const commit =
-    name === 'code_git_commit' && step.result && !step.result.isError
-      ? parseCommitResult(resultText)
-      : null;
-  const sentence = isTaskEnd
-    ? state === 'done'
-      ? completion?.outcome === 'needs_input'
-        ? 'Needs your input'
-        : 'Task complete'
-      : state === 'failed'
-        ? 'The task could not be marked complete'
-        : 'Marking the task complete'
-    : milestoneSentence(name, state);
-  const headline = isTaskEnd
-    ? completion?.summary || null
-    : commit
-      ? `${commit.sha} ${commit.subject}`.trim()
-      : (summary?.headline ?? null);
-  const args = step.block.partialJson ?? JSON.stringify(step.block.input, null, 2);
-  const iconTone =
-    state === 'failed'
-      ? 'text-red-500'
-      : state === 'pending' || state === 'waiting'
-        ? 'text-blue-500'
-        : isTaskEnd
-          ? completion?.outcome === 'needs_input'
-            ? 'text-amber-600 dark:text-amber-400'
-            : 'text-green-600 dark:text-green-400'
-          : 'text-blue-600 dark:text-blue-400';
-  const failLine = step.result?.isError
-    ? (resultText.split('\n').find((line) => line.trim()) ?? 'The call failed.')
-    : null;
-  const inline = failLine ?? headline;
-  const hasActions = (summary?.link || (commit && code)) && state === 'done';
+  const view = milestoneCardView(step, state, code !== null);
+  const { sentence, commit, failLine, inline } = view;
+  const args = callInputText(step.block);
+  const iconTone = MILESTONE_TONES[view.tone];
+  const hasActions = view.link !== null || view.canShowCommit;
   return (
     <details
       className={`chat-fold ${state === 'failed' ? 'chat-fold-error' : ''}`}
       data-milestone={name}
     >
       <summary>
-        <Icon path={toolIconFor(name)} className={`h-3.5 w-3.5 shrink-0 ${iconTone}`} />
+        <Icon path={ICONS[toolIconFor(name)]} className={`h-3.5 w-3.5 shrink-0 ${iconTone}`} />
         <span className="shrink-0" title={name}>
           {sentence}
         </span>
@@ -1358,7 +1103,7 @@ function MilestoneCard({
       <div className="space-y-2">
         {hasActions ? (
           <div className="flex flex-wrap items-center gap-2">
-            {commit && code ? (
+            {commit && code && view.canShowCommit ? (
               <button
                 type="button"
                 onClick={() => code.onShowCommit(commit.sha)}
@@ -1368,13 +1113,13 @@ function MilestoneCard({
                 View diff
               </button>
             ) : null}
-            {summary?.link ? (
+            {view.link ? (
               <ExternalLink
-                href={summary.link.url}
+                href={view.link.url}
                 className="flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-0.5 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
               >
                 <Icon path={ICONS.externalLink} className="h-3.5 w-3.5" />
-                {summary.link.label}
+                {view.link.label}
               </ExternalLink>
             ) : null}
           </div>
@@ -1396,6 +1141,19 @@ function MilestoneCard({
   );
 }
 
+const DECISION_CLASSES: Record<ToolPermissionDecision, string> = {
+  once: 'bg-blue-600 text-white hover:bg-blue-700',
+  always:
+    'border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800',
+  deny: 'text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40',
+};
+
+const DECISION_TITLES: Record<ToolPermissionDecision, string | undefined> = {
+  once: undefined,
+  always: 'Runs this tool without asking from now on. Change your mind under Preferences.',
+  deny: undefined,
+};
+
 /**
  * The ask, inline where the reply stopped: what the assistant wants to
  * call, with what, and the three answers. Allow once is the plain yes;
@@ -1412,18 +1170,14 @@ function PermissionCard({
   prompt: PermissionPrompt;
   call: Extract<ChatBlock, { type: 'tool_use' }> | null;
 }) {
-  const [busy, setBusy] = useState<ToolPermissionDecision | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(permissionCardReducer, initialPermissionCardState);
   const name = prompt.pending.name;
-  const args = call ? JSON.stringify(call.input, null, 2) : null;
+  const text = permissionCardText(name, prompt.canDecide, call);
   const decide = async (decision: ToolPermissionDecision) => {
-    setBusy(decision);
-    setError(null);
+    if (state.busy) return;
+    dispatch({ type: 'decide', decision });
     const failure = await prompt.onDecide(prompt.pending.toolUseId, decision);
-    if (failure) {
-      setError(failure);
-      setBusy(null);
-    }
+    if (failure) dispatch({ type: 'refused', error: failure });
     // On success the stream's tool_permission_decided event takes the
     // card away; nothing to reset here.
   };
@@ -1443,14 +1197,13 @@ function PermissionCard({
         </span>
         <div className="min-w-0 flex-1">
           <p className="font-medium text-gray-900 dark:text-gray-100">
-            {prompt.canDecide ? 'Allow this?' : 'Waiting for the owner'} The assistant wants to{' '}
-            <span title={name}>{toolLabel(name).toLowerCase()}</span>.
+            {text.lead} The assistant wants to <span title={name}>{text.action}</span>.
           </p>
           <p className="mt-0.5 text-xs text-gray-600 dark:text-gray-400">
             This changes something outside the conversation, so it waits for a yes. Tool:{' '}
             <code className="font-mono">{name}</code>
           </p>
-          {args ? (
+          {text.input ? (
             <details className="chat-fold mt-1">
               <summary>
                 What it will send
@@ -1459,45 +1212,32 @@ function PermissionCard({
                   className="chat-fold-chevron h-3.5 w-3.5 text-gray-400"
                 />
               </summary>
-              <CodePane text={args} language="json" />
+              <CodePane text={text.input} language="json" />
             </details>
           ) : null}
           {prompt.canDecide ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => void decide('once')}
-                className={`${buttonClass} bg-blue-600 text-white hover:bg-blue-700`}
-              >
-                {busy === 'once' ? 'Allowing…' : 'Allow once'}
-              </button>
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => void decide('always')}
-                title="Runs this tool without asking from now on. Change your mind under Preferences."
-                className={`${buttonClass} border border-gray-300 bg-white text-gray-800 hover:bg-gray-100 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800`}
-              >
-                {busy === 'always' ? 'Allowing…' : 'Always allow'}
-              </button>
-              <button
-                type="button"
-                disabled={busy !== null}
-                onClick={() => void decide('deny')}
-                className={`${buttonClass} text-red-700 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40`}
-              >
-                {busy === 'deny' ? 'Denying…' : 'Deny'}
-              </button>
+              {permissionButtons(state).map(({ decision, label, disabled }) => (
+                <button
+                  key={decision}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => void decide(decision)}
+                  title={DECISION_TITLES[decision]}
+                  className={`${buttonClass} ${DECISION_CLASSES[decision]}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
           ) : (
             <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
               Only the chat&rsquo;s owner can allow or deny it.
             </p>
           )}
-          {error ? (
+          {state.error ? (
             <p className="mt-1 text-xs text-red-600 dark:text-red-400" role="alert">
-              {error}
+              {state.error}
             </p>
           ) : null}
         </div>

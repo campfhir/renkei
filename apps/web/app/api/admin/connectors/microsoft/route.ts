@@ -15,10 +15,9 @@ import {
 } from '@renkei/connector-config';
 import { MICROSOFT_CONNECTOR, DEFAULT_MICROSOFT_SCOPES } from '@/lib/microsoft-app';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -59,13 +58,7 @@ export async function GET(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

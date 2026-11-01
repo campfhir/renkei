@@ -31,6 +31,7 @@ import type { ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { LoadingLine, LoadingRegion, SkeletonText } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { clientLogger } from '@/lib/client-logger';
+import { scrollMotion } from '@/lib/hash-scroll';
 
 const PERIODS = [
   { days: 1, label: '24 hours' },
@@ -477,7 +478,10 @@ function Stat({ label, value, hint }: { label: string; value: string; hint?: str
   );
 }
 
-export default function UsageViewer({ initial, tools }: {
+export default function UsageViewer({
+  initial,
+  tools,
+}: {
   initial: UsageReport;
   tools: ToolDescriptor[];
 }) {
@@ -767,7 +771,7 @@ export default function UsageViewer({ initial, tools }: {
                 onClick={() =>
                   document
                     .getElementById(`connector-${label.replace(/[^A-Za-z0-9]+/g, '-')}`)
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                    ?.scrollIntoView({ behavior: scrollMotion(), block: 'start' })
                 }
                 className="flex shrink-0 items-center gap-1.5 rounded-full border border-gray-300 px-2.5 py-1 text-xs text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900"
               >

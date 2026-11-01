@@ -1,7 +1,14 @@
 import React from 'react';
 import Link from 'next/link';
-import { friendlyToolName, parseFormNodes, parseStoredActions, type FormNode } from '@renkei/agents';
-import { jiraIssueFieldRows } from '@/lib/mcp-tools/jira/fields';
+import {
+  executionResultView,
+  pauseOutcomeWording,
+  proposedActions,
+  questionFormFrom,
+  relatedExcerpts,
+  type FieldRow,
+  type ProposedCallView,
+} from './cards.model';
 import { Icon, ICONS } from '@/components/icons';
 import ExternalLink from '@/components/external-link';
 import CardActions from './card-actions';
@@ -47,7 +54,10 @@ export interface ActionableItemRow {
  * alongside the pager, which needs the same "is there another page?"
  * answer the query produces.
  */
-export default function ActionableCards({ items, showArchived = false }: {
+export default function ActionableCards({
+  items,
+  showArchived = false,
+}: {
   items: ActionableItemRow[];
   /** Whose feed this is — every decision on these cards requires the
    * card's owner_subject to match it (server-side). */
@@ -109,10 +119,7 @@ export default function ActionableCards({ items, showArchived = false }: {
             // lets the wait treat it as not accepted.
             <ApprovalActions itemId={item.id} />
           ) : item.kind === 'question' ? (
-            <QuestionActions
-              itemId={item.id}
-              form={questionFormFrom(item.suggested_action)}
-            />
+            <QuestionActions itemId={item.id} form={questionFormFrom(item.suggested_action)} />
           ) : (
             <CardActions itemId={item.id} dismissOnly={item.kind === 'info'} />
           ))}
@@ -128,10 +135,7 @@ export default function ActionableCards({ items, showArchived = false }: {
         {item.status === 'failed' && <ExecutionResult result={item.result} failed />}
 
         {item.status !== 'suggested' && !isPause && (
-          <ArchiveAction
-            itemId={item.id}
-            archived={item.archived_at !== null}
-          />
+          <ArchiveAction itemId={item.id} archived={item.archived_at !== null} />
         )}
       </div>
     );
@@ -140,52 +144,16 @@ export default function ActionableCards({ items, showArchived = false }: {
   return <div className="space-y-4">{cards}</div>;
 }
 
-/** The form an ask_person call snapshotted onto its card. */
-function questionFormFrom(suggestedAction: unknown): FormNode[] {
-  if (typeof suggestedAction !== 'object' || suggestedAction === null) return [];
-  const record: { form?: unknown } = { ...suggestedAction };
-  return parseFormNodes(record.form);
-}
-
-/** Tools whose args are a Jira/JSM issue — same shape the issue-preview
- * MCP widget renders (jira/write.ts, jsm.ts), so the approval card can show
- * the same project/type header, summary, description and field rows
- * instead of a raw arg dump. */
-const ISSUE_ARG_TOOLS = new Set([
-  'jira_create_issue',
-  'jira_create_issue_confirm',
-  'jira_update_issue',
-  'jira_update_issue_confirm',
-  'jsm_create_request',
-  'jsm_create_request_confirm',
-]);
-
-/** Tools whose args are an outgoing email — same fields the email-compose
- * MCP widget renders (outlook/index.ts). */
-const EMAIL_ARG_TOOLS = new Set([
-  'outlook_send_mail',
-  'outlook_send_mail_confirm',
-  'outlook_reply_message',
-  'outlook_reply_confirm',
-  'outlook_reply_all_message',
-  'outlook_reply_all_confirm',
-  'outlook_forward_message',
-  'outlook_forward_confirm',
-]);
-
 /**
  * The batch of staged actions an agent proposed — the card's whole point.
  * Accepting (ApprovalActions, below it) accepts every action, in this
  * order; nothing runs from here: a separate executor makes the calls and
  * reports each outcome back to the agent. Each action reads as what it
- * would do and why, with its arguments behind a disclosure — the tool
- * families common enough to be worth it render the way their chat-side
- * preview cards do, everything else as a plain arg list.
+ * would do and why, with its arguments behind a disclosure — laid out by
+ * cards.model.ts for its tool family.
  */
 function ProposedBatch({ suggestedAction }: { suggestedAction: unknown }): React.ReactNode {
-  const record: { actions?: unknown } =
-    typeof suggestedAction === 'object' && suggestedAction !== null ? { ...suggestedAction } : {};
-  const actions = parseStoredActions(record.actions);
+  const actions = proposedActions(suggestedAction);
   if (actions.length === 0) return null;
   return (
     <ol aria-label="Proposed actions" className="my-2 space-y-2">
@@ -196,7 +164,7 @@ function ProposedBatch({ suggestedAction }: { suggestedAction: unknown }): React
         >
           <p className="font-medium">
             <span className="mr-1.5 text-gray-500">{index + 1}.</span>
-            {friendlyToolName(action.tool, null)}
+            {action.label}
           </p>
           <p className="mt-0.5 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
             {action.reason}
@@ -205,7 +173,9 @@ function ProposedBatch({ suggestedAction }: { suggestedAction: unknown }): React
             <summary className="cursor-pointer text-xs text-blue-600 hover:underline dark:text-blue-400">
               Details
             </summary>
-            <ProposedCall tool={action.tool} args={action.args} />
+            <div className="mt-1 text-sm" aria-label={`${action.label} arguments`}>
+              <ProposedCall call={action.call} />
+            </div>
           </details>
         </li>
       ))}
@@ -213,42 +183,8 @@ function ProposedBatch({ suggestedAction }: { suggestedAction: unknown }): React
   );
 }
 
-/** One action's arguments, rendered for its tool family. */
-function ProposedCall({
-  tool,
-  args,
-}: {
-  tool: string;
-  args: Record<string, unknown>;
-}): React.ReactNode {
-  const toolLabel = friendlyToolName(tool, null);
-  if (ISSUE_ARG_TOOLS.has(tool)) {
-    return <IssueProposedCall toolLabel={toolLabel} args={args} />;
-  }
-  if (EMAIL_ARG_TOOLS.has(tool)) {
-    return <EmailProposedCall toolLabel={toolLabel} args={args} />;
-  }
-  return <GenericProposedCall toolLabel={toolLabel} args={args} />;
-}
-
-/** Shared shell every "Wants to call …" card variant renders inside. */
-function ProposedCallShell({
-  toolLabel,
-  children,
-}: {
-  toolLabel: string;
-  children: React.ReactNode;
-}): React.ReactNode {
-  return (
-    <div className="mt-1 text-sm" aria-label={`${toolLabel} arguments`}>
-      {children}
-    </div>
-  );
-}
-
-/** `label: value` rows, the shape both the issue and email cards below
- * reduce their args to — mirrors an MCP preview card's own field list. */
-function FieldRows({ rows }: { rows: { label: string; value: string }[] }): React.ReactNode {
+/** `label: value` rows — mirrors an MCP preview card's own field list. */
+function FieldRows({ rows }: { rows: FieldRow[] }): React.ReactNode {
   if (rows.length === 0) return null;
   return (
     <dl className="mt-2 space-y-1 text-xs text-gray-600 dark:text-gray-400">
@@ -262,115 +198,42 @@ function FieldRows({ rows }: { rows: { label: string; value: string }[] }): Reac
   );
 }
 
-/** A Jira/JSM issue create-or-update call — project/type header (or the
- * issue key, on an update), summary, description, and everything else
- * jiraIssueFieldRows already knows how to lay out. No live Jira fetch: this
- * is the call as written, the same way the preview card shows it before a
- * person confirms. */
-function IssueProposedCall({
-  toolLabel,
-  args,
-}: {
-  toolLabel: string;
-  args: Record<string, unknown>;
-}): React.ReactNode {
-  const str = (value: unknown) => (typeof value === 'string' ? value : '');
-  const projectKey = str(args.projectKey);
-  const issueType = str(args.issueType);
-  const issueKey = str(args.issueKey);
-  const subtitle = [projectKey, issueType].filter(Boolean).join(' · ') || issueKey;
-  const summary = str(args.summary);
-  const description = str(args.description);
-  return (
-    <ProposedCallShell toolLabel={toolLabel}>
-      <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-        {summary && <p className="min-w-0 break-words font-medium">{summary}</p>}
-        {subtitle && (
-          <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
-            {subtitle}
-          </span>
+/** One action's arguments, drawn for its tool family. */
+function ProposedCall({ call }: { call: ProposedCallView }): React.ReactNode {
+  if (call.kind === 'issue') {
+    return (
+      <>
+        <div className="mt-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+          {call.summary && <p className="min-w-0 break-words font-medium">{call.summary}</p>}
+          {call.subtitle && (
+            <span className="shrink-0 rounded bg-gray-200 px-1.5 py-0.5 font-mono text-xs text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+              {call.subtitle}
+            </span>
+          )}
+        </div>
+        {call.description && (
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
+            {call.description}
+          </p>
         )}
-      </div>
-      {description && (
-        <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
-          {description}
-        </p>
-      )}
-      <FieldRows rows={jiraIssueFieldRows(args)} />
-    </ProposedCallShell>
-  );
-}
-
-/** An outgoing email — recipients, subject, and body, the same fields the
- * email-compose card shows. Reply/reply-all/forward auto-populate their
- * primary recipient(s) server-side (Graph fills them from the message
- * being replied to), so `additionalTo` stands in for `to` when that's all
- * the call carries. */
-function EmailProposedCall({
-  toolLabel,
-  args,
-}: {
-  toolLabel: string;
-  args: Record<string, unknown>;
-}): React.ReactNode {
-  const addresses = (value: unknown): string[] =>
-    Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
-  const to = addresses(args.to);
-  const additionalTo = addresses(args.additionalTo);
-  const cc = addresses(args.cc);
-  const bcc = addresses(args.bcc);
-  const subject = typeof args.subject === 'string' ? args.subject : '';
-  const body =
-    typeof args.body === 'string'
-      ? args.body
-      : typeof args.comment === 'string'
-        ? args.comment
-        : '';
-
-  const rows: { label: string; value: string }[] = [];
-  if (to.length > 0) rows.push({ label: 'To', value: to.join(', ') });
-  else if (additionalTo.length > 0) {
-    rows.push({ label: 'Also to', value: `(auto-populated) ${additionalTo.join(', ')}` });
+        <FieldRows rows={call.rows} />
+      </>
+    );
   }
-  if (cc.length > 0) rows.push({ label: 'Cc', value: cc.join(', ') });
-  if (bcc.length > 0) rows.push({ label: 'Bcc', value: bcc.join(', ') });
-
-  return (
-    <ProposedCallShell toolLabel={toolLabel}>
-      <FieldRows rows={rows} />
-      {subject && <p className="mt-2 break-words font-medium">{subject}</p>}
-      {body && (
-        <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
-          {body}
-        </p>
-      )}
-    </ProposedCallShell>
-  );
-}
-
-/** The fallback for any tool without a dedicated card above — every arg,
- * `key: value`. `String()` on an object or array gives "[object
- * Object]"/comma-joined junk, so anything non-primitive is JSON-stringified
- * instead. */
-function GenericProposedCall({
-  toolLabel,
-  args,
-}: {
-  toolLabel: string;
-  args: Record<string, unknown>;
-}): React.ReactNode {
-  const formatValue = (value: unknown): string =>
-    value === null || typeof value !== 'object' ? String(value) : JSON.stringify(value);
-  return (
-    <ProposedCallShell toolLabel={toolLabel}>
-      <FieldRows
-        rows={Object.entries(args).map(([key, value]) => ({
-          label: key,
-          value: formatValue(value),
-        }))}
-      />
-    </ProposedCallShell>
-  );
+  if (call.kind === 'email') {
+    return (
+      <>
+        <FieldRows rows={call.rows} />
+        {call.subject && <p className="mt-2 break-words font-medium">{call.subject}</p>}
+        {call.body && (
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-400">
+            {call.body}
+          </p>
+        )}
+      </>
+    );
+  }
+  return <FieldRows rows={call.rows} />;
 }
 
 /**
@@ -412,26 +275,7 @@ function PauseOutcome({
   status: string;
   result: unknown;
 }): React.ReactNode {
-  const record: Record<string, unknown> =
-    typeof result === 'object' && result !== null ? { ...result } : {};
-  const wording =
-    kind === 'question'
-      ? status === 'answered'
-        ? 'You answered — the run continued.'
-        : record.reason === 'run-ended' || record.reason === 'agent-disabled'
-          ? 'The run ended before anyone answered.'
-          : 'Nobody answered in time — the run treated it as unanswered.'
-      : status === 'approved'
-        ? typeof record.comment === 'string' && record.comment
-          ? `You accepted: ${record.comment}`
-          : 'You accepted — the actions were carried out and the run continued.'
-        : status === 'declined'
-          ? typeof record.comment === 'string' && record.comment
-            ? `You declined: ${record.comment}`
-            : 'You declined.'
-          : record.reason === 'run-ended' || record.reason === 'agent-disabled'
-            ? 'The run ended before anyone decided.'
-            : 'Nobody decided in time — none of the actions were made.';
+  const wording = pauseOutcomeWording(kind, status, result);
   return (
     <p className="whitespace-pre-wrap break-words text-sm text-gray-600 dark:text-gray-400">
       {wording}
@@ -444,24 +288,18 @@ function PauseOutcome({
  * live ACL gate for the reporting user at enrichment time.
  */
 function RelatedEvidence({ evidence }: { evidence: unknown }): React.ReactNode {
-  if (typeof evidence !== 'object' || evidence === null) return null;
-  const record: Record<string, unknown> = { ...evidence };
-  const related = Array.isArray(record.related) ? record.related : [];
-  if (related.length === 0) return null;
+  const excerpts = relatedExcerpts(evidence);
+  if (excerpts.length === 0) return null;
 
   return (
     <div className="my-2 rounded-md bg-gray-100 p-2 dark:bg-gray-900">
       <strong className="text-xs">Similar prior discussion</strong>
       <ul className="ml-4 mt-1 list-disc text-xs text-gray-600 dark:text-gray-400">
-        {related.map((entry, index) => {
-          if (typeof entry !== 'object' || entry === null) return null;
-          const hit: Record<string, unknown> = { ...entry };
-          return (
-            <li key={index} className="break-words">
-              {String(hit.excerpt ?? '')}
-            </li>
-          );
-        })}
+        {excerpts.map((excerpt, index) => (
+          <li key={index} className="break-words">
+            {excerpt}
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -474,28 +312,20 @@ function ExecutionResult({
   result: unknown;
   failed?: boolean;
 }): React.ReactNode {
-  if (typeof result !== 'object' || result === null) return null;
-  const record: Record<string, unknown> = { ...result };
-
-  if (failed) {
-    return (
-      <p className="text-sm text-red-700 dark:text-red-300">
-        Failed: {String(record.error ?? 'unknown error')}
-      </p>
-    );
+  const view = executionResultView(result, failed);
+  if (view === null) return null;
+  if (view.kind === 'failed') {
+    return <p className="text-sm text-red-700 dark:text-red-300">Failed: {view.message}</p>;
   }
-  if (typeof record.url === 'string' && typeof record.issueKey === 'string') {
-    return (
-      <p className="text-sm">
-        Created{' '}
-        <ExternalLink
-          href={record.url}
-          className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-        >
-          {record.issueKey}
-        </ExternalLink>
-      </p>
-    );
-  }
-  return null;
+  return (
+    <p className="text-sm">
+      Created{' '}
+      <ExternalLink
+        href={view.url}
+        className="text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+      >
+        {view.issueKey}
+      </ExternalLink>
+    </p>
+  );
 }

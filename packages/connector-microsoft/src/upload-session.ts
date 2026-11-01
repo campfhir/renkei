@@ -22,16 +22,13 @@ import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest, type GraphRequestOptions } from './client';
 import { graphErrorDetail } from './fetch';
+import { isRecord } from '@renkei/guards';
 
 /** 16 × 320KiB — Graph requires non-final chunks be 320KiB multiples. */
 export const UPLOAD_SESSION_CHUNK_BYTES = 16 * 320 * 1024;
 
 /** Per-chunk transfer budget; a 5MiB chunk on a slow uplink is minutes-safe. */
 const CHUNK_TIMEOUT_MS = 120_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function graphUploadViaSession(
   auth: AuthedFetch,

@@ -16,12 +16,11 @@ import {
 } from '@renkei/connector-config';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 const EMBEDDINGS_CONNECTOR = 'embeddings';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -63,13 +62,7 @@ export async function GET(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

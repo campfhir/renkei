@@ -55,6 +55,7 @@ import type { BatchOutcome, ReindexKind } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import type { EventHandler } from '../handlers';
 import { logger } from '../logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'knowledge/reindex';
 
@@ -62,10 +63,6 @@ const COMPONENT = 'knowledge/reindex';
 const BATCH_LIMIT: Record<ReindexKind, number> = { lexical: 200, embed: 128, keywords: 20 };
 /** A skip list past this is a model that is failing, not a few odd objects. */
 const MAX_SKIP = 500;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * A database failure, with the database's own words. The run row is what

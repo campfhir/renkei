@@ -19,13 +19,11 @@ import {
 } from './metadata';
 import { metadataBody, metadataFile } from './metadata-xml';
 import { mergeValueList, type PicklistChanges } from './picklists';
+import { isRecord } from '@renkei/guards';
 
 export type { PicklistChanges } from './picklists';
 
 type Json = Record<string, unknown>;
-
-const isRecord = (value: unknown): value is Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 

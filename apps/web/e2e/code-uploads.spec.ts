@@ -1,15 +1,12 @@
 /**
- * Getting files into a code project's checkout, and moving them about:
+ * Getting files into a code project's checkout, and moving them about,
+ * in a browser:
  *
- * - Add files (the chat's title-bar button) with its two destinations —
- *   the checkout, where the tree beside the chat shows the new folder
- *   and files the moment they land, without a reload; and the project's
- *   artifacts — its file list scrolling on its own under pinned buttons,
- *   and, once Add is pressed, the same files as a live table: Added per
- *   row, a failed row with why (an empty file is refused), and Failed
- *   narrowing the rows to it. The sends run in the app's upload queue:
- *   closing the dialog mid-upload leaves the title bar's indicator
- *   counting until the last file is answered.
+ * - Add files (the chat's title-bar button): three files into a folder of
+ *   the checkout, sent for real — the dialog's table answering Added per
+ *   row and Failed for the empty one the route refuses, the tree beside
+ *   the chat showing the new folder without a reload, and the title
+ *   bar's indicator keeping the failed batch until it is dismissed.
  * - A file dropped from the desktop on a folder row lands in that
  *   folder; a row dragged onto another folder moves there; dragged onto
  *   the tree's own box, to the root.
@@ -17,6 +14,14 @@
  *   with the typed text marked in each path, Enter takes the row.
  * - A row's "⋯" menu, portalled out of the scrolling rail, is drawn on a
  *   surface of its own.
+ *
+ * The rules moved out: the dialog's destinations, paths, button words and
+ * the batch it sends are app/(app)/code/_components/add-files-modal.model.test.ts;
+ * each row's state, retry and stop, a clean batch clearing itself, the
+ * table's summary and Failed filter, and every state of the indicator
+ * (uploading, failed, uploaded) are components/uploads/upload-queue.model.test.ts;
+ * the empty-file refusal is app/api/code/projects/[projectId]/files/route.test.ts;
+ * where a drop or a move lands is repo-tree.model.test.ts.
  *
  * Real routes and the real (stubbed) sandbox worker throughout —
  * sandbox-stub.mjs's upload/ls/mv/find verbs carry the same overlay a
@@ -61,10 +66,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
 }
 
 /** A drop of files from outside the page, as the browser would deliver it. */
-async function dropFiles(
-  target: Locator,
-  files: { name: string; text: string }[]
-): Promise<void> {
+async function dropFiles(target: Locator, files: { name: string; text: string }[]): Promise<void> {
   const transfer = await target.evaluateHandle((_, list) => {
     const transfer = new DataTransfer();
     for (const file of list) {
@@ -97,7 +99,7 @@ test.describe('code uploads and the tree', () => {
     await removeModel(page.request, ids.modelId);
   });
 
-  test('Add files: destinations, the live table, the tree refreshing, the indicator', async ({
+  test('Add files: the live table, the tree refreshing, the indicator', async ({
     page,
   }, testInfo) => {
     const main = page.getByRole('main');
@@ -123,16 +125,12 @@ test.describe('code uploads and the tree', () => {
     //    the route refuses — then the table ──
     await addFiles();
     const dialog = page.getByRole('dialog', { name: 'Add files' });
-    await expect(dialog.getByRole('radio', { name: /repository’s checkout/ })).toBeChecked();
     await dialog.getByLabel('Folder (optional)').fill('docs');
     await dialog.locator('input[type="file"]').setInputFiles([
       { name: 'guide.md', mimeType: 'text/markdown', buffer: Buffer.from('# Guide\n') },
       { name: 'empty.md', mimeType: 'text/markdown', buffer: Buffer.alloc(0) },
       { name: 'notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# Notes\n') },
     ]);
-    const toAdd = dialog.getByRole('list', { name: 'Files to add' });
-    await expect(toAdd.getByRole('listitem')).toHaveCount(3);
-    await expect(toAdd).toContainText('docs/guide.md');
     // The list scrolls on its own; the buttons stay put under it.
     await expect(dialog.getByRole('button', { name: 'Add to repository (3)' })).toBeVisible();
     await shot(page, testInfo, 'code-add-files-picked.png');
@@ -144,16 +142,7 @@ test.describe('code uploads and the tree', () => {
     await expect(rowOf('docs/notes.md')).toContainText('Added');
     await expect(rowOf('docs/empty.md')).toContainText('Failed');
     await expect(rowOf('docs/empty.md')).toContainText('The file is empty.');
-    await expect(table.getByRole('status')).toHaveText('2 of 3 uploaded · 1 failed');
-    // No report in the footer: the rows are the report.
-    await expect(dialog.getByText(/Added to the checkout/)).toHaveCount(0);
     await shot(page, testInfo, 'code-add-files-table.png');
-    // Failed narrows the rows to the one that failed.
-    await dialog.getByRole('button', { name: 'Failed (1)' }).click();
-    await expect(table.getByRole('listitem')).toHaveCount(1);
-    await expect(table.getByRole('listitem')).toContainText('docs/empty.md');
-    await dialog.getByRole('button', { name: 'All' }).click();
-    await expect(table.getByRole('listitem')).toHaveCount(3);
     await dialog.getByRole('button', { name: 'Done' }).click();
     await expect(dialog).toHaveCount(0);
 
@@ -165,31 +154,6 @@ test.describe('code uploads and the tree', () => {
     await expect(tree.getByRole('button', { name: /^notes\.md/ })).toBeVisible();
     await expect(tree.getByRole('button', { name: /^empty\.md/ })).toHaveCount(0);
     await shot(page, testInfo, 'code-add-files-tree-refreshed.png');
-
-    // ── Into the project's artifacts instead ──
-    await addFiles();
-    await dialog.getByRole('radio', { name: /project’s artifacts/ }).check();
-    await expect(dialog.getByLabel('Folder (optional)')).toHaveCount(0);
-    await dialog.locator('input[type="file"]').setInputFiles({
-      name: 'kept-note.md',
-      mimeType: 'text/markdown',
-      buffer: Buffer.from('# Kept\n'),
-    });
-    const artifactUpload = page.waitForResponse(
-      (response) =>
-        response.url().includes('/api/chat/attachments?') &&
-        response.url().includes(`projectId=${ids.projectId}`) &&
-        response.request().method() === 'PUT'
-    );
-    await dialog.getByRole('button', { name: 'Add to artifacts' }).click();
-    expect((await artifactUpload).ok()).toBe(true);
-    await expect(rowOf('kept-note.md → artifacts')).toContainText('Added');
-    await dialog.getByRole('button', { name: 'Done' }).click();
-    const artifacts = await page.request.get(`/api/chat/projects/${ids.projectId}/artifacts`);
-    expect(artifacts.ok()).toBe(true);
-    expect(JSON.stringify(await artifacts.json())).toContain('kept-note.md');
-    // Not in the checkout.
-    await expect(tree.getByRole('button', { name: /^kept-note\.md/ })).toHaveCount(0);
 
     // ── The title bar's indicator still carries the first batch: one of
     //    its files failed, so it stays until dismissed (a batch with
@@ -207,39 +171,6 @@ test.describe('code uploads and the tree', () => {
     // The last batch gone, the indicator goes — and the dialog is its.
     await expect(uploads).toHaveCount(0);
     await expect(indicator).toHaveCount(0);
-
-    // ── A send that takes its time outlives the dialog: the indicator
-    //    counts it until it is answered ──
-    let release: () => void = () => undefined;
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await page.route('**/files?path=slow.txt', async (route) => {
-      await held;
-      await route.continue();
-    });
-    await addFiles();
-    await dialog.locator('input[type="file"]').setInputFiles({
-      name: 'slow.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('later'),
-    });
-    await dialog.getByRole('button', { name: 'Add to repository' }).click();
-    await expect(dialog.getByText('Closing this keeps the upload going')).toBeVisible();
-    await dialog.getByRole('button', { name: 'Done' }).click();
-    await expect(indicator).toHaveAccessibleName(/Uploading 1 of 1/);
-    await shot(page, testInfo, 'code-upload-indicator.png');
-    // Its dialog shows the same table, with Stop while it runs.
-    await indicator.click();
-    await expect(uploads.getByText('slow.txt')).toBeVisible();
-    await expect(uploads.getByRole('button', { name: 'Stop' })).toBeVisible();
-    await uploads.getByRole('button', { name: 'Done' }).click();
-    release();
-    await expect(indicator).toHaveAccessibleName(/Uploaded 1/);
-    await expect(tree.getByRole('button', { name: /^slow\.txt/ })).toBeVisible();
-    // Done with nothing failed, the indicator clears itself.
-    await expect(indicator).toHaveCount(0, { timeout: 10_000 });
-    await page.unroute('**/files?path=slow.txt');
   });
 
   test('drops on the tree, moves inside it, @ completions, the row menu', async ({
@@ -324,7 +255,10 @@ test.describe('code uploads and the tree', () => {
 
     // ── A phone: the Code tab, the same tree, a drop still lands ──
     await page.setViewportSize(MOBILE_VIEWPORT);
-    await main.getByRole('tablist', { name: 'Chat or code' }).getByRole('tab', { name: /Code/ }).click();
+    await main
+      .getByRole('tablist', { name: 'Chat or code' })
+      .getByRole('tab', { name: /Code/ })
+      .click();
     await expect(tree.getByRole('button', { name: /^at-root\.txt/ })).toBeVisible();
     await dropFiles(box, [{ name: 'phone.txt', text: 'phone' }]);
     await expect(tree.getByRole('button', { name: /^phone\.txt/ })).toBeVisible();

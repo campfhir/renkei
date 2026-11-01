@@ -36,12 +36,9 @@ import {
   readWebhookBody,
   tooManyRequests,
 } from '@/lib/webhook-intake';
+import { isRecord } from '@renkei/guards';
 
 const eventsQueue = webhookEventsQueue();
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   // Throttle, then the credential's shape, then a bounded body — all before

@@ -8,9 +8,10 @@
  * viewers read it. The data is the page's (project-view.ts); every change
  * goes through the API and refreshes the page. A project can hold hundreds
  * (a batch dropped in at once), so the list shows them a page at a time.
+ * What the card decides is artifacts-card.model.ts.
  */
 
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useReducer, useRef, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -19,13 +20,22 @@ import { chatClient } from '@/lib/chat/client';
 import type { ProjectArtifactView } from '@/lib/chat/views';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import AttachArtifactsModal from './attach-artifacts-modal';
+import { ModeToggle, sizeOf, statusLabel, tokensLabel, TypeBadge } from './artifact-bits';
+import {
+  attachedLabel,
+  budgetLine,
+  cardPage,
+  cardReducer,
+  detachSends,
+  initialCard,
+  listedFiles,
+  uploadLabel,
+} from './artifacts-card.model';
 
-/** Rows the list shows at once. */
-export const ARTIFACTS_PAGE_SIZE = 10;
+export { ARTIFACTS_PAGE_SIZE } from './artifacts-card.model';
 
 const pagerButton =
   'flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
-import { ModeToggle, sizeOf, statusLabel, tokensLabel, TypeBadge } from './artifact-bits';
 
 export default function ArtifactsCard({
   projectId,
@@ -47,93 +57,70 @@ export default function ArtifactsCard({
   const router = useRouter();
   const anchor = useCoachAnchor('project-files');
   const fileInput = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const [picking, setPicking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(cardReducer, initialCard);
   // Files taken off the list before the server has said so: a second click
   // on the same row then finds nothing to do, instead of a 404.
-  const [removing, setRemoving] = useState<string[]>([]);
-  const files = serverFiles.filter((file) => !removing.includes(file.id));
+  const files = listedFiles(state, serverFiles);
   useEffect(() => {
-    setRemoving([]);
+    dispatch({ type: 'serverAnswered' });
   }, [serverFiles]);
-  // 1-based; held inside the list as it shrinks (a detach on the last page).
-  const [pageAsked, setPage] = useState(1);
-  const pageCount = Math.max(1, Math.ceil(files.length / ARTIFACTS_PAGE_SIZE));
-  const page = Math.min(pageAsked, pageCount);
-  const firstIndex = (page - 1) * ARTIFACTS_PAGE_SIZE;
-  const shown = files.slice(firstIndex, firstIndex + ARTIFACTS_PAGE_SIZE);
+  const pager = cardPage(files, state.pageAsked);
+  const { page, pageCount, shown } = pager;
 
   const upload = async (list: FileList | File[] | null) => {
     const items = list ? [...list] : [];
     if (items.length === 0) return;
-    setError(null);
-    setUploading(items.length);
+    dispatch({ type: 'uploadStarted', count: items.length });
     for (const file of items) {
       const result = await chatClient.uploadArtifact({ projectId }, file);
-      if (result.error) setError(`${file.name}: ${result.error}`);
-      setUploading((count) => count - 1);
+      dispatch({ type: 'fileUploaded', name: file.name, error: result.error });
     }
     router.refresh();
   };
 
   const setMode = async (file: ProjectArtifactView, mode: 'always' | 'on_demand') => {
-    setBusyId(file.id);
-    setError(null);
+    dispatch({ type: 'modeSent', id: file.id });
     const result = await chatClient.setArtifactMode(projectId, file.id, mode);
-    setBusyId(null);
-    if (result.error) setError(result.error);
+    dispatch({ type: 'modeAnswered', error: result.error });
     router.refresh();
   };
 
   const detach = async (file: ProjectArtifactView) => {
-    if (removing.includes(file.id)) return;
-    setRemoving((ids) => [...ids, file.id]);
-    setError(null);
+    if (!detachSends(state, file.id)) return;
+    dispatch({ type: 'detachSent', id: file.id });
     const result = await chatClient.detachArtifact(projectId, file.id);
-    if (result.error) {
-      setError(result.error);
-      setRemoving((ids) => ids.filter((id) => id !== file.id));
-    }
+    dispatch({ type: 'detachAnswered', id: file.id, error: result.error });
     router.refresh();
   };
 
   const onDrop = (event: DragEvent<HTMLElement>) => {
     event.preventDefault();
-    setDragging(false);
+    dispatch({ type: 'dragLeft' });
     if (canEdit && event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
   };
 
-  const budgetPercent = Math.min(
-    100,
-    Math.round((alwaysTokens.used / Math.max(1, alwaysTokens.budget)) * 100)
-  );
-  const onDemandCount = files.filter((file) => file.mode === 'on_demand').length;
+  const budget = budgetLine(files, alwaysTokens);
 
   return (
     <section
-      className={`${className} ${dragging ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30' : ''}`}
+      className={`${className} ${state.dragging ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/30' : ''}`}
       aria-label="Artifacts"
       onDragOver={(event) => {
         event.preventDefault();
-        if (canEdit) setDragging(true);
+        dispatch({ type: 'dragOver', canEdit });
       }}
-      onDragLeave={() => setDragging(false)}
+      onDragLeave={() => dispatch({ type: 'dragLeft' })}
       onDrop={onDrop}
       {...anchor}
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <h2 className="text-sm font-semibold">Artifacts</h2>
-        <span className="text-xs text-gray-500">
-          {files.length === 0 ? 'none attached' : `${files.length} attached`}
-        </span>
+        <span className="text-xs text-gray-500">{attachedLabel(files.length)}</span>
         {canEdit ? (
           <span className="ml-auto flex gap-1.5">
             <button
               type="button"
-              onClick={() => setPicking(true)}
+              onClick={() => dispatch({ type: 'pickerOpened' })}
               className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               <Icon path={ICONS.layers} className="h-3.5 w-3.5" />
@@ -141,12 +128,12 @@ export default function ArtifactsCard({
             </button>
             <button
               type="button"
-              disabled={uploading > 0}
+              disabled={state.uploading > 0}
               onClick={() => fileInput.current?.click()}
               className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               <Icon path={ICONS.upload} className="h-3.5 w-3.5" />
-              {uploading > 0 ? `Uploading ${uploading}…` : 'Upload'}
+              {uploadLabel(state)}
             </button>
             <input
               ref={fileInput}
@@ -216,13 +203,13 @@ export default function ArtifactsCard({
                 <ModeToggle
                   label={`How this project's chats use ${file.filename}`}
                   value={file.mode}
-                  disabled={!canEdit || busyId === file.id}
+                  disabled={!canEdit || state.busyId === file.id}
                   onChange={(mode) => void setMode(file, mode)}
                 />
                 {canEdit || mine ? (
                   <button
                     type="button"
-                    disabled={busyId === file.id}
+                    disabled={state.busyId === file.id}
                     onClick={() => void detach(file)}
                     aria-label={`Remove ${file.filename} from ${projectName}`}
                     data-tip="Detach from this project. The file stays in its owner’s artifacts."
@@ -236,18 +223,16 @@ export default function ArtifactsCard({
           })}
         </ul>
       )}
-      {pageCount > 1 ? (
+      {pager.range !== null ? (
         <nav
           aria-label="Artifact pages"
           className="mt-2 flex items-center justify-end gap-2 text-xs text-gray-500"
         >
-          <span>
-            {firstIndex + 1}–{firstIndex + shown.length} of {files.length}
-          </span>
+          <span>{pager.range}</span>
           <button
             type="button"
-            onClick={() => setPage(page - 1)}
-            disabled={page <= 1}
+            onClick={() => dispatch({ type: 'pageTurned', page: page - 1 })}
+            disabled={pager.previousDisabled}
             aria-label="Previous page"
             className={pagerButton}
           >
@@ -258,8 +243,8 @@ export default function ArtifactsCard({
           </span>
           <button
             type="button"
-            onClick={() => setPage(page + 1)}
-            disabled={page >= pageCount}
+            onClick={() => dispatch({ type: 'pageTurned', page: page + 1 })}
+            disabled={pager.nextDisabled}
             aria-label="Next page"
             className={pagerButton}
           >
@@ -273,10 +258,10 @@ export default function ArtifactsCard({
           <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
             <span className="font-medium text-gray-700 dark:text-gray-300">Always in context</span>
             <span className="text-gray-500">
-              {files.length - onDemandCount} file{files.length - onDemandCount === 1 ? '' : 's'} ·{' '}
-              {tokensLabel(alwaysTokens.used)} of {tokensLabel(alwaysTokens.budget)} per turn
+              {budget.alwaysFiles} · {tokensLabel(alwaysTokens.used)} of{' '}
+              {tokensLabel(alwaysTokens.budget)} per turn
             </span>
-            <span className="ml-auto text-gray-500">{onDemandCount} searched on demand</span>
+            <span className="ml-auto text-gray-500">{budget.onDemandCount} searched on demand</span>
           </div>
           <div
             role="img"
@@ -284,8 +269,8 @@ export default function ArtifactsCard({
             className="h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800"
           >
             <div
-              className={`h-full rounded-full ${budgetPercent >= 90 ? 'bg-amber-500' : 'bg-blue-600'}`}
-              style={{ width: `${budgetPercent}%` }}
+              className={`h-full rounded-full ${budget.nearlyFull ? 'bg-amber-500' : 'bg-blue-600'}`}
+              style={{ width: `${budget.percent}%` }}
             />
           </div>
           <p className="mt-1.5 text-xs text-gray-500">
@@ -302,18 +287,18 @@ export default function ArtifactsCard({
           Drop files here to upload and attach them to {projectName}
         </div>
       ) : null}
-      {error ? (
+      {state.error ? (
         <p role="alert" className="mt-1 text-xs text-red-600">
-          {error}
+          {state.error}
         </p>
       ) : null}
-      {picking ? (
+      {state.picking ? (
         <AttachArtifactsModal
           projectId={projectId}
           projectName={projectName}
           attachedIds={files.map((file) => file.id)}
           onAttached={() => router.refresh()}
-          onClose={() => setPicking(false)}
+          onClose={() => dispatch({ type: 'pickerClosed' })}
         />
       ) : null}
     </section>

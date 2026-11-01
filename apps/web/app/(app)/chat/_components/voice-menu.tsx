@@ -24,7 +24,7 @@ import type { VoiceInfo } from '@renkei/voice';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingLine } from '@/components/skeleton';
 import { useDismiss } from '@/lib/use-dismiss';
-import { localeLabel, previewLocale, voiceSpeaks } from '@/lib/voice/catalog';
+import { localeLabel, previewLocale } from '@/lib/voice/catalog';
 import { voiceClient } from '@/lib/voice/client';
 import { listAudioDevices, type AudioDevice } from '@/lib/voice/device-settings';
 import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
@@ -32,8 +32,20 @@ import type { LevelSource } from '@/lib/voice/levels';
 import { useVoicePreview } from '@/lib/voice/use-voice-preview';
 import { LanguagePicker, VoicePicker } from './voice-picker';
 import { VoiceWaveIcon } from './voice-wave';
-
-const SPEEDS = [0.75, 1, 1.25, 1.5, 2] as const;
+import {
+  SPEEDS,
+  deviceChoosers,
+  deviceOptions,
+  hearingChosen,
+  speakerTitle,
+} from './voice-menu.model';
+import {
+  catalogFrom,
+  chooseLocale as choosingLocale,
+  chooseVoice as choosingVoice,
+  effectiveLocale,
+  localesOnOffer,
+} from './voice-picker.model';
 
 export default function VoiceMenu({
   prefs,
@@ -110,62 +122,25 @@ export default function VoiceMenu({
   useEffect(() => {
     if (!open || voices !== null) return;
     void voiceClient.status().then((result) => {
-      if (!result.data) {
-        setVoices([]);
-        setVoicesError(result.error);
-        return;
-      }
-      setVoices(result.data.voices);
-      setVoicesError(result.data.voicesError ?? null);
+      const catalog = catalogFrom(result);
+      setVoices(catalog.voices);
+      setVoicesError(catalog.error);
     });
   }, [open, voices]);
 
-  const locale = prefs.locale ?? defaults.locale;
-  const locales = useMemo(() => {
-    const set = new Set((voices ?? []).map((voice) => voice.locale));
-    set.add(defaults.locale);
-    if (prefs.locale) set.add(prefs.locale);
-    return [...set];
-  }, [voices, defaults.locale, prefs.locale]);
-  const chosenVoice = useMemo(
-    () => (prefs.voice ? ((voices ?? []).find((voice) => voice.id === prefs.voice) ?? null) : null),
-    [voices, prefs.voice]
-  );
+  const locale = effectiveLocale(prefs, defaults);
+  const locales = useMemo(() => localesOnOffer(voices, prefs, defaults), [voices, prefs, defaults]);
   // A sample plays through its own queue, after the reply's has been silenced.
   const sample = useVoicePreview({
     rate: prefs.rate,
     outputDevice: audioOutput,
     onBeforePlay: onStopReading,
   });
-  const chooseLocale = (next: string) =>
-    onChange({
-      ...prefs,
-      locale: next === defaults.locale ? null : next,
-      // A voice that cannot speak the new language is dropped with it; a
-      // multilingual one stays.
-      voice: chosenVoice && voiceSpeaks(chosenVoice, next) ? prefs.voice : null,
-    });
-  const chooseVoice = (voice: VoiceInfo | null) => {
-    if (!voice) {
-      onChange({ ...prefs, voice: null });
-      return;
-    }
-    // A voice of another language brings its language along, since that
-    // is what it will be speaking.
-    const nextLocale = voiceSpeaks(voice, locale) ? locale : voice.locale;
-    onChange({
-      ...prefs,
-      voice: voice.id,
-      locale: nextLocale === defaults.locale ? null : nextLocale,
-    });
-  };
+  const chooseLocale = (next: string) => onChange(choosingLocale(prefs, next, voices, defaults));
+  const chooseVoice = (voice: VoiceInfo | null) => onChange(choosingVoice(prefs, voice, defaults));
   const reading = queueState !== 'idle';
-  const deviceOptions = (list: AudioDevice[], chosen: string | null) =>
-    // A chosen device that is not listed now stays listed, so the choice is
-    // visible and can be dropped; it is the default until it is back.
-    chosen && !list.some((device) => device.id === chosen)
-      ? [...list, { id: chosen, label: 'Chosen device (not connected)' }]
-      : list;
+  const hearing = hearingChosen(sample.previewing, prefs.voice);
+  const choosers = deviceChoosers({ devices, microphone, audioOutput, canChooseOutput });
 
   return (
     <div ref={ref} className={embedded ? undefined : 'relative'}>
@@ -179,13 +154,7 @@ export default function VoiceMenu({
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label="Voice"
-          title={
-            reading
-              ? 'Reading the reply aloud'
-              : prefs.autoPlay
-                ? 'Replies are read aloud'
-                : 'Voice'
-          }
+          title={speakerTitle(queueState, prefs.autoPlay)}
           disabled={disabled}
           className="relative flex items-center justify-center rounded-md p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:hover:bg-gray-800"
         >
@@ -332,19 +301,12 @@ export default function VoiceMenu({
                 <button
                   type="button"
                   onClick={() => sample.preview(prefs.voice, locale)}
-                  aria-pressed={sample.previewing === (prefs.voice ?? '')}
-                  title={
-                    sample.previewing === (prefs.voice ?? '')
-                      ? 'Stop the sample'
-                      : `Hear a sample in ${localeLabel(locale)}`
-                  }
+                  aria-pressed={hearing}
+                  title={hearing ? 'Stop the sample' : `Hear a sample in ${localeLabel(locale)}`}
                   className="mt-0.5 flex shrink-0 items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
                 >
-                  <Icon
-                    path={sample.previewing === (prefs.voice ?? '') ? ICONS.stop : ICONS.play}
-                    className="h-3.5 w-3.5"
-                  />
-                  {sample.previewing === (prefs.voice ?? '') ? 'Stop' : 'Hear'}
+                  <Icon path={hearing ? ICONS.stop : ICONS.play} className="h-3.5 w-3.5" />
+                  {hearing ? 'Stop' : 'Hear'}
                 </button>
               </div>
             )}
@@ -402,7 +364,7 @@ export default function VoiceMenu({
               </span>
             </span>
           </button>
-          {devices && (devices.microphones.length > 0 || microphone) ? (
+          {devices && choosers.microphone ? (
             <label className="block px-2 py-1">
               <span className="block text-[11px] font-medium text-gray-500">
                 Microphone on this device
@@ -421,7 +383,7 @@ export default function VoiceMenu({
               </select>
             </label>
           ) : null}
-          {canChooseOutput && devices && (devices.outputs.length > 0 || audioOutput) ? (
+          {devices && choosers.output ? (
             <label className="block px-2 py-1">
               <span className="block text-[11px] font-medium text-gray-500">
                 Speaker on this device
@@ -440,7 +402,7 @@ export default function VoiceMenu({
               </select>
             </label>
           ) : null}
-          {devices && devices.microphones.length === 0 && devices.outputs.length === 0 ? (
+          {choosers.unnamed ? (
             <p className="px-2 py-1 text-[11px] text-gray-500">
               Devices are named here once the microphone has been used.
             </p>

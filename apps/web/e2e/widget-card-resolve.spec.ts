@@ -13,6 +13,16 @@
  * chat_widget_resolve call, the permission card the runner parks on for a
  * tool that acts, the local tool's write, the event on the stream.
  * Nothing here reaches a vendor, so nothing is answered at the edge.
+ *
+ * Kept here: that one path end to end — the event on the real stream
+ * reaching the open frame, which flips without a reload — and the live
+ * card at a phone's width. The rules moved: a later `resolved` re-posted
+ * to the card only when the receipt changes (widget-card.model.test.ts),
+ * a `resolved` receipt replacing the live form (issue-preview.model.test.ts),
+ * a decided card refusing its confirm tool (widget/tool-call/route.test.ts),
+ * and what chat_widget_resolve writes (lib/chat/widget-state-tools*.test.ts).
+ * That a reload reads a recorded decision back is widget-card.spec.ts's
+ * @smoke test.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -65,7 +75,7 @@ async function resolveFromTheComposer(
   page: Page,
   testInfo: TestInfo,
   screens: { before: string; ask: string; after: string }
-): Promise<{ chatId: string; previewId: string }> {
+): Promise<void> {
   const title = `Rotate the webhook secret (${tag})`;
   const { chatId, previewIds } = await previewChat(page, {
     modelId,
@@ -127,42 +137,38 @@ async function resolveFromTheComposer(
   // And the model's turn carried on to its reply.
   await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible(COLD);
   await shot(page, testInfo, screens.after);
-
-  // The receipt is what every later load shows.
-  await page.reload();
-  await expect(frame.locator('.done-headline')).toHaveText('Created by hand in Jira', COLD);
-  await expect(frame.locator('.done-detail')).toHaveText('OPS-123, filed from the Jira UI');
-  await expect(frame.getByRole('button', { name: 'Create' })).toHaveCount(0);
-  return { chatId, previewId };
 }
 
 test('the model marks a card decided on the person’s word, and the open card flips to the receipt', async ({
   page,
 }, testInfo) => {
-  const { chatId, previewId } = await resolveFromTheComposer(page, testInfo, {
+  await resolveFromTheComposer(page, testInfo, {
     before: 'widget-resolve-live.png',
     ask: 'widget-resolve-ask.png',
     after: 'widget-resolve-done.png',
   });
-
-  // Once decided, the card's own confirm can no longer run — the same
-  // guard as a second device (widget-tools.ts's confirmWidgetTool).
-  const refused = await page.request.post(`/api/chat/chats/${chatId}/widget/tool-call`, {
-    data: {
-      name: 'jira_create_issue_confirm',
-      arguments: { previewId, ...ISSUE_INPUT },
-      stateKey: `renkei-preview:${previewId}`,
-    },
-  });
-  expect(refused.status()).toBe(409);
-  expect(await refused.json()).toMatchObject({ code: 'already-decided' });
 });
 
-test('the same, at phone width', async ({ page }, testInfo) => {
+test('the live card at phone width', async ({ page }, testInfo) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await resolveFromTheComposer(page, testInfo, {
-    before: 'widget-resolve-live-mobile.png',
-    ask: 'widget-resolve-ask-mobile.png',
-    after: 'widget-resolve-done-mobile.png',
+  const title = `Rotate the webhook secret (${tag})`;
+  const { chatId } = await previewChat(page, {
+    modelId,
+    title,
+    prompt: 'File a task to rotate the Zoom webhook secret.',
+    steps: [
+      {
+        text: 'Here’s a preview — nothing is created until you confirm.',
+        tools: [preview(ISSUE_INPUT)],
+      },
+      { text: 'Waiting on your decision.' },
+    ],
   });
+  await page.goto(`/chat/${chatId}`);
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible(COLD);
+  const frame = page.getByRole('main').frameLocator('iframe[title="Preview card"]');
+  await expect(frame.getByRole('button', { name: 'Create' })).toBeVisible(COLD);
+  const bodyWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  expect(bodyWidth).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
+  await shot(page, testInfo, 'widget-resolve-live-mobile.png');
 });

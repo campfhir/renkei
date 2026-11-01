@@ -38,6 +38,7 @@ import { MessageReleased } from '@renkei/worker-loop';
 import { createAgentRunHandler, TURN_STEP_ID, type FinalizedRun } from './engine';
 import { createActionsHandler } from './actions';
 import type { McpClient, McpToolResult } from './mcp-client';
+import { isRecord } from '@renkei/guards';
 
 let ownerDelegated = true;
 const FAKE_SEAL = 'uenc1:test:';
@@ -137,10 +138,6 @@ const text = (body: string, isError = false): McpToolResult => ({
   isError,
   meta: {},
 });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function unsealed(detail: unknown): Record<string, unknown> {
   const envelope = sealedDetailOf(detail);

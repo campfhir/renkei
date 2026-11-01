@@ -23,6 +23,7 @@ import { loadVoiceAvailability } from '@/lib/voice/availability';
 import { listImageModels } from '@/lib/chat/models';
 import { keyStatusView } from '@/lib/keys/status';
 import PreferencesForm from './preferences-form';
+import { notificationConnectorRows } from './preferences-form.model';
 import DefaultToolsForm from './default-tools-form';
 import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
@@ -111,19 +112,11 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     A connector with no curated acts at all is dropped rather than shown
     empty — there is nothing here to decide yet.
   */
-  const actsByKey = new Map(actsByConnector().map((group) => [group.connector, group.acts]));
-  const seen = new Set<string>();
-  const connectors = CONNECTOR_CATALOG.filter((entry) => {
-    if (seen.has(entry.capabilityKey)) return false;
-    seen.add(entry.capabilityKey);
-    return actsByKey.has(entry.capabilityKey);
-  }).map((entry) => {
-    const present = new Set(actsByKey.get(entry.capabilityKey)?.map((act) => act.category) ?? []);
-    const categories = ACT_CATEGORIES.filter(
-      (category) => category === 'other' || present.has(category)
-    );
-    return { key: entry.capabilityKey, label: entry.label, categories };
-  });
+  const connectors = notificationConnectorRows(
+    CONNECTOR_CATALOG,
+    actsByConnector(),
+    ACT_CATEGORIES
+  );
 
   return (
     /*

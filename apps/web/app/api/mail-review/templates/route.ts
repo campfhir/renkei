@@ -18,10 +18,7 @@ import { getIdentityEmail } from '@/lib/identity';
 import { deriveTemplate, saveTemplateVersion } from '@renkei/email-sanitizer';
 import type { MarkedField } from '@renkei/email-sanitizer';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 function parseMarkedFields(value: unknown): MarkedField[] | null {
   if (!Array.isArray(value)) return null;
@@ -50,10 +47,7 @@ function parseMarkedFields(value: unknown): MarkedField[] | null {
   return fields;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

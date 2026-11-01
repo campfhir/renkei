@@ -38,7 +38,6 @@
 
 export {
   sendJson,
-  isRecord,
   str,
   authorized,
   matchApiKey,

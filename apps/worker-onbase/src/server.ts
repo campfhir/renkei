@@ -39,7 +39,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { getOrgSettings } from '@renkei/settings';
-import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { authorized, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
   oidcDiscoveryUrl,
   parseDiscoveryDocument,
@@ -56,6 +56,7 @@ import {
 import { logger } from './logger';
 import type { Result } from '@campfhir/safe-functions/types';
 import { forgetSession, hasOnBaseSession, rememberSession, sessionCookie } from './sessions';
+import { isRecord } from '@renkei/guards';
 
 /**
  * The `set-cookie` headers of a response, as a list.
@@ -80,9 +81,7 @@ export interface OnBaseServerDeps {
   /** Injected in tests; production uses orgTransferLimit. */
   maxTransferBytes?: () => Promise<number>;
   /** Injected in tests; production reads connector_configs. */
-  resolveConfig?: (
-    connector: string
-  ) => Promise<Result<OnBaseTenantConfig, ConfigError>>;
+  resolveConfig?: (connector: string) => Promise<Result<OnBaseTenantConfig, ConfigError>>;
   /** Injected clock for discovery-cache tests. */
   now?: () => number;
 }
@@ -208,8 +207,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
   const transferLimit = deps.maxTransferBytes ?? orgTransferLimit;
   const resolveConfig =
     deps.resolveConfig ??
-    ((connector: string) =>
-      resolveOnBaseConfig(deps.encryptionKey, connector));
+    ((connector: string) => resolveOnBaseConfig(deps.encryptionKey, connector));
   const now = deps.now ?? Date.now;
   // Only successes are cached: an error remembered as endpoints would not
   // heal on its own.
@@ -578,9 +576,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
 
       const connector = str(body.connector) || ONBASE_CONNECTOR;
       const contentSubject = connector === ONBASE_CONNECTOR ? str(body.subject) : '';
-      const contentCookie = contentSubject
-        ? sessionCookie(contentSubject)
-        : undefined;
+      const contentCookie = contentSubject ? sessionCookie(contentSubject) : undefined;
 
       const upstream = await timedFetch(
         config.apiBaseUrl + path,
@@ -714,11 +710,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
     // session, as it does today).
     const uploadSubject = str(request.headers['x-onbase-subject']);
     if (!uploadId || !accessToken) {
-      return sendError(
-        response,
-        'bad_request',
-        'uploadId and x-onbase-token are required'
-      );
+      return sendError(response, 'bad_request', 'uploadId and x-onbase-token are required');
     }
     if (!/^\d+$/.test(filePart))
       return sendError(response, 'bad_request', 'filePart must be a number');

@@ -121,6 +121,7 @@ export interface BrowserPageState {
 }
 
 import { parseSecretRef, type SecretRef } from './secrets';
+import { isRecord } from '@renkei/guards';
 
 const REF_PATTERN = /^e\d{1,5}$/;
 
@@ -161,10 +162,6 @@ export const BROWSER_STEP_KINDS: readonly BrowserStepKind[] = [
 
 /** Why a step was refused before anything ran: a malformed ref, or anything else. */
 export type BrowserStepRefusal = { ok: false; type: 'bad_ref' | 'bad_request'; message: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function refOf(value: unknown, where: string): { ok: true; ref: string } | BrowserStepRefusal {
   if (!isBrowserRef(value)) {

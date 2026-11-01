@@ -1,13 +1,18 @@
 /**
  * Talking while the assistant is busy, in the immersive voice
- * conversation: what is said while a reply is still being worked out
- * cancels nothing — it queues as the next message, voice mode says so,
- * and it goes out once the reply has been read. The fake microphone
- * speaks twice: once to ask, and once more while the model is "thinking"
- * (the reply held back long enough for that second utterance to land).
- * The rules themselves — a few words over a reply being READ interrupt
- * it, a short sound never does — are pinned without a microphone in
- * lib/voice/barge-in.test.ts and lib/voice/recorder.test.ts.
+ * conversation, end to end: what is said while a reply is still being
+ * worked out sends no cancel request — it queues as the next message —
+ * and it goes out once the reply has been read; and the dialog fits a
+ * phone. The fake microphone speaks twice: once to ask, and once more
+ * while the model is "thinking" (the reply held back long enough for
+ * that second utterance to land).
+ *
+ * The rules are pinned without a microphone: a few words over a reply
+ * being READ interrupt it, a short sound never does, in
+ * lib/voice/barge-in.test.ts and lib/voice/recorder.test.ts; what an
+ * utterance over a reply still being worked out becomes (sent, nothing
+ * cut), the queued line's words and the label staying "Thinking…", in
+ * chat/_components/voice-mode.model.test.ts.
  *
  * Its own spec file because the fake microphone is a launch option, one
  * file per spec: voice.spec.ts's single utterance stays as it is.
@@ -105,12 +110,10 @@ test('talking while the reply is worked out queues the next message instead of s
   await expect(dialog.getByText(UTTERANCE)).toBeVisible({ timeout: 30_000 });
   await expect(dialog.getByText('Thinking…')).toBeVisible({ timeout: 10_000 });
 
-  // The second utterance, over the thinking: nothing is stopped — the
-  // turn is not cancelled and the label stays — and the words wait.
+  // The second utterance, over the thinking: the turn is not cancelled,
+  // and the words wait in the thread's queue.
   const queued = dialog.locator('[data-voice-queued]');
   await expect(queued).toBeVisible({ timeout: 20_000 });
-  await expect(queued).toHaveText(/Your next message is queued/);
-  await expect(dialog.getByText('Thinking…')).toBeVisible();
   expect(cancels).toBe(0);
   await shot(page, testInfo, 'voice-14-queued-while-thinking', false);
   queuedOverThinking();

@@ -21,6 +21,7 @@
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/delegate-client": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/queue": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/tool-outcomes": "workspace:*"

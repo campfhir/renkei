@@ -24,15 +24,9 @@ import { getOwnRow, setOverride } from '@renkei/email-sanitizer';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });

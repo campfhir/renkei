@@ -32,6 +32,7 @@ import type { EmbeddingProvider } from './embeddings';
 import { searchTextParts, LEXICAL_CONFIG } from './ingest';
 import { titleOf, chunkContext, embeddingInput } from './context';
 import type { KeywordExtractor } from './keywords';
+import { isRecord } from '@renkei/guards';
 
 export type ReindexKind = 'lexical' | 'embed' | 'keywords';
 export const REINDEX_KINDS: readonly ReindexKind[] = ['lexical', 'embed', 'keywords'];
@@ -56,10 +57,6 @@ export interface BatchOutcome {
   cursor: string | null;
   /** Objects to skip for the rest of this run (keywords only). */
   skip: string[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function metadataOf(value: unknown): Record<string, unknown> {

@@ -3,43 +3,39 @@
 /**
  * Requests for larger code-workspace checkouts, awaiting an admin.
  * Approving raises that project's limit (the amount asked for, or an
- * amount the admin sets); denying can carry a note the person sees.
+ * amount the admin sets); denying can carry a note the person sees. What
+ * the list decides is size-requests.model.ts.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import { sendJsonFull } from '@/lib/fetch-json';
 import type { SizeRequestView } from '@/lib/code/size-requests';
-
-const GB = 1_073_741_824;
-
-function gb(value: number): string {
-  const n = value / GB;
-  return `${Number.isInteger(n) ? n : n.toFixed(1)} GB`;
-}
+import {
+  decidedLine,
+  decisionBody,
+  gbText,
+  initRow,
+  partitionRequests,
+  rowReducer,
+} from './size-requests.model';
 
 function Row({ item }: { item: SizeRequestView }) {
   const router = useRouter();
-  const [approveGb, setApproveGb] = useState(Math.round(item.requestedBytes / GB));
-  const [note, setNote] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(rowReducer, item.requestedBytes, initRow);
 
   async function decide(decision: 'approved' | 'denied') {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull(
       `/api/admin/sandbox-size-requests/${item.id}`,
       'POST',
-      decision === 'approved'
-        ? { decision, note, approvedBytes: approveGb * GB }
-        : { decision, note }
+      decisionBody(state, decision)
     );
-    setBusy(false);
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
+    dispatch({ type: 'decided' });
     router.refresh();
   }
 
@@ -50,7 +46,7 @@ function Row({ item }: { item: SizeRequestView }) {
     >
       <p className="text-sm">
         <span className="font-medium">{item.projectName}</span> — asks for{' '}
-        <span className="font-medium">{gb(item.requestedBytes)}</span>
+        <span className="font-medium">{gbText(item.requestedBytes)}</span>
       </p>
       <p className="mt-0.5 text-xs text-gray-500">{item.reason}</p>
       <div className="mt-2 flex flex-wrap items-end gap-2 text-xs">
@@ -61,8 +57,10 @@ function Row({ item }: { item: SizeRequestView }) {
             aria-label="Approve up to (GB)"
             min={1}
             max={64}
-            value={approveGb}
-            onChange={(event) => setApproveGb(Number(event.target.value))}
+            value={state.approveGb}
+            onChange={(event) =>
+              dispatch({ type: 'approveGbChanged', gb: Number(event.target.value) })
+            }
             className="w-24 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
         </label>
@@ -72,14 +70,14 @@ function Row({ item }: { item: SizeRequestView }) {
             type="text"
             aria-label="Note"
             maxLength={1000}
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
+            value={state.note}
+            onChange={(event) => dispatch({ type: 'noteChanged', note: event.target.value })}
             className="w-full rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
         </label>
         <button
           type="button"
-          disabled={busy}
+          disabled={state.busy}
           onClick={() => void decide('approved')}
           className="rounded-md bg-blue-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
         >
@@ -87,21 +85,20 @@ function Row({ item }: { item: SizeRequestView }) {
         </button>
         <button
           type="button"
-          disabled={busy}
+          disabled={state.busy}
           onClick={() => void decide('denied')}
           className="rounded-md border border-gray-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-gray-700"
         >
           Deny
         </button>
       </div>
-      {error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {state.error && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{state.error}</p>}
     </li>
   );
 }
 
 export function SizeRequests({ requests }: { requests: SizeRequestView[] }) {
-  const pending = requests.filter((request) => request.status === 'pending');
-  const decided = requests.filter((request) => request.status !== 'pending').slice(0, 10);
+  const { pending, decided } = partitionRequests(requests);
   return (
     <section
       className="mt-4 rounded-lg border border-gray-200 bg-white p-4 text-sm dark:border-gray-800 dark:bg-gray-950"
@@ -124,10 +121,7 @@ export function SizeRequests({ requests }: { requests: SizeRequestView[] }) {
           <h3 className="mt-4 mb-1 text-xs font-semibold text-gray-500">Recently decided</h3>
           <ul className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
             {decided.map((item) => (
-              <li key={item.id}>
-                {item.projectName} — {gb(item.requestedBytes)} {item.status}
-                {item.decisionNote ? ` (${item.decisionNote})` : ''}
-              </li>
+              <li key={item.id}>{decidedLine(item)}</li>
             ))}
           </ul>
         </>

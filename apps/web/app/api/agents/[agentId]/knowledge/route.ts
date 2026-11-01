@@ -21,6 +21,7 @@ import {
   MAX_AGENT_NOTE_TITLE_CHARS,
 } from '@/lib/agents/agent-notes';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 export async function GET(
   request: NextRequest,
@@ -99,18 +100,6 @@ export async function POST(
     return NextResponse.json({ error: 'The note could not be saved' }, { status: 500 });
   }
   return NextResponse.json({ noteId: created.noteId }, { status: 201 });
-}
-
-/**
- * Delete several notes at once, or all of them.
- *
- * `{ all: true }` purges; `{ noteIds: [...] }` deletes a selection. The
- * owner's email is required for the same reason creation needs it — a note's
- * ref is owner-prefixed — and a grantee deleting is deliberate: the access
- * grant already lets them add and edit.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function DELETE(

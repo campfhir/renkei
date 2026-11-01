@@ -11,32 +11,9 @@ import { useEffect, useState } from 'react';
 import DownloadLink, { useDownloadReady } from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { LibraryItem } from '@/lib/chat/artifact-library';
-import { MIN_SAMPLES } from '@/lib/chat/artifact-ocr-estimate';
-import { isPicture } from './artifact-bits';
+import { ocrOffer, ocrProgress, textFilename } from './artifact-ocr-panel.model';
 
-/** A file OCR can read that has no text yet, and no read in flight. */
-export function canRunOcr(item: LibraryItem): boolean {
-  return item.ocrSupported && item.ocr === null;
-}
-
-/** The text's name: the file's own, without its extension, as the text route names it. */
-function textFilename(filename: string): string {
-  return `${filename.replace(/\.[^.]+$/, '') || 'file'}.txt`;
-}
-
-/** OCR has read the file already: its text is there, and a read again replaces it. */
-function alreadyRead(item: LibraryItem): boolean {
-  return item.extractStatus === 'done';
-}
-
-/** “45 s”, “2 min”, “1 min 12 s”. */
-export function durationLabel(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds} s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0 ? `${minutes} min` : `${minutes} min ${rest} s`;
-}
+export { canRunOcr, durationLabel } from './artifact-ocr-panel.model';
 
 export default function OcrPanel({
   item,
@@ -66,15 +43,8 @@ export default function OcrPanel({
   }, [running]);
 
   if (running) {
-    const sinceSnapshot = now - mountedAt;
-    const elapsed = running.elapsedMs + sinceSnapshot;
-    const { estimate } = running;
-    const remaining =
-      estimate.remainingMs === null ? null : Math.max(0, estimate.remainingMs - sinceSnapshot);
-    const percent =
-      estimate.totalMs && estimate.totalMs > 0
-        ? Math.min(95, (elapsed / estimate.totalMs) * 100)
-        : null;
+    const progress = ocrProgress(running, now - mountedAt);
+    const { percent } = progress;
     return (
       <section aria-label="OCR" className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">OCR</h3>
@@ -114,31 +84,23 @@ export default function OcrPanel({
                 />
               )}
             </div>
-            <p className="mt-2 text-sm">Reading the scan · {durationLabel(elapsed)} so far</p>
-            <p className="mt-1 text-xs text-gray-500">
-              {estimate.overdue
-                ? `Taking longer than the ${estimate.basedOn} similar files before it.`
-                : remaining !== null
-                  ? `About ${durationLabel(remaining)} left, from ${estimate.basedOn} similar files.`
-                  : `No estimate yet: it needs ${MIN_SAMPLES} finished reads of similar files, and there are ${estimate.basedOn} so far.`}
-            </p>
+            <p className="mt-2 text-sm">{progress.sofar}</p>
+            <p className="mt-1 text-xs text-gray-500">{progress.estimate}</p>
           </>
         )}
       </section>
     );
   }
 
-  if (canRunOcr(item)) {
-    const read = alreadyRead(item);
+  const offer = ocrOffer(item);
+  if (offer) {
     return (
       <section aria-label="OCR" className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">OCR</h3>
-        {item.ocrPages !== null ? (
-          <p className="mb-1 text-sm text-gray-700 dark:text-gray-300">
-            Read {item.ocrPages} {item.ocrPages === 1 ? 'page' : 'pages'} by OCR.
-          </p>
+        {offer.pages !== null ? (
+          <p className="mb-1 text-sm text-gray-700 dark:text-gray-300">{offer.pages}</p>
         ) : null}
-        {read ? (
+        {offer.download ? (
           textReady === 'pending' ? (
             <p className="mb-1 text-sm text-gray-500">Preparing the text…</p>
           ) : (
@@ -151,13 +113,7 @@ export default function OcrPanel({
             </DownloadLink>
           )
         ) : null}
-        <p className="text-sm text-gray-700 dark:text-gray-300">
-          {read
-            ? 'The full text is read. A read again replaces it with a fresh OCR of the file.'
-            : isPicture(item.contentType)
-              ? 'OCR reads any text in this picture. Its description is written from the picture itself.'
-              : 'OCR reads the full text of this file, for the assistant and for people, including scans and pages a text layer misses.'}
-        </p>
+        <p className="text-sm text-gray-700 dark:text-gray-300">{offer.explanation}</p>
         {!digests ? (
           <p className="mt-1 text-xs text-gray-500">
             Summaries and descriptions are off for this organization, so search will not find this
@@ -173,11 +129,7 @@ export default function OcrPanel({
           }}
           className="mt-2 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
-          {read
-            ? 'Read again with OCR'
-            : item.extractStatus === 'ocr_failed'
-              ? 'Try OCR again'
-              : 'Run OCR'}
+          {offer.button}
         </button>
       </section>
     );

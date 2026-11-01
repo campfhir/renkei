@@ -18,10 +18,9 @@ import {
   DEFAULT_ATLASSIAN_BITBUCKET_SCOPES,
 } from '@/lib/atlassian-app';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -37,10 +36,7 @@ export async function GET(
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
-  const configResult = await getConnectorConfig(
-    ATLASSIAN_BITBUCKET_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await getConnectorConfig(ATLASSIAN_BITBUCKET_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
     logger.error('Could not read connector config: {error}', {
       component: 'api/admin/connectors/atlassian-bitbucket',
@@ -64,13 +60,7 @@ export async function GET(
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

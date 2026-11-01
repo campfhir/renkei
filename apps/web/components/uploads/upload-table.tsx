@@ -7,20 +7,24 @@
  * summary line above counts what is done and what failed, and "Failed"
  * narrows the rows to the failures so their reasons can be read
  * without scrolling past what worked. Shared by the dialog an upload
- * starts from and the one the title bar's indicator opens.
+ * starts from and the one the title bar's indicator opens. What the
+ * summary and each row say is upload-queue.model.ts (`tableView`,
+ * `rowView`).
  */
 
 import { Icon, ICONS } from '@/components/icons';
 import { Spinner } from '@/components/skeleton';
-import { batchProgress, type UploadBatch, type UploadJob } from './upload-queue';
+import {
+  rowView,
+  tableView,
+  type UploadBatch,
+  type UploadFilter,
+  type UploadJob,
+} from './upload-queue.model';
 
-export type UploadFilter = 'all' | 'failed';
-
-export function sizeLabel(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1_048_576) return `${Math.max(1, Math.round(value / 1024))} KB`;
-  return `${(value / 1_048_576).toFixed(1)} MB`;
-}
+export type { UploadFilter } from './upload-queue.model';
+export { sizeLabel } from './upload-queue.model';
+import { sizeLabel } from './upload-queue.model';
 
 export default function UploadTable({
   batch,
@@ -33,9 +37,8 @@ export default function UploadTable({
   onFilter: (filter: UploadFilter) => void;
   onRetry?: (job: UploadJob) => void;
 }) {
-  const progress = batchProgress(batch);
-  const rows = filter === 'failed' ? batch.jobs.filter((job) => isFailed(job)) : batch.jobs;
-  const percent = progress.bytes > 0 ? Math.min(100, (progress.loaded / progress.bytes) * 100) : 0;
+  const view = tableView(batch, filter);
+  const { rows, percent } = view;
   const filterButton = (value: UploadFilter, label: string) => (
     <button
       type="button"
@@ -54,18 +57,14 @@ export default function UploadTable({
     <div className="flex min-h-0 flex-col" data-testid="upload-table">
       <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-600 dark:text-gray-400">
         <span role="status" aria-live="polite">
-          {progress.pending > 0
-            ? `${progress.done} of ${progress.total} uploaded`
-            : progress.failed > 0
-              ? `${progress.done} of ${progress.total} uploaded · ${progress.failed} failed`
-              : `All ${progress.total} uploaded`}
+          {view.status}
         </span>
         <span className="ml-auto flex items-center gap-1" role="group" aria-label="Show">
           {filterButton('all', 'All')}
-          {filterButton('failed', `Failed${progress.failed > 0 ? ` (${progress.failed})` : ''}`)}
+          {filterButton('failed', view.failedLabel)}
         </span>
       </div>
-      {progress.pending > 0 ? (
+      {percent !== null ? (
         <div
           role="progressbar"
           aria-label="Upload progress"
@@ -77,10 +76,8 @@ export default function UploadTable({
           <div className="h-full bg-blue-600 transition-[width]" style={{ width: `${percent}%` }} />
         </div>
       ) : null}
-      {rows.length === 0 ? (
-        <p className="py-3 text-center text-xs text-gray-500">
-          {filter === 'failed' ? 'Nothing failed.' : 'No files.'}
-        </p>
+      {view.empty ? (
+        <p className="py-3 text-center text-xs text-gray-500">{view.empty}</p>
       ) : (
         <ul className="divide-y divide-gray-200 text-sm dark:divide-gray-800" aria-label="Files">
           {rows.map((job) => (
@@ -92,12 +89,8 @@ export default function UploadTable({
   );
 }
 
-function isFailed(job: UploadJob): boolean {
-  return job.status === 'failed' || job.status === 'cancelled';
-}
-
 function UploadRow({ job, onRetry }: { job: UploadJob; onRetry?: (job: UploadJob) => void }) {
-  const percent = job.size > 0 ? Math.min(100, (job.loaded / job.size) * 100) : 0;
+  const { percent, state, retry, error } = rowView(job);
   return (
     <li className="flex items-start gap-2 py-1.5" data-status={job.status}>
       <Icon path={ICONS.file} className="mt-0.5 h-4 w-4 shrink-0 text-gray-400" />
@@ -120,8 +113,8 @@ function UploadRow({ job, onRetry }: { job: UploadJob; onRetry?: (job: UploadJob
             />
           </span>
         ) : null}
-        {isFailed(job) && job.error ? (
-          <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">{job.error}</span>
+        {error ? (
+          <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">{error}</span>
         ) : null}
       </span>
       <span className="shrink-0 text-xs text-gray-500">{sizeLabel(job.size)}</span>
@@ -142,9 +135,9 @@ function UploadRow({ job, onRetry }: { job: UploadJob; onRetry?: (job: UploadJob
           <>
             <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
               <Icon path={ICONS.close} className="h-3.5 w-3.5" />
-              {job.status === 'cancelled' ? 'Stopped' : 'Failed'}
+              {state}
             </span>
-            {onRetry ? (
+            {onRetry && retry ? (
               <button
                 type="button"
                 onClick={() => onRetry(job)}

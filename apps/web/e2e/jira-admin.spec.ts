@@ -1,13 +1,22 @@
 /**
- * Jira Administration, end to end in a browser: an operator registers the
- * fifth Atlassian app through the real admin form and save route, a person
- * finds its card on the connectors page, narrows its classic scopes in the
- * live picker, and the authorize route turns that into a consent request
- * carrying exactly those scopes — and refuses a scope the org held back.
- * Then the person connects for real and disconnects again, without
- * touching their everyday Jira, which is connected alongside it the whole
- * time (and whose connected panel once took the whole page down: a
- * server-rendered card handing a function to a client component).
+ * Jira Administration, end to end in a browser: the fifth Atlassian app's
+ * admin page renders on the real server; the registration is staged
+ * through the admin save route the form calls, with the org holding its
+ * newest box back; a person finds its card on the connectors page,
+ * narrows its classic scopes in the live picker, and the authorize route
+ * turns that into a consent request carrying exactly those scopes — and
+ * refuses a scope the org held back. Then the person connects for real
+ * and disconnects again, without touching their everyday Jira, which is
+ * connected alongside it the whole time (and whose connected panel once
+ * took the whole page down: a server-rendered card handing a function to
+ * a client component).
+ *
+ * Where the admin form's rules went: which boxes start ticked, what Save
+ * sends (the ceiling without a held-back box, offline_access always in, a
+ * blank secret kept) and how a stored secret reads are
+ * app/(app)/admin/connectors/forms/app-registration-form.model.test.ts;
+ * what the save route stores and that GET never shows the secret are
+ * app/api/admin/connectors/atlassian-admin/route.test.ts.
  *
  * Nothing here reaches Atlassian: on the in-memory app the consent is the
  * app's own fake OAuth (packages/provider-grants/src/fake-oauth.ts), whose
@@ -60,7 +69,7 @@ test('jira administration: register the app, connect with narrowed classic scope
     // Everyday Jira, the first Atlassian app, registered and connected first.
     await connectJira(page);
 
-    // --- The operator registers the fifth Atlassian app. ---
+    // --- The operator's page renders; the registration is staged through its route. ---
     await page.goto(`/admin/connectors/atlassian-admin`);
     await expect(
       page.getByRole('heading', { name: 'Jira Administration', level: 1 })
@@ -69,33 +78,24 @@ test('jira administration: register the app, connect with narrowed classic scope
     await expect(form.getByText('Atlassian (Jira Administration)')).toBeVisible();
     // The classic-scope setup note is the one thing an operator must not miss.
     await expect(form.getByText(/Classic scopes/)).toBeVisible();
-    await expect(form.getByText('Read access & space details')).toBeVisible();
     await expect(form.getByText('Site configuration')).toBeVisible();
-    // Every box starts ticked; this org holds the newest back, so its people
-    // cannot pick it (below) until an admin ticks it here.
-    const newest = form.getByRole('checkbox', { name: /Space components, versions and screens/ });
-    await expect(newest).toBeChecked();
-    await newest.uncheck();
-
-    await form.getByLabel('Client ID').fill('e2e-admin-client');
-    await form.getByLabel('Client secret').fill('e2e-admin-secret');
-    // On, whatever an earlier run left it at.
-    await form.getByRole('checkbox', { name: 'Enabled', exact: true }).check();
-    await form.getByRole('button', { name: 'Save' }).click();
-    await expect(form.getByText('Saved')).toBeVisible({ timeout: 30_000 });
-    await shot(page, testInfo, 'jira-admin-01-registered');
-
-    // Saved for real: a reload shows the stored secret as stored, never its value.
+    // What the form's Save sends with the newest box held back, so this
+    // org's people cannot pick it (below) until an admin ticks it.
+    await saveConnectorConfig(page.request, 'atlassian-admin', {
+      clientId: 'e2e-admin-client',
+      clientSecret: 'e2e-admin-secret',
+      enabled: true,
+      scopes: 'read:jira-user read:jira-work manage:jira-configuration offline_access',
+    });
     await page.reload();
     await expect(form.getByLabel('Client secret')).toHaveAttribute(
       'placeholder',
       'Stored — leave blank to keep'
     );
-    const stored = await connectorConfig(page.request, 'atlassian-admin');
-    expect(stored.enabled).toBe(true);
-    expect(String(stored.scopes).split(' ').sort()).toEqual(
-      ['manage:jira-configuration', 'offline_access', 'read:jira-user', 'read:jira-work'].sort()
-    );
+    await expect(
+      form.getByRole('checkbox', { name: /Space components, versions and screens/ })
+    ).not.toBeChecked();
+    await shot(page, testInfo, 'jira-admin-01-registered');
 
     // --- The person connects it from its card. ---
     await addConnectors(page.request, ['jira-admin']);

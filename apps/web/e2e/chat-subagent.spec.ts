@@ -1,12 +1,14 @@
 /**
- * An ordinary chat's sub-agent — no project, no checkout: the assistant
- * hands a reading errand to `chat_delegate` (lib/chat/chat-delegate.ts)
- * on another model of the org's, and the thread shows it the way a code
- * chat shows its own: a card of its own, marked read-only (a chat
- * sub-agent only ever reads), naming the model it ran on, with its
- * transcript a button away. The turn and the errand really run, each on a
- * scripted stand-in model (e2e/support/stub-model.ts). Also a viewport
- * pass at phone width.
+ * An ordinary chat's sub-agent, run for real — the assistant hands a
+ * reading errand to `chat_delegate` (lib/chat/chat-delegate.ts) on another
+ * model of the org's, each on a scripted stand-in model
+ * (e2e/support/stub-model.ts) — and drawn on the real server: its card
+ * unfolds to the report, and its transcript opens from the card with the
+ * run as the server kept it. Also a viewport pass at phone width.
+ *
+ * What the card says — read-only for a chat sub-agent, "on <model>",
+ * "Sub-agent reported", the report's first line, the transcript button's
+ * words — is message-list.model.test.ts's.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -33,7 +35,7 @@ async function expectNoHorizontalOverflow(page: Page): Promise<void> {
 }
 
 test.describe('ordinary chat sub-agent', () => {
-  test('a plain chat shows the sub-agent card, read-only, with its transcript', async ({
+  test('a plain chat’s sub-agent card unfolds to its report and opens its transcript', async ({
     page,
     person: _person,
   }, testInfo) => {
@@ -84,14 +86,10 @@ test.describe('ordinary chat sub-agent', () => {
       await page.goto(`/chat/${chatId}`);
       await expect(main.getByText(QUESTION)).toBeVisible();
 
-      // ── The card, folded: a chat sub-agent is read-only by nature, ran on
-      //    the model the assistant picked, and reported ──
+      // ── The card unfolds to the report ──
       const subagent = main.locator('details[data-subagent]');
       await expect(subagent).toContainText('Sub-agent reported');
-      await expect(subagent).toContainText('read-only');
-      await expect(subagent.locator('[data-subagent-model]')).toHaveText(`on ${fastModelLabel}`);
       await subagent.locator('> summary').click();
-      await expect(subagent).toHaveAttribute('open', '');
       await expect(subagent.getByText('Two issues: OPS-41', { exact: false })).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await shot('chat-subagent-card.png');
@@ -112,8 +110,7 @@ test.describe('ordinary chat sub-agent', () => {
       await page.setViewportSize({ width: 390, height: 844 });
       await page.reload();
       await expect(main.getByText(QUESTION)).toBeVisible();
-      const narrow = main.locator('details[data-subagent]');
-      await expect(narrow).toContainText('read-only');
+      await expect(main.locator('details[data-subagent]')).toBeVisible();
       await expectNoHorizontalOverflow(page);
       await shot('chat-subagent-mobile.png');
     } finally {

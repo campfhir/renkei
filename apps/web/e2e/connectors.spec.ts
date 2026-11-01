@@ -1,24 +1,33 @@
 /**
- * The connectors page: the "Needs setup" sectioning that floats
- * added-but-unconnected cards to the top, and the live scope picker (a
- * shared client island, `ScopeConnectPanel`) whose "Connect" link follows
- * the boxes before any round trip.
+ * The connectors page in a browser: it renders on the real server, one
+ * real connect walk, and a phone's width.
  *
- * Zoom and WebEx — the two single-catalog OAuth cards, the shape most
- * connectors share — are registered through their admin routes (what the
- * admin connector page's Save sends) and added from the catalog
+ * Where its rules went:
+ *   - which cards the page draws, their order, which sit under "Needs
+ *     setup" and when the rest are headed "Connected", what each card hosts
+ *     and is handed: app/(app)/connectors/connectors-page.model.test.ts;
+ *   - what the scope picker offers and ticks, its "N of M" summary, and the
+ *     Connect link following the boxes: scope-connect-panel.model.test.ts
+ *     and components/scope-picker.model.test.ts;
+ *   - Disconnect's confirm / "Keep it" / refusal: disconnect-control.model.test.ts;
+ *   - the authorize route (ceiling refusal, what Zoom is asked for, the
+ *     pending row) and the disconnect route (whose grant, the purge, the
+ *     refusal): app/api/zoom/authorize/route.test.ts and
+ *     app/api/zoom/grant/route.test.ts.
+ *
+ * Zoom and WebEx are registered through their admin routes (what the admin
+ * connector page's Save sends) and added from the catalog
  * (e2e/support/connectors.ts). Connector configs are organization-wide,
  * one row per connector for the whole server, so the flow runs once, in
  * desktop-light, with the dark theme as an `emulateMedia` screenshot, and
  * each config is put back as it was afterwards (disabled again when the
  * test made it — the admin routes have no delete).
  *
- * Then the person connects Zoom for real: the card's Connect link runs the
- * authorize route, which on the in-memory app consents at once (fake
- * OAuth, packages/provider-grants/src/fake-oauth.ts) and lands on the
- * callback, which stores the grant as production does — Zoom moves into
- * "Connected" — and `DisconnectControl` disconnects it through the real
- * DELETE route.
+ * The walk: the card's Connect link runs the authorize route, which on the
+ * in-memory app consents at once (fake OAuth,
+ * packages/provider-grants/src/fake-oauth.ts) and lands on the callback,
+ * which stores the grant as production does — and the page, re-rendered on
+ * the server, draws Zoom under "Connected".
  *
  * Pinned Chromium; "mobile" is a resized viewport.
  */
@@ -58,7 +67,7 @@ async function register(page: Page, connector: string): Promise<() => Promise<vo
   };
 }
 
-test('connectors page: needs-setup ordering, live scope picker, connect and disconnect', async ({
+test('connectors page: renders, connects Zoom for real, fits a phone', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -75,12 +84,11 @@ test('connectors page: needs-setup ordering, live scope picker, connect and disc
     await page.goto(`/connectors`);
     await expect(page.getByRole('heading', { name: 'Connectors' })).toBeVisible();
 
-    // Both cards start unconnected, in "Needs setup".
     const zoomCard = page.locator('[data-coach="card-zoom"]').filter({ visible: true });
     const webexCard = page.locator('[data-coach="card-webex"]').filter({ visible: true });
     // The sections, by their headings. Organization-wide features another
     // spec switched on (the sandbox browser's secrets card) may sit in
-    // "Connected" already, so its membership is what is asserted.
+    // "Connected" already, so only Zoom's membership is asserted.
     const needsSetup = page
       .locator('xpath=//h2[normalize-space()="Needs setup"]/..')
       .filter({ visible: true });
@@ -88,51 +96,20 @@ test('connectors page: needs-setup ordering, live scope picker, connect and disc
       .locator('xpath=//h2[normalize-space()="Connected"]/..')
       .filter({ visible: true });
     await expect(needsSetup.locator('[data-coach="card-zoom"]')).toBeVisible();
-    await expect(needsSetup.locator('[data-coach="card-webex"]')).toBeVisible();
-    await expect(connected.locator('[data-coach="card-zoom"]')).toHaveCount(0);
-    await expect(zoomCard.getByText('Not connected')).toBeVisible();
     await expect(webexCard.getByText('Not connected')).toBeVisible();
     await shot(page, testInfo, 'connectors-01-needs-setup');
     await page.emulateMedia({ colorScheme: 'dark' });
     await shot(page, testInfo, 'connectors-01-needs-setup-dark');
     await page.emulateMedia({ colorScheme: 'light' });
 
-    // The scope picker is a live client island (ScopeConnectPanel): unchecking
-    // a capability must change the "Connect Zoom" link's authorize URL before
-    // any network round trip.
-    await zoomCard.getByText(/What Renkei may do/).click();
-    const connectZoomLink = zoomCard.getByRole('link', { name: 'Connect Zoom' });
-    const hrefBefore = await connectZoomLink.getAttribute('href');
-    await zoomCard.getByRole('checkbox').first().uncheck();
-    await expect.poll(() => connectZoomLink.getAttribute('href')).not.toBe(hrefBefore);
-
     // Connect: the authorize route, the fake consent, the callback, and back
-    // here. Zoom moves out of "Needs setup" into its own "Connected"
-    // section, while WebEx — still unconnected — stays in "Needs setup".
-    await connectZoomLink.click();
+    // here, where the server draws Zoom connected.
+    await zoomCard.getByRole('link', { name: 'Connect Zoom' }).click();
     await page.waitForURL(/\/connectors(\?|$)/, { timeout: 30_000 });
     await expect(connected.locator('[data-coach="card-zoom"]')).toBeVisible();
-    await expect(needsSetup.locator('[data-coach="card-webex"]')).toBeVisible();
     await expect(zoomCard.getByText('Connected', { exact: true })).toBeVisible();
-    await expect(webexCard.getByText('Not connected')).toBeVisible();
+    await expect(zoomCard.getByRole('button', { name: 'Disconnect Zoom' })).toBeVisible();
     await shot(page, testInfo, 'connectors-02-mixed');
-
-    // DisconnectControl, for real: cancel first (must not disconnect), then
-    // confirm, which hits the actual DELETE route.
-    await zoomCard.getByRole('button', { name: 'Disconnect Zoom' }).click();
-    await expect(zoomCard.getByText(/Disconnect your Zoom account\?/)).toBeVisible();
-    await zoomCard.getByRole('button', { name: 'Keep it' }).click();
-    await expect(zoomCard.getByText(/Disconnect your Zoom account\?/)).toHaveCount(0);
-    await expect(zoomCard.getByText('Connected', { exact: true })).toBeVisible();
-
-    await zoomCard.getByRole('button', { name: 'Disconnect Zoom' }).click();
-    await zoomCard.getByRole('button', { name: 'Yes, disconnect' }).click();
-    await expect(zoomCard.getByText('Not connected')).toBeVisible({ timeout: 30_000 });
-    // Back to a single "Needs setup" section: the disconnect's refresh
-    // re-read the grants and re-sorted both cards into it.
-    await expect(needsSetup.locator('[data-coach="card-zoom"]')).toBeVisible();
-    await expect(connected.locator('[data-coach="card-zoom"]')).toHaveCount(0);
-    await shot(page, testInfo, 'connectors-03-disconnected');
 
     // Mobile: a resized Chromium viewport, not a device descriptor.
     await page.setViewportSize(MOBILE_VIEWPORT);

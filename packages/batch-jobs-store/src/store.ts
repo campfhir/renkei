@@ -29,10 +29,7 @@
  */
 
 import { getDataStore, type BatchJobItemRecord, type BatchJobRecord } from '@renkei/db';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export interface BatchJobRow {
   id: string;

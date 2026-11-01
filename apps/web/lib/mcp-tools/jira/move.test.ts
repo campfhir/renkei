@@ -24,6 +24,7 @@ import { registerMoveTools } from './move';
 import { clearFieldSchemaCache } from './field-schema';
 import { clearProjectTypeCache } from './issue-urls';
 import type { JiraAuth } from './jira-auth';
+import { isRecord } from '@renkei/guards';
 
 type ToolResult = {
   content: { type: string; text?: string }[];
@@ -53,10 +54,6 @@ class FakeJiraApiError extends Error {
 
 let calls: Call[] = [];
 let responder: (call: Call) => unknown;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];

@@ -82,6 +82,7 @@ import type { NetworkIsolation } from './workspaces';
 import type { LspSessions } from './lsp-sessions';
 import { logger } from './logger';
 import { logErrorResponse, withRequestScope } from './request-log';
+import { isRecord } from '@renkei/guards';
 
 /**
  * The browser verbs the HTTP surface dispatches to — structurally the
@@ -183,10 +184,6 @@ function batchIdOf(value: unknown): string | null {
 export async function orgMaxFileBytes(): Promise<number> {
   const settings = await getOrgSettings();
   return settings.ok ? settings.val.maxAttachmentBytes : DEFAULT_MAX_FILE_BYTES;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

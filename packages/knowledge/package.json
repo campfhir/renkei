@@ -18,6 +18,7 @@
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
     "@renkei/gates": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/rate-limit": "workspace:*",
     "@renkei/settings": "workspace:*"
   },

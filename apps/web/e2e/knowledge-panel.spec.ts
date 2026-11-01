@@ -1,6 +1,8 @@
 /**
- * An agent's Knowledge panel: selection, the purge affordance, and no
- * overflow. The notes are added the way the panel's own form adds them
+ * An agent's Knowledge panel in a browser: real notes render, one press
+ * reaches the panel's model, and nothing overflows. What the panel does
+ * with selection, drafts and deletes is knowledge-panel.model.test.ts's
+ * (app/(app)/agents/[agentId]/). The notes are added the way the panel's own form adds them
  * (POST /api/agents/:id/knowledge), embedded synchronously by the
  * organization's embedding provider — the stand-in model's /embeddings
  * (e2e/llm-stub.mjs), configured through the admin route and left on.

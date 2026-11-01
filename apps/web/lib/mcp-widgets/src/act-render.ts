@@ -34,6 +34,7 @@ import type {
   VerdictBody,
   WorklogBody,
 } from './act-card';
+import { eventSpan, formatWhen, whenParts } from './act-preview.model';
 import { avatar, el, str } from './ui';
 
 /* ------------------------------------------------------------------ */
@@ -259,36 +260,6 @@ function tableRow(label: string, ...content: Node[]): HTMLElement {
   value.append(...content);
   row.append(el('div', 'a-table-label', label), value);
   return row;
-}
-
-/** "2026-10-21T14:00:00" → "Wed, 21 Oct · 14:00", as written, with no zone conversion. */
-const WHEN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/;
-function whenParts(text: string): { date: Date; hasTime: boolean } | null {
-  const match = WHEN.exec(text);
-  if (!match) return null;
-  const [, y, mo, d, h, mi] = match;
-  return {
-    date: new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h ?? 0), Number(mi ?? 0))),
-    hasTime: h !== undefined,
-  };
-}
-export function formatWhen(text: string): string {
-  const parts = whenParts(text);
-  if (!parts) return text;
-  const day = parts.date.toLocaleDateString('en', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-  if (!parts.hasTime) return day;
-  const time = parts.date.toLocaleTimeString('en', {
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: 'UTC',
-  });
-  return `${day} · ${time}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -848,15 +819,7 @@ function renderEvent(body: EventBody, ctx: RenderContext): HTMLElement {
   if (body.subject !== undefined)
     text.append(el('div', 'a-event-title', body.subject || '(no title)'));
   if (body.start) {
-    const end = body.end ? whenParts(body.end) : null;
-    const startText = formatWhen(body.start);
-    const endText =
-      end && start && end.hasTime && end.date.toDateString() === start.date.toDateString()
-        ? end.date.toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })
-        : body.end
-          ? formatWhen(body.end)
-          : '';
-    text.append(el('div', undefined, endText ? `${startText} – ${endText}` : startText));
+    text.append(el('div', undefined, eventSpan(body.start, body.end)));
     if (body.timezone) text.append(el('div', 'a-meta', body.timezone));
   }
   if (body.where) text.append(el('div', 'a-meta', body.where));

@@ -1,9 +1,11 @@
 /**
  * The composer's unsent text, kept per chat on the server
- * (lib/chat/drafts.ts): typing is saved once after a pause — not per
- * keystroke — and comes back after a reload and in a second browser
- * context (another device) with the same sign-in. Clearing the box
- * removes it. What is stored is read back the way the page reads it, as
+ * (lib/chat/drafts.ts): what is typed reaches the server and comes back
+ * after a reload and in a second browser context (another device) with
+ * the same sign-in; clearing the box removes it. When a save goes out —
+ * after a pause, not per keystroke; at once on clearing; one at a time,
+ * the newest last; a failure retried on the next change — is
+ * draft-sync.model.test.ts's. What is stored is read back the way the page reads it, as
  * the chat's `draft` (GET /api/chat/chats/:id); that it is sealed at rest
  * is lib/chat/drafts.ts's own tests' to show.
  *
@@ -60,27 +62,15 @@ async function openChat(page: Page): Promise<void> {
 const isDraftSave = (url: string, method: string) =>
   method === 'PUT' && url.endsWith(`/api/chat/chats/${chatId}/draft`);
 
-test('an unsent message is saved after a pause and comes back on reload', async ({
-  page,
-}, testInfo) => {
+test('an unsent message is saved and comes back on reload', async ({ page }, testInfo) => {
   await openChat(page);
   await expect(page.getByLabel('Message').filter({ visible: true })).toHaveValue('');
 
-  const saves: string[] = [];
-  page.on('request', (request) => {
-    if (isDraftSave(request.url(), request.method())) saves.push(request.postData() ?? '');
-  });
   const saved = page.waitForResponse(
     (response) => isDraftSave(response.url(), response.request().method()) && response.ok()
   );
-  // Keystroke by keystroke, well inside the debounce window.
-  await page
-    .getByLabel('Message')
-    .filter({ visible: true })
-    .pressSequentially(DRAFT, { delay: 15 });
-  await saved;
-  expect(saves).toHaveLength(1);
-  expect(JSON.parse(saves[0])).toEqual({ text: DRAFT });
+  await page.getByLabel('Message').filter({ visible: true }).fill(DRAFT);
+  expect((await saved).request().postDataJSON()).toEqual({ text: DRAFT });
   expect((await readChat(page.request, chatId)).chat.draft).toBe(DRAFT);
 
   await page.reload();
@@ -101,7 +91,11 @@ test('another device sees the draft, and clearing the box removes it', async ({
 
   // A second browser context with the same sign-in, at phone width.
   const state = await page.context().storageState();
-  const phone = await browser.newContext({ storageState: state, viewport: MOBILE_VIEWPORT });
+  const phone = await browser.newContext({
+    reducedMotion: 'reduce',
+    storageState: state,
+    viewport: MOBILE_VIEWPORT,
+  });
   try {
     const other = await phone.newPage();
     await other.goto(`/chat/${chatId}`);

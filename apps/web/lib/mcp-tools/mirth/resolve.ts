@@ -29,9 +29,10 @@
  */
 
 import type { McpServer } from '@modelcontextprotocol/server';
-import { isRecord, textOf, unwrapList, unwrapMap } from '@renkei/connector-mirth';
+import { textOf, unwrapList, unwrapMap } from '@renkei/connector-mirth';
 import type { ConnectedInstance } from '@renkei/connector-mirth';
 import type { MirthApiRequest, WireApiResponse } from '@/lib/mirth/service-client';
+import { isRecord } from '@renkei/guards';
 
 export type RefKind =
   | 'channel'

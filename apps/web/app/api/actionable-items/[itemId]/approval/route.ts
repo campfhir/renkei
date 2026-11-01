@@ -20,10 +20,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { decideApproval } from '@/lib/agents/approvals';
 import { MAX_QUESTION_ANSWER_CHARS } from '@renkei/agents';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export async function POST(
   request: NextRequest,

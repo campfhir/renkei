@@ -6,6 +6,10 @@
  * or code), the Always / On demand switch, sizes and statuses as words.
  */
 
+import { isPicture } from './artifact-ocr-panel.model';
+
+export { isPicture };
+
 export function sizeOf(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -84,14 +88,6 @@ export function statusLabel(status: string): string | null {
     default:
       return 'No text';
   }
-}
-
-/**
- * A picture is described from its own bytes, so it is never "waiting for
- * OCR" as far as the person is concerned: OCR only adds any text in it.
- */
-export function isPicture(contentType: string): boolean {
-  return contentType.startsWith('image/');
 }
 
 /** The status a file shows: a picture with no text is ready to read, not waiting. */

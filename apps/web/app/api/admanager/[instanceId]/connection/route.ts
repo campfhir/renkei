@@ -26,10 +26,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { admanagerClientFailure, admanagerTestConnection } from '@/lib/admanager/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/admanager/parse';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 /** Whether the body carries any credential field (vs. exposure-only). */
 function carriesCredential(body: Record<string, unknown>): boolean {

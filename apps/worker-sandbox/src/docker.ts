@@ -20,10 +20,7 @@
  */
 
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from 'node:http';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 /** JSON from the engine, or null when it is not JSON — never a throw. */
 function parseJson(text: string): unknown {
