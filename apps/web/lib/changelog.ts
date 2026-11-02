@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-02',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Asking for a Zoom note from a given day finds it',
+        detail:
+          "Agents now look up a Zoom note by the day it was created instead of by the meeting's name, which newer notes, titled by Zoom from what was said, often don't carry. When you ask for your notes they no longer reach for the meeting transcript instead.",
+      },
+    ],
+  },
+  {
     date: '2026-11-01',
     entries: [
       {
