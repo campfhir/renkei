@@ -592,6 +592,86 @@ describe('zoom_bulk_get_notes', () => {
   });
 });
 
+describe('zoom_search_notes', () => {
+  const bodyOf = (): Record<string, unknown> =>
+    JSON.parse(String((mockCall.mock.calls[0]?.[1] as { body?: string }).body));
+
+  it('finds a day’s notes by when they were created, with no query', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        files: [
+          {
+            file_id: 'note-oct26',
+            file_name: 'Blockers and executive priorities',
+            file_link: 'https://docs.zoom.us/doc/note-oct26',
+            file_type: 'note',
+          },
+        ],
+      })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('zoom_search_notes')!({
+        createdAfter: '2026-10-26T00:00:00-07:00',
+        createdBefore: '2026-10-26T23:59:59-07:00',
+      })
+    );
+
+    expect(mockCall.mock.calls[0]?.[0]).toBe('/docs/file_search');
+    expect(bodyOf()).toEqual({
+      file_types: ['note'],
+      page_size: 20,
+      created_time_from: '2026-10-26T00:00:00-07:00',
+      created_time_to: '2026-10-26T23:59:59-07:00',
+    });
+    expect(text).toContain('Blockers and executive priorities — id: note-oct26');
+    expect(text).not.toContain('Ranked by relevance');
+  });
+
+  it('refuses created and modified filters together, before asking Zoom', async () => {
+    const tools = await toolsOf();
+
+    const result = await tools.get('zoom_search_notes')!({
+      createdAfter: '2026-10-26T00:00:00Z',
+      modifiedBefore: '2026-11-02T00:00:00Z',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('not both');
+    expect(mockCall).not.toHaveBeenCalled();
+  });
+
+  it('a query’s page says it is ranked and padded, so the top line is not taken as the answer', async () => {
+    mockCall.mockResolvedValue(
+      jsonResponse({
+        files: [{ file_id: 'f1', file_name: 'Stand-up', file_link: '', file_type: 'note' }],
+      })
+    );
+    const tools = await toolsOf();
+
+    const text = textOf(await tools.get('zoom_search_notes')!({ query: 'IT Team Leads' }));
+
+    expect(bodyOf()).toMatchObject({ query: 'IT Team Leads' });
+    expect(text).toContain('Ranked by relevance');
+  });
+
+  it('an empty dated search with a query suggests dropping the query', async () => {
+    mockCall.mockResolvedValue(jsonResponse({ files: [] }));
+    const tools = await toolsOf();
+
+    const text = textOf(
+      await tools.get('zoom_search_notes')!({
+        query: 'Weekly IT Team Leads',
+        createdAfter: '2026-10-26T00:00:00Z',
+      })
+    );
+
+    expect(text).toContain('No notes found.');
+    expect(text).toContain('without query');
+  });
+});
+
 describe('zoomScopeFor', () => {
   it('gives each acting tool its own scope, not a shared default', () => {
     expect(zoomScopeFor('zoom_create_meeting')).toEqual(['meeting:write:meeting']);

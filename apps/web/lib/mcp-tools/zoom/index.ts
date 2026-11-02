@@ -312,7 +312,8 @@ export async function registerZoomTools(
       title: 'Zoom · Read — List Zoom meetings',
       description:
         'List the connected user’s meetings — upcoming by default, or previous ones. Meeting ' +
-        'ids feed zoom_get_meeting, zoom_get_transcript and zoom_get_meeting_summary.',
+        'ids feed zoom_get_meeting, zoom_get_transcript and zoom_get_meeting_summary. For the ' +
+        'user’s notes from a meeting, go to zoom_search_notes with the meeting’s date instead.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         which: z
@@ -767,7 +768,9 @@ export async function registerZoomTools(
       title: 'Zoom · Read — Get a Zoom meeting transcript',
       description:
         'Download and clean the transcript of a cloud-recorded meeting (audio transcript must ' +
-        'have been enabled). The raw material for "summarize that meeting".',
+        'have been enabled). Not the user’s notes: when they ask for a note or "my notes", use ' +
+        'zoom_search_notes / zoom_get_note, and come here only if they ask for the transcript ' +
+        'or there is no note.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         meetingId: z.string().min(1).describe('Meeting id or UUID from zoom_list_recordings'),
@@ -875,22 +878,40 @@ export async function registerZoomTools(
     {
       title: 'Zoom · Read — Search all My Notes',
       description:
-        'List or search the connected user’s My Notes across ALL meetings (no meeting id ' +
-        'needed) — titles and searchable content, newest-relevant first. Note ids feed ' +
-        'zoom_get_note. Leave query empty to just list notes.',
+        'The way to find the user’s My Notes — across ALL meetings, no meeting id needed. ' +
+        'Note ids feed zoom_get_note / zoom_bulk_get_notes. For "the note from <day>" ' +
+        '(e.g. last Monday’s meeting), set createdAfter/createdBefore to that day and leave ' +
+        'query EMPTY: a note is created when its meeting happens, and newer notes are titled ' +
+        'by Zoom’s AI from what was said, not by the meeting’s topic, so searching the meeting ' +
+        'name often misses them. A query ranks by relevance and pads the page with weak ' +
+        'matches; results carry no dates, so judge them by the date filter, not by order. ' +
+        'Created and modified filters cannot be combined.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         query: z
           .string()
           .describe('Keyword matched against note titles and content; omit to list all')
           .optional(),
+        createdAfter: z
+          .string()
+          .describe(
+            'Only notes created on or after this ISO-8601 time — the meeting’s day, in the ' +
+              'user’s timezone (e.g. 2026-10-26T00:00:00-07:00)'
+          )
+          .optional(),
+        createdBefore: z
+          .string()
+          .describe('Only notes created on or before this ISO-8601 time')
+          .optional(),
         modifiedAfter: z
           .string()
-          .describe('Only notes modified after this ISO-8601 time')
+          .describe(
+            'Only notes modified on or after this ISO-8601 time (not with createdAfter/Before)'
+          )
           .optional(),
         modifiedBefore: z
           .string()
-          .describe('Only notes modified before this ISO-8601 time')
+          .describe('Only notes modified on or before this ISO-8601 time')
           .optional(),
         max: z.number().int().min(1).max(50).describe('Per page (default 20)').optional(),
         nextPageToken: z
@@ -900,6 +921,15 @@ export async function registerZoomTools(
       }),
     },
     async (args: Record<string, any>) => {
+      // Zoom 400s on created_* and modified_* together; say so before asking.
+      const created = Boolean(str(args.createdAfter) || str(args.createdBefore));
+      const modified = Boolean(str(args.modifiedAfter) || str(args.modifiedBefore));
+      if (created && modified) {
+        return errText(
+          'Use either createdAfter/createdBefore or modifiedAfter/modifiedBefore, not both — ' +
+            'Zoom refuses the two together. For a meeting’s note, filter by created.'
+        );
+      }
       // The cross-meeting listing lives in the Canvas Search API — the
       // My Notes API itself can only list per meeting.
       const result = await zoomCall(auth, zoomScopeFor('zoom_search_notes'), '/docs/file_search', {
@@ -908,6 +938,8 @@ export async function registerZoomTools(
           file_types: ['note'],
           page_size: typeof args.max === 'number' ? args.max : 20,
           ...(str(args.query) ? { query: str(args.query) } : {}),
+          ...(str(args.createdAfter) ? { created_time_from: str(args.createdAfter) } : {}),
+          ...(str(args.createdBefore) ? { created_time_to: str(args.createdBefore) } : {}),
           ...(str(args.modifiedAfter) ? { modified_time_from: str(args.modifiedAfter) } : {}),
           ...(str(args.modifiedBefore) ? { modified_time_to: str(args.modifiedBefore) } : {}),
           ...(str(args.nextPageToken) ? { next_page_token: str(args.nextPageToken) } : {}),
@@ -936,10 +968,24 @@ export async function registerZoomTools(
       );
       const nextToken = str(body.next_page_token);
       const nextLine = nextToken ? `\n\nMore available — pass nextPageToken: ${nextToken}` : '';
-      if (lines.length === 0) return textResult(`No notes found.${nextLine}`);
+      if (lines.length === 0) {
+        return textResult(
+          `No notes found.${nextLine}` +
+            (str(args.query) && created
+              ? '\nTry again without query: the note may be titled by its content, not the meeting.'
+              : '')
+        );
+      }
+      // A query's page is relevance-ranked and padded with weak matches —
+      // say so, or a model reads the top line as the answer.
+      const rankedLine = str(args.query)
+        ? '\n\nRanked by relevance; Zoom pads the page with weak matches, so a title that ' +
+          'does not fit is not the note. For a meeting on a known day, search by created ' +
+          'date with no query.'
+        : '';
       return textResult(
         withPresentationHint(
-          lines.join('\n') + nextLine,
+          lines.join('\n') + nextLine + rankedLine,
           'a table (Note, id) usually scans faster than this flat list.'
         )
       );
@@ -951,8 +997,12 @@ export async function registerZoomTools(
     {
       title: 'Zoom · Read — List My Notes for a meeting',
       description:
-        'The connected user’s My Notes attached to one meeting (Zoom’s AI note-taking ' +
-        'companion). Note ids feed zoom_get_note. My Notes must be enabled on the account.',
+        'The connected user’s My Notes attached to one meeting instance (Zoom’s AI ' +
+        'note-taking companion). Note ids feed zoom_get_note. Needs that instance’s UUID: for ' +
+        'a recurring meeting, the uuid zoom_get_meeting shows is the series’, not a past ' +
+        'occurrence’s, and finds nothing — to find a past occurrence’s note, use ' +
+        'zoom_search_notes with createdAfter/createdBefore on its day. My Notes must be ' +
+        'enabled on the account.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         meetingId: z.string().min(1).describe('Meeting id or UUID the notes belong to'),
@@ -993,7 +1043,7 @@ export async function registerZoomTools(
         'endpoint, so edits happen in the Zoom client.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
-        noteId: z.string().min(1).describe('Note id from zoom_list_notes'),
+        noteId: z.string().min(1).describe('Note id from zoom_search_notes or zoom_list_notes'),
         includeTranscript: z
           .boolean()
           .describe('Also return the associated meeting transcript (default false)')
