@@ -616,9 +616,15 @@ describe('a running service and the project’s commands', () => {
     });
     expect(after.json.logs).toBe('2026-09-23T10:00:04.000000000Z ERROR: db lost a connection');
     // A duration is read back from now; a bad since or match is refused.
+    // The server floors now to whole seconds, so bracket it by the whole
+    // seconds either side of the request: a bound read after the request
+    // alone fails whenever the clock crosses a second in between.
+    const secondBefore = Math.floor(Date.now() / 1000);
     await post(enabledBase, 'services/logs', { ...TARGET, name: 'db', since: '5m' });
+    const secondAfter = Math.floor(Date.now() / 1000);
     const asked = engine.calls.at(-1)!.args[2] as { since?: string };
-    expect(Number(asked.since)).toBeGreaterThan(Date.now() / 1000 - 301);
+    expect(Number(asked.since)).toBeGreaterThanOrEqual(secondBefore - 300);
+    expect(Number(asked.since)).toBeLessThanOrEqual(secondAfter - 300);
     expect(
       (await post(enabledBase, 'services/logs', { ...TARGET, name: 'db', since: 'ages' })).status
     ).toBe(400);
