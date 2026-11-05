@@ -14,7 +14,7 @@
  * through the API and any number may be open at once.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
@@ -34,6 +34,19 @@ import ChatPrBadge from '../../code/_components/chat-pr-badge';
 import DownloadProjectModal from '../../code/_components/download-project';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import IssueCards from '../../code/_components/issue-cards';
+import RefinePanel from './refine-panel';
+import {
+  aboutReducer,
+  canRefine,
+  canSave,
+  initialAbout,
+  instructionsLocked,
+  isDirty,
+  refineBody,
+  refinedUnsaved,
+  saveBody,
+  type RefineProposal,
+} from './project-about.model';
 
 /** Chats a row bothers asking for a PR badge — the rest just don't show one. */
 const PR_BADGE_ROW_LIMIT = 10;
@@ -105,16 +118,19 @@ export default function ProjectView({
   const indexHref = variant === 'code' ? `/code` : `/chat/projects`;
   const deleteRoute = variant === 'code' ? `/api/code/projects/${project.id}` : base;
 
-  const [name, setName] = useState(project.name);
+  // The About section's rules: project-about.model.ts.
+  const [about, dispatchAbout] = useReducer(
+    aboutReducer,
+    { project, defaultInstructions },
+    initialAbout
+  );
+  const { name, description, instructions } = about.fields;
+  const { saving, saveError, savedAt } = about;
+  const type = (field: 'name' | 'description' | 'instructions', value: string) =>
+    dispatchAbout({ type: 'fieldTyped', field, value });
   const [renamingHeader, setRenamingHeader] = useState(false);
   const nameInputRef = useRef<HTMLInputElement>(null);
-  const [description, setDescription] = useState(project.description ?? '');
-  const [instructions, setInstructions] = useState(
-    project.instructions ?? defaultInstructions ?? ''
-  );
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const instructionsId = useId();
   const [share, setShare] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [downloadOpen, setDownloadOpen] = useState(false);
@@ -139,10 +155,7 @@ export default function ProjectView({
     router.push(`/chat/${created.data.chatId}`);
   };
 
-  const dirty =
-    name !== project.name ||
-    description !== (project.description ?? '') ||
-    instructions !== (project.instructions ?? '');
+  const dirty = isDirty(about);
 
   useEffect(() => {
     if (renamingHeader) nameInputRef.current?.select();
@@ -150,7 +163,7 @@ export default function ProjectView({
 
   const startRenaming = () => {
     if (!canEdit) return;
-    setName(project.name);
+    dispatchAbout({ type: 'renameCancelled' });
     setRenamingHeader(true);
   };
 
@@ -159,40 +172,57 @@ export default function ProjectView({
   // description and instructions).
   const renameFromHeader = async () => {
     const next = name.trim();
-    if (!next || next === project.name) {
-      setName(project.name);
+    if (!next || next === about.saved.name) {
+      dispatchAbout({ type: 'renameCancelled' });
       setRenamingHeader(false);
       return;
     }
-    setSaving(true);
-    setSaveError(null);
+    dispatchAbout({ type: 'saveStarted' });
     const result = await sendJsonFull(base, 'PATCH', { name: next });
-    setSaving(false);
     setRenamingHeader(false);
     if (result.error) {
-      setSaveError(result.error);
-      setName(project.name);
+      dispatchAbout({ type: 'renameFailed', error: result.error });
       return;
     }
-    setSavedAt(Date.now());
+    dispatchAbout({ type: 'renameSaved', name: next, at: Date.now() });
     router.refresh();
   };
 
   const save = async () => {
-    setSaving(true);
-    setSaveError(null);
-    const result = await sendJsonFull(base, 'PATCH', {
-      name: name.trim(),
-      description: description.trim() || null,
-      instructions: instructions.trim() || null,
-    });
-    setSaving(false);
+    if (!canSave(about)) return;
+    dispatchAbout({ type: 'saveStarted' });
+    const result = await sendJsonFull(base, 'PATCH', saveBody(about));
     if (result.error) {
-      setSaveError(result.error);
+      dispatchAbout({ type: 'saveFailed', error: result.error });
       return;
     }
-    setSavedAt(Date.now());
+    dispatchAbout({ type: 'saved', at: Date.now() });
     router.refresh();
+  };
+
+  // Refine: the roster loads the first time the panel opens.
+  const openRefine = async () => {
+    dispatchAbout({ type: 'refineOpened' });
+    if (about.refine.models) return;
+    const result = await chatClient.models();
+    dispatchAbout({ type: 'modelsLoaded', models: result.data?.models ?? [] });
+  };
+  const refine = async () => {
+    if (!canRefine(about)) return;
+    dispatchAbout({ type: 'refineStarted' });
+    const result = await sendJsonFull<RefineProposal>(
+      `${base}/instructions/refine`,
+      'POST',
+      refineBody(about)
+    );
+    if (result.error || !result.data) {
+      dispatchAbout({
+        type: 'refineFailed',
+        error: result.error ?? 'The model could not refine the instructions. Try again.',
+      });
+      return;
+    }
+    dispatchAbout({ type: 'refineAnswered', proposal: result.data });
   };
 
   const addNote = async () => {
@@ -335,14 +365,14 @@ export default function ProjectView({
             <input
               ref={nameInputRef}
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => type('name', event.target.value)}
               onBlur={() => void renameFromHeader()}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
                   void renameFromHeader();
                 } else if (event.key === 'Escape') {
-                  setName(project.name);
+                  dispatchAbout({ type: 'renameCancelled' });
                   setRenamingHeader(false);
                 }
               }}
@@ -404,23 +434,25 @@ export default function ProjectView({
         <OverflowMenu
           label="More"
           anchored={false}
-          items={[
-            ...(canEdit
-              ? [{ label: 'Tools', icon: ICONS.tool, onSelect: () => setToolsOpen(true) }]
-              : []),
-            ...(download
-              ? [
-                  {
-                    label: 'Download offline copy',
-                    icon: ICONS.download,
-                    onSelect: () => setDownloadOpen(true),
-                  },
-                ]
-              : []),
-            ...(role === 'owner'
-              ? [{ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) }]
-              : []),
-          ] satisfies OverflowItem[]}
+          items={
+            [
+              ...(canEdit
+                ? [{ label: 'Tools', icon: ICONS.tool, onSelect: () => setToolsOpen(true) }]
+                : []),
+              ...(download
+                ? [
+                    {
+                      label: 'Download offline copy',
+                      icon: ICONS.download,
+                      onSelect: () => setDownloadOpen(true),
+                    },
+                  ]
+                : []),
+              ...(role === 'owner'
+                ? [{ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) }]
+                : []),
+            ] satisfies OverflowItem[]
+          }
         />
         {variant === 'code' ? (
           <button
@@ -480,7 +512,7 @@ export default function ProjectView({
                 <div className="space-y-3">
                   <input
                     value={name}
-                    onChange={(event) => setName(event.target.value)}
+                    onChange={(event) => type('name', event.target.value)}
                     aria-label="Project name"
                     maxLength={200}
                     className={inputClass}
@@ -488,38 +520,72 @@ export default function ProjectView({
                   {variant === 'code' ? null : (
                     <input
                       value={description}
-                      onChange={(event) => setDescription(event.target.value)}
+                      onChange={(event) => type('description', event.target.value)}
                       placeholder="Description (optional)"
                       aria-label="Description"
                       maxLength={2000}
                       className={inputClass}
                     />
                   )}
-                  <label className="block">
-                    <span className="mb-1 block text-xs font-medium text-gray-500">
-                      Instructions — what every chat in this project should know and how it should
-                      behave
-                    </span>
+                  <div>
+                    <div className="mb-1 flex items-end gap-2">
+                      <label
+                        htmlFor={instructionsId}
+                        className="min-w-0 flex-1 text-xs font-medium text-gray-500"
+                      >
+                        Instructions — what every chat in this project should know and how it should
+                        behave
+                      </label>
+                      <button
+                        type="button"
+                        disabled={!canRefine(about) || about.refine.open}
+                        onClick={() => void openRefine()}
+                        title={
+                          instructions.trim()
+                            ? 'Have a model rewrite these instructions — you review it before anything is saved'
+                            : 'Write some instructions first'
+                        }
+                        className="flex shrink-0 items-center gap-1 rounded-md border border-gray-300 px-2 py-0.5 text-xs hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                      >
+                        <Icon path={ICONS.sparkles} className="h-3.5 w-3.5" />
+                        Refine
+                      </button>
+                    </div>
                     <textarea
+                      id={instructionsId}
                       value={instructions}
-                      onChange={(event) => setInstructions(event.target.value)}
+                      onChange={(event) => type('instructions', event.target.value)}
+                      readOnly={instructionsLocked(about)}
                       rows={variant === 'code' ? 12 : 6}
                       maxLength={20_000}
-                      className={inputClass}
+                      className={`${inputClass} read-only:opacity-60`}
                     />
+                    {about.refine.open ? (
+                      <RefinePanel
+                        state={about}
+                        dispatch={dispatchAbout}
+                        onAsk={() => void refine()}
+                      />
+                    ) : null}
+                    {refinedUnsaved(about) ? (
+                      <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
+                        Refined, not saved yet — read it over, change it as you like, then Save
+                        keeps it for every chat in this project.
+                      </span>
+                    ) : null}
                     {!project.instructions && defaultInstructions && instructions.trim() ? (
                       <span className="mt-1 block text-xs text-amber-700 dark:text-amber-400">
                         A developer’s standing brief, not saved yet — change it as you like, then
                         Save keeps it for every chat in this project.
                       </span>
                     ) : null}
-                  </label>
+                  </div>
                   <div className="flex items-center gap-2">
                     {saveError ? <p className="text-sm text-red-600">{saveError}</p> : null}
                     {savedAt && !dirty ? <p className="text-xs text-gray-500">Saved.</p> : null}
                     <button
                       type="button"
-                      disabled={!dirty || saving || !name.trim()}
+                      disabled={!canSave(about)}
                       onClick={() => void save()}
                       className="ml-auto rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                     >

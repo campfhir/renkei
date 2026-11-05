@@ -88,8 +88,10 @@ Jira and Outlook argument cards on the real server, and the like).
 
 Fifteen browser tests tagged `@smoke` and the page crawl gate a pull request
 (`pnpm --filter renkei e2e:smoke`, about a minute and a half); the full
-suite runs when a change merges to main. A screen not listed above
-still has its rules inline: it gets its model the next time those rules
+suite runs when a change merges to main. Moved since wave 5: a chat
+project page's About form with Refine (`project-about`) and the Move to
+project dialog (`move-chat-dialog`), with `project-instructions` their
+press-through. A screen not listed here still has its rules inline: it gets its model the next time those rules
 change (AGENTS.md, "When you change a screen"). What is left in the
 browser suite is the smoke paths, layout and visual checks
 (`nav-shell`, `nav-chat-scroll`, `code-mobile`, `code-chat-width`,
