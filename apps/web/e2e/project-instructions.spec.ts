@@ -57,7 +57,7 @@ test.describe('project instructions', () => {
           tools: [
             {
               name: 'propose_instructions',
-              input: { instructions: refined, changes: ['Added a heading'] },
+              input: { instructions: refined },
             },
           ],
         },
@@ -82,7 +82,6 @@ test.describe('project instructions', () => {
       await expect(dialog.getByLabel('Original instructions')).toContainText('help w/ interviews');
       const recommended = dialog.getByLabel('Recommended instructions');
       await expect(recommended).toHaveText(refined, COLD);
-      await expect(dialog.getByText('Added a heading')).toBeVisible();
 
       // Try again sits in the prompt and sends what it says, on the model chosen.
       await dialog.getByLabel(/Anything to change/).fill('make it warmer');

@@ -36,7 +36,7 @@ describe('the prompt', () => {
 });
 
 describe('the reply', () => {
-  it('is the tool’s rewrite and its list of changes, trimmed', () => {
+  it('is the tool’s rewrite, trimmed', () => {
     expect(
       parseRefineReply([
         {
@@ -44,17 +44,15 @@ describe('the reply', () => {
           name: REFINE_TOOL,
           input: {
             instructions: '  # Hiring\n\nYou help.  ',
-            changes: [' Added a heading ', '', 3],
           },
         },
       ])
-    ).toEqual({ instructions: '# Hiring\n\nYou help.', changes: ['Added a heading'] });
+    ).toEqual({ instructions: '# Hiring\n\nYou help.' });
   });
 
   it('is the text when the model answered without the tool', () => {
     expect(parseRefineReply([{ type: 'text', text: ' You help with hiring. ' }])).toEqual({
       instructions: 'You help with hiring.',
-      changes: [],
     });
   });
 

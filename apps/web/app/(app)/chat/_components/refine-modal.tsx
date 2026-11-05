@@ -3,9 +3,9 @@
 /**
  * Refine, a dialog over a project's About section: the draft on the left,
  * the model's rewrite on the right (asked for the moment the dialog
- * opens), what changed under it, and a prompt at the bottom whose own
- * Try again button sits inside the field, so it is never taken for
- * Accept, which closes the footer with Cancel. The rules are
+ * opens), and a prompt at the bottom whose own Try again button sits
+ * inside the field, so it is never taken for Accept, which closes the
+ * footer with Cancel. The rules are
  * project-about.model.ts's; the call is the page's (project-view.tsx).
  */
 
@@ -80,16 +80,6 @@ export default function RefineModal({
               {refine.error ? 'No recommendation this time.' : 'Nothing yet.'}
             </div>
           )}
-          {!working && refine.proposal && refine.proposal.changes.length > 0 ? (
-            <div className="mt-2">
-              <p className="text-xs font-medium text-gray-600 dark:text-gray-300">What changed</p>
-              <ul className="ml-4 list-disc text-xs text-gray-600 dark:text-gray-400">
-                {refine.proposal.changes.map((change, index) => (
-                  <li key={index}>{change}</li>
-                ))}
-              </ul>
-            </div>
-          ) : null}
           {!working && proposalUnchanged(state) ? (
             <p className="mt-2 text-xs text-gray-500">The model found nothing to change.</p>
           ) : null}

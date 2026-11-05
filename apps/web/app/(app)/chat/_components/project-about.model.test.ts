@@ -37,7 +37,6 @@ const fold = (state: AboutState, ...actions: AboutAction[]) => actions.reduce(ab
 
 const PROPOSAL = {
   instructions: '# Hiring\n\nYou help run interview loops. Be warm and direct.',
-  changes: ['Added a heading', 'Spoke to the assistant directly'],
 };
 
 describe('the About form', () => {
@@ -269,7 +268,7 @@ describe('Refine', () => {
       start(),
       { type: 'refineOpened' },
       { type: 'refineStarted' },
-      { type: 'refineAnswered', proposal: { instructions: 'help w/ hiring. be nice', changes: [] } }
+      { type: 'refineAnswered', proposal: { instructions: 'help w/ hiring. be nice' } }
     );
     expect(proposalUnchanged(state)).toBe(true);
     expect(canAccept(state)).toBe(false);

@@ -18,7 +18,6 @@ export interface AboutFields {
 
 export interface RefineProposal {
   instructions: string;
-  changes: string[];
 }
 
 export interface RefineState {

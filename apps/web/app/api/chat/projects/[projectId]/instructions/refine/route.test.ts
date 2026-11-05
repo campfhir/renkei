@@ -47,7 +47,7 @@ describe('POST /api/chat/projects/:id/instructions/refine', () => {
             type: 'tool_use',
             id: 't1',
             name: REFINE_TOOL,
-            input: { instructions: 'You help with hiring.', changes: ['Spoke to the assistant'] },
+            input: { instructions: 'You help with hiring.' },
           },
         ],
         usage: { inputTokens: 120, outputTokens: 30 },
@@ -94,7 +94,6 @@ describe('POST /api/chat/projects/:id/instructions/refine', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       instructions: 'You help with hiring.',
-      changes: ['Spoke to the assistant'],
     });
     const sent = complete.mock.calls[0][0];
     expect(sent.toolChoice).toEqual({ name: REFINE_TOOL });

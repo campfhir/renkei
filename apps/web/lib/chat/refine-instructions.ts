@@ -1,13 +1,13 @@
 /**
  * Refine a project's instructions: one model call that rewrites the draft
  * an editor has in the About field into clearer, better organized
- * instructions, and lists what it changed. It never saves anything — the
- * page shows the proposal beside the draft, and the editor takes it into
+ * instructions. It never saves anything — the page shows the proposal
+ * beside the draft, and the editor takes it into
  * the field (then Save) or discards it (project-about.model.ts).
  *
  * The call forces `propose_instructions`. A model that answers in plain
- * text instead has its text taken as the proposal, with no list of
- * changes, so a provider that ignores a forced tool still gives an answer.
+ * text instead has its text taken as the proposal, so a provider that
+ * ignores a forced tool still gives an answer.
  *
  * Its tokens go to the usage ledger under purpose `instructions_refine`,
  * attributed to the editor who asked.
@@ -22,9 +22,6 @@ import { PROJECT_INSTRUCTIONS_MAX_CHARS, type ProjectKind } from './projects';
 export const REFINE_TOOL = 'propose_instructions';
 /** What the editor may add about what to change, cut before it is sent. */
 export const REFINE_GUIDANCE_MAX_CHARS = 2_000;
-/** Changes the proposal lists, at most. */
-const MAX_CHANGES = 8;
-const MAX_CHANGE_CHARS = 300;
 
 export interface RefineInput {
   kind: ProjectKind;
@@ -38,8 +35,6 @@ export interface RefineInput {
 
 export interface RefineProposal {
   instructions: string;
-  /** What the rewrite changed, one short line each, most important first. */
-  changes: string[];
 }
 
 export const REFINE_SYSTEM_PROMPT = [
@@ -51,12 +46,12 @@ export const REFINE_SYSTEM_PROMPT = [
   '- Use short Markdown headings and bullet lists when the draft has more than a few points; keep a short draft short.',
   '- Remove repetition and filler. Do not pad.',
   `- Keep it under ${PROJECT_INSTRUCTIONS_MAX_CHARS.toLocaleString('en-US')} characters.`,
-  'If the editor says what they want changed, do that too. Call the propose_instructions tool once with the rewritten instructions and a list of what you changed. Do not write anything else.',
+  'If the editor says what they want changed, do that too. Call the propose_instructions tool once with the rewritten instructions. Do not write anything else.',
 ].join('\n');
 
 export const REFINE_TOOL_DEF = {
   name: REFINE_TOOL,
-  description: 'Propose the rewritten project instructions and say what changed.',
+  description: 'Propose the rewritten project instructions.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -64,13 +59,8 @@ export const REFINE_TOOL_DEF = {
         type: 'string',
         description: 'The complete rewritten instructions, ready to save as they are.',
       },
-      changes: {
-        type: 'array',
-        items: { type: 'string' },
-        description: `What you changed, one short sentence each, most important first; at most ${MAX_CHANGES}.`,
-      },
     },
-    required: ['instructions', 'changes'],
+    required: ['instructions'],
   },
 };
 
@@ -98,20 +88,13 @@ export function parseRefineReply(
     const input = isRecord(call.input) ? call.input : {};
     const instructions = isString(input.instructions) ? input.instructions.trim() : '';
     if (!instructions) return null;
-    const changes = Array.isArray(input.changes)
-      ? input.changes
-          .filter(isString)
-          .map((change) => change.trim().slice(0, MAX_CHANGE_CHARS))
-          .filter(Boolean)
-          .slice(0, MAX_CHANGES)
-      : [];
-    return { instructions: instructions.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS), changes };
+    return { instructions: instructions.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS) };
   }
   const text = content
     .flatMap((block) => (block.type === 'text' && isString(block.text) ? [block.text] : []))
     .join('\n')
     .trim();
-  return text ? { instructions: text.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS), changes: [] } : null;
+  return text ? { instructions: text.slice(0, PROJECT_INSTRUCTIONS_MAX_CHARS) } : null;
 }
 
 export type RefineOutcome =
