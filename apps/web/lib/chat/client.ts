@@ -117,6 +117,9 @@ export const chatClient = {
 
   deleteChat: (chatId: string) => sendJsonFull(`${base()}/chats/${chatId}`, 'DELETE'),
 
+  /** The chat projects a chat can be moved into. */
+  listProjects: () => getJson<{ projects: ChatSidebarData['projects'] }>(`${base()}/projects`),
+
   moveChat: (chatId: string, projectId: string | null) =>
     sendJsonFull(`${base()}/chats/${chatId}/move`, 'POST', { projectId }),
 

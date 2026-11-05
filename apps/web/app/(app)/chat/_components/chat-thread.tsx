@@ -91,6 +91,8 @@ import {
 import AutoModeToggle from './auto-mode-toggle';
 import { TemporaryChatMark, TemporaryChatToggle } from './temporary-chat';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
+import MoveChatDialog from './move-chat-dialog';
+import { rowActions } from './chat-nav.model';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity, type VoiceSendTicket } from './voice-mode';
 import SubagentModal from './subagent-modal';
@@ -194,6 +196,7 @@ export default function ChatThread({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
+  const [moving, setMoving] = useState(false);
   // The send path's state (chat-thread.model.ts): the queue, the prompt
   // being edited or resent, and the rename / delete / branch dialogs.
   const [sendState, sendDispatch] = useReducer(threadSendReducer, initialChat, initialThreadSend);
@@ -964,6 +967,15 @@ export default function ChatThread({
   }
   if (isOwner) {
     overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
+    // The sidebar row's menu offers the same move; a code project's chats
+    // and a temporary chat are never moved (chat-nav.model.ts's rowActions).
+    if (rowActions(chat).includes('move')) {
+      overflow.push({
+        label: 'Move to project…',
+        icon: ICONS.folder,
+        onSelect: () => setMoving(true),
+      });
+    }
     overflow.push({
       label: 'Rename',
       icon: ICONS.pencil,
@@ -1488,6 +1500,24 @@ export default function ChatThread({
             }}
           />
         </Modal>
+      ) : null}
+      {moving ? (
+        <MoveChatDialog
+          chatId={chat.id}
+          currentProjectId={chat.projectId}
+          onMoved={(project) => {
+            setMoving(false);
+            // The page holds its own copy of the chat: the header follows at once.
+            setChat((current) => ({
+              ...current,
+              projectId: project?.id ?? null,
+              projectName: project?.name ?? null,
+              projectKind: project ? 'chat' : null,
+            }));
+            router.refresh();
+          }}
+          onClose={() => setMoving(false)}
+        />
       ) : null}
       {share ? (
         <ShareModal

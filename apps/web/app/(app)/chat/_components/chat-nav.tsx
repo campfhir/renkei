@@ -35,6 +35,7 @@ import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
 import ShareModal from './share-modal';
+import MoveChatDialog from './move-chat-dialog';
 import {
   canLoadMore,
   chatListReducer,
@@ -402,33 +403,16 @@ function ChatRow({
         </Modal>
       ) : null}
       {dialog === 'move' ? (
-        <Modal title="Move to project" onClose={() => setDialog(null)}>
-          <div className="space-y-1">
-            <button
-              type="button"
-              disabled={busy || chat.projectId === null}
-              onClick={() => void run(() => chatClient.moveChat(chat.id, null))}
-              className="block w-full rounded-md px-3 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
-            >
-              No project
-            </button>
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                disabled={busy || chat.projectId === project.id}
-                onClick={() => void run(() => chatClient.moveChat(chat.id, project.id))}
-                className="block w-full rounded-md px-3 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
-              >
-                {project.name}
-              </button>
-            ))}
-            {projects.length === 0 ? (
-              <p className="px-3 text-sm text-gray-500">You have no projects yet.</p>
-            ) : null}
-            {error ? <p className="px-3 text-sm text-red-600">{error}</p> : null}
-          </div>
-        </Modal>
+        <MoveChatDialog
+          chatId={chat.id}
+          currentProjectId={chat.projectId}
+          projects={projects}
+          onMoved={() => {
+            setDialog(null);
+            router.refresh();
+          }}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog === 'share' ? (
         <ShareModal

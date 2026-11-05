@@ -328,8 +328,11 @@ export interface RecordLlmCallInput {
    * `context_window`: a call made beside a chat's turn rather than as one —
    * the automatic title (chat-title-tools.ts). Counted in the totals, never
    * in a chat's own turns or the auto-compaction budget.
+   * `instructions_refine`: a project's instructions rewritten on an
+   * editor's ask (apps/web/lib/chat/refine-instructions.ts).
    */
-  purpose: 'run' | 'optimize' | 'chat' | 'context_window' | 'artifact_digest';
+  purpose:
+    'run' | 'optimize' | 'chat' | 'context_window' | 'artifact_digest' | 'instructions_refine';
   /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;
