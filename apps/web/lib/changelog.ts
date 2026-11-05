@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-05',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Move a chat into a project from the chat itself',
+        detail:
+          "Move to project… is now in an open chat's ⋯ menu as well as the sidebar's, so a chat started on its own can join a project, or leave one, without going back to the list.",
+      },
+      {
+        kind: 'added',
+        title: "Refine a project's instructions",
+        detail:
+          "A Refine button beside a project's instructions shows a model's clearer, better organized rewrite next to your draft. Tell it what to change and try again, then Accept to put it in the field; Save keeps it.",
+      },
+    ],
+  },
+  {
     date: '2026-11-02',
     entries: [
       {
