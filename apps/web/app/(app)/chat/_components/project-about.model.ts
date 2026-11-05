@@ -1,10 +1,11 @@
 /**
  * A project page's About section (project-view.tsx): the name,
  * description and instructions being edited, what Save sends and when it
- * may, the header's quick rename, and Refine — a model's rewrite of the
- * instructions shown beside them, which the editor takes into the field
- * (still unsaved until Save) or discards. Tested in
- * project-about.model.test.ts.
+ * may, the header's quick rename, and Refine — a dialog (refine-modal.tsx)
+ * with the draft on the left and a model's rewrite on the right, asked
+ * for the moment it opens; a prompt under them steers Try again, and
+ * Accept takes the rewrite into the field (still unsaved until Save).
+ * Tested in project-about.model.test.ts.
  */
 
 import type { ModelOption } from '@/lib/chat/views';
@@ -22,6 +23,8 @@ export interface RefineProposal {
 
 export interface RefineState {
   open: boolean;
+  /** An ask waits for the roster: the dialog asks the moment it opens. */
+  queued: boolean;
   /** What the editor wants changed ("shorter", "add a section on tone"). */
   guidance: string;
   /** The chat roster, once loaded; null before. */
@@ -53,6 +56,7 @@ export interface AboutProject {
 
 const closedRefine: RefineState = {
   open: false,
+  queued: false,
   guidance: '',
   models: null,
   modelId: null,
@@ -148,7 +152,17 @@ export function aboutReducer(state: AboutState, action: AboutAction): AboutState
     case 'renameCancelled':
       return { ...state, fields: { ...state.fields, name: state.saved.name } };
     case 'refineOpened':
-      return { ...state, refine: { ...state.refine, open: true, error: null, proposal: null } };
+      if (state.refine.open || !canRefine(state)) return state;
+      return {
+        ...state,
+        refine: {
+          ...closedRefine,
+          models: state.refine.models,
+          modelId: state.refine.modelId,
+          open: true,
+          queued: true,
+        },
+      };
     case 'refineClosed':
       // Closing keeps the roster and the chosen model for the next time.
       return {
@@ -174,14 +188,20 @@ export function aboutReducer(state: AboutState, action: AboutAction): AboutState
       return { ...state, refine: { ...state.refine, guidance: action.text } };
     case 'refineStarted':
       if (!canRefine(state)) return state;
-      return { ...state, refine: { ...state.refine, asking: true, error: null, proposal: null } };
+      return {
+        ...state,
+        refine: { ...state.refine, asking: true, queued: false, error: null, proposal: null },
+      };
     case 'refineFailed':
+      // An answer to an ask the person has walked away from (Cancel) is dropped.
+      if (!state.refine.asking) return state;
       return { ...state, refine: { ...state.refine, asking: false, error: action.error } };
     case 'refineAnswered':
+      if (!state.refine.asking) return state;
       return { ...state, refine: { ...state.refine, asking: false, proposal: action.proposal } };
     case 'proposalAccepted': {
       const proposal = state.refine.proposal;
-      if (!proposal) return state;
+      if (!proposal || !canAccept(state)) return state;
       return {
         ...state,
         fields: { ...state.fields, instructions: proposal.instructions },
@@ -257,4 +277,22 @@ export function refinedUnsaved(state: AboutState): boolean {
     state.fields.instructions === state.accepted &&
     state.fields.instructions !== state.saved.instructions
   );
+}
+
+/** The dialog is open with its first ask waiting, and the roster has come. */
+export function shouldAskNow(state: AboutState): boolean {
+  return (
+    state.refine.open && state.refine.queued && state.refine.models !== null && canRefine(state)
+  );
+}
+
+/** The prompt's own button: a first ask, a working one, or another go. */
+export function askLabel(state: AboutState): 'Refine' | 'Refining…' | 'Try again' {
+  if (state.refine.asking || state.refine.queued) return 'Refining…';
+  return state.refine.proposal || state.refine.error ? 'Try again' : 'Refine';
+}
+
+/** Accept takes a finished rewrite that differs from the draft. */
+export function canAccept(state: AboutState): boolean {
+  return state.refine.proposal !== null && !state.refine.asking && !proposalUnchanged(state);
 }

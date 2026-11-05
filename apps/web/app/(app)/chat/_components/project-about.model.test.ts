@@ -1,6 +1,8 @@
 import type { ModelOption } from '@/lib/chat/views';
 import {
   aboutReducer,
+  askLabel,
+  canAccept,
   canRefine,
   canSave,
   initialAbout,
@@ -10,6 +12,7 @@ import {
   refineBody,
   refinedUnsaved,
   saveBody,
+  shouldAskNow,
   type AboutAction,
   type AboutState,
 } from './project-about.model';
@@ -105,9 +108,48 @@ describe('the About form', () => {
 });
 
 describe('Refine', () => {
-  it('needs instructions to work on', () => {
+  it('needs instructions to work on, and does not open without them', () => {
     expect(canRefine(start(null))).toBe(false);
     expect(canRefine(start())).toBe(true);
+    expect(fold(start(null), { type: 'refineOpened' }).refine.open).toBe(false);
+  });
+
+  it('asks the moment it opens, once the roster has come', () => {
+    const opened = fold(start(), { type: 'refineOpened' });
+    expect(shouldAskNow(opened)).toBe(false);
+    expect(askLabel(opened)).toBe('Refining…');
+    const ready = fold(opened, { type: 'modelsLoaded', models: [model('a', true)] });
+    expect(shouldAskNow(ready)).toBe(true);
+    const asking = fold(ready, { type: 'refineStarted' });
+    expect(shouldAskNow(asking)).toBe(false);
+  });
+
+  it('a roster already loaded asks at once on the next opening', () => {
+    const reopened = fold(
+      start(),
+      { type: 'refineOpened' },
+      { type: 'modelsLoaded', models: [model('a', true)] },
+      { type: 'refineClosed' },
+      { type: 'refineOpened' }
+    );
+    expect(shouldAskNow(reopened)).toBe(true);
+  });
+
+  it('offers Try again beside the prompt once there is an answer or a failure, and Accept only for a finished rewrite', () => {
+    const asked = fold(
+      start(),
+      { type: 'refineOpened' },
+      { type: 'modelsLoaded', models: [model('a', true)] },
+      { type: 'refineStarted' }
+    );
+    expect(canAccept(asked)).toBe(false);
+    const answered = fold(asked, { type: 'refineAnswered', proposal: PROPOSAL });
+    expect(askLabel(answered)).toBe('Try again');
+    expect(canAccept(answered)).toBe(true);
+    const again = fold(answered, { type: 'refineStarted' });
+    expect(canAccept(again)).toBe(false);
+    expect(aboutReducer(again, { type: 'proposalAccepted' })).toBe(again);
+    expect(askLabel(fold(asked, { type: 'refineFailed', error: 'x' }))).toBe('Try again');
   });
 
   it('picks the organization’s default model, and keeps the one chosen across openings', () => {
@@ -198,6 +240,18 @@ describe('Refine', () => {
     expect(isDirty(state)).toBe(false);
   });
 
+  it('an answer that lands after Cancel is dropped', () => {
+    const cancelled = fold(
+      start(),
+      { type: 'refineOpened' },
+      { type: 'modelsLoaded', models: [model('a', true)] },
+      { type: 'refineStarted' },
+      { type: 'refineClosed' }
+    );
+    expect(aboutReducer(cancelled, { type: 'refineAnswered', proposal: PROPOSAL })).toBe(cancelled);
+    expect(aboutReducer(cancelled, { type: 'refineFailed', error: 'x' })).toBe(cancelled);
+  });
+
   it('a failed refine says why and can be asked again', () => {
     const state = fold(
       start(),
@@ -218,5 +272,6 @@ describe('Refine', () => {
       { type: 'refineAnswered', proposal: { instructions: 'help w/ hiring. be nice', changes: [] } }
     );
     expect(proposalUnchanged(state)).toBe(true);
+    expect(canAccept(state)).toBe(false);
   });
 });

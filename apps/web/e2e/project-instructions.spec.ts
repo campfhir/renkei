@@ -1,8 +1,9 @@
 /**
  * A chat project's instructions refined, and a loose chat moved into a
  * project, on the real server — what only a browser shows: Refine under
- * the instructions field sends the draft as it stands to the model and
- * draws the proposal, "Use this" puts it in the field and Save keeps it
+ * the instructions field opens a dialog that sends the draft as it stands
+ * to the model and draws the rewrite beside it, Try again in the prompt
+ * sends what the prompt says, Accept puts it in the field and Save keeps it
  * (still there after a reload); and the open chat's own ⋯ menu moves it
  * into a project and back out, the header following, at desktop and at
  * phone width.
@@ -47,7 +48,7 @@ test.describe('project instructions', () => {
       const { projectId } = await created.json();
 
       await page.goto(`/chat/projects/${projectId}`);
-      const field = page.getByLabel(/^Instructions/);
+      const field = page.getByLabel(/^Instructions/).filter({ visible: true });
       await expect(field).toHaveValue('be nice');
       // An unsaved draft: what Refine works on is the field, not the stored text.
       const draft = `help w/ interviews. be nice\n\n${stubScript([
@@ -67,29 +68,39 @@ test.describe('project instructions', () => {
         await expect(field).toHaveValue(draft, { timeout: 1_000 });
       }).toPass(COLD);
 
-      await page.getByRole('button', { name: 'Refine', exact: true }).click();
-      const panel = page.getByRole('region', { name: 'Refine instructions' });
-      await panel.getByLabel(/Anything in particular/).fill('make it warmer');
-      const ask = panel.getByRole('button', { name: 'Refine', exact: true });
-      await expect(ask).toBeEnabled();
-      // The roster is the org's: pick this test's own stand-in when there is a choice.
-      const select = panel.getByLabel('Model');
-      if (await select.count()) await select.selectOption(modelId);
-
-      const [request] = await Promise.all([
+      const refineRequest = () =>
         page.waitForRequest(
           (sent) => sent.url().endsWith('/instructions/refine') && sent.method() === 'POST'
-        ),
-        ask.click(),
+        );
+      // Opening the dialog asks at once, with the draft as it stands.
+      const [first] = await Promise.all([
+        refineRequest(),
+        page.getByRole('button', { name: 'Refine', exact: true }).click(),
       ]);
-      const body: unknown = request.postDataJSON();
-      expect(body).toMatchObject({ guidance: 'make it warmer', llmModelId: modelId });
-      expect(JSON.stringify(body)).toContain('help w/ interviews');
+      expect(JSON.stringify(first.postDataJSON())).toContain('help w/ interviews');
+      const dialog = page.getByRole('dialog', { name: 'Refine instructions' });
+      await expect(dialog.getByLabel('Original instructions')).toContainText('help w/ interviews');
+      const recommended = dialog.getByLabel('Recommended instructions');
+      await expect(recommended).toHaveText(refined, COLD);
+      await expect(dialog.getByText('Added a heading')).toBeVisible();
 
-      await expect(panel.getByLabel('Proposed instructions')).toHaveText(refined, COLD);
-      await expect(panel.getByText('Added a heading')).toBeVisible();
-      await panel.getByRole('button', { name: 'Use this' }).click();
-      await expect(panel).toHaveCount(0);
+      // Try again sits in the prompt and sends what it says, on the model chosen.
+      await dialog.getByLabel(/Anything to change/).fill('make it warmer');
+      // The roster is the org's: pick this test's own stand-in when there is a choice.
+      const select = dialog.getByLabel('Model');
+      if (await select.count()) await select.selectOption(modelId);
+      const [again] = await Promise.all([
+        refineRequest(),
+        dialog.getByRole('button', { name: 'Try again' }).click(),
+      ]);
+      expect(again.postDataJSON()).toMatchObject({
+        guidance: 'make it warmer',
+        llmModelId: modelId,
+      });
+      await expect(recommended).toHaveText(refined);
+
+      await dialog.getByRole('button', { name: 'Accept' }).click();
+      await expect(dialog).toHaveCount(0);
       await expect(field).toHaveValue(refined);
       await expect(page.getByText(/Refined, not saved yet/)).toBeVisible();
 
@@ -104,16 +115,20 @@ test.describe('project instructions', () => {
       expect(saved.ok()).toBe(true);
       await expect(page.getByText(/Refined, not saved yet/)).toHaveCount(0);
       await page.reload();
-      await expect(page.getByLabel(/^Instructions/)).toHaveValue(refined);
+      await expect(page.getByLabel(/^Instructions/).filter({ visible: true })).toHaveValue(refined);
 
-      // Phone width: the panel opens under the field and fits.
+      // Phone width: the dialog fits, the original stacked over the recommendation.
       await page.setViewportSize(PHONE);
+      // The saved text carries no script now: the stand-in answers its fixed reply.
       await page.getByRole('button', { name: 'Refine', exact: true }).click();
-      await expect(panel).toBeInViewport({ ratio: 0.5 });
-      const box = await panel.boundingBox();
-      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(PHONE.width);
-      await panel.getByRole('button', { name: 'Cancel' }).click();
-      await expect(panel).toHaveCount(0);
+      await expect(recommended).toBeVisible(COLD);
+      const original = await dialog.getByLabel('Original instructions').boundingBox();
+      const proposed = await recommended.boundingBox();
+      expect((original?.x ?? 0) + (original?.width ?? 0)).toBeLessThanOrEqual(PHONE.width);
+      expect(proposed?.y ?? 0).toBeGreaterThan((original?.y ?? 0) + (original?.height ?? 0));
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect(page.getByLabel(/^Instructions/).filter({ visible: true })).toHaveValue(refined);
     } finally {
       await removeModel(page.request, modelId);
     }

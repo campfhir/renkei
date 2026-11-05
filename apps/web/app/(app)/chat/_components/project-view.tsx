@@ -14,7 +14,7 @@
  * through the API and any number may be open at once.
  */
 
-import { useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useReducer, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
@@ -34,7 +34,7 @@ import ChatPrBadge from '../../code/_components/chat-pr-badge';
 import DownloadProjectModal from '../../code/_components/download-project';
 import OverflowMenu, { type OverflowItem } from './overflow-menu';
 import IssueCards from '../../code/_components/issue-cards';
-import RefinePanel from './refine-panel';
+import RefineModal from './refine-modal';
 import {
   aboutReducer,
   canRefine,
@@ -45,6 +45,7 @@ import {
   refineBody,
   refinedUnsaved,
   saveBody,
+  shouldAskNow,
   type RefineProposal,
 } from './project-about.model';
 
@@ -200,14 +201,15 @@ export default function ProjectView({
     router.refresh();
   };
 
-  // Refine: the roster loads the first time the panel opens.
+  // Refine: the dialog asks as soon as it opens; the roster loads the
+  // first time it does.
   const openRefine = async () => {
     dispatchAbout({ type: 'refineOpened' });
     if (about.refine.models) return;
     const result = await chatClient.models();
     dispatchAbout({ type: 'modelsLoaded', models: result.data?.models ?? [] });
   };
-  const refine = async () => {
+  const refine = useCallback(async () => {
     if (!canRefine(about)) return;
     dispatchAbout({ type: 'refineStarted' });
     const result = await sendJsonFull<RefineProposal>(
@@ -223,7 +225,11 @@ export default function ProjectView({
       return;
     }
     dispatchAbout({ type: 'refineAnswered', proposal: result.data });
-  };
+  }, [about, base]);
+  const askNow = shouldAskNow(about);
+  useEffect(() => {
+    if (askNow) void refine();
+  }, [askNow, refine]);
 
   const addNote = async () => {
     if (!note.trim()) return;
@@ -538,7 +544,7 @@ export default function ProjectView({
                       </label>
                       <button
                         type="button"
-                        disabled={!canRefine(about) || about.refine.open}
+                        disabled={!canRefine(about)}
                         onClick={() => void openRefine()}
                         title={
                           instructions.trim()
@@ -561,7 +567,7 @@ export default function ProjectView({
                       className={`${inputClass} read-only:opacity-60`}
                     />
                     {about.refine.open ? (
-                      <RefinePanel
+                      <RefineModal
                         state={about}
                         dispatch={dispatchAbout}
                         onAsk={() => void refine()}
