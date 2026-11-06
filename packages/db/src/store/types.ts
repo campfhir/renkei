@@ -81,6 +81,7 @@ export type * from './domains/chat-threads';
 export type * from './domains/chat-projects';
 export type * from './domains/prompt-libraries';
 export type * from './domains/user-memory';
+export type * from './domains/chat-tasks';
 export type * from './domains/artifacts';
 export type * from './domains/code-projects';
 export type * from './domains/code-templates';

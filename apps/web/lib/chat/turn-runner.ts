@@ -69,7 +69,7 @@ import type { LlmCallModel } from '@renkei/agents/runs';
 import { randomUUID } from 'node:crypto';
 import { secure } from '@/lib/logger';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
-import type { LocalToolContext, LocalToolSet } from './local-tools';
+import { endsTurn, type LocalToolContext, type LocalToolSet } from './local-tools';
 import { parseDigest, type ArtifactDigest } from './artifact-digest-input';
 import { PROMPT_FILE_MAX_BYTES } from './attachments';
 import type { ChatStreamEvent } from './stream-events';
@@ -1506,6 +1506,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         string,
         'deny' | 'timeout' | 'blocked' | 'truncated' | 'preview' | 'unavailable'
       >();
+      // A call that suspends the chat (chat_task_wait, tasks/wake.ts): the
+      // round's results are written, then the turn ends as a reply would.
+      let endTurnAfterRound = false;
       for (const use of toolUses) {
         if (denied.has(use.name)) refused.set(use.id, 'blocked');
         else if (unavailable.has(use.name)) refused.set(use.id, 'unavailable');
@@ -1713,6 +1716,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           if (deps.autoContinue && use.name === deps.autoContinue.doneTool && !outcome.isError) {
             taskDone = true;
           }
+          if (!refused.has(use.id) && endsTurn(outcome)) endTurnAfterRound = true;
           const text = textOfResult(outcome);
           // A call whose tool declared a widget (tools/list's
           // _meta.ui.resourceUri, carried here as widgetResourceUris) gets
@@ -1754,6 +1758,14 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       // Every tool_use must be answered; a break above cannot leave one
       // unanswered because we returned.
       await appendResultsRow([...results, ...attachments], produced);
+      if (endTurnAfterRound) {
+        clearInterval(timer);
+        const outcome: TurnOutcome = { status: 'completed', error: null, iterations, ...totals };
+        await store.finishTurn(outcome);
+        emit({ type: 'turn_end', turnId: input.turnId, status: 'completed', error: null });
+        channel.close();
+        return outcome;
+      }
       await startNextAssistant();
     }
   } catch (error) {

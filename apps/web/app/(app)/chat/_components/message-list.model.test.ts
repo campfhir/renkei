@@ -565,6 +565,23 @@ describe('the sub-agent card', () => {
     });
   });
 
+  it('a background sub-agent says it started, not that it reported, and keeps its task as the line', () => {
+    const view = subagentCardView(
+      delegate(
+        { task: 'List what merged.\nAll of it.', task_id: 2, background: true },
+        { content: 'Started a background sub-agent on #2 “Collect merged changes”.' }
+      ),
+      'done',
+      null,
+      null
+    );
+    expect(view).toMatchObject({
+      sentence: 'Sub-agent started in the background',
+      inline: 'List what merged.',
+      running: false,
+    });
+  });
+
   it('a code chat’s sub-agent is read-only only when its task says so', () => {
     const code = (readOnly: boolean) =>
       subagentCardView(

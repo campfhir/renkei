@@ -78,6 +78,8 @@ export interface SystemPromptInput {
    * and CODE_BRIEF cover delegating.
    */
   hasDelegate?: boolean;
+  /** The chat's task list is offered (tasks/tools.ts); absent counts as offered — every chat has it. */
+  hasTasks?: boolean;
   /**
    * outlook_search_users is among the tools: there is a live employee
    * directory, so the prompt says to use it — not search_knowledge or a
@@ -240,6 +242,16 @@ const VOICE_DELEGATE_BRIEF = `The person is waiting on the line while you work, 
 const DELEGATE_BRIEF = `Keep this conversation for the conversation. Anything that takes more than a call or two — reading several tickets or pages, searching across systems, comparing documents, pulling together what a summary needs — goes to a sub-agent with chat_delegate: give it a complete, self-contained task with what to report, one sub-agent per piece, and answer from its report. Its own calls and results never enter this conversation; only its report does, and it is kept for you. Read reports critically — you own the answer — and keep for yourself what is quick (one lookup, a check of what a report claims) and everything that creates, changes or sends something, which only you do, with the person's say-so.`;
 
 /**
+ * The chat's task list (tasks/tools.ts), built into every chat: when to
+ * keep a plan, and how a background sub-agent and chat_task_wait let the
+ * chat suspend rather than sit in a turn waiting.
+ */
+export const TASKS_BRIEF = `This chat keeps a task list (chat_task_*). For work of several steps, plan it there before you start: one task per step, subtasks for the parts of a step, depends_on for what must finish first. Mark a task in progress as you start it, report progress on long ones, and complete it with its result (or fail or cancel it, saying why) — the person can open the list from the chat's menu at any time, so keep it true. Skip it for a question you answer in a reply or two.`;
+
+/** The task list's other half where sub-agents are offered: background work and suspending. */
+export const TASKS_DELEGATE_BRIEF = `To hand a task to a sub-agent, give chat_delegate its number as \`task\`: the task goes in progress, the sub-agent can record subtasks and progress on it, and its report completes the task. With \`background\` true the sub-agent works while you carry on — start several side by side for independent tasks — and when nothing is left for you to do until they land, tell the person what you are waiting for and call chat_task_wait as your last call: the reply ends, and you are woken with each task's result when they finish (or one fails, or the timeout passes).`;
+
+/**
  * Memory is only as good as what gets written to it, and a model left
  * waiting for "remember this" writes almost nothing: people state who they
  * are, what they prefer and what they are working on in passing. So the
@@ -375,6 +387,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
   }
   if (input.hasDelegate) {
     sections.push(DELEGATE_BRIEF);
+  }
+  if (input.hasTasks !== false) {
+    sections.push(input.hasDelegate ? `${TASKS_BRIEF}\n\n${TASKS_DELEGATE_BRIEF}` : TASKS_BRIEF);
   }
   if (input.hasDiscoverableTools) {
     sections.push(DISCOVERY_BRIEF);

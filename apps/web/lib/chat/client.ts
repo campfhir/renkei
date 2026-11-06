@@ -24,6 +24,8 @@ import type { StartedTurn } from './start-turn';
 import type { ChatSearchHit } from './search-text';
 import type { VoiceAvailability } from '@/lib/voice/availability';
 import type { WidgetModelContextOutcome } from './widget-tools';
+import type { ChatTaskView, TaskWaitView } from './tasks/graph';
+import type { TurnView } from './views';
 
 const base = () => `/api/chat`;
 
@@ -83,6 +85,30 @@ export const chatClient = {
   searchChats: (query: string) =>
     getJson<{ query: string; hits: ChatSearchHit[] }>(
       `${base()}/chats/search?${new URLSearchParams({ q: query }).toString()}`
+    ),
+
+  /** The chat's task list, what it is suspended on, and the turn running now (tasks dialog). */
+  getTasks: (chatId: string) =>
+    getJson<{ tasks: ChatTaskView[]; wait: TaskWaitView | null; activeTurn: TurnView | null }>(
+      `${base()}/chats/${chatId}/tasks`
+    ),
+
+  /** The task list as a Markdown file, for a download link. */
+  tasksMarkdownUrl: (chatId: string) => `${base()}/chats/${chatId}/tasks?format=markdown`,
+
+  /** The person completes or cancels one task; the list as it now stands. */
+  actOnTask: (chatId: string, taskId: string, action: 'complete' | 'cancel') =>
+    sendJsonFull<{ tasks: ChatTaskView[] }>(
+      `${base()}/chats/${chatId}/tasks/${encodeURIComponent(taskId)}`,
+      'PATCH',
+      { action }
+    ),
+
+  /** The person deletes one task with its subtasks. */
+  deleteTask: (chatId: string, taskId: string) =>
+    sendJsonFull<{ tasks: ChatTaskView[] }>(
+      `${base()}/chats/${chatId}/tasks/${encodeURIComponent(taskId)}`,
+      'DELETE'
     ),
 
   /** A sub-agent's run — its task, progress, report and full transcript — by the delegating call. */

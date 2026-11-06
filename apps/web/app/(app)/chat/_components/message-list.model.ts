@@ -550,14 +550,20 @@ export function subagentCardView(
 ): SubagentCardView {
   const input =
     typeof step.block.input === 'object' && step.block.input !== null ? step.block.input : {};
-  const record: { task?: unknown; readOnly?: unknown; instructions?: unknown; model?: unknown } =
-    input;
+  const record: {
+    task?: unknown;
+    readOnly?: unknown;
+    instructions?: unknown;
+    model?: unknown;
+    background?: unknown;
+  } = input;
   const task = typeof record.task === 'string' ? record.task.trim() : '';
   const instructions = typeof record.instructions === 'string' ? record.instructions.trim() : '';
   const readOnly = record.readOnly === true || step.block.name === CHAT_DELEGATE_TOOL;
   const model = typeof record.model === 'string' ? record.model.trim() : '';
   const reportLine = step.result ? firstLine(step.result.content) : '';
   const running = state === 'pending' || state === 'waiting';
+  const background = record.background === true;
   const sentence =
     state === 'waiting'
       ? 'Waiting for permission to start a sub-agent'
@@ -567,12 +573,16 @@ export function subagentCardView(
           : 'Sub-agent working'
         : state === 'failed'
           ? 'The sub-agent failed'
-          : 'Sub-agent reported';
+          : // A background sub-agent's call answers as it starts (chat-delegate.ts):
+            // its report completes its task in the chat's task list, not this card.
+            background
+            ? 'Sub-agent started in the background'
+            : 'Sub-agent reported';
   const live = progress && progress.status === 'running' ? progress : null;
   const plural = (n: number) => (n === 1 ? '' : 's');
   const inline = live
     ? `${live.steps}/${live.maxSteps} calls · ${live.toolCalls} tool call${plural(live.toolCalls)}${elapsed ? ` · ${elapsed}` : ''}`
-    : !running && reportLine
+    : !running && reportLine && !background
       ? reportLine
       : firstLine(task);
   return {
