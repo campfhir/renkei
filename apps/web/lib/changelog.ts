@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-06',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Old email-indexing jobs cleared out',
+        detail:
+          'Email jobs left over from before mail stopped being indexed are removed, so they no longer fail over and over in the background or sit in the queue holding copies of messages.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Searching the activity log from a chat finds what you ask for',
+        detail:
+          "Asking the assistant for errors or warnings now returns them instead of nothing, a search it can't run explains why, and a long result says there is more and where the next page starts.",
+      },
+      {
         kind: 'added',
         title: 'Task lists in every chat',
         detail:
