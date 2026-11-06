@@ -23,10 +23,7 @@ test('pasted memories import, show on the memory page, and leave in the download
 }) => {
   // Reached from the foot of Preferences.
   await page.goto('/preferences');
-  await page
-    .getByRole('main')
-    .getByRole('link', { name: /^Your data/ })
-    .click();
+  await page.getByRole('main').getByRole('link', { name: 'Export or import your data' }).click();
   await expect(page).toHaveURL(/\/preferences\/data$/);
   await expect(page.getByRole('heading', { level: 1, name: 'Your data' })).toBeVisible();
   const section = page.getByRole('region', { name: 'Import' });

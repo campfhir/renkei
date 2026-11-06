@@ -1,7 +1,8 @@
 /**
  * The notification preferences form's state (preferences-form.tsx): the
- * preferences being edited, the per-agent override picker, the Save
- * button's status, and this browser's desktop-notification switch.
+ * preferences being edited, the preferences as last saved, each card's own
+ * Save (a card saves only its own fields), the per-agent override picker,
+ * and this browser's desktop-notification switch.
  *
  * Also the rows the server page lays out (`notificationConnectorRows`):
  * which categories each connector's acts are offered under. Everything
@@ -54,9 +55,45 @@ export type PauseEvent = 'approvalNeeded' | 'questionAsked';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
+/** The cards on the form, each with a Save of its own. */
+export type NotificationGroup =
+  'runs' | 'batch' | 'sharing' | 'pauses' | 'overrides' | 'acts' | 'popups' | 'browser';
+
+/**
+ * The fields each card edits and saves; every field of NotificationPrefs
+ * belongs to exactly one (preferences-form.model.test.ts checks). The
+ * desktop switch is not here: it is this browser's own, applied at once.
+ */
+export const GROUP_FIELDS: Record<NotificationGroup, readonly (keyof NotificationPrefs)[]> = {
+  runs: ['runStarted', 'runFinished', 'runFailed', 'agentEditedByOthers'],
+  batch: ['batchStarted', 'batchFinished', 'batchFailed'],
+  sharing: ['chatShared', 'agentShared'],
+  pauses: ['approvalNeeded', 'questionAsked'],
+  overrides: ['agentOverrides'],
+  acts: ['acts'],
+  popups: ['toastsEnabled', 'toastCorner'],
+  browser: ['chatReplyDesktop', 'openInSourceApp'],
+};
+
+/** The cards, in the order the form shows them. */
+export const NOTIFICATION_GROUPS: readonly NotificationGroup[] = [
+  'runs',
+  'batch',
+  'sharing',
+  'pauses',
+  'overrides',
+  'acts',
+  'popups',
+  'browser',
+];
+
 export interface PreferencesState {
+  /** As on screen. */
   prefs: NotificationPrefs;
-  status: SaveStatus;
+  /** As the server last confirmed: what a card's unsaved changes are measured from. */
+  saved: NotificationPrefs;
+  /** Each card's Save: idle, out, saved (until its next change), or refused. */
+  groups: Record<NotificationGroup, SaveStatus>;
   /** The agent whose overrides the table shows; '' with no agents. */
   overrideAgentId: string;
   desktop: {
@@ -99,9 +136,10 @@ export type PreferencesAction =
   | { type: 'chatReplyDesktop'; on: boolean }
   | { type: 'openInSourceApp'; on: boolean }
   | { type: 'overrideAgentPicked'; agentId: string }
-  | { type: 'saveSent' }
-  | { type: 'saved' }
-  | { type: 'saveFailed' }
+  | { type: 'saveSent'; group: NotificationGroup }
+  /** `sent` is the document that card's save sent (groupSaveRequest). */
+  | { type: 'saved'; group: NotificationGroup; sent: NotificationPrefs }
+  | { type: 'saveFailed'; group: NotificationGroup }
   /** The browser's state, read once it is mounted. */
   | { type: 'desktopRead'; enabled: boolean; permission: DesktopPermission }
   | { type: 'desktopOff' }
@@ -117,10 +155,35 @@ export function initPreferences(input: {
 }): PreferencesState {
   return {
     prefs: input.initial,
-    status: 'idle',
+    saved: input.initial,
+    groups: idleGroups(),
     overrideAgentId: input.agents[0]?.id ?? '',
     desktop: { enabled: false, permission: null, subscribeError: false },
   };
+}
+
+function idleGroups(): Record<NotificationGroup, SaveStatus> {
+  return {
+    runs: 'idle',
+    batch: 'idle',
+    sharing: 'idle',
+    pauses: 'idle',
+    overrides: 'idle',
+    acts: 'idle',
+    popups: 'idle',
+    browser: 'idle',
+  };
+}
+
+/** `base` with one card's fields taken from `from`. */
+function withGroup(
+  base: NotificationPrefs,
+  from: NotificationPrefs,
+  group: NotificationGroup
+): NotificationPrefs {
+  const next = { ...base };
+  for (const field of GROUP_FIELDS[group]) Object.assign(next, { [field]: from[field] });
+  return next;
 }
 
 function setAgentOverride<K extends OverridableEvent>(
@@ -214,17 +277,29 @@ export function preferencesReducer(
   action: PreferencesAction
 ): PreferencesState {
   const prefs = changedPrefs(state.prefs, action);
-  // Any change takes "Saved." away: it no longer describes what is on screen.
-  if (prefs) return { ...state, prefs, status: 'idle' };
+  if (prefs) {
+    // A change takes its own card's "Saved." away (it no longer describes
+    // what is on screen), and leaves every other card's alone.
+    const groups = { ...state.groups };
+    for (const group of NOTIFICATION_GROUPS) {
+      const touched = GROUP_FIELDS[group].some((field) => prefs[field] !== state.prefs[field]);
+      if (touched && groups[group] !== 'saving') groups[group] = 'idle';
+    }
+    return { ...state, prefs, groups };
+  }
   switch (action.type) {
     case 'overrideAgentPicked':
       return { ...state, overrideAgentId: action.agentId };
     case 'saveSent':
-      return { ...state, status: 'saving' };
+      return { ...state, groups: { ...state.groups, [action.group]: 'saving' } };
     case 'saved':
-      return { ...state, status: 'saved' };
+      return {
+        ...state,
+        saved: withGroup(state.saved, action.sent, action.group),
+        groups: { ...state.groups, [action.group]: 'saved' },
+      };
     case 'saveFailed':
-      return { ...state, status: 'failed' };
+      return { ...state, groups: { ...state.groups, [action.group]: 'failed' } };
     case 'desktopRead':
       return {
         ...state,
@@ -256,9 +331,51 @@ export function preferencesReducer(
   }
 }
 
-/** What Save PUTs to /api/preferences. */
-export function saveRequest(state: PreferencesState): { notifications: NotificationPrefs } {
-  return { notifications: state.prefs };
+/** Whether a card's fields on screen differ from what was last saved. */
+export function groupDirty(state: PreferencesState, group: NotificationGroup): boolean {
+  return GROUP_FIELDS[group].some(
+    (field) => JSON.stringify(state.prefs[field]) !== JSON.stringify(state.saved[field])
+  );
+}
+
+/**
+ * Whether a card's Save can be pressed: it has changes, and no save is
+ * out — one at a time, so two cards' documents never race each other to
+ * the server and undo one another.
+ */
+export function canSaveGroup(state: PreferencesState, group: NotificationGroup): boolean {
+  return (
+    groupDirty(state, group) &&
+    !NOTIFICATION_GROUPS.some((other) => state.groups[other] === 'saving')
+  );
+}
+
+/**
+ * What a card's Save shows: nothing while it has nothing to save and
+ * nothing to report, so an untouched card carries no button.
+ */
+export function groupSaveView(
+  state: PreferencesState,
+  group: NotificationGroup
+): { show: boolean; label: string; message: 'saved' | 'failed' | null } {
+  const status = state.groups[group];
+  return {
+    show: status !== 'idle' || groupDirty(state, group),
+    label: status === 'saving' ? 'Saving…' : 'Save',
+    message: status === 'saved' ? 'saved' : status === 'failed' ? 'failed' : null,
+  };
+}
+
+/**
+ * What a card's Save PUTs to /api/preferences: the document as last saved
+ * with only this card's fields from the screen, so another card's unsaved
+ * changes stay unsaved.
+ */
+export function groupSaveRequest(
+  state: PreferencesState,
+  group: NotificationGroup
+): { notifications: NotificationPrefs } {
+  return { notifications: withGroup(state.saved, state.prefs, group) };
 }
 
 /**

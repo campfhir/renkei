@@ -190,20 +190,25 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         agents={myAgents}
       />
       {/* Done once in a while, not a setting: its own page, at the foot of this one. */}
-      <Link
-        href="/preferences/data"
-        className="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900"
+      <section
+        aria-labelledby="your-data-heading"
+        className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
       >
-        <span>
-          <span className="block font-semibold">Your data</span>
-          <span className="block text-sm text-gray-600 dark:text-gray-400">
-            Export everything, or import chats and memories from another assistant.
-          </span>
-        </span>
-        <span aria-hidden="true" className="text-gray-400">
-          →
-        </span>
-      </Link>
+        <h3 id="your-data-heading" className="font-semibold">
+          Your data
+        </h3>
+        <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+          Download everything you have here, or bring chats and memories in from ChatGPT, Claude or
+          Gemini.
+        </p>
+        <Link
+          href="/preferences/data"
+          className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+        >
+          Export or import your data
+          <span aria-hidden="true">→</span>
+        </Link>
+      </section>
     </div>
   );
 }

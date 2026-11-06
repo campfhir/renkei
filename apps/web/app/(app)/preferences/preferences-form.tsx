@@ -32,7 +32,11 @@ import {
   initPreferences,
   overrideRow,
   preferencesReducer,
-  saveRequest,
+  canSaveGroup,
+  groupSaveRequest,
+  groupSaveView,
+  type NotificationGroup,
+  type PreferencesState,
   type ChannelAvailability,
   type ConnectorRow,
   type DeliveryEvent,
@@ -202,6 +206,48 @@ function ChannelHints({ channels }: { channels: ChannelAvailability }): ReactNod
   );
 }
 
+/**
+ * A card's own Save, at its foot: there only once the card has changes
+ * (or a save to report), pressed one card at a time.
+ */
+function GroupSave({
+  group,
+  state,
+  onSave,
+  inset = false,
+}: {
+  group: NotificationGroup;
+  state: PreferencesState;
+  onSave: (group: NotificationGroup) => Promise<void>;
+  /** The card keeps its padding inside its parts, so the row brings its own. */
+  inset?: boolean;
+}): ReactNode {
+  const view = groupSaveView(state, group);
+  if (!view.show) return null;
+  return (
+    <div className={`flex flex-wrap items-center gap-3 ${inset ? 'px-4 pb-4 pt-3' : 'mt-4'}`}>
+      <button
+        type="button"
+        onClick={() => void onSave(group)}
+        disabled={!canSaveGroup(state, group)}
+        className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        {view.label}
+      </button>
+      {view.message === 'saved' ? (
+        <span role="status" className="text-sm text-green-700 dark:text-green-400">
+          Saved.
+        </span>
+      ) : null}
+      {view.message === 'failed' ? (
+        <span role="alert" className="text-sm text-red-600 dark:text-red-400">
+          Could not save.
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export default function PreferencesForm({
   connectors,
   channels,
@@ -215,7 +261,7 @@ export default function PreferencesForm({
 }) {
   // Everything the form decides lives in preferences-form.model.ts.
   const [state, dispatch] = useReducer(preferencesReducer, { initial, agents }, initPreferences);
-  const { prefs, status, overrideAgentId } = state;
+  const { prefs, overrideAgentId } = state;
   const { enabled: desktopEnabled, permission, subscribeError } = state.desktop;
   const desktop = desktopView(state);
 
@@ -322,13 +368,15 @@ export default function PreferencesForm({
     on: boolean
   ) => dispatch({ type: 'overridePauseChannel', agentId, event, channel, on });
 
-  async function save() {
-    dispatch({ type: 'saveSent' });
+  /** One card's Save: only its fields, on top of what was last saved. */
+  async function saveGroup(group: NotificationGroup) {
+    const body = groupSaveRequest(state, group);
+    dispatch({ type: 'saveSent', group });
     try {
       const response = await fetch(`/api/preferences`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(saveRequest(state)),
+        body: JSON.stringify(body),
       });
       if (!response.ok)
         reportFetchFailure(
@@ -337,10 +385,14 @@ export default function PreferencesForm({
           response.status,
           `Request failed (${response.status})`
         );
-      dispatch({ type: response.ok ? 'saved' : 'saveFailed' });
+      dispatch(
+        response.ok
+          ? { type: 'saved', group, sent: body.notifications }
+          : { type: 'saveFailed', group }
+      );
     } catch (error) {
       reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
-      dispatch({ type: 'saveFailed' });
+      dispatch({ type: 'saveFailed', group });
     }
   }
 
@@ -359,7 +411,8 @@ export default function PreferencesForm({
           </h2>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             What Renkei tells you about, and how it reaches you. Everything below feeds the
-            notifications page.
+            notifications page. Each card saves on its own, and applies from then on: switching
+            something on does not fill in what already happened.
           </p>
         </div>
 
@@ -425,6 +478,7 @@ export default function PreferencesForm({
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="runs" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
@@ -490,6 +544,7 @@ export default function PreferencesForm({
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="batch" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
@@ -553,6 +608,7 @@ export default function PreferencesForm({
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="sharing" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
@@ -608,6 +664,7 @@ export default function PreferencesForm({
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="pauses" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -791,6 +848,7 @@ export default function PreferencesForm({
               <ChannelHints channels={channels} />
             </>
           )}
+          <GroupSave group="overrides" state={state} onSave={saveGroup} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -925,6 +983,7 @@ export default function PreferencesForm({
           </div>
 
           <ChannelHints channels={channels} />
+          <GroupSave group="acts" state={state} onSave={saveGroup} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -969,6 +1028,7 @@ export default function PreferencesForm({
               </fieldset>
             </div>
           </div>
+          <GroupSave group="popups" state={state} onSave={saveGroup} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -1084,26 +1144,9 @@ export default function PreferencesForm({
               </span>
             </label>
           </div>
+          <GroupSave group="browser" state={state} onSave={saveGroup} />
         </section>
       </section>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={status === 'saving'}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {status === 'saving' ? 'Saving…' : 'Save'}
-        </button>
-        {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
-        {status === 'failed' ? (
-          <span className="text-sm text-red-600 dark:text-red-400">Could not save.</span>
-        ) : null}
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          These apply from now on. Switching something on does not fill in what already happened.
-        </p>
-      </div>
     </div>
   );
 }

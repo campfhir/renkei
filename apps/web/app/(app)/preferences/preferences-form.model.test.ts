@@ -17,7 +17,12 @@ import {
   notificationConnectorRows,
   overrideRow,
   preferencesReducer,
-  saveRequest,
+  GROUP_FIELDS,
+  canSaveGroup,
+  groupDirty,
+  groupSaveRequest,
+  groupSaveView,
+  NOTIFICATION_GROUPS,
   type ConnectorRow,
   type PreferencesAction,
   type PreferencesState,
@@ -241,21 +246,124 @@ describe('per-agent overrides', () => {
   });
 });
 
-describe('Save', () => {
-  it('sends the preferences as edited', () => {
+describe('each card saves on its own', () => {
+  it('every notification field belongs to exactly one card', () => {
+    const fields = Object.values(GROUP_FIELDS).flat();
+    expect(new Set(fields).size).toBe(fields.length);
+    expect([...fields].sort()).toEqual(Object.keys(fresh().prefs).sort());
+  });
+
+  it('an untouched card carries no Save', () => {
+    const state = fresh();
+    for (const group of NOTIFICATION_GROUPS) {
+      expect(groupSaveView(state, group).show).toBe(false);
+      expect(canSaveGroup(state, group)).toBe(false);
+    }
+  });
+
+  it('a change shows Save on its own card only', () => {
     const state = run([{ type: 'toastsEnabled', on: false }]);
-    expect(saveRequest(state)).toEqual({ notifications: state.prefs });
+    expect(groupSaveView(state, 'popups')).toEqual({ show: true, label: 'Save', message: null });
+    expect(canSaveGroup(state, 'popups')).toBe(true);
+    expect(groupSaveView(state, 'runs').show).toBe(false);
+    expect(groupSaveView(state, 'browser').show).toBe(false);
   });
 
-  it('reads Saving…, then Saved. or Could not save.', () => {
-    expect(run([{ type: 'saveSent' }]).status).toBe('saving');
-    expect(run([{ type: 'saveSent' }, { type: 'saved' }]).status).toBe('saved');
-    expect(run([{ type: 'saveSent' }, { type: 'saveFailed' }]).status).toBe('failed');
+  it('changing something back to how it was saved takes the Save away again', () => {
+    const on = fresh().prefs.toastsEnabled;
+    const state = run([
+      { type: 'toastsEnabled', on: !on },
+      { type: 'toastsEnabled', on },
+    ]);
+    expect(groupSaveView(state, 'popups').show).toBe(false);
   });
 
-  it('any change after a save takes "Saved." away', () => {
-    const state = run([{ type: 'saved' }, { type: 'chatReplyDesktop', on: true }]);
-    expect(state.status).toBe('idle');
+  it("sends only that card's changes, leaving another card's unsaved changes out", () => {
+    const before = fresh().prefs;
+    const state = run([
+      { type: 'toastsEnabled', on: !before.toastsEnabled },
+      { type: 'deliveryChannel', event: 'runStarted', channel: 'app', on: !before.runStarted.app },
+    ]);
+    const sent = groupSaveRequest(state, 'popups').notifications;
+    expect(sent.toastsEnabled).toBe(!before.toastsEnabled);
+    expect(sent.runStarted).toEqual(before.runStarted);
+  });
+
+  it('reads Saving…, then Saved. on that card, which then has nothing left to save', () => {
+    const changed = run([{ type: 'toastCorner', corner: 'bottom-left' }]);
+    const sent = groupSaveRequest(changed, 'popups').notifications;
+    const saving = run([{ type: 'saveSent', group: 'popups' }], changed);
+    expect(groupSaveView(saving, 'popups').label).toBe('Saving…');
+    const saved = run([{ type: 'saved', group: 'popups', sent }], saving);
+    expect(groupSaveView(saved, 'popups')).toEqual({ show: true, label: 'Save', message: 'saved' });
+    expect(groupDirty(saved, 'popups')).toBe(false);
+    expect(canSaveGroup(saved, 'popups')).toBe(false);
+  });
+
+  it('a later save of another card keeps what the first card saved', () => {
+    const before = fresh().prefs;
+    let state = run([
+      { type: 'toastsEnabled', on: !before.toastsEnabled },
+      { type: 'chatReplyDesktop', on: !before.chatReplyDesktop },
+    ]);
+    const first = groupSaveRequest(state, 'popups').notifications;
+    state = run(
+      [
+        { type: 'saveSent', group: 'popups' },
+        { type: 'saved', group: 'popups', sent: first },
+      ],
+      state
+    );
+    const second = groupSaveRequest(state, 'browser').notifications;
+    expect(second.toastsEnabled).toBe(!before.toastsEnabled);
+    expect(second.chatReplyDesktop).toBe(!before.chatReplyDesktop);
+  });
+
+  it('a refused save says so on its card and keeps the changes to try again', () => {
+    const state = run([
+      { type: 'toastsEnabled', on: false },
+      { type: 'saveSent', group: 'popups' },
+      { type: 'saveFailed', group: 'popups' },
+    ]);
+    expect(groupSaveView(state, 'popups').message).toBe('failed');
+    expect(canSaveGroup(state, 'popups')).toBe(true);
+  });
+
+  it('one save at a time: while one card saves, the others wait', () => {
+    const before = fresh().prefs;
+    const state = run([
+      { type: 'toastsEnabled', on: !before.toastsEnabled },
+      { type: 'chatReplyDesktop', on: !before.chatReplyDesktop },
+      { type: 'saveSent', group: 'popups' },
+    ]);
+    expect(canSaveGroup(state, 'browser')).toBe(false);
+    expect(canSaveGroup(state, 'popups')).toBe(false);
+  });
+
+  it("a change takes its own card's Saved. away, and leaves another card's", () => {
+    let state = run([
+      { type: 'toastsEnabled', on: false },
+      { type: 'chatReplyDesktop', on: true },
+    ]);
+    for (const group of ['popups', 'browser'] as const) {
+      const sent = groupSaveRequest(state, group).notifications;
+      state = run(
+        [
+          { type: 'saveSent', group },
+          { type: 'saved', group, sent },
+        ],
+        state
+      );
+    }
+    state = run([{ type: 'openInSourceApp', on: !state.prefs.openInSourceApp }], state);
+    expect(groupSaveView(state, 'browser').message).toBeNull();
+    expect(groupSaveView(state, 'popups').message).toBe('saved');
+  });
+
+  it('an override change belongs to the Agent overrides card', () => {
+    const state = run([{ type: 'overrideToggled', agentId: 'a1', event: 'runFailed', on: true }]);
+    expect(groupDirty(state, 'overrides')).toBe(true);
+    expect(groupDirty(state, 'runs')).toBe(false);
   });
 });
 
