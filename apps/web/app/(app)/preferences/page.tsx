@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
@@ -31,7 +32,6 @@ import VoiceForm from './voice-form';
 import ImageModelForm from './image-model-form';
 import ChatArchiveForm from './chat-archive-form';
 import EncryptionKeySection from './encryption-key-section';
-import YourDataSection from './your-data-section';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -166,9 +166,6 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         </div>
       ) : null}
       <div className="mb-6">
-        <YourDataSection />
-      </div>
-      <div className="mb-6">
         <DefaultToolsForm
           connectors={chatToolOptions}
           initialDefault={chatDefault?.connectors ?? null}
@@ -192,6 +189,21 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         initial={notifications}
         agents={myAgents}
       />
+      {/* Done once in a while, not a setting: its own page, at the foot of this one. */}
+      <Link
+        href="/preferences/data"
+        className="mt-6 flex items-center justify-between rounded-lg border border-gray-200 bg-white p-4 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900"
+      >
+        <span>
+          <span className="block font-semibold">Your data</span>
+          <span className="block text-sm text-gray-600 dark:text-gray-400">
+            Export everything, or import chats and memories from another assistant.
+          </span>
+        </span>
+        <span aria-hidden="true" className="text-gray-400">
+          →
+        </span>
+      </Link>
     </div>
   );
 }

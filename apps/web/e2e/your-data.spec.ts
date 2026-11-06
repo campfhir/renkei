@@ -1,9 +1,10 @@
 /**
- * Your data, in a browser: the Preferences page's "Your data" section
- * takes pasted text and a Claude export file in, through Preview and
- * Import, to the real memory page and a real chat; its two links save
- * real downloads (the zip and the portable profile) holding what was
- * imported; and the section fits a phone. Real routes, the real delegate
+ * Your data, in a browser: reached from the link at the foot of
+ * Preferences, the Your data page (/preferences/data) takes pasted text
+ * and a Claude export file in, through Preview and Import, to the real
+ * memory page and a real chat; its two links save real downloads (the zip
+ * and the portable profile) holding what was imported; and the page fits
+ * a phone. Real routes, the real delegate
  * sealing memory under the person's key.
  *
  * What each format parses to is lib/data-portability/import-parse.test.ts's;
@@ -20,14 +21,23 @@ test('pasted memories import, show on the memory page, and leave in the download
   page,
   person: _person,
 }) => {
+  // Reached from the foot of Preferences.
   await page.goto('/preferences');
-  const section = page.getByRole('region', { name: 'Your data' });
-  await expect(section).toBeVisible();
+  await page
+    .getByRole('main')
+    .getByRole('link', { name: /^Your data/ })
+    .click();
+  await expect(page).toHaveURL(/\/preferences\/data$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Your data' })).toBeVisible();
+  const section = page.getByRole('region', { name: 'Import' });
+  const exports = page.getByRole('region', { name: 'Export' });
 
   // ── In: pasted text, previewed, then imported ──
   await section.getByRole('radio', { name: 'Paste text' }).check();
   await section.getByLabel('Text to import').fill('- Lives in Denver\n- Prefers metric units');
-  const previewed = page.waitForResponse((r) => r.url().includes('/api/account/import?mode=preview'));
+  const previewed = page.waitForResponse((r) =>
+    r.url().includes('/api/account/import?mode=preview')
+  );
   await section.getByRole('button', { name: 'Preview' }).click();
   expect((await previewed).status()).toBe(200);
   const found = section.getByRole('region', { name: 'What was found' });
@@ -49,9 +59,9 @@ test('pasted memories import, show on the memory page, and leave in the download
   await expect(main.getByText('Prefers metric units').filter({ visible: true })).toBeVisible();
 
   // ── Out: the zip ──
-  await page.goto('/preferences');
+  await page.goto('/preferences/data');
   const zipSaved = page.waitForEvent('download');
-  await section.getByRole('link', { name: 'Download all my data (.zip)' }).click();
+  await exports.getByRole('link', { name: 'Download all my data (.zip)' }).click();
   const zipDownload = await zipSaved;
   expect(zipDownload.suggestedFilename()).toMatch(/^renkei-export-\d{4}-\d{2}-\d{2}\.zip$/);
   const zip = await JSZip.loadAsync(await readFile(await zipDownload.path()));
@@ -66,7 +76,7 @@ test('pasted memories import, show on the memory page, and leave in the download
 
   // ── Out: the profile for other assistants ──
   const profileSaved = page.waitForEvent('download');
-  await section.getByRole('link', { name: 'Download profile for other assistants (.md)' }).click();
+  await exports.getByRole('link', { name: 'Download profile for other assistants (.md)' }).click();
   const profileDownload = await profileSaved;
   expect(profileDownload.suggestedFilename()).toMatch(/^renkei-profile-.*\.md$/);
   const profile = await readFile(await profileDownload.path(), 'utf8');
@@ -88,8 +98,8 @@ test('a Claude export file imports as a chat that opens like any other', async (
       ],
     },
   ];
-  await page.goto('/preferences');
-  const section = page.getByRole('region', { name: 'Your data' });
+  await page.goto('/preferences/data');
+  const section = page.getByRole('region', { name: 'Import' });
   await section.getByLabel('File to import').setInputFiles({
     name: 'conversations.json',
     mimeType: 'application/json',
@@ -123,12 +133,16 @@ test('a Claude export file imports as a chat that opens like any other', async (
   ).toBeVisible();
 });
 
-test('the section fits a phone', async ({ page, person: _person }) => {
+test('the page fits a phone', async ({ page, person: _person }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/preferences');
-  const section = page.getByRole('region', { name: 'Your data' });
+  await page.goto('/preferences/data');
+  const section = page.getByRole('region', { name: 'Import' });
+  await expect(
+    page
+      .getByRole('region', { name: 'Export' })
+      .getByRole('link', { name: 'Download all my data (.zip)' })
+  ).toBeVisible();
   await section.scrollIntoViewIfNeeded();
-  await expect(section.getByRole('link', { name: 'Download all my data (.zip)' })).toBeVisible();
   const box = await section.boundingBox();
   expect(box).not.toBeNull();
   expect(box!.x + box!.width).toBeLessThanOrEqual(390);

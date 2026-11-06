@@ -1,15 +1,15 @@
 /**
- * The "Your data" section's import (your-data-section.tsx): bringing
+ * The Your data page's import (your-data.tsx): bringing
  * chats and memories in from another assistant. The person picks a file
  * (an export zip, one of its JSON files, Markdown or text) or pastes text;
  * Preview asks the server what it found, which shows counts and a few
  * examples; they choose memories, chats or both (and whether the chats go
  * to the archive); Import writes it and says what landed.
  *
- * What the section decides — when Preview and Import are allowed, what a
+ * What the page decides — when Preview and Import are allowed, what a
  * new file or new text does to a preview already shown, what each request
  * asks for, and the words for a preview, an outcome and a refusal — is
- * here, tested in your-data-section.model.test.ts. The downloads are
+ * here, tested in your-data.model.test.ts. The downloads are
  * plain links (GET /api/account/export and …/profile) with nothing to
  * decide. The server parses and refuses on its own
  * (app/api/account/import, route.test.ts beside it).

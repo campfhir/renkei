@@ -18,7 +18,7 @@ import {
   yourDataReducer,
   type YourDataAction,
   type YourDataState,
-} from './your-data-section.model';
+} from './your-data.model';
 
 const from = (state: YourDataState, ...actions: YourDataAction[]): YourDataState =>
   actions.reduce(yourDataReducer, state);
