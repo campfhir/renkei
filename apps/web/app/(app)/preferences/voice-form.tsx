@@ -30,6 +30,7 @@ import {
 import { hearingChosen } from '../chat/_components/voice-menu.model';
 import {
   canSave,
+  voicePatch,
   initVoicePrefsForm,
   languageHint,
   speedLabel,
@@ -66,10 +67,10 @@ export default function VoiceForm({
   const chooseVoice = (voice: VoiceInfo | null) => change(choosingVoice(prefs, voice, defaults));
 
   async function save() {
-    const sent = prefs;
+    const sent = voicePatch(form);
     dispatch({ type: 'saving' });
     const result = await voiceClient.savePrefs(sent);
-    dispatch(result.error ? { type: 'save-failed' } : { type: 'saved', prefs: sent });
+    dispatch(result.error ? { type: 'save-failed' } : { type: 'saved', patch: sent });
   }
 
   // "Saved." and the disclaimer share the line below the buttons; the

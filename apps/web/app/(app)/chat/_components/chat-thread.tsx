@@ -105,6 +105,7 @@ import CodePane from '../../code/_components/code-pane';
 import { useCodePane } from '../../code/_components/use-code-pane';
 import UploadIndicator from '@/components/uploads/upload-indicator';
 import { clientLogger } from '@/lib/client-logger';
+import { changedFields } from '@/lib/prefs-patch';
 
 interface ThreadProps {
   subject: string;
@@ -321,10 +322,16 @@ export default function ChatThread({
     messages: state.messages,
     activeTurnId,
   });
-  const changeVoicePrefs = useCallback((next: VoicePrefs) => {
-    setVoicePrefs(next);
-    void voiceClient.savePrefs(next);
-  }, []);
+  const changeVoicePrefs = useCallback(
+    (next: VoicePrefs) => {
+      // Only what this menu changed: a field the Preferences page saved
+      // meanwhile stays as it saved it.
+      const patch = changedFields(voicePrefs, next);
+      setVoicePrefs(next);
+      if (Object.keys(patch).length > 0) void voiceClient.savePrefs(patch);
+    },
+    [voicePrefs]
+  );
   /** Read one earlier reply aloud, in pieces so the first is heard at once. */
   const listen = useCallback(
     (key: string, markdown: string) => {

@@ -3,7 +3,7 @@
  * person's name from the identity spine, the unread badge from the
  * notification poll — a colleague shared an agent with them, through the
  * agent's own access route), moving between pages from the menu, the
- * theme a saved preference picks (PUT /api/preferences, as the
+ * theme a saved preference picks (PATCH /api/preferences, as the
  * preferences form saves it), a signed-out visitor turned away, and the
  * same at phone width. No database anywhere — see
  * playwright.config.ts.
@@ -63,7 +63,7 @@ test('the shell carries the person and moves between pages from the menu @smoke'
 });
 
 test('a saved theme preference sets the page theme', async ({ page, person: _person }) => {
-  const saved = await page.request.put('/api/preferences', { data: { theme: { mode: 'dark' } } });
+  const saved = await page.request.patch('/api/preferences', { data: { theme: { mode: 'dark' } } });
   expect(saved.ok()).toBe(true);
   await page.goto('/about');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');

@@ -332,7 +332,7 @@ test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
     // default, as just shown) — on, every block gets a gutter, a pure
     // CSS counter rather than a character the markup carries, so Copy
     // above and here both still return bare code, numbers or not.
-    const numbers = await page.request.put('/api/preferences', {
+    const numbers = await page.request.patch('/api/preferences', {
       data: { theme: { mode: 'auto', codeLineNumbers: true } },
     });
     expect(numbers.ok()).toBe(true);
@@ -358,7 +358,7 @@ test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
           'project = OPS AND sprint in closedSprints() AND status != Done ORDER BY updated DESC\n'
         );
     } finally {
-      await page.request.put('/api/preferences', {
+      await page.request.patch('/api/preferences', {
         data: { theme: { mode: 'auto', codeLineNumbers: false } },
       });
       await page.reload();

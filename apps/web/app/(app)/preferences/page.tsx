@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
@@ -188,6 +189,26 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         initial={notifications}
         agents={myAgents}
       />
+      {/* Done once in a while, not a setting: its own page, at the foot of this one. */}
+      <section
+        aria-labelledby="your-data-heading"
+        className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+      >
+        <h3 id="your-data-heading" className="font-semibold">
+          Your data
+        </h3>
+        <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+          Download everything you have here, or bring chats and memories in from ChatGPT, Claude or
+          Gemini.
+        </p>
+        <Link
+          href="/preferences/data"
+          className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+        >
+          Export or import your data
+          <span aria-hidden="true">→</span>
+        </Link>
+      </section>
     </div>
   );
 }

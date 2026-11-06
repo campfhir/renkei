@@ -128,6 +128,15 @@ describe('finding', () => {
     );
   });
 
+  it('finds the Your data page by what a person would type to move their data', () => {
+    for (const words of ['export', 'import chatgpt', 'backup', 'download zip']) {
+      const settings = section(search(words), 'Settings');
+      expect(settings.find((r) => /Your data/.test(r.label))?.href).toBe(
+        '/preferences/data#export-heading'
+      );
+    }
+  });
+
   it('finds a connector by a product inside it, and opens it with the words for the catalog', () => {
     const connectors = section(search('sharepoint'), 'Connectors');
     const microsoft = connectors.find((r) => /Microsoft 365/.test(r.label));

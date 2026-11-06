@@ -11,7 +11,7 @@
  *      GET /api/keys for the live instances, then POST /api/keys/enroll
  *      with a user key sealed to each instance for this session and an
  *      automation key for the automation window.
- *   3. PUT /api/preferences with the coach-mark tours off, so no tour
+ *   3. PATCH /api/preferences with the coach-mark tours off, so no tour
  *      steals focus mid-test.
  *
  * A subject nobody else has needs no cleanup: whatever the test makes
@@ -134,11 +134,11 @@ export async function createPerson(
   if (options.enroll !== false) await enroll(request, headers);
   if (!options.coachMarks) {
     await expectOk(
-      await request.put(`${MEMORY_BASE_URL}/api/preferences`, {
+      await request.patch(`${MEMORY_BASE_URL}/api/preferences`, {
         headers,
         data: { coachMarks: { autoStart: false } },
       }),
-      'PUT /api/preferences'
+      'PATCH /api/preferences'
     );
   }
   return { subject, sessionId, displayName, roles, headers };

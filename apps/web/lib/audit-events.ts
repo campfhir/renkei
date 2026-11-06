@@ -23,6 +23,10 @@ export type AuditAction =
   | 'user.signed_out'
   /** An operator ended every session and MCP token of a person (details: subject, counts). */
   | 'user.sessions_revoked'
+  /** A person downloaded their own data (details: format — zip or profile — and counts). */
+  | 'user.data_exported'
+  /** A person imported chats or memories from another assistant (details: sources and counts). */
+  | 'user.data_imported'
   | 'connector.connected'
   | 'connector.disconnected'
   | 'connector.audience_updated'

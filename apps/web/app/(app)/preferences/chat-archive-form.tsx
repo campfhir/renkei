@@ -48,7 +48,7 @@ export default function ChatArchiveForm({
     dispatch({ type: 'sent' });
     try {
       const response = await fetch(`/api/preferences`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(archiveRequest(parsed.days)),
       });
@@ -56,11 +56,11 @@ export default function ChatArchiveForm({
         dispatch({ type: 'stored' });
       } else {
         const problem = refusalWords(await response.json().catch(() => null));
-        reportFetchFailure('PUT', '/api/preferences', response.status, problem);
+        reportFetchFailure('PATCH', '/api/preferences', response.status, problem);
         dispatch({ type: 'failed', problem });
       }
     } catch (error) {
-      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
+      reportFetchFailure('PATCH', '/api/preferences', 0, 'Could not reach the server', error);
       dispatch({ type: 'failed', problem: 'Could not save.' });
     }
   }

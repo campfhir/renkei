@@ -8,6 +8,7 @@
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
 import {
   canSave,
+  voicePatch,
   initVoicePrefsForm,
   isDirty,
   languageHint,
@@ -59,7 +60,7 @@ describe('saving', () => {
     const saved = run([
       { type: 'changed', prefs: faster },
       { type: 'saving' },
-      { type: 'saved', prefs: faster },
+      { type: 'saved', patch: voicePatch(run([{ type: 'changed', prefs: faster }])) },
     ]);
     expect(saved.status).toBe('saved');
     expect(canSave(saved)).toBe(false);
@@ -71,9 +72,16 @@ describe('saving', () => {
       { type: 'changed', prefs: faster },
       { type: 'saving' },
       { type: 'changed', prefs: { ...faster, autoPlay: true } },
-      { type: 'saved', prefs: faster },
+      { type: 'saved', patch: voicePatch(run([{ type: 'changed', prefs: faster }])) },
     ]);
     expect(isDirty(state)).toBe(true);
+  });
+
+  it('Save sends only the fields changed since the last save', () => {
+    const state = run([{ type: 'changed', prefs: faster }]);
+    expect(voicePatch(state)).toEqual({ rate: faster.rate });
+    const saved = run([{ type: 'saving' }, { type: 'saved', patch: voicePatch(state) }], state);
+    expect(voicePatch(saved)).toEqual({});
   });
 
   it('a failed save says so and can be tried again', () => {

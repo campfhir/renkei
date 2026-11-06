@@ -19,8 +19,29 @@ export function memoryUserPreferences(tables: MemoryTables): UserPreferenceStore
         }
       );
     },
+    async merge(subject, key, patch) {
+      const stored = tables.first(
+        'user_preferences',
+        (r) => r.subject === subject && r.key === key
+      )?.value;
+      const base =
+        typeof stored === 'object' && stored !== null && !Array.isArray(stored) ? stored : {};
+      const json = toJson({ ...base, ...patch });
+      tables.upsert(
+        'user_preferences',
+        { subject, key, value: json, updated_at: new Date() },
+        ['subject', 'key'],
+        { value: json, updated_at: new Date() }
+      );
+    },
     async delete(subject, key) {
       tables.delete('user_preferences', (r) => r.subject === subject && r.key === key);
+    },
+    async listBySubject(subject) {
+      return orderBy(
+        tables.select('user_preferences', (r) => r.subject === subject),
+        [(r) => r.key]
+      ).map((row) => ({ key: row.key, value: row.value }));
     },
     async listByKey(key) {
       return orderBy(

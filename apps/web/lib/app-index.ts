@@ -105,6 +105,16 @@ const SETTINGS: AppPlace[] = [
     operatorOnly: false,
   },
   {
+    title: 'Your data: export and import',
+    where: 'Preferences · Your data',
+    href: `${PREFERENCES}/data#export-heading`,
+    icon: ICONS.sliders,
+    keywords:
+      'export download zip backup takeout import chatgpt claude gemini memories profile markdown move migrate',
+    section: 'Settings',
+    operatorOnly: false,
+  },
+  {
     title: 'Encryption key',
     where: 'Preferences',
     href: `${PREFERENCES}#encryption-key`,

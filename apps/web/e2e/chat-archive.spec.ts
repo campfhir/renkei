@@ -1,7 +1,7 @@
 /**
  * The "Archive old chats" preference in a browser: the section renders on
  * the preferences page, one save goes end to end (a window typed, Save
- * pressed, the PUT reaching /api/preferences, "Saved." drawn, and a reload
+ * pressed, the PATCH reaching /api/preferences, "Saved." drawn, and a reload
  * reading it back), and the field and its note fit a phone's width.
  *
  * Where the rest went: the form's rules (empty is never, Save off until the
