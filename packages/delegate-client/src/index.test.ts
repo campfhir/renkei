@@ -314,4 +314,36 @@ describe('a dropped connection to the delegate', () => {
     expect(written.headers.get('x-delegate-error')).toBe('DELEGATE_UNREACHABLE');
     expect(flaky.calls).toHaveLength(1);
   });
+
+  it("hands a manual caller the delegate's redirect untouched, not the page it points at", async () => {
+    const delegate = scripted(
+      () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://tenant-my.sharepoint.com/download.aspx?tempauth=x' },
+        })
+    );
+    const grants = new DelegateGrants(
+      new DelegateTransport(config, delegate.fetchImpl),
+      config.url,
+      config.apiKey,
+      delegate.fetchImpl
+    );
+    const answer = await grants.fetch(
+      { provider: 'microsoft', subject: 'alice' },
+      'https://graph.microsoft.com/v1.0/drives/d/items/i/content',
+      { redirect: 'manual' }
+    );
+    expect(answer.status).toBe(302);
+    expect(answer.headers.get('location')).toContain('sharepoint.com/download.aspx');
+    expect(delegate.calls[0]?.init.redirect).toBe('manual');
+    expect(new Headers(delegate.calls[0]?.init.headers).get('x-delegate-redirect')).toBe('manual');
+
+    delegate.calls.length = 0;
+    await grants.fetch(
+      { provider: 'microsoft', subject: 'alice' },
+      'https://graph.microsoft.com/v1.0/me'
+    );
+    expect(delegate.calls[0]?.init.redirect).toBe('follow');
+  });
 });
