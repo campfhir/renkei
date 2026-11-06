@@ -195,6 +195,7 @@ export const EXPECTED_MIGRATIONS = [
   '169-sandbox-scope',
   '170-temporary-chats',
   '171-chat-tasks',
+  '172-drop-email-ingest-jobs',
 ];
 
 export interface MigrationStatus {
