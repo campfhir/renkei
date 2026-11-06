@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-06',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Downloading OneDrive and SharePoint files',
+        detail:
+          'Getting a download link for a OneDrive or SharePoint file no longer fails with "Graph offered no download redirect" when Microsoft hands the link over only as a redirect, as it does for some workbooks, including ones shared from a colleague\'s OneDrive.',
+      },
+      {
         kind: 'added',
         title: 'Task lists in every chat',
         detail:
