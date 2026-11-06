@@ -137,8 +137,8 @@ export type PreferencesAction =
   | { type: 'openInSourceApp'; on: boolean }
   | { type: 'overrideAgentPicked'; agentId: string }
   | { type: 'saveSent'; group: NotificationGroup }
-  /** `sent` is the document that card's save sent (groupSaveRequest). */
-  | { type: 'saved'; group: NotificationGroup; sent: NotificationPrefs }
+  /** `sent` is the patch that card's save sent (groupSaveRequest). */
+  | { type: 'saved'; group: NotificationGroup; sent: Partial<NotificationPrefs> }
   | { type: 'saveFailed'; group: NotificationGroup }
   /** The browser's state, read once it is mounted. */
   | { type: 'desktopRead'; enabled: boolean; permission: DesktopPermission }
@@ -173,17 +173,6 @@ function idleGroups(): Record<NotificationGroup, SaveStatus> {
     popups: 'idle',
     browser: 'idle',
   };
-}
-
-/** `base` with one card's fields taken from `from`. */
-function withGroup(
-  base: NotificationPrefs,
-  from: NotificationPrefs,
-  group: NotificationGroup
-): NotificationPrefs {
-  const next = { ...base };
-  for (const field of GROUP_FIELDS[group]) Object.assign(next, { [field]: from[field] });
-  return next;
 }
 
 function setAgentOverride<K extends OverridableEvent>(
@@ -295,7 +284,7 @@ export function preferencesReducer(
     case 'saved':
       return {
         ...state,
-        saved: withGroup(state.saved, action.sent, action.group),
+        saved: { ...state.saved, ...action.sent },
         groups: { ...state.groups, [action.group]: 'saved' },
       };
     case 'saveFailed':
@@ -339,15 +328,12 @@ export function groupDirty(state: PreferencesState, group: NotificationGroup): b
 }
 
 /**
- * Whether a card's Save can be pressed: it has changes, and no save is
- * out — one at a time, so two cards' documents never race each other to
- * the server and undo one another.
+ * Whether a card's Save can be pressed: it has changes and is not already
+ * saving. Other cards saving at the same time are no obstacle: each sends
+ * a patch of its own fields, which the server merges atomically.
  */
 export function canSaveGroup(state: PreferencesState, group: NotificationGroup): boolean {
-  return (
-    groupDirty(state, group) &&
-    !NOTIFICATION_GROUPS.some((other) => state.groups[other] === 'saving')
-  );
+  return groupDirty(state, group) && state.groups[group] !== 'saving';
 }
 
 /**
@@ -367,15 +353,19 @@ export function groupSaveView(
 }
 
 /**
- * What a card's Save PUTs to /api/preferences: the document as last saved
- * with only this card's fields from the screen, so another card's unsaved
- * changes stay unsaved.
+ * What a card's Save PATCHes to /api/preferences: this card's fields as on
+ * screen, and nothing else — another card's unsaved changes stay unsaved,
+ * and sending it twice changes nothing the first did not.
  */
 export function groupSaveRequest(
   state: PreferencesState,
   group: NotificationGroup
-): { notifications: NotificationPrefs } {
-  return { notifications: withGroup(state.saved, state.prefs, group) };
+): { notifications: Partial<NotificationPrefs> } {
+  const notifications: Partial<NotificationPrefs> = {};
+  for (const field of GROUP_FIELDS[group]) {
+    Object.assign(notifications, { [field]: state.prefs[field] });
+  }
+  return { notifications };
 }
 
 /**

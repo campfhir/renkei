@@ -7,6 +7,14 @@ export interface UserPreferenceStore {
   /** Undefined when the person has never saved this key. */
   get(subject: string, key: string): Promise<unknown>;
   set(subject: string, key: string, value: unknown): Promise<void>;
+  /**
+   * Merge these top-level fields into the stored object, as one atomic
+   * write: fields named replace their stored value whole, fields not named
+   * stay as stored. A key never saved, or one holding something other than
+   * an object, becomes just the patch. The same patch twice leaves the same
+   * value, and patches naming different fields never undo each other.
+   */
+  merge(subject: string, key: string, patch: Record<string, unknown>): Promise<void>;
   /** Forget a saved key, so it reads as never set; a key never saved is left alone. */
   delete(subject: string, key: string): Promise<void>;
   /** Every key one person has saved, with its value, by key. */

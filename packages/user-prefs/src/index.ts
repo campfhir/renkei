@@ -110,6 +110,26 @@ export async function setNotificationPrefs(
   return ok();
 }
 
+/**
+ * Change some of this person's notification preferences: the fields given
+ * replace their stored values, everything else stays (one atomic merge in
+ * the store). Idempotent, and two patches of different fields made at once
+ * both land.
+ */
+export async function patchNotificationPrefs(
+  subject: string,
+  patch: Partial<NotificationPrefs>
+): Promise<Result<void, 'DB_ERROR'>> {
+  const written = await wrapAsync(
+    () => getDataStore().userPreferences.merge(subject, NOTIFICATIONS_KEY, { ...patch }),
+    'DB_ERROR' as const
+  );
+  if (!written.ok) return written;
+
+  cache.delete(cacheKey(subject));
+  return ok();
+}
+
 const connectorCache = new Map<string, { value: ConnectorPrefs; expiresAt: number }>();
 
 /**

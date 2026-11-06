@@ -278,15 +278,28 @@ describe('each card saves on its own', () => {
     expect(groupSaveView(state, 'popups').show).toBe(false);
   });
 
-  it("sends only that card's changes, leaving another card's unsaved changes out", () => {
+  it("sends a patch of only that card's fields: another card's unsaved changes stay out", () => {
     const before = fresh().prefs;
     const state = run([
       { type: 'toastsEnabled', on: !before.toastsEnabled },
       { type: 'deliveryChannel', event: 'runStarted', channel: 'app', on: !before.runStarted.app },
     ]);
-    const sent = groupSaveRequest(state, 'popups').notifications;
-    expect(sent.toastsEnabled).toBe(!before.toastsEnabled);
-    expect(sent.runStarted).toEqual(before.runStarted);
+    expect(groupSaveRequest(state, 'popups')).toEqual({
+      notifications: { toastsEnabled: !before.toastsEnabled, toastCorner: before.toastCorner },
+    });
+  });
+
+  it('sends the same patch however often it is pressed', () => {
+    const state = run([{ type: 'toastsEnabled', on: false }]);
+    const sent = groupSaveRequest(state, 'popups');
+    const after = run(
+      [
+        { type: 'saveSent', group: 'popups' },
+        { type: 'saved', group: 'popups', sent: sent.notifications },
+      ],
+      state
+    );
+    expect(groupSaveRequest(after, 'popups')).toEqual(sent);
   });
 
   it('reads Saving…, then Saved. on that card, which then has nothing left to save', () => {
@@ -300,23 +313,22 @@ describe('each card saves on its own', () => {
     expect(canSaveGroup(saved, 'popups')).toBe(false);
   });
 
-  it('a later save of another card keeps what the first card saved', () => {
+  it("one card's save leaves another card's unsaved changes unsaved", () => {
     const before = fresh().prefs;
     let state = run([
       { type: 'toastsEnabled', on: !before.toastsEnabled },
       { type: 'chatReplyDesktop', on: !before.chatReplyDesktop },
     ]);
-    const first = groupSaveRequest(state, 'popups').notifications;
+    const sent = groupSaveRequest(state, 'popups').notifications;
     state = run(
       [
         { type: 'saveSent', group: 'popups' },
-        { type: 'saved', group: 'popups', sent: first },
+        { type: 'saved', group: 'popups', sent },
       ],
       state
     );
-    const second = groupSaveRequest(state, 'browser').notifications;
-    expect(second.toastsEnabled).toBe(!before.toastsEnabled);
-    expect(second.chatReplyDesktop).toBe(!before.chatReplyDesktop);
+    expect(groupDirty(state, 'popups')).toBe(false);
+    expect(groupDirty(state, 'browser')).toBe(true);
   });
 
   it('a refused save says so on its card and keeps the changes to try again', () => {
@@ -329,14 +341,14 @@ describe('each card saves on its own', () => {
     expect(canSaveGroup(state, 'popups')).toBe(true);
   });
 
-  it('one save at a time: while one card saves, the others wait', () => {
+  it('cards save side by side: one saving does not hold another back, but a card saving waits for itself', () => {
     const before = fresh().prefs;
     const state = run([
       { type: 'toastsEnabled', on: !before.toastsEnabled },
       { type: 'chatReplyDesktop', on: !before.chatReplyDesktop },
       { type: 'saveSent', group: 'popups' },
     ]);
-    expect(canSaveGroup(state, 'browser')).toBe(false);
+    expect(canSaveGroup(state, 'browser')).toBe(true);
     expect(canSaveGroup(state, 'popups')).toBe(false);
   });
 

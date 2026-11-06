@@ -12,7 +12,7 @@ jest.mock('@/lib/session', () => ({ getSessionFromRequest: jest.fn() }));
 import { NextRequest } from 'next/server';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { invalidateSettingsCache, setOrgSettings } from '@renkei/settings';
-import { GET, PUT } from './route';
+import { GET, PATCH, PUT } from './route';
 
 const { getSessionFromRequest: mockGetSession } = jest.requireMock<{
   getSessionFromRequest: jest.Mock;
@@ -105,5 +105,73 @@ describe('PUT /api/preferences — chatArchive', () => {
   it('needs a signed-in person', async () => {
     mockGetSession.mockResolvedValue(null);
     expect((await put({ chatArchive: { afterDays: 30 } })).status).toBe(401);
+  });
+});
+
+describe('PATCH /api/preferences — notifications', () => {
+  const patch = (body: unknown) =>
+    PATCH(
+      new NextRequest('http://test.local/api/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      })
+    );
+
+  async function notifications(): Promise<Record<string, unknown>> {
+    const body: { notifications: Record<string, unknown> } = await (
+      await GET(new NextRequest('http://test.local/api/preferences'))
+    ).json();
+    return body.notifications;
+  }
+
+  it('changes only the fields named, and answers with the whole document', async () => {
+    const before = await notifications();
+    const response = await patch({ notifications: { toastCorner: 'bottom-left' } });
+    expect(response.status).toBe(200);
+    const body: { notifications: Record<string, unknown> } = await response.json();
+    expect(body.notifications).toEqual({ ...before, toastCorner: 'bottom-left' });
+    expect(await notifications()).toEqual({ ...before, toastCorner: 'bottom-left' });
+  });
+
+  it('is idempotent: the same patch twice leaves the same preferences', async () => {
+    const change = { notifications: { runStarted: { app: true, email: false, webex: false } } };
+    await patch(change);
+    const once = await notifications();
+    await patch(change);
+    expect(await notifications()).toEqual(once);
+  });
+
+  it('two patches of different cards sent at once both land', async () => {
+    const before = await notifications();
+    await Promise.all([
+      patch({ notifications: { toastsEnabled: false } }),
+      patch({ notifications: { chatReplyDesktop: true, openInSourceApp: false } }),
+    ]);
+    expect(await notifications()).toEqual({
+      ...before,
+      toastsEnabled: false,
+      chatReplyDesktop: true,
+      openInSourceApp: false,
+    });
+  });
+
+  it('leaves the other preferences alone', async () => {
+    await put({ chatArchive: { afterDays: 30 } });
+    await patch({ notifications: { toastsEnabled: false } });
+    expect(await storedDays()).toBe(30);
+  });
+
+  it('refuses a field the preferences do not have, an empty patch, and no notifications', async () => {
+    const unknown = await patch({ notifications: { toastsEnabled: false, colour: 'red' } });
+    expect(unknown.status).toBe(400);
+    expect((await unknown.json()).error).toBe('Not a notification preference: colour.');
+    expect((await patch({ notifications: {} })).status).toBe(400);
+    expect((await patch({ theme: { mode: 'dark' } })).status).toBe(400);
+    expect((await notifications()).toastsEnabled).toBe(true);
+  });
+
+  it('is refused when signed out', async () => {
+    mockGetSession.mockResolvedValueOnce(null);
+    expect((await patch({ notifications: { toastsEnabled: false } })).status).toBe(401);
   });
 });

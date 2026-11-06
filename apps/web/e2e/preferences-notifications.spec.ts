@@ -1,7 +1,7 @@
 /**
  * Notification preferences save card by card, in a browser: a change
- * brings up Save on its own card and no other, pressing it sends one PUT
- * to /api/preferences with that card's change, "Saved." shows there, and
+ * brings up Save on its own card and no other, pressing it sends one PATCH
+ * to /api/preferences carrying only that card's fields, "Saved." shows there, and
  * the change is still there after a reload. What each card sends and when
  * its Save shows is preferences-form.model.test.ts's.
  */
@@ -28,12 +28,12 @@ test('a card saves its own change, and only its card offers Save', async ({
   await expect(popups.getByRole('button', { name: 'Save' })).toBeEnabled();
   await expect(browser.getByRole('button', { name: 'Save' })).toHaveCount(0);
 
-  const put = page.waitForRequest(
-    (request) => request.method() === 'PUT' && request.url().endsWith('/api/preferences')
+  const patch = page.waitForRequest(
+    (request) => request.method() === 'PATCH' && request.url().endsWith('/api/preferences')
   );
   await popups.getByRole('button', { name: 'Save' }).click();
-  const sent: { notifications: { toastCorner: string } } = (await put).postDataJSON();
-  expect(sent.notifications.toastCorner).toBe('bottom-left');
+  const sent: { notifications: Record<string, unknown> } = (await patch).postDataJSON();
+  expect(sent).toEqual({ notifications: { toastsEnabled: true, toastCorner: 'bottom-left' } });
   await expect(popups.getByRole('status')).toHaveText('Saved.');
 
   await page.reload();

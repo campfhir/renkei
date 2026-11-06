@@ -208,7 +208,7 @@ function ChannelHints({ channels }: { channels: ChannelAvailability }): ReactNod
 
 /**
  * A card's own Save, at its foot: there only once the card has changes
- * (or a save to report), pressed one card at a time.
+ * (or a save to report).
  */
 function GroupSave({
   group,
@@ -368,19 +368,19 @@ export default function PreferencesForm({
     on: boolean
   ) => dispatch({ type: 'overridePauseChannel', agentId, event, channel, on });
 
-  /** One card's Save: only its fields, on top of what was last saved. */
+  /** One card's Save: a patch of only its own fields, merged in by the server. */
   async function saveGroup(group: NotificationGroup) {
     const body = groupSaveRequest(state, group);
     dispatch({ type: 'saveSent', group });
     try {
       const response = await fetch(`/api/preferences`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       if (!response.ok)
         reportFetchFailure(
-          'PUT',
+          'PATCH',
           '/api/preferences',
           response.status,
           `Request failed (${response.status})`
@@ -391,7 +391,7 @@ export default function PreferencesForm({
           : { type: 'saveFailed', group }
       );
     } catch (error) {
-      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
+      reportFetchFailure('PATCH', '/api/preferences', 0, 'Could not reach the server', error);
       dispatch({ type: 'saveFailed', group });
     }
   }

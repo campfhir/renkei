@@ -386,6 +386,38 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
   };
 }
 
+function isNotificationField(key: string): key is keyof NotificationPrefs {
+  return Object.prototype.hasOwnProperty.call(DEFAULT_NOTIFICATION_PREFS, key);
+}
+
+/**
+ * A change to some of the notification preferences (PATCH
+ * /api/preferences): the fields sent, each normalised exactly as a whole
+ * document would be (an unrecognised channel value falls back to its
+ * default), and nothing else. A field the preferences do not have is
+ * refused rather than dropped, and so is an empty patch: either is a
+ * caller's mistake, and silently saving nothing would look like success.
+ */
+export function parseNotificationPatch(
+  raw: unknown
+): { ok: true; patch: Partial<NotificationPrefs> } | { ok: false; error: string } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: 'Expected an object of notification preferences.' };
+  }
+  const keys = Object.keys(raw);
+  if (keys.length === 0) return { ok: false, error: 'Nothing to change.' };
+  const unknown = keys.filter((key) => !isNotificationField(key));
+  if (unknown.length > 0) {
+    return { ok: false, error: `Not a notification preference: ${unknown.join(', ')}.` };
+  }
+  const parsed = parseNotificationPrefs(raw);
+  const patch: Partial<NotificationPrefs> = {};
+  for (const key of keys) {
+    if (isNotificationField(key)) Object.assign(patch, { [key]: parsed[key] });
+  }
+  return { ok: true, patch };
+}
+
 /**
  * The connectors a person has added to their own connectors page.
  *

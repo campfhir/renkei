@@ -6,7 +6,10 @@
  * `notifications`, `theme`, `voice`, `image`, `coachMarks` and `chatArchive`
  * are independent documents, each a whole-document replace when its key is
  * present in the body — which is what each form on the preferences page (and
- * the chat's voice menu, and the Tutorials page) sends. Unknown connector and
+ * the chat's voice menu, and the Tutorials page) sends. PATCH changes some
+ * notification preferences instead: only the fields named, merged in
+ * atomically, so each Preferences card saves its own fields and nothing it
+ * did not touch (see PATCH below). Unknown connector and
  * category keys are DROPPED rather than rejected: during a rolling deploy an
  * older page can post a grid that no longer matches the catalog, and refusing
  * the save would strand somebody on a page that cannot be used until the
@@ -26,7 +29,9 @@ import {
   parseChatArchivePrefs,
   parseCoachMarkPrefs,
   parseImagePrefs,
+  parseNotificationPatch,
   parseNotificationPrefs,
+  patchNotificationPrefs,
   parseThemePrefs,
   parseVoicePrefs,
   setChatArchivePrefs,
@@ -39,9 +44,7 @@ import {
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -56,9 +59,7 @@ export async function GET(
   return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -192,4 +193,40 @@ export async function PUT(
   }
 
   return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });
+}
+
+/**
+ * Change some notification preferences: `{ notifications: { …fields } }`
+ * names only the fields being changed (a Preferences card sends its own),
+ * and the store merges them into what is saved in one atomic write. The
+ * same request twice leaves the same preferences, and two cards saved at
+ * once never undo each other. Answers with the whole document as stored.
+ */
+export async function PATCH(request: NextRequest): Promise<NextResponse> {
+  const session = await getSessionFromRequest(request);
+  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+
+  const body: unknown = await request.json().catch(() => null);
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return NextResponse.json({ error: 'Expected an object' }, { status: 400 });
+  }
+  const payload: { notifications?: unknown } = body;
+  if (!('notifications' in payload)) {
+    return NextResponse.json({ error: 'Nothing to change' }, { status: 400 });
+  }
+  const parsed = parseNotificationPatch(payload.notifications);
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+
+  const written = await patchNotificationPrefs(session.subject, parsed.patch);
+  if (!written.ok) {
+    logger.error('Could not save: {error}', {
+      component: 'api/preferences',
+      subject: session.subject,
+      error: written.err.message ?? written.err.type,
+    });
+    return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  }
+  return NextResponse.json({
+    notifications: await getNotificationPrefs(session.subject, { fresh: true }),
+  });
 }
