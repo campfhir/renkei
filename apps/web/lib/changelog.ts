@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-06',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Task lists in every chat',
+        detail:
+          "The assistant can plan multi-step work as tasks with subtasks and dependencies, hand tasks to sub-agents that work in the background, and pause until they finish — picking the conversation back up on its own when they report, fail or time out. Open Tasks from a chat's ⋯ menu to see what is under way, what is waiting and what has finished, or copy the list as Markdown.",
+      },
+    ],
+  },
+  {
     date: '2026-11-05',
     entries: [
       {
