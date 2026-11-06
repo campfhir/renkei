@@ -22,6 +22,12 @@ export function memoryUserPreferences(tables: MemoryTables): UserPreferenceStore
     async delete(subject, key) {
       tables.delete('user_preferences', (r) => r.subject === subject && r.key === key);
     },
+    async listBySubject(subject) {
+      return orderBy(
+        tables.select('user_preferences', (r) => r.subject === subject),
+        [(r) => r.key]
+      ).map((row) => ({ key: row.key, value: row.value }));
+    },
     async listByKey(key) {
       return orderBy(
         tables.select('user_preferences', (r) => r.key === key),

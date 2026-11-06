@@ -31,6 +31,7 @@ import VoiceForm from './voice-form';
 import ImageModelForm from './image-model-form';
 import ChatArchiveForm from './chat-archive-form';
 import EncryptionKeySection from './encryption-key-section';
+import YourDataSection from './your-data-section';
 
 /**
  * The page the nav's Preferences item has been pointing at since before it
@@ -164,6 +165,9 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
           <EncryptionKeySection initial={keyStatus} />
         </div>
       ) : null}
+      <div className="mb-6">
+        <YourDataSection />
+      </div>
       <div className="mb-6">
         <DefaultToolsForm
           connectors={chatToolOptions}

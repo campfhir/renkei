@@ -9,6 +9,8 @@ export interface UserPreferenceStore {
   set(subject: string, key: string, value: unknown): Promise<void>;
   /** Forget a saved key, so it reads as never set; a key never saved is left alone. */
   delete(subject: string, key: string): Promise<void>;
+  /** Every key one person has saved, with its value, by key. */
+  listBySubject(subject: string): Promise<{ key: string; value: unknown }[]>;
   /** Everyone's saved value of one key, by subject. */
   listByKey(key: string): Promise<{ subject: string; value: unknown }[]>;
 }

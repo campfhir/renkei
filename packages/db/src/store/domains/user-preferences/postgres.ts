@@ -31,6 +31,14 @@ export function postgresUserPreferences(db: () => Kysely<DB>): UserPreferenceSto
         .where('key', '=', key)
         .execute();
     },
+    async listBySubject(subject) {
+      return db()
+        .selectFrom('user_preferences')
+        .select(['key', 'value'])
+        .where('subject', '=', subject)
+        .orderBy('key')
+        .execute();
+    },
     async listByKey(key) {
       return db()
         .selectFrom('user_preferences')
