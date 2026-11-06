@@ -50,6 +50,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Old email-indexing jobs cleared out',
+        detail:
+          'Email jobs left over from before mail stopped being indexed are removed, so they no longer fail over and over in the background or sit in the queue holding copies of messages.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Searching the activity log from a chat finds what you ask for',
+        detail:
+          "Asking the assistant for errors or warnings now returns them instead of nothing, a search it can't run explains why, and a long result says there is more and where the next page starts.",
+      },
+      {
+        kind: 'fixed',
         title: 'Downloading OneDrive and SharePoint files',
         detail:
           'Getting a download link for a OneDrive or SharePoint file no longer fails with "Graph offered no download redirect" when Microsoft hands the link over only as a redirect, as it does for some workbooks, including ones shared from a colleague\'s OneDrive.',
