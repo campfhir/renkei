@@ -304,3 +304,79 @@ test('rejects malformed query syntax with a clear message, never silently matchi
   expect(result.content[0]?.text).toContain('Could not parse "query"');
   expect(mockQuery).not.toHaveBeenCalled();
 });
+
+test("level and message name the entry's own columns, in a query or a filter, not attributes", async () => {
+  mockQuery.mockResolvedValue({ ok: true, val: [] });
+  const handlers = registerAll({});
+
+  await handlers.get('log_search')!({
+    filter: {
+      or: [
+        { key: 'level', op: 'eq', value: 'error' },
+        { key: 'message', op: 'contains', value: 'grant' },
+      ],
+    },
+    query: 'level:critical',
+  });
+
+  expect(JSON.stringify(firstCallFilter())).toContain(
+    '"key":"$level","operator":"=","value":"error"'
+  );
+  expect(JSON.stringify(firstCallFilter())).toContain(
+    '"key":"$message","operator":"contains","value":"grant"'
+  );
+  expect(JSON.stringify(firstCallFilter())).toContain(
+    '"key":"$level","operator":"contains","value":"critical"'
+  );
+  expect(JSON.stringify(firstCallFilter())).not.toContain('"key":"level"');
+});
+
+test('a bare NOT in a query is refused with how to negate, not run as message text', async () => {
+  const handlers = registerAll({ roles: ['renkei-operator'] });
+
+  const result = await handlers.get('log_search')!({ query: 'NOT approval-sweep' });
+
+  expect(result.isError).toBe(true);
+  expect(result.content[0]?.text).toContain("component:!'approval-sweep'");
+  expect(mockQuery).not.toHaveBeenCalled();
+});
+
+test('a page that fills the limit says there may be more and where the next page starts', async () => {
+  const row = (minute: number) => ({
+    id: `log-${minute}`,
+    timestamp: `2026-11-06T16:${String(minute).padStart(2, '0')}:00.000Z`,
+    level: 'warn' as const,
+    message: 'waiting run has no approval card',
+    meta: { component: 'worker-agents/approval-sweep' },
+  });
+  mockQuery.mockResolvedValue({ ok: true, val: [row(2), row(1)] });
+  const handlers = registerAll({ roles: ['renkei-operator'] });
+
+  const text = (await handlers.get('log_search')!({ limit: 2 })).content[0]?.text ?? '';
+
+  expect(text).toContain('newest first');
+  expect(text).toContain('there may be more');
+  expect(text).toContain('end set to 2026-11-06T16:01:00.000Z');
+});
+
+test('an oldest-first page is labeled so and pages forward with start', async () => {
+  const row = (minute: number) => ({
+    id: `log-${minute}`,
+    timestamp: `2026-11-06T16:0${minute}:00.000Z`,
+    level: 'error' as const,
+    message: 'failed',
+    meta: {},
+  });
+  mockQuery.mockResolvedValue({ ok: true, val: [row(1), row(2)] });
+  const handlers = registerAll({});
+
+  const full =
+    (await handlers.get('log_search')!({ sort: 'asc', limit: 2 })).content[0]?.text ?? '';
+  expect(full).toContain('oldest first');
+  expect(full).toContain('start set to 2026-11-06T16:02:00.000Z');
+
+  mockQuery.mockResolvedValue({ ok: true, val: [row(1)] });
+  const short =
+    (await handlers.get('log_search')!({ sort: 'asc', limit: 2 })).content[0]?.text ?? '';
+  expect(short).not.toContain('there may be more');
+});
