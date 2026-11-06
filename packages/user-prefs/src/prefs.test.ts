@@ -7,6 +7,11 @@
 
 import {
   parseNotificationPatch,
+  parseThemePatch,
+  parseVoicePatch,
+  parseImagePatch,
+  parseCoachMarkPatch,
+  parseChatArchivePatch,
   BATCH_EVENTS,
   DEFAULT_NOTIFICATION_PREFS,
   batchEventForStatus,
@@ -552,5 +557,48 @@ describe('parseNotificationPatch', () => {
 
   it('refuses an inherited name rather than reading it as a field', () => {
     expect(parseNotificationPatch(JSON.parse('{"toString": 1}')).ok).toBe(false);
+  });
+});
+
+describe('the other documents patch the same way', () => {
+  it('theme: keeps the fields sent, normalised; refuses one it does not have', () => {
+    expect(parseThemePatch({ mode: 'neon' })).toEqual({ ok: true, patch: { mode: 'auto' } });
+    expect(parseThemePatch({ codeLineNumbers: true })).toEqual({
+      ok: true,
+      patch: { codeLineNumbers: true },
+    });
+    expect(parseThemePatch({ font: 'serif' })).toEqual({
+      ok: false,
+      error: 'Not a theme preference: font.',
+    });
+  });
+
+  it('voice: a rate is clamped and a locale canonicalised, the rest left out', () => {
+    expect(parseVoicePatch({ rate: 9, locale: 'en_us' })).toEqual({
+      ok: true,
+      patch: { rate: 2, locale: 'en-US' },
+    });
+  });
+
+  it('image and tours: one field each, empty refused', () => {
+    expect(parseImagePatch({ modelId: null })).toEqual({ ok: true, patch: { modelId: null } });
+    expect(parseCoachMarkPatch({ autoStart: false })).toEqual({
+      ok: true,
+      patch: { autoStart: false },
+    });
+    expect(parseCoachMarkPatch({})).toEqual({ ok: false, error: 'Nothing to change.' });
+  });
+
+  it('chat archive: a whole number of days or null; anything else refused, not parsed down', () => {
+    expect(parseChatArchivePatch({ afterDays: 30 })).toEqual({
+      ok: true,
+      patch: { afterDays: 30 },
+    });
+    expect(parseChatArchivePatch({ afterDays: null })).toEqual({
+      ok: true,
+      patch: { afterDays: null },
+    });
+    expect(parseChatArchivePatch({ afterDays: 2.5 }).ok).toBe(false);
+    expect(parseChatArchivePatch({ afterDays: 0 }).ok).toBe(false);
   });
 });

@@ -8,6 +8,7 @@
  */
 
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
+import { changedFields } from '@/lib/prefs-patch';
 
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'failed';
 
@@ -25,8 +26,8 @@ export function initVoicePrefsForm(initial: VoicePrefs): VoicePrefsFormState {
 export type VoicePrefsFormAction =
   | { type: 'changed'; prefs: VoicePrefs }
   | { type: 'saving' }
-  /** The server stored `prefs` (what Save sent, not any edit made since). */
-  | { type: 'saved'; prefs: VoicePrefs }
+  /** The server stored `patch` (what Save sent, not any edit made since). */
+  | { type: 'saved'; patch: Partial<VoicePrefs> }
   | { type: 'save-failed' }
   /** "Saved." has been up long enough (the component's two seconds). */
   | { type: 'saved-shown' };
@@ -41,7 +42,7 @@ export function voicePrefsFormReducer(
     case 'saving':
       return { ...state, status: 'saving' };
     case 'saved':
-      return { ...state, saved: action.prefs, status: 'saved' };
+      return { ...state, saved: { ...state.saved, ...action.patch }, status: 'saved' };
     case 'save-failed':
       return { ...state, status: 'failed' };
     case 'saved-shown':
@@ -52,6 +53,11 @@ export function voicePrefsFormReducer(
 /** Something differs from what is stored. */
 export function isDirty(state: VoicePrefsFormState): boolean {
   return JSON.stringify(state.prefs) !== JSON.stringify(state.saved);
+}
+
+/** What Save PATCHes as `voice`: only the fields changed since the last save. */
+export function voicePatch(state: VoicePrefsFormState): Partial<VoicePrefs> {
+  return changedFields(state.saved, state.prefs);
 }
 
 /** Save is on once something changed, and not while a save is on its way. */

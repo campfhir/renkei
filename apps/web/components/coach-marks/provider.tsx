@@ -104,13 +104,13 @@ function writePending(id: string): boolean {
 async function saveAutoStart(value: boolean): Promise<boolean> {
   try {
     const response = await fetch(`/api/preferences`, {
-      method: 'PUT',
+      method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ coachMarks: { autoStart: value } }),
     });
     if (!response.ok) {
       reportFetchFailure(
-        'PUT',
+        'PATCH',
         '/api/preferences',
         response.status,
         `Request failed (${response.status})`
@@ -118,7 +118,7 @@ async function saveAutoStart(value: boolean): Promise<boolean> {
     }
     return response.ok;
   } catch (error) {
-    reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
+    reportFetchFailure('PATCH', '/api/preferences', 0, 'Could not reach the server', error);
     return false;
   }
 }

@@ -53,7 +53,7 @@ let modelId = '';
 test.beforeEach(async ({ page, request, person: _person }, testInfo) => {
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   await enableVoiceService(page.request);
-  const prefs = await page.request.put('/api/preferences', { data: { voice: VOICE_PREFS } });
+  const prefs = await page.request.patch('/api/preferences', { data: { voice: VOICE_PREFS } });
   expect(prefs.ok(), await prefs.text()).toBe(true);
   modelId = await setUpCode(page, request, tag);
   const projectId = await createCodeProject(page.request, {

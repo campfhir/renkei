@@ -4,16 +4,20 @@
  * edits somebody else's settings.
  *
  * `notifications`, `theme`, `voice`, `image`, `coachMarks` and `chatArchive`
- * are independent documents, each a whole-document replace when its key is
- * present in the body — which is what each form on the preferences page (and
- * the chat's voice menu, and the Tutorials page) sends. PATCH changes some
- * notification preferences instead: only the fields named, merged in
- * atomically, so each Preferences card saves its own fields and nothing it
- * did not touch (see PATCH below). Unknown connector and
- * category keys are DROPPED rather than rejected: during a rolling deploy an
- * older page can post a grid that no longer matches the catalog, and refusing
- * the save would strand somebody on a page that cannot be used until the
- * deploy finishes.
+ * are independent documents. GET reads all six; PATCH changes some fields
+ * of any of them — `{ theme: { mode: 'dark' } }` changes the mode and
+ * nothing else — merged into what is stored in one atomic write per
+ * document. A PATCH is idempotent (the same request twice leaves the same
+ * preferences), and two made at once, of different fields, both land: each
+ * Preferences card, the chat's voice menu and the Tutorials page send only
+ * what they change, never a copy of everything else.
+ *
+ * A field a document does not have is refused, as is an empty patch.
+ * Unknown connector and category keys INSIDE the notification grid are
+ * dropped rather than refused: during a rolling deploy an older page can
+ * post a grid that no longer matches the catalog, and refusing the save
+ * would strand somebody on a page that cannot be used until the deploy
+ * finishes.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,182 +29,73 @@ import {
   getNotificationPrefs,
   getThemePrefs,
   getVoicePrefs,
-  isChatArchiveDays,
-  parseChatArchivePrefs,
-  parseCoachMarkPrefs,
-  parseImagePrefs,
+  parseChatArchivePatch,
+  parseCoachMarkPatch,
+  parseImagePatch,
   parseNotificationPatch,
-  parseNotificationPrefs,
+  parseThemePatch,
+  parseVoicePatch,
+  patchChatArchivePrefs,
+  patchCoachMarkPrefs,
+  patchImagePrefs,
   patchNotificationPrefs,
-  parseThemePrefs,
-  parseVoicePrefs,
-  setChatArchivePrefs,
-  setCoachMarkPrefs,
-  setImagePrefs,
-  setNotificationPrefs,
-  setThemePrefs,
-  setVoicePrefs,
+  patchThemePrefs,
+  patchVoicePrefs,
+  type PrefsPatch,
 } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
 
+async function readAll(subject: string) {
+  const [notifications, theme, voice, image, coachMarks, chatArchive] = await Promise.all([
+    getNotificationPrefs(subject, { fresh: true }),
+    getThemePrefs(subject, { fresh: true }),
+    getVoicePrefs(subject, { fresh: true }),
+    getImagePrefs(subject, { fresh: true }),
+    getCoachMarkPrefs(subject, { fresh: true }),
+    getChatArchivePrefs(subject, { fresh: true }),
+  ]);
+  return { notifications, theme, voice, image, coachMarks, chatArchive };
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-
-  const [notifications, theme, voice, image, coachMarks, chatArchive] = await Promise.all([
-    getNotificationPrefs(session.subject, { fresh: true }),
-    getThemePrefs(session.subject, { fresh: true }),
-    getVoicePrefs(session.subject, { fresh: true }),
-    getImagePrefs(session.subject, { fresh: true }),
-    getCoachMarkPrefs(session.subject, { fresh: true }),
-    getChatArchivePrefs(session.subject, { fresh: true }),
-  ]);
-  return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });
+  return NextResponse.json(await readAll(session.subject));
 }
 
-export async function PUT(request: NextRequest): Promise<NextResponse> {
-  const session = await getSessionFromRequest(request);
-  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
+type Written = { ok: true } | { ok: false; err: { type: string; message?: string } };
 
-  const body: unknown = await request.json().catch(() => null);
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-    return NextResponse.json({ error: 'Expected an object' }, { status: 400 });
-  }
-  const payload: {
-    notifications?: unknown;
-    theme?: unknown;
-    voice?: unknown;
-    image?: unknown;
-    coachMarks?: unknown;
-    chatArchive?: unknown;
-  } = body;
+/** A document's patch, read and checked, with the write that applies it. */
+type Prepared =
+  | { ok: true; patch: object; write: (subject: string) => Promise<Written> }
+  | { ok: false; error: string };
 
-  // Each of the two is only written when the caller actually sent that key —
-  // the notification form PUTs just `{notifications}` and the appearance
-  // form PUTs just `{theme}`, and writing the other's default over an unsent
-  // key would silently reset whichever preference the caller wasn't editing.
-  //
-  // The parser is the validator for the one that IS sent: it keeps what it
-  // recognises and fills the rest from the defaults, so a partial or stale
-  // document is usable rather than a 400.
-  let notifications = await getNotificationPrefs(session.subject, { fresh: true });
-  if ('notifications' in payload) {
-    notifications = parseNotificationPrefs(payload.notifications);
-    const written = await setNotificationPrefs(session.subject, notifications);
-    if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
-      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
-    }
-  }
-
-  let theme = await getThemePrefs(session.subject, { fresh: true });
-  if ('theme' in payload) {
-    theme = parseThemePrefs(payload.theme);
-    const written = await setThemePrefs(session.subject, theme);
-    if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
-      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
-    }
-  }
-
-  let voice = await getVoicePrefs(session.subject, { fresh: true });
-  if ('voice' in payload) {
-    voice = parseVoicePrefs(payload.voice);
-    const written = await setVoicePrefs(session.subject, voice);
-    if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
-      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
-    }
-  }
-
-  let image = await getImagePrefs(session.subject, { fresh: true });
-  if ('image' in payload) {
-    image = parseImagePrefs(payload.image);
-    const written = await setImagePrefs(session.subject, image);
-    if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
-      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
-    }
-  }
-
-  let coachMarks = await getCoachMarkPrefs(session.subject, { fresh: true });
-  if ('coachMarks' in payload) {
-    coachMarks = parseCoachMarkPrefs(payload.coachMarks);
-    const written = await setCoachMarkPrefs(session.subject, coachMarks);
-    if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
-      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
-    }
-  }
-
-  // Unlike the others this one is refused rather than parsed down: a window
-  // longer than the org keeps chats is a choice the person can see is wrong,
-  // and silently saving something else would leave them thinking it took.
-  let chatArchive = await getChatArchivePrefs(session.subject, { fresh: true });
-  if ('chatArchive' in payload) {
-    const requested: unknown = payload.chatArchive;
-    const days: unknown =
-      typeof requested === 'object' && requested !== null
-        ? Reflect.get(requested, 'afterDays')
-        : undefined;
-    if (days !== null && !isChatArchiveDays(days)) {
-      return NextResponse.json(
-        { error: 'chatArchive.afterDays must be a whole number of days, or null for never' },
-        { status: 400 }
-      );
-    }
-    const org = await getOrgSettings();
-    const retention = org.ok ? org.val.chatRetentionDays : 0;
-    if (isChatArchiveDays(days) && retention > 0 && days > retention) {
-      return NextResponse.json(
-        {
-          error: `Archiving cannot be longer than the organization keeps chats (${retention} days)`,
-        },
-        { status: 400 }
-      );
-    }
-    chatArchive = parseChatArchivePrefs(requested);
-    const written = await setChatArchivePrefs(session.subject, chatArchive);
-    if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
-      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
-    }
-  }
-
-  return NextResponse.json({ notifications, theme, voice, image, coachMarks, chatArchive });
+/** One document a PATCH may name: its patch reader and its writer, joined. */
+function document<T>(
+  parse: (raw: unknown) => PrefsPatch<T>,
+  write: (subject: string, patch: Partial<T>) => Promise<Written>
+): (raw: unknown) => Prepared {
+  return (raw) => {
+    const parsed = parse(raw);
+    if (!parsed.ok) return parsed;
+    return { ok: true, patch: parsed.patch, write: (subject) => write(subject, parsed.patch) };
+  };
 }
+
+const DOCUMENTS: Record<string, (raw: unknown) => Prepared> = {
+  notifications: document(parseNotificationPatch, patchNotificationPrefs),
+  theme: document(parseThemePatch, patchThemePrefs),
+  voice: document(parseVoicePatch, patchVoicePrefs),
+  image: document(parseImagePatch, patchImagePrefs),
+  coachMarks: document(parseCoachMarkPatch, patchCoachMarkPrefs),
+  chatArchive: document(parseChatArchivePatch, patchChatArchivePrefs),
+};
 
 /**
- * Change some notification preferences: `{ notifications: { …fields } }`
- * names only the fields being changed (a Preferences card sends its own),
- * and the store merges them into what is saved in one atomic write. The
- * same request twice leaves the same preferences, and two cards saved at
- * once never undo each other. Answers with the whole document as stored.
+ * Change some fields of one or more documents. Every patch is read and
+ * checked before anything is written, so a refused field leaves every
+ * document as it was. Answers with all six documents as now stored.
  */
 export async function PATCH(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -210,23 +105,49 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
     return NextResponse.json({ error: 'Expected an object' }, { status: 400 });
   }
-  const payload: { notifications?: unknown } = body;
-  if (!('notifications' in payload)) {
-    return NextResponse.json({ error: 'Nothing to change' }, { status: 400 });
+  const names = Object.keys(body);
+  if (names.length === 0) return NextResponse.json({ error: 'Nothing to change' }, { status: 400 });
+  const unknown = names.filter((name) => !Object.prototype.hasOwnProperty.call(DOCUMENTS, name));
+  if (unknown.length > 0) {
+    return NextResponse.json({ error: `Not a preference: ${unknown.join(', ')}` }, { status: 400 });
   }
-  const parsed = parseNotificationPatch(payload.notifications);
-  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
 
-  const written = await patchNotificationPrefs(session.subject, parsed.patch);
-  if (!written.ok) {
-    logger.error('Could not save: {error}', {
-      component: 'api/preferences',
-      subject: session.subject,
-      error: written.err.message ?? written.err.type,
-    });
-    return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+  const patches: { name: string; patch: object; write: (subject: string) => Promise<Written> }[] =
+    [];
+  for (const name of names) {
+    const prepared = DOCUMENTS[name](Reflect.get(body, name));
+    if (!prepared.ok) return NextResponse.json({ error: prepared.error }, { status: 400 });
+    patches.push({ name, patch: prepared.patch, write: prepared.write });
   }
-  return NextResponse.json({
-    notifications: await getNotificationPrefs(session.subject, { fresh: true }),
-  });
+
+  // A window longer than the organization keeps chats is a choice the
+  // person can see is wrong: refused, not quietly saved as something else.
+  const archive = patches.find((entry) => entry.name === 'chatArchive')?.patch;
+  const days: unknown = archive ? Reflect.get(archive, 'afterDays') : null;
+  if (typeof days === 'number') {
+    const org = await getOrgSettings();
+    const retention = org.ok ? org.val.chatRetentionDays : 0;
+    if (retention > 0 && days > retention) {
+      return NextResponse.json(
+        {
+          error: `Archiving cannot be longer than the organization keeps chats (${retention} days)`,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  for (const { name, write } of patches) {
+    const written = await write(session.subject);
+    if (!written.ok) {
+      logger.error('Could not save {document}: {error}', {
+        component: 'api/preferences',
+        subject: session.subject,
+        document: name,
+        error: written.err.message ?? written.err.type,
+      });
+      return NextResponse.json({ error: 'Could not save' }, { status: 500 });
+    }
+  }
+  return NextResponse.json(await readAll(session.subject));
 }

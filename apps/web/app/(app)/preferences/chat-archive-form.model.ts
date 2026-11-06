@@ -74,7 +74,7 @@ export function saveLabel(state: ChatArchiveState): string {
   return state.status === 'saving' ? 'Saving…' : 'Save';
 }
 
-/** What Save sends to PUT /api/preferences. */
+/** What Save sends to PATCH /api/preferences. */
 export function archiveRequest(days: number | null): { chatArchive: { afterDays: number | null } } {
   return { chatArchive: { afterDays: days } };
 }

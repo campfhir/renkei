@@ -62,6 +62,27 @@ const cache = new Map<string, CacheEntry>();
 const cacheKey = (subject: string) => `${subject}`;
 
 /**
+ * Merge some fields into one of this person's preference documents (one
+ * atomic write in the store: named fields replace theirs, the rest stay),
+ * then forget the cached copy. Idempotent, and two patches of different
+ * fields made at once both land.
+ */
+async function mergePrefs(
+  subject: string,
+  key: string,
+  patch: object,
+  cached: { delete(key: string): boolean }
+): Promise<Result<void, 'DB_ERROR'>> {
+  const written = await wrapAsync(
+    () => getDataStore().userPreferences.merge(subject, key, { ...patch }),
+    'DB_ERROR' as const
+  );
+  if (!written.ok) return written;
+  cached.delete(cacheKey(subject));
+  return ok();
+}
+
+/**
  * One person's notification preferences, defaults filled in.
  *
  * Cached briefly, for the caller that reads this on a hot path: the worker,
@@ -95,39 +116,12 @@ export async function getNotificationPrefs(
   return value;
 }
 
-/** Replace this person's notification preferences wholesale. */
-export async function setNotificationPrefs(
-  subject: string,
-  prefs: NotificationPrefs
-): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.set(subject, NOTIFICATIONS_KEY, prefs),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  cache.delete(cacheKey(subject));
-  return ok();
-}
-
-/**
- * Change some of this person's notification preferences: the fields given
- * replace their stored values, everything else stays (one atomic merge in
- * the store). Idempotent, and two patches of different fields made at once
- * both land.
- */
+/** Change some of this person's notification preferences: the fields given, nothing else (see mergePrefs). */
 export async function patchNotificationPrefs(
   subject: string,
   patch: Partial<NotificationPrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.merge(subject, NOTIFICATIONS_KEY, { ...patch }),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  cache.delete(cacheKey(subject));
-  return ok();
+  return mergePrefs(subject, NOTIFICATIONS_KEY, patch, cache);
 }
 
 const connectorCache = new Map<string, { value: ConnectorPrefs; expiresAt: number }>();
@@ -206,19 +200,12 @@ export async function getThemePrefs(
   return value;
 }
 
-/** Replace this person's theme preference wholesale. */
-export async function setThemePrefs(
+/** Change some of this person's theme: the fields given, nothing else (see mergePrefs). */
+export async function patchThemePrefs(
   subject: string,
-  prefs: ThemePrefs
+  patch: Partial<ThemePrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.set(subject, THEME_KEY, prefs),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  themeCache.delete(cacheKey(subject));
-  return ok();
+  return mergePrefs(subject, THEME_KEY, patch, themeCache);
 }
 
 const voiceCache = new Map<string, { value: VoicePrefs; expiresAt: number }>();
@@ -249,19 +236,12 @@ export async function getVoicePrefs(
   return value;
 }
 
-/** Replace this person's voice preferences wholesale. */
-export async function setVoicePrefs(
+/** Change some of this person's voice preferences: the fields given, nothing else (see mergePrefs). */
+export async function patchVoicePrefs(
   subject: string,
-  prefs: VoicePrefs
+  patch: Partial<VoicePrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.set(subject, VOICE_KEY, prefs),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  voiceCache.delete(cacheKey(subject));
-  return ok();
+  return mergePrefs(subject, VOICE_KEY, patch, voiceCache);
 }
 
 const imageCache = new Map<string, { value: ImagePrefs; expiresAt: number }>();
@@ -292,19 +272,12 @@ export async function getImagePrefs(
   return value;
 }
 
-/** Replace this person's image preferences wholesale. */
-export async function setImagePrefs(
+/** Change some of this person's image preference: the fields given, nothing else (see mergePrefs). */
+export async function patchImagePrefs(
   subject: string,
-  prefs: ImagePrefs
+  patch: Partial<ImagePrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.set(subject, IMAGE_KEY, prefs),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  imageCache.delete(cacheKey(subject));
-  return ok();
+  return mergePrefs(subject, IMAGE_KEY, patch, imageCache);
 }
 
 const coachMarkCache = new Map<string, { value: CoachMarkPrefs; expiresAt: number }>();
@@ -335,19 +308,12 @@ export async function getCoachMarkPrefs(
   return value;
 }
 
-/** Replace this person's coach-mark preference wholesale. */
-export async function setCoachMarkPrefs(
+/** Change some of this person's tour preference: the fields given, nothing else (see mergePrefs). */
+export async function patchCoachMarkPrefs(
   subject: string,
-  prefs: CoachMarkPrefs
+  patch: Partial<CoachMarkPrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.set(subject, COACH_MARKS_KEY, prefs),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  coachMarkCache.delete(cacheKey(subject));
-  return ok();
+  return mergePrefs(subject, COACH_MARKS_KEY, patch, coachMarkCache);
 }
 
 const chatArchiveCache = new Map<string, { value: ChatArchivePrefs; expiresAt: number }>();
@@ -377,17 +343,10 @@ export async function getChatArchivePrefs(
   return value;
 }
 
-/** Replace this person's chat archive preference wholesale. */
-export async function setChatArchivePrefs(
+/** Change some of this person's chat archive preference: the fields given, nothing else (see mergePrefs). */
+export async function patchChatArchivePrefs(
   subject: string,
-  prefs: ChatArchivePrefs
+  patch: Partial<ChatArchivePrefs>
 ): Promise<Result<void, 'DB_ERROR'>> {
-  const written = await wrapAsync(
-    () => getDataStore().userPreferences.set(subject, CHAT_ARCHIVE_KEY, prefs),
-    'DB_ERROR' as const
-  );
-  if (!written.ok) return written;
-
-  chatArchiveCache.delete(cacheKey(subject));
-  return ok();
+  return mergePrefs(subject, CHAT_ARCHIVE_KEY, patch, chatArchiveCache);
 }

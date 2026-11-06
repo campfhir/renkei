@@ -65,7 +65,7 @@ export function canSave(state: ImageModelFormState): boolean {
   return state.status !== 'saving' && state.modelId !== state.saved;
 }
 
-/** What Save PUTs to /api/preferences. */
+/** What Save PATCHes to /api/preferences. */
 export function requestBody(state: ImageModelFormState): { image: { modelId: string | null } } {
   return { image: { modelId: state.modelId } };
 }

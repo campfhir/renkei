@@ -49,7 +49,7 @@ export default function ImageModelForm({
     dispatch({ type: 'saving' });
     try {
       const response = await fetch(`/api/preferences`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -60,7 +60,7 @@ export default function ImageModelForm({
         dispatch({ type: 'save-failed' });
       }
     } catch (error) {
-      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
+      reportFetchFailure('PATCH', '/api/preferences', 0, 'Could not reach the server', error);
       dispatch({ type: 'save-failed' });
     }
   }
