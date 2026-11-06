@@ -204,6 +204,11 @@ export interface ChatView {
   updatedAt: string;
   /** The running turn, if one is in flight when the page loads. */
   activeTurn: TurnView | null;
+  /**
+   * The chat's model suspended on its tasks (tasks/wake.ts) and has not
+   * been woken yet: the thread watches for the turn that wakes it.
+   */
+  taskWait?: boolean;
   /** Files tools produced in this chat, oldest first. */
   artifacts: AttachmentView[];
   /**

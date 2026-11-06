@@ -32,6 +32,7 @@
  * permission (the deadline counts from the turn's start).
  */
 
+import { fireDueTaskWaits } from './tasks/wake';
 import { getDataStore } from '@renkei/db';
 import { resolveAgentLlm, type LlmContentBlock } from '@renkei/agent-llm';
 import { getOrgSettings } from '@renkei/settings';
@@ -346,6 +347,9 @@ export function startTurnRecovery(intervalMs = RECOVERY_SWEEP_MS): () => void {
     running = true;
     try {
       await recoverOrphanedTurns();
+      // Chats suspended on their tasks whose wait timed out (tasks/wake.ts):
+      // this process's own timer is gone if it restarted since.
+      await fireDueTaskWaits();
     } catch (error) {
       logger.error('chat turn recovery sweep failed: {message}', {
         component: 'chat/turn-recovery',

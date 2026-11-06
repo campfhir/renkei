@@ -18,6 +18,23 @@ import { logger } from '@/lib/logger';
 
 export interface LocalToolContext {
   subject: string;
+  /**
+   * The roles of the session the turn runs as: what a chat suspended on its
+   * tasks (tasks/wake.ts) is woken with. Absent, a woken turn has none.
+   */
+  roles?: string[];
+  /**
+   * Who is acting on the chat's task list (tasks/tools.ts): the chat's own
+   * model, or a sub-agent it handed work to. Absent means the chat's model.
+   */
+  taskActor?: 'assistant' | 'subagent';
+  /**
+   * Keeps the turn's tool surface (its MCP token) alive past the turn's own
+   * end, for work the turn started in the background (a background
+   * sub-agent, chat-delegate.ts); call the returned function when that
+   * work is done. Absent, nothing may outlive the turn.
+   */
+  holdTurn?: () => () => void;
   chatId: string;
   /** How this chat's rows are sealed and opened (access.cipher). */
   cipher: ContentCipher;
@@ -120,6 +137,18 @@ export interface LocalToolSet {
   /** This tool's own timeout override, or null when the turn's own limit applies. */
   timeoutMsFor(name: string): number | null;
   run(name: string, input: unknown, context: LocalToolContext): Promise<McpToolResult>;
+}
+
+/**
+ * A result's meta key asking the runner to end the turn once this round's
+ * results are written, as a reply with no calls would (chat_task_wait:
+ * the chat suspends until its tasks finish, tasks/wake.ts).
+ */
+export const END_TURN_META = 'endTurn';
+
+/** Whether a call's result asked the turn to end after its round. */
+export function endsTurn(result: McpToolResult): boolean {
+  return !result.isError && result.meta?.[END_TURN_META] === true;
 }
 
 export function textResult(text: string, meta: Record<string, unknown> = {}): McpToolResult {

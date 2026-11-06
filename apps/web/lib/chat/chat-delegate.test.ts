@@ -157,6 +157,9 @@ describe('chat_delegate', () => {
       'task',
       'instructions',
       'maxSteps',
+      // The chat's task list (tasks/tools.ts): the task it works, and whether it works in the background.
+      'task_id',
+      'background',
     ]);
   });
 

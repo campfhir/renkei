@@ -96,6 +96,7 @@ import { rowActions } from './chat-nav.model';
 import VoiceMenu from './voice-menu';
 import VoiceMode, { type VoiceActivity, type VoiceSendTicket } from './voice-mode';
 import SubagentModal from './subagent-modal';
+import TasksDialog from './tasks-dialog';
 import { useMediaQuery } from '@/lib/use-media-query';
 import { useElementWidth } from '@/lib/use-element-width';
 import { sendJsonFull } from '@/lib/fetch-json';
@@ -137,6 +138,9 @@ function parseEvent(data: string): ChatStreamEvent | null {
   }
   return null;
 }
+
+/** How often a chat suspended on its tasks looks for the turn that wakes it. */
+const TASK_WAKE_POLL_MS = 5_000;
 
 /** Under this much main column the code pane becomes the Code tab. */
 const SPLIT_MIN_PX = 1024;
@@ -197,6 +201,11 @@ export default function ChatThread({
   const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
   const [moving, setMoving] = useState(false);
+  // The task list (lib/chat/tasks/), opened from the More menu, and whether
+  // the chat's model is suspended on it: the thread then watches for the
+  // turn that wakes it, which no Send of this page started.
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [taskWait, setTaskWait] = useState(initialChat.taskWait === true);
   // The send path's state (chat-thread.model.ts): the queue, the prompt
   // being edited or resent, and the rename / delete / branch dialogs.
   const [sendState, sendDispatch] = useReducer(threadSendReducer, initialChat, initialThreadSend);
@@ -429,6 +438,10 @@ export default function ChatThread({
         source.close();
         setActiveTurnId(null);
         setCheckoutVersion((version) => version + 1);
+        // Did the reply end by suspending on its tasks (chat_task_wait)?
+        void chatClient.getTasks(chat.id).then((result) => {
+          if (result.data) setTaskWait(result.data.wait !== null);
+        });
         // The sidebar's title and ordering come from the server.
         router.refresh();
       }
@@ -444,6 +457,45 @@ export default function ChatThread({
     };
     return () => source.close();
   }, [chat, activeTurnId, router]);
+
+  // A chat suspended on its tasks is woken by the server (tasks/wake.ts):
+  // a background sub-agent finished, a task was completed, the wait timed
+  // out. Ask now and then, and follow the woken turn like one of our own.
+  useEffect(() => {
+    if (running || !taskWait) return;
+    let cancelled = false;
+    const look = async () => {
+      const result = await chatClient.getTasks(chat.id);
+      if (cancelled || !result.data) return;
+      const { wait, activeTurn } = result.data;
+      if (wait && !(activeTurn && activeTurn.status === 'running')) return;
+      const fresh = await chatClient.getChat(chat.id);
+      if (cancelled || !fresh.data) return;
+      // Settled before any state changes: a change re-runs this effect,
+      // and its cleanup would cancel this look halfway.
+      const turn = fresh.data.chat.activeTurn ?? null;
+      if (turn && turn.status === 'running') {
+        dispatch({
+          type: 'snapshot',
+          turn,
+          messages: fresh.data.messages.filter((message) => message.turnId === turn.id),
+        });
+        setActiveTurnId(turn.id);
+      } else {
+        // Woken and already answered between two looks: take the rows we lack.
+        const known = new Set(state.messages.map((message) => message.id));
+        for (const message of fresh.data.messages) {
+          if (!known.has(message.id)) dispatch({ type: 'row', message });
+        }
+      }
+      setTaskWait(fresh.data.chat.taskWait === true);
+    };
+    const timer = setInterval(() => void look(), TASK_WAKE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [running, taskWait, chat.id, state.messages]);
 
   useEffect(() => {
     runningRef.current = running;
@@ -932,6 +984,7 @@ export default function ChatThread({
   const branch = branchOverride ?? liveBranch;
   const overflow: OverflowItem[] = [
     { label: 'New chat', icon: ICONS.plus, onSelect: () => void startNewChat() },
+    { label: 'Tasks', icon: ICONS.checkboxChecked, onSelect: () => setTasksOpen(true) },
   ];
   // A temporary chat stands outside projects (lib/chat/temporary.ts).
   if (!chat.projectId) {
@@ -1517,6 +1570,14 @@ export default function ChatThread({
             router.refresh();
           }}
           onClose={() => setMoving(false)}
+        />
+      ) : null}
+      {tasksOpen ? (
+        <TasksDialog
+          chatId={chat.id}
+          chatTitle={chat.title}
+          isOwner={isOwner}
+          onClose={() => setTasksOpen(false)}
         />
       ) : null}
       {share ? (

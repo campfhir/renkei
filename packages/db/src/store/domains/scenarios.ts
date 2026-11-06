@@ -41,6 +41,7 @@ import { chatThreadScenarios } from './chat-threads/scenarios';
 import { chatProjectScenarios } from './chat-projects/scenarios';
 import { promptLibraryScenarios } from './prompt-libraries/scenarios';
 import { userMemoryScenarios } from './user-memory/scenarios';
+import { chatTaskScenarios } from './chat-tasks/scenarios';
 import { artifactScenarios } from './artifacts/scenarios';
 import { codeProjectScenarios } from './code-projects/scenarios';
 import { codeTemplateScenarios } from './code-templates/scenarios';
@@ -128,6 +129,7 @@ export const SCENARIOS: Scenario<DataStore>[] = [
   ...chatProjectScenarios,
   ...promptLibraryScenarios,
   ...userMemoryScenarios,
+  ...chatTaskScenarios,
   ...artifactScenarios,
   ...codeProjectScenarios,
   ...codeTemplateScenarios,

@@ -30,6 +30,7 @@ import type { McpClient, McpToolResult } from '@renkei/mcp-client';
 import {
   createLocalToolSet,
   errorResult,
+  textResult,
   type LocalTool,
   type LocalToolContext,
 } from './local-tools';
@@ -46,6 +47,12 @@ import {
   type SubagentModelChoice,
 } from './subagent';
 import { MOCKUP_TOOL } from '@/lib/mockups/request';
+import { logger } from '@/lib/logger';
+import { onShutdown } from '@/lib/shutdown';
+import { descendantsOf, findTask, isFinished, taskRef, type ChatTaskView } from './tasks/graph';
+import { changeTask, listTasks } from './tasks/store';
+import { subagentTaskTools } from './tasks/tools';
+import { wakeSoon } from './tasks/wake';
 import { CHAT_DELEGATE_TOOL } from './subagent-tools';
 import { FIND_TOOLS_NAME, findToolsTool } from './tool-discovery';
 import type { DiscoverableTool } from './tool-surface';
@@ -69,6 +76,17 @@ const PREVIEW_SUFFIX = '_preview';
 
 const SUB_AGENT_BRIEF = `You are a sub-agent working on behalf of an assistant that is talking with a person in their organization's workspace. The assistant gave you one task and will read your report; the person never sees this conversation. Use the tools to do the task yourself — search, read, compare, count — and answer from what comes back rather than from memory. Every tool here only reads: you cannot create, change or send anything, or ask anyone, so do not try; note what would need doing and leave it to the assistant. Do not ask questions — decide, act, and report. Your final message is your report: what you found, with the identifiers, names, dates and figures the assistant will need to answer (issue keys, page titles, who said what, links the tools gave), what you looked at, and anything you could not find or are unsure of. Be concrete and brief.`;
 
+/** What a sub-agent working one of the chat's tasks is told about it (tasks/tools.ts). */
+function taskNote(task: ChatTaskView): string {
+  return `You are working task ${taskRef(task)} of the assistant's task list: “${task.title}”${
+    task.detail ? ` (${task.detail})` : ''
+  }. Besides reading, you may keep that list: record the steps you take as subtasks of ${taskRef(
+    task
+  )} (chat_task_create with parent ${task.number}), report progress on it with chat_task_update, and complete or fail your subtasks as you go. Your final report completes ${taskRef(
+    task
+  )} on its own; if the task cannot be done, say so plainly in the report and it is marked failed.`;
+}
+
 const DISCOVERY_NOTE = `More of the organization's connectors are available than the tools listed: call ${FIND_TOOLS_NAME} with a few words for what you need, or a connector name, and matching tools become callable at once.`;
 
 /** What the turn resolved for the chat, as far as a reading sub-agent needs it. */
@@ -91,6 +109,54 @@ export interface ChatDelegateOptions {
   models?: SubagentModelChoice[];
   /** How a chosen config becomes a provider — resolveAgentLlm, or a fake in tests. */
   resolve?: ResolveSubagentLlm;
+}
+
+/** Where a sub-agent's answer turns from the run's counts to its report (subagent.ts). */
+const REPORT_MARKER = '\n\nReport:\n';
+
+/**
+ * The sub-agent reported (or failed): its task completes with the report,
+ * or fails with the reason — unless it was finished meanwhile (the
+ * sub-agent's own call, the person's cancel). Then any wait looks again.
+ */
+async function settleLinkedTask(
+  context: LocalToolContext,
+  taskId: string,
+  outcome: McpToolResult
+): Promise<void> {
+  const tasks = await listTasks(context.chatId, context.cipher);
+  const task = tasks.find((t) => t.id === taskId);
+  if (task && !isFinished(task.status)) {
+    const said = outcome.content
+      .flatMap((block) => (block.type === 'text' ? [block.text] : []))
+      .join('\n');
+    // The task keeps the report itself, not the run's counts above it (subagent.ts's report()).
+    const marker = said.indexOf(REPORT_MARKER);
+    const report = (marker >= 0 ? said.slice(marker + REPORT_MARKER.length) : said).trim();
+    // Subtasks the sub-agent left open would refuse the completion: they end with it.
+    for (const sub of descendantsOf(taskId, tasks).filter((t) => !isFinished(t.status))) {
+      await changeTask(context.chatId, context.cipher, sub.id, { status: 'cancelled' }, new Date());
+    }
+    const settled = await changeTask(
+      context.chatId,
+      context.cipher,
+      taskId,
+      {
+        status: outcome.isError ? 'failed' : 'completed',
+        result:
+          report || (outcome.isError ? 'The sub-agent failed.' : 'The sub-agent reported nothing.'),
+      },
+      new Date()
+    );
+    if (!settled.ok) {
+      logger.warn('a sub-agent’s task could not be settled: {reason}', {
+        component: 'chat/delegate',
+        chatId: context.chatId,
+        reason: settled.reason,
+      });
+    }
+  }
+  wakeSoon(context.chatId);
 }
 
 /** A connector tool a sub-agent may have: one that only reads, and is not a preview card. */
@@ -163,6 +229,16 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
           maximum: CHAT_DELEGATE_MAX_STEPS,
           description: `Model calls the sub-agent may make (default ${CHAT_DELEGATE_DEFAULT_STEPS}).`,
         },
+        task_id: {
+          type: ['string', 'integer'],
+          description:
+            'A task of this chat’s task list (its number or id) that this sub-agent works: it goes in progress, the sub-agent can add subtasks and progress to it, and the report completes it (or fails it).',
+        },
+        background: {
+          type: 'boolean',
+          description:
+            'Needs task_id. Return at once and let the sub-agent work while you carry on; its task completes when it reports. Wait for it with chat_task_wait.',
+        },
         ...modelArgumentSchema(models),
       },
       required: ['task'],
@@ -187,7 +263,32 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
       );
       if (!picked.ok) return picked.error;
       const instructions = str(input.instructions).trim();
-      const set = createLocalToolSet(discovery ? [...local, discovery] : local);
+      // The task this sub-agent works, when the call names one: it must be
+      // open and free to start, and it goes in progress now.
+      let linked: ChatTaskView | null = null;
+      if (input.task_id !== undefined && input.task_id !== null && input.task_id !== '') {
+        const tasks = await listTasks(context.chatId, context.cipher);
+        const found = findTask(tasks, input.task_id);
+        if (!found) return errorResult(`No task ${String(input.task_id)} in this chat.`);
+        if (isFinished(found.status))
+          return errorResult(`${taskRef(found)} is already ${found.status}.`);
+        const started = await changeTask(
+          context.chatId,
+          context.cipher,
+          found.id,
+          { status: 'in_progress' },
+          new Date()
+        );
+        if (!started.ok) return errorResult(started.reason);
+        linked = started.task;
+      }
+      const background = input.background === true;
+      if (background && !linked)
+        return errorResult(
+          'A background sub-agent needs a task to report to: create one with chat_task_create and pass its number as task_id.'
+        );
+      const taskTools = linked ? subagentTaskTools() : [];
+      const set = createLocalToolSet([...local, ...taskTools, ...(discovery ? [discovery] : [])]);
       // The connector tools callable right now: what was offered up front,
       // plus what find_tools surfaces as the run goes.
       const connector = new Map(eager.map((tool) => [tool.name, tool]));
@@ -202,6 +303,7 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
             toolUseId,
             // A sub-agent's own tools record nothing further: one run, one record.
             subagents: undefined,
+            taskActor: 'subagent',
           });
           // Only reads were searchable, so anything found is a read.
           for (const found of discoveredToolsOfMeta(outcome.meta)) connector.set(found.name, found);
@@ -224,21 +326,61 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
         SUB_AGENT_BRIEF +
         `\n\nNow is about ${new Date().toISOString()} (UTC). For an exact time, a weekday or a date relative to today, call resolve_date when it is among your tools rather than working it out.` +
         (discovery ? `\n\n${DISCOVERY_NOTE}` : '') +
+        (linked ? `\n\n${taskNote(linked)}` : '') +
         (instructions ? `\n\nInstructions from the assistant:\n${instructions}` : '');
-      return runSubagent({
-        llm: picked.llm,
-        system,
-        task,
-        instructions: instructions || null,
-        readOnly: true,
-        maxSteps: stepsOf(input.maxSteps, CHAT_DELEGATE_DEFAULT_STEPS, CHAT_DELEGATE_MAX_STEPS),
-        wallClockMs: CHAT_DELEGATE_WALL_CLOCK_MS,
-        tools: {
-          defs: () => [...set.defs(), ...connector.values()],
-          run,
-        },
-        context,
-      });
+      const go = (runContext: LocalToolContext) =>
+        runSubagent({
+          llm: picked.llm,
+          system,
+          task,
+          instructions: instructions || null,
+          readOnly: true,
+          maxSteps: stepsOf(input.maxSteps, CHAT_DELEGATE_DEFAULT_STEPS, CHAT_DELEGATE_MAX_STEPS),
+          wallClockMs: CHAT_DELEGATE_WALL_CLOCK_MS,
+          tools: {
+            defs: () => [...set.defs(), ...connector.values()],
+            run: (name, args, toolUseId) => run(name, args, toolUseId),
+          },
+          context: runContext,
+        });
+      if (!linked) return go(context);
+      const taskId = linked.id;
+      if (!background) {
+        const outcome = await go(context);
+        await settleLinkedTask(context, taskId, outcome);
+        return outcome;
+      }
+      // In the background: the turn may end (and suspend on chat_task_wait)
+      // while this runs. Its own stop is the process's shutdown, never the
+      // turn's Stop; the turn's tool surface is held open until it is done.
+      const stop = new AbortController();
+      const unsubscribe = onShutdown(() => stop.abort());
+      const release = context.holdTurn?.() ?? (() => {});
+      void go({ ...context, signal: stop.signal })
+        .then((outcome) => settleLinkedTask(context, taskId, outcome))
+        .catch(async (error: unknown) => {
+          logger.warn('background sub-agent failed: {error}', {
+            component: 'chat/delegate',
+            subject: context.subject,
+            chatId: context.chatId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          await settleLinkedTask(
+            context,
+            taskId,
+            errorResult('The sub-agent stopped unexpectedly.')
+          );
+        })
+        .catch(() => {})
+        .finally(() => {
+          unsubscribe();
+          release();
+        });
+      return textResult(
+        `Started a background sub-agent on ${taskRef(linked)} “${linked.title}”. It completes the task when it reports. ` +
+          'Carry on with other work, or call chat_task_wait to suspend until it finishes.',
+        { taskId }
+      );
     },
   };
 }

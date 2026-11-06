@@ -100,6 +100,8 @@ import { notifyChatReplyDesktop } from './reply-notification';
 import { createSubagentRecorder } from './subagent-runs';
 import type { WidgetDecisionState } from './views';
 import { temporaryUnavailableTools, withoutMemoryConnectors } from './temporary';
+import { taskTools } from './tasks/tools';
+import { wakeSoon } from './tasks/wake';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -501,6 +503,9 @@ export async function executeChatTurn(input: ExecuteTurnInput): Promise<void> {
     clearInterval(preparing);
     unsubscribeShutdown();
     settle();
+    // A wait that came due while this turn ran (a background sub-agent
+    // finished, the person completed a task) was left for now: look again.
+    if (!suspend.signal.aborted) wakeSoon(input.chat.id);
   }
 }
 
@@ -539,6 +544,30 @@ async function executeTurnBody(
   // The turn is over (or never got going): a tool surface still resolving
   // then releases itself rather than handing a release to nobody.
   let released = false;
+  // Work the turn started in the background (a background sub-agent,
+  // chat-delegate.ts) holds the tool surface open past the turn's end;
+  // the last of them to finish releases it.
+  let holds = 0;
+  let turnOver = false;
+  const releaseUnlessHeld = async () => {
+    if (!turnOver || holds > 0 || released) return;
+    released = true;
+    await release();
+  };
+  const holdTurn = () => {
+    holds += 1;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      holds -= 1;
+      void releaseUnlessHeld().catch((error: unknown) =>
+        log('chat tool surface release failed: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+    };
+  };
   // Everything before the model's first token is time the person waits
   // in silence (a voice turn most of all), so the reads below run side by
   // side wherever one does not feed another, and the whole is logged.
@@ -710,6 +739,8 @@ async function executeTurnBody(
     const chatSummary = await latestChatSummary(input.chat.id, input.cipher);
     const localContext = {
       subject: input.session.subject,
+      roles: input.session.roles,
+      holdTurn,
       chatId: input.chat.id,
       cipher: input.cipher,
       ...(projectCipher ? { projectCipher } : {}),
@@ -784,6 +815,9 @@ async function executeTurnBody(
         ...(auto ? [taskCompleteTool()] : []),
       ]
     ).filter((tool) => !denied.has(tool.def.name));
+    // The task list (tasks/tools.ts) is built in: every chat has it, and
+    // no preference blocks it — it acts only on the chat's own plan.
+    if (!input.localTools) baseLocalTools.push(...taskTools());
     // Offered even with nothing to find: a new chat starts with core
     // connectors only, and its model should still find the tool when asked.
     const discoveryTool = findToolsTool(surface.discoverable, {
@@ -834,6 +868,8 @@ async function executeTurnBody(
         hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
         voice: input.voice === true,
         hasDelegate: delegate !== null,
+        // A caller with its own local tools offers only those.
+        hasTasks: !input.localTools,
         // outlook_search_users is a `microsoft` tool, not a core connector, so
         // it is almost always in `discoverable` rather than offered up front —
         // the brief has to work whichever bucket it is in.
@@ -1027,8 +1063,8 @@ async function executeTurnBody(
     });
     channel.close();
   } finally {
-    released = true;
-    await release();
+    turnOver = true;
+    await releaseUnlessHeld();
   }
 }
 

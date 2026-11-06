@@ -194,6 +194,7 @@ export const EXPECTED_MIGRATIONS = [
   '168-document-usage',
   '169-sandbox-scope',
   '170-temporary-chats',
+  '171-chat-tasks',
 ];
 
 export interface MigrationStatus {
