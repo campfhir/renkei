@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'fixed',
+        title: 'Fewer stalled chat turns and clearer worker errors',
+        detail:
+          'Chat turns that ran several tools at once no longer hit a database error while reporting progress, and the connector workers now log the real reason a request failed instead of an internal logging error.',
+      },
+      {
+        kind: 'fixed',
         title: 'Old email-indexing jobs cleared out',
         detail:
           'Email jobs left over from before mail stopped being indexed are removed, so they no longer fail over and over in the background or sit in the queue holding copies of messages.',
