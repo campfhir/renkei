@@ -225,14 +225,14 @@ export default function TasksDialog({
               No tasks yet. When the assistant plans work of several steps, its tasks show here.
             </p>
           ) : (
-            <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1">
+            <div className="max-h-[60vh] space-y-3 overflow-y-auto pr-1">
               {sections.map((section) => (
                 <section key={section.key} data-tasks-section={section.key}>
-                  <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
                     {section.label}{' '}
                     <span className="font-normal normal-case">({section.tasks.length})</span>
                   </h3>
-                  <ul className="space-y-1.5">
+                  <ul className="divide-y divide-gray-100 overflow-hidden rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
                     {section.tasks.map((task) => (
                       <TaskRow
                         key={task.id}
@@ -273,81 +273,45 @@ function TaskRow({
   onAct: (action: TaskAction) => void;
 }) {
   const state = displayState(task, tasks);
-  const facts = taskFacts(task, tasks);
   const finishedAt = when(task.finishedAt);
+  const open = !['completed', 'failed', 'cancelled'].includes(task.status);
+  // One quiet line under the title: parent, dependencies, progress note or result, when.
+  const meta = [
+    ...taskFacts(task, tasks),
+    ...(task.progressNote && open ? [task.progressNote] : []),
+    ...(finishedAt ? [finishedAt] : []),
+  ];
+  const progress = task.status === 'in_progress' && task.progress !== null ? task.progress : null;
   return (
     <li
       data-task={task.number}
-      className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800"
+      className="group/row px-2.5 py-1.5"
+      title={task.detail ?? undefined}
     >
-      <div className="flex items-start gap-2">
-        <span className="mt-0.5 shrink-0 font-mono text-xs text-gray-400">{taskRef(task)}</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span
-              className={`break-words font-medium text-gray-900 dark:text-gray-100 ${
-                task.status === 'cancelled' ? 'line-through opacity-60' : ''
-              }`}
-            >
-              {task.title}
-            </span>
-            <span
-              className={`rounded-full px-1.5 py-0.5 text-[11px] font-medium ${STATE_STYLE[state]}`}
-            >
-              {STATE_LABELS[state]}
-            </span>
-            {task.createdBy === 'subagent' ? (
-              <span className="text-[11px] text-gray-400">by a sub-agent</span>
-            ) : null}
-          </div>
-          {facts.length > 0 || finishedAt ? (
-            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-              {[...facts, ...(finishedAt ? [`finished ${finishedAt}`] : [])].join(' · ')}
-            </p>
-          ) : null}
-          {task.detail ? (
-            <p className="mt-1 whitespace-pre-wrap break-words text-xs text-gray-600 dark:text-gray-300">
-              {task.detail}
-            </p>
-          ) : null}
-          {task.status === 'in_progress' && task.progress !== null ? (
-            <div className="mt-1.5 flex items-center gap-2" aria-label={`${task.progress}% done`}>
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800">
-                <div
-                  className="h-full rounded-full bg-indigo-500"
-                  style={{ width: `${task.progress}%` }}
-                />
-              </div>
-              <span className="text-[11px] tabular-nums text-gray-500">{task.progress}%</span>
-            </div>
-          ) : null}
-          {task.progressNote && !['completed', 'failed', 'cancelled'].includes(task.status) ? (
-            <p className="mt-1 break-words text-xs italic text-gray-500 dark:text-gray-400">
-              {task.progressNote}
-            </p>
-          ) : null}
-          {task.result ? (
-            <details className="group mt-1 text-xs" data-task-result>
-              <summary className="flex cursor-pointer list-none items-start gap-1 text-gray-600 dark:text-gray-300 [&::-webkit-details-marker]:hidden">
-                <Icon
-                  path={ICONS.chevron}
-                  className="mt-0.5 h-3 w-3 shrink-0 text-gray-400 group-open:rotate-90"
-                />
-                <span className="min-w-0 flex-1 truncate group-open:whitespace-normal">
-                  <span className="font-medium">
-                    {task.status === 'completed' ? 'Result' : 'Why'}:
-                  </span>{' '}
-                  <span className="group-open:hidden">{task.result.split('\n')[0]}</span>
-                </span>
-              </summary>
-              <p className="mt-1 whitespace-pre-wrap break-words pl-4 text-gray-700 dark:text-gray-300">
-                {task.result}
-              </p>
-            </details>
-          ) : null}
-        </div>
+      <div className="flex items-center gap-2">
+        <span className="w-6 shrink-0 font-mono text-[11px] text-gray-400">{taskRef(task)}</span>
+        <span
+          className={`min-w-0 flex-1 truncate text-[13px] text-gray-900 dark:text-gray-100 ${
+            task.status === 'cancelled' ? 'line-through opacity-60' : ''
+          }`}
+        >
+          {task.title}
+        </span>
+        {progress !== null ? (
+          <span
+            className="hidden h-1 w-12 shrink-0 overflow-hidden rounded-full bg-gray-200 sm:block dark:bg-gray-800"
+            aria-label={`${progress}% done`}
+          >
+            <span className="block h-full bg-indigo-500" style={{ width: `${progress}%` }} />
+          </span>
+        ) : null}
+        <span
+          className={`shrink-0 rounded-full px-1.5 text-[10px] font-medium leading-4 ${STATE_STYLE[state]}`}
+        >
+          {progress !== null ? `${progress}%` : STATE_LABELS[state]}
+        </span>
         {actions.length > 0 ? (
-          <div className="flex shrink-0 gap-0.5">
+          <span className="-mr-1 flex shrink-0">
             {actions.map((action) => (
               <button
                 key={action}
@@ -356,16 +320,40 @@ function TaskRow({
                 aria-label={`${ACTION_LABEL[action]} ${taskRef(task)}`}
                 title={ACTION_LABEL[action]}
                 onClick={() => onAct(action)}
-                className={`rounded p-1.5 text-gray-500 hover:bg-gray-100 disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-800 ${
-                  action === 'delete' ? 'hover:text-red-600' : ''
+                className={`rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 disabled:opacity-40 dark:hover:bg-gray-800 dark:hover:text-gray-200 ${
+                  action === 'delete' ? 'hover:text-red-600 dark:hover:text-red-400' : ''
                 } ${pendingAction === action ? 'motion-safe:animate-pulse' : ''}`}
               >
-                <Icon path={ACTION_ICON[action]} className="h-4 w-4" />
+                <Icon path={ACTION_ICON[action]} className="h-3.5 w-3.5" />
               </button>
             ))}
-          </div>
+          </span>
         ) : null}
       </div>
+      {meta.length > 0 || task.result ? (
+        <div className="ml-8 min-w-0 text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+          {meta.length > 0 ? <p className="truncate">{meta.join(' · ')}</p> : null}
+          {task.result ? (
+            <details className="group" data-task-result>
+              <summary className="flex cursor-pointer list-none items-center gap-1 [&::-webkit-details-marker]:hidden">
+                <Icon
+                  path={ICONS.chevron}
+                  className="h-2.5 w-2.5 shrink-0 text-gray-400 group-open:rotate-90"
+                />
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium text-gray-600 dark:text-gray-300">
+                    {task.status === 'completed' ? 'Result' : 'Why'}:
+                  </span>{' '}
+                  <span className="group-open:hidden">{task.result.split('\n')[0]}</span>
+                </span>
+              </summary>
+              <p className="mt-0.5 whitespace-pre-wrap break-words pl-3.5 text-gray-700 dark:text-gray-300">
+                {task.result}
+              </p>
+            </details>
+          ) : null}
+        </div>
+      ) : null}
     </li>
   );
 }
