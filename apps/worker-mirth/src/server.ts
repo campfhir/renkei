@@ -155,7 +155,7 @@ function sendError(
   context?: { op: string; instanceId?: string; subject?: string }
 ): void {
   if (!UNLOGGED_ERRORS.has(type)) {
-    const log = type === 'store' ? logger.error : logger.warn;
+    const log = type === 'store' ? logger.error.bind(logger) : logger.warn.bind(logger);
     log('mirth {op} failed ({type}): {error}', {
       component: COMPONENT,
       op: context?.op ?? 'request',

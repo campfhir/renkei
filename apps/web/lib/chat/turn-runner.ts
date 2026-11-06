@@ -803,12 +803,17 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     tick += 1;
     if (dirty) void flush();
     if (tick % 8 === 0) {
-      void store.heartbeat(iterations, stage).then((requested) => {
-        if (requested) {
-          cancelRequested = true;
-          channel.requestCancel();
-        }
-      });
+      // A failed heartbeat is skipped, not thrown: the next tick tries again,
+      // and an unhandled rejection here would take the server down.
+      void store
+        .heartbeat(iterations, stage)
+        .then((requested) => {
+          if (requested) {
+            cancelRequested = true;
+            channel.requestCancel();
+          }
+        })
+        .catch(() => {});
     }
   }, limits.flushMs);
   channel.onCancel(() => {

@@ -291,7 +291,15 @@ export async function heartbeatTurn(
   iterations: number,
   stage: string | null
 ): Promise<boolean> {
-  return getDataStore().chatThreads.heartbeatTurn(turnId, iterations, stage);
+  return getDataStore().chatThreads.heartbeatTurn(turnId, iterations, clampStage(stage));
+}
+
+/** `chat_turns.stage` is varchar(64); a parallel tool group's joined names can exceed it. */
+export const STAGE_MAX_LENGTH = 64;
+
+export function clampStage(stage: string | null): string | null {
+  if (stage === null || stage.length <= STAGE_MAX_LENGTH) return stage;
+  return `${stage.slice(0, STAGE_MAX_LENGTH - 1)}…`;
 }
 
 export async function finishTurn(

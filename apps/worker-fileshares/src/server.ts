@@ -103,7 +103,7 @@ function sendServiceError(
   context: { op: string; shareId: string; subject?: string; path?: string }
 ): void {
   if (!UNLOGGED_SERVICE_ERRORS.has(error.type)) {
-    const log = error.type === 'store' ? logger.error : logger.warn;
+    const log = error.type === 'store' ? logger.error.bind(logger) : logger.warn.bind(logger);
     log('fileshare {op} failed ({type}): {error}', {
       component: COMPONENT,
       ...context,

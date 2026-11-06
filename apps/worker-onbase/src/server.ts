@@ -162,7 +162,7 @@ function sendError(
   context?: { op: string; subject?: string; [key: string]: unknown }
 ): void {
   if (!UNLOGGED_ERRORS.has(type)) {
-    const log = type === 'store' ? logger.error : logger.warn;
+    const log = type === 'store' ? logger.error.bind(logger) : logger.warn.bind(logger);
     log('onbase {op} failed ({type}): {error}', {
       component: COMPONENT,
       ...context,
