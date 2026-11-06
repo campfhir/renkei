@@ -49,6 +49,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-06',
     entries: [
       {
+        kind: 'added',
+        title: 'Download all your data',
+        detail:
+          'Preferences → Your data downloads every chat you own, your memory, projects and preferences as a zip, or a short profile of you to give another assistant such as ChatGPT, Claude or Gemini.',
+      },
+      {
+        kind: 'added',
+        title: 'Import chats and memories from ChatGPT, Claude or Gemini',
+        detail:
+          'Bring in a ChatGPT or Claude data export, Gemini activity from Google Takeout, or a pasted list of things about you. You see what was found before anything is added, and imported chats can be continued like any other.',
+      },
+      {
+        kind: 'changed',
+        title: 'Each preferences card saves on its own',
+        detail:
+          'The notification settings no longer share one Save at the bottom of the page: a card shows its own Save once you change something in it, and saving it leaves your unsaved changes in other cards alone.',
+      },
+      {
         kind: 'fixed',
         title: 'Fewer stalled chat turns and clearer worker errors',
         detail:
