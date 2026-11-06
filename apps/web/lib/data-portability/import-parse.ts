@@ -81,34 +81,109 @@ const ENTITIES: Record<string, string> = {
   nbsp: ' ',
 };
 
-/** HTML (a Takeout reply) as plain text: paragraphs and list items on lines of their own. */
+/** Tags that end a line of text: a block closing, or a line break. */
+const LINE_ENDING_TAGS = new Set([
+  'p',
+  'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'ul',
+  'ol',
+  'pre',
+  'blockquote',
+  'tr',
+]);
+
+/** One HTML entity as its character, or the entity as written when unknown. */
+function decodeEntity(whole: string, code: string): string {
+  if (code.startsWith('#x') || code.startsWith('#X')) {
+    const point = parseInt(code.slice(2), 16);
+    return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
+  }
+  if (code.startsWith('#')) {
+    const point = parseInt(code.slice(1), 10);
+    return Number.isFinite(point) && point <= 0x10ffff ? String.fromCodePoint(point) : whole;
+  }
+  return ENTITIES[code.toLowerCase()] ?? whole;
+}
+
+/**
+ * HTML (a Takeout reply) as plain text: paragraphs and list items on lines
+ * of their own. One pass over the characters rather than a chain of tag
+ * regexes: every tag is dropped wherever it starts, the contents of
+ * <script> and <style> go with them, and entities are decoded once, last,
+ * so a decoded `<` stays text. The result is only ever stored and shown as
+ * text (a chat message), never as markup.
+ */
 export function htmlToText(html: string): string {
-  return html
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<li[^>]*>/gi, '\n- ')
-    .replace(/<\/(p|div|h[1-6]|ul|ol|pre|blockquote|tr)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (whole, code: string) => {
-      if (code.startsWith('#x') || code.startsWith('#X')) {
-        return String.fromCodePoint(parseInt(code.slice(2), 16));
-      }
-      if (code.startsWith('#')) return String.fromCodePoint(parseInt(code.slice(1), 10));
-      return ENTITIES[code.toLowerCase()] ?? whole;
-    })
-    .replace(/[ \t]+\n/g, '\n')
+  let text = '';
+  let skipping: string | null = null;
+  let at = 0;
+  while (at < html.length) {
+    const open = html.indexOf('<', at);
+    if (open < 0) {
+      if (!skipping) text += html.slice(at);
+      break;
+    }
+    if (!skipping) text += html.slice(at, open);
+    const close = html.indexOf('>', open + 1);
+    if (close < 0) break;
+    const inner = html
+      .slice(open + 1, close)
+      .trim()
+      .toLowerCase();
+    const closing = inner.startsWith('/');
+    const name = (closing ? inner.slice(1) : inner).split(/[\s/]/, 1)[0];
+    at = close + 1;
+    if (skipping) {
+      if (closing && name === skipping) skipping = null;
+      continue;
+    }
+    if (!closing && (name === 'script' || name === 'style')) skipping = name;
+    else if (name === 'br') text += '\n';
+    else if (name === 'li' && !closing) text += '\n- ';
+    else if (closing && LINE_ENDING_TAGS.has(name)) text += '\n';
+  }
+  return text
+    .replace(/&(#\d{1,7}|#x[0-9a-f]{1,6}|[a-z]{2,8});/gi, decodeEntity)
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Text split after each run of sentence-ending punctuation (and any closing quote or bracket). */
+function sentencesOf(text: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  let at = 0;
+  while (at < text.length) {
+    if ('.!?'.includes(text[at])) {
+      let end = at + 1;
+      while (end < text.length && '.!?"\')]'.includes(text[end])) end += 1;
+      out.push(text.slice(start, end));
+      start = end;
+      at = end;
+    } else {
+      at += 1;
+    }
+  }
+  if (start < text.length) out.push(text.slice(start));
+  return out;
 }
 
 /** Text cut into pieces of at most `max` characters, at sentence ends where it can. */
 export function chunkText(text: string, max: number): string[] {
   const flat = text.replace(/\s+/g, ' ').trim();
   if (flat.length <= max) return flat ? [flat] : [];
-  const sentences = flat.match(/[^.!?]+[.!?]+["')\]]*\s*|[^.!?]+$/g) ?? [flat];
   const pieces: string[] = [];
   let current = '';
-  for (const raw of sentences) {
+  for (const raw of sentencesOf(flat)) {
     const sentence = raw.trim();
     if (!sentence) continue;
     if (sentence.length > max) {

@@ -35,14 +35,14 @@ export interface ExportFile {
 
 /** A name safe in any file system: lower-case words joined by dashes, at most 48 characters. */
 export function slugOf(text: string | null): string {
-  const slug = (text ?? '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48)
-    .replace(/-+$/g, '');
+  const words =
+    (text ?? '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) ?? [];
+  let slug = words.join('-').slice(0, 48);
+  while (slug.endsWith('-')) slug = slug.slice(0, -1);
   return slug || 'untitled';
 }
 

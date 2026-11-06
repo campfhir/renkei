@@ -361,6 +361,26 @@ describe('text helpers', () => {
     );
   });
 
+  it('drops script and style contents, however their closing tag is spaced or cased', () => {
+    expect(htmlToText('<p>a</p><script>alert(1)</script ><STYLE>b{}</STYLE>c')).toBe('a\nc');
+    expect(htmlToText('<script type="x">never</script\n>after')).toBe('after');
+  });
+
+  it('keeps an encoded tag as the text it spells, decoded once', () => {
+    expect(htmlToText('&lt;script&gt;x&lt;/script&gt; &amp;lt;')).toBe('<script>x</script> &lt;');
+  });
+
+  it('drops an unclosed tag and everything after it, and stray brackets in text survive', () => {
+    expect(htmlToText('1 > 0 <b>bold</b> <i')).toBe('1 > 0 bold');
+  });
+
+  it('finishes quickly on long hostile input', () => {
+    const started = performance.now();
+    htmlToText(`${' '.repeat(50_000)}x${'<'.repeat(20_000)}`);
+    chunkText('a'.repeat(100_000), 500);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
   it('cuts a sentence with no stops into pieces of the limit', () => {
     expect(chunkText('x'.repeat(25), 10)).toEqual(['x'.repeat(10), 'x'.repeat(10), 'x'.repeat(5)]);
   });

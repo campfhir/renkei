@@ -87,6 +87,8 @@ describe('file names', () => {
     expect(slugOf(null)).toBe('untitled');
     expect(slugOf('???')).toBe('untitled');
     expect(slugOf('a'.repeat(60))).toHaveLength(48);
+    expect(slugOf(`${'a'.repeat(47)} b`)).toBe('a'.repeat(47));
+    expect(slugOf(`--x--${'-'.repeat(50_000)}`)).toBe('x');
     expect(chatFileStem(sample().chats[0])).toBe('2026-10-05-budget-review-11111111');
   });
 });
