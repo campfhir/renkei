@@ -185,6 +185,10 @@ test.describe('code projects', () => {
       timeout: 30_000,
     });
     await expect(page.getByText('Your code project')).toBeVisible();
+    // The seeded chat's creation started the clone in the background
+    // (lib/code/checkout.ts) and the Repository card follows it; the
+    // layout is measured below, so it settles on Ready first.
+    await expect(sectionOf('Repository').getByText('Ready')).toBeVisible({ timeout: 15_000 });
     // A code project keeps no files of its own, has a toolset of its own
     // (the picker in its header, which its chats start from), and
     // describes itself through its README; its chats are listed here.
@@ -272,11 +276,10 @@ test.describe('code projects', () => {
       (await memoryTitle.boundingBox())!.y + 10
     );
     const repository = sectionOf('Repository');
-    // The seeded chat's creation started the clone in the background
-    // (lib/code/checkout.ts), so the card follows it to Ready; a project
-    // with no chat yet reads "Not cloned yet" (the new-project walks below).
+    // Ready (waited for above); a project with no chat yet reads "Not
+    // cloned yet" (the new-project walks below).
     await expect(repository.getByText('acme/billing-service')).toBeVisible();
-    await expect(repository.getByText('Ready')).toBeVisible({ timeout: 15_000 });
+    await expect(repository.getByText('Ready')).toBeVisible();
     await expect(repository.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
       'href',
       'https://bitbucket.org/acme/billing-service'
