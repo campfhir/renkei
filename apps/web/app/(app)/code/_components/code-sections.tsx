@@ -33,7 +33,11 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
-import type { CodeCheckoutState, CodeEnvVariableView, CodeProjectView } from '@/lib/code/project-view';
+import type {
+  CodeCheckoutState,
+  CodeEnvVariableView,
+  CodeProjectView,
+} from '@/lib/code/project-view';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import PipelinesSummary from './pipelines-summary';
@@ -63,7 +67,8 @@ export function CodeRepoStrip({
 }: {
   projectId: string;
   /** The repository, whether workspaces run here, and the clone as the worker has it. */
-  code: CodeCheckoutState & Pick<CodeProjectView['code'], 'repoFullName' | 'repoProvider' | 'enabled'>;
+  code: CodeCheckoutState &
+    Pick<CodeProjectView['code'], 'repoFullName' | 'repoProvider' | 'enabled'>;
 }) {
   const router = useRouter();
   const base = `/api/code/projects/${projectId}`;
@@ -127,7 +132,7 @@ export function CodeRepoStrip({
         {!code.enabled
           ? 'Code workspaces are not enabled on this deployment; chats here have no code tools.'
           : !workspace
-            ? `The first chat in this project clones it into the sandbox, with the chatting person’s own ${hostLabel} access.`
+            ? `Opening a chat in this project clones it into the sandbox, with that person’s own ${hostLabel} access.`
             : workspace.status === 'failed'
               ? `The last clone failed: ${workspace.error ?? 'unknown reason'}. The next chat tries again.`
               : workspace.status === 'cloning'

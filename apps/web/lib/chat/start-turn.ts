@@ -649,6 +649,7 @@ async function executeTurnBody(
       project?.kind === 'code'
         ? codeProjectContext(project, {
             subject: input.session.subject,
+            roles: input.session.roles,
             chat: { id: input.chat.id, workspaceId: input.chat.workspaceId },
             // Auto mode's sub-agents run long (delegate.ts).
             auto: input.chat.autoMode && !readOnly,

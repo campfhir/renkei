@@ -79,7 +79,7 @@ export default function DownloadProjectModal({
           <p className="text-gray-500">Code workspaces are not enabled on this deployment.</p>
         ) : !state.workspace ? (
           <p className="text-gray-500" data-testid="download-not-cloned">
-            Nothing is cloned yet: the first chat in this project clones the repository, and there
+            Nothing is cloned yet: opening a chat in this project clones the repository, and there
             is a copy to download after that.
           </p>
         ) : state.workspace.status !== 'ready' ? (

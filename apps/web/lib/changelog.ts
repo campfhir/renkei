@@ -49,6 +49,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-07',
     entries: [
       {
+        kind: 'added',
+        title: 'Previews: open what a code chat built, in your browser',
+        detail:
+          "A code chat can start the project's own server (a dev server, an API, a site) and hand you a link to open it signed in, or a share link anyone can open for a few hours. A preview can expose several named ports, and the chat's menu offers Open preview while one is up.",
+      },
+      {
+        kind: 'added',
+        title: 'The rest of git in code chats',
+        detail:
+          'A chat in a code project can now read the history, fetch, work with branches, stash, rebase and merge (stopping on conflicts and naming the files to fix), reset, clean, and narrow a large repository to the directories it needs. After a rebase it can replace its own remote branch safely; a plain force push is still impossible.',
+      },
+      {
+        kind: 'changed',
+        title: 'A code chat is ready to work the moment you open it',
+        detail:
+          "The repository is checked out and the chat's own working copy prepared as soon as a code chat is created or opened, instead of on its first message. A message sent before that finishes gets a short reply, and the chat continues on its own as soon as the checkout is ready.",
+      },
+      {
         kind: 'fixed',
         title: 'Renkei answers right after a deploy',
         detail:

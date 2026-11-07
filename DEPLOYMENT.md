@@ -485,6 +485,19 @@ DESC` says which server to add next.
   where no organization will ever have either (commands then run
   unisolated by uid, and the worker's log says so).
 
+**Code project previews** (`docs/sandbox-workspaces-design.md`,
+"Previews"): with workspaces on, a project's chat can run the project's
+own server in its checkout and the web app relays it to a browser — a
+signed-in member's address under the project's routes, or a share link
+by token. The server listens on ports from the sandbox worker's own
+pool, `SANDBOX_PREVIEW_PORTS` as `low-high` (`10000-10050` unless set,
+in `.env`; a malformed value stops the worker's boot). The pool is a
+system limit: a preview declares the ports it needs by name and is told
+their numbers (`PORT`, `PORT_<NAME>`), and the pool's width is how many
+preview ports the worker runs at once. Nothing is published on the
+container; the web app reaches the ports through the worker's bearer-
+keyed proxy.
+
 **Code project services** (`docs/sandbox-workspaces-design.md`,
 "Services"): with workspaces on, the organization's **Code project
 services** setting (the `code_service_*` tools a project's chats get, and

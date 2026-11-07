@@ -121,6 +121,9 @@ export type AuditAction =
   /** A service container started or stopped from a code project's Services page. */
   | 'code.services.started'
   | 'code.services.stopped'
+  /** A preview (the project's own server, served through the app) started or stopped from a code project's routes. */
+  | 'code.previews.started'
+  | 'code.previews.stopped'
   | 'code.files.uploaded'
   /** A file or folder of a checkout, or the whole checkout, downloaded as the person's offline copy. */
   | 'code.files.downloaded'

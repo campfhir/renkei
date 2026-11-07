@@ -11,7 +11,15 @@ import {
   EXEC_UID_BASE,
   EXEC_UID_SPAN,
   looksBinary,
+  parseCleanOutput,
+  STASH_MESSAGE_MAX_CHARS,
   validateCommand,
+  validateGitLogFilter,
+  validateGitRange,
+  validateGitRevision,
+  validateSparsePaths,
+  validateStashIndex,
+  validateStashMessage,
   validateEnvName,
   validateEnvValue,
   validateGitRef,
@@ -163,5 +171,75 @@ describe('execUidFor', () => {
     expect(uid).toBeLessThan(EXEC_UID_BASE + EXEC_UID_SPAN);
     expect(execUidFor('t1', 'bob')).not.toBe(uid);
     expect(execUidFor('t2', 'alice')).not.toBe(uid);
+  });
+});
+
+describe('validateGitRevision and validateGitRange', () => {
+  it('takes branches, remote-tracking names, heads, hashes, and stepped forms', () => {
+    for (const good of [
+      'main',
+      'origin/main',
+      'HEAD',
+      'FETCH_HEAD',
+      'abc1234',
+      'HEAD~3',
+      'main^2~1',
+    ]) {
+      expect(validateGitRevision(good)).toEqual({ ok: true, revision: good });
+    }
+    expect(validateGitRevision(' main ')).toEqual({ ok: true, revision: 'main' });
+  });
+
+  it('refuses options, ranges, reflog expressions and empties', () => {
+    for (const bad of ['', '-f', '--hard', 'a..b', 'HEAD@{1}', 'a:b', '~', 'x..', 'a b']) {
+      expect(validateGitRevision(bad).ok).toBe(false);
+    }
+  });
+
+  it('reads a range as two revisions, or one revision, defaulting to HEAD', () => {
+    expect(validateGitRange('')).toEqual({ ok: true, range: 'HEAD' });
+    expect(validateGitRange('main..feature')).toEqual({ ok: true, range: 'main..feature' });
+    expect(validateGitRange('v1...v2')).toEqual({ ok: true, range: 'v1...v2' });
+    expect(validateGitRange('origin/main')).toEqual({ ok: true, range: 'origin/main' });
+    expect(validateGitRange('a..b..c').ok).toBe(false);
+    expect(validateGitRange('..b').ok).toBe(false);
+    expect(validateGitRange('--all').ok).toBe(false);
+  });
+});
+
+describe('stashes, sparse paths and clean output', () => {
+  it('names a stash by position and bounds its message', () => {
+    expect(validateStashIndex(undefined)).toEqual({ ok: true, index: 0 });
+    expect(validateStashIndex(2)).toEqual({ ok: true, index: 2 });
+    expect(validateStashIndex(-1).ok).toBe(false);
+    expect(validateStashIndex(1.5).ok).toBe(false);
+    expect(validateStashMessage(' wip ')).toEqual({ ok: true, message: 'wip' });
+    expect(validateStashMessage('x'.repeat(STASH_MESSAGE_MAX_CHARS + 1)).ok).toBe(false);
+  });
+
+  it('keeps sparse paths relative, non-empty, unique, and out of .git', () => {
+    expect(validateSparsePaths(['apps/web', './apps/web/', 'packages'])).toEqual({
+      ok: true,
+      paths: ['apps/web', 'packages'],
+    });
+    expect(validateSparsePaths([]).ok).toBe(false);
+    expect(validateSparsePaths(['']).ok).toBe(false);
+    expect(validateSparsePaths(['../x']).ok).toBe(false);
+    expect(validateSparsePaths(['.git/hooks']).ok).toBe(false);
+    expect(validateSparsePaths('apps').ok).toBe(false);
+  });
+
+  it('reads what clean removed or would remove', () => {
+    expect(
+      parseCleanOutput('Would remove junk\nWould remove build/\nWould skip repository sub/\n')
+    ).toEqual(['junk', 'build', 'sub']);
+    expect(parseCleanOutput('Removing a.log\n')).toEqual(['a.log']);
+    expect(parseCleanOutput('')).toEqual([]);
+  });
+
+  it('bounds a log filter to printable text', () => {
+    expect(validateGitLogFilter(' fix ')).toEqual({ ok: true, filter: 'fix' });
+    expect(validateGitLogFilter('')).toEqual({ ok: true, filter: '' });
+    expect(validateGitLogFilter('a\nb').ok).toBe(false);
   });
 });
