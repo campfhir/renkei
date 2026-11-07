@@ -76,6 +76,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mirth_list_alerts: { instanceId: INSTANCE },
   mirth_get_alert: { instanceId: INSTANCE, alertId: 'a1' },
   mirth_alert_coverage: { instanceId: INSTANCE },
+  mirth_find_channels_by_endpoint: { instanceId: INSTANCE, port: 6661 },
   mirth_channels_writing_to: { instanceId: INSTANCE, channelId: 'c1' },
   mirth_list_code_templates: { instanceId: INSTANCE },
   mirth_get_code_template: { instanceId: INSTANCE, codeTemplateId: 't1' },

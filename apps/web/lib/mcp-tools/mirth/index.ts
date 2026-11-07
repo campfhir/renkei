@@ -30,6 +30,13 @@
  * Permanent operations (delete a channel, purge messages, restore the
  * server…) are additionally preview + confirm on a card, whatever the
  * permission says: a human click sits between the model and the act.
+ *
+ * Shape the curated tools by the QUESTION a person asks, not by the route
+ * that answers it: "which channels does no alert watch", "what sends to
+ * localhost:8888", "who writes to the collector". Such a tool fetches what
+ * it needs (several routes if so), reads it in a pure module beside this
+ * file (alerts.ts, endpoints.ts) and answers in names, whole — a dump
+ * that clips at the character cap is a route tool, not a question tool.
  */
 
 import { z } from 'zod';
@@ -74,6 +81,7 @@ import {
   type RefKind,
 } from './resolve';
 import { isRecord } from '@renkei/guards';
+import { connectorEndpointsOf, endpointLine, matchesEndpoint } from './endpoints';
 import {
   alertModelsOf,
   alertSummaryOf,
@@ -1478,6 +1486,100 @@ export function registerMirthTools(
                 )
                 .join('; ')}`
           )
+        );
+      }
+      return textResult(clip(lines.join('\n'), DEFAULT_MAX_CHARS));
+    }
+  );
+
+  gated('channels.read').registerTool(
+    'mirth_find_channels_by_endpoint',
+    {
+      title: 'Mirth · Read — Find channels by where they listen or send',
+      description:
+        'The channels whose connectors match an address: a host and/or port ("localhost:8888", ' +
+        "port 6661), a URL, directory, database URL or any fragment of a connector's " +
+        'settings, optionally only sources (listeners) or destinations (senders) or one ' +
+        'transport ("TCP Sender", "File"). Every match shows the channel, its state and the ' +
+        'connector that matched. A listener on 0.0.0.0 answers for any host on its port; ' +
+        "localhost and 127.0.0.1 are the same. With no filter, every connector's endpoint on " +
+        'the instance.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        host: z
+          .string()
+          .optional()
+          .describe('A host name or IP, optionally with ":port" ("localhost:8888").'),
+        port: z.number().int().positive().max(65535).optional(),
+        text: z
+          .string()
+          .optional()
+          .describe('A fragment to find in the connector settings: a path, URL, queue, user.'),
+        transport: z
+          .string()
+          .optional()
+          .describe('A transport name fragment ("TCP", "HTTP Sender").'),
+        role: z.enum(['source', 'destination']).optional(),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const instanceId = str(args.instanceId);
+      const query = {
+        host: str(args.host) || undefined,
+        port: typeof args.port === 'number' ? args.port : undefined,
+        text: str(args.text) || undefined,
+        transport: str(args.transport) || undefined,
+        role:
+          args.role === 'source'
+            ? ('source' as const)
+            : args.role === 'destination'
+              ? ('destination' as const)
+              : undefined,
+      };
+      const found = await getJson(instanceId, 'read the channel definitions', '/channels');
+      if (!found.ok) return errText(found.message);
+      const statuses = await getJson(
+        instanceId,
+        'read the channel statuses',
+        '/channels/statuses',
+        {
+          includeUndeployed: true,
+        }
+      );
+      const stateOf = new Map<string, string>();
+      for (const status of statuses.ok ? unwrapList(statuses.value) : []) {
+        if (isRecord(status) && str(status.channelId)) {
+          stateOf.set(str(status.channelId), str(status.state) || 'UNKNOWN');
+        }
+      }
+      const hits = connectorEndpointsOf(found.value).filter((endpoint) =>
+        matchesEndpoint(endpoint, query)
+      );
+      const asked = [
+        query.host && `host ${query.host}`,
+        query.port !== undefined && `port ${query.port}`,
+        query.text && `"${query.text}"`,
+        query.transport && `transport ${query.transport}`,
+        query.role && `${query.role}s only`,
+      ]
+        .filter(Boolean)
+        .join(', ');
+      if (hits.length === 0) {
+        return textResult(
+          `No connector matches ${asked || 'anything'}. An address built at run time (from a variable or the configuration map) is not found this way.`
+        );
+      }
+      const byChannel = new Map<string, typeof hits>();
+      for (const hit of hits)
+        byChannel.set(hit.channelId, [...(byChannel.get(hit.channelId) ?? []), hit]);
+      const lines = [
+        `${byChannel.size} channel(s), ${hits.length} connector(s) match${asked ? ` ${asked}` : ''}:`,
+      ];
+      for (const [channelId, matched] of byChannel) {
+        lines.push(
+          `${matched[0].channelName} — id ${channelId} — ${stateOf.get(channelId) ?? 'UNDEPLOYED'}`,
+          ...matched.map(endpointLine)
         );
       }
       return textResult(clip(lines.join('\n'), DEFAULT_MAX_CHARS));

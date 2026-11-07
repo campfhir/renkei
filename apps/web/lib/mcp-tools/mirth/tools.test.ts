@@ -1213,3 +1213,78 @@ describe('alerts, readably', () => {
     expect(text).not.toContain('Elsewhere');
   });
 });
+
+describe('mirth_find_channels_by_endpoint', () => {
+  const definitions = {
+    list: {
+      channel: [
+        {
+          id: 'c1',
+          name: 'ADT In',
+          sourceConnector: {
+            name: 'sourceConnector',
+            transportName: 'TCP Listener',
+            properties: { listenerConnectorProperties: { host: '0.0.0.0', port: '6661' } },
+          },
+          destinationConnectors: {
+            connector: {
+              name: 'To Epic',
+              transportName: 'TCP Sender',
+              metaDataId: 1,
+              properties: { remoteAddress: 'localhost', remotePort: '8888' },
+            },
+          },
+        },
+        {
+          id: 'c9',
+          name: 'Nine',
+          sourceConnector: {
+            name: 'sourceConnector',
+            transportName: 'JavaScript Reader',
+            properties: { script: 'return;' },
+          },
+          destinationConnectors: { connector: [] },
+        },
+      ],
+    },
+  };
+  const statuses = {
+    list: { dashboardStatus: { channelId: 'c1', name: 'ADT In', state: 'STARTED' } },
+  };
+
+  it('finds the channel sending to localhost:8888 and shows the connector that does', async () => {
+    mirthApi
+      .mockResolvedValueOnce(answer(200, definitions))
+      .mockResolvedValueOnce(answer(200, statuses));
+    const text = textOf(
+      await register().get('mirth_find_channels_by_endpoint')!({
+        instanceId: INSTANCE_ID,
+        host: 'localhost:8888',
+      })
+    );
+    expect(mirthApi).toHaveBeenNthCalledWith(1, TARGET, {
+      method: 'GET',
+      path: '/channels',
+      query: undefined,
+    });
+    expect(text).toBe(
+      '1 channel(s), 1 connector(s) match host localhost:8888:\n' +
+        'ADT In — id c1 — STARTED\n' +
+        '  destination 1 "To Epic": TCP Sender → localhost:8888'
+    );
+  });
+
+  it('says plainly when nothing matches', async () => {
+    mirthApi
+      .mockResolvedValueOnce(answer(200, definitions))
+      .mockResolvedValueOnce(answer(200, statuses));
+    const text = textOf(
+      await register().get('mirth_find_channels_by_endpoint')!({
+        instanceId: INSTANCE_ID,
+        port: 9999,
+        role: 'source',
+      })
+    );
+    expect(text).toContain('No connector matches port 9999, sources only.');
+  });
+});
