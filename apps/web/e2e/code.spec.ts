@@ -451,20 +451,18 @@ test.describe('code projects', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.seededName })).toBeVisible();
     await expect(main.getByRole('link', { name: ids.seededChatTitle })).toBeVisible();
 
-    // ── A finished turn in the project's chat: the clone step reads as a
-    //    sentence inside the work fold after the prompt; the commit is
-    //    lifted out of the fold as a milestone card of its own, with its
-    //    git glyph and the result on its line ──
+    // ── A finished turn in the project's chat: the checkout was prepared
+    //    when the chat was created, so the turn has no clone step and its
+    //    work fold holds the model's own calls; the commit is lifted out
+    //    of the fold as a milestone card of its own, with its git glyph
+    //    and the result on its line ──
     await main.getByRole('link', { name: ids.seededChatTitle }).click();
     await expect(main.getByText(QUESTION)).toBeVisible();
     const work = main.locator('details.chat-fold:not([data-milestone])').first();
-    await expect(work).toContainText('2 tool calls');
+    await expect(work).toContainText('1 tool call');
+    await expect(work).not.toContainText('Cloned the repository');
     await work.locator('> summary').click();
     const steps = work.locator('ol > li > details.chat-fold');
-    const cloneStep = steps.filter({ hasText: 'Cloned the repository' });
-    await expect(cloneStep).toBeVisible();
-    await cloneStep.locator('> summary').click();
-    await expect(cloneStep.getByText(/4\.1 MB on the sandbox/)).toBeVisible();
     // The model's own deletion is a named step like any file change, with
     // the tree's changed files in its result.
     const deleteStep = steps.filter({ hasText: 'Delete file' });
