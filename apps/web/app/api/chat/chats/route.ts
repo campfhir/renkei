@@ -8,10 +8,14 @@
  *
  * `temporary: true` starts a temporary chat (lib/chat/temporary.ts),
  * which stands outside projects.
+ *
+ * Creating a chat in a code project also starts preparing its checkout —
+ * the project's clone and the chat's worktree — in the background
+ * (lib/code/checkout.ts), as does opening one ([chatId]/route.ts).
  */
 
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
@@ -20,6 +24,8 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { resolveResourceAccess } from '@/lib/chat/access';
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { TEMPORARY_OUTSIDE_PROJECTS } from '@/lib/chat/temporary';
+import { startCheckoutPreparation } from '@/lib/code/checkout';
+import { getOrigin } from '@/lib/get-origin';
 
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -61,5 +67,17 @@ export async function POST(request: NextRequest): Promise<Response> {
     autoMode: project?.kind === 'code',
     temporary,
   });
+  // A code chat's checkout is prepared now, behind the answer, so its first
+  // message finds the tools ready rather than waiting on the clone.
+  if (project?.kind === 'code') {
+    const origin = await getOrigin(request);
+    after(() =>
+      startCheckoutPreparation({
+        chatId,
+        subject: session.subject,
+        ...(origin.ok ? { origin: origin.val } : {}),
+      })
+    );
+  }
   return NextResponse.json({ chatId }, { status: 201 });
 }

@@ -1053,6 +1053,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     // The running services' addresses and exports, over the `.env`. Not
     // secrets — the address is the point — so they are not scrubbed.
     const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
+    // The previews that are up, likewise: PREVIEW_<NAME>_PORT and _URL, so
+    // a command can curl the server a chat started.
+    const previewEnv = deps.previews?.environmentFor(workspace) ?? {};
     // A caller that goes away before the answer — the chat turn behind
     // the call was stopped — takes the command with it: its process tree
     // is killed rather than left to run to its timeout unseen.
@@ -1061,7 +1064,10 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       if (!response.writableFinished) gone.abort();
     });
     const result = await runShell(
-      runInputFor(workspace, env, timeoutMs, { extraEnv: serviceEnv, signal: gone.signal }),
+      runInputFor(workspace, env, timeoutMs, {
+        extraEnv: { ...serviceEnv, ...previewEnv },
+        signal: gone.signal,
+      }),
       command.command
     );
     await markEnvUsed(env);

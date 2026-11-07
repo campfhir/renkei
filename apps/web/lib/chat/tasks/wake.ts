@@ -53,7 +53,12 @@ export type OpenWakeTurn = (input: {
   text: string;
 }) => Promise<{ ok: true } | { ok: false; running: boolean }>;
 
-const openWithStartTurn: OpenWakeTurn = async (input) => {
+/**
+ * A note turn opened as the person — a task wait firing, or a code chat's
+ * checkout becoming ready (lib/code/checkout.ts): the text is a line in the
+ * thread and the user row of a new turn.
+ */
+export const openNoteTurn: OpenWakeTurn = async (input) => {
   // Imported when first needed: start-turn imports the chat's tools, and they import this.
   const { startChatTurn } = await import('../start-turn');
   const started = await startChatTurn({
@@ -164,7 +169,7 @@ export async function wakeIfReady(
   }
   if (!(await store.clearWait(chatId))) return false;
   clearTimer(chatId);
-  const open = options.open ?? openWithStartTurn;
+  const open = options.open ?? openNoteTurn;
   const opened = await open({
     session: { subject: wait.subject, roles: wait.roles },
     chatId,

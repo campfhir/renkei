@@ -79,6 +79,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(302, '', {'Location': '/hello'})
         if self.path.startswith('/env'):
             return self._send(200, 'PORT=%s URL=%s SECRET=%s' % (os.environ.get('PORT'), os.environ.get('RENKEI_PREVIEW_URL'), os.environ.get('NPM_TOKEN')))
+        if self.path.startswith('/neighbours'):
+            return self._send(200, ' '.join('%s=%s' % (k, v) for k, v in sorted(os.environ.items()) if k.startswith('PREVIEW_')))
         return self._send(200, 'hi %s host=%s' % (self.path, self.headers.get('Host')))
     def do_POST(self):
         n = int(self.headers.get('Content-Length') or 0)
@@ -258,6 +260,37 @@ describe('a preview', () => {
     expect(await portAccepts(port)).toBe(false);
     expect((await post('previews/list', {})).json.previews).toEqual([]);
     expect((await through('/v1/previews/proxy/web/hello')).status).toBe(404);
+  });
+
+  it('tells a second preview, and a command, where the first one is', async () => {
+    const api = await post('previews/start', {
+      name: 'api',
+      command: 'python3 server.py',
+      url: 'https://app.example/api/code/projects/p1/previews/api/app/',
+      waitMs: 30_000,
+    });
+    expect(api.status).toBe(201);
+    const web = await post('previews/start', {
+      name: 'web',
+      command: 'python3 server.py',
+      url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+      waitMs: 30_000,
+    });
+    expect(web.status).toBe(201);
+    const seen = await through('/v1/previews/proxy/web/neighbours');
+    expect(seen.text).toBe(
+      `PREVIEW_API_PORT=${api.json.preview.port} PREVIEW_API_URL=https://app.example/api/code/projects/p1/previews/api/app/`
+    );
+    const ran = await post('workspaces/exec', { command: 'env | grep ^PREVIEW_ | sort' });
+    expect(ran.status).toBe(200);
+    expect(ran.json.stdout.trim().split('\n')).toEqual([
+      `PREVIEW_API_PORT=${api.json.preview.port}`,
+      'PREVIEW_API_URL=https://app.example/api/code/projects/p1/previews/api/app/',
+      `PREVIEW_WEB_PORT=${web.json.preview.port}`,
+      'PREVIEW_WEB_URL=https://app.example/api/code/projects/p1/previews/web/app/',
+    ]);
+    await post('previews/stop', { name: 'api' });
+    await post('previews/stop', { name: 'web' });
   });
 
   it('is reached by its share token when started public, and nowhere else by token', async () => {

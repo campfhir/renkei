@@ -67,24 +67,21 @@ export const WITHHELD_FROM_SUBAGENTS: ReadonlySet<string> = new Set([
   'code_git_push',
   CODE_DELEGATE_TOOL,
   'code_clone',
-  // A service outlives the sub-agent's task; what runs beside the checkout is the orchestrator's call.
+  // A service or a preview outlives the sub-agent's task; what runs beside
+  // the checkout is the orchestrator's call.
   'code_service_start',
   'code_service_stop',
-  // So does a preview, and so does the shape of the branch: rewriting
-  // history, moving the branch, throwing work away or narrowing the
-  // checkout is the orchestrator's call, not a sub-agent's.
   'code_preview_start',
   'code_preview_stop',
-  'code_git_fetch',
-  'code_git_rebase',
-  'code_git_merge',
+  // Throwing work away is too: a hard reset or a clean undoes what the
+  // orchestrator and the person may be counting on. The rest of git —
+  // fetch, branches, log, stash, rebase, merge, a sparse checkout — is a
+  // sub-agent's to use for its task, as a developer's would be.
   'code_git_reset',
-  'code_git_stash',
   'code_git_clean',
-  'code_git_sparse_checkout',
 ]);
 
-const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output. Do not push, do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, and anything you could not do or are unsure of. Be concrete and brief.`;
+const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output; git is yours too — fetch, branches, stash, rebase or merge when the task calls for it (a rebase or merge that stops on conflicts names the files: fix them and continue, or abort). Do not push, do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, and anything you could not do or are unsure of. Be concrete and brief.`;
 
 export interface DelegateOptions {
   /**

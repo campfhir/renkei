@@ -31,85 +31,39 @@ import {
   sandboxServicesEnabled,
   sandboxWorkspacesEnabled,
   sbEnvList,
-  sbWorkspaceGet,
-  type WireWorkspace,
 } from '@renkei/sandbox-client';
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
 import { listChatModels } from '@/lib/chat/models';
 import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import { getChatRow } from '@/lib/chat/store';
 import type { PreludeStep, TurnLimits } from '@/lib/chat/turn-runner';
-import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
-import { startProjectClone, type CodeOutcome } from './projects';
 import { ensureChatWorktree } from './worktree';
 import { codeProjectTarget } from './scope';
 import { codeTools, type CheckoutRecovery } from './tools';
+import {
+  CLONE_WAIT_MS,
+  awaitClone,
+  registerCheckoutWake,
+  resolveBase,
+  type Actor,
+  type Chat,
+  type Target,
+} from './checkout';
 
-/** How long the clone step waits before giving up on the tools for this turn. */
-export const CLONE_WAIT_MS = 5 * 60_000;
-const CLONE_POLL_MS = 2_000;
 /** The name the clone step carries in the transcript, beside the code_* tools. */
 export const CLONE_STEP_NAME = 'code_clone';
+/**
+ * How long the turn's own step waits on a clone before handing the wait
+ * to the background (checkout.ts): long enough for a clone that is nearly
+ * done, short enough that the person is not left watching a step.
+ */
+export const CLONE_QUICK_WAIT_MS = 12_000;
+export { CLONE_WAIT_MS } from './checkout';
 
 function bytes(value: number): string {
   if (value < 1_048_576) return `${Math.max(1, Math.round(value / 1024))} KB`;
   if (value < 1_073_741_824) return `${(value / 1_048_576).toFixed(1)} MB`;
   return `${(value / 1_073_741_824).toFixed(2)} GB`;
-}
-
-/**
- * The checkout once its clone has settled — polled while `cloning`, up to
- * the deadline. Null when it disappeared from the worker meanwhile;
- * still `cloning` when the deadline passed first.
- */
-async function awaitClone(
-  target: ReturnType<typeof codeProjectTarget>,
-  workspace: WireWorkspace,
-  deadline: number
-): Promise<WireWorkspace | null> {
-  let current = workspace;
-  while (current.status === 'cloning' && Date.now() < deadline) {
-    await sleep(CLONE_POLL_MS);
-    const got = await sbWorkspaceGet(target, current.id);
-    if (!got.ok) return null;
-    current = got.val;
-  }
-  return current;
-}
-
-type Actor = { subject: string; origin?: string };
-type Chat = { id: string; workspaceId: string | null };
-type Target = ReturnType<typeof codeProjectTarget>;
-
-/**
- * The project's base clone as it is: present, cloning, or — when it is
- * gone or failed — cloned again with the chatting person's grant.
- */
-async function resolveBase(
-  project: ProjectRow,
-  actor: Actor,
-  target: Target,
-  options: { notId?: string } = {}
-): Promise<
-  (CodeOutcome<WireWorkspace> & { cloned?: boolean }) | { ok: false; status: 0; message: string }
-> {
-  let current: WireWorkspace | null = null;
-  if (project.workspaceId && project.workspaceId !== options.notId) {
-    const got = await sbWorkspaceGet(target, project.workspaceId);
-    if (got.ok) current = got.val;
-  }
-  if (current && current.status !== 'failed') return { ok: true, val: current };
-  const credential = await resolveWorkspaceGitAccess(
-    {
-      subject: actor.subject,
-      origin: actor.origin ?? getPublicBaseUrl() ?? '',
-      provider: project.repo!.provider,
-    },
-    { write: false }
-  );
-  if (typeof credential === 'string') return { ok: false, status: 0, message: credential };
-  const cloned = await startProjectClone(project, credential);
-  return cloned.ok ? { ok: true, val: cloned.val, cloned: true } : cloned;
 }
 
 /**
@@ -183,13 +137,17 @@ export interface CodeTurnContext {
   prelude: PreludeStep | null;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export async function codeProjectContext(
   project: ProjectRow,
-  actor: { subject: string; origin?: string; auto?: boolean; chat: Chat }
+  actor: {
+    subject: string;
+    origin?: string;
+    auto?: boolean;
+    chat: Chat;
+    /** The session's roles, for the note turn that wakes the chat when its checkout is ready. */
+    roles?: string[];
+  },
+  options: { quickWaitMs?: number } = {}
 ): Promise<CodeTurnContext | null> {
   if (project.kind !== 'code' || !project.repo) return null;
   const target = codeProjectTarget(project.id);
@@ -257,11 +215,14 @@ export async function codeProjectContext(
   });
 
   // A clone in flight — this turn's or an earlier one's — is the turn's
-  // first step: it waits, makes the chat's worktree, and answers the way a
-  // tool would.
+  // first step: it waits a little, makes the chat's worktree, and answers
+  // the way a tool would. A clone that takes longer than that is handed to
+  // the background (checkout.ts): the model is told to say so and end its
+  // turn, and a note turn wakes the chat when the checkout is ready.
   if (baseWorkspace.status === 'cloning') {
     const repoFullName = project.repo.fullName;
     const started = Date.now();
+    const quickWaitMs = options.quickWaitMs ?? CLONE_QUICK_WAIT_MS;
     const prelude: PreludeStep = {
       name: CLONE_STEP_NAME,
       input: {
@@ -270,7 +231,7 @@ export async function codeProjectContext(
         ...(clonedNow ? {} : { resumed: true }),
       },
       async run() {
-        const current = await awaitClone(target, baseWorkspace, started + CLONE_WAIT_MS);
+        const current = await awaitClone(target, baseWorkspace, started + quickWaitMs);
         if (!current) return errorResult('The checkout disappeared while cloning.');
         const seconds = Math.round((Date.now() - started) / 1000);
         if (current.status === 'ready') {
@@ -290,8 +251,15 @@ export async function codeProjectContext(
             `The clone failed: ${current.error ?? 'unknown reason'}. The code_* tools cannot work until it is cloned; the next chat tries again.`
           );
         }
-        return errorResult(
-          `The clone is still running after ${seconds}s. The code_* tools are not usable in this turn; try again in a few minutes.`
+        registerCheckoutWake({
+          chatId: actor.chat.id,
+          session: { subject: actor.subject, roles: actor.roles ?? [] },
+          ...(actor.origin ? { origin: actor.origin } : {}),
+        });
+        return textResult(
+          `${repoFullName} is still being cloned into the sandbox (${seconds}s so far) and the clone continues in the background. ` +
+            'Do not call any code_* tool in this turn — it would only wait. Tell the person in a sentence that the repository is still being checked out and that you will carry on as soon as it is ready, then end your turn. ' +
+            'You will be woken automatically with a note in this chat when the checkout is ready (or if it fails), and can then do what they asked.'
         );
       },
     };

@@ -116,7 +116,11 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
           'open (a phone, a colleague, a webhook) until the preview stops. The process gets ' +
           'RENKEI_PREVIEW_URL for frameworks that need their public address or base path; an app ' +
           'that serves absolute paths (/_next/…) needs a base path set to the address’s path to ' +
-          'render through the signed-in address, or use the share link. ' +
+          'render through the signed-in address, or use the share link. A UI and an API are two ' +
+          'previews (one process and one port each): every preview and every code_run command gets ' +
+          'PREVIEW_<NAME>_PORT (the other’s loopback port, for a dev server that proxies /api to it) ' +
+          'and PREVIEW_<NAME>_URL (the address a browser reaches it at, for a UI that calls its API ' +
+          'directly) — start the API first, then the UI with its API address from those. ' +
           `At most ${PREVIEW_MAX_PER_SUBJECT} previews; a name in use must be stopped first. A preview lives a few hours past its last request and dies with the sandbox worker.`,
         inputSchema: {
           type: 'object',

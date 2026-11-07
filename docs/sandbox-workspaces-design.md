@@ -29,6 +29,20 @@ repository on it, kept apart from ordinary chats:
   chats in the app menu — marked with the Code glyph and naming the
   project beneath the title, so they are told apart from ordinary chats
   and from chats in chat projects at a glance.
+- **The checkout is prepared when a chat is created or opened**, not on
+  its first message: creating a chat in a code project and opening one
+  (`POST /api/chat/chats`, `GET /api/chat/chats/[chatId]`) start the
+  project's clone, when there is none, and the chat's worktree behind the
+  answer (`lib/code/checkout.ts`), so the first turn usually finds the
+  tools ready. A turn that arrives first runs the clone step as before,
+  but waits only a few seconds: past that it hands the wait to the
+  background, tells the model to say the repository is still being
+  checked out and end its turn, and when the checkout settles a note turn
+  wakes the chat — "Checkout ready: … carry on" (or why not) as a line
+  in the thread, opened as the person the way a task wait fires
+  (`lib/chat/tasks/wake.ts`), retried while the chat is mid-turn. A wake
+  lives in the process that promised it; a restart loses it, and the
+  next message does what a first turn always did.
 - **A worktree per chat.** Any number of chats in a project work at once.
   The project's clone is its **base**, which no chat edits; each chat
   works in a `git worktree` of it, on a branch of its own
@@ -134,9 +148,11 @@ descriptions say so; `clean` is a dry run unless told otherwise. After a
 rebase the remote branch must be replaced, so `git-push` takes
 `forceWithLease` — `--force-with-lease`, which refuses when the remote
 moved since the last fetch — and a plain `--force` is still nowhere. A
-sub-agent (`code_delegate`) is not offered the verbs that reshape the
-branch or the checkout (fetch, rebase, merge, reset, stash, clean, sparse
-checkout, previews): those are the orchestrator's call.
+sub-agent (`code_delegate`) has the rest of git as a developer would —
+fetch, branches, log, stash, rebase, merge, sparse checkout — and is not
+offered what publishes or throws work away (push, reset, clean) or what
+runs beside the checkout (services, previews): those are the
+orchestrator's call.
 
 **Sparse checkouts.** `clone` takes `sparsePaths` (`git clone --sparse`,
 then `sparse-checkout set --cone`), so a monorepo project's checkout holds
@@ -529,6 +545,17 @@ whole secret: it travels only inside its link, is answered by nothing the
 worker does not hold, and stops working the moment the preview is stopped
 or expires. It is for a phone, a colleague or a webhook to reach what a
 chat built for a few hours, not a way to host.
+
+**Several processes.** A preview is one process on one port; a UI and an
+API, or a monorepo's apps, are several previews. Each preview's process
+and every `code_run` command get `PREVIEW_<NAME>_PORT` (the other's
+loopback port, for a dev server that proxies `/api` to the backend
+beside it) and `PREVIEW_<NAME>_URL` (the address a browser reaches it
+at — the share link when it has one — for a UI the browser runs that
+calls its API itself), so the API is started first and the UI is told
+where it is from those. A UI reached through the signed-in relay calls
+an API reached through the same relay from the same origin, so the
+member's session covers both and no CORS is involved.
 
 **Lifetime and bounds.** A preview is working state in the worker's memory
 and process table: at most 3 per project, alive 4 hours past its last

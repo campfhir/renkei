@@ -178,6 +178,8 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
           if (!workspace) return;
           const env = await deps.openEnv(target);
           const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(target) : {};
+          // The other previews' ports and addresses, so a UI finds its API.
+          const neighbours = manager.environmentFor(target, name.name);
           const started = await manager.start(target, {
             workspace: {
               id: workspace.id,
@@ -189,7 +191,7 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
             command: command.command,
             port: port.port,
             env: env.values,
-            extraEnv: serviceEnv,
+            extraEnv: { ...serviceEnv, ...neighbours },
             token,
             url,
             waitMs: previewWaitMs(body.waitMs),

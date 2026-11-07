@@ -823,16 +823,11 @@ describe('the rest of git', () => {
     );
   });
 
-  it('keeps the verbs that reshape the branch or the checkout from a sub-agent', () => {
+  it('keeps publishing, throwing work away and previews from a sub-agent, and offers it the rest of git', () => {
     for (const withheld of [
       'code_git_push',
-      'code_git_fetch',
-      'code_git_rebase',
-      'code_git_merge',
       'code_git_reset',
-      'code_git_stash',
       'code_git_clean',
-      'code_git_sparse_checkout',
       'code_preview_start',
       'code_preview_stop',
     ]) {
@@ -840,7 +835,12 @@ describe('the rest of git', () => {
     }
     for (const offered of [
       'code_git_log',
+      'code_git_fetch',
       'code_git_branch',
+      'code_git_stash',
+      'code_git_rebase',
+      'code_git_merge',
+      'code_git_sparse_checkout',
       'code_previews',
       'code_preview_logs',
     ]) {

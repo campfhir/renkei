@@ -10,6 +10,7 @@ import {
   PREVIEW_START_WAIT_MAX_MS,
   isPreviewToken,
   previewEnvironment,
+  previewNeighbourEnvironment,
   previewProxyPath,
   previewWaitMs,
   proxyResponseHeaders,
@@ -59,6 +60,21 @@ describe('what the process is told', () => {
       RENKEI_PREVIEW_PORT: '20123',
       RENKEI_PREVIEW_URL: 'https://app.example/api/code/preview/t/',
     });
+  });
+
+  it('tells a preview and a command about the other previews that are up, by name', () => {
+    expect(
+      previewNeighbourEnvironment([
+        { name: 'web-ui', port: 20_200, url: 'https://app.example/p/web-ui/app/' },
+        { name: 'api', port: 20_100, url: 'https://app.example/api/code/preview/t/' },
+      ])
+    ).toEqual({
+      PREVIEW_API_PORT: '20100',
+      PREVIEW_API_URL: 'https://app.example/api/code/preview/t/',
+      PREVIEW_WEB_UI_PORT: '20200',
+      PREVIEW_WEB_UI_URL: 'https://app.example/p/web-ui/app/',
+    });
+    expect(previewNeighbourEnvironment([])).toEqual({});
   });
 
   it('addresses a preview through the project, the chat, or a token', () => {

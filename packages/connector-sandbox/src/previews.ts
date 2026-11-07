@@ -138,6 +138,31 @@ export function previewEnvironment(port: number, publicUrl: string): Record<stri
   };
 }
 
+/** `PREVIEW_<NAME>` — the name upper-cased, hyphens to underscores, as a variable prefix. */
+export function previewEnvPrefix(name: string): string {
+  return `PREVIEW_${name.toUpperCase().replace(/-/g, '_')}`;
+}
+
+/**
+ * What every command and every other preview is told about the previews
+ * that are up: `PREVIEW_<NAME>_PORT` (the loopback port, for a dev server
+ * that proxies `/api` to a backend beside it) and `PREVIEW_<NAME>_URL`
+ * (the address a browser reaches it at — the share link when it has one,
+ * else the member's — for a UI that calls its API from the browser).
+ * A monorepo's UI and API are two previews that find each other this way.
+ */
+export function previewNeighbourEnvironment(
+  previews: ReadonlyArray<{ name: string; port: number; url: string }>
+): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const preview of [...previews].sort((a, b) => a.name.localeCompare(b.name))) {
+    const prefix = previewEnvPrefix(preview.name);
+    env[`${prefix}_PORT`] = String(preview.port);
+    env[`${prefix}_URL`] = preview.url;
+  }
+  return env;
+}
+
 // ─── Proxy headers ──────────────────────────────────────────────────────────
 
 /**

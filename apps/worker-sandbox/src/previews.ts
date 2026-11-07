@@ -33,6 +33,7 @@ import {
   PREVIEW_PROXY_TIMEOUT_MS,
   PREVIEW_TTL_MS,
   previewEnvironment,
+  previewNeighbourEnvironment,
   stripHopByHop,
   type PreviewStatus,
 } from '@renkei/connector-sandbox';
@@ -390,6 +391,19 @@ export class PreviewManager {
       await this.kill(preview);
       this.previews.delete(preview.id);
     }
+  }
+
+  /**
+   * What a command — or another preview — in the project is told about the
+   * previews that are up: PREVIEW_<NAME>_PORT and PREVIEW_<NAME>_URL for
+   * each, `except` the one being started itself.
+   */
+  environmentFor(target: PreviewTarget, except?: string): Record<string, string> {
+    return previewNeighbourEnvironment(
+      this.of(target)
+        .filter((preview) => preview.status !== 'exited' && preview.name !== except)
+        .map((preview) => ({ name: preview.name, port: preview.port, url: preview.url }))
+    );
   }
 
   /** A request reached the preview: it lives on. */

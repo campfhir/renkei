@@ -224,6 +224,8 @@ export {
   previewLogLines,
   isPreviewToken,
   previewEnvironment,
+  previewEnvPrefix,
+  previewNeighbourEnvironment,
   stripHopByHop,
   stripCookies,
   proxyResponseHeaders,

@@ -1024,6 +1024,15 @@ export default function ChatThread({
         onSelect: () => sendDispatch({ type: 'branchOpened' }),
       });
     }
+    // The project's own server, when a chat or a person has one up: opens
+    // in a new tab, signed in, through the app's relay.
+    for (const preview of codeTools.previews) {
+      overflow.push({
+        label: preview.label,
+        icon: ICONS.externalLink,
+        onSelect: () => window.open(preview.url, '_blank', 'noopener,noreferrer'),
+      });
+    }
   }
   if (isOwner) {
     overflow.push({ label: 'Share', icon: ICONS.share, onSelect: () => setShare(true) });
