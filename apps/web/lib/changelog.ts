@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-07',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Ask Mirth by the question, not the route',
+        detail:
+          'The agent can now read one alert in full by name, show which channels no enabled alert watches, list the channels feeding a collector, and find the channel listening on a port or sending to a host, URL or directory — whole answers in names instead of a clipped definitions dump.',
+      },
+    ],
+  },
+  {
     date: '2026-11-06',
     entries: [
       {
