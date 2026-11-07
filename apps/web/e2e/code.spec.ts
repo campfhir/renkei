@@ -175,7 +175,7 @@ test.describe('code projects', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-index.png');
 
-    // ── The seeded project's page: not cloned yet (the first chat does
+    // ── The seeded project's page: cloned by its seeded chat (opening a chat does
     //    that), the repository fixed — no clone or change buttons — and
     //    the README from Bitbucket in place of a description ──
     await seededRow.click();
@@ -272,10 +272,11 @@ test.describe('code projects', () => {
       (await memoryTitle.boundingBox())!.y + 10
     );
     const repository = sectionOf('Repository');
-    await expect(repository.getByText('Not cloned yet')).toBeVisible();
+    // The seeded chat's creation started the clone in the background
+    // (lib/code/checkout.ts), so the card follows it to Ready; a project
+    // with no chat yet reads "Not cloned yet" (the new-project walks below).
     await expect(repository.getByText('acme/billing-service')).toBeVisible();
-    await expect(repository.getByText(/The first chat in this project clones it/)).toBeVisible();
-    await expect(repository.getByRole('button')).toHaveCount(0);
+    await expect(repository.getByText('Ready')).toBeVisible({ timeout: 15_000 });
     await expect(repository.getByRole('link', { name: 'Open on Bitbucket' })).toHaveAttribute(
       'href',
       'https://bitbucket.org/acme/billing-service'
@@ -285,7 +286,7 @@ test.describe('code projects', () => {
     // push beside the chat', below).
     await expect(main.getByRole('tree', { name: 'Files' })).toHaveCount(0);
     await expectNoHorizontalOverflow(page);
-    await shot('code-project-not-cloned.png');
+    await shot('code-project-ready.png');
 
     // ── Back to Code, and in again ──
     await main.getByRole('link', { name: 'Back to Code' }).click();

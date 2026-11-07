@@ -394,6 +394,29 @@ export const SPARSE_PATHS_MAX = 200;
 export type GitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
 
 /**
+ * Where a revision's `~N` / `^N` steps begin: the index of the first
+ * step, or the revision's length when it has none. Each step is a `~` or
+ * `^` followed by digits; the scan walks back over digits and step marks
+ * and then forward to drop a leading run of digits, which belong to the
+ * name (`abc12`, `v2`), not to a step.
+ */
+function stepsStart(revision: string): number {
+  let index = revision.length;
+  while (index > 0) {
+    const char = revision[index - 1]!;
+    if (char === '~' || char === '^' || (char >= '0' && char <= '9')) index -= 1;
+    else break;
+  }
+  // Digits right after the name are the name's own.
+  while (index < revision.length) {
+    const char = revision[index]!;
+    if (char >= '0' && char <= '9') index += 1;
+    else break;
+  }
+  return index;
+}
+
+/**
  * A revision a caller may hand to git where a commit is meant: a branch or
  * tag name (`validateGitRef`'s rules), a remote-tracking name
  * (`origin/main`), `HEAD` or one of git's other upper-case heads
@@ -405,8 +428,9 @@ export function validateGitRevision(
   input: unknown
 ): { ok: true; revision: string } | { ok: false; message: string } {
   const revision = typeof input === 'string' ? input.trim() : '';
-  const stepped = revision.match(/^(.*?)((?:[~^]\d*)*)$/);
-  const base = stepped?.[1] ?? '';
+  // The steps are read off the end by hand rather than by a nested
+  // quantifier, which is quadratic on a long run of `^`.
+  const base = revision.slice(0, stepsStart(revision));
   if (!base || revision.length > GIT_REF_MAX_CHARS) {
     return { ok: false, message: `"${revision || '(empty)'}" is not a usable revision.` };
   }

@@ -2864,6 +2864,9 @@ const server = createServer((request, response) => {
     if (!body.subject) return error(response, 400, 'bad_request');
     if (op.startsWith('services/'))
       return handleServices(op.slice('services/'.length), body, response);
+    // Previews (the project's own server): none run on the stub, so a code
+    // chat's title bar reads an empty list rather than an unknown verb.
+    if (op === 'previews/list') return json(response, 200, { previews: [] });
     if (op.startsWith('workspaces/'))
       return handleWorkspaces(op.slice('workspaces/'.length), body, response);
     if (op.startsWith('env/')) return handleEnv(op.slice('env/'.length), body, response);
