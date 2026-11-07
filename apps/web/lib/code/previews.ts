@@ -187,7 +187,14 @@ export async function previewRelay(
   ref: { subject: string; name: string; port?: string | null } | { token: string },
   options: { prefix: string; path: string[] | undefined }
 ): Promise<Response> {
-  const rest = (options.path ?? []).map(encodeURIComponent).join('/') + request.nextUrl.search;
+  // The path the browser asked for, segment by segment: each one encoded,
+  // none of them a dot segment, so the relayed path can only descend from
+  // the preview's own prefix on the worker — never climb to another verb.
+  const segments = options.path ?? [];
+  if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+    return Response.json({ error: 'Not a preview path.', code: 'not-found' }, { status: 404 });
+  }
+  const rest = segments.map(encodeURIComponent).join('/') + request.nextUrl.search;
   const target = sbPreviewProxyTarget(ref, rest);
   if (!target) {
     return Response.json(
@@ -233,6 +240,11 @@ export async function previewRelay(
   }
   let upstream: Response;
   try {
+    // A reverse proxy is the feature: the host is the deployment's own
+    // sandbox worker (SANDBOX_WORKER_URL, never the request's), the prefix
+    // names the preview, and only the path and query below it are the
+    // browser's — encoded, no dot segments — which is what a proxy relays.
+    // codeql[js/request-forgery]
     upstream = await fetch(target.url, init);
   } catch (error) {
     return Response.json(

@@ -124,6 +124,18 @@ describe('previewRelay', () => {
     expect(response.headers.get('location')).toBe('/api/code/projects/p1/previews/web/app/login');
   });
 
+  it('refuses a dot segment in the path before anything is relayed', async () => {
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    const request = new NextRequest('https://r.example/api/code/projects/p1/previews/web/app/x');
+    const response = await previewRelay(
+      request,
+      { subject: 'code-project:p1', name: 'web' },
+      { prefix: '/api/code/projects/p1/previews/web/app/', path: ['..', 'env', 'list'] }
+    );
+    expect(response.status).toBe(404);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('answers 503 when the sandbox is not configured and 502 when it cannot be reached', async () => {
     delete process.env.SANDBOX_WORKER_URL;
     const request = new NextRequest('https://r.example/api/code/projects/p1/previews/web/app/');

@@ -469,6 +469,11 @@ export class PreviewManager {
     this.touch(preview.id);
     const headers = stripHopByHop(request.headers);
     headers.host = `127.0.0.1:${port}`;
+    // A reverse proxy is the feature: the host is this worker's own
+    // loopback and the port one the pool handed the preview — neither is
+    // the request's — and the path is what the browser asked the preview's
+    // server for, which is what a proxy relays.
+    // codeql[js/request-forgery]
     const upstream = httpRequest(
       {
         host: '127.0.0.1',
