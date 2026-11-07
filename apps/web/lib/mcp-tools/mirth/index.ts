@@ -74,6 +74,14 @@ import {
   type RefKind,
 } from './resolve';
 import { isRecord } from '@renkei/guards';
+import {
+  alertModelsOf,
+  alertSummaryOf,
+  channelCoverage,
+  coverageLabel,
+  sendsToChannel,
+  type AlertSummary,
+} from './alerts';
 
 /** The connector key the Mirth capabilities register under. */
 export const MIRTH_MCP_CONNECTOR = 'mirth';
@@ -1242,7 +1250,9 @@ export function registerMirthTools(
     {
       title: 'Mirth · Read — Alerts and their status',
       description:
-        'Every alert defined on an instance with its enabled state and alerted/sent counts.',
+        'Every alert defined on an instance with its enabled state and alerted/sent counts — ' +
+        'the roster. mirth_get_alert reads one in full; mirth_alert_coverage shows which ' +
+        'channels the alerts watch and which none does.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({ instanceId: instanceIdField }),
     },
@@ -1258,26 +1268,260 @@ export function registerMirthTools(
     }
   );
 
+  /** Channel ids → names on an instance; empty when the directory cannot say. */
+  const channelNamesOf = async (instanceId: string): Promise<Map<string, string>> => {
+    const entries = await directory.entries(instanceId, 'channel');
+    return new Map(typeof entries === 'string' ? [] : entries.map((e) => [e.id, e.name]));
+  };
+  const named = (names: Map<string, string>, channelId: string): string =>
+    names.has(channelId) ? `${names.get(channelId)} (${channelId})` : channelId;
+
+  /** The alert's actions, one line each, channel recipients named. */
+  const actionLines = (alert: AlertSummary, names: Map<string, string>): string[] =>
+    alert.actionGroups.flatMap((group, index) => [
+      ...(alert.actionGroups.length > 1 ? [`Action group ${index + 1}:`] : []),
+      ...group.actions.map(
+        (action) =>
+          `  - ${action.protocol}: ${action.protocol.toLowerCase() === 'channel' ? named(names, action.recipient) : action.recipient}`
+      ),
+      ...(group.subject ? [`  Subject: ${group.subject}`] : []),
+      ...(group.template ? [`  Template:\n${group.template.replace(/^/gm, '    ')}`] : []),
+    ]);
+
+  const MAX_LISTED_CHANNELS = 40;
+  const MAX_CONNECTOR_LOOKUPS = 20;
+
   gated('alerts.read').registerTool(
     'mirth_get_alert',
     {
-      title: 'Mirth · Read — One alert definition',
-      description: 'The full definition of one alert (trigger, channels, actions) as JSON.',
+      title: 'Mirth · Read — One alert, readably',
+      description:
+        'One alert in full, readable form: whether it is on, what errors trigger it, every ' +
+        'channel it watches by name (whole, or only some connectors), whether channels created ' +
+        'later are watched, where it sends (channel recipients named) and its template. ' +
+        'Format "json" or "xml" (the form mirth_create_alert and mirth_update_alert take) ' +
+        'returns the definition itself. mirth_list_alerts is the roster; mirth_alert_coverage ' +
+        'compares alerts against every channel.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         instanceId: instanceIdField,
         alertId: z.string().min(1).describe('The alert id or its name (from mirth_list_alerts).'),
+        format: z.enum(['summary', 'json', 'xml']).optional().describe('Default summary.'),
       }),
     },
     async (args: Record<string, unknown>) => {
-      const alert = await getJson(
-        str(args.instanceId),
-        'read the alert',
-        `/alerts/${encodeURIComponent(str(args.alertId))}`
+      const instanceId = str(args.instanceId);
+      const format = str(args.format) || 'summary';
+      const answered = await call(instanceId, 'read the alert', {
+        method: 'GET',
+        path: `/alerts/${encodeURIComponent(str(args.alertId))}`,
+        accept: format === 'xml' ? 'application/xml' : 'application/json',
+      });
+      if (!answered.ok) return errText(answered.message);
+      if (!answered.response.body.trim()) return errText('Mirth has no alert with that id.');
+      if (format === 'xml') return textResult(answered.response.body);
+      const parsed = parseJson(answered.response.body);
+      if (parsed === null) return errText('Mirth has no alert with that id.');
+      if (format === 'json') return textResult(JSON.stringify(parsed, null, 2));
+
+      const alert = alertSummaryOf(parsed);
+      if (!alert) return textResult(JSON.stringify(parsed, null, 2));
+      const names = await channelNamesOf(instanceId);
+      const listed = (ids: readonly string[]) => [
+        ...ids.slice(0, MAX_LISTED_CHANNELS).map((id) => `  - ${named(names, id)}`),
+        ...(ids.length > MAX_LISTED_CHANNELS
+          ? [
+              `  … and ${ids.length - MAX_LISTED_CHANNELS} more (mirth_alert_coverage lists every channel)`,
+            ]
+          : []),
+      ];
+      const partialLines: string[] = [];
+      for (const [index, partial] of alert.partialChannels.entries()) {
+        let connectors = partial.enabledConnectors.map(String);
+        if (index < MAX_CONNECTOR_LOOKUPS) {
+          const entries = await directory.entries(instanceId, 'connector', {
+            channelId: partial.channelId,
+          });
+          const connectorNames = new Map(
+            typeof entries === 'string' ? [] : entries.map((e) => [e.id, e.name])
+          );
+          connectors = partial.enabledConnectors.map((id) =>
+            connectorNames.has(String(id))
+              ? `${id} "${connectorNames.get(String(id))}"`
+              : String(id)
+          );
+        }
+        partialLines.push(
+          `  - ${named(names, partial.channelId)} — connector${connectors.length === 1 ? '' : 's'} ${connectors.join(', ')} only`
+        );
+      }
+      const newChannels =
+        alert.newChannelSource && alert.newChannelDestination
+          ? 'watched (source and destinations)'
+          : alert.newChannelSource
+            ? 'watched (source connector only)'
+            : alert.newChannelDestination
+              ? 'watched (destinations only)'
+              : 'not watched';
+      const trigger =
+        alert.errorEventTypes.length === 0 || alert.errorEventTypes.includes('ANY')
+          ? 'any error'
+          : `errors of type ${alert.errorEventTypes.join(', ')}`;
+      const lines = [
+        `${alert.name} — id ${alert.id} — ${alert.enabled ? 'enabled' : 'DISABLED'}`,
+        `Trigger: ${trigger}${alert.regex ? ` matching /${alert.regex}/` : ''}`,
+        `Watches ${alert.enabledChannels.length} whole channel(s)${alert.enabledChannels.length ? ':' : '.'}`,
+        ...listed(alert.enabledChannels),
+        ...(alert.partialChannels.length
+          ? [
+              `Watches some connectors of ${alert.partialChannels.length} channel(s):`,
+              ...partialLines,
+            ]
+          : []),
+        `Channels created after this alert was saved: ${newChannels}.`,
+        ...(alert.disabledChannels.length
+          ? [
+              `Explicitly not watched: ${alert.disabledChannels.length} channel(s)`,
+              ...listed(alert.disabledChannels),
+            ]
+          : []),
+        `Sends:${alert.actionGroups.some((g) => g.actions.length) ? '' : ' nowhere (no actions)'}`,
+        ...actionLines(alert, names),
+      ];
+      return textResult(lines.join('\n'));
+    }
+  );
+
+  gated('alerts.read').registerTool(
+    'mirth_alert_coverage',
+    {
+      title: 'Mirth · Read — Which channels the alerts watch, and which none does',
+      description:
+        'Every channel on the instance against the alerts: the channels no enabled alert ' +
+        'watches, then the watched ones with the alert(s) watching each and how (whole ' +
+        'channel, some connectors, or as a channel created after the alert). Narrow to the ' +
+        'alerts that send to one channel (an error-collector channel) with recipientChannelId; ' +
+        'includeDisabledAlerts counts alerts that are switched off too.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        recipientChannelId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            'Only alerts with a Channel action sending to this channel (id or name) count.'
+          ),
+        includeDisabledAlerts: z.boolean().optional().describe('Default false.'),
+        show: z
+          .enum(['unwatched', 'all'])
+          .optional()
+          .describe('"unwatched" lists only the channels no alert watches. Default all.'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const instanceId = str(args.instanceId);
+      const recipient = str(args.recipientChannelId);
+      const found = await getJson(instanceId, 'read the alerts', '/alerts');
+      if (!found.ok) return errText(found.message);
+      const all = alertModelsOf(found.value);
+      const names = await channelNamesOf(instanceId);
+      const statuses = await getJson(
+        instanceId,
+        'read the channel statuses',
+        '/channels/statuses',
+        {
+          includeUndeployed: true,
+        }
       );
-      if (!alert.ok) return errText(alert.message);
-      if (alert.value === null) return errText('Mirth has no alert with that id.');
-      return textResult(clip(JSON.stringify(alert.value, null, 2), DEFAULT_MAX_CHARS));
+      if (!statuses.ok) return errText(statuses.message);
+      const stateOf = new Map<string, string>();
+      for (const status of unwrapList(statuses.value)) {
+        if (isRecord(status) && str(status.channelId)) {
+          stateOf.set(str(status.channelId), str(status.state) || 'UNKNOWN');
+        }
+      }
+      const counted = all.filter(
+        (alert) =>
+          (args.includeDisabledAlerts === true || alert.enabled) &&
+          (!recipient || sendsToChannel(alert, recipient))
+      );
+      const skipped = all.length - counted.length;
+      const channelIds = [...names.keys()].sort((a, b) =>
+        (names.get(a) ?? '').localeCompare(names.get(b) ?? '')
+      );
+      const coverage = channelCoverage(counted, channelIds);
+      const unwatched = coverage.filter((entry) => entry.watchedBy.length === 0);
+      const watched = coverage.filter((entry) => entry.watchedBy.length > 0);
+      const channelLine = (channelId: string) =>
+        `  ${names.get(channelId) ?? channelId} — id ${channelId} — ${stateOf.get(channelId) ?? 'UNDEPLOYED'}`;
+      const scope =
+        `${counted.length} alert(s) counted` +
+        (skipped
+          ? ` (${skipped} left out: ${args.includeDisabledAlerts === true ? '' : 'disabled'}${recipient && args.includeDisabledAlerts !== true ? ', or ' : ''}${recipient ? `not sending to ${named(names, recipient)}` : ''})`
+          : '') +
+        `; ${channelIds.length} channel(s) on the instance.`;
+      const lines = [
+        scope,
+        `Watched by none of them — ${unwatched.length} channel(s)${unwatched.length ? ':' : '.'}`,
+        ...unwatched.map((entry) => channelLine(entry.channelId)),
+      ];
+      if (str(args.show) !== 'unwatched') {
+        lines.push(
+          `Watched — ${watched.length} channel(s)${watched.length ? ':' : '.'}`,
+          ...watched.map(
+            (entry) =>
+              `${channelLine(entry.channelId)} — ${entry.watchedBy
+                .map(
+                  (w) =>
+                    `${w.alert.name}${w.alert.enabled ? '' : ' [disabled]'} (${coverageLabel(w.coverage)})`
+                )
+                .join('; ')}`
+          )
+        );
+      }
+      return textResult(clip(lines.join('\n'), DEFAULT_MAX_CHARS));
+    }
+  );
+
+  gated('channels.read').registerTool(
+    'mirth_channels_writing_to',
+    {
+      title: 'Mirth · Read — Which channels send messages to a channel',
+      description:
+        'The channels with a Channel Writer destination aimed at the channel named — the ' +
+        'feeders of a collector or router channel — each with the destination that does it. ' +
+        'Reads every channel definition on the instance.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({ instanceId: instanceIdField, channelId: channelIdField }),
+    },
+    async (args: Record<string, unknown>) => {
+      const instanceId = str(args.instanceId);
+      const target = str(args.channelId);
+      const found = await getJson(instanceId, 'read the channel definitions', '/channels');
+      if (!found.ok) return errText(found.message);
+      const names = await channelNamesOf(instanceId);
+      const lines: string[] = [];
+      for (const channel of unwrapList(found.value)) {
+        if (!isRecord(channel) || !str(channel.id)) continue;
+        const destinations = isRecord(channel.destinationConnectors)
+          ? unwrapList(channel.destinationConnectors)
+          : [];
+        for (const destination of destinations) {
+          if (!isRecord(destination)) continue;
+          const properties = isRecord(destination.properties) ? destination.properties : {};
+          if (str(properties.channelId) !== target) continue;
+          const enabled = !(destination.enabled === false || destination.enabled === 'false');
+          lines.push(
+            `  ${str(channel.name)} — id ${str(channel.id)} — destination ${textOf(destination.metaDataId)} "${str(destination.name)}" (${str(destination.transportName)}${enabled ? '' : ', disabled'})`
+          );
+        }
+      }
+      return textResult(
+        lines.length
+          ? `${lines.length} destination(s) write to ${named(names, target)}:\n${lines.join('\n')}`
+          : `No channel has a Channel Writer destination aimed at ${named(names, target)}. A destination whose target is set by a variable at run time is not found this way.`
+      );
     }
   );
 

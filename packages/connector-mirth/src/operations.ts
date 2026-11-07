@@ -1287,7 +1287,10 @@ export const MIRTH_OPERATIONS: readonly OperationSpec[] = [
     tool: 'get_alerts',
     permission: 'alerts.read',
     title: 'Alert definitions',
-    description: 'The full definitions of all alerts, or of the ids given (GET /alerts).',
+    description:
+      'The raw definitions of all alerts, or of the ids given (GET /alerts) — large. For ' +
+      'reading, mirth_list_alerts, mirth_get_alert and mirth_alert_coverage say the same ' +
+      'readably.',
     method: 'GET',
     path: '/alerts',
     params: [q('alertId', 'string[]', 'Only these alert ids; omit for all.')],

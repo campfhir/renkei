@@ -987,3 +987,229 @@ describe('PHI access trail', () => {
     expect(recordPhiAccess).not.toHaveBeenCalled();
   });
 });
+
+describe('alerts, readably', () => {
+  const COLLECTOR = 'c9';
+  const alertModel = (overrides: Record<string, unknown>) => ({
+    id: 'a1',
+    name: 'Queue alert',
+    enabled: true,
+    trigger: {
+      alertChannels: {
+        newChannelSource: false,
+        newChannelDestination: false,
+        enabledChannels: { string: 'c1' },
+        disabledChannels: null,
+        partialChannels: null,
+      },
+      errorEventTypes: { errorEventType: 'ANY' },
+      regex: null,
+    },
+    actionGroups: {
+      alertActionGroup: {
+        actions: { alertAction: { protocol: 'Channel', recipient: COLLECTOR } },
+        subject: 'Lab error',
+        template: 'channel: ${channelName}',
+      },
+    },
+    ...overrides,
+  });
+
+  it('mirth_get_alert reads one alert as a person would, naming channels and connectors', async () => {
+    mirthApi.mockResolvedValueOnce(
+      answer(200, {
+        alertModel: alertModel({
+          trigger: {
+            alertChannels: {
+              newChannelSource: true,
+              newChannelDestination: false,
+              enabledChannels: { string: 'c1' },
+              disabledChannels: null,
+              partialChannels: {
+                entry: {
+                  string: 'c9',
+                  alertConnectors: {
+                    enabledConnectors: { int: 1 },
+                    disabledConnectors: { int: 0, null: null },
+                  },
+                },
+              },
+            },
+            errorEventTypes: { errorEventType: 'ANY' },
+            regex: 'timeout',
+          },
+        }),
+      })
+    );
+    const text = textOf(
+      await register().get('mirth_get_alert')!({ instanceId: INSTANCE_ID, alertId: 'Queue alert' })
+    );
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/alerts/a1',
+      accept: 'application/json',
+    });
+    expect(text).toContain('Queue alert — id a1 — enabled');
+    expect(text).toContain('Trigger: any error matching /timeout/');
+    expect(text).toContain('Watches 1 whole channel(s):\n  - ADT In (c1)');
+    expect(text).toContain('Nine (c9) — connector 1 "To Lab" only');
+    expect(text).toContain(
+      'Channels created after this alert was saved: watched (source connector only).'
+    );
+    expect(text).toContain('  - Channel: Nine (c9)');
+    expect(text).toContain('  Subject: Lab error');
+    expect(text).toContain('  Template:\n    channel: ${channelName}');
+  });
+
+  it('mirth_get_alert hands back the XML export form verbatim', async () => {
+    mirthApi.mockResolvedValueOnce(
+      answer(200, '<alertModel><id>a1</id></alertModel>', 'application/xml')
+    );
+    const text = textOf(
+      await register().get('mirth_get_alert')!({
+        instanceId: INSTANCE_ID,
+        alertId: 'a1',
+        format: 'xml',
+      })
+    );
+    expect(text).toBe('<alertModel><id>a1</id></alertModel>');
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/alerts/a1',
+      accept: 'application/xml',
+    });
+  });
+
+  it('mirth_alert_coverage names the channels no enabled alert watches, then the watched ones', async () => {
+    mirthApi
+      .mockResolvedValueOnce(
+        answer(200, {
+          list: {
+            alertModel: [
+              alertModel({}),
+              alertModel({
+                id: 'a2',
+                name: 'Catch-all (off)',
+                enabled: false,
+                trigger: {
+                  alertChannels: {
+                    newChannelSource: true,
+                    newChannelDestination: true,
+                    enabledChannels: null,
+                    disabledChannels: null,
+                    partialChannels: null,
+                  },
+                  errorEventTypes: { errorEventType: 'ANY' },
+                },
+              }),
+            ],
+          },
+        })
+      )
+      .mockResolvedValueOnce(
+        answer(200, {
+          list: { dashboardStatus: { channelId: 'c1', name: 'ADT In', state: 'STARTED' } },
+        })
+      );
+    const text = textOf(
+      await register().get('mirth_alert_coverage')!({
+        instanceId: INSTANCE_ID,
+        recipientChannelId: 'Nine',
+      })
+    );
+    expect(mirthApi).toHaveBeenNthCalledWith(1, TARGET, {
+      method: 'GET',
+      path: '/alerts',
+      query: undefined,
+    });
+    expect(text).toContain(
+      '1 alert(s) counted (1 left out: disabled, or not sending to Nine (c9)); 2 channel(s)'
+    );
+    expect(text).toContain('Watched by none of them — 1 channel(s):\n  Nine — id c9 — UNDEPLOYED');
+    expect(text).toContain(
+      'Watched — 1 channel(s):\n  ADT In — id c1 — STARTED — Queue alert (whole channel)'
+    );
+  });
+
+  it('mirth_alert_coverage counts a disabled catch-all when asked, as a new-channel watch', async () => {
+    mirthApi
+      .mockResolvedValueOnce(
+        answer(200, {
+          list: {
+            alertModel: alertModel({
+              enabled: false,
+              trigger: {
+                alertChannels: { newChannelSource: true, newChannelDestination: true },
+                errorEventTypes: { errorEventType: 'ANY' },
+              },
+            }),
+          },
+        })
+      )
+      .mockResolvedValueOnce(answer(200, { list: '' }));
+    const text = textOf(
+      await register().get('mirth_alert_coverage')!({
+        instanceId: INSTANCE_ID,
+        includeDisabledAlerts: true,
+        show: 'unwatched',
+      })
+    );
+    expect(text).toContain('Watched by none of them — 0 channel(s).');
+    expect(text).not.toContain('Watched — ');
+  });
+
+  it('mirth_channels_writing_to finds the Channel Writer destinations aimed at a channel', async () => {
+    mirthApi.mockResolvedValueOnce(
+      answer(200, {
+        list: {
+          channel: [
+            {
+              id: 'c1',
+              name: 'ADT In',
+              destinationConnectors: {
+                connector: [
+                  {
+                    name: 'To collector',
+                    transportName: 'Channel Writer',
+                    metaDataId: 2,
+                    enabled: false,
+                    properties: { channelId: 'c9' },
+                  },
+                  { name: 'Archive', transportName: 'File Writer', metaDataId: 3, properties: {} },
+                ],
+              },
+            },
+            {
+              id: 'c9',
+              name: 'Nine',
+              destinationConnectors: {
+                connector: {
+                  name: 'Elsewhere',
+                  transportName: 'Channel Writer',
+                  metaDataId: 1,
+                  properties: { channelId: 'none' },
+                },
+              },
+            },
+          ],
+        },
+      })
+    );
+    const text = textOf(
+      await register().get('mirth_channels_writing_to')!({
+        instanceId: INSTANCE_ID,
+        channelId: 'Nine',
+      })
+    );
+    expect(mirthApi).toHaveBeenCalledWith(TARGET, {
+      method: 'GET',
+      path: '/channels',
+      query: undefined,
+    });
+    expect(text).toContain('1 destination(s) write to Nine (c9):');
+    expect(text).toContain(
+      '  ADT In — id c1 — destination 2 "To collector" (Channel Writer, disabled)'
+    );
+    expect(text).not.toContain('Elsewhere');
+  });
+});
