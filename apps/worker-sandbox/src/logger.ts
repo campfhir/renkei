@@ -1,6 +1,6 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
-import { checkDataStore, createLogAdapter } from '@renkei/db';
+import { checkDataStore, createLogAdapter, migrateLogTables } from '@renkei/db';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 import packageJson from '../package.json';
 
@@ -75,7 +75,7 @@ export async function attachPersistentLogging(): Promise<void> {
   }
   const adapter = built.val;
   try {
-    await adapter.migrate();
+    await migrateLogTables(adapter);
   } catch (error) {
     logger.error('Log table migration failed; logging to console only', {
       component: 'worker-sandbox/logging',
