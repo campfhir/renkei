@@ -52,5 +52,7 @@ export {
   createLogAdapter,
   checkDataStore,
   closeDataStore,
+  migrateLogTables,
   type LogAdapterOptions,
+  type LogTableMigrator,
 } from './platform';

@@ -5,6 +5,7 @@ import {
   createLogAdapter,
   createMemoryDataStore,
   memoryDataStoreRequested,
+  migrateLogTables,
   registerDataStore,
 } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
@@ -93,38 +94,26 @@ export async function register() {
       process.exit(1);
     }
 
-    // The adapter rides @renkei/db's own connection: this process never
-    // holds the handle.
-    const built = await createLogAdapter({
-      level: 'info',
-      encrypt: cipher.encrypt,
-      decrypt: cipher.decrypt,
-      onWarning(w) {
-        if (w.type === 'attr_keys_truncated') {
-          logger.warn('attribute keys truncated', { component: 'logging/adapter' });
-        } else if (w.type === 'attr_value_truncated') {
-          logger.warn('attribute value truncated', { component: 'logging/adapter' });
-        }
-      },
-    });
-    if (!built.ok) {
-      logger.error('Failed to initialize database for bored-logs', {
-        component: 'web/instrumentation',
-        error: String(built.err),
-      });
-      return;
-    }
-    const adapter = built.val;
-
-    // Idempotent (CREATE IF NOT EXISTS) — brings a table set created by an
-    // older bored-logs up to the current schema on every boot.
-    await adapter.migrate();
-    logger.addAdapter(adapter);
-
+    // The log table and the schema check need the database, and register()
+    // must finish before Next serves a single request — health checks
+    // included. So they run beside the server rather than ahead of it: a
+    // slow or locked database delays when log lines reach the table (they
+    // are on the console meanwhile), never when the app answers.
     globalMarks.__renkeiPgLogAdapterAttached = true;
-    logger.info('PostgresAdapter registered', { component: 'web/instrumentation' });
-
-    await reportSchemaDrift();
+    void attachLogTable(cipher)
+      .catch((error: unknown) =>
+        logger.error('Failed to attach the Postgres log adapter; logging to console only', {
+          component: 'web/instrumentation',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      )
+      .then(reportSchemaDrift)
+      .catch((error: unknown) =>
+        logger.error('Could not check migration status: {error}', {
+          component: 'web/instrumentation',
+          error: error instanceof Error ? error.message : String(error),
+        })
+      );
 
     // Shutdown and recovery for the chat turns this process runs. Next's
     // own SIGTERM/SIGINT handler stays: it waits for after() work, and
@@ -180,6 +169,42 @@ export const onRequestError: Instrumentation.onRequestError = (error, request, c
     renderSource: context.renderSource,
   });
 };
+
+/**
+ * The bored-logs Postgres adapter, its tables brought current, added to the
+ * logger. Throws when the tables cannot be brought current.
+ */
+async function attachLogTable(cipher: LogCipher): Promise<void> {
+  // The adapter rides @renkei/db's own connection: this process never
+  // holds the handle.
+  const built = await createLogAdapter({
+    level: 'info',
+    encrypt: cipher.encrypt,
+    decrypt: cipher.decrypt,
+    onWarning(w) {
+      if (w.type === 'attr_keys_truncated') {
+        logger.warn('attribute keys truncated', { component: 'logging/adapter' });
+      } else if (w.type === 'attr_value_truncated') {
+        logger.warn('attribute value truncated', { component: 'logging/adapter' });
+      }
+    },
+  });
+  if (!built.ok) {
+    logger.error('Failed to initialize database for bored-logs', {
+      component: 'web/instrumentation',
+      error: String(built.err),
+    });
+    return;
+  }
+  const adapter = built.val;
+
+  // DDL only when a table or index is missing: the "idempotent" CREATE ...
+  // IF NOT EXISTS still queues for a table lock behind every other
+  // process's log inserts (see migrateLogTables).
+  await migrateLogTables(adapter);
+  logger.addAdapter(adapter);
+  logger.info('PostgresAdapter registered', { component: 'web/instrumentation' });
+}
 
 /**
  * Say loudly, once, at startup if the schema is behind the code.

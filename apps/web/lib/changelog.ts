@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-07',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Renkei answers right after a deploy',
+        detail:
+          'After an update the app could take several minutes to start answering while every service restarted at once. It now answers as soon as it has started.',
+      },
+      {
         kind: 'added',
         title: 'Ask Mirth by the question, not the route',
         detail:
