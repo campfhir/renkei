@@ -15,6 +15,7 @@ import {
   mintPreviewToken,
   parsePreviewStartPayload,
   previewAddresses,
+  previewPortRequests,
   previewRelay,
 } from './previews';
 
@@ -144,46 +145,82 @@ describe('previewRelay', () => {
 });
 
 describe('the start payload and the addresses', () => {
-  it('reads a name, a command, an optional port, public and the wait', () => {
+  it('reads a name, a command, the ports by name, public and the wait', () => {
     expect(
       parsePreviewStartPayload({
         name: 'web',
         command: 'pnpm dev',
-        port: 3000,
+        ports: ['web', 'api'],
         public: true,
         waitSeconds: 90,
       })
-    ).toEqual({ name: 'web', command: 'pnpm dev', port: 3000, public: true, waitMs: 90_000 });
+    ).toEqual({
+      name: 'web',
+      command: 'pnpm dev',
+      ports: ['web', 'api'],
+      public: true,
+      waitMs: 90_000,
+    });
     expect(parsePreviewStartPayload({ name: 'web', command: 'pnpm dev' })).toEqual({
       name: 'web',
       command: 'pnpm dev',
+      ports: ['app'],
       public: false,
     });
     expect(parsePreviewStartPayload({ name: 'Web', command: 'x' })).toHaveProperty('error');
     expect(parsePreviewStartPayload({ name: 'web', command: '' })).toHaveProperty('error');
-    expect(parsePreviewStartPayload({ name: 'web', command: 'x', port: 80 })).toHaveProperty(
+    expect(parsePreviewStartPayload({ name: 'web', command: 'x', ports: [3000] })).toHaveProperty(
       'error'
     );
     expect(parsePreviewStartPayload('nope')).toHaveProperty('error');
   });
 
-  it('mints a token of the published shape and builds both addresses from it', () => {
+  it('mints a token of the published shape and builds every port’s addresses', () => {
     const token = mintPreviewToken();
     expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(mintPreviewToken()).not.toBe(token);
-    expect(
-      previewAddresses('https://r.example/', { projectId: 'p1', chatId: 'c1', name: 'web', token })
-    ).toEqual({
+    const addresses = previewAddresses('https://r.example/', {
+      projectId: 'p1',
+      chatId: 'c1',
+      name: 'web',
+      ports: [
+        { name: 'app', token },
+        { name: 'api', token: null },
+      ],
+    });
+    expect(addresses).toEqual({
       url: 'https://r.example/api/code/projects/p1/chats/c1/previews/web/app/',
       publicUrl: `https://r.example/api/code/preview/${token}/`,
+      ports: [
+        {
+          name: 'app',
+          url: 'https://r.example/api/code/projects/p1/chats/c1/previews/web/app/',
+          publicUrl: `https://r.example/api/code/preview/${token}/`,
+          token,
+        },
+        {
+          name: 'api',
+          url: 'https://r.example/api/code/projects/p1/chats/c1/previews/web/ports/api/',
+          publicUrl: null,
+          token: null,
+        },
+      ],
     });
+    // What the worker is told: the public address where there is a token, the member's otherwise.
+    expect(previewPortRequests(addresses)).toEqual([
+      { name: 'app', url: `https://r.example/api/code/preview/${token}/`, token },
+      {
+        name: 'api',
+        url: 'https://r.example/api/code/projects/p1/chats/c1/previews/web/ports/api/',
+      },
+    ]);
     expect(
       previewAddresses('https://r.example', {
         projectId: 'p1',
         chatId: null,
         name: 'web',
-        token: null,
-      })
-    ).toEqual({ url: 'https://r.example/api/code/projects/p1/previews/web/app/', publicUrl: null });
+        ports: [{ name: 'app', token: null }],
+      }).url
+    ).toBe('https://r.example/api/code/projects/p1/previews/web/app/');
   });
 });

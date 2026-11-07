@@ -3,7 +3,8 @@
  * checkout by the sandbox worker and served through this app. GET lists
  * them with the addresses to open (any member); POST starts one
  * (editors), the way a chat's code_preview_start would: the command,
- * an optional fixed port, and whether to mint a share link. Through
+ * the ports it needs by name (numbers come from the worker's pool), and
+ * whether to mint share links. Through
  * `/chats/[chatId]/previews` the command runs in that chat's worktree;
  * here, in the project's base clone. One preview by name — its logs,
  * stopping it, and the relay itself — is [name]/ beside this.
@@ -15,7 +16,13 @@ import { clientFailure, sbPreviewList, sbPreviewStart } from '@renkei/sandbox-cl
 import { jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { codeProjectContext } from '@/lib/code/route-access';
 import { codeProjectTarget } from '@/lib/code/scope';
-import { mintPreviewToken, parsePreviewStartPayload, previewAddresses } from '@/lib/code/previews';
+import {
+  mintPreviewToken,
+  parsePreviewStartPayload,
+  previewAddresses,
+  previewPortRequests,
+  withAddresses,
+} from '@/lib/code/previews';
 import { getOrigin } from '@/lib/get-origin';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
@@ -43,16 +50,10 @@ export async function GET(
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   return NextResponse.json({
-    previews: listed.val.map((preview) => ({
-      ...preview,
-      // The addresses a browser opens; the token itself travels only inside its link.
-      ...previewAddresses(origin.ok ? origin.val : '', {
-        projectId,
-        chatId: chatId ?? null,
-        name: preview.name,
-        token: preview.token,
-      }),
-    })),
+    // Each port's addresses a browser opens; a token travels only inside its link.
+    previews: listed.val.map((preview) =>
+      withAddresses(preview, origin.ok ? origin.val : '', { projectId, chatId: chatId ?? null })
+    ),
   });
 }
 
@@ -71,20 +72,18 @@ export async function POST(
   const origin = await getOrigin(request);
   if (!origin.ok)
     return jsonError(500, 'origin', 'The deployment’s address could not be determined.');
-  const token = input.public ? mintPreviewToken() : null;
+  // One share token per port when public: each port's link is its own secret.
   const addresses = previewAddresses(origin.val, {
     projectId,
     chatId: chatId ?? null,
     name: input.name,
-    token,
+    ports: input.ports.map((name) => ({ name, token: input.public ? mintPreviewToken() : null })),
   });
   const started = await sbPreviewStart(codeProjectTarget(projectId), {
     id: workspaceId,
     name: input.name,
     command: input.command,
-    ...(input.port !== undefined ? { port: input.port } : {}),
-    ...(token ? { token } : {}),
-    url: addresses.publicUrl ?? addresses.url,
+    ports: previewPortRequests(addresses),
     ...(input.waitMs !== undefined ? { waitMs: input.waitMs } : {}),
   });
   if (!started.ok) {
@@ -115,8 +114,8 @@ export async function POST(
       projectId,
       chatId: chatId ?? null,
       name: input.name,
-      port: started.val.preview.port,
-      public: token !== null,
+      ports: started.val.preview.ports.map((port) => `${port.name}=${port.port}`),
+      public: input.public,
       listening: started.val.listening,
     },
   });
@@ -126,6 +125,6 @@ export async function POST(
       listening: started.val.listening,
       logs: started.val.logs,
     },
-    { status: started.val.listening ? 201 : 202 }
+    { status: started.val.listening.length ? 201 : 202 }
   );
 }

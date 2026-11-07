@@ -503,62 +503,79 @@ and a person wants to open it — in a browser, on a phone, from a webhook
 `apps/web/lib/code/preview-tools.ts`): the project's own start command
 (`pnpm dev`, `uvicorn app:app`, `python -m http.server`) run in the chat's
 worktree as a long-lived process — the same uid drop, prelude, limits and
-environment as `code_run`, with `PORT` (and `HOST=0.0.0.0`) set to a port
-the worker chose from its own range (or the one the project insists on,
-checked free) and `RENKEI_PREVIEW_URL` set to where the app serves it —
+environment as `code_run` — listening on ports from the **worker's pool**
 and reached only through the web app:
 
-| Tool                 | Kind | What it does                                                                                                   |
-| -------------------- | ---- | -------------------------------------------------------------------------------------------------------------- |
-| `code_previews`      | Read | What is running: name, state, port, the address to open.                                                       |
-| `code_preview_start` | Act  | Run the command, wait for the port to accept connections, answer the address (and a share link when `public`). |
-| `code_preview_logs`  | Read | The server's output, both streams stamped, newest last.                                                        |
-| `code_preview_stop`  | Act  | End the process tree; the address and the share link stop working, the name is free.                           |
+| Tool                 | Kind | What it does                                                                                                                                            |
+| -------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code_previews`      | Read | What is running: name, state, each port's number and address.                                                                                           |
+| `code_preview_start` | Act  | Run the command with its ports by name, wait for the first to accept connections, answer each port's address (and a share link per port when `public`). |
+| `code_preview_logs`  | Read | The server's output, both streams stamped, newest last.                                                                                                 |
+| `code_preview_stop`  | Act  | End the process tree; the addresses and share links stop working, the ports go back to the pool.                                                        |
+
+**Ports are the system's, never the preview's.** The worker holds a
+small pool — `SANDBOX_PREVIEW_PORTS`, as `low-high`, 10000-10050 unless
+set (`parsePreviewPortRange`; a malformed value stops the boot) — and
+hands ports out lowest-free-first (not held by a preview, nothing
+listening). A preview declares the ports it needs by **name**: none means
+one, `app`; a dev script that starts a UI and an API together declares
+`["web", "api"]` (up to eight). The process is told `PORT` (the first)
+and `PORT_<NAME>` for each, with `HOST=0.0.0.0`, so a project binds what
+it was given rather than what it hard-codes; `RENKEI_PREVIEW_URL` (and
+`RENKEI_PREVIEW_URL_<NAME>`) say where each is served. Every other
+preview and every `code_run` command gets `PREVIEW_<NAME>_PORT` / `_URL`
+for each preview that is up, and `PREVIEW_<NAME>_<PORT>_PORT` / `_URL`
+per named port, so a UI finds its API whether they share a preview or
+not. The pool's width is the ceiling on what runs at once on the worker;
+a start that needs more ports than are free is refused, naming the pool.
 
 **How a request gets there.** Nothing is published on the container: the
 process listens on the worker's own loopback, and the only way in is the
 app's relay (`apps/web/lib/code/previews.ts`, `previewRelay`) —
-`/api/code/projects/[projectId]/previews/[name]/app/…` (and the same
+`/api/code/projects/[projectId]/previews/[name]/app/…` for the first
+port, `…/previews/[name]/ports/[port]/…` for any named one (and the same
 under `/chats/[chatId]/`), which checks the person's session and
 membership like every project route, then forwards the request as it
 came (any method, the body streamed, `duplex: half`) to the worker's
-`/v1/previews/proxy/<name>/…` with the bearer key and the project's
-subject in a header; the worker (`preview-endpoints.ts`) relays it to
-`127.0.0.1:<port>` and streams the answer back. Hop-by-hop headers stop at
-each hop; the app's own session cookie is taken out of the `cookie`
-header before it goes (the preview runs the project's own code — a
-repository that captured it would hold the person's session) and the
-server's other cookies pass; `accept-encoding: identity` is asked of the
-server so what the app relays is what the browser gets;
-`x-forwarded-host`, `-proto` and `-prefix` say where the request really
-came from; a `location` that names a path on the server is rewritten
-under the preview's prefix so a redirect lands back inside it. The
-preview's answers are NOT scrubbed of environment values — they are the
-project's own server's, relayed as bytes like `download` — which the
-model is told. WebSockets (a dev server's HMR) do not cross the relay.
+`/v1/previews/proxy/<name>/…` or `/v1/previews/port/<name>/<port>/…` with
+the bearer key and the project's subject in a header; the worker
+(`preview-endpoints.ts`) relays it to `127.0.0.1:<port>` and streams the
+answer back. Hop-by-hop headers stop at each hop; the app's own session
+cookie is taken out of the `cookie` header before it goes (the preview
+runs the project's own code — a repository that captured it would hold
+the person's session) and the server's other cookies pass;
+`accept-encoding: identity` is asked of the server so what the app relays
+is what the browser gets; `x-forwarded-host`, `-proto` and `-prefix` say
+where the request really came from; a `location` that names a path on
+the server is rewritten under the port's prefix so a redirect lands back
+inside it. The preview's answers are NOT scrubbed of environment values —
+they are the project's own server's, relayed as bytes like `download` —
+which the model is told. WebSockets (a dev server's HMR) do not cross the
+relay.
 
-**Share links.** Started with `public`, a preview also gets a token — 32
-random bytes, minted in the web app so the public address can be told to
-the process — and `/api/code/preview/<token>/…` relays without a session,
-through the worker's `/v1/previews/public/<token>/…`. The token is the
-whole secret: it travels only inside its link, is answered by nothing the
-worker does not hold, and stops working the moment the preview is stopped
-or expires. It is for a phone, a colleague or a webhook to reach what a
-chat built for a few hours, not a way to host.
+**Share links.** Started with `public`, each port gets a token — 32 random
+bytes, minted in the web app so the public address can be told to the
+process — and `/api/code/preview/<token>/…` relays to that port without a
+session, through the worker's `/v1/previews/public/<token>/…`. A token is
+the whole secret of its link: it travels only inside the link, is
+answered by nothing the worker does not hold, and stops working the
+moment the preview is stopped or expires. It is for a phone, a colleague
+or a webhook to reach what a chat built for a few hours, not a way to
+host.
 
-**Several processes.** A preview is one process on one port; a UI and an
-API, or a monorepo's apps, are several previews. Each preview's process
-and every `code_run` command get `PREVIEW_<NAME>_PORT` (the other's
-loopback port, for a dev server that proxies `/api` to the backend
-beside it) and `PREVIEW_<NAME>_URL` (the address a browser reaches it
-at — the share link when it has one — for a UI the browser runs that
-calls its API itself), so the API is started first and the UI is told
-where it is from those. A UI reached through the signed-in relay calls
-an API reached through the same relay from the same origin, so the
-member's session covers both and no CORS is involved.
+**Several processes.** One dev script that starts a UI and an API is one
+preview with two named ports; two scripts are two previews. Either way
+the API is started (or named) first and the UI is told where it is: a dev
+server that proxies `/api` uses the loopback port (`PORT_API`, or another
+preview's `PREVIEW_API_PORT`); a UI the browser runs uses the API's
+address (`RENKEI_PREVIEW_URL_API`, or `PREVIEW_API_URL`). A UI reached
+through the signed-in relay calls an API reached through the same relay
+from the same origin, so the member's session covers both and no CORS is
+involved.
 
 **Lifetime and bounds.** A preview is working state in the worker's memory
-and process table: at most 3 per project, alive 4 hours past its last
+and process table: at most 3 per project and as many ports as the pool
+holds across the worker, alive 4 hours past its last
 relayed request (the sweep ends an idle one), ended when its checkout is
 deleted and when the worker stops (none outlives the process; a restart
 takes every preview with it and the list says so by saying nothing). The

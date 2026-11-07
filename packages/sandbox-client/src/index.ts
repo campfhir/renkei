@@ -2136,15 +2136,26 @@ export async function sbServicesTail(
 
 export type WirePreviewStatus = 'starting' | 'running' | 'exited';
 
+/** One of a preview's named ports: its number from the worker's pool and how it is reached. */
+export interface WirePreviewPort {
+  name: string;
+  port: number;
+  /** The port's share token, when the preview is public; null otherwise. */
+  token: string | null;
+  /** Where the web app serves this port — the public address when it has a token. */
+  url: string;
+}
+
 export interface WirePreview {
   id: string;
   name: string;
   workspaceId: string;
   command: string;
+  /** The ports, the first primary (`PORT`, the `…/app/` address). */
+  ports: WirePreviewPort[];
+  /** The first port's number, token and address, for a reader that wants one of each. */
   port: number;
-  /** The share token, when the preview is public; null when only a signed-in member may reach it. */
   token: string | null;
-  /** Where the web app serves it — what the process was told. */
   url: string;
   status: WirePreviewStatus;
   exitCode: number | null;
@@ -2152,6 +2163,16 @@ export interface WirePreview {
   startedAt: string;
   lastUsedAt: string;
   expiresAt: string;
+}
+
+function previewPortOf(value: unknown): WirePreviewPort | null {
+  if (!isRecord(value) || !str(value.name) || typeof value.port !== 'number') return null;
+  return {
+    name: str(value.name),
+    port: value.port,
+    token: optStr(value.token) ?? null,
+    url: str(value.url),
+  };
 }
 
 function previewOf(value: unknown): WirePreview | null {
@@ -2162,14 +2183,22 @@ function previewOf(value: unknown): WirePreview | null {
   if (!id || !name || (status !== 'starting' && status !== 'running' && status !== 'exited')) {
     return null;
   }
+  const ports: WirePreviewPort[] = [];
+  for (const raw of Array.isArray(value.ports) ? value.ports : []) {
+    const port = previewPortOf(raw);
+    if (!port) return null;
+    ports.push(port);
+  }
+  const [primary] = ports;
   return {
     id,
     name,
     workspaceId: str(value.workspaceId),
     command: str(value.command),
-    port: typeof value.port === 'number' ? value.port : 0,
-    token: optStr(value.token) ?? null,
-    url: str(value.url),
+    ports,
+    port: primary?.port ?? 0,
+    token: primary?.token ?? null,
+    url: primary?.url ?? '',
     status,
     exitCode: typeof value.exitCode === 'number' ? value.exitCode : null,
     signal: optStr(value.signal) ?? null,
@@ -2192,12 +2221,20 @@ export async function sbPreviewList(target: SandboxTarget): Promise<ClientResult
   return { ok: true, val: previews };
 }
 
+/** A port a start asks for: its name, where the web app will serve it, and its share token when public. */
+export interface PreviewPortRequest {
+  name: string;
+  url: string;
+  token?: string;
+}
+
 /**
  * Start a server in the checkout and wait (up to `waitMs`, the worker's
- * ceiling applies) for it to accept connections on its port. `url` is
- * where the web app will serve it — told to the process as
- * RENKEI_PREVIEW_URL; with `token`, the share link's address. Answers
- * whether it is listening yet, and its first lines either way.
+ * ceiling applies) for its first port to accept connections. `ports`
+ * names the ports it needs, first one primary, each with where the web
+ * app will serve it — told to the process as RENKEI_PREVIEW_URL(_<NAME>);
+ * the numbers come from the worker's pool. Answers which ports listen
+ * yet, and the first lines either way.
  */
 export async function sbPreviewStart(
   target: SandboxTarget,
@@ -2205,12 +2242,10 @@ export async function sbPreviewStart(
     id: string;
     name: string;
     command: string;
-    port?: number;
-    token?: string;
-    url: string;
+    ports: PreviewPortRequest[];
     waitMs?: number;
   }
-): Promise<ClientResult<{ preview: WirePreview; listening: boolean; logs: string }>> {
+): Promise<ClientResult<{ preview: WirePreview; listening: string[]; logs: string }>> {
   const cfg = sandboxConfig();
   if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
   let response: Response;
@@ -2235,7 +2270,7 @@ export async function sbPreviewStart(
   if (!preview || !isRecord(value)) return malformed();
   return {
     ok: true,
-    val: { preview, listening: value.listening === true, logs: str(value.logs) },
+    val: { preview, listening: stringList(value.listening), logs: str(value.logs) },
   };
 }
 
@@ -2274,11 +2309,12 @@ export async function sbPreviewStop(
 /**
  * Where the web app relays a browser's request to a preview: the
  * worker's proxy path for a member's request (the subject rides a
- * header) or for a share token, with the headers the worker needs.
- * `path` is what follows the preview's own prefix, query included.
+ * header) — the first port, or a named one — or for a port's share
+ * token, with the headers the worker needs. `path` is what follows the
+ * preview's own prefix, query included.
  */
 export function sbPreviewProxyTarget(
-  ref: { subject: string; name: string } | { token: string },
+  ref: { subject: string; name: string; port?: string | null } | { token: string },
   path: string
 ): { url: string; headers: Record<string, string> } | null {
   const cfg = sandboxConfig();
@@ -2290,8 +2326,11 @@ export function sbPreviewProxyTarget(
       headers: { authorization: `Bearer ${cfg.key}` },
     };
   }
+  const where = ref.port
+    ? `port/${encodeURIComponent(ref.name)}/${encodeURIComponent(ref.port)}`
+    : `proxy/${encodeURIComponent(ref.name)}`;
   return {
-    url: `${cfg.url}/v1/previews/proxy/${encodeURIComponent(ref.name)}/${rest}`,
+    url: `${cfg.url}/v1/previews/${where}/${rest}`,
     headers: { authorization: `Bearer ${cfg.key}`, 'x-sandbox-subject': ref.subject },
   };
 }

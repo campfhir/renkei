@@ -1383,11 +1383,16 @@ describe('the rest of git', () => {
   });
 
   it('phrases the new refusals', () => {
-    expect(clientFailure({ kind: 'op', type: 'git_in_progress', status: 409 }).status).toBe(409);
-    expect(clientFailure({ kind: 'op', type: 'port_in_use', status: 409 }).status).toBe(409);
-    expect(clientFailure({ kind: 'op', type: 'preview_unreachable', status: 502 }).status).toBe(
-      502
-    );
+    expect(
+      clientFailure({ kind: 'op', type: 'git_in_progress', message: undefined, status: 409 }).status
+    ).toBe(409);
+    expect(
+      clientFailure({ kind: 'op', type: 'port_in_use', message: undefined, status: 409 }).status
+    ).toBe(409);
+    expect(
+      clientFailure({ kind: 'op', type: 'preview_unreachable', message: undefined, status: 502 })
+        .status
+    ).toBe(502);
   });
 });
 
@@ -1398,15 +1403,26 @@ describe('previews', () => {
     fetchSpy?.mockRestore();
   });
 
-  it('starts one with where it will be served and reads whether it listens', async () => {
+  it('starts one with its named ports and where each is served, and reads which listen', async () => {
     const preview = {
       id: 'p1',
       name: 'web',
       workspaceId: 'ws-1',
       command: 'pnpm dev',
-      port: 20123,
-      token: null,
-      url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+      ports: [
+        {
+          name: 'app',
+          port: 10000,
+          token: null,
+          url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+        },
+        {
+          name: 'api',
+          port: 10001,
+          token: 't'.repeat(43),
+          url: `https://app.example/api/code/preview/${'t'.repeat(43)}/`,
+        },
+      ],
       status: 'running',
       exitCode: null,
       signal: null,
@@ -1414,27 +1430,48 @@ describe('previews', () => {
       lastUsedAt: '2026-09-01T10:00:00.000Z',
       expiresAt: '2026-09-01T14:00:00.000Z',
     };
-    fetchSpy = jest
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(
-        new Response(JSON.stringify({ preview, listening: true, logs: 'ready' }), { status: 201 })
-      );
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ preview, listening: ['app'], logs: 'ready' }), {
+        status: 201,
+      })
+    );
     const started = await sbPreviewStart(TARGET, {
       id: 'ws-1',
       name: 'web',
       command: 'pnpm dev',
-      url: preview.url,
+      ports: [
+        { name: 'app', url: preview.ports[0]!.url },
+        { name: 'api', url: preview.ports[1]!.url, token: 't'.repeat(43) },
+      ],
     });
     expect(fetchSpy).toHaveBeenCalledWith(
       'http://sandbox.internal:8092/v1/previews/start',
       expect.objectContaining({ method: 'POST' })
     );
-    expect(started).toEqual({ ok: true, val: { preview, listening: true, logs: 'ready' } });
+    expect(started).toEqual({
+      ok: true,
+      val: {
+        preview: {
+          ...preview,
+          port: 10000,
+          token: null,
+          url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+        },
+        listening: ['app'],
+        logs: 'ready',
+      },
+    });
   });
 
-  it('names the worker proxy path for a member and for a share token, and nothing when unconfigured', () => {
+  it('names the worker proxy path for a member, a named port and a share token, and nothing when unconfigured', () => {
     expect(sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, '/a/b?x=1')).toEqual({
       url: 'http://sandbox.internal:8092/v1/previews/proxy/web/a/b?x=1',
+      headers: { authorization: 'Bearer test-key', 'x-sandbox-subject': 'code-project:p1' },
+    });
+    expect(
+      sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web', port: 'api' }, 'x')
+    ).toEqual({
+      url: 'http://sandbox.internal:8092/v1/previews/port/web/api/x',
       headers: { authorization: 'Bearer test-key', 'x-sandbox-subject': 'code-project:p1' },
     });
     expect(sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toEqual({

@@ -1,19 +1,22 @@
 /**
  * Code project previews — the I/O half: a project's own server started
- * in its checkout as a long-lived process, the port it listens on, its
+ * in its checkout as a long-lived process, the ports it listens on, its
  * output, and the HTTP proxy that carries a request from the web app to
- * it and the answer back. The pure half (bounds, names, what the process
- * is told, header shaping) is @renkei/connector-sandbox's previews.ts;
- * the HTTP surface is preview-endpoints.ts.
+ * it and the answer back. The pure half (bounds, names, the port pool,
+ * what the process is told, header shaping) is @renkei/connector-sandbox's
+ * previews.ts; the HTTP surface is preview-endpoints.ts.
  *
  * A preview is a `code_run` that does not end: the same uid drop, the
  * same prelude and limits, the same environment built from nothing plus
- * the project's variables and its services' addresses — with `PORT` set
- * to a port this worker chose (or the one the project insists on) and
- * `RENKEI_PREVIEW_URL` to where the web app serves it. The process is
- * reached only from this worker's own loopback: nothing is published on
- * the container, and the web app's routes (which check the person's
- * session, or a share token) are the one way in from outside.
+ * the project's variables and its services' addresses — with `PORT` (and
+ * `PORT_<NAME>` for each port it declared) set from this worker's pool
+ * and `RENKEI_PREVIEW_URL` to where the web app serves it. The pool is
+ * the system's (SANDBOX_PREVIEW_PORTS, 10000-10050 by default), handed
+ * out lowest free first: a preview never picks a port, and the pool's
+ * size is the ceiling on what runs at once. The process is reached only
+ * from this worker's own loopback: nothing is published on the
+ * container, and the web app's routes (which check the person's
+ * session, or a port's share token) are the one way in from outside.
  *
  * It is working state kept in memory: a preview lives in this process's
  * table and process tree, for PREVIEW_TTL_MS past its last request, and
@@ -26,15 +29,17 @@ import { randomUUID } from 'node:crypto';
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { connect, createServer } from 'node:net';
 import {
+  DEFAULT_PREVIEW_PORT_RANGE,
   PREVIEW_LOG_MAX_LINES,
   PREVIEW_MAX_PER_SUBJECT,
-  PREVIEW_PORT_MAX,
-  PREVIEW_PORT_MIN,
   PREVIEW_PROXY_TIMEOUT_MS,
   PREVIEW_TTL_MS,
   previewEnvironment,
   previewNeighbourEnvironment,
+  previewPortPool,
   stripHopByHop,
+  type PreviewPortBinding,
+  type PreviewPortRange,
   type PreviewStatus,
 } from '@renkei/connector-sandbox';
 import { childEnvironment, shellPrelude, wrapCommand, type ExecIdentity } from './workspaces';
@@ -56,11 +61,8 @@ export interface StoredPreview {
   workspaceId: string;
   name: string;
   command: string;
-  port: number;
-  /** The share token the web app minted, when the preview is public; null otherwise. */
-  token: string | null;
-  /** Where the web app serves it — what the process was told. */
-  url: string;
+  /** The ports, the first primary. */
+  ports: PreviewPortBinding[];
   status: PreviewStatus;
   exitCode: number | null;
   signal: string | null;
@@ -88,7 +90,6 @@ interface Running extends StoredPreview {
 
 const KILL_GRACE_MS = 5_000;
 const READY_POLL_MS = 250;
-const PORT_TRIES = 40;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -119,29 +120,35 @@ export function portAccepts(port: number): Promise<boolean> {
   });
 }
 
+/** One port a start asks for: its name, and how the web app will serve it. */
+export interface PreviewPortRequest {
+  name: string;
+  token: string | null;
+  url: string;
+}
+
 export interface PreviewStartInput {
   workspace: { id: string; cwd: string; home: string; identity: ExecIdentity | null };
   name: string;
   command: string;
-  /** The port the project insists on, or null for one of this worker's choosing. */
-  port: number | null;
+  /** The ports, by name, first one primary; each with where the web app serves it. */
+  ports: PreviewPortRequest[];
   /** The caller's own variables (opened env secrets). */
   env: Record<string, string>;
-  /** The running services' variables, over the caller's. */
+  /** The running services' and other previews' variables, over the caller's. */
   extraEnv: Record<string, string>;
-  token: string | null;
-  /** Where the web app serves the preview (the public address when there is a token). */
-  url: string;
-  /** How long to wait for the server to accept connections before answering anyway. */
+  /** How long to wait for the first port to accept connections before answering anyway. */
   waitMs: number;
 }
 
 export class PreviewManager {
   private readonly previews = new Map<string, Running>();
   private readonly ttlMs: number;
+  readonly range: PreviewPortRange;
 
-  constructor(options: { ttlMs?: number } = {}) {
+  constructor(options: { ttlMs?: number; portRange?: PreviewPortRange } = {}) {
     this.ttlMs = options.ttlMs ?? PREVIEW_TTL_MS;
+    this.range = options.portRange ?? DEFAULT_PREVIEW_PORT_RANGE;
   }
 
   expiresAt(preview: StoredPreview): Date {
@@ -158,40 +165,50 @@ export class PreviewManager {
     return this.of(target).find((preview) => preview.name === name);
   }
 
-  /** A port nothing listens on and no preview holds: the caller's, checked, or one from the range. */
-  private async allocatePort(fixed: number | null): Promise<number> {
-    const held = new Set([...this.previews.values()].map((preview) => preview.port));
-    if (fixed !== null) {
-      if (held.has(fixed) || !(await portIsFree(fixed))) {
-        throw new PreviewOpError(
-          'port_in_use',
-          `Port ${fixed} is already in use on the sandbox; stop what holds it, or leave the port to the sandbox (PORT is set for the command).`
-        );
-      }
-      return fixed;
+  /** Every port a preview on this worker holds, exited ones included until they are replaced. */
+  private heldPorts(): Set<number> {
+    const held = new Set<number>();
+    for (const preview of this.previews.values()) {
+      for (const binding of preview.ports) held.add(binding.port);
     }
-    for (let attempt = 0; attempt < PORT_TRIES; attempt += 1) {
-      const port =
-        PREVIEW_PORT_MIN + Math.floor(Math.random() * (PREVIEW_PORT_MAX - PREVIEW_PORT_MIN + 1));
+    return held;
+  }
+
+  /**
+   * `count` ports from the pool, lowest free first: not held by a preview
+   * and nothing listening on them. Fewer than that free is a refusal
+   * that says how wide the pool is.
+   */
+  private async allocatePorts(count: number): Promise<number[]> {
+    const held = this.heldPorts();
+    const taken: number[] = [];
+    for (const port of previewPortPool(this.range)) {
+      if (taken.length === count) break;
       if (held.has(port)) continue;
-      if (await portIsFree(port)) return port;
+      if (await portIsFree(port)) taken.push(port);
     }
-    throw new PreviewOpError('start_failed', 'No free port could be found for the preview.');
+    if (taken.length < count) {
+      throw new PreviewOpError(
+        'port_in_use',
+        `The sandbox's preview ports (${this.range.min}-${this.range.max}) have only ${taken.length} free and this preview needs ${count}; stop a preview first.`
+      );
+    }
+    return taken;
   }
 
   async start(
     target: PreviewTarget,
     input: PreviewStartInput
-  ): Promise<{ preview: StoredPreview; listening: boolean }> {
+  ): Promise<{ preview: StoredPreview; listening: string[] }> {
     const existing = this.find(target, input.name);
     if (existing) {
       if (existing.status !== 'exited') {
         throw new PreviewOpError(
           'exists',
-          `A preview named ${input.name} is already ${existing.status} on port ${existing.port}; stop it first, or pick another name.`
+          `A preview named ${input.name} is already ${existing.status} on port ${existing.ports[0]?.port}; stop it first, or pick another name.`
         );
       }
-      // An exited one under that name makes way.
+      // An exited one under that name makes way (and gives its ports back).
       this.previews.delete(existing.id);
     }
     const live = this.of(target).filter((preview) => preview.status !== 'exited');
@@ -201,7 +218,15 @@ export class PreviewManager {
         `A project runs at most ${PREVIEW_MAX_PER_SUBJECT} previews at once; stop one first.`
       );
     }
-    const port = await this.allocatePort(input.port);
+    if (input.ports.length === 0)
+      throw new PreviewOpError('bad_request', 'A preview needs a port.');
+    const numbers = await this.allocatePorts(input.ports.length);
+    const ports: PreviewPortBinding[] = input.ports.map((request, index) => ({
+      name: request.name,
+      port: numbers[index]!,
+      token: request.token,
+      url: request.url,
+    }));
     const now = new Date();
     const preview: Running = {
       id: randomUUID(),
@@ -209,9 +234,7 @@ export class PreviewManager {
       workspaceId: input.workspace.id,
       name: input.name,
       command: input.command,
-      port,
-      token: input.token,
-      url: input.url,
+      ports,
       status: 'starting',
       exitCode: null,
       signal: null,
@@ -240,7 +263,7 @@ export class PreviewManager {
           identity: input.workspace.identity,
           env: input.env,
           timeoutMs: 0,
-          extraEnv: { ...input.extraEnv, ...previewEnvironment(port, input.url) },
+          extraEnv: { ...input.extraEnv, ...previewEnvironment(ports) },
         }),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: true,
@@ -272,24 +295,28 @@ export class PreviewManager {
       });
     });
     this.previews.set(preview.id, preview);
-    logger.info('started preview {name} for {subject} on port {port}', {
+    logger.info('started preview {name} for {subject} on port(s) {ports}', {
       component: 'worker-sandbox/previews',
       name: preview.name,
       subject: target.subject,
-      port,
+      ports: ports.map((binding) => `${binding.name}=${binding.port}`).join(','),
     });
 
-    // Listening, exited, or the wait is up: whichever comes first.
+    // The first port listening, the process exited, or the wait is up:
+    // whichever comes first. Then which ports answer right now.
     const deadline = Date.now() + input.waitMs;
-    let listening = false;
+    const primary = ports[0]!.port;
     while (preview.status !== 'exited' && Date.now() < deadline) {
-      if (await portAccepts(port)) {
-        listening = true;
-        break;
-      }
+      if (await portAccepts(primary)) break;
       await sleep(READY_POLL_MS);
     }
-    if (listening) preview.status = 'running';
+    const listening: string[] = [];
+    if (preview.status !== 'exited') {
+      for (const binding of ports) {
+        if (await portAccepts(binding.port)) listening.push(binding.name);
+      }
+    }
+    if (listening.length) preview.status = 'running';
     return { preview: this.summary(preview), listening };
   }
 
@@ -317,7 +344,7 @@ export class PreviewManager {
 
   private summary(preview: Running): StoredPreview {
     const { child: _child, logs: _logs, exited: _exited, ...summary } = preview;
-    return { ...summary };
+    return { ...summary, ports: summary.ports.map((binding) => ({ ...binding })) };
   }
 
   list(target: PreviewTarget): StoredPreview[] {
@@ -337,18 +364,31 @@ export class PreviewManager {
     return preview.logs.slice(-lines);
   }
 
-  /** The preview a share token names, if it is still up. */
-  byToken(token: string): StoredPreview | null {
+  /** The preview and port a share token names, if the preview is still up. */
+  byToken(token: string): { preview: StoredPreview; port: PreviewPortBinding } | null {
     for (const preview of this.previews.values()) {
-      if (preview.token === token && preview.status !== 'exited') return this.summary(preview);
+      if (preview.status === 'exited') continue;
+      const port = preview.ports.find((binding) => binding.token === token);
+      if (port) return { preview: this.summary(preview), port: { ...port } };
     }
     return null;
   }
 
-  /** The preview a (subject, name) names for the proxy, if it is still up. */
-  reachable(target: PreviewTarget, name: string): StoredPreview | null {
+  /**
+   * The preview and port a (subject, name, port name) names for the proxy,
+   * if the preview is still up; no port name means the first port.
+   */
+  reachable(
+    target: PreviewTarget,
+    name: string,
+    portName?: string | null
+  ): { preview: StoredPreview; port: PreviewPortBinding } | null {
     const preview = this.find(target, name);
-    return preview && preview.status !== 'exited' ? this.summary(preview) : null;
+    if (!preview || preview.status === 'exited') return null;
+    const port = portName
+      ? preview.ports.find((binding) => binding.name === portName)
+      : preview.ports[0];
+    return port ? { preview: this.summary(preview), port: { ...port } } : null;
   }
 
   private async kill(preview: Running): Promise<void> {
@@ -395,14 +435,14 @@ export class PreviewManager {
 
   /**
    * What a command — or another preview — in the project is told about the
-   * previews that are up: PREVIEW_<NAME>_PORT and PREVIEW_<NAME>_URL for
-   * each, `except` the one being started itself.
+   * previews that are up: PREVIEW_<NAME>_PORT / _URL for each and per
+   * named port, `except` the one being started itself.
    */
   environmentFor(target: PreviewTarget, except?: string): Record<string, string> {
     return previewNeighbourEnvironment(
       this.of(target)
         .filter((preview) => preview.status !== 'exited' && preview.name !== except)
-        .map((preview) => ({ name: preview.name, port: preview.port, url: preview.url }))
+        .map((preview) => ({ name: preview.name, ports: preview.ports }))
     );
   }
 
@@ -413,25 +453,26 @@ export class PreviewManager {
   }
 
   /**
-   * One request to the preview's server on the loopback, its answer
-   * streamed back as it comes. Hop-by-hop headers stop at each side; the
-   * `host` the server sees is its own loopback address, which is what a
-   * dev server's host check expects, and `x-forwarded-*` from the web
-   * app say where the request really came from.
+   * One request to a port of the preview's server on the loopback, its
+   * answer streamed back as it comes. Hop-by-hop headers stop at each
+   * side; the `host` the server sees is its own loopback address, which
+   * is what a dev server's host check expects, and `x-forwarded-*` from
+   * the web app say where the request really came from.
    */
   proxy(
     preview: StoredPreview,
+    port: number,
     request: IncomingMessage,
     response: ServerResponse,
     path: string
   ): void {
     this.touch(preview.id);
     const headers = stripHopByHop(request.headers);
-    headers.host = `127.0.0.1:${preview.port}`;
+    headers.host = `127.0.0.1:${port}`;
     const upstream = httpRequest(
       {
         host: '127.0.0.1',
-        port: preview.port,
+        port,
         method: request.method,
         path,
         headers,
@@ -453,7 +494,7 @@ export class PreviewManager {
       const payload = JSON.stringify({
         error: {
           type: 'preview_unreachable',
-          message: `The preview ${preview.name} did not answer on port ${preview.port}: ${error.message}`,
+          message: `The preview ${preview.name} did not answer on port ${port}: ${error.message}`,
         },
       });
       response.writeHead(502, {

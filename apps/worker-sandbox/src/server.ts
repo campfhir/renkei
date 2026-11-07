@@ -992,6 +992,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     // JSON verbs' POST-only rule.
     if (
       url.pathname.startsWith('/v1/previews/proxy/') ||
+      url.pathname.startsWith('/v1/previews/port/') ||
       url.pathname.startsWith('/v1/previews/public/')
     ) {
       return withRequestScope('previews/proxy', str(request.headers['x-sandbox-subject']), () =>

@@ -92,6 +92,7 @@ import { createSandboxServer, orgMaxFileBytes } from './server';
 import { DockerClient, parseDockerHost } from './docker';
 import { ServiceManager } from './services';
 import { PreviewManager } from './previews';
+import { parsePreviewPortRange } from '@renkei/connector-sandbox';
 import { BrowserSessions } from './browser';
 import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
 import { CRAWL_STALE_MS, Crawler } from './crawler';
@@ -489,7 +490,17 @@ async function main(): Promise<void> {
 
   // Previews: a checkout's own server kept running (previews.ts). Made
   // here so the shutdown below can end every one of them before exiting.
-  const previews = new PreviewManager();
+  // Their ports come from the system's pool — SANDBOX_PREVIEW_PORTS, as
+  // `low-high`, 10000-10050 unless set — never from the preview's choice.
+  const portRange = parsePreviewPortRange(process.env.SANDBOX_PREVIEW_PORTS);
+  if (!portRange.ok) fatal(portRange.message);
+  const previews = new PreviewManager({ portRange: portRange.range });
+  logger.info('preview ports: {min}-{max} ({count} at once)', {
+    component: 'worker-sandbox/previews',
+    min: portRange.range.min,
+    max: portRange.range.max,
+    count: portRange.range.max - portRange.range.min + 1,
+  });
   const server = createSandboxServer({
     apiKeys,
     browser,

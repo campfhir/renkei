@@ -79,6 +79,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(302, '', {'Location': '/hello'})
         if self.path.startswith('/env'):
             return self._send(200, 'PORT=%s URL=%s SECRET=%s' % (os.environ.get('PORT'), os.environ.get('RENKEI_PREVIEW_URL'), os.environ.get('NPM_TOKEN')))
+        if self.path.startswith('/ports'):
+            return self._send(200, ' '.join('%s=%s' % (k, v) for k, v in sorted(os.environ.items()) if k.startswith('PORT_')))
         if self.path.startswith('/neighbours'):
             return self._send(200, ' '.join('%s=%s' % (k, v) for k, v in sorted(os.environ.items()) if k.startswith('PREVIEW_')))
         return self._send(200, 'hi %s host=%s' % (self.path, self.headers.get('Host')))
@@ -89,9 +91,28 @@ class H(BaseHTTPRequestHandler):
         sys.stderr.write('served %s\\n' % (args[0] if args else ''))
         sys.stderr.flush()
 
+import threading
+for key, value in os.environ.items():
+    if key.startswith('PORT_') and value != os.environ['PORT']:
+        threading.Thread(target=HTTPServer(('0.0.0.0', int(value)), H).serve_forever, daemon=True).start()
 print('listening on', os.environ['PORT'], flush=True)
 HTTPServer(('0.0.0.0', int(os.environ['PORT'])), H).serve_forever()
 `;
+
+/** A start body's ports: one, `app`, at a project address, unless named. */
+function portsFor(
+  name: string,
+  ports: Array<{ name: string; token?: string }> = [{ name: 'app' }]
+) {
+  return ports.map((port) => ({
+    name: port.name,
+    ...(port.token ? { token: port.token } : {}),
+    url:
+      port.name === 'app'
+        ? `https://app.example/api/code/projects/p1/previews/${name}/app/`
+        : `https://app.example/api/code/projects/p1/previews/${name}/ports/${port.name}/`,
+  }));
+}
 
 let root: string;
 let server: Server;
@@ -192,11 +213,11 @@ describe('a preview', () => {
     const started = await post('previews/start', {
       name: 'web',
       command: 'python3 server.py',
-      url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+      ports: portsFor('web'),
       waitMs: 30_000,
     });
     expect(started.status).toBe(201);
-    expect(started.json.listening).toBe(true);
+    expect(started.json.listening).toEqual(['app']);
     expect(started.json.preview).toEqual(
       expect.objectContaining({
         name: 'web',
@@ -205,8 +226,17 @@ describe('a preview', () => {
         workspaceId: 'ws-preview',
       })
     );
+    // The lowest free port of the system's pool, never one of the preview's choosing.
     const port: number = started.json.preview.port;
-    expect(port).toBeGreaterThanOrEqual(20_000);
+    expect(port).toBe(10_000);
+    expect(started.json.preview.ports).toEqual([
+      {
+        name: 'app',
+        port: 10_000,
+        token: null,
+        url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+      },
+    ]);
     expect(started.json.logs).toContain(`listening on ${port}`);
 
     const hello = await through('/v1/previews/proxy/web/hello/there?x=1');
@@ -250,7 +280,7 @@ describe('a preview', () => {
     const again = await post('previews/start', {
       name: 'web',
       command: 'python3 server.py',
-      url: 'https://app.example/x/',
+      ports: portsFor('web'),
     });
     expect(again.status).toBe(409);
     expect(again.json.error.type).toBe('exists');
@@ -266,62 +296,128 @@ describe('a preview', () => {
     const api = await post('previews/start', {
       name: 'api',
       command: 'python3 server.py',
-      url: 'https://app.example/api/code/projects/p1/previews/api/app/',
+      ports: portsFor('api'),
       waitMs: 30_000,
     });
     expect(api.status).toBe(201);
     const web = await post('previews/start', {
       name: 'web',
       command: 'python3 server.py',
-      url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+      ports: portsFor('web'),
       waitMs: 30_000,
     });
     expect(web.status).toBe(201);
+    const apiPort = api.json.preview.port;
+    const webPort = web.json.preview.port;
+    const apiUrl = 'https://app.example/api/code/projects/p1/previews/api/app/';
     const seen = await through('/v1/previews/proxy/web/neighbours');
     expect(seen.text).toBe(
-      `PREVIEW_API_PORT=${api.json.preview.port} PREVIEW_API_URL=https://app.example/api/code/projects/p1/previews/api/app/`
+      `PREVIEW_API_APP_PORT=${apiPort} PREVIEW_API_APP_URL=${apiUrl} PREVIEW_API_PORT=${apiPort} PREVIEW_API_URL=${apiUrl}`
     );
     const ran = await post('workspaces/exec', { command: 'env | grep ^PREVIEW_ | sort' });
     expect(ran.status).toBe(200);
     expect(ran.json.stdout.trim().split('\n')).toEqual([
-      `PREVIEW_API_PORT=${api.json.preview.port}`,
-      'PREVIEW_API_URL=https://app.example/api/code/projects/p1/previews/api/app/',
-      `PREVIEW_WEB_PORT=${web.json.preview.port}`,
+      `PREVIEW_API_APP_PORT=${apiPort}`,
+      `PREVIEW_API_APP_URL=${apiUrl}`,
+      `PREVIEW_API_PORT=${apiPort}`,
+      `PREVIEW_API_URL=${apiUrl}`,
+      `PREVIEW_WEB_APP_PORT=${webPort}`,
+      'PREVIEW_WEB_APP_URL=https://app.example/api/code/projects/p1/previews/web/app/',
+      `PREVIEW_WEB_PORT=${webPort}`,
       'PREVIEW_WEB_URL=https://app.example/api/code/projects/p1/previews/web/app/',
     ]);
     await post('previews/stop', { name: 'api' });
     await post('previews/stop', { name: 'web' });
   });
 
-  it('is reached by its share token when started public, and nowhere else by token', async () => {
+  it('holds several named ports, each reached by name or by its own share token', async () => {
+    const T2 = 'b'.repeat(43);
     const started = await post('previews/start', {
-      name: 'pub',
+      name: 'full',
       command: 'python3 server.py',
-      token: TOKEN,
-      url: `https://app.example/api/code/preview/${TOKEN}/`,
+      ports: portsFor('full', [
+        { name: 'web', token: TOKEN },
+        { name: 'api', token: T2 },
+      ]),
       waitMs: 30_000,
     });
     expect(started.status).toBe(201);
+    expect(started.json.listening).toEqual(['web', 'api']);
+    const [web, api] = started.json.preview.ports;
+    expect(web).toEqual(expect.objectContaining({ name: 'web', port: 10_000, token: TOKEN }));
+    expect(api).toEqual(expect.objectContaining({ name: 'api', port: 10_001, token: T2 }));
     expect(started.json.preview.token).toBe(TOKEN);
-    const hello = await through(`/v1/previews/public/${TOKEN}/hello`, { subject: null });
-    expect(hello.status).toBe(200);
-    expect(hello.text).toContain('hi /hello');
+    // The process was told both: PORT is the first, PORT_<NAME> each.
+    const told = await through('/v1/previews/proxy/full/ports');
+    expect(told.text).toBe('PORT_API=10001 PORT_WEB=10000');
+    // By name through the member path, the port the request reached in the Host it saw.
+    expect((await through('/v1/previews/proxy/full/hello')).text).toContain('host=127.0.0.1:10000');
+    expect((await through('/v1/previews/port/full/web/hello')).text).toContain(
+      'host=127.0.0.1:10000'
+    );
+    expect((await through('/v1/previews/port/full/api/hello')).text).toContain(
+      'host=127.0.0.1:10001'
+    );
+    expect((await through('/v1/previews/port/full/nope/hello')).status).toBe(404);
+    // Each port's own share token, and nothing for one that is not held.
+    expect((await through(`/v1/previews/public/${TOKEN}/hello`, { subject: null })).text).toContain(
+      'host=127.0.0.1:10000'
+    );
+    expect((await through(`/v1/previews/public/${T2}/hello`, { subject: null })).text).toContain(
+      'host=127.0.0.1:10001'
+    );
     expect(
-      (await through(`/v1/previews/public/${'b'.repeat(43)}/hello`, { subject: null })).status
+      (await through(`/v1/previews/public/${'c'.repeat(43)}/hello`, { subject: null })).status
     ).toBe(404);
     expect((await through('/v1/previews/public/short/hello', { subject: null })).status).toBe(404);
-    await post('previews/stop', { name: 'pub' });
+    await post('previews/stop', { name: 'full' });
+    // Stopped: both ports go back to the pool, and the lowest is handed out again.
+    const next = await post('previews/start', {
+      name: 'next',
+      command: 'python3 server.py',
+      ports: portsFor('next'),
+      waitMs: 30_000,
+    });
+    expect(next.json.preview.port).toBe(10_000);
+    await post('previews/stop', { name: 'next' });
+  });
+
+  it('refuses more ports than the pool has free, naming the pool', async () => {
+    const small = new PreviewManager({ portRange: { min: 10_040, max: 10_041 } });
+    await expect(
+      small.start(TARGET, {
+        workspace: {
+          id: 'ws-preview',
+          cwd: dir,
+          home: join(root, 'tenant-1', 'hash', 'home'),
+          identity: identityFor(TARGET),
+        },
+        name: 'wide',
+        command: 'python3 server.py',
+        ports: portsFor('wide', [{ name: 'a' }, { name: 'b' }, { name: 'c' }]).map((port) => ({
+          ...port,
+          token: null,
+        })),
+        env: {},
+        extraEnv: {},
+        waitMs: 1_000,
+      })
+    ).rejects.toMatchObject({
+      type: 'port_in_use',
+      message: expect.stringContaining('10040-10041'),
+    });
+    expect(small.count()).toBe(0);
   });
 
   it('reports a command that exits at once as exited, with its last lines, and lets the name be reused', async () => {
     const started = await post('previews/start', {
       name: 'dead',
       command: 'echo "boom: no such port"; exit 3',
-      url: 'https://app.example/x/',
+      ports: portsFor('dead'),
       waitMs: 5_000,
     });
     expect(started.status).toBe(202);
-    expect(started.json.listening).toBe(false);
+    expect(started.json.listening).toEqual([]);
     expect(started.json.preview.status).toBe('exited');
     expect(started.json.preview.exitCode).toBe(3);
     expect(started.json.logs).toContain('boom: no such port');
@@ -330,7 +426,7 @@ describe('a preview', () => {
     const replaced = await post('previews/start', {
       name: 'dead',
       command: 'exit 0',
-      url: 'https://app.example/x/',
+      ports: portsFor('dead'),
       waitMs: 2_000,
     });
     expect(replaced.status).toBe(202);
@@ -340,15 +436,9 @@ describe('a preview', () => {
     await post('previews/stop', { name: 'dead' });
   });
 
-  it('refuses a bad name, a privileged port, a bad url, and a token of the wrong shape', async () => {
-    expect(
-      (await post('previews/start', { name: 'Web', command: 'x', url: 'https://a/' })).status
-    ).toBe(400);
-    expect(
-      (await post('previews/start', { name: 'web', command: 'x', port: 80, url: 'https://a/' }))
-        .status
-    ).toBe(400);
-    expect((await post('previews/start', { name: 'web', command: 'x', url: 'nope' })).status).toBe(
+  it('refuses a bad name, bad port names, a bad url, and a token of the wrong shape', async () => {
+    const ok = portsFor('web');
+    expect((await post('previews/start', { name: 'Web', command: 'x', ports: ok })).status).toBe(
       400
     );
     expect(
@@ -356,11 +446,29 @@ describe('a preview', () => {
         await post('previews/start', {
           name: 'web',
           command: 'x',
-          url: 'https://a/',
-          token: 'short',
+          ports: [{ name: 'Bad', url: 'https://a/' }],
         })
       ).status
     ).toBe(400);
+    expect(
+      (
+        await post('previews/start', {
+          name: 'web',
+          command: 'x',
+          ports: [{ name: 'a', url: 'nope' }],
+        })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await post('previews/start', {
+          name: 'web',
+          command: 'x',
+          ports: [{ name: 'a', url: 'https://a/', token: 'short' }],
+        })
+      ).status
+    ).toBe(400);
+    expect((await post('previews/start', { name: 'web', command: 'x' })).status).toBe(400);
     expect((await post('previews/logs', { name: 'nothing' })).status).toBe(404);
   });
 
@@ -376,16 +484,14 @@ describe('a preview', () => {
       },
       name: 'idle',
       command: 'python3 server.py',
-      port: null,
+      ports: [{ name: 'app', token: null, url: 'https://app.example/x/' }],
       env: {},
       extraEnv: {},
-      token: null,
-      url: 'https://app.example/x/',
       waitMs: 30_000,
     });
-    expect(started.listening).toBe(true);
+    expect(started.listening).toEqual(['app']);
     expect(await idle.sweep(Date.now() + 1)).toBe(1);
-    expect(await portAccepts(started.preview.port)).toBe(false);
+    expect(await portAccepts(started.preview.ports[0]!.port)).toBe(false);
     expect(idle.list(TARGET)).toEqual([]);
   });
 });

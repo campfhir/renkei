@@ -12,7 +12,11 @@
 import {
   PREVIEW_LOG_MAX_LINES,
   PREVIEW_MAX_PER_SUBJECT,
+  PREVIEW_PORT_MAX,
+  PREVIEW_PORT_MIN,
+  PREVIEW_PORTS_MAX,
   PREVIEW_START_WAIT_MAX_MS,
+  validatePreviewPorts,
 } from '@renkei/connector-sandbox';
 import {
   sbPreviewList,
@@ -25,7 +29,12 @@ import {
 } from '@renkei/sandbox-client';
 import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
 import type { McpToolResult } from '@renkei/mcp-client';
-import { mintPreviewToken, previewAddresses } from './previews';
+import {
+  mintPreviewToken,
+  previewAddresses,
+  previewPortRequests,
+  type PreviewAddresses,
+} from './previews';
 
 export interface PreviewToolDeps {
   target: SandboxTarget;
@@ -46,22 +55,23 @@ function num(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
-/** One preview as the model reads it: name, state, port, the address — never the token on its own. */
-export function renderPreview(
-  preview: WirePreview,
-  addresses: { url: string; publicUrl: string | null }
-): string {
+/** One preview as the model reads it: name, state, each port's number and address — never a token on its own. */
+export function renderPreview(preview: WirePreview, addresses: PreviewAddresses): string {
   const state =
     preview.status === 'exited'
       ? `exited${preview.exitCode !== null ? ` (code ${preview.exitCode})` : ''}${preview.signal ? ` (${preview.signal})` : ''}`
       : preview.status;
+  const ports = preview.ports.map((port) => `${port.name}=${port.port}`).join(', ');
+  if (preview.status === 'exited')
+    return `${preview.name}: ${state}, ports ${ports}, \`${preview.command}\``;
+  const lines = addresses.ports.map(
+    (port, index) =>
+      `  ${port.name} (port ${preview.ports[index]?.port ?? '?'}${index === 0 ? ', PORT' : ''}): open ${port.url}` +
+      (port.publicUrl ? `\n    share link (no sign-in): ${port.publicUrl}` : '')
+  );
   return (
-    `${preview.name}: ${state}, port ${preview.port}, \`${preview.command}\`` +
-    (preview.status === 'exited'
-      ? ''
-      : `\n  open: ${addresses.url}` +
-        (addresses.publicUrl ? `\n  share link (no sign-in): ${addresses.publicUrl}` : '') +
-        `\n  until ${preview.expiresAt} unless requested again`)
+    `${preview.name}: ${state}, \`${preview.command}\`\n${lines.join('\n')}` +
+    `\n  until ${preview.expiresAt} unless requested again`
   );
 }
 
@@ -69,13 +79,13 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
   const { target, ref, failed } = deps;
   const addressesOf = (
     context: { projectId: string | null; chatId: string },
-    preview: { name: string; token: string | null }
+    preview: { name: string; ports: ReadonlyArray<{ name: string; token: string | null }> }
   ) =>
     previewAddresses(deps.origin, {
       projectId: context.projectId ?? '',
       chatId: context.chatId,
       name: preview.name,
-      token: preview.token,
+      ports: preview.ports,
     });
 
   return [
@@ -110,17 +120,18 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
           'Start the project’s own server in this checkout so the person can open it in a ' +
           'browser: the command (pnpm dev, npm start, python -m http.server, uvicorn app:app …) ' +
           'runs with the project’s environment and PORT set to the port it must listen on — bind ' +
-          '0.0.0.0 (or the given PORT and HOST); pass port only when the project insists on one. ' +
-          'Waits up to waitSeconds for the server to accept connections, then answers the address ' +
-          'the person opens signed in; with public true also a share link anyone holding it can ' +
-          'open (a phone, a colleague, a webhook) until the preview stops. The process gets ' +
-          'RENKEI_PREVIEW_URL for frameworks that need their public address or base path; an app ' +
-          'that serves absolute paths (/_next/…) needs a base path set to the address’s path to ' +
-          'render through the signed-in address, or use the share link. A UI and an API are two ' +
-          'previews (one process and one port each): every preview and every code_run command gets ' +
-          'PREVIEW_<NAME>_PORT (the other’s loopback port, for a dev server that proxies /api to it) ' +
-          'and PREVIEW_<NAME>_URL (the address a browser reaches it at, for a UI that calls its API ' +
-          'directly) — start the API first, then the UI with its API address from those. ' +
+          `0.0.0.0 (or the given PORT and HOST). Ports are the sandbox's own pool (${PREVIEW_PORT_MIN}-${PREVIEW_PORT_MAX}), ` +
+          'never a port of your choosing: a project that hard-codes one must be told $PORT. A ' +
+          'preview that runs several processes — a UI and an API from one dev script — declares ' +
+          `ports by name (up to ${PREVIEW_PORTS_MAX}: ["web", "api"]); the first is PORT and each is also PORT_<NAME> ` +
+          '(PORT_WEB, PORT_API), each with an address of its own in the answer. Waits up to waitSeconds ' +
+          'for the first port to accept connections, then answers the addresses the person opens signed ' +
+          'in; with public true also a share link per port anyone holding it can open (a phone, a ' +
+          'colleague, a webhook) until the preview stops. The process gets RENKEI_PREVIEW_URL (and ' +
+          'RENKEI_PREVIEW_URL_<NAME>) for frameworks that need their public address or base path; an ' +
+          'app that serves absolute paths (/_next/…) needs a base path set to the address’s path to ' +
+          'render through the signed-in address, or use the share link. Separate previews learn each ' +
+          'other’s ports and addresses as PREVIEW_<NAME>_PORT / PREVIEW_<NAME>_URL (per port too). ' +
           `At most ${PREVIEW_MAX_PER_SUBJECT} previews; a name in use must be stopped first. A preview lives a few hours past its last request and dies with the sandbox worker.`,
         inputSchema: {
           type: 'object',
@@ -131,11 +142,13 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
               description: 'A short name — web, api, docs — part of the address.',
             },
             command: { type: 'string', minLength: 1, maxLength: 8_000 },
-            port: {
-              type: 'integer',
-              minimum: 1024,
-              maximum: 65535,
-              description: 'Only when the project hard-codes its port.',
+            ports: {
+              type: 'array',
+              items: { type: 'string', pattern: '^[a-z][a-z0-9-]{0,15}$' },
+              minItems: 1,
+              maxItems: PREVIEW_PORTS_MAX,
+              description:
+                'The ports by name, first one primary (default ["app"]); each becomes PORT_<NAME> and gets its own address.',
             },
             public: {
               type: 'boolean',
@@ -155,21 +168,29 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
       async execute(input, context) {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const name = str(input.name);
-        const token = input.public === true ? mintPreviewToken() : null;
-        const addresses = addressesOf(context, { name, token });
+        const portNames = validatePreviewPorts(input.ports);
+        if (!portNames.ok) return errorResult(portNames.message);
+        const addresses = addressesOf(context, {
+          name,
+          ports: portNames.ports.map((port) => ({
+            name: port,
+            token: input.public === true ? mintPreviewToken() : null,
+          })),
+        });
         const waitSeconds = num(input.waitSeconds);
         const started = await sbPreviewStart(target, {
           id: ref.id,
           name,
           command: str(input.command),
-          ...(num(input.port) !== undefined ? { port: num(input.port) } : {}),
-          ...(token ? { token } : {}),
-          url: addresses.publicUrl ?? addresses.url,
+          ports: previewPortRequests(addresses),
           ...(waitSeconds !== undefined ? { waitMs: waitSeconds * 1000 } : {}),
         });
         if (!started.ok) return failed(started.err);
-        const head = started.val.listening
-          ? `Started and listening.`
+        const notYet = started.val.preview.ports
+          .map((port) => port.name)
+          .filter((port) => !started.val.listening.includes(port));
+        const head = started.val.listening.length
+          ? `Started and listening${notYet.length ? ` on ${started.val.listening.join(', ')} (not yet on ${notYet.join(', ')} — check code_preview_logs)` : ''}.`
           : started.val.preview.status === 'exited'
             ? `The command exited before listening${started.val.preview.exitCode !== null ? ` (code ${started.val.preview.exitCode})` : ''}; its output is below.`
             : `Started, but nothing is accepting connections on port ${started.val.preview.port} yet — it may still be building; check code_preview_logs, or make sure the server binds PORT.`;
@@ -224,7 +245,9 @@ export function previewTools(deps: PreviewToolDeps): LocalTool[] {
         if (context.readOnly) return errorResult('The organization is in read-only mode.');
         const stopped = await sbPreviewStop(target, str(input.name));
         if (!stopped.ok) return failed(stopped.err);
-        return textResult(`Stopped ${stopped.val.name} (port ${stopped.val.port} is free again).`);
+        return textResult(
+          `Stopped ${stopped.val.name} (port${stopped.val.ports.length === 1 ? '' : 's'} ${stopped.val.ports.map((port) => port.port).join(', ')} back in the pool).`
+        );
       },
     },
   ];

@@ -37,7 +37,15 @@ const PREVIEW = {
   name: 'web',
   workspaceId: 'ws-chat',
   command: 'pnpm dev',
-  port: 20123,
+  ports: [
+    {
+      name: 'app',
+      port: 10000,
+      token: null,
+      url: 'https://r.example/api/code/projects/project-1/previews/web/app/',
+    },
+  ],
+  port: 10000,
   token: null,
   url: 'https://r.example/api/code/projects/project-1/previews/web/app/',
   status: 'running',
@@ -70,7 +78,7 @@ describe('POST …/previews', () => {
     member('ws-chat', { id: 'chat-1' });
     sandbox.sbPreviewStart.mockResolvedValue({
       ok: true,
-      val: { preview: PREVIEW, listening: true, logs: 'ready' },
+      val: { preview: PREVIEW, listening: ['app'], logs: 'ready' },
     });
     const response = await chatPOST(
       new NextRequest(`https://r.example/api/code/projects/${PROJECT}/chats/chat-1/previews`, {
@@ -91,12 +99,17 @@ describe('POST …/previews', () => {
         id: 'ws-chat',
         name: 'web',
         command: 'pnpm dev',
-        url: `https://r.example/api/code/projects/${PROJECT}/chats/chat-1/previews/web/app/`,
+        ports: [
+          {
+            name: 'app',
+            url: `https://r.example/api/code/projects/${PROJECT}/chats/chat-1/previews/web/app/`,
+          },
+        ],
         waitMs: 30_000,
       }
     );
     const body = await response.json();
-    expect(body.listening).toBe(true);
+    expect(body.listening).toEqual(['app']);
     expect(body.preview.url).toBe(
       `https://r.example/api/code/projects/${PROJECT}/chats/chat-1/previews/web/app/`
     );
@@ -109,14 +122,25 @@ describe('POST …/previews', () => {
     );
   });
 
-  it('mints a share token for a public preview and tells the worker the public address', async () => {
+  it('mints a share token per port for a public preview and tells the worker each public address', async () => {
     member();
     sandbox.sbPreviewStart.mockImplementation(
-      async (_t: unknown, input: { token?: string; url: string }) => ({
+      async (
+        _t: unknown,
+        input: { ports: Array<{ name: string; token?: string; url: string }> }
+      ) => ({
         ok: true,
         val: {
-          preview: { ...PREVIEW, token: input.token, url: input.url },
-          listening: false,
+          preview: {
+            ...PREVIEW,
+            ports: input.ports.map((port, index) => ({
+              name: port.name,
+              port: 10000 + index,
+              token: port.token ?? null,
+              url: port.url,
+            })),
+          },
+          listening: [],
           logs: '',
         },
       })
@@ -124,19 +148,32 @@ describe('POST …/previews', () => {
     const response = await POST(
       new NextRequest(`https://r.example/api/code/projects/${PROJECT}/previews`, {
         method: 'POST',
-        body: JSON.stringify({ name: 'web', command: 'pnpm dev', public: true }),
+        body: JSON.stringify({
+          name: 'web',
+          command: 'pnpm dev',
+          ports: ['web', 'api'],
+          public: true,
+        }),
         headers: { 'content-type': 'application/json' },
       }),
       { params: Promise.resolve({ projectId: PROJECT }) }
     );
     expect(response.status).toBe(202);
     const sent = sandbox.sbPreviewStart.mock.calls[0][1];
-    expect(sent.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(sent.url).toBe(`https://r.example/api/code/preview/${sent.token}/`);
+    expect(sent.ports).toHaveLength(2);
+    for (const port of sent.ports) {
+      expect(port.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(port.url).toBe(`https://r.example/api/code/preview/${port.token}/`);
+    }
     const body = await response.json();
-    expect(body.preview.publicUrl).toBe(`https://r.example/api/code/preview/${sent.token}/`);
+    expect(body.preview.publicUrl).toBe(
+      `https://r.example/api/code/preview/${sent.ports[0].token}/`
+    );
     expect(body.preview.url).toBe(
       `https://r.example/api/code/projects/${PROJECT}/previews/web/app/`
+    );
+    expect(body.preview.ports[1].url).toBe(
+      `https://r.example/api/code/projects/${PROJECT}/previews/web/ports/api/`
     );
   });
 

@@ -1,17 +1,18 @@
 /**
  * The HTTP surface for code project previews — dispatched from server.ts:
  *
- *   POST /v1/previews/start  { subject, id, name, command, port?, token?, url, waitMs? }
+ *   POST /v1/previews/start  { subject, id, name, command, ports: [{name, token?, url}], waitMs? }
  *   POST /v1/previews/list   { subject }
  *   POST /v1/previews/logs   { subject, name, lines? }
  *   POST /v1/previews/stop   { subject, name }
- *   ANY  /v1/previews/proxy/<name>/<path>     x-sandbox-subject: <subject>
- *   ANY  /v1/previews/public/<token>/<path>
+ *   ANY  /v1/previews/proxy/<name>/<path>              x-sandbox-subject: <subject>   (the first port)
+ *   ANY  /v1/previews/port/<name>/<port name>/<path>   x-sandbox-subject: <subject>   (a named port)
+ *   ANY  /v1/previews/public/<token>/<path>                                           (a port's share token)
  *
  * The JSON verbs keep the workspace rules: the caller's own checkout
  * first (`loadWorkspace` is workspace-endpoints' own gate), text out
- * scrubbed of the caller's environment values. The two proxy paths are
- * the one place this worker relays a request body and answer untouched:
+ * scrubbed of the caller's environment values. The proxy paths are the
+ * one place this worker relays a request body and answer untouched:
  * they are reached only with the bearer key, by the web app, which has
  * already checked the person's session (or the share token's shape) and
  * names the subject in a header — the body is the request's own.
@@ -26,12 +27,20 @@ import {
   previewWaitMs,
   validateCommand,
   validatePreviewName,
-  validatePreviewPort,
+  validatePreviewPortName,
+  validatePreviewPorts,
+  type PreviewPortBinding,
 } from '@renkei/connector-sandbox';
+import { isRecord } from '@renkei/guards';
 import type { StoredWorkspace, WorkspaceTarget } from './workspace-store';
 import { scrubEnv, type OpenedEnv } from './env-secrets';
 import { homeDir, identityFor, workspaceDir } from './workspaces';
-import { PreviewOpError, type PreviewManager, type StoredPreview } from './previews';
+import {
+  PreviewOpError,
+  type PreviewManager,
+  type PreviewPortRequest,
+  type StoredPreview,
+} from './previews';
 import { logErrorResponse } from './request-log';
 
 export interface PreviewHandlerDeps {
@@ -81,16 +90,21 @@ const STATUS_OF: Record<PreviewOpError['type'], number> = {
   start_failed: 502,
 };
 
+const URL_PATTERN = /^https?:\/\/\S+\/$/;
+
 export function previewWire(manager: PreviewManager, preview: StoredPreview, env?: OpenedEnv) {
   const scrub = (text: string) => (env ? scrubEnv(text, env) : text);
+  const [primary] = preview.ports;
   return {
     id: preview.id,
     name: preview.name,
     workspaceId: preview.workspaceId,
     command: scrub(preview.command),
-    port: preview.port,
-    token: preview.token,
-    url: preview.url,
+    ports: preview.ports.map((binding: PreviewPortBinding) => ({ ...binding })),
+    // The first port's, for a reader that wants one number and one address.
+    port: primary?.port ?? 0,
+    token: primary?.token ?? null,
+    url: primary?.url ?? '',
     status: preview.status,
     exitCode: preview.exitCode,
     signal: preview.signal,
@@ -98,6 +112,42 @@ export function previewWire(manager: PreviewManager, preview: StoredPreview, env
     lastUsedAt: preview.lastUsedAt.toISOString(),
     expiresAt: manager.expiresAt(preview).toISOString(),
   };
+}
+
+/**
+ * The ports a start asks for: `[{name, token?, url}]`, names validated as
+ * a set, each with where the web app serves it and its share token when
+ * public. Null with the refusal when any of it is off.
+ */
+function portsOf(body: Body, response: ServerResponse): PreviewPortRequest[] | null {
+  const raw = Array.isArray(body.ports) ? body.ports : undefined;
+  const names = validatePreviewPorts(raw?.map((entry) => (isRecord(entry) ? entry.name : entry)));
+  if (!names.ok) {
+    sendError(response, 400, 'bad_request', names.message);
+    return null;
+  }
+  const requests: PreviewPortRequest[] = [];
+  for (let index = 0; index < names.ports.length; index += 1) {
+    const entry = raw?.[index];
+    const record = isRecord(entry) ? entry : {};
+    const token = record.token === undefined || record.token === null ? null : record.token;
+    if (token !== null && !isPreviewToken(token)) {
+      sendError(response, 400, 'bad_request', 'A share token is 43 base64url characters.');
+      return null;
+    }
+    const url = str(record.url).trim();
+    if (!URL_PATTERN.test(url)) {
+      sendError(
+        response,
+        400,
+        'bad_request',
+        `Port ${names.ports[index]} needs url: where the web app serves it, ending in a slash.`
+      );
+      return null;
+    }
+    requests.push({ name: names.ports[index]!, token, url });
+  }
+  return requests;
 }
 
 export function createPreviewHandlers(deps: PreviewHandlerDeps) {
@@ -136,6 +186,9 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
     }
   }
 
+  const renderLogs = (lines: ReturnType<PreviewManager['logs']>) =>
+    lines.map((line) => `${line.at} [${line.stream}] ${line.line}`).join('\n');
+
   async function handlePreviews(op: string, body: Body, response: ServerResponse): Promise<void> {
     const subject = str(body.subject);
     if (!subject) return sendError(response, 400, 'bad_request');
@@ -147,6 +200,7 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
           const env = await deps.openEnv(target);
           return sendJson(response, 200, {
             previews: manager.list(target).map((preview) => previewWire(manager, preview, env)),
+            portRange: manager.range,
           });
         }
         case 'start': {
@@ -154,26 +208,8 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
           if (!name.ok) return sendError(response, 400, 'bad_request', name.message);
           const command = validateCommand(body.command);
           if (!command.ok) return sendError(response, 400, 'bad_request', command.message);
-          const port = validatePreviewPort(body.port);
-          if (!port.ok) return sendError(response, 400, 'bad_request', port.message);
-          const token = body.token === undefined || body.token === null ? null : body.token;
-          if (token !== null && !isPreviewToken(token)) {
-            return sendError(
-              response,
-              400,
-              'bad_request',
-              'A share token is 43 base64url characters.'
-            );
-          }
-          const url = str(body.url).trim();
-          if (!/^https?:\/\/\S+\/$/.test(url)) {
-            return sendError(
-              response,
-              400,
-              'bad_request',
-              'url is where the web app serves the preview, ending in a slash.'
-            );
-          }
+          const ports = portsOf(body, response);
+          if (!ports) return;
           const workspace = await deps.loadWorkspace(target, body, response);
           if (!workspace) return;
           const env = await deps.openEnv(target);
@@ -189,21 +225,16 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
             },
             name: name.name,
             command: command.command,
-            port: port.port,
+            ports,
             env: env.values,
             extraEnv: { ...serviceEnv, ...neighbours },
-            token,
-            url,
             waitMs: previewWaitMs(body.waitMs),
           });
           const logs = manager.logs(target, name.name, 40);
-          return sendJson(response, started.listening ? 201 : 202, {
+          return sendJson(response, started.listening.length ? 201 : 202, {
             preview: previewWire(manager, started.preview, env),
             listening: started.listening,
-            logs: scrubEnv(
-              logs.map((line) => `${line.at} [${line.stream}] ${line.line}`).join('\n'),
-              env
-            ),
+            logs: scrubEnv(renderLogs(logs), env),
           });
         }
         case 'logs': {
@@ -212,10 +243,7 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
           const env = await deps.openEnv(target);
           const preview = manager.get(target, name.name);
           const lines = manager.logs(target, name.name, previewLogLines(body.lines));
-          const clipped = clipOutput(
-            lines.map((line) => `${line.at} [${line.stream}] ${line.line}`).join('\n'),
-            PREVIEW_LOGS_MAX_CHARS
-          );
+          const clipped = clipOutput(renderLogs(lines), PREVIEW_LOGS_MAX_CHARS);
           return sendJson(response, 200, {
             preview: previewWire(manager, preview, env),
             logs: scrubEnv(clipped.text, env),
@@ -237,10 +265,12 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
   }
 
   /**
-   * `/v1/previews/proxy/<name>/…` for the web app's session-checked
-   * route (the subject in `x-sandbox-subject`), `/v1/previews/public/<token>/…`
-   * for its share-link route. What follows the name or token, query
-   * string included, is the path the preview's server gets.
+   * `/v1/previews/proxy/<name>/…` for the first port and
+   * `/v1/previews/port/<name>/<port name>/…` for a named one, both for
+   * the web app's session-checked routes (the subject in
+   * `x-sandbox-subject`); `/v1/previews/public/<token>/…` for its share-
+   * link route, a token naming one port. What follows, query string
+   * included, is the path the preview's server gets.
    */
   async function handleProxy(
     request: IncomingMessage,
@@ -250,22 +280,32 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
     if (!(await enabled(response))) return;
     const publicPrefix = '/v1/previews/public/';
     const proxyPrefix = '/v1/previews/proxy/';
-    let preview: StoredPreview | null = null;
+    const portPrefix = '/v1/previews/port/';
+    let found: { preview: StoredPreview; port: PreviewPortBinding } | null = null;
     let rest = '';
     if (url.pathname.startsWith(publicPrefix)) {
       const [token, ...parts] = url.pathname.slice(publicPrefix.length).split('/');
       if (!isPreviewToken(token)) return sendError(response, 404, 'not_found', 'No such preview.');
-      preview = manager.byToken(token);
+      found = manager.byToken(token);
       rest = parts.join('/');
-    } else if (url.pathname.startsWith(proxyPrefix)) {
+    } else if (url.pathname.startsWith(proxyPrefix) || url.pathname.startsWith(portPrefix)) {
+      const named = url.pathname.startsWith(portPrefix);
       const subject = str(request.headers['x-sandbox-subject']);
-      const [rawName, ...parts] = url.pathname.slice(proxyPrefix.length).split('/');
+      const [rawName, ...parts] = url.pathname
+        .slice((named ? portPrefix : proxyPrefix).length)
+        .split('/');
       const name = validatePreviewName(rawName);
       if (!subject || !name.ok) return sendError(response, 404, 'not_found', 'No such preview.');
-      preview = manager.reachable({ subject }, name.name);
+      let portName: string | null = null;
+      if (named) {
+        const port = validatePreviewPortName(parts.shift());
+        if (!port.ok) return sendError(response, 404, 'not_found', 'No such preview port.');
+        portName = port.name;
+      }
+      found = manager.reachable({ subject }, name.name, portName);
       rest = parts.join('/');
     }
-    if (!preview) {
+    if (!found) {
       return sendError(
         response,
         404,
@@ -273,7 +313,7 @@ export function createPreviewHandlers(deps: PreviewHandlerDeps) {
         'No such preview is running — it was stopped, expired, or the sandbox worker restarted.'
       );
     }
-    manager.proxy(preview, request, response, `/${rest}${url.search}`);
+    manager.proxy(found.preview, found.port.port, request, response, `/${rest}${url.search}`);
   }
 
   return { handlePreviews, handleProxy };

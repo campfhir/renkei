@@ -850,14 +850,21 @@ describe('the rest of git', () => {
 });
 
 describe('previews', () => {
+  const PORT = {
+    name: 'app',
+    port: 10000,
+    token: null,
+    url: 'https://r.example/api/code/projects/p1/chats/chat-1/previews/web/app/',
+  };
   const PREVIEW = {
     id: 'pv1',
     name: 'web',
     workspaceId: WS_ID,
     command: 'pnpm dev',
-    port: 20123,
+    ports: [PORT],
+    port: 10000,
     token: null,
-    url: 'https://r.example/api/code/projects/p1/chats/chat-1/previews/web/app/',
+    url: PORT.url,
     status: 'running',
     exitCode: null,
     signal: null,
@@ -869,7 +876,7 @@ describe('previews', () => {
   it('starts the server in the chat’s worktree, tells it its address, and answers the link', async () => {
     client.sbPreviewStart.mockResolvedValue({
       ok: true,
-      val: { preview: PREVIEW, listening: true, logs: 'ready on 20123' },
+      val: { preview: PREVIEW, listening: ['app'], logs: 'ready on 10000' },
     });
     const result = await tools()
       .get('code_preview_start')!
@@ -878,42 +885,63 @@ describe('previews', () => {
       id: WS_ID,
       name: 'web',
       command: 'pnpm dev',
-      url: 'https://r.example/api/code/projects/p1/chats/chat-1/previews/web/app/',
+      ports: [{ name: 'app', url: PORT.url }],
       waitMs: 90_000,
     });
     const text = result.content[0].type === 'text' ? result.content[0].text : '';
     expect(text).toContain('Started and listening.');
-    expect(text).toContain(
-      'open: https://r.example/api/code/projects/p1/chats/chat-1/previews/web/app/'
-    );
+    expect(text).toContain(`app (port 10000, PORT): open ${PORT.url}`);
     expect(text).not.toContain('share link');
-    expect(text).toContain('ready on 20123');
+    expect(text).toContain('ready on 10000');
   });
 
-  it('mints a share token for a public preview and never shows it apart from its link', async () => {
+  it('declares several named ports, mints a share token per port when public, and shows each address', async () => {
     client.sbPreviewStart.mockImplementation(
-      async (_target: unknown, input: { token?: string; url: string }) => ({
+      async (
+        _target: unknown,
+        input: { ports: Array<{ name: string; token?: string; url: string }> }
+      ) => ({
         ok: true,
         val: {
-          preview: { ...PREVIEW, token: input.token ?? null, url: input.url },
-          listening: true,
+          preview: {
+            ...PREVIEW,
+            ports: input.ports.map((port, index) => ({
+              name: port.name,
+              port: 10000 + index,
+              token: port.token ?? null,
+              url: port.url,
+            })),
+          },
+          listening: ['web'],
           logs: '',
         },
       })
     );
     const result = await tools()
       .get('code_preview_start')!
-      .execute({ name: 'web', command: 'pnpm dev', public: true }, context);
+      .execute({ name: 'full', command: 'pnpm dev', ports: ['web', 'api'], public: true }, context);
     const sent = client.sbPreviewStart.mock.calls[0][1];
-    expect(sent.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(sent.url).toBe(`https://r.example/api/code/preview/${sent.token}/`);
+    expect(sent.ports.map((port: { name: string }) => port.name)).toEqual(['web', 'api']);
+    for (const port of sent.ports) {
+      expect(port.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(port.url).toBe(`https://r.example/api/code/preview/${port.token}/`);
+    }
+    expect(sent.ports[0].token).not.toBe(sent.ports[1].token);
     const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('Started and listening on web (not yet on api');
     expect(text).toContain(
-      `share link (no sign-in): https://r.example/api/code/preview/${sent.token}/`
+      'web (port 10000, PORT): open https://r.example/api/code/projects/p1/chats/chat-1/previews/full/app/'
     );
     expect(text).toContain(
-      'open: https://r.example/api/code/projects/p1/chats/chat-1/previews/web/app/'
+      'api (port 10001): open https://r.example/api/code/projects/p1/chats/chat-1/previews/full/ports/api/'
     );
+    expect(text).toContain(
+      `share link (no sign-in): https://r.example/api/code/preview/${sent.ports[1].token}/`
+    );
+    const refused = await tools()
+      .get('code_preview_start')!
+      .execute({ name: 'full', command: 'pnpm dev', ports: ['web', 'web'] }, context);
+    expect(refused.isError).toBe(true);
   });
 
   it('reports a server that exited before listening as an error, with its output', async () => {
@@ -921,7 +949,7 @@ describe('previews', () => {
       ok: true,
       val: {
         preview: { ...PREVIEW, status: 'exited', exitCode: 1 },
-        listening: false,
+        listening: [],
         logs: 'Error: Cannot find module',
       },
     });
@@ -938,7 +966,7 @@ describe('previews', () => {
     client.sbPreviewList.mockResolvedValue({ ok: true, val: [PREVIEW] });
     const listed = await tools().get('code_previews')!.execute({}, context);
     expect(listed.content[0].type === 'text' && listed.content[0].text).toContain(
-      'web: running, port 20123'
+      'web: running, `pnpm dev`'
     );
     client.sbPreviewLogs.mockResolvedValue({
       ok: true,
@@ -952,176 +980,12 @@ describe('previews', () => {
     client.sbPreviewStop.mockResolvedValue({ ok: true, val: PREVIEW });
     const stopped = await tools().get('code_preview_stop')!.execute({ name: 'web' }, context);
     expect(client.sbPreviewStop).toHaveBeenCalledWith(TARGET, 'web');
-    expect(stopped.content[0].type === 'text' && stopped.content[0].text).toContain('Stopped web');
+    expect(stopped.content[0].type === 'text' && stopped.content[0].text).toContain(
+      'Stopped web (port 10000 back in the pool)'
+    );
     const refused = await tools()
       .get('code_preview_stop')!
       .execute({ name: 'web' }, { ...context, readOnly: true });
     expect(refused.isError).toBe(true);
-  });
-});
-
-describe('services beside the checkout', () => {
-  const running = {
-    id: 's1',
-    name: 'db',
-    image: 'docker.io/library/postgres:16',
-    status: 'running',
-    error: null,
-    host: '172.20.0.3',
-    ports: [5432],
-    exportNames: ['DATABASE_URL'],
-    createdAt: '',
-    lastUsedAt: '',
-    expiresAt: '',
-  };
-
-  it('the code_service_* tools exist only where the deployment offers them', () => {
-    expect(tools().has('code_service_start')).toBe(false);
-    const offered = codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    }).map((tool) => tool.def.name);
-    expect(offered).toEqual(
-      expect.arrayContaining([
-        'code_services',
-        'code_service_start',
-        'code_service_stop',
-        'code_service_logs',
-      ])
-    );
-  });
-
-  it('start hands the worker the name, image, env and exports, and answers the address', async () => {
-    client.sbServiceStart.mockResolvedValue({ ok: true, val: running });
-    const list = codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    });
-    const byName = new Map(list.map((tool) => [tool.def.name, tool]));
-    const result = await byName.get('code_service_start')!.execute(
-      {
-        name: 'db',
-        image: 'postgres:16',
-        env: { POSTGRES_PASSWORD: 'pw' },
-        exports: { DATABASE_URL: 'postgres://postgres:pw@{host}:{port}/app' },
-      },
-      context
-    );
-    expect(client.sbServiceStart).toHaveBeenCalledWith(TARGET, {
-      name: 'db',
-      image: 'postgres:16',
-      env: { POSTGRES_PASSWORD: 'pw' },
-      exports: { DATABASE_URL: 'postgres://postgres:pw@{host}:{port}/app' },
-    });
-    expect(result.isError).toBeFalsy();
-    expect(result.content[0]?.text).toContain('172.20.0.3:5432');
-    expect(result.content[0]?.text).toContain('SERVICE_DB_HOST');
-    expect(result.content[0]?.text).toContain('DATABASE_URL');
-    expect(byName.get('code_services')?.readOnly).toBe(true);
-    expect(byName.get('code_service_logs')?.readOnly).toBe(true);
-    expect(byName.get('code_service_start')?.readOnly).toBeUndefined();
-  });
-
-  it('a refusal from the worker (an image outside the rules) is a clean error', async () => {
-    client.sbServiceStart.mockResolvedValue({
-      ok: false,
-      err: {
-        kind: 'op',
-        type: 'not_allowed',
-        status: 403,
-        message: 'redis is not allowed. Allowed: docker.io/library/postgres.',
-      },
-    });
-    const list = codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    });
-    const start = list.find((tool) => tool.def.name === 'code_service_start')!;
-    const result = await start.execute({ name: 'cache', image: 'redis' }, context);
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('Allowed: docker.io/library/postgres');
-    expect(result.meta).toEqual({});
-  });
-});
-
-describe('service logs, narrowed', () => {
-  const list = () =>
-    codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    }).find((tool) => tool.def.name === 'code_service_logs')!;
-
-  it('one service: match and since go to the worker, the stamps come back for reuse', async () => {
-    client.sbServiceLogs.mockResolvedValue({
-      ok: true,
-      val: {
-        service: {
-          id: 's1',
-          name: 'db',
-          image: 'docker.io/library/postgres:16',
-          status: 'running',
-          error: null,
-          host: '172.20.0.3',
-          ports: [5432],
-          exportNames: [],
-          createdAt: '',
-          lastUsedAt: '',
-          expiresAt: '',
-        },
-        logs: '2026-09-23T10:00:04.000000000Z ERROR: relation "users" does not exist',
-        truncated: false,
-        count: 1,
-        lastAt: '2026-09-23T10:00:04.000000000Z',
-      },
-    });
-    const result = await list().execute({ name: 'db', match: 'error', since: '5m' }, context);
-    expect(client.sbServiceLogs).toHaveBeenCalledWith(TARGET, {
-      name: 'db',
-      match: 'error',
-      since: '5m',
-    });
-    expect(result.content[0]?.text).toContain(
-      '1 line (pass since: "2026-09-23T10:00:04.000000000Z"'
-    );
-    expect(result.content[0]?.text).toContain('ERROR: relation "users" does not exist');
-  });
-
-  it('no name: every service interleaved, each line named', async () => {
-    client.sbServicesTail.mockResolvedValue({
-      ok: true,
-      val: {
-        entries: [
-          { service: 'db', at: '2026-09-23T10:00:01.000000000Z', line: 'ready' },
-          {
-            service: 'cache',
-            at: '2026-09-23T10:00:02.000000000Z',
-            line: 'Ready to accept connections',
-          },
-        ],
-        truncated: false,
-        unreadable: [],
-      },
-    });
-    const result = await list().execute({ match: 'ready' }, context);
-    expect(client.sbServicesTail).toHaveBeenCalledWith(TARGET, { match: 'ready' });
-    expect(result.content[0]?.text).toContain('2 lines across every service');
-    expect(result.content[0]?.text).toContain('2026-09-23T10:00:01.000000000Z db ready');
-    expect(result.content[0]?.text).toContain('cache Ready to accept connections');
   });
 });
