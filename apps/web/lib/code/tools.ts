@@ -69,6 +69,8 @@ import type { McpToolResult } from '@renkei/mcp-client';
 import { GITHUB } from '@renkei/provider-grants';
 import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { codeDelegateTool, type SubagentModelChoice } from './delegate';
+import { moreGitTools } from './git-tools';
+import { previewTools } from './preview-tools';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
 import { isRecord } from '@renkei/guards';
 
@@ -861,8 +863,11 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           `A command is killed at timeoutSeconds (default 120, max ${EXEC_MAX_TIMEOUT_MS / 1000}) — ` +
           'for a slow install or test suite, say so. For one file, the dedicated tools are cheaper ' +
           'and safer than a command: code_read_file, code_write_file, code_edit_file, code_delete_file, ' +
-          'code_move_file. Git has its own: code_git_status, code_git_commit, code_git_push, ' +
-          'code_git_pull.',
+          'code_move_file. Git has its own: code_git_status, code_git_log, code_git_commit, ' +
+          'code_git_push, code_git_pull, code_git_fetch, code_git_branch, code_git_rebase, ' +
+          'code_git_merge, code_git_stash, code_git_reset, code_git_clean, code_git_sparse_checkout ' +
+          '(a `git` command here has no credential for the remote). A server that should keep ' +
+          'running is code_preview_start, not a command.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -927,7 +932,10 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         });
         if (!status.ok) return failed(status.err);
         const parts = [
-          `Branch: ${status.val.branch}`,
+          `Branch: ${status.val.branch}` +
+            (status.val.inProgress
+              ? ` — a ${status.val.inProgress} is IN PROGRESS${status.val.conflicts.length ? `, conflicts in: ${status.val.conflicts.join(', ')}` : ''} (continue, skip or abort it with code_git_${status.val.inProgress === 'merge' ? 'merge' : 'rebase'})`
+              : ''),
           `Status:\n${status.val.status || '(clean)'}`,
         ];
         if (status.val.diffStat !== undefined)
@@ -998,7 +1006,9 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         description:
           'Push the current branch to origin with the person’s own access to the project’s git ' +
           'host (an upstream is set). Pass branch to push under another remote branch name. Then ' +
-          `open a pull request with ${prTool(binding.repoProvider)}. Never force-pushes.`,
+          `open a pull request with ${prTool(binding.repoProvider)}. Never force-pushes; after a ` +
+          'rebase, forceWithLease replaces the remote branch only while it is still where this ' +
+          'checkout last saw it — on your own branch only, never on a shared one.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -1006,6 +1016,10 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
               type: 'string',
               maxLength: 200,
               description: 'Remote branch name (default: the current branch).',
+            },
+            forceWithLease: {
+              type: 'boolean',
+              description: 'Replace the remote branch after a rebase (safe force).',
             },
           },
         },
@@ -1025,10 +1039,11 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
           id: ref.id,
           gitProxy: credential.gitProxy,
           ...(str(input.branch) ? { branch: str(input.branch) } : {}),
+          ...(input.forceWithLease === true ? { forceWithLease: true } : {}),
         });
         if (!pushed.ok) return failed(pushed.err);
         return textResult(
-          `Pushed ${pushed.val.branch} to origin/${pushed.val.remoteBranch}.` +
+          `Pushed ${pushed.val.branch} to origin/${pushed.val.remoteBranch}${pushed.val.forced ? ' (replaced, with lease)' : ''}.` +
             (pushed.val.output ? `\n${pushed.val.output}` : '') +
             `\n\nTo open a pull request: ${prTool(binding.repoProvider)} on ${binding.repoFullName} with this branch as the source.`
         );
@@ -1094,6 +1109,16 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       },
     },
   ];
+  tools.push(
+    ...moreGitTools({
+      target,
+      ref,
+      origin: binding.origin,
+      repoProvider: binding.repoProvider,
+      failed,
+    }),
+    ...previewTools({ target, ref, origin: binding.origin, failed })
+  );
   if (binding.servicesEnabled) tools.push(...serviceTools(target, failed));
   // One recovery state for the whole turn: the tools share the clone
   // that brings the checkout back, the count of times it was lost, and

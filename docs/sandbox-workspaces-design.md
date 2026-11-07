@@ -82,28 +82,70 @@ chatting person's own Bitbucket grant, and a commit is authored as them.
 Local tools of the chat (`apps/web/lib/code/tools.ts`), added to a turn
 when the project's checkout is ready (`lib/code/turn.ts`):
 
-| Tool               | Kind | What it does                                                                                |
-| ------------------ | ---- | ------------------------------------------------------------------------------------------- |
-| `code_ls`          | Read | One directory's entries.                                                                    |
-| `code_find`        | Read | Paths matching a glob (`.gitignore` honoured).                                              |
-| `code_grep`        | Read | Regex search of contents, as `path:line: text`.                                             |
-| `code_read_file`   | Read | A file's text with line numbers, in line ranges.                                            |
-| `code_write_file`  | Act  | Create or replace a file.                                                                   |
-| `code_edit_file`   | Act  | Replace one exact snippet (must be unique, or `replaceAll`).                                |
-| `code_delete_file` | Act  | Remove a file, or a folder and everything under it.                                         |
-| `code_move_file`   | Act  | Rename or move a file or folder; refuses an existing destination.                           |
-| `code_run`         | Act  | A bash command in the checkout, with the project's environment; exit code and both streams. |
-| `code_git_status`  | Read | Branch, changed files, a diff summary or the full diff, recent log.                         |
-| `code_git_commit`  | Act  | Stage (all or listed paths) and commit as the person, optionally on a new branch.           |
-| `code_git_push`    | Act  | Push the current branch to origin with the person's grant; never force.                     |
-| `code_git_pull`    | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                     |
-| `code_env_names`   | Read | The names of the project's environment variables — never a value.                           |
-| `code_service_*`   |      | Containers beside the checkout, where the deployment offers them — see "Services" below.    |
+| Tool                       | Kind | What it does                                                                                                     |
+| -------------------------- | ---- | ---------------------------------------------------------------------------------------------------------------- |
+| `code_ls`                  | Read | One directory's entries.                                                                                         |
+| `code_find`                | Read | Paths matching a glob (`.gitignore` honoured).                                                                   |
+| `code_grep`                | Read | Regex search of contents, as `path:line: text`.                                                                  |
+| `code_read_file`           | Read | A file's text with line numbers, in line ranges.                                                                 |
+| `code_write_file`          | Act  | Create or replace a file.                                                                                        |
+| `code_edit_file`           | Act  | Replace one exact snippet (must be unique, or `replaceAll`).                                                     |
+| `code_delete_file`         | Act  | Remove a file, or a folder and everything under it.                                                              |
+| `code_move_file`           | Act  | Rename or move a file or folder; refuses an existing destination.                                                |
+| `code_run`                 | Act  | A bash command in the checkout, with the project's environment; exit code and both streams.                      |
+| `code_git_status`          | Read | Branch, changed files, a diff summary or the full diff, recent log.                                              |
+| `code_git_commit`          | Act  | Stage (all or listed paths) and commit as the person, optionally on a new branch.                                |
+| `code_git_push`            | Act  | Push the current branch to origin with the person's grant; `forceWithLease` after a rebase, never a plain force. |
+| `code_git_pull`            | Act  | Fast-forward from origin, or fetch and switch to another remote branch.                                          |
+| `code_git_log`             | Read | The history as records: a revision or range, paths, `grep`/`author`, paged.                                      |
+| `code_git_fetch`           | Act  | Fetch origin (one branch or all) with the person's grant; `prune`.                                               |
+| `code_git_branch`          | Act  | List local and remote-tracking branches; create, switch (a remote one by name), delete.                          |
+| `code_git_rebase`          | Act  | Rebase onto a revision; stops on conflicts and names the files; continue, skip, abort.                           |
+| `code_git_merge`           | Act  | Merge a revision in (`--no-ff`, squash, a message); the same conflict shape.                                     |
+| `code_git_reset`           | Act  | Move the branch (soft, mixed, hard, keep) or unstage paths.                                                      |
+| `code_git_stash`           | Act  | Push, list, show, pop, apply, drop — by position.                                                                |
+| `code_git_clean`           | Act  | Remove untracked files; a dry run unless `dryRun: false`; `ignored` for ignored ones too.                        |
+| `code_git_sparse_checkout` | Act  | Narrow the working tree to named directories (cone mode), add, list, disable.                                    |
+| `code_env_names`           | Read | The names of the project's environment variables — never a value.                                                |
+| `code_service_*`           |      | Containers beside the checkout, where the deployment offers them — see "Services" below.                         |
+| `code_preview_*`           |      | The project's own server, run in the checkout and served through the app — see "Previews" below.                 |
 
 A pull request is `bitbucket_create_pull_request`, as before. The worker
 verbs behind these (`/v1/workspaces/*`, `/v1/env/*` on
 `apps/worker-sandbox`) are reachable only from the web app with the
-bearer key; nothing on the MCP surface reaches a checkout. Two verbs
+bearer key; nothing on the MCP surface reaches a checkout.
+
+**The rest of git** (`apps/worker-sandbox/src/git-verbs.ts`, the tools in
+`apps/web/lib/code/git-tools.ts`) keeps the "curated verbs" line rather
+than opening `git` in `code_run`: every argument passes a validator in
+`@renkei/connector-sandbox` first — a revision is a branch or tag name,
+`origin/<branch>`, a head or a hash with `~N`/`^N` steps and never an
+option (`validateGitRevision`, `validateGitRange` for `a..b`), a path is
+inside the checkout, a stash is a position — and a remote operation
+(`fetch`, `push`) spends the person's own grant for one call as before.
+Rebase and merge are shaped for how a developer finishes one: the answer
+says `completed`, or `inProgress` with the `conflicts`, and the same verb
+takes `continue` (the resolved files are `git add`ed by the worker — the
+model has no add of its own, it edits with the file tools), `skip` and
+`abort`; `git-status` reports an operation left half-done and the files
+still in conflict, so the next turn sees it. Nothing opens an editor
+(`GIT_EDITOR=true`). `reset --hard` and `clean` discard work, and the tool
+descriptions say so; `clean` is a dry run unless told otherwise. After a
+rebase the remote branch must be replaced, so `git-push` takes
+`forceWithLease` — `--force-with-lease`, which refuses when the remote
+moved since the last fetch — and a plain `--force` is still nowhere. A
+sub-agent (`code_delegate`) is not offered the verbs that reshape the
+branch or the checkout (fetch, rebase, merge, reset, stash, clean, sparse
+checkout, previews): those are the orchestrator's call.
+
+**Sparse checkouts.** `clone` takes `sparsePaths` (`git clone --sparse`,
+then `sparse-checkout set --cone`), so a monorepo project's checkout holds
+one app's directories and the root's files; a worktree made of it
+inherits the patterns (git copies them on `worktree add`), and
+`code_git_sparse_checkout` narrows or widens a worktree on its own
+(per-worktree config, so the base and the other chats are untouched).
+History and objects are whole either way; only the working tree is
+narrowed. Two verbs
 serve the page rather than the model: `git-diff` (the working tree
 against HEAD, untracked files included, with per-file counts) and
 `git-show` (one commit by its hash — never a ref — with its header, its
@@ -435,6 +477,72 @@ project's own. A service lives a day past the project's last command
 (`sandbox_services`, the same expiry-on-use as a checkout); the worker's
 sweep stops and removes it with its anonymous volumes, and removes any
 container carrying its label that no row claims.
+
+## Previews: the project's own server, reached from outside
+
+A chat that built a web page, an API or a static site wants to show it,
+and a person wants to open it — in a browser, on a phone, from a webhook
+— without the code leaving the sandbox. So a project may run
+**previews** (`apps/worker-sandbox/src/previews.ts`, the tools in
+`apps/web/lib/code/preview-tools.ts`): the project's own start command
+(`pnpm dev`, `uvicorn app:app`, `python -m http.server`) run in the chat's
+worktree as a long-lived process — the same uid drop, prelude, limits and
+environment as `code_run`, with `PORT` (and `HOST=0.0.0.0`) set to a port
+the worker chose from its own range (or the one the project insists on,
+checked free) and `RENKEI_PREVIEW_URL` set to where the app serves it —
+and reached only through the web app:
+
+| Tool                 | Kind | What it does                                                                                                   |
+| -------------------- | ---- | -------------------------------------------------------------------------------------------------------------- |
+| `code_previews`      | Read | What is running: name, state, port, the address to open.                                                       |
+| `code_preview_start` | Act  | Run the command, wait for the port to accept connections, answer the address (and a share link when `public`). |
+| `code_preview_logs`  | Read | The server's output, both streams stamped, newest last.                                                        |
+| `code_preview_stop`  | Act  | End the process tree; the address and the share link stop working, the name is free.                           |
+
+**How a request gets there.** Nothing is published on the container: the
+process listens on the worker's own loopback, and the only way in is the
+app's relay (`apps/web/lib/code/previews.ts`, `previewRelay`) —
+`/api/code/projects/[projectId]/previews/[name]/app/…` (and the same
+under `/chats/[chatId]/`), which checks the person's session and
+membership like every project route, then forwards the request as it
+came (any method, the body streamed, `duplex: half`) to the worker's
+`/v1/previews/proxy/<name>/…` with the bearer key and the project's
+subject in a header; the worker (`preview-endpoints.ts`) relays it to
+`127.0.0.1:<port>` and streams the answer back. Hop-by-hop headers stop at
+each hop; the app's own session cookie is taken out of the `cookie`
+header before it goes (the preview runs the project's own code — a
+repository that captured it would hold the person's session) and the
+server's other cookies pass; `accept-encoding: identity` is asked of the
+server so what the app relays is what the browser gets;
+`x-forwarded-host`, `-proto` and `-prefix` say where the request really
+came from; a `location` that names a path on the server is rewritten
+under the preview's prefix so a redirect lands back inside it. The
+preview's answers are NOT scrubbed of environment values — they are the
+project's own server's, relayed as bytes like `download` — which the
+model is told. WebSockets (a dev server's HMR) do not cross the relay.
+
+**Share links.** Started with `public`, a preview also gets a token — 32
+random bytes, minted in the web app so the public address can be told to
+the process — and `/api/code/preview/<token>/…` relays without a session,
+through the worker's `/v1/previews/public/<token>/…`. The token is the
+whole secret: it travels only inside its link, is answered by nothing the
+worker does not hold, and stops working the moment the preview is stopped
+or expires. It is for a phone, a colleague or a webhook to reach what a
+chat built for a few hours, not a way to host.
+
+**Lifetime and bounds.** A preview is working state in the worker's memory
+and process table: at most 3 per project, alive 4 hours past its last
+relayed request (the sweep ends an idle one), ended when its checkout is
+deleted and when the worker stops (none outlives the process; a restart
+takes every preview with it and the list says so by saying nothing). The
+start waits up to 60 seconds (5 minutes at most) for the port to accept
+connections and answers either way — listening, still starting, or
+exited with its last lines — and keeps 2,000 lines of output. Because
+every project's commands share the worker's network namespace, one
+project's command can reach another's preview on the loopback if it
+knows the port, as it can a service; the honest gap above applies. A
+start or stop from the routes is an audit event
+(`code.previews.started`, `code.previews.stopped`).
 
 ## What it deliberately is not
 

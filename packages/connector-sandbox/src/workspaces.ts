@@ -376,3 +376,155 @@ export function looksBinary(bytes: Uint8Array): boolean {
   }
   return false;
 }
+
+// ─── More git: revisions, ranges, stashes, sparse checkouts ─────────────────
+
+/** Commits `git-log` answers by default, and the most it will. */
+export const GIT_LOG_DEFAULT_COUNT = 20;
+export const GIT_LOG_MAX_COUNT = 200;
+/** A `--grep` or `--author` filter on the log. */
+export const GIT_LOG_FILTER_MAX_CHARS = 200;
+export const STASH_MESSAGE_MAX_CHARS = 200;
+/** Stash entries are addressed by position; nobody keeps more than this. */
+export const STASH_MAX_INDEX = 100;
+/** Directories one sparse checkout may name. */
+export const SPARSE_PATHS_MAX = 200;
+
+/** An operation git has left half-done in the checkout, as `git status` would say. */
+export type GitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
+
+/**
+ * A revision a caller may hand to git where a commit is meant: a branch or
+ * tag name (`validateGitRef`'s rules), a remote-tracking name
+ * (`origin/main`), `HEAD` or one of git's other upper-case heads
+ * (`FETCH_HEAD`, `ORIG_HEAD`), or a commit hash — each optionally followed
+ * by `~N` / `^N` steps (`HEAD~3`, `main^2`). Never an option, a range, a
+ * path or a reflog expression; those have verbs and arguments of their own.
+ */
+export function validateGitRevision(
+  input: unknown
+): { ok: true; revision: string } | { ok: false; message: string } {
+  const revision = typeof input === 'string' ? input.trim() : '';
+  const stepped = revision.match(/^(.*?)((?:[~^]\d*)*)$/);
+  const base = stepped?.[1] ?? '';
+  if (!base || revision.length > GIT_REF_MAX_CHARS) {
+    return { ok: false, message: `"${revision || '(empty)'}" is not a usable revision.` };
+  }
+  if (/^[0-9a-f]{4,40}$/i.test(base)) return { ok: true, revision };
+  const ref = validateGitRef(base);
+  if (!ref.ok) return { ok: false, message: `"${revision}" is not a usable revision.` };
+  return { ok: true, revision };
+}
+
+/**
+ * What `git-log` may be asked to walk: one revision, or a range between
+ * two (`main..feature`, `v1...v2`), each half a `validateGitRevision`.
+ */
+export function validateGitRange(
+  input: unknown
+): { ok: true; range: string } | { ok: false; message: string } {
+  const range = typeof input === 'string' ? input.trim() : '';
+  if (!range) return { ok: true, range: 'HEAD' };
+  const halves = range.split(/(\.{2,3})/);
+  if (halves.length === 1) {
+    const one = validateGitRevision(range);
+    return one.ok ? { ok: true, range: one.revision } : one;
+  }
+  if (halves.length !== 3) {
+    return { ok: false, message: `"${range}" is not a revision or a range (a..b).` };
+  }
+  const [from, dots, to] = halves;
+  const left = validateGitRevision(from);
+  const right = validateGitRevision(to);
+  if (!left.ok || !right.ok) {
+    return { ok: false, message: `"${range}" is not a revision or a range (a..b).` };
+  }
+  return { ok: true, range: `${left.revision}${dots}${right.revision}` };
+}
+
+/** A `--grep` / `--author` filter for the log: bounded, printable, never an option of its own. */
+export function validateGitLogFilter(
+  input: unknown
+): { ok: true; filter: string } | { ok: false; message: string } {
+  const filter = typeof input === 'string' ? input.trim() : '';
+  if (!filter) return { ok: true, filter: '' };
+  // eslint-disable-next-line no-control-regex
+  if (filter.length > GIT_LOG_FILTER_MAX_CHARS || /[\x00-\x1f\x7f]/.test(filter)) {
+    return {
+      ok: false,
+      message: `A log filter is at most ${GIT_LOG_FILTER_MAX_CHARS} printable characters.`,
+    };
+  }
+  return { ok: true, filter };
+}
+
+export function validateStashIndex(
+  input: unknown
+): { ok: true; index: number } | { ok: false; message: string } {
+  if (input === undefined || input === null) return { ok: true, index: 0 };
+  if (
+    typeof input !== 'number' ||
+    !Number.isInteger(input) ||
+    input < 0 ||
+    input > STASH_MAX_INDEX
+  ) {
+    return { ok: false, message: `A stash is named by its position, 0 to ${STASH_MAX_INDEX}.` };
+  }
+  return { ok: true, index: input };
+}
+
+export function validateStashMessage(
+  input: unknown
+): { ok: true; message: string } | { ok: false; message: string } {
+  const text = typeof input === 'string' ? input.trim() : '';
+  if (!text) return { ok: true, message: '' };
+  // eslint-disable-next-line no-control-regex
+  if (text.length > STASH_MESSAGE_MAX_CHARS || /[\x00-\x08\x0b-\x1f\x7f]/.test(text)) {
+    return {
+      ok: false,
+      message: `A stash message is at most ${STASH_MESSAGE_MAX_CHARS} characters.`,
+    };
+  }
+  return { ok: true, message: text };
+}
+
+/**
+ * The directories a sparse checkout keeps: workspace paths, none empty
+ * (the root would mean "everything", which is `disable`), de-duplicated,
+ * at most SPARSE_PATHS_MAX.
+ */
+export function validateSparsePaths(
+  input: unknown
+): { ok: true; paths: string[] } | { ok: false; message: string } {
+  if (!Array.isArray(input)) {
+    return { ok: false, message: 'paths is a list of directories relative to the root.' };
+  }
+  if (input.length > SPARSE_PATHS_MAX) {
+    return { ok: false, message: `At most ${SPARSE_PATHS_MAX} paths.` };
+  }
+  const paths: string[] = [];
+  for (const raw of input) {
+    const path = validateWorkspacePath(raw, { forWrite: true });
+    if (!path.ok) return path;
+    if (!path.path) {
+      return { ok: false, message: 'A sparse checkout names directories, not the root.' };
+    }
+    if (!paths.includes(path.path)) paths.push(path.path);
+  }
+  if (paths.length === 0) {
+    return { ok: false, message: 'Name at least one directory to keep.' };
+  }
+  return { ok: true, paths };
+}
+
+/** The lines `git clean` names, with or without `-n`: the paths it removed or would remove. */
+export function parseCleanOutput(text: string): string[] {
+  const paths: string[] = [];
+  for (const line of text.split('\n')) {
+    const match = line.match(
+      /^(?:Would remove|Removing|Would skip repository|Skipping repository) (.+)$/
+    );
+    if (match?.[1]) paths.push(match[1].replace(/\/$/, ''));
+  }
+  return paths;
+}

@@ -91,6 +91,7 @@ import { probeLanguageServers } from './lsp-sessions';
 import { createSandboxServer, orgMaxFileBytes } from './server';
 import { DockerClient, parseDockerHost } from './docker';
 import { ServiceManager } from './services';
+import { PreviewManager } from './previews';
 import { BrowserSessions } from './browser';
 import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
 import { CRAWL_STALE_MS, Crawler } from './crawler';
@@ -486,9 +487,13 @@ async function main(): Promise<void> {
     });
   }
 
+  // Previews: a checkout's own server kept running (previews.ts). Made
+  // here so the shutdown below can end every one of them before exiting.
+  const previews = new PreviewManager();
   const server = createSandboxServer({
     apiKeys,
     browser,
+    previews,
     crawler,
     crawlStore,
     vault,
@@ -543,6 +548,13 @@ async function main(): Promise<void> {
     deadline.unref();
     void (async () => {
       await server.drain();
+      const stoppedPreviews = await previews.stopAll();
+      if (stoppedPreviews) {
+        logger.info('stopped {count} preview(s)', {
+          component: 'worker-sandbox/previews',
+          count: stoppedPreviews,
+        });
+      }
       await browser?.shutdown();
       await charts?.shutdown();
       vault.close();

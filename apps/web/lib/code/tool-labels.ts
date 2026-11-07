@@ -26,6 +26,19 @@ const LABELS: Record<string, CodeToolLabel> = {
   code_git_push: { label: 'Push' },
   code_git_pull: { label: 'Pull' },
   code_git_status: { label: 'Git status' },
+  code_git_log: { label: 'Git log' },
+  code_git_fetch: { label: 'Fetch' },
+  code_git_branch: { label: 'Branches' },
+  code_git_rebase: { label: 'Rebase' },
+  code_git_merge: { label: 'Merge' },
+  code_git_reset: { label: 'Reset' },
+  code_git_stash: { label: 'Stash' },
+  code_git_clean: { label: 'Clean untracked files' },
+  code_git_sparse_checkout: { label: 'Sparse checkout' },
+  code_previews: { label: 'Previews' },
+  code_preview_start: { label: 'Start preview' },
+  code_preview_stop: { label: 'Stop preview' },
+  code_preview_logs: { label: 'Preview logs' },
   code_run: { label: 'Run command' },
   code_edit_file: { label: 'Edit file' },
   code_write_file: { label: 'Write file' },
@@ -88,6 +101,8 @@ export function gitGlyphFor(
   if (name.includes('rebase')) return 'rebase';
   if (name.includes('stash')) return 'stash';
   if (name.includes('checkout')) return 'checkout';
+  if (name.includes('fetch')) return 'pull';
+  if (name.includes('reset') || name.includes('log')) return 'commit';
   if (name.includes('branch') || name === 'code_git_status') return 'branch';
   return null;
 }

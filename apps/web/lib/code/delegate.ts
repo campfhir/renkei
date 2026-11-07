@@ -63,13 +63,25 @@ export const DELEGATE_AUTO_WALL_CLOCK_MS = 4 * 60 * 60_000;
 export const DELEGATE_AUTO_TOOL_TIMEOUT_MS = DELEGATE_AUTO_WALL_CLOCK_MS + 15 * 60_000;
 
 /** Tools a sub-agent never gets: publishing and further delegation stay with the orchestrator. */
-const WITHHELD = new Set([
+export const WITHHELD_FROM_SUBAGENTS: ReadonlySet<string> = new Set([
   'code_git_push',
   CODE_DELEGATE_TOOL,
   'code_clone',
   // A service outlives the sub-agent's task; what runs beside the checkout is the orchestrator's call.
   'code_service_start',
   'code_service_stop',
+  // So does a preview, and so does the shape of the branch: rewriting
+  // history, moving the branch, throwing work away or narrowing the
+  // checkout is the orchestrator's call, not a sub-agent's.
+  'code_preview_start',
+  'code_preview_stop',
+  'code_git_fetch',
+  'code_git_rebase',
+  'code_git_merge',
+  'code_git_reset',
+  'code_git_stash',
+  'code_git_clean',
+  'code_git_sparse_checkout',
 ]);
 
 const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output. Do not push, do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, and anything you could not do or are unsure of. Be concrete and brief.`;
@@ -94,7 +106,7 @@ export interface DelegateOptions {
  * and only the read-only part when the task says so.
  */
 export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = {}): LocalTool {
-  const offered = tools.filter((tool) => !WITHHELD.has(tool.def.name));
+  const offered = tools.filter((tool) => !WITHHELD_FROM_SUBAGENTS.has(tool.def.name));
   const models = options.models ?? [];
   const auto = options.auto === true;
   const defaultSteps = auto ? DELEGATE_AUTO_DEFAULT_STEPS : DELEGATE_DEFAULT_STEPS;

@@ -70,6 +70,8 @@ import { secretSummary } from './secrets';
 import { interruptRunningProcesses, orphanedByNow } from './workspaces';
 import { createWorkspaceHandlers } from './workspace-endpoints';
 import { createServiceHandlers } from './service-endpoints';
+import { createPreviewHandlers } from './preview-endpoints';
+import { PreviewManager } from './previews';
 import { createScriptHandlers } from './script-endpoints';
 import { createCrawlHandlers } from './crawl-endpoints';
 import type { Crawler } from './crawler';
@@ -137,6 +139,8 @@ export interface SandboxServerDeps {
   charts?: ChartVerbs | null;
   /** Commands can be run for a caller here (not root, or root that can drop to a uid); off answers every workspace and env verb 503. */
   workspaces?: boolean;
+  /** The previews (long-running servers in a checkout); the server makes its own when not given. */
+  previews?: PreviewManager;
   /**
    * The manager over the Docker engine, or null, which answers every
    * service verb 503. A running service's variables join the environment
@@ -342,12 +346,24 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     store: deps.crawlStore ?? null,
     enabledFor: async () => (await orgFeatures()).browser,
   });
+  const previewManager = deps.previews ?? new PreviewManager();
   const workspaces = createWorkspaceHandlers({
     capable: capabilities.workspaces,
     enabledFor: async () => (await orgFeatures()).workspaces,
     // A running service's variables join every command's environment.
     ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
     lsp: deps.lsp,
+    previews: previewManager,
+  });
+  // Previews: a checkout's own server, under the workspaces switch (no
+  // engine needed — it is a command that keeps running).
+  const previews = createPreviewHandlers({
+    manager: previewManager,
+    capable: capabilities.workspaces,
+    enabledFor: async () => (await orgFeatures()).workspaces,
+    loadWorkspace: workspaces.loadReady,
+    openEnv: workspaces.openEnv,
+    ...(deps.services ? { serviceEnv: (target) => deps.services!.environmentFor(target) } : {}),
   });
 
   const fetchUrl = deps.fetchUrl ?? ((url, init) => guardedFetch(url, { signal: init.signal }));
@@ -971,6 +987,17 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     if (!authorized(request, deps.apiKeys)) {
       return sendError(response, 401, 'unauthorized');
     }
+    // A request relayed to a preview's server is whatever the browser
+    // sent — any method, the body as it is — so it is routed before the
+    // JSON verbs' POST-only rule.
+    if (
+      url.pathname.startsWith('/v1/previews/proxy/') ||
+      url.pathname.startsWith('/v1/previews/public/')
+    ) {
+      return withRequestScope('previews/proxy', str(request.headers['x-sandbox-subject']), () =>
+        previews.handleProxy(request, response, url)
+      );
+    }
     if (request.method !== 'POST') {
       return sendError(response, 405, 'method_not_allowed');
     }
@@ -1004,6 +1031,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
     const workspacesOp = op.startsWith('workspaces/') ? op.slice('workspaces/'.length) : null;
     const envOp = op.startsWith('env/') ? op.slice('env/'.length) : null;
     const servicesOp = op.startsWith('services/') ? op.slice('services/'.length) : null;
+    const previewsOp = op.startsWith('previews/') ? op.slice('previews/'.length) : null;
     const chartsOp = op.startsWith('charts/') ? op.slice('charts/'.length) : null;
     const scriptsOp = op.startsWith('scripts/') ? op.slice('scripts/'.length) : null;
     const crawlsOp = op.startsWith('crawls/') ? op.slice('crawls/'.length) : null;
@@ -1014,6 +1042,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       workspacesOp !== null ||
       envOp !== null ||
       servicesOp !== null ||
+      previewsOp !== null ||
       chartsOp !== null ||
       scriptsOp !== null;
     const jsonHandler = prefixed ? null : jsonHandlers[op];
@@ -1041,6 +1070,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       if (workspacesOp !== null) return workspaces.handleWorkspaces(workspacesOp, body, response);
       if (envOp !== null) return workspaces.handleEnv(envOp, body, response);
       if (servicesOp !== null) return services.handleServices(servicesOp, body, response);
+      if (previewsOp !== null) return previews.handlePreviews(previewsOp, body, response);
       if (chartsOp !== null) return handleCharts(chartsOp, body, response);
       if (scriptsOp !== null) return scripts.handleScripts(scriptsOp, body, response);
       if (crawlsOp !== null) return crawls.handleCrawls(crawlsOp, body, response);
@@ -1121,6 +1151,8 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
       // Services past theirs: the container, then the row; and any
       // container of ours that no row claims.
       if (deps.services) await deps.services.sweep(SWEEP_BATCH);
+      // Previews nobody has asked for in a while: their process tree.
+      await previewManager.sweep();
       // Secrets past their lifetime: the key first, then the row; and
       // held keys past their window, wherever they are kept.
       await vault.sweepExpired();
@@ -1143,8 +1175,9 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   server.on('close', () => {
     clearInterval(sweep);
     if (!deps.vault) vault.close();
-    // Language servers are this process's children; none outlives it.
+    // Language servers and previews are this process's children; none outlives it.
     void workspaces.lsp.closeAll();
+    void previewManager.stopAll();
   });
 
   return server;

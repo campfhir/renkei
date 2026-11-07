@@ -55,6 +55,7 @@ import {
   validateEnvValue,
   validateGitRef,
   validateGlob,
+  validateSparsePaths,
   validateGrepPattern,
   validateRepoFullName,
   validateWorkspacePath,
@@ -106,6 +107,8 @@ import {
   spawnArchive,
 } from './workspaces';
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
+import { createGitVerbs, operationState } from './git-verbs';
+import type { PreviewManager } from './previews';
 import { logger } from './logger';
 import { logErrorResponse } from './request-log';
 import { isRecord } from '@renkei/guards';
@@ -125,6 +128,8 @@ export interface WorkspaceHandlerDeps {
   serviceEnv?: (target: store.WorkspaceTarget) => Promise<Record<string, string>>;
   /** The language server sessions; the handlers make their own when not given (tests share one). */
   lsp?: LspSessions;
+  /** The previews (previews.ts): a checkout that goes takes its previews with it. */
+  previews?: PreviewManager;
 }
 
 const SSE_PING_MS = 15_000;
@@ -355,6 +360,14 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       typeof body.depth === 'number' && Number.isFinite(body.depth)
         ? Math.max(0, Math.floor(body.depth))
         : CLONE_DEFAULT_DEPTH;
+    // A sparse clone keeps only the named directories in the working tree —
+    // a monorepo's one app — and every worktree made of it inherits that.
+    let sparsePaths: string[] = [];
+    if (body.sparsePaths !== undefined) {
+      const sparse = validateSparsePaths(body.sparsePaths);
+      if (!sparse.ok) return sendError(response, 400, 'bad_request', sparse.message);
+      sparsePaths = sparse.paths;
+    }
 
     if ((await store.countWorkspaces(target)) >= WORKSPACE_MAX_PER_SUBJECT) {
       return sendError(
@@ -385,6 +398,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         gitProxy,
         branch,
         depth,
+        sparsePaths,
       });
       if (!outcome.ok) {
         logger.warn('workspace clone failed for {repo}: {error}', {
@@ -536,12 +550,14 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const id = str(body.id);
     const deleted = id ? await store.deleteWorkspace(target, id) : undefined;
     if (!deleted) return sendError(response, 404, 'not_found');
+    await deps.previews?.stopForWorkspace(deleted.id);
     if (deleted.parentId) {
       const base = await store.getWorkspace(target, deleted.parentId);
       await removeWorktree(base?.storageKey ?? null, deleted.storageKey, identityFor(target));
     } else {
       // A base clone takes its worktrees with it: they cannot work without it.
       for (const child of await store.listWorktrees(target, deleted.id)) {
+        await deps.previews?.stopForWorkspace(child.id);
         await store.deleteWorkspaceById(child.id);
         await removeWorktree(null, child.storageKey, identityFor(target));
       }
@@ -1099,6 +1115,11 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       ]);
       parts.log = scrubEnv(gitText(log), env);
     }
+    // A rebase or merge left half-done, and the files still in conflict:
+    // the first thing a reader of the status needs to know.
+    const operation = await operationState(input);
+    parts.inProgress = operation.inProgress;
+    parts.conflicts = operation.conflicts.map((path) => scrubEnv(path, env));
     await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, parts);
   }
@@ -1379,16 +1400,26 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       remoteBranch = ref.ref;
     }
     const input = runInputFor(workspace, env, 5 * 60_000, { gitProxy });
+    // After a rebase the remote branch has to be replaced; `--force-with-lease`
+    // does that only while the remote is still where this checkout last saw
+    // it, so nobody else's pushes are overwritten. A plain `--force` never.
+    const forceWithLease = body.forceWithLease === true;
     const pushed = await runGit(input, [
       'push',
       '--set-upstream',
+      ...(forceWithLease ? ['--force-with-lease'] : []),
       'origin',
       `HEAD:refs/heads/${remoteBranch}`,
     ]);
     if (pushed.exitCode !== 0)
       return sendError(response, 409, 'git_failed', scrubEnv(gitText(pushed), env));
     await store.touchWorkspace(workspace.id, { branch });
-    sendJson(response, 200, { branch, remoteBranch, output: scrubEnv(gitText(pushed), env) });
+    sendJson(response, 200, {
+      branch,
+      remoteBranch,
+      forced: forceWithLease,
+      output: scrubEnv(gitText(pushed), env),
+    });
   }
 
   async function gitPull(
@@ -1579,6 +1610,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     'git-push': gitPush,
     'git-pull': gitPull,
     'git-discard': gitDiscard,
+    ...createGitVerbs({
+      runInputFor,
+      currentBranch,
+      refreshSize,
+      touch: (id, patch) => store.touchWorkspace(id, patch),
+    }),
   };
 
   /**
@@ -1816,7 +1853,11 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     }
   }
 
-  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp };
+  /** The caller's environment secrets opened for one request — what previews start with and scrub by. */
+  const openEnv = (target: store.WorkspaceTarget): Promise<OpenedEnv> =>
+    envSecretsEnabled() ? openCallerEnv(target) : Promise.resolve(EMPTY_ENV);
+
+  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp, loadReady, openEnv };
 }
 
 /** Exposed for tests: the contained-path check the file verbs rely on. */

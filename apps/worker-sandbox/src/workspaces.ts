@@ -700,6 +700,8 @@ export interface CloneInput {
   branch: string;
   /** 0 means the whole history. */
   depth: number;
+  /** Directories to keep in the working tree (`--sparse`, cone mode); empty means all of it. */
+  sparsePaths?: string[];
 }
 
 export type CloneOutcome = { ok: true; branch: string } | { ok: false; message: string };
@@ -725,9 +727,11 @@ export async function cloneRepository(input: CloneInput): Promise<CloneOutcome> 
     timeoutMs: CLONE_TIMEOUT_MS,
     gitProxy: input.gitProxy,
   };
+  const sparse = input.sparsePaths ?? [];
   const args = ['clone', '--no-tags'];
   if (input.depth > 0) args.push('--depth', String(input.depth), '--no-single-branch');
   if (input.branch) args.push('--branch', input.branch);
+  if (sparse.length) args.push('--sparse');
   args.push('--', input.cloneUrl, dir);
   const cloned = await runGit(run, args);
   if (cloned.timedOut) {
@@ -737,6 +741,21 @@ export async function cloneRepository(input: CloneInput): Promise<CloneOutcome> 
   if (cloned.exitCode !== 0) {
     await rm(dir, { recursive: true, force: true });
     return { ok: false, message: gitFailure(cloned, 'git clone failed') };
+  }
+  if (sparse.length) {
+    // `--sparse` checks out the root's files alone; the named directories
+    // join them. A worktree made of this clone inherits the patterns.
+    const narrowed = await runGit({ ...run, cwd: dir }, [
+      'sparse-checkout',
+      'set',
+      '--cone',
+      '--',
+      ...sparse,
+    ]);
+    if (narrowed.exitCode !== 0) {
+      await rm(dir, { recursive: true, force: true });
+      return { ok: false, message: gitFailure(narrowed, 'git sparse-checkout failed') };
+    }
   }
   const head = await runGit({ ...run, cwd: dir }, ['rev-parse', '--abbrev-ref', 'HEAD']);
   const branch = head.exitCode === 0 ? head.stdout.trim() : input.branch;

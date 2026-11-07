@@ -830,6 +830,7 @@ const RETRIED_WORKSPACE_READS = new Set([
   'git-status',
   'git-diff',
   'git-show',
+  'git-log',
 ]);
 
 async function workspaceCall(
@@ -870,6 +871,8 @@ export async function sbWorkspaceClone(
     repoFullName: string;
     branch?: string;
     depth?: number;
+    /** Directories to keep in the working tree (a sparse, cone-mode checkout); absent means all of it. */
+    sparsePaths?: string[];
     cloneUrl: string;
     gitProxy: GitProxy;
   }
@@ -1291,11 +1294,36 @@ export async function sbWorkspaceExec(
   };
 }
 
+/** An operation git has left half-done in the checkout. */
+export type WireGitOperation = 'rebase' | 'merge' | 'cherry-pick' | 'revert';
+
+function gitOperationOf(value: unknown): WireGitOperation | null {
+  return value === 'rebase' || value === 'merge' || value === 'cherry-pick' || value === 'revert'
+    ? value
+    : null;
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : [];
+}
+
 export async function sbWorkspaceGitStatus(
   target: SandboxTarget,
   input: { id: string; diff?: boolean; log?: number }
 ): Promise<
-  ClientResult<{ branch: string; status: string; diff?: string; diffStat?: string; log?: string }>
+  ClientResult<{
+    branch: string;
+    status: string;
+    diff?: string;
+    diffStat?: string;
+    log?: string;
+    /** A rebase or merge left half-done, when one is (absent on an older worker's answer). */
+    inProgress: WireGitOperation | null;
+    /** Files still in conflict. */
+    conflicts: string[];
+  }>
 > {
   const result = await workspaceCall('git-status', target, input);
   if (!result.ok) return result;
@@ -1306,6 +1334,8 @@ export async function sbWorkspaceGitStatus(
     val: {
       branch: str(value.branch),
       status: str(value.status),
+      inProgress: gitOperationOf(value.inProgress),
+      conflicts: stringList(value.conflicts),
       ...(typeof value.diff === 'string' ? { diff: value.diff } : {}),
       ...(typeof value.diffStat === 'string' ? { diffStat: value.diffStat } : {}),
       ...(typeof value.log === 'string' ? { log: value.log } : {}),
@@ -1454,8 +1484,16 @@ export async function sbWorkspaceGitCommit(
 
 export async function sbWorkspaceGitPush(
   target: SandboxTarget,
-  input: { id: string; gitProxy: GitProxy; branch?: string }
-): Promise<ClientResult<{ branch: string; remoteBranch: string; output: string }>> {
+  input: {
+    id: string;
+    gitProxy: GitProxy;
+    branch?: string;
+    /** Replace the remote branch (after a rebase), only while it is still where this checkout last saw it. Never a plain force. */
+    forceWithLease?: boolean;
+  }
+): Promise<
+  ClientResult<{ branch: string; remoteBranch: string; forced: boolean; output: string }>
+> {
   const result = await workspaceCall('git-push', target, input);
   if (!result.ok) return result;
   const value = result.val;
@@ -1465,6 +1503,7 @@ export async function sbWorkspaceGitPush(
     val: {
       branch: str(value.branch),
       remoteBranch: str(value.remoteBranch),
+      forced: value.forced === true,
       output: str(value.output),
     },
   };
@@ -1494,6 +1533,322 @@ export async function sbWorkspaceGitDiscard(
   const value = result.val;
   if (!isRecord(value)) return malformed();
   return { ok: true, val: { branch: str(value.branch) } };
+}
+
+// ─── The rest of git ────────────────────────────────────────────────────────
+
+export interface WireLogEntry {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  author: string;
+  email: string;
+  date: string;
+  /** Branch and tag names at this commit. */
+  refs: string[];
+  parents: string[];
+}
+
+function logEntryOf(value: unknown): WireLogEntry | null {
+  if (!isRecord(value) || !str(value.sha)) return null;
+  return {
+    sha: str(value.sha),
+    shortSha: str(value.shortSha),
+    subject: str(value.subject),
+    author: str(value.author),
+    email: str(value.email),
+    date: str(value.date),
+    refs: stringList(value.refs),
+    parents: stringList(value.parents),
+  };
+}
+
+/**
+ * The history as records: `ref` a revision or a range (`main..HEAD`),
+ * `paths` to narrow it to some files, `grep` and `author` to filter,
+ * `max`/`skip` to page. `all` walks every branch instead of `ref`.
+ */
+export async function sbWorkspaceGitLog(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    ref?: string;
+    paths?: string[];
+    grep?: string;
+    author?: string;
+    max?: number;
+    skip?: number;
+    all?: boolean;
+  }
+): Promise<ClientResult<{ branch: string; commits: WireLogEntry[]; truncated: boolean }>> {
+  const result = await workspaceCall('git-log', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value) || !Array.isArray(value.commits)) return malformed();
+  const commits: WireLogEntry[] = [];
+  for (const raw of value.commits) {
+    const entry = logEntryOf(raw);
+    if (!entry) return malformed();
+    commits.push(entry);
+  }
+  return {
+    ok: true,
+    val: { branch: str(value.branch), commits, truncated: value.truncated === true },
+  };
+}
+
+/** Fetch origin (one branch, or all of it) with the person's own access; `prune` drops remote branches that are gone. */
+export async function sbWorkspaceGitFetch(
+  target: SandboxTarget,
+  input: { id: string; gitProxy: GitProxy; branch?: string; prune?: boolean }
+): Promise<ClientResult<{ branch: string; output: string }>> {
+  const result = await workspaceCall('git-fetch', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return { ok: true, val: { branch: str(value.branch), output: str(value.output) } };
+}
+
+export interface WireLocalBranch {
+  name: string;
+  current: boolean;
+  upstream: string | null;
+  sha: string;
+  subject: string;
+}
+
+export interface WireRemoteBranch {
+  name: string;
+  sha: string;
+  subject: string;
+}
+
+/**
+ * Branches: `list` answers the local ones (with their upstreams) and the
+ * remote-tracking ones; `create` makes one at `start` (default HEAD);
+ * `switch` checks one out — a remote branch by its short name becomes a
+ * tracking branch, `create` makes a new one at `start` first; `delete`
+ * removes a local branch, `force` even when unmerged.
+ */
+export async function sbWorkspaceGitBranch(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    action: 'list' | 'create' | 'switch' | 'delete';
+    name?: string;
+    start?: string;
+    create?: boolean;
+    force?: boolean;
+  }
+): Promise<
+  ClientResult<{
+    branch: string;
+    output: string;
+    local: WireLocalBranch[];
+    remote: WireRemoteBranch[];
+  }>
+> {
+  const result = await workspaceCall('git-branch', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  const local: WireLocalBranch[] = [];
+  for (const raw of Array.isArray(value.local) ? value.local : []) {
+    if (!isRecord(raw)) return malformed();
+    local.push({
+      name: str(raw.name),
+      current: raw.current === true,
+      upstream: optStr(raw.upstream) ?? null,
+      sha: str(raw.sha),
+      subject: str(raw.subject),
+    });
+  }
+  const remote: WireRemoteBranch[] = [];
+  for (const raw of Array.isArray(value.remote) ? value.remote : []) {
+    if (!isRecord(raw)) return malformed();
+    remote.push({ name: str(raw.name), sha: str(raw.sha), subject: str(raw.subject) });
+  }
+  return {
+    ok: true,
+    val: { branch: str(value.branch), output: str(value.output), local, remote },
+  };
+}
+
+/** How a rebase or merge stands after a step: done, or stopped on conflicts to resolve. */
+export interface WireGitOperationOutcome {
+  branch: string;
+  /** The operation finished (or there was nothing to do). */
+  completed: boolean;
+  inProgress: WireGitOperation | null;
+  conflicts: string[];
+  output: string;
+}
+
+function operationOutcomeOf(value: unknown): WireGitOperationOutcome | null {
+  if (!isRecord(value)) return null;
+  return {
+    branch: str(value.branch),
+    completed: value.completed === true,
+    inProgress: gitOperationOf(value.inProgress),
+    conflicts: stringList(value.conflicts),
+    output: str(value.output),
+  };
+}
+
+/**
+ * Rebase the current branch: `start` onto a revision (fetch first for a
+ * remote one), then — when it stops on conflicts — `continue` after the
+ * files are fixed and staged, `skip` the commit, or `abort` back to
+ * where it was. Reapplied commits are committed as `author`.
+ */
+export async function sbWorkspaceGitRebase(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    action: 'start' | 'continue' | 'skip' | 'abort';
+    onto?: string;
+    autostash?: boolean;
+    author?: { name: string; email: string };
+  }
+): Promise<ClientResult<WireGitOperationOutcome>> {
+  const result = await workspaceCall('git-rebase', target, input);
+  if (!result.ok) return result;
+  const outcome = operationOutcomeOf(result.val);
+  return outcome ? { ok: true, val: outcome } : malformed();
+}
+
+/** Merge a revision into the current branch; the same continue/abort shape as a rebase when it stops on conflicts. */
+export async function sbWorkspaceGitMerge(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    action: 'start' | 'continue' | 'abort';
+    ref?: string;
+    message?: string;
+    noFastForward?: boolean;
+    squash?: boolean;
+    author?: { name: string; email: string };
+  }
+): Promise<ClientResult<WireGitOperationOutcome>> {
+  const result = await workspaceCall('git-merge', target, input);
+  if (!result.ok) return result;
+  const outcome = operationOutcomeOf(result.val);
+  return outcome ? { ok: true, val: outcome } : malformed();
+}
+
+/**
+ * Move the branch (`soft` keeps the index, `mixed` the working tree,
+ * `hard` nothing, `keep` the uncommitted work) to `target` (default
+ * HEAD); with `paths`, unstage those files instead.
+ */
+export async function sbWorkspaceGitReset(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    mode?: 'soft' | 'mixed' | 'hard' | 'keep';
+    target?: string;
+    paths?: string[];
+  }
+): Promise<ClientResult<{ branch: string; head: string; output: string }>> {
+  const result = await workspaceCall('git-reset', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: { branch: str(value.branch), head: str(value.head), output: str(value.output) },
+  };
+}
+
+export interface WireStash {
+  index: number;
+  ref: string;
+  message: string;
+  date: string;
+}
+
+/** Stashes: list, push (the work away, `includeUntracked` for new files, `paths` for some), pop/apply/drop/show by position. */
+export async function sbWorkspaceGitStash(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    action: 'list' | 'push' | 'pop' | 'apply' | 'drop' | 'show';
+    message?: string;
+    includeUntracked?: boolean;
+    paths?: string[];
+    index?: number;
+    author?: { name: string; email: string };
+  }
+): Promise<
+  ClientResult<{ branch: string; stashes: WireStash[]; output: string; conflicts: string[] }>
+> {
+  const result = await workspaceCall('git-stash', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  const stashes: WireStash[] = [];
+  for (const raw of Array.isArray(value.stashes) ? value.stashes : []) {
+    if (!isRecord(raw)) return malformed();
+    stashes.push({
+      index: typeof raw.index === 'number' ? raw.index : 0,
+      ref: str(raw.ref),
+      message: str(raw.message),
+      date: str(raw.date),
+    });
+  }
+  return {
+    ok: true,
+    val: {
+      branch: str(value.branch),
+      stashes,
+      output: str(value.output),
+      conflicts: stringList(value.conflicts),
+    },
+  };
+}
+
+/** Untracked files and folders removed (`dryRun: false`) or only named (the default); `ignored` takes ignored ones too. */
+export async function sbWorkspaceGitClean(
+  target: SandboxTarget,
+  input: { id: string; dryRun?: boolean; ignored?: boolean; paths?: string[] }
+): Promise<ClientResult<{ branch: string; dryRun: boolean; paths: string[] }>> {
+  const result = await workspaceCall('git-clean', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: {
+      branch: str(value.branch),
+      dryRun: value.dryRun !== false,
+      paths: stringList(value.paths),
+    },
+  };
+}
+
+/** The sparse checkout: `list` what is kept, `set`/`add` directories (cone mode unless `cone: false`), `disable` for the whole tree. */
+export async function sbWorkspaceGitSparseCheckout(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    action: 'list' | 'set' | 'add' | 'disable';
+    paths?: string[];
+    cone?: boolean;
+  }
+): Promise<ClientResult<{ branch: string; enabled: boolean; patterns: string[]; output: string }>> {
+  const result = await workspaceCall('git-sparse-checkout', target, input);
+  if (!result.ok) return result;
+  const value = result.val;
+  if (!isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: {
+      branch: str(value.branch),
+      enabled: value.enabled === true,
+      patterns: stringList(value.patterns),
+      output: str(value.output),
+    },
+  };
 }
 
 // ─── Workspace environment secrets ──────────────────────────────────────────
@@ -1776,6 +2131,170 @@ export async function sbServicesTail(
 }
 
 // ─── The organization's image rules ─────────────────────────────────────────
+
+// ─── Previews: a checkout's own server, reached from outside ───────────────
+
+export type WirePreviewStatus = 'starting' | 'running' | 'exited';
+
+export interface WirePreview {
+  id: string;
+  name: string;
+  workspaceId: string;
+  command: string;
+  port: number;
+  /** The share token, when the preview is public; null when only a signed-in member may reach it. */
+  token: string | null;
+  /** Where the web app serves it — what the process was told. */
+  url: string;
+  status: WirePreviewStatus;
+  exitCode: number | null;
+  signal: string | null;
+  startedAt: string;
+  lastUsedAt: string;
+  expiresAt: string;
+}
+
+function previewOf(value: unknown): WirePreview | null {
+  if (!isRecord(value)) return null;
+  const id = str(value.id);
+  const name = str(value.name);
+  const status = str(value.status);
+  if (!id || !name || (status !== 'starting' && status !== 'running' && status !== 'exited')) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    workspaceId: str(value.workspaceId),
+    command: str(value.command),
+    port: typeof value.port === 'number' ? value.port : 0,
+    token: optStr(value.token) ?? null,
+    url: str(value.url),
+    status,
+    exitCode: typeof value.exitCode === 'number' ? value.exitCode : null,
+    signal: optStr(value.signal) ?? null,
+    startedAt: str(value.startedAt),
+    lastUsedAt: str(value.lastUsedAt),
+    expiresAt: str(value.expiresAt),
+  };
+}
+
+export async function sbPreviewList(target: SandboxTarget): Promise<ClientResult<WirePreview[]>> {
+  const result = await callJson('previews/list', { ...target });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || !Array.isArray(result.val.previews)) return malformed();
+  const previews: WirePreview[] = [];
+  for (const raw of result.val.previews) {
+    const preview = previewOf(raw);
+    if (!preview) return malformed();
+    previews.push(preview);
+  }
+  return { ok: true, val: previews };
+}
+
+/**
+ * Start a server in the checkout and wait (up to `waitMs`, the worker's
+ * ceiling applies) for it to accept connections on its port. `url` is
+ * where the web app will serve it — told to the process as
+ * RENKEI_PREVIEW_URL; with `token`, the share link's address. Answers
+ * whether it is listening yet, and its first lines either way.
+ */
+export async function sbPreviewStart(
+  target: SandboxTarget,
+  input: {
+    id: string;
+    name: string;
+    command: string;
+    port?: number;
+    token?: string;
+    url: string;
+    waitMs?: number;
+  }
+): Promise<ClientResult<{ preview: WirePreview; listening: boolean; logs: string }>> {
+  const cfg = sandboxConfig();
+  if (!cfg) return { ok: false, err: { kind: 'unconfigured' } };
+  let response: Response;
+  try {
+    response = await fetch(`${cfg.url}/v1/previews/start`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${cfg.key}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...target, ...input }),
+      signal: AbortSignal.timeout(Math.min(10 * 60_000, (input.waitMs ?? 60_000) + 30_000)),
+    });
+  } catch (error) {
+    return unreachable(error instanceof Error ? error.message : String(error));
+  }
+  if (!response.ok) return opFailure(response);
+  let value: unknown;
+  try {
+    value = await response.json();
+  } catch {
+    return unreachable('The sandbox service answered an unreadable response.');
+  }
+  const preview = isRecord(value) ? previewOf(value.preview) : null;
+  if (!preview || !isRecord(value)) return malformed();
+  return {
+    ok: true,
+    val: { preview, listening: value.listening === true, logs: str(value.logs) },
+  };
+}
+
+export async function sbPreviewLogs(
+  target: SandboxTarget,
+  input: { name: string; lines?: number }
+): Promise<
+  ClientResult<{ preview: WirePreview; logs: string; truncated: boolean; count: number }>
+> {
+  const result = await callJson('previews/logs', { ...target, ...input });
+  if (!result.ok) return result;
+  if (!isRecord(result.val) || typeof result.val.logs !== 'string') return malformed();
+  const preview = previewOf(result.val.preview);
+  if (!preview) return malformed();
+  return {
+    ok: true,
+    val: {
+      preview,
+      logs: result.val.logs,
+      truncated: result.val.truncated === true,
+      count: typeof result.val.count === 'number' ? result.val.count : 0,
+    },
+  };
+}
+
+export async function sbPreviewStop(
+  target: SandboxTarget,
+  name: string
+): Promise<ClientResult<WirePreview>> {
+  const result = await callJson('previews/stop', { ...target, name });
+  if (!result.ok) return result;
+  const preview = isRecord(result.val) ? previewOf(result.val.preview) : null;
+  return preview ? { ok: true, val: preview } : malformed();
+}
+
+/**
+ * Where the web app relays a browser's request to a preview: the
+ * worker's proxy path for a member's request (the subject rides a
+ * header) or for a share token, with the headers the worker needs.
+ * `path` is what follows the preview's own prefix, query included.
+ */
+export function sbPreviewProxyTarget(
+  ref: { subject: string; name: string } | { token: string },
+  path: string
+): { url: string; headers: Record<string, string> } | null {
+  const cfg = sandboxConfig();
+  if (!cfg) return null;
+  const rest = path.replace(/^\/+/, '');
+  if ('token' in ref) {
+    return {
+      url: `${cfg.url}/v1/previews/public/${encodeURIComponent(ref.token)}/${rest}`,
+      headers: { authorization: `Bearer ${cfg.key}` },
+    };
+  }
+  return {
+    url: `${cfg.url}/v1/previews/proxy/${encodeURIComponent(ref.name)}/${rest}`,
+    headers: { authorization: `Bearer ${cfg.key}`, 'x-sandbox-subject': ref.subject },
+  };
+}
 
 export interface WireImageRule {
   id: string;
@@ -2075,6 +2594,17 @@ export function clientFailure(error: SandboxClientError): { status: number; mess
       return { status: 409, message: error.message ?? 'The edit did not apply.' };
     case 'git_failed':
       return { status: 409, message: error.message ?? 'git refused.' };
+    case 'git_in_progress':
+      return {
+        status: 409,
+        message: error.message ?? 'A rebase or merge is in progress; finish or abort it first.',
+      };
+    case 'port_in_use':
+      return { status: 409, message: error.message ?? 'That port is already in use.' };
+    case 'start_failed':
+      return { status: 502, message: error.message ?? 'The preview could not be started.' };
+    case 'preview_unreachable':
+      return { status: 502, message: error.message ?? 'The preview did not answer.' };
     case 'workspace_limit':
       return { status: 429, message: error.message ?? 'Too many workspaces — delete one first.' };
     case 'env_limit':
