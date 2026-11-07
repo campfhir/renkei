@@ -81,6 +81,7 @@ const INTEGER_KINDS = new Set<RefKind>(['user', 'connector']);
 export const REF_ARGS: Record<string, RefKind> = {
   channelId: 'channel',
   channelIds: 'channel',
+  recipientChannelId: 'channel',
   alertId: 'alert',
   codeTemplateId: 'code_template',
   libraryId: 'code_template_library',
