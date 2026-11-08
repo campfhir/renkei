@@ -234,6 +234,26 @@ export function renameRequest(draft: string): { title: string } | { error: strin
   return title ? { title } : { error: 'The name can’t be empty.' };
 }
 
+/**
+ * Whether a turn starting re-reads the app menu's chat list. "+ New" makes
+ * its chat empty, and the menu lists a chat from its first message
+ * (lib/chat/sidebar.ts) out of the layout's server data, which only a
+ * refresh moves: the first turn's start brings the chat into the menu
+ * while its reply is still coming, under the title the server derived
+ * from the prompt. Every later turn leaves the list to the turn's end,
+ * which carries the model's title and the day's ordering too — and a chat
+ * opened mid-reply (a turn already running on load) was listed by the
+ * same render that drew it.
+ */
+export function menuRefreshOnTurnStart(chat: {
+  /** How many messages the thread held before this turn began. */
+  messagesBefore: number;
+  /** Whether a turn was already running when the page loaded. */
+  loadedRunning: boolean;
+}): boolean {
+  return chat.messagesBefore === 0 && !chat.loadedRunning;
+}
+
 /** The model a chat opens on: its own, else the organization's default, else the first, else none. */
 export function initialModelId(
   chat: Pick<ChatView, 'llmModelId'>,

@@ -229,10 +229,19 @@ function kindOf(chat: ChatListItem): {
 /**
  * A day's heading. It sticks to the top of the list while that day's chats
  * scroll past, and the next day's heading takes its place.
+ *
+ * Stuck, its box starts where the list's clip edge is — but the two are
+ * snapped to device pixels separately, and on a phone (three device pixels
+ * per CSS pixel, fractional scroll offsets) the box can land a fraction
+ * below the edge, leaving a hairline of the row scrolling under it showing
+ * above the heading. The `before` strip paints the heading's own background
+ * a few pixels further up, into the clip, so no seam opens whichever way
+ * the rounding goes; in its resting place the strip covers only the gap
+ * above the heading.
  */
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-10 bg-white px-2 pt-1 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
+    <div className="sticky top-0 z-10 bg-white px-2 pt-1 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 before:absolute before:inset-x-0 before:-top-1 before:h-1 before:bg-inherit dark:bg-gray-950">
       {children}
     </div>
   );
