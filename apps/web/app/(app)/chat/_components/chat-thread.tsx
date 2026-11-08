@@ -67,6 +67,7 @@ import {
   initialThreadSend,
   isCompactCommand,
   lastQueueId,
+  menuRefreshOnTurnStart,
   nextToSend,
   promptActionsOffered,
   promptTextOf,
@@ -432,6 +433,25 @@ export default function ChatThread({
     },
     [openPaneFile, paneMode, paneOpen, togglePane]
   );
+
+  // The menu's chat list is the layout's server data, and "+ New" made
+  // this chat before anything was said in it: the first turn's start
+  // re-reads the list so the chat is in the menu while its reply is still
+  // coming (menuRefreshOnTurnStart says when). Counted here, not off
+  // `state.messages`: by the time the turn's id is set, the optimistic
+  // prompt row is already in the thread.
+  const messagesBefore = useRef(initialMessages.length);
+  const loadedRunning = useRef(initialChat.activeTurn?.status === 'running');
+  useEffect(() => {
+    if (!activeTurnId) return;
+    const refresh = menuRefreshOnTurnStart({
+      messagesBefore: messagesBefore.current,
+      loadedRunning: loadedRunning.current,
+    });
+    // One re-read per chat: the row is listed from here on.
+    messagesBefore.current = Math.max(messagesBefore.current, 1);
+    if (refresh) router.refresh();
+  }, [activeTurnId, router]);
 
   // One EventSource per running turn.
   useEffect(() => {

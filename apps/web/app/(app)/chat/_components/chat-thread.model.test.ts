@@ -14,6 +14,7 @@ import {
   initialThreadSend,
   isCompactCommand,
   lastQueueId,
+  menuRefreshOnTurnStart,
   nextToSend,
   promptActionsOffered,
   promptTextOf,
@@ -261,5 +262,19 @@ describe('rename and delete', () => {
 
   it('Switch branch opens its picker', () => {
     expect(run([{ type: 'branchOpened' }]).dialog).toBe('branch');
+  });
+});
+
+describe('the app menu', () => {
+  it('a new chat’s first send re-reads the menu, so the chat is listed while the reply comes', () => {
+    expect(menuRefreshOnTurnStart({ messagesBefore: 0, loadedRunning: false })).toBe(true);
+  });
+
+  it('a later send leaves the menu to the turn’s end, which brings the title and the order', () => {
+    expect(menuRefreshOnTurnStart({ messagesBefore: 3, loadedRunning: false })).toBe(false);
+  });
+
+  it('a chat opened while its first reply was already running was listed by that very load', () => {
+    expect(menuRefreshOnTurnStart({ messagesBefore: 0, loadedRunning: true })).toBe(false);
   });
 });
