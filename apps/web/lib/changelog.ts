@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Refine and draft prompts with AI',
+        detail:
+          'In the prompt editor, Refine rewrites a prompt so it is clearer and asks for what changes each time, and Draft with AI writes one from a description. You see the original beside the recommendation and the questions it would ask, steer it and try again, then accept it before saving.',
+      },
+      {
+        kind: 'added',
         title: 'Prompt libraries for code projects',
         detail:
           'A library can be offered in code projects only, so development prompts stay out of ordinary chats. The prompt picker groups prompts by library, folds long libraries, can filter to one, and works from the keyboard.',

@@ -25,7 +25,7 @@ test.use({ roles: ['renkei-user', 'renkei-operator'] });
 async function makeLibrary(
   request: APIRequestContext,
   input: { name: string; scope: 'any' | 'code'; prompts: { title: string; body: string }[] }
-): Promise<void> {
+): Promise<string> {
   const created = await request.post('/api/chat/prompt-libraries', {
     data: { name: input.name, scope: input.scope },
   });
@@ -39,6 +39,7 @@ async function makeLibrary(
     });
     expect(added.ok(), await added.text()).toBe(true);
   }
+  return libraryId;
 }
 
 const composer = (page: Page) => page.getByLabel('Message').filter({ visible: true });
@@ -256,4 +257,96 @@ test('the assistant asks a form in the chat, and the answers go back as the next
   );
   await expect(page.getByText('My answers:')).toHaveCount(0);
   await expect(again.getByRole('button', { name: 'Send answers' })).toHaveCount(0);
+});
+
+const REFINED = [
+  'Review {{file}} for {{focus:choice}}.',
+  '',
+  '```variables',
+  'file:',
+  '  required: true',
+  '  help: Path in the repository',
+  'focus:',
+  '  options: [security, performance, readability]',
+  '  default: security',
+  '```',
+].join('\n');
+
+test('Refine rewrites a prompt so it asks, and Draft writes one from a description', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  const libraryId = await makeLibrary(page.request, {
+    name: `Refine ${tag}`,
+    scope: 'code',
+    prompts: [],
+  });
+
+  // What the model would say, answered where the request leaves the browser.
+  const asked: { title: string; body: string; guidance?: string }[] = [];
+  await page.route('**/prompts/refine', async (route) => {
+    const sent = route.request().postDataJSON();
+    asked.push(sent);
+    await route.fulfill({
+      json: { body: REFINED, title: sent.title ? null : 'Review a file' },
+    });
+  });
+
+  await page.goto(`/chat/prompts/${libraryId}`);
+  await page.getByRole('button', { name: 'New prompt' }).click();
+  const editor = page.getByRole('dialog', { name: 'New prompt' });
+
+  // With no text it is Draft: nothing is asked until the editor says what the prompt is for.
+  await expect(editor.getByRole('button', { name: 'Draft with AI' })).toBeVisible({
+    timeout: 30_000,
+  });
+  await editor.getByRole('button', { name: 'Draft with AI' }).click();
+  const drafting = page.getByRole('dialog', { name: 'Draft prompt' });
+  await expect(drafting.getByText('Nothing written yet.')).toBeVisible();
+  await expect(drafting.getByRole('button', { name: 'Draft', exact: true })).toBeDisabled();
+  expect(asked).toHaveLength(0);
+  await drafting.getByLabel(/What is this prompt for/).fill('reviews a file and asks which one');
+  await drafting.getByRole('button', { name: 'Draft', exact: true }).click();
+
+  const recommended = drafting.getByLabel('Recommended prompt');
+  await expect(recommended).toHaveText(REFINED, { timeout: 30_000 });
+  expect(asked[0]).toMatchObject({ body: '', guidance: 'reviews a file and asks which one' });
+  // The questions it would ask, read by the same parser the form uses.
+  const questions = drafting.getByRole('region', { name: 'Questions it asks' });
+  await expect(questions.getByText('File', { exact: true })).toBeVisible();
+  await expect(questions.getByText('Short text · required')).toBeVisible();
+  await expect(
+    questions.getByText('Choose one · security, performance, readability')
+  ).toBeVisible();
+  await expect(questions.getByText('Review a file')).toBeVisible();
+
+  // Accept fills the empty title and the text, still unsaved; Save keeps them.
+  await drafting.getByRole('button', { name: 'Accept' }).click();
+  await expect(drafting).toBeHidden();
+  await expect(editor.getByPlaceholder('Title')).toHaveValue('Review a file');
+  await expect(editor.getByPlaceholder(/The prompt text/)).toHaveValue(REFINED);
+  await expect(editor.getByText('Refined, not saved yet. Save to keep it.')).toBeVisible();
+  await expect(editor.getByText('Asks 2 questions when picked.')).toBeVisible();
+  await editor.getByRole('button', { name: 'Save' }).click();
+  await expect(editor).toBeHidden();
+  await expect(page.getByRole('main').getByText('Review a file').first()).toBeVisible();
+
+  // Editing it again: Refine asks as it opens, with the text as it stands, and Try again steers it.
+  await page.getByRole('button', { name: 'Edit prompt' }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit prompt' });
+  await edit.getByPlaceholder(/The prompt text/).fill('review the file for bugs');
+  await edit.getByRole('button', { name: 'Refine', exact: true }).click();
+  const refining = page.getByRole('dialog', { name: 'Refine prompt' });
+  await expect(refining.getByLabel('Recommended prompt')).toHaveText(REFINED, { timeout: 30_000 });
+  expect(asked[1]).toMatchObject({ title: 'Review a file', body: 'review the file for bugs' });
+  await refining.getByLabel(/Anything to change/).fill('ask which file');
+  await refining.getByRole('button', { name: 'Try again' }).click();
+  await expect(refining.getByRole('button', { name: 'Try again' })).toBeVisible();
+  await expect.poll(() => asked.length).toBe(3);
+  expect(asked[2]).toMatchObject({ guidance: 'ask which file' });
+
+  // Cancel leaves the editor's text as it was.
+  await refining.getByRole('button', { name: 'Cancel' }).click();
+  await expect(refining).toBeHidden();
+  await expect(edit.getByPlaceholder(/The prompt text/)).toHaveValue('review the file for bugs');
 });
