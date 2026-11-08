@@ -17,6 +17,7 @@ function run(n: number, agent: number, status: string, extra: Record<string, unk
     trigger_kind: 'manual',
     status,
     waiting_until: null,
+    cancel_requested_at: null,
     created_at: at(n),
     updated_at: at(n),
     ...extra,
@@ -183,8 +184,8 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
-    method: 'agentRuns.failAbandoned',
-    name: 'queued or running runs only, once',
+    method: 'agentRuns.closeAbandoned',
+    name: 'queued or running runs only, once: failed with the error',
     fixture: {
       agents,
       agent_runs: [run(41, 1, 'running'), run(42, 1, 'queued'), run(43, 1, 'succeeded')],
@@ -192,13 +193,39 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     run: async (store) => {
       const failure = { errorKind: 'timeout', error: 'abandoned' };
       const outcomes = [
-        await store.agentRuns.failAbandoned(id(41), failure),
-        await store.agentRuns.failAbandoned(id(41), failure),
-        await store.agentRuns.failAbandoned(id(42), failure),
-        await store.agentRuns.failAbandoned(id(43), failure),
+        await store.agentRuns.closeAbandoned(id(41), failure),
+        await store.agentRuns.closeAbandoned(id(41), failure),
+        await store.agentRuns.closeAbandoned(id(42), failure),
+        await store.agentRuns.closeAbandoned(id(43), failure),
       ];
       const detail = await store.agentRuns.findForResume(id(41), id(1), 'ann');
       return [outcomes, detail, await runStatus(store, 42, 1), await runStatus(store, 43, 1)];
+    },
+  },
+  {
+    method: 'agentRuns.closeAbandoned',
+    name: 'a run someone asked to cancel is canceled, with no error, not failed',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(44, 1, 'running', { cancel_requested_at: at(50), cancel_requested_by: 'ann' }),
+        run(45, 1, 'queued', { cancel_requested_at: at(51), cancel_requested_by: 'ann' }),
+        run(46, 1, 'queued'),
+      ],
+    },
+    run: async (store) => {
+      const failure = { errorKind: 'timeout', error: 'abandoned' };
+      const outcomes = [
+        await store.agentRuns.closeAbandoned(id(44), failure),
+        await store.agentRuns.closeAbandoned(id(45), failure),
+        await store.agentRuns.closeAbandoned(id(46), failure),
+        await store.agentRuns.closeAbandoned(id(44), failure),
+      ];
+      const detail = async (n: number) => {
+        const found = await store.agentRuns.findForResume(id(n), id(1), 'ann');
+        return found && { status: found.status, error: found.error, errorKind: found.errorKind };
+      };
+      return [outcomes, await detail(44), await detail(45), await detail(46)];
     },
   },
 ];

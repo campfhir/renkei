@@ -112,20 +112,25 @@ export function postgresAgentRunSweeps(db: () => Kysely<DB>): AgentRunSweepStore
         startedAt: row.started_at === null ? null : new Date(row.started_at),
       }));
     },
-    async failAbandoned(runId, { errorKind, error }) {
-      const result = await db()
+    async closeAbandoned(runId, { errorKind, error }) {
+      // Decided from the row being written, so a cancel request that lands
+      // between the janitor's read and this write still wins.
+      const requested = sql`cancel_requested_at IS NOT NULL`;
+      const row = await db()
         .updateTable('agent_runs')
         .set({
-          status: 'failed',
-          error_kind: errorKind,
-          error,
+          status: sql<string>`CASE WHEN ${requested} THEN 'canceled' ELSE 'failed' END`,
+          error_kind: sql<string | null>`CASE WHEN ${requested} THEN NULL ELSE ${errorKind} END`,
+          error: sql<string | null>`CASE WHEN ${requested} THEN NULL ELSE ${error} END`,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
         .where('id', '=', runId)
         .where('status', 'in', ['queued', 'running'])
+        .returning('status')
         .executeTakeFirst();
-      return Number(result.numUpdatedRows ?? 0) > 0;
+      if (!row) return null;
+      return row.status === 'canceled' ? 'canceled' : 'failed';
     },
   };
 }

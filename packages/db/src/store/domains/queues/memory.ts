@@ -41,7 +41,10 @@ function isDue(row: LiveRow, now: number, options: QueueClaimOptions): boolean {
 
 /** The settle guard: only the delivery that still holds the lease. */
 function heldAt(row: LiveRow, guard: QueueLeaseGuard | undefined): boolean {
-  return guard?.attempts === undefined || (row.status === 'processing' && row.attempts === guard.attempts);
+  return (
+    guard?.attempts === undefined ||
+    (row.status === 'processing' && row.attempts === guard.attempts)
+  );
 }
 
 function inSources(row: LiveRow, options: QueueClaimOptions): boolean {

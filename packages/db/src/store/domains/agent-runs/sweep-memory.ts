@@ -129,18 +129,25 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
         startedAt: r.started_at,
       }));
     },
-    async failAbandoned(runId, { errorKind, error }) {
+    async closeAbandoned(runId, { errorKind, error }) {
       const id = runId;
       const now = new Date();
-      return (
-        tables.update('agent_runs', (r) => r.id === id && IN_PROGRESS.includes(r.status), {
-          status: 'failed',
-          error_kind: errorKind,
-          error,
-          finished_at: now,
-          updated_at: now,
-        }).length > 0
+      const [closed] = tables.update(
+        'agent_runs',
+        (r) => r.id === id && IN_PROGRESS.includes(r.status),
+        (r) =>
+          r.cancel_requested_at !== null
+            ? {
+                status: 'canceled',
+                error_kind: null,
+                error: null,
+                finished_at: now,
+                updated_at: now,
+              }
+            : { status: 'failed', error_kind: errorKind, error, finished_at: now, updated_at: now }
       );
+      if (!closed) return null;
+      return closed.status === 'canceled' ? 'canceled' : 'failed';
     },
   };
 }
