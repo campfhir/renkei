@@ -36,7 +36,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
 
   return {
     ...memoryAgentRunSweeps(tables),
-    async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
+    async list({ agentId, ownerSubject, audience, status, q, matchId, limit, offset }) {
       const agent = agentId;
       const id = matchId ? matchId : undefined;
       const pattern = q ? likePattern(q) : null;
@@ -56,9 +56,27 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
           (id !== undefined && r.id === id)
         );
       });
-      return page(orderBy(rows, [(r) => r.created_at, 'desc'], [(r) => r.id]), limit).map(
-        summaryFromRow
+      return page(
+        orderBy(rows, [(r) => r.created_at, 'desc'], [(r) => r.id]),
+        limit,
+        offset ?? 0
+      ).map(summaryFromRow);
+    },
+    async summarizeLive(agentIds) {
+      const wanted = new Set(agentIds);
+      const live = tables.select(
+        'agent_runs',
+        (r) => wanted.has(r.agent_id) && LIVE.includes(r.status)
       );
+      const groups = [...groupBy(live, (r) => `${r.agent_id} ${r.status}`).values()].map(
+        (group) => ({
+          agentId: group[0].agent_id,
+          status: group[0].status,
+          count: group.length,
+          oldestCreatedAt: new Date(Math.min(...group.map((r) => r.created_at.getTime()))),
+        })
+      );
+      return orderBy(groups, [(g) => g.agentId], [(g) => g.status]);
     },
     async findDetail({ agentId, runId: wanted, ownerSubject, audience }) {
       const agent = agentId;

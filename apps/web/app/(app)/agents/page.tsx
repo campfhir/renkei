@@ -7,6 +7,9 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
 import { listAgentsSharedWith } from '@/lib/agents/access-grants';
 import { AgentsList } from './agents-list';
+import AgentsOverview from './agents-overview';
+import { overviewOf } from './agents-overview.model';
+import { listLiveRunCounts } from '@/lib/agents/runs-view';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
@@ -25,6 +28,25 @@ export default async function AgentsPage(): Promise<React.ReactNode> {
     listAgents(session.subject),
     listAgentsSharedWith(session.subject),
   ]);
+
+  // What every agent has in flight, above the cards: the viewer's own
+  // agents and the ones shared with them, both access-resolved above.
+  const overviewAgents = [
+    ...agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      enabled: agent.enabled,
+      shared: false,
+    })),
+    ...shared.map((listing) => ({
+      id: listing.agent.id,
+      name: listing.agent.name,
+      enabled: listing.agent.enabled,
+      shared: true,
+    })),
+  ];
+  const liveCounts = await listLiveRunCounts(overviewAgents.map((agent) => agent.id));
+  const overview = overviewOf(overviewAgents, liveCounts, Date.now());
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -53,6 +75,7 @@ export default async function AgentsPage(): Promise<React.ReactNode> {
         Step-by-step helpers you draft yourself — they act with your own connections, on your
         triggers, and keep a full history of every run.
       </p>
+      <AgentsOverview overview={overview} />
       <CoachTarget name="agents-list">
         <AgentsList
           agents={agents}
