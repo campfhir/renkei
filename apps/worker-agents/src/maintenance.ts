@@ -88,6 +88,10 @@ export function createNotificationRetentionSweep() {
  *
  * The live-job check is what keeps the janitor from racing a real worker:
  * a slow-but-alive run still has its processing row, and is left alone.
+ *
+ * A run with a cancel request is closed as canceled rather than failed:
+ * the request only ever reaches a live worker, so without this a run whose
+ * job died after someone pressed Stop would read as a failure nobody had.
  */
 export function createStuckRunJanitor() {
   return async function sweep(): Promise<void> {
@@ -100,24 +104,38 @@ export function createStuckRunJanitor() {
     for (const run of stuck) {
       if (await store.queues.hasLiveAgentRunJob(run.id)) continue;
 
-      await store.agentRuns.failAbandoned(run.id, {
+      // A run someone asked to cancel ends canceled, as the engine would
+      // have ended it had a worker reached it: the request is honoured even
+      // though its job died first. Otherwise it failed.
+      const closed = await store.agentRuns.closeAbandoned(run.id, {
         errorKind: 'timeout',
         error: ABANDONED_ERROR,
       });
-      // The run log must agree: an abandoned run is a failed run there too.
-      await recordAgentRunOutcome({
-        agentId: run.agentId,
-        runId: run.id,
-        ownerSubject: run.ownerSubject,
-        status: 'failed',
-        errorKind: 'timeout',
-        error: ABANDONED_ERROR,
-      });
-      logger.warn('janitor closed abandoned run {runId}', {
+      if (closed === null) continue; // finished in the meantime
+      // The run log must agree with the run.
+      await recordAgentRunOutcome(
+        closed === 'canceled'
+          ? {
+              agentId: run.agentId,
+              runId: run.id,
+              ownerSubject: run.ownerSubject,
+              status: 'canceled',
+            }
+          : {
+              agentId: run.agentId,
+              runId: run.id,
+              ownerSubject: run.ownerSubject,
+              status: 'failed',
+              errorKind: 'timeout',
+              error: ABANDONED_ERROR,
+            }
+      );
+      logger.warn('janitor closed abandoned run {runId} as {status}', {
         component: 'worker-agents/janitor',
         runId: run.id,
         agentId: run.agentId,
         subject: run.ownerSubject,
+        status: closed,
       });
     }
   };

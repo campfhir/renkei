@@ -14,6 +14,11 @@ import { createOptimizeHandler } from './optimize';
 import { createFinalizeHook } from './finalize';
 import { logger } from './logger';
 
+/** Lease renewal cadence: several renewals inside agent_jobs' 30-minute lease. */
+const LEASE_RENEW_MS = 5 * 60_000;
+/** The longest one claim is renewed for — the stuck-run janitor's horizon. */
+const MAX_HOLD_MS = 2 * 60 * 60_000;
+
 export interface AgentJobsConsumer {
   loop: EventLoop;
   /** Hand the current run back at its next checkpoint, and stop claiming. */
@@ -60,6 +65,16 @@ export function createAgentJobsConsumer(options: {
     // A run the engine hands back on shutdown goes straight back to
     // pending — no attempt spent, no backoff, no lease to wait out.
     release: (event) => queue.consumer.release(event),
+    // A run segment can spend the org's whole active-time budget (30
+    // minutes by default) inside one claim — as long as the 30-minute
+    // lease. Unrenewed, a slow run was reclaimed by a second worker and
+    // executed twice at once, and the second's failure unlocked the
+    // agent's ordering key under the first. Renewed while it runs, up to
+    // the stuck-run janitor's two hours, after which a hung handler loses
+    // its claim like a dead worker's.
+    extend: (event) => queue.consumer.extend(event),
+    extendEveryMs: LEASE_RENEW_MS,
+    maxHoldMs: MAX_HOLD_MS,
     // Runs enqueue under a per-agent fairness lane (`agents:{agentId}`);
     // the bare `agents` form still matches so rows enqueued before lanes
     // existed drain normally.

@@ -135,6 +135,9 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
     async claim() {
       return getDataStore().queues.claim(requireTable(), {
         staleClaimMinutes: config.staleClaimMinutes ?? DEFAULT_STALE_CLAIM_MINUTES,
+        // The contract's promise that a poison message cannot loop forever,
+        // kept for consumers that die instead of failing it too.
+        maxAttempts: policy.maxAttempts,
         sources: config.sources,
         fairAcrossSources: config.fairAcrossSources,
       });
@@ -143,6 +146,7 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
     async complete(message: ClaimedMessage, outcome: CompletionOutcome = 'processed') {
       await getDataStore().queues.complete(requireTable(), message.id, outcome, {
         clearPayload: config.clearPayloadOnComplete,
+        attempts: message.attempts,
       });
     },
 
@@ -150,13 +154,18 @@ export function createPostgresQueue(config: PostgresQueueConfig): Queue {
       await getDataStore().queues.release(requireTable(), message.id, message.attempts);
     },
 
+    async extend(message: ClaimedMessage) {
+      return getDataStore().queues.extendLease(requireTable(), message.id, message.attempts);
+    },
+
     async fail(message: ClaimedMessage, error: string): Promise<Disposition> {
       const disposition = failureDisposition(message.attempts, policy);
       const queues = getDataStore().queues;
+      const lease = { attempts: message.attempts };
       if (disposition.status === 'dead') {
-        await queues.deadLetter(requireTable(), message.id, error);
+        await queues.deadLetter(requireTable(), message.id, error, lease);
       } else {
-        await queues.retry(requireTable(), message.id, error, disposition.delaySeconds);
+        await queues.retry(requireTable(), message.id, error, disposition.delaySeconds, lease);
       }
       return disposition;
     },

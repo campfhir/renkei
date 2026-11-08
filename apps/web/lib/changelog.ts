@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-08',
     entries: [
       {
+        kind: 'fixed',
+        title: 'A stuck run you stopped shows as canceled',
+        detail:
+          'Stopping a run whose worker had already died used to leave it running until the cleanup sweep closed it as a failure. The sweep now closes it as canceled, the way you asked.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Agents no longer stall behind a run that stopped responding',
+        detail:
+          "A run whose worker crashed or hung could hold up every later run of the same agent for days, leaving them queued without ever starting. It is now set aside as failed once it has used its retries, and the agent's next run goes ahead. A run that is slow but still working keeps going instead of being started a second time beside itself.",
+      },
+      {
         kind: 'changed',
         title: 'Rename prompt libraries and change their description',
         detail:

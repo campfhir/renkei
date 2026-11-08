@@ -50,8 +50,13 @@ export interface AgentRunSweepStore {
   /** Queued or running runs created before `createdBefore`, oldest first (ties by id). */
   listStaleInProgress(createdBefore: Date, limit: number): Promise<AgentRunStaleRecord[]>;
   /**
-   * Close a still queued or running run as failed with this error, finished
-   * now. False when it had already left those states.
+   * Close a still queued or running run whose job is gone, finished now, in
+   * one write: canceled when someone had asked to cancel it (no error, as a
+   * cancel the engine carried out reads), otherwise failed with this error.
+   * Which it became, or null when it had already left those states.
    */
-  failAbandoned(runId: string, failure: { errorKind: string; error: string }): Promise<boolean>;
+  closeAbandoned(
+    runId: string,
+    failure: { errorKind: string; error: string }
+  ): Promise<'failed' | 'canceled' | null>;
 }
