@@ -350,3 +350,22 @@ test('Refine rewrites a prompt so it asks, and Draft writes one from a descripti
   await expect(refining).toBeHidden();
   await expect(edit.getByPlaceholder(/The prompt text/)).toHaveValue('review the file for bugs');
 });
+
+test('the owner renames a library and changes its description on the library page', async ({
+  page,
+}, testInfo) => {
+  const libraryId = await makeLibrary(page.request, {
+    name: `Drafts ${tag}`,
+    scope: 'any',
+    prompts: [{ title: `Outline ${tag}`, body: 'Outline the post.' }],
+  });
+  await page.goto(`/chat/prompts/${libraryId}`);
+  const renamed = `Renamed ${testInfo.project.name} ${tag}`;
+  await page.getByRole('button', { name: 'Edit name and description' }).click();
+  await page.getByLabel('Name', { exact: true }).fill(renamed);
+  await page.getByLabel('Description', { exact: true }).fill('Posts for the team blog.');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  const heading = page.getByRole('main').getByRole('heading', { level: 1 });
+  await expect(heading).toHaveText(renamed);
+  await expect(page.getByText('Posts for the team blog.')).toBeVisible();
+});
