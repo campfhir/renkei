@@ -10,7 +10,7 @@ import { AgentsList } from './agents-list';
 import AgentsOverview from './agents-overview';
 import { overviewOf } from './agents-overview.model';
 import { agentsPageHref, cardsPage, listPage, pageFromParam } from './agents-page.model';
-import ListPager from './list-pager';
+import { Pager } from '@/components/data-table';
 import { listLiveRunCounts } from '@/lib/agents/runs-view';
 import CoachTarget from '@/components/coach-marks/anchor';
 
@@ -107,7 +107,8 @@ export default async function AgentsPage({
             }))}
           />
         </CoachTarget>
-        <ListPager
+        <Pager
+          className="mt-2"
           label="Agent pages"
           range={cards.paging.range ? `Agents ${cards.paging.range}` : null}
           previousHref={cards.paging.hasPrevious ? cardsHref(cards.paging.page - 1) : null}

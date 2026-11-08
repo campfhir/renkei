@@ -6,7 +6,8 @@
  * waiting run. Then the same page at phone width, where the overview is
  * cards instead of a table, without sideways scroll.
  * And the overview and the cards each paging ten at a time through the
- * URL, each pager keeping the other's place.
+ * URL, each pager keeping the other's place, its pager always shown and,
+ * when the body is taller than the screen, stuck to the bottom of it.
  *
  * What each row says (stuck, needs you, ages, order) is
  * agents-overview.model.test.ts's; paging is agents-page.model.test.ts's
@@ -79,6 +80,11 @@ test('the agents page shows what each agent has in flight, and opens the runs be
     await expect(table.getByRole('columnheader', { name: 'Status' })).toBeVisible();
     const runRow = table.getByRole('row').nth(1);
     await expect(runRow).toContainText('Waiting');
+    // A filtered tab still shows its pager, even with one page: the range,
+    // and both buttons switched off.
+    const runsPages = page.getByRole('navigation', { name: 'Runs pages' });
+    await expect(runsPages).toContainText('Runs 1–1');
+    await expect(runsPages.getByRole('link')).toHaveCount(0);
     await runRow.getByRole('link').click();
     await expect(page).toHaveURL(new RegExp(`/agents/${askingId}/runs/${runId}$`));
 
@@ -168,6 +174,13 @@ test('the overview and the agent cards page ten at a time, each keeping the othe
   const cards = overview.getByRole('list', { name: 'Agents in flight' }).getByRole('listitem');
   await expect(overviewPages).toContainText('Agents 1–10 of 11');
   await expect(cards).toHaveCount(10);
+  // Ten cards are taller than the frame's body: it scrolls inside itself,
+  // and the pager is stuck to the bottom of the screen rather than pushed
+  // off it.
+  const body = overview.locator('[data-table-body]');
+  expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+  const footerBottom = await overviewPages.evaluate((nav) => nav.getBoundingClientRect().bottom);
+  expect(footerBottom).toBeLessThanOrEqual(844);
   const phoneFirstTop = await pagerTop();
   await overviewPages.getByRole('link', { name: 'Next →' }).click();
   await expect(overviewPages).toContainText('Agents 11–11 of 11');

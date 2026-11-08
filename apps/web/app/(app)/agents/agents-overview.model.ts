@@ -13,8 +13,9 @@
 
 import type { LiveRunCount } from '@/lib/agents/runs-view';
 
-/** Queued or running longer than this, a run reads as stuck. */
-export const STUCK_AFTER_MS = 2 * 60 * 60_000;
+// The same horizon terminating a run uses (lib/agents/stuck.ts).
+import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
+export { STUCK_AFTER_MS };
 
 export type OverviewState = 'stuck' | 'needs-you' | 'busy' | 'idle';
 

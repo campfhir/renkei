@@ -24,16 +24,26 @@ import QuestionActions from '../../../../question-actions';
 import RerunButton from './rerun-button';
 import ResumeButton from './resume-button';
 import CancelButton from './cancel-button';
+import TerminateButton from '../terminate-button';
+import { isStuckRun } from '@/lib/agents/stuck';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import { isRunSettled } from '@/lib/agents/run-labels';
 import type { OwnerRunPageData } from '@/lib/agents/run-page-data';
 import { clientLogger } from '@/lib/client-logger';
 
-export default function RunLive({ agentId, runId, agentName, initialData }: {
+export default function RunLive({
+  agentId,
+  runId,
+  agentName,
+  initialData,
+  loadedAt,
+}: {
   agentId: string;
   runId: string;
   agentName: string;
   initialData: OwnerRunPageData;
+  /** When the server rendered the page: the clock "stuck" is read against. */
+  loadedAt: number;
 }) {
   const [data, setData] = useState(initialData);
 
@@ -50,9 +60,7 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
     // for a stream to tell us.
     if (isRunSettled(initialData.run.status)) return;
 
-    const source = new EventSource(
-      `/api/agents/${agentId}/runs/${runId}/stream`
-    );
+    const source = new EventSource(`/api/agents/${agentId}/runs/${runId}/stream`);
     source.addEventListener('run', (event: MessageEvent<string>) => {
       try {
         const parsed: OwnerRunPageData = JSON.parse(event.data);
@@ -92,7 +100,15 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
             both — a rerun while it is still going would put two runs on
             the same message at once. */}
         {!isRunSettled(run.status) ? (
-          <CancelButton agentId={agentId} runId={runId} />
+          <>
+            <CancelButton agentId={agentId} runId={runId} />
+            {/* A cancel only asks, and a stuck run is never reached to be
+                asked: past two hours queued or running, offer to close it
+                out directly (run-termination.ts). */}
+            {isStuckRun(run, loadedAt) ? (
+              <TerminateButton agentId={agentId} runId={runId} label="Terminate stuck run" />
+            ) : null}
+          </>
         ) : (
           <>
             {/* A failed run gets a third option beside rerun: pick THIS
@@ -102,11 +118,7 @@ export default function RunLive({ agentId, runId, agentName, initialData }: {
             {run.status === 'failed' ? (
               <ResumeButton agentId={agentId} runId={runId} agentName={agentName} />
             ) : null}
-            <RerunButton
-              agentId={agentId}
-              runId={runId}
-              agentName={agentName}
-            />
+            <RerunButton agentId={agentId} runId={runId} agentName={agentName} />
           </>
         )}
       </div>

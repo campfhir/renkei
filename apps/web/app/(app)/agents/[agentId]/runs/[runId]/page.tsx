@@ -36,7 +36,13 @@ export default async function AgentRunDetailPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <RunLive agentId={agentId} runId={runId} agentName={agent.name} initialData={data} />
+      <RunLive
+        agentId={agentId}
+        runId={runId}
+        agentName={agent.name}
+        initialData={data}
+        loadedAt={Date.now()}
+      />
     </div>
   );
 }

@@ -87,6 +87,12 @@ export function errorSummary(errorKind: string): string {
     // (docs/delegate-key-design.md); their next sign-in re-queues the run.
     case 'needs-sign-in':
       return 'Paused until you sign in';
+    // Closed out from under a stuck run (force-halt.ts): by its owner or a
+    // grantee from the run pages, or by an operator from admin oversight.
+    case 'terminated':
+      return 'Terminated while stuck';
+    case 'force_halted':
+      return 'Force-halted by an admin';
     default:
       return errorKind;
   }
