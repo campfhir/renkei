@@ -78,3 +78,13 @@ export function agentsPageHref(
   const search = params.toString();
   return `/agents${search ? `?${search}` : ''}${hash ? `#${hash}` : ''}`;
 }
+
+/**
+ * Blank rows to pad a short last page to a full one, so a paged list keeps
+ * the same height on every page and its pager (and what follows it) stays
+ * where it was. None when there is only one page: nothing pages, so
+ * nothing needs to hold still.
+ */
+export function fillerRows(page: ListPage<unknown>, size = AGENTS_PAGE_SIZE): number {
+  return page.pageCount > 1 ? Math.max(0, size - page.rows.length) : 0;
+}

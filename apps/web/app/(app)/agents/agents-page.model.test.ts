@@ -1,4 +1,10 @@
-import { AGENTS_PAGE_SIZE, agentsPageHref, cardsPage, listPage } from './agents-page.model';
+import {
+  AGENTS_PAGE_SIZE,
+  agentsPageHref,
+  cardsPage,
+  fillerRows,
+  listPage,
+} from './agents-page.model';
 
 const items = (n: number, prefix = 'a') =>
   Array.from({ length: n }, (_, index) => `${prefix}${index + 1}`);
@@ -62,5 +68,16 @@ describe('agents page links', () => {
       '/agents?page=2#agents-list'
     );
     expect(agentsPageHref({ inflight: 1, page: 1 })).toBe('/agents');
+  });
+});
+
+describe('holding a paged list’s height', () => {
+  it('pads a short last page to ten, so the pager does not move', () => {
+    expect(fillerRows(listPage(items(11), 2))).toBe(9);
+    expect(fillerRows(listPage(items(11), 1))).toBe(0);
+  });
+
+  it('pads nothing when everything fits on one page', () => {
+    expect(fillerRows(listPage(items(3), 1))).toBe(0);
   });
 });

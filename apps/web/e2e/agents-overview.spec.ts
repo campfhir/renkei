@@ -3,7 +3,8 @@
  * an agent whose run is parked on a question shows above the cards as
  * waiting on you, an agent that never ran shows idle, and the waiting
  * row's link opens that agent's runs — now a table — filtered to the
- * waiting run. Then the same page at phone width, without sideways scroll.
+ * waiting run. Then the same page at phone width, where the overview is
+ * cards instead of a table, without sideways scroll.
  * And the overview and the cards each paging ten at a time through the
  * URL, each pager keeping the other's place.
  *
@@ -81,10 +82,21 @@ test('the agents page shows what each agent has in flight, and opens the runs be
     await runRow.getByRole('link').click();
     await expect(page).toHaveURL(new RegExp(`/agents/${askingId}/runs/${runId}$`));
 
-    // Phone width: the overview still reads, and nothing scrolls sideways.
+    // Phone width: the overview turns from a table into cards, and nothing
+    // scrolls sideways.
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/agents');
-    await expect(askingRow).toContainText('1 waiting');
+    await expect(overview.getByRole('table')).toBeHidden();
+    const askingCard = overview
+      .getByRole('list', { name: 'Agents in flight' })
+      .getByRole('listitem')
+      .filter({ hasText: asking });
+    await expect(askingCard).toContainText('1 waiting');
+    await expect(askingCard).toContainText('Needs you');
+    await expect(askingCard.getByRole('link')).toHaveAttribute(
+      'href',
+      `/agents/${askingId}/runs?status=waiting`
+    );
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
     ).toBe(true);
@@ -120,9 +132,19 @@ test('the overview and the agent cards page ten at a time, each keeping the othe
   await expect(cardList.getByRole('switch')).toHaveCount(10);
   await expect(cardPages).toContainText('Agents 1–10 of 11');
 
+  // Where the pager sits on the page (not in the viewport: clicking Next on
+  // a phone scrolls it into view first, and paging keeps that scroll).
+  const pagerTop = () =>
+    overviewPages.evaluate((nav) => nav.getBoundingClientRect().top + window.scrollY);
+  const firstPageTop = await pagerTop();
+
   await overviewPages.getByRole('link', { name: 'Next →' }).click();
   await expect(page).toHaveURL(/\/agents\?inflight=2$/);
   await expect(overview.getByRole('row')).toHaveCount(2);
+  // One agent on this page, yet the table keeps its height: the pager has
+  // not moved (the blank rows padding it are hidden from assistive tech,
+  // so the row count above is still header plus one).
+  expect(await pagerTop()).toBe(firstPageTop);
   await expect(overview.getByRole('row').nth(1)).toContainText(`Paged 11 ${tag}`);
   await expect(overviewPages).toContainText('Agents 11–11 of 11');
   // The cards stayed on their first page.
@@ -139,4 +161,17 @@ test('the overview and the agent cards page ten at a time, each keeping the othe
   await cardPages.getByRole('link', { name: '← Previous' }).click();
   await expect(page).toHaveURL(/\/agents\?inflight=2#agents-list$/);
   await expect(cardList.getByRole('switch')).toHaveCount(10);
+
+  // At phone width too, the overview's pager holds still between pages.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/agents');
+  const cards = overview.getByRole('list', { name: 'Agents in flight' }).getByRole('listitem');
+  await expect(overviewPages).toContainText('Agents 1–10 of 11');
+  await expect(cards).toHaveCount(10);
+  const phoneFirstTop = await pagerTop();
+  await overviewPages.getByRole('link', { name: 'Next →' }).click();
+  await expect(overviewPages).toContainText('Agents 11–11 of 11');
+  // One card, its nine blank stand-ins hidden from assistive tech.
+  await expect(cards).toHaveCount(1);
+  expect(await pagerTop()).toBe(phoneFirstTop);
 });
