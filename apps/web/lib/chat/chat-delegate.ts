@@ -47,6 +47,7 @@ import {
   type SubagentModelChoice,
 } from './subagent';
 import { MOCKUP_TOOL } from '@/lib/mockups/request';
+import { ASK_FORM_TOOL } from './ask-form';
 import { logger } from '@/lib/logger';
 import { onShutdown } from '@/lib/shutdown';
 import { descendantsOf, findTask, isFinished, taskRef, type ChatTaskView } from './tasks/graph';
@@ -186,7 +187,9 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
       tool.readOnly === true &&
       tool.def.name !== CHAT_DELEGATE_TOOL &&
       // A sub-agent has no thread to draw the card in; its mockup would be seen by no one.
-      tool.def.name !== MOCKUP_TOOL
+      tool.def.name !== MOCKUP_TOOL &&
+      // Nor a form: its answers go to the person's thread, which a sub-agent is not in.
+      tool.def.name !== ASK_FORM_TOOL
   );
   const discovery = surface.mcp ? findToolsTool(discoverable) : null;
   if (eager.length === 0 && discovery === null && local.length === 0) return null;

@@ -13,28 +13,28 @@ export interface LibraryListItem {
   id: string;
   name: string;
   description: string | null;
+  scope: 'any' | 'code';
   role: 'owner' | 'editor' | 'viewer';
 }
 
-export default function LibrariesIndex({ libraries }: {
-  libraries: LibraryListItem[];
-}) {
+export default function LibrariesIndex({ libraries }: { libraries: LibraryListItem[] }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const newAnchor = useCoachAnchor('prompts-new');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [scope, setScope] = useState<'any' | 'code'>('any');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const create = async () => {
     setBusy(true);
     setError(null);
-    const result = await sendJsonFull<{ libraryId: string }>(
-      `/api/chat/prompt-libraries`,
-      'POST',
-      { name: name.trim(), description: description.trim() || null }
-    );
+    const result = await sendJsonFull<{ libraryId: string }>(`/api/chat/prompt-libraries`, 'POST', {
+      name: name.trim(),
+      description: description.trim() || null,
+      scope,
+    });
     setBusy(false);
     if (result.error || !result.data) {
       setError(result.error ?? 'The library could not be created.');
@@ -98,6 +98,7 @@ export default function LibrariesIndex({ libraries }: {
               maxLength={2000}
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
             />
+            <ScopeSelect value={scope} onChange={setScope} />
             <DialogFooter
               busy={busy}
               error={error}
@@ -111,7 +112,11 @@ export default function LibrariesIndex({ libraries }: {
   );
 }
 
-function Group({ title, libraries, empty }: {
+function Group({
+  title,
+  libraries,
+  empty,
+}: {
   title: string;
   libraries: LibraryListItem[];
   empty: string;
@@ -131,7 +136,14 @@ function Group({ title, libraries, empty }: {
               >
                 <Icon path={ICONS.sparkle} className="h-5 w-5 shrink-0 text-gray-400" />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{library.name}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="truncate font-medium">{library.name}</span>
+                    {library.scope === 'code' ? (
+                      <span className="shrink-0 rounded border border-gray-300 px-1 text-[10px] font-medium text-gray-600 dark:border-gray-700 dark:text-gray-400">
+                        code
+                      </span>
+                    ) : null}
+                  </span>
                   {library.description ? (
                     <span className="block truncate text-xs text-gray-500">
                       {library.description}
@@ -145,5 +157,28 @@ function Group({ title, libraries, empty }: {
         </ul>
       )}
     </section>
+  );
+}
+
+/** Where a library's prompts are offered; shared by the create dialog and the library page. */
+export function ScopeSelect({
+  value,
+  onChange,
+}: {
+  value: 'any' | 'code';
+  onChange: (scope: 'any' | 'code') => void;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="mb-1 block text-xs text-gray-500">Offered in</span>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value === 'code' ? 'code' : 'any')}
+        className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+      >
+        <option value="any">Every chat</option>
+        <option value="code">Code projects only</option>
+      </select>
+    </label>
   );
 }

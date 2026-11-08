@@ -25,6 +25,7 @@ export default async function PromptLibraryPage({
         id: library.id,
         name: library.name,
         description: library.description,
+        scope: library.scope,
         role: access.role,
       }}
       prompts={prompts.map((prompt) => ({

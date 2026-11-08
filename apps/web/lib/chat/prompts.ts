@@ -4,13 +4,26 @@
  * resolver's (owner / editor / viewer).
  */
 
-import { getDataStore, type PromptLibraryRecord, type PromptRecord } from '@renkei/db';
+import {
+  getDataStore,
+  type PromptLibraryRecord,
+  type PromptLibraryScope,
+  type PromptRecord,
+} from '@renkei/db';
 import { isUuid } from '@/lib/uuid';
 import { listAccessibleProjectIds, listGrantedResources } from './access';
 
 export const LIBRARY_NAME_MAX_CHARS = 200;
 export const PROMPT_TITLE_MAX_CHARS = 200;
 export const PROMPT_BODY_MAX_CHARS = 20_000;
+
+export type { PromptLibraryScope };
+
+/** A request's `scope` field: 'any' or 'code', undefined when absent, null when it is something else. */
+export function parseLibraryScope(value: unknown): PromptLibraryScope | undefined | null {
+  if (value === undefined) return undefined;
+  return value === 'any' || value === 'code' ? value : null;
+}
 
 export type LibraryRow = PromptLibraryRecord;
 export type PromptRow = PromptRecord;
@@ -50,13 +63,14 @@ export async function createLibrary(input: {
   ownerSubject: string;
   name: string;
   description: string | null;
+  scope?: PromptLibraryScope;
 }): Promise<string> {
   return getDataStore().promptLibraries.create(input);
 }
 
 export async function updateLibrary(
   libraryId: string,
-  patch: { name?: string; description?: string | null }
+  patch: { name?: string; description?: string | null; scope?: PromptLibraryScope }
 ): Promise<boolean> {
   if (!isUuid(libraryId)) return false;
   return getDataStore().promptLibraries.update(libraryId, patch);
@@ -99,19 +113,37 @@ export async function deletePrompt(libraryId: string, promptId: string): Promise
   return getDataStore().promptLibraries.deletePrompt(libraryId, promptId);
 }
 
-/** The composer's picker: every prompt in every library this person can open. */
+/**
+ * The composer's picker: every prompt in every library this person can
+ * open and the chat can use. A code project's chat is offered every
+ * library; any other chat is not offered the code-scoped ones.
+ */
 export async function listPickerPrompts(
-  subject: string
-): Promise<{ id: string; title: string; body: string; libraryName: string }[]> {
-  const libraries = await listAccessibleLibraries(subject);
+  subject: string,
+  options: { inCodeProject: boolean }
+): Promise<
+  {
+    id: string;
+    title: string;
+    body: string;
+    libraryId: string;
+    libraryName: string;
+    libraryScope: PromptLibraryScope;
+  }[]
+> {
+  const libraries = (await listAccessibleLibraries(subject)).filter(
+    ({ library }) => options.inCodeProject || library.scope === 'any'
+  );
   if (libraries.length === 0) return [];
-  const names = new Map(libraries.map((entry) => [entry.library.id, entry.library.name]));
-  const rows = await getDataStore().promptLibraries.listPromptsIn([...names.keys()]);
+  const byId = new Map(libraries.map((entry) => [entry.library.id, entry.library]));
+  const rows = await getDataStore().promptLibraries.listPromptsIn([...byId.keys()]);
   return rows.map((row) => ({
     id: row.id,
     title: row.title,
     body: row.body,
-    libraryName: names.get(row.libraryId) ?? '',
+    libraryId: row.libraryId,
+    libraryName: byId.get(row.libraryId)?.name ?? '',
+    libraryScope: byId.get(row.libraryId)?.scope ?? 'any',
   }));
 }
 

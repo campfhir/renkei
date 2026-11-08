@@ -101,6 +101,9 @@ import ListenButton from './listen-button';
 import Markdown from './markdown';
 import ImageCard from './image-card';
 import MockupCard from './mockup-card';
+import AskFormCard from './ask-form-card';
+import { isAskFormAnswers } from '@/lib/chat/ask-form';
+import { formLaterOf, type AskFormLater } from './ask-form-card.model';
 import WidgetCard from './widget-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
@@ -172,6 +175,7 @@ export default function MessageList({
   subagents = {},
   onShowSubagent = null,
   onWidgetDecision = null,
+  onAnswerForm = null,
   artifacts = [],
 }: {
   chatId: string;
@@ -193,6 +197,8 @@ export default function MessageList({
   onShowSubagent?: ((toolUseId: string) => void) | null;
   /** A preview card's decision landed (widget-card.tsx): the note to show and the turn to stream. */
   onWidgetDecision?: ((outcome: WidgetModelContextOutcome) => void) | null;
+  /** Send a form's answers as the person's next message (chat_ask_form); null when they cannot send. */
+  onAnswerForm?: ((text: string) => Promise<boolean>) | null;
   /** The chat's files tools produced; an image call finds its picture among them. */
   artifacts?: AttachmentView[];
 }) {
@@ -242,11 +248,15 @@ export default function MessageList({
     >
       {turns.length === 0 ? empty : null}
       <div className="mx-auto flex max-w-3xl flex-col gap-5">
-        {turns.map((group) => (
+        {turns.map((group, groupIndex) => (
           <div key={group.key} className="flex flex-col gap-5">
-            {group.prompts.map((message) => (
-              <UserMessage key={message.id} message={message} actions={promptActions} />
-            ))}
+            {group.prompts
+              // A form's answers went to the model as a message; the form's card, collapsed,
+              // is where the person sees them, not a bubble of their own.
+              .filter((message) => !isAskFormAnswers(messageText(message)))
+              .map((message) => (
+                <UserMessage key={message.id} message={message} actions={promptActions} />
+              ))}
             {group.replies.length > 0 ? (
               <Reply
                 chatId={chatId}
@@ -262,6 +272,8 @@ export default function MessageList({
                 subagents={subagents}
                 onShowSubagent={onShowSubagent}
                 onWidgetDecision={onWidgetDecision}
+                onAnswerForm={onAnswerForm}
+                formLater={formLaterOf(promptTexts(turns[groupIndex + 1]))}
                 artifacts={artifacts}
                 resultRows={resultRows}
               />
@@ -468,6 +480,8 @@ function Reply({
   subagents,
   onShowSubagent,
   onWidgetDecision,
+  onAnswerForm,
+  formLater,
   artifacts,
   resultRows,
 }: {
@@ -485,6 +499,9 @@ function Reply({
   subagents: Record<string, SubagentProgress>;
   onShowSubagent: ((toolUseId: string) => void) | null;
   onWidgetDecision: ((outcome: WidgetModelContextOutcome) => void) | null;
+  onAnswerForm: ((text: string) => Promise<boolean>) | null;
+  /** What came after this reply's forms in the thread. */
+  formLater: AskFormLater;
   artifacts: AttachmentView[];
   resultRows: Map<string, string>;
 }) {
@@ -581,6 +598,15 @@ function Reply({
               />
             );
           }
+          case 'form':
+            return (
+              <AskFormCard
+                key={part.step.block.id}
+                request={part.request}
+                later={formLater}
+                onAnswer={onAnswerForm}
+              />
+            );
           case 'mockup':
             return (
               <MockupCard
@@ -1248,4 +1274,14 @@ function PermissionCard({
 
 function Cursor() {
   return <span className="chat-cursor" aria-hidden="true" />;
+}
+
+/** The text of one message: its text blocks, joined. */
+function messageText(message: ChatMessageView): string {
+  return message.blocks.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n');
+}
+
+/** The texts of the person's prompts in a turn, or null when there is no such turn. */
+function promptTexts(turn: { prompts: ChatMessageView[] } | undefined): string[] | null {
+  return turn ? turn.prompts.map(messageText) : null;
 }

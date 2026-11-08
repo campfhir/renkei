@@ -20,16 +20,31 @@ function prompt(n: number, libraryId: string, position: number, minute: number) 
 
 const fixture = {
   prompt_libraries: [
-    { id: LIB.ann, owner_subject: ANN, name: 'Mine', created_at: at(1), updated_at: at(5) },
+    {
+      id: LIB.ann,
+      owner_subject: ANN,
+      name: 'Mine',
+      scope: 'any',
+      created_at: at(1),
+      updated_at: at(5),
+    },
     {
       id: LIB.ann2,
       owner_subject: ANN,
       name: 'Two',
       description: 'd',
+      scope: 'code',
       created_at: at(2),
       updated_at: at(5),
     },
-    { id: LIB.bob, owner_subject: BOB, name: 'Bob', created_at: at(3), updated_at: at(9) },
+    {
+      id: LIB.bob,
+      owner_subject: BOB,
+      name: 'Bob',
+      scope: 'any',
+      created_at: at(3),
+      updated_at: at(9),
+    },
   ],
   prompts: [
     prompt(1, LIB.ann, 2, 1),
@@ -46,6 +61,7 @@ const libraryState = async (store: DataStore, id: string) => {
     library && {
       name: library.name,
       description: library.description,
+      scope: library.scope,
       touched: library.updatedAt > at(10),
     }
   );
@@ -89,7 +105,20 @@ export const promptLibraryScenarios: Scenario<DataStore>[] = [
         description: null,
       });
       const library = await store.promptLibraries.get(id);
-      return library && [library.ownerSubject, library.name, library.description];
+      return library && [library.ownerSubject, library.name, library.description, library.scope];
+    },
+  },
+  {
+    method: 'promptLibraries.create',
+    name: 'with a code scope',
+    run: async (store) => {
+      const id = await store.promptLibraries.create({
+        ownerSubject: ANN,
+        name: 'Dev',
+        description: null,
+        scope: 'code',
+      });
+      return (await store.promptLibraries.get(id))?.scope;
     },
   },
   {
@@ -99,6 +128,7 @@ export const promptLibraryScenarios: Scenario<DataStore>[] = [
     run: async (store) => [
       await store.promptLibraries.update(LIB.ann, { name: 'Renamed', description: 'now' }),
       await store.promptLibraries.update(LIB.ann2, { description: null }),
+      await store.promptLibraries.update(LIB.ann, { scope: 'code' }),
       await store.promptLibraries.update(uid(999), { name: 'x' }),
       await libraryState(store, LIB.ann),
       await libraryState(store, LIB.ann2),

@@ -196,6 +196,7 @@ export const EXPECTED_MIGRATIONS = [
   '170-temporary-chats',
   '171-chat-tasks',
   '172-drop-email-ingest-jobs',
+  '173-prompt-library-scope',
 ];
 
 export interface MigrationStatus {

@@ -8,6 +8,7 @@ export function libraryFromRow(row: Selectable<PromptLibraries>): PromptLibraryR
     ownerSubject: row.owner_subject,
     name: row.name,
     description: row.description,
+    scope: row.scope === 'code' ? 'code' : 'any',
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   };

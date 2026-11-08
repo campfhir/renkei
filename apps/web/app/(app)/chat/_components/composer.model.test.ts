@@ -99,6 +99,56 @@ describe('the box', () => {
     expect(picked.prompts).toBe(false);
   });
 
+  describe('a library prompt that asks questions', () => {
+    const RAW = 'Review {{file}}.\n\n```variables\nfile:\n  required: true\n```';
+    const variables = {
+      template: 'Review {{file}}.',
+      fields: [{ name: 'file', label: 'File', type: 'text' as const, required: true }],
+      defaults: {},
+      problems: [],
+    };
+
+    it('opens its form instead of putting text in the box', () => {
+      const asked = run([
+        { type: 'typed', text: 'Hello' },
+        { type: 'promptsOpened' },
+        { type: 'promptNeedsAnswers', title: 'Review a file', body: RAW, variables },
+      ]);
+      expect(asked.prompts).toBe(false);
+      expect(asked.variables).toEqual({ title: 'Review a file', body: RAW, variables });
+      expect(asked.text).toBe('Hello');
+    });
+
+    it('puts the filled-in text in the box when the form is answered', () => {
+      const filled = run([
+        { type: 'typed', text: 'Hello' },
+        { type: 'promptNeedsAnswers', title: 'Review a file', body: RAW, variables },
+        { type: 'promptFilled', text: 'Review a.ts.' },
+      ]);
+      expect(filled.text).toBe('Hello\nReview a.ts.');
+      expect(filled.variables).toBeNull();
+    });
+
+    it('puts the template in the box as written when the assistant is to ask instead', () => {
+      const asked = run([
+        { type: 'promptNeedsAnswers', title: 'Review a file', body: RAW, variables },
+        { type: 'promptPicked', body: RAW },
+      ]);
+      expect(asked.text).toBe(RAW);
+      expect(asked.variables).toBeNull();
+    });
+
+    it('leaves the box as it was when the form is closed', () => {
+      const closed = run([
+        { type: 'typed', text: 'Hello' },
+        { type: 'promptNeedsAnswers', title: 'Review a file', body: RAW, variables },
+        { type: 'promptFormClosed' },
+      ]);
+      expect(closed.text).toBe('Hello');
+      expect(closed.variables).toBeNull();
+    });
+  });
+
   it('a successful send empties the box and drops the staged files', () => {
     const sent = run([
       { type: 'typed', text: 'Look at these' },

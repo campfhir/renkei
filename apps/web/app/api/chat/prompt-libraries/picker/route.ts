@@ -7,5 +7,6 @@ export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
-  return NextResponse.json({ prompts: await listPickerPrompts(session.subject) });
+  const inCodeProject = request.nextUrl.searchParams.get('context') === 'code';
+  return NextResponse.json({ prompts: await listPickerPrompts(session.subject, { inCodeProject }) });
 }

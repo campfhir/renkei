@@ -16,6 +16,7 @@
  */
 
 import type { AttachmentView } from '@/lib/chat/views';
+import type { PromptVariables } from '@/lib/chat/prompt-variables';
 
 /** What the composer hands its caller on Send. */
 export interface ComposerSubmit {
@@ -74,6 +75,8 @@ export interface ComposerState<F extends NamedFile = NamedFile> {
   queueOpen: boolean;
   dragging: boolean;
   prompts: boolean;
+  /** A picked prompt with variables, waiting on the form that fills them. */
+  variables: { title: string; body: string; variables: PromptVariables } | null;
   dictating: boolean;
   /** The microphone hears speech right now. */
   hearing: boolean;
@@ -101,6 +104,7 @@ export function initialComposer<F extends NamedFile = NamedFile>(
     queueOpen: false,
     dragging: false,
     prompts: false,
+    variables: null,
     dictating: false,
     hearing: false,
     dictationError: null,
@@ -158,6 +162,11 @@ export type ComposerAction<F extends NamedFile = NamedFile> =
   | { type: 'promptsOpened' }
   | { type: 'promptsClosed' }
   | { type: 'promptPicked'; body: string }
+  /** The picked prompt asks questions first: the picker closes and the form opens. */
+  | { type: 'promptNeedsAnswers'; title: string; body: string; variables: PromptVariables }
+  /** The form was filled in: its text goes in the box like a picked prompt. */
+  | { type: 'promptFilled'; text: string }
+  | { type: 'promptFormClosed' }
   // Dictation.
   | { type: 'dictationStarted' }
   | { type: 'speechHeard' }
@@ -300,7 +309,22 @@ export function composerReducer<F extends NamedFile>(
     case 'promptsClosed':
       return { ...state, prompts: false };
     case 'promptPicked':
-      return { ...state, prompts: false, text: insertPrompt(state.text, action.body) };
+      return {
+        ...state,
+        prompts: false,
+        variables: null,
+        text: insertPrompt(state.text, action.body),
+      };
+    case 'promptNeedsAnswers':
+      return {
+        ...state,
+        prompts: false,
+        variables: { title: action.title, body: action.body, variables: action.variables },
+      };
+    case 'promptFilled':
+      return { ...state, variables: null, text: insertPrompt(state.text, action.text) };
+    case 'promptFormClosed':
+      return { ...state, variables: null };
     case 'dictationStarted':
       return { ...state, dictating: true, hearing: false, dictationError: null };
     case 'speechHeard':

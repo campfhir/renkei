@@ -1347,6 +1347,9 @@ export default function ChatThread({
               artifacts={state.artifacts}
               onShowSubagent={setSubagent}
               onWidgetDecision={isOwner ? beginWidgetTurn : null}
+              onAnswerForm={
+                isOwner ? (text) => queueOrSend({ text, attachments: [] }) : null
+              }
               speech={
                 voice && speechQueue
                   ? {
