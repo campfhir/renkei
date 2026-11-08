@@ -46,6 +46,29 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-08',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Prompt libraries for code projects',
+        detail:
+          'A library can be offered in code projects only, so development prompts stay out of ordinary chats. The prompt picker groups prompts by library, folds long libraries, can filter to one, and works from the keyboard.',
+      },
+      {
+        kind: 'added',
+        title: 'Prompts that ask for their details',
+        detail:
+          'Put {{name}} or {{name:type}} in a library prompt and picking it opens a form for the values, with required answers, options and help set in a short block at the end of the prompt. You can also let the assistant ask in the chat instead.',
+      },
+      {
+        kind: 'added',
+        title: 'The assistant can ask you a form',
+        detail:
+          'When it needs several details from you, the assistant now asks in a form in the chat — radio buttons, checkboxes, text, number and date boxes — and carries on with your answers. Once answered, the form folds into one line you can open to see what was asked and said.',
+      },
+    ],
+  },
+  {
     date: '2026-11-07',
     entries: [
       {
