@@ -13,6 +13,7 @@ import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
 import { DialogFooter } from './chat-nav';
 import ShareModal from './share-modal';
+import { ScopeSelect } from './libraries-index';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface PromptItem {
@@ -25,11 +26,15 @@ interface PromptItem {
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-export default function LibraryView({ library, prompts }: {
+export default function LibraryView({
+  library,
+  prompts,
+}: {
   library: {
     id: string;
     name: string;
     description: string | null;
+    scope: 'any' | 'code';
     role: 'owner' | 'editor' | 'viewer';
   };
   prompts: PromptItem[];
@@ -47,6 +52,19 @@ export default function LibraryView({ library, prompts }: {
   const [share, setShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [scope, setScope] = useState(library.scope);
+  const [scopeError, setScopeError] = useState<string | null>(null);
+
+  const changeScope = async (next: 'any' | 'code') => {
+    const before = scope;
+    setScope(next);
+    setScopeError(null);
+    const result = await sendJsonFull(base, 'PATCH', { scope: next });
+    if (result.error) {
+      setScope(before);
+      setScopeError(result.error);
+    }
+  };
 
   const open = (prompt: PromptItem | 'new') => {
     setEditing(prompt);
@@ -137,6 +155,14 @@ export default function LibraryView({ library, prompts }: {
       </header>
 
       <div className="mx-auto max-w-3xl space-y-3 p-4">
+        {canEdit ? (
+          <div className="max-w-xs">
+            <ScopeSelect value={scope} onChange={(next) => void changeScope(next)} />
+            {scopeError ? <p className="mt-1 text-xs text-red-600">{scopeError}</p> : null}
+          </div>
+        ) : scope === 'code' ? (
+          <p className="text-xs text-gray-500">Offered in code projects only.</p>
+        ) : null}
         {prompts.length === 0 ? (
           <p className="text-sm text-gray-500">
             {canEdit ? 'No prompts yet — add the first one.' : 'This library is empty.'}

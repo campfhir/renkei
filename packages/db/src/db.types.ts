@@ -1296,6 +1296,7 @@ export interface PromptLibraries {
   name: string;
   owner_subject: string;
   published_to_org: Generated<boolean>;
+  scope: Generated<string>;
   updated_at: Generated<Timestamp>;
 }
 

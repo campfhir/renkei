@@ -34,6 +34,7 @@ export function memoryPromptLibraries(tables: MemoryTables): PromptLibraryStore 
         owner_subject: library.ownerSubject,
         name: library.name,
         description: library.description,
+        scope: library.scope ?? 'any',
         id: globalThis.crypto.randomUUID(),
         published_to_org: false,
         created_at: new Date(),
@@ -46,6 +47,7 @@ export function memoryPromptLibraries(tables: MemoryTables): PromptLibraryStore 
         tables.update('prompt_libraries', (r) => r.id === wanted, {
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           ...(patch.description !== undefined ? { description: patch.description } : {}),
+          ...(patch.scope !== undefined ? { scope: patch.scope } : {}),
           updated_at: new Date(),
         }).length > 0
       );

@@ -15,6 +15,7 @@ export default async function PromptLibrariesPage() {
         id: library.id,
         name: library.name,
         description: library.description,
+        scope: library.scope,
         role,
       }))}
     />

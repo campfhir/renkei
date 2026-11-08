@@ -901,12 +901,13 @@ export default function Composer({
       </p>
       {prompts ? (
         <PromptPicker
+          inCodeProject={pathCompletions !== null}
           onClose={() => {
             dispatch({ type: 'promptsClosed' });
             textareaRef.current?.focus();
           }}
-          onPick={(body) => {
-            dispatch({ type: 'promptPicked', body });
+          onPick={(prompt) => {
+            dispatch({ type: 'promptPicked', body: prompt.body });
             textareaRef.current?.focus();
           }}
           onCompact={() => {

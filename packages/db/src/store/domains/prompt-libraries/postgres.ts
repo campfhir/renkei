@@ -48,6 +48,7 @@ export function postgresPromptLibraries(db: () => Kysely<DB>): PromptLibraryStor
           owner_subject: library.ownerSubject,
           name: library.name,
           description: library.description,
+          scope: library.scope ?? 'any',
         })
         .returning('id')
         .executeTakeFirstOrThrow();
@@ -59,6 +60,7 @@ export function postgresPromptLibraries(db: () => Kysely<DB>): PromptLibraryStor
         .set({
           ...(patch.name !== undefined ? { name: patch.name } : {}),
           ...(patch.description !== undefined ? { description: patch.description } : {}),
+          ...(patch.scope !== undefined ? { scope: patch.scope } : {}),
           updated_at: sql<Date>`NOW()`,
         })
         .where('id', '=', libraryId)
