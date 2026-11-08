@@ -26,7 +26,10 @@ test('app menu: a new chat is listed as soon as its first message is sent', asyn
     // A desktop: the menu is the column beside the page.
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto('/chat/new');
-    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    // "+ New" makes the chat and lands on its address; on a dev server the
+    // first visit also compiles the thread's page, which outlasts the
+    // default wait.
+    await page.waitForURL(/\/chat\/[0-9a-f-]{36}$/, { timeout: 60_000 });
     const chatId = page.url().match(/\/chat\/([0-9a-f-]{36})$/)?.[1] ?? '';
     expect(chatId).not.toBe('');
 
