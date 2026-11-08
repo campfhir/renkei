@@ -1,5 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
+import ListPager from './list-pager';
+import type { ListPage } from './agents-page.model';
 import {
   overviewHeadline,
   type Overview,
@@ -79,7 +81,19 @@ function Row({ row }: { row: OverviewRow }) {
   );
 }
 
-export default function AgentsOverview({ overview }: { overview: Overview }): React.ReactNode {
+export default function AgentsOverview({
+  overview,
+  page,
+  previousHref,
+  nextHref,
+}: {
+  /** Every agent's row: the headline totals all of them. */
+  overview: Overview;
+  /** The rows this page shows, ten at a time, the ones needing attention first. */
+  page: ListPage<OverviewRow>;
+  previousHref: string | null;
+  nextHref: string | null;
+}): React.ReactNode {
   if (overview.rows.length === 0) return null;
   return (
     <section aria-labelledby="agents-overview-heading" className="mb-6">
@@ -108,12 +122,19 @@ export default function AgentsOverview({ overview }: { overview: Overview }): Re
             </tr>
           </thead>
           <tbody>
-            {overview.rows.map((row) => (
+            {page.rows.map((row) => (
               <Row key={row.agentId} row={row} />
             ))}
           </tbody>
         </table>
       </div>
+      <ListPager
+        label="In flight pages"
+        range={page.range ? `Agents ${page.range}` : null}
+        previousHref={previousHref}
+        nextHref={nextHref}
+        keepScroll
+      />
     </section>
   );
 }

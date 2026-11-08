@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'See what every agent has in flight, and page through all its runs',
         detail:
-          "The Agents page opens with an In flight table: for each agent, how many runs are queued, running or waiting on you, how old the oldest is, and whether anything looks stuck (queued or running for over two hours). Stuck agents come first, and each row opens the runs behind it. An agent's runs are now a table you can page through 50 at a time, with a Queued tab of its own.",
+          "The Agents page opens with an In flight table: for each agent, how many runs are queued, running or waiting on you, how old the oldest is, and whether anything looks stuck (queued or running for over two hours). Stuck agents come first, and each row opens the runs behind it. The overview and the agent cards each page ten at a time, and an agent's runs are now a table you can page through 50 at a time, with a Queued tab of its own.",
       },
       {
         kind: 'fixed',

@@ -4,14 +4,16 @@
  * waiting on you, an agent that never ran shows idle, and the waiting
  * row's link opens that agent's runs — now a table — filtered to the
  * waiting run. Then the same page at phone width, without sideways scroll.
+ * And the overview and the cards each paging ten at a time through the
+ * URL, each pager keeping the other's place.
  *
  * What each row says (stuck, needs you, ages, order) is
- * agents-overview.model.test.ts's; paging the runs table is
- * runs-page.model.test.ts's. This walks the one path a model cannot: real
- * runs counted by the store, drawn by the server, opened by a click.
+ * agents-overview.model.test.ts's; paging is agents-page.model.test.ts's
+ * and runs-page.model.test.ts's. This walks the one path a model cannot:
+ * real runs counted by the store, drawn by the server, opened by a click.
  *
  * Agents are the fresh person's own, so the overview holds only this
- * spec's two; their names carry the tag because names are unique org-wide.
+ * spec's agents; their names carry the tag because names are unique org-wide.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -89,4 +91,52 @@ test('the agents page shows what each agent has in flight, and opens the runs be
   } finally {
     await removeModel(page.request, modelId);
   }
+});
+
+test('the overview and the agent cards page ten at a time, each keeping the other’s place', async ({
+  page,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  // Eleven agents, never run: all idle, so the overview orders them by
+  // name, and the eleventh starts a second page of each list.
+  for (let n = 1; n <= 11; n += 1) {
+    await createAgent(page.request, {
+      name: `Paged ${String(n).padStart(2, '0')} ${tag}`,
+      instructions: 'Idle.',
+    });
+  }
+
+  await page.goto('/agents');
+  const overview = page.getByRole('region', { name: 'In flight' });
+  const overviewPages = page.getByRole('navigation', { name: 'In flight pages' });
+  const cardList = page.locator('#agents-list');
+  const cardPages = page.getByRole('navigation', { name: 'Agent pages' });
+
+  // A header row plus ten.
+  await expect(overview.getByRole('row')).toHaveCount(11);
+  await expect(overviewPages).toContainText('Agents 1–10 of 11');
+  await expect(cardList.getByRole('switch')).toHaveCount(10);
+  await expect(cardPages).toContainText('Agents 1–10 of 11');
+
+  await overviewPages.getByRole('link', { name: 'Next →' }).click();
+  await expect(page).toHaveURL(/\/agents\?inflight=2$/);
+  await expect(overview.getByRole('row')).toHaveCount(2);
+  await expect(overview.getByRole('row').nth(1)).toContainText(`Paged 11 ${tag}`);
+  await expect(overviewPages).toContainText('Agents 11–11 of 11');
+  // The cards stayed on their first page.
+  await expect(cardList.getByRole('switch')).toHaveCount(10);
+
+  await cardPages.getByRole('link', { name: 'Next →' }).click();
+  await expect(page).toHaveURL(/\/agents\?inflight=2&page=2#agents-list$/);
+  await expect(cardList.getByRole('switch')).toHaveCount(1);
+  // The cards keep their own order, newest first: the oldest is the one left over.
+  await expect(cardList).toContainText(`Paged 01 ${tag}`);
+  // And the overview kept its second page.
+  await expect(overviewPages).toContainText('Agents 11–11 of 11');
+
+  await cardPages.getByRole('link', { name: '← Previous' }).click();
+  await expect(page).toHaveURL(/\/agents\?inflight=2#agents-list$/);
+  await expect(cardList.getByRole('switch')).toHaveCount(10);
 });
