@@ -136,3 +136,56 @@ test('a library with many prompts folds, and opens on request', async ({ page })
   await section.getByRole('button', { name: 'Show fewer' }).click();
   await expect(section.getByRole('option')).toHaveCount(6);
 });
+
+const VARIABLE_PROMPT = [
+  'Review {{file}} for {{focus:choice}} in {{areas:multi}}, severity {{severity:number}}.',
+  'Notes: {{notes:longtext}}',
+  '',
+  '```variables',
+  'file:',
+  '  required: true',
+  '  help: Path in the repository',
+  'focus:',
+  '  options: [security, performance, readability]',
+  '  default: security',
+  'areas:',
+  '  options: [api, ui, db]',
+  'severity:',
+  '  min: 1',
+  '  max: 5',
+  '```',
+].join('\n');
+
+test('a prompt with variables asks first, then puts the filled-in text in the box', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await makeLibrary(page.request, {
+    name: `Forms ${tag}`,
+    scope: 'any',
+    prompts: [{ title: `Review a file ${tag}`, body: VARIABLE_PROMPT }],
+  });
+  await page.goto(`/chat/${plainChatId}`);
+  await openPicker(page);
+  await page.getByRole('option', { name: new RegExp(`Review a file ${tag}`) }).click();
+
+  const form = page.getByRole('dialog');
+  await expect(form.getByLabel('File')).toBeVisible();
+  // Nothing is in the box yet, and a missing required answer is refused under its field.
+  await expect(composer(page)).toHaveValue('');
+  await form.getByRole('button', { name: 'Insert' }).click();
+  await expect(form.getByText('Needs an answer.')).toBeVisible();
+  await expect(composer(page)).toHaveValue('');
+
+  await form.getByLabel('File').fill('src/billing.ts');
+  await form.getByLabel('performance').check();
+  await form.getByLabel('api').check();
+  await form.getByLabel('db').check();
+  await form.getByLabel('Severity').fill('4');
+  await form.getByRole('button', { name: 'Insert' }).click();
+
+  await expect(form).toBeHidden();
+  await expect(composer(page)).toHaveValue(
+    'Review src/billing.ts for performance in api, db, severity 4.\nNotes: '
+  );
+});

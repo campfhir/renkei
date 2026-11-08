@@ -35,6 +35,8 @@ import AttachmentListModal from './attachment-list-modal';
 import AttachmentChip from './attachment-chip';
 import ComposerToolsMenu from './composer-tools-menu';
 import PromptPicker from './prompt-picker';
+import PromptFormDialog from './prompt-form-dialog';
+import { parsePromptVariables } from '@/lib/chat/prompt-variables';
 import { usePathCompletions, type PathCompletionScope } from './path-autocomplete';
 import { VoiceWaveIcon, type WaveAccent } from './voice-wave';
 import { useDraftSync } from './use-draft-sync';
@@ -210,6 +212,7 @@ export default function Composer({
     queueOpen,
     dragging,
     prompts,
+    variables,
     dictating,
     hearing,
     dictationError,
@@ -907,12 +910,32 @@ export default function Composer({
             textareaRef.current?.focus();
           }}
           onPick={(prompt) => {
-            dispatch({ type: 'promptPicked', body: prompt.body });
+            const variables = parsePromptVariables(prompt.body);
+            if (variables.fields.length > 0) {
+              dispatch({ type: 'promptNeedsAnswers', variables, title: prompt.title });
+              return;
+            }
+            // No questions: the prompt goes in as written, minus any unused variables block.
+            dispatch({ type: 'promptPicked', body: variables.template });
             textareaRef.current?.focus();
           }}
           onCompact={() => {
             dispatch({ type: 'promptsClosed' });
             void onCompact();
+          }}
+        />
+      ) : null}
+      {variables ? (
+        <PromptFormDialog
+          title={variables.title}
+          variables={variables.variables}
+          onInsert={(text) => {
+            dispatch({ type: 'promptFilled', text });
+            textareaRef.current?.focus();
+          }}
+          onClose={() => {
+            dispatch({ type: 'promptFormClosed' });
+            textareaRef.current?.focus();
           }}
         />
       ) : null}

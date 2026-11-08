@@ -151,7 +151,7 @@ export default function PromptPicker({
         ) : (
           groups.map((group) => (
             <section key={group.libraryId} aria-label={group.libraryName} className="mb-1">
-              <h3 className="sticky top-0 z-10 flex items-center gap-2 bg-white/95 px-2 py-1 text-xs font-semibold tracking-wide text-gray-500 uppercase backdrop-blur dark:bg-gray-950/95">
+              <h3 className="sticky top-0 z-10 flex items-center gap-2 bg-white px-2 pt-1.5 pb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase dark:bg-gray-950">
                 <span className="min-w-0 truncate">{group.libraryName}</span>
                 {group.libraryScope === 'code' ? (
                   <span className="rounded border border-gray-300 px-1 text-[10px] font-medium normal-case dark:border-gray-700">

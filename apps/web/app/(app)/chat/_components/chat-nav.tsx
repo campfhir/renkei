@@ -232,7 +232,7 @@ function kindOf(chat: ChatListItem): {
  */
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-10 mb-1 bg-white px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
+    <div className="sticky top-0 z-10 bg-white px-2 pt-1 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
       {children}
     </div>
   );
