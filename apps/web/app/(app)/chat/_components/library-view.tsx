@@ -34,6 +34,14 @@ import {
   type PromptProposal,
 } from './prompt-editor.model';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import {
+  canSaveSettings,
+  initialLibrarySettings,
+  librarySettingsReducer,
+  settingsBody,
+  LIBRARY_DESCRIPTION_LIMIT,
+  LIBRARY_NAME_LIMIT,
+} from './library-settings.model';
 
 interface PromptItem {
   id: string;
@@ -70,6 +78,19 @@ export default function LibraryView({
   const [copied, setCopied] = useState<string | null>(null);
   const [scope, setScope] = useState(library.scope);
   const [scopeError, setScopeError] = useState<string | null>(null);
+  const [settings, dispatchSettings] = useReducer(librarySettingsReducer, initialLibrarySettings);
+
+  const saveSettings = async () => {
+    if (!canSaveSettings(settings)) return;
+    dispatchSettings({ type: 'saveStarted' });
+    const result = await sendJsonFull(base, 'PATCH', settingsBody(settings));
+    if (result.error) {
+      dispatchSettings({ type: 'saveFailed', error: result.error });
+      return;
+    }
+    dispatchSettings({ type: 'saved' });
+    router.refresh();
+  };
 
   const changeScope = async (next: 'any' | 'code') => {
     const before = scope;
@@ -169,6 +190,22 @@ export default function LibraryView({
                 : `Shared · you can ${canEdit ? 'edit' : 'view'}`)}
           </p>
         </div>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() =>
+              dispatchSettings({
+                type: 'opened',
+                library: { name: library.name, description: library.description },
+              })
+            }
+            aria-label="Edit name and description"
+            title="Edit name and description"
+            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.pencil} className="h-5 w-5" />
+          </button>
+        ) : null}
         {library.role === 'owner' ? (
           <button
             type="button"
@@ -331,6 +368,46 @@ export default function LibraryView({
       ) : null}
       {editor.refine.open ? (
         <PromptRefineModal state={editor} dispatch={dispatch} onAsk={() => void refine()} />
+      ) : null}
+      {settings.open ? (
+        <Modal title="Edit library" onClose={() => dispatchSettings({ type: 'closed' })}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveSettings();
+            }}
+            className="space-y-3"
+          >
+            <input
+              autoFocus
+              value={settings.name}
+              onChange={(event) =>
+                dispatchSettings({ type: 'nameTyped', text: event.target.value })
+              }
+              placeholder="Name"
+              aria-label="Name"
+              maxLength={LIBRARY_NAME_LIMIT}
+              required
+              className={inputClass}
+            />
+            <input
+              value={settings.description}
+              onChange={(event) =>
+                dispatchSettings({ type: 'descriptionTyped', text: event.target.value })
+              }
+              placeholder="Description (optional)"
+              aria-label="Description"
+              maxLength={LIBRARY_DESCRIPTION_LIMIT}
+              className={inputClass}
+            />
+            <DialogFooter
+              busy={settings.busy}
+              error={settings.error}
+              label="Save"
+              onCancel={() => dispatchSettings({ type: 'closed' })}
+            />
+          </form>
+        </Modal>
       ) : null}
       {share ? (
         <ShareModal

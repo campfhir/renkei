@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-08',
     entries: [
       {
+        kind: 'changed',
+        title: 'Rename prompt libraries and change their description',
+        detail:
+          "A library's name and description can now be edited from its page, not only its scope.",
+      },
+      {
         kind: 'added',
         title: 'Refine and draft prompts with AI',
         detail:
