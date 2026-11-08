@@ -119,6 +119,78 @@ describe('release — a consumer stopping on purpose', () => {
   });
 });
 
+describe('leases — a consumer that dies, hangs or falls behind', () => {
+  const twice = { maxAttempts: 2, baseDelaySeconds: 1, maxDelaySeconds: 1 };
+
+  it('a message whose consumer died on its last allowed delivery is dead-lettered, not reclaimed forever', async () => {
+    const queue = new InMemoryQueue({ leaseMs: -1, policy: twice });
+    await queue.producer.enqueue(input({ type: 'hangs' }));
+    expect((await mustClaim(queue)).attempts).toBe(1);
+    expect((await mustClaim(queue)).attempts).toBe(2);
+    // Neither consumer ever failed it; the third claim retires it instead.
+    expect(await queue.consumer.claim()).toBeNull();
+    expect(queue.snapshot()).toHaveLength(0);
+    const listed = await queue.deadLetters.list();
+    expect(listed.ok && listed.val.map((d) => [d.type, d.attempts])).toEqual([['hangs', 2]]);
+    expect(listed.ok && listed.val[0]?.lastError).toMatch(/lease expired/);
+  });
+
+  it('retiring a spent lease frees its ordering key for the next message', async () => {
+    const queue = new InMemoryQueue({ leaseMs: -1, policy: twice });
+    await queue.producer.enqueue(input({ type: 'stuck-run', orderingKey: 'agent:a' }));
+    await queue.producer.enqueue(input({ type: 'next-run', orderingKey: 'agent:a' }));
+    await mustClaim(queue);
+    await mustClaim(queue);
+    expect((await mustClaim(queue)).type).toBe('next-run');
+  });
+
+  it('a late ack from a consumer whose lease was reclaimed leaves the newer delivery alone', async () => {
+    const queue = new InMemoryQueue({ leaseMs: -1 });
+    await queue.producer.enqueue(input({ orderingKey: 'agent:a' }));
+    await queue.producer.enqueue(input({ type: 'behind', orderingKey: 'agent:a' }));
+    const stale = await mustClaim(queue);
+    const current = await mustClaim(queue);
+    expect(current.attempts).toBe(2);
+
+    await queue.consumer.complete(stale);
+    const row = queue.snapshot()[0]!;
+    expect(row.status).toBe('processing');
+    expect(row.attempts).toBe(2);
+  });
+
+  it('a late nack from a consumer whose lease was reclaimed neither retries nor dead-letters it', async () => {
+    const queue = new InMemoryQueue({
+      leaseMs: -1,
+      policy: { maxAttempts: 3, baseDelaySeconds: 60, maxDelaySeconds: 60 },
+    });
+    await queue.producer.enqueue(input());
+    const stale = await mustClaim(queue);
+    await mustClaim(queue);
+
+    await queue.consumer.fail(stale, 'the first consumer gave up');
+    const row = queue.snapshot()[0]!;
+    expect(row.status).toBe('processing');
+    expect(row.lastError).toBeNull();
+    expect(queue.deadSnapshot()).toHaveLength(0);
+  });
+
+  it('extend keeps a slow consumer’s lease so the message is not reclaimed under it', async () => {
+    const queue = new InMemoryQueue({ leaseMs: 60_000 });
+    await queue.producer.enqueue(input());
+    const message = await mustClaim(queue);
+    expect(await queue.consumer.extend(message)).toBe(true);
+    expect(await queue.consumer.claim()).toBeNull();
+  });
+
+  it('extend reports a lease that is already lost', async () => {
+    const queue = new InMemoryQueue({ leaseMs: -1 });
+    await queue.producer.enqueue(input());
+    const stale = await mustClaim(queue);
+    await mustClaim(queue);
+    expect(await queue.consumer.extend(stale)).toBe(false);
+  });
+});
+
 describe('retry and dead-letter lifecycle', () => {
   it('fail schedules a backoff retry per the policy', async () => {
     const queue = new InMemoryQueue();

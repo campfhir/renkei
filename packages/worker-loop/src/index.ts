@@ -74,6 +74,24 @@ export interface EventLoopDeps<M extends LoopMessage> {
    * queue without the operation still makes progress, just more slowly.
    */
   release?: (message: M) => Promise<void>;
+  /**
+   * Renews the lease on the message being handled; false when it is
+   * already lost. Called every `extendEveryMs` while a handler runs, so a
+   * handler that is slow but alive keeps its claim instead of having
+   * another consumer reclaim the message and run it a second time beside
+   * it. Omitted (or without `extendEveryMs`), the lease is never renewed.
+   */
+  extend?: (message: M) => Promise<boolean>;
+  /** How often to renew; well inside the queue's lease. */
+  extendEveryMs?: number;
+  /**
+   * Stop renewing once a handler has held one message this long. A
+   * handler that hangs then loses its lease like a dead consumer's would,
+   * so the message is reclaimed (and, once its attempts are spent,
+   * dead-lettered) rather than held — and its ordering key with it — for
+   * as long as the process lives. Default: no cap.
+   */
+  maxHoldMs?: number;
   handlerFor: (
     message: Pick<M, 'source' | 'type'>
   ) => ((message: M) => Promise<HandlerResolution>) | undefined;
@@ -111,6 +129,62 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
   const logger = deps.logger;
   let running = true;
 
+  /** Renew `event`'s lease on a timer until the returned stop is called. */
+  function keepLease(event: M): () => void {
+    const { extend, extendEveryMs } = deps;
+    if (!extend || !extendEveryMs || extendEveryMs <= 0) return () => {};
+    const heldSince = Date.now();
+    let renewing = false;
+    let stopped = false;
+    const timer = setInterval(() => {
+      if (renewing || stopped) return;
+      if (deps.maxHoldMs !== undefined && Date.now() - heldSince >= deps.maxHoldMs) {
+        stop();
+        logger.warn(
+          'event {eventId} ({source}/{type}) held past {maxHoldMs}ms; no longer renewing its lease',
+          {
+            component,
+            eventId: event.id,
+            source: event.source,
+            type: event.type,
+            maxHoldMs: deps.maxHoldMs,
+          }
+        );
+        return;
+      }
+      renewing = true;
+      extend(event)
+        .then((held) => {
+          if (held || stopped) return;
+          stop();
+          logger.warn('event {eventId} ({source}/{type}) lost its lease while being handled', {
+            component,
+            eventId: event.id,
+            source: event.source,
+            type: event.type,
+          });
+        })
+        .catch((error: unknown) => {
+          // A database blip: the next tick tries again, well inside the lease.
+          logger.warn('event {eventId} lease renewal failed: {error}', {
+            component,
+            eventId: event.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        })
+        .finally(() => {
+          renewing = false;
+        });
+    }, extendEveryMs);
+    // Never the reason a stopping process stays up.
+    timer.unref?.();
+    function stop(): void {
+      stopped = true;
+      clearInterval(timer);
+    }
+    return stop;
+  }
+
   async function processOne(): Promise<boolean> {
     const event = await deps.claim();
     if (!event) return false;
@@ -146,8 +220,11 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       return true;
     }
 
+    // Renewed only while the handler runs: settling is the end of the hold.
+    const stopRenewing = keepLease(event);
     try {
       const resolution = await handler(event);
+      stopRenewing();
       const outcome = resolution === 'skipped' ? 'skipped' : 'processed';
       await deps.complete(event, outcome);
       logger.debug('completed event {eventId} ({outcome})', {
@@ -156,6 +233,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         outcome,
       });
     } catch (error) {
+      stopRenewing();
       if (error instanceof MessageReleased && deps.release) {
         await deps.release(event);
         logger.warn('event {eventId} ({source}/{type}) released on attempt {attempts}: {reason}', {

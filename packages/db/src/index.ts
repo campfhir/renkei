@@ -40,6 +40,9 @@ export {
   FREE_TEXT_KEY,
 } from './store/domains/knowledge-chunks/metadata-filter';
 export type * from './store/types';
+// What a message dead-lettered by a claim (its final lease expired) says
+// as its last error; the in-memory queue adapter writes the same words.
+export { LEASE_EXPIRED_ERROR } from './store/domains/queues/types';
 // The migration runner is deliberately NOT re-exported here: it touches fs,
 // path and process.cwd, which poisons this barrel for Next's edge-runtime
 // analysis. The migrate CLI imports ./migrations/runner directly.

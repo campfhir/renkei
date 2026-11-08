@@ -1,7 +1,14 @@
 import { compareAsc, orderBy } from '../../memory/order';
 import { wakeQueue } from '../../memory/signals';
 import { toJson, type MemoryTables, type Row } from '../../memory/tables';
-import type { QueueClaimOptions, QueueDeadLetterTable, QueueStore, QueueTable } from './types';
+import {
+  LEASE_EXPIRED_ERROR,
+  type QueueClaimOptions,
+  type QueueDeadLetterTable,
+  type QueueLeaseGuard,
+  type QueueStore,
+  type QueueTable,
+} from './types';
 
 const DEAD_LETTERS: Record<QueueTable, QueueDeadLetterTable> = {
   events: 'events_dead_letters',
@@ -12,15 +19,29 @@ const DEAD_LETTERS: Record<QueueTable, QueueDeadLetterTable> = {
 
 type LiveRow = Row<QueueTable>;
 
-/** Pending past run_after, or processing under a lease older than the stale horizon. */
+/** Processing under a lease older than the stale horizon. */
+function isStaleLease(row: LiveRow, now: number, options: QueueClaimOptions): boolean {
+  return (
+    row.status === 'processing' &&
+    row.locked_at !== null &&
+    row.locked_at.getTime() < now - options.staleClaimMinutes * 60_000
+  );
+}
+
+/** Delivered as often as the claim allows: an expired lease is dead-lettered, never reclaimed. */
+function spentBudget(row: LiveRow, options: QueueClaimOptions): boolean {
+  return options.maxAttempts !== undefined && row.attempts >= options.maxAttempts;
+}
+
+/** Pending past run_after, or a stale lease still inside the delivery budget. */
 function isDue(row: LiveRow, now: number, options: QueueClaimOptions): boolean {
   if (row.status === 'pending') return row.run_after.getTime() <= now;
-  if (row.status === 'processing') {
-    return (
-      row.locked_at !== null && row.locked_at.getTime() < now - options.staleClaimMinutes * 60_000
-    );
-  }
-  return false;
+  return isStaleLease(row, now, options) && !spentBudget(row, options);
+}
+
+/** The settle guard: only the delivery that still holds the lease. */
+function heldAt(row: LiveRow, guard: QueueLeaseGuard | undefined): boolean {
+  return guard?.attempts === undefined || (row.status === 'processing' && row.attempts === guard.attempts);
 }
 
 function inSources(row: LiveRow, options: QueueClaimOptions): boolean {
@@ -51,6 +72,32 @@ function textAt(payload: unknown, path: readonly string[]): string | null {
 }
 
 export function memoryQueues(tables: MemoryTables): QueueStore {
+  /** Move the matching live rows to the dead letters; how many moved. */
+  function moveToDeadLetters(
+    table: QueueTable,
+    match: (row: LiveRow) => boolean,
+    error: string
+  ): number {
+    const moving = tables.select(table, match);
+    const deadAt = new Date();
+    for (const row of moving) {
+      tables.insert(DEAD_LETTERS[table], {
+        id: row.id,
+        source: row.source,
+        type: row.type,
+        payload: toJson(row.payload),
+        ordering_key: row.ordering_key,
+        attempts: row.attempts,
+        last_error: error,
+        created_at: row.created_at,
+        dead_at: deadAt,
+      });
+    }
+    const ids = new Set(moving.map((row) => row.id));
+    tables.delete(table, (r) => ids.has(r.id));
+    return moving.length;
+  }
+
   return {
     async enqueue(table, message) {
       const key = message.orderingKey ?? null;
@@ -116,6 +163,13 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
     // locks there is nobody here to take.
     async claim(table, options) {
       const now = Date.now();
+      if (options.maxAttempts !== undefined) {
+        moveToDeadLetters(
+          table,
+          (r) => isStaleLease(r, now, options) && spentBudget(r, options) && inSources(r, options),
+          LEASE_EXPIRED_ERROR
+        );
+      }
       const rows = tables.select(table);
       const due = rows.filter((r) => isDue(r, now, options) && inSources(r, options));
       if (due.length === 0) return null;
@@ -165,12 +219,25 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
 
     async complete(table, id, outcome, options = {}) {
       const key = id;
-      tables.update(table, (r) => r.id === key, {
-        status: outcome,
-        locked_at: null,
-        updated_at: new Date(),
-        ...(options.clearPayload ? { payload: {} } : {}),
-      });
+      return (
+        tables.update(table, (r) => r.id === key && heldAt(r, options), {
+          status: outcome,
+          locked_at: null,
+          updated_at: new Date(),
+          ...(options.clearPayload ? { payload: {} } : {}),
+        }).length > 0
+      );
+    },
+
+    async extendLease(table, id, attempts) {
+      const key = id;
+      const at = new Date();
+      return (
+        tables.update(table, (r) => r.id === key && heldAt(r, { attempts }), {
+          locked_at: at,
+          updated_at: at,
+        }).length > 0
+      );
     },
 
     async release(table, id, attempts) {
@@ -190,34 +257,23 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       wakeQueue(tables, table);
     },
 
-    async retry(table, id, error, delaySeconds) {
+    async retry(table, id, error, delaySeconds, guard) {
       const key = id;
       const at = new Date();
-      tables.update(table, (r) => r.id === key, {
-        status: 'pending',
-        locked_at: null,
-        last_error: error,
-        run_after: new Date(at.getTime() + delaySeconds * 1000),
-        updated_at: at,
-      });
+      return (
+        tables.update(table, (r) => r.id === key && heldAt(r, guard), {
+          status: 'pending',
+          locked_at: null,
+          last_error: error,
+          run_after: new Date(at.getTime() + delaySeconds * 1000),
+          updated_at: at,
+        }).length > 0
+      );
     },
 
-    async deadLetter(table, id, error) {
+    async deadLetter(table, id, error, guard) {
       const key = id;
-      for (const row of tables.select(table, (r) => r.id === key)) {
-        tables.insert(DEAD_LETTERS[table], {
-          id: row.id,
-          source: row.source,
-          type: row.type,
-          payload: toJson(row.payload),
-          ordering_key: row.ordering_key,
-          attempts: row.attempts,
-          last_error: error,
-          created_at: row.created_at,
-          dead_at: new Date(),
-        });
-      }
-      tables.delete(table, (r) => r.id === key);
+      return moveToDeadLetters(table, (r) => r.id === key && heldAt(r, guard), error) > 0;
     },
 
     async find(table, id) {

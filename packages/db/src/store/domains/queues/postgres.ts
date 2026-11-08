@@ -1,11 +1,13 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '../../../db.types';
-import type {
-  QueueClaimOptions,
-  QueueClaimedRecord,
-  QueueDeadLetterRecord,
-  QueueStore,
-  QueueTable,
+import {
+  LEASE_EXPIRED_ERROR,
+  type QueueClaimOptions,
+  type QueueClaimedRecord,
+  type QueueDeadLetterRecord,
+  type QueueLeaseGuard,
+  type QueueStore,
+  type QueueTable,
 } from './types';
 
 /** A queue table name: a code constant from QueueTable, never input, so it is interpolated raw. */
@@ -18,13 +20,50 @@ const whole = (n: number) => sql.raw(String(Number(n)));
 // WHERE fragments shared by the claim and the fair source pick. `due` is
 // the lease/backoff eligibility; the ordering-key gate lives only in the
 // claim itself (the pick tolerates the approximation — see claim()).
+const staleLease = (options: QueueClaimOptions) =>
+  sql`c.status = 'processing' AND c.locked_at < NOW() - INTERVAL '${whole(options.staleClaimMinutes)} minutes'`;
+// A stale lease still inside the delivery budget; one past it is never
+// handed out (the claim dead-letters it first — see expireSpentLeases).
+const withinBudget = (options: QueueClaimOptions) =>
+  options.maxAttempts === undefined ? sql`` : sql` AND c.attempts < ${options.maxAttempts}`;
 const due = (options: QueueClaimOptions) => sql`
     ((c.status = 'pending' AND c.run_after <= NOW())
-       OR (c.status = 'processing' AND c.locked_at < NOW() - INTERVAL '${whole(options.staleClaimMinutes)} minutes'))`;
+       OR (${staleLease(options)}${withinBudget(options)}))`;
 const sourceRestriction = (options: QueueClaimOptions) =>
   options.sources && options.sources.length > 0
     ? sql` AND c.source IN (${sql.join(options.sources.map((s) => sql`${s}`))})`
     : sql``;
+// The settle guard: only the delivery that still holds the lease.
+const heldAt = (guard: QueueLeaseGuard | undefined) =>
+  guard?.attempts === undefined
+    ? sql``
+    : sql` AND status = 'processing' AND attempts = ${guard.attempts}`;
+
+/**
+ * Move every expired lease that has spent its delivery budget to the dead
+ * letters, in one statement. A row two consumers race for is deleted once:
+ * the second DELETE finds it gone.
+ */
+async function expireSpentLeases(
+  db: Kysely<DB>,
+  table: QueueTable,
+  options: QueueClaimOptions
+): Promise<void> {
+  if (options.maxAttempts === undefined) return;
+  await sql`
+    WITH moved AS (
+      DELETE FROM ${live(table)} c
+      WHERE ${staleLease(options)}
+        AND c.attempts >= ${options.maxAttempts}
+        ${sourceRestriction(options)}
+      RETURNING c.id, c.source, c.type, c.payload, c.ordering_key, c.attempts, c.created_at
+    )
+    INSERT INTO ${dead(table)}
+      (id, source, type, payload, ordering_key, attempts, last_error, created_at)
+    SELECT id, source, type, payload, ordering_key, attempts, ${LEASE_EXPIRED_ERROR}, created_at
+    FROM moved
+  `.execute(db);
+}
 
 async function claimOne(
   db: Kysely<DB>,
@@ -140,6 +179,7 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
 
     async claim(table, options) {
       const conn = db();
+      await expireSpentLeases(conn, table, options);
       if (options.fairAcrossSources) {
         // Uniform pick among sources with due work. Due, not deliverable:
         // the ordering-key gate is skipped here on purpose — it would make
@@ -168,19 +208,22 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
       // 'skipped' is terminal exactly like 'processed' — the claim query
       // only ever looks at pending/processing — it differs only in what the
       // row tells an operator afterwards.
-      if (options.clearPayload) {
-        await sql`
-          UPDATE ${live(table)}
-          SET status = ${outcome}, locked_at = NULL, payload = '{}'::jsonb, updated_at = NOW()
-          WHERE id = ${id}
-        `.execute(db());
-      } else {
-        await sql`
-          UPDATE ${live(table)}
-          SET status = ${outcome}, locked_at = NULL, updated_at = NOW()
-          WHERE id = ${id}
-        `.execute(db());
-      }
+      const blank = options.clearPayload ? sql`, payload = '{}'::jsonb` : sql``;
+      const result = await sql`
+        UPDATE ${live(table)}
+        SET status = ${outcome}, locked_at = NULL${blank}, updated_at = NOW()
+        WHERE id = ${id}${heldAt(options)}
+      `.execute(db());
+      return Number(result.numAffectedRows ?? 0) > 0;
+    },
+
+    async extendLease(table, id, attempts) {
+      const result = await sql`
+        UPDATE ${live(table)}
+        SET locked_at = NOW(), updated_at = NOW()
+        WHERE id = ${id}${heldAt({ attempts })}
+      `.execute(db());
+      return Number(result.numAffectedRows ?? 0) > 0;
     },
 
     async release(table, id, attempts) {
@@ -195,22 +238,23 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
       `.execute(db());
     },
 
-    async retry(table, id, error, delaySeconds) {
-      await sql`
+    async retry(table, id, error, delaySeconds, guard) {
+      const result = await sql`
         UPDATE ${live(table)}
         SET status = 'pending', locked_at = NULL, last_error = ${error},
             run_after = NOW() + INTERVAL '${whole(delaySeconds)} seconds',
             updated_at = NOW()
-        WHERE id = ${id}
+        WHERE id = ${id}${heldAt(guard)}
       `.execute(db());
+      return Number(result.numAffectedRows ?? 0) > 0;
     },
 
-    async deadLetter(table, id, error) {
+    async deadLetter(table, id, error, guard) {
       // MOVE to the dead-letter table atomically; the live table keeps no
       // trace, so its claim path stays lean and its ordering keys unblock.
-      await sql`
+      const result = await sql`
         WITH moved AS (
-          DELETE FROM ${live(table)} WHERE id = ${id}
+          DELETE FROM ${live(table)} WHERE id = ${id}${heldAt(guard)}
           RETURNING id, source, type, payload, ordering_key, attempts, created_at
         )
         INSERT INTO ${dead(table)}
@@ -218,6 +262,7 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
         SELECT id, source, type, payload, ordering_key, attempts, ${error}, created_at
         FROM moved
       `.execute(db());
+      return Number(result.numAffectedRows ?? 0) > 0;
     },
 
     async find(table, id) {

@@ -25,6 +25,7 @@ import type {
   Queue,
   QueueMessageInput,
 } from './contract';
+import { LEASE_EXPIRED_ERROR } from '@renkei/db';
 import { failureDisposition, DEFAULT_RETRY_POLICY, type RetryPolicy } from './policy';
 
 export type MemoryMessageStatus = 'pending' | 'processing' | 'processed' | 'skipped';
@@ -115,9 +116,19 @@ export class InMemoryQueue implements Queue {
   readonly consumer = {
     claim: async (): Promise<ClaimedMessage | null> => {
       const now = Date.now();
+      const staleLease = (row: MemoryMessage): boolean =>
+        row.status === 'processing' && (row.lockedAt ?? 0) < now - this.leaseMs;
+      const spent = (row: MemoryMessage): boolean => row.attempts >= this.policy.maxAttempts;
+      // A consumer that died on its last allowed delivery never failed the
+      // message: dead-letter it, or it would be reclaimed forever.
+      for (let i = this.rows.length - 1; i >= 0; i -= 1) {
+        const row = this.rows[i]!;
+        if (!staleLease(row) || !spent(row)) continue;
+        if (this.sources && !this.sources.includes(row.source)) continue;
+        this.toDeadLetters(i, LEASE_EXPIRED_ERROR);
+      }
       const due = (row: MemoryMessage): boolean =>
-        (row.status === 'pending' && row.runAfter <= now) ||
-        (row.status === 'processing' && (row.lockedAt ?? 0) < now - this.leaseMs);
+        (row.status === 'pending' && row.runAfter <= now) || (staleLease(row) && !spent(row));
       const live = (row: MemoryMessage): boolean =>
         row.status === 'pending' || row.status === 'processing';
 
@@ -163,11 +174,18 @@ export class InMemoryQueue implements Queue {
       message: ClaimedMessage,
       outcome: CompletionOutcome = 'processed'
     ): Promise<void> => {
-      const row = this.rows.find((r) => r.id === message.id);
+      const row = this.held(message);
       if (!row) return;
       row.status = outcome;
       row.lockedAt = null;
       row.completedAt = Date.now();
+    },
+
+    extend: async (message: ClaimedMessage): Promise<boolean> => {
+      const row = this.held(message);
+      if (!row) return false;
+      row.lockedAt = Date.now();
+      return true;
     },
 
     release: async (message: ClaimedMessage): Promise<void> => {
@@ -181,21 +199,10 @@ export class InMemoryQueue implements Queue {
 
     fail: async (message: ClaimedMessage, error: string): Promise<Disposition> => {
       const disposition = failureDisposition(message.attempts, this.policy);
-      const index = this.rows.findIndex((r) => r.id === message.id);
-      if (index === -1) return disposition;
-      const row = this.rows[index]!;
+      const row = this.held(message);
+      if (!row) return disposition;
       if (disposition.status === 'dead') {
-        this.rows.splice(index, 1);
-        this.deadRows.push({
-          id: row.id,
-          source: row.source,
-          type: row.type,
-          payload: row.payload,
-          orderingKey: row.orderingKey,
-          attempts: row.attempts,
-          lastError: error,
-          deadAt: new Date(),
-        });
+        this.toDeadLetters(this.rows.indexOf(row), error);
       } else {
         row.status = 'pending';
         row.lockedAt = null;
@@ -289,6 +296,28 @@ export class InMemoryQueue implements Queue {
       return ok(dropped);
     },
   };
+
+  /** The live row, only while this delivery still holds its lease. */
+  private held(message: ClaimedMessage): MemoryMessage | undefined {
+    return this.rows.find(
+      (r) => r.id === message.id && r.status === 'processing' && r.attempts === message.attempts
+    );
+  }
+
+  /** Move the live row at `index` to the dead letters. */
+  private toDeadLetters(index: number, error: string): void {
+    const row = this.rows.splice(index, 1)[0]!;
+    this.deadRows.push({
+      id: row.id,
+      source: row.source,
+      type: row.type,
+      payload: row.payload,
+      orderingKey: row.orderingKey,
+      attempts: row.attempts,
+      lastError: error,
+      deadAt: new Date(),
+    });
+  }
 
   // ——— test-observability helpers, not part of the Queue contract ———
 
