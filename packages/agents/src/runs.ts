@@ -330,9 +330,17 @@ export interface RecordLlmCallInput {
    * in a chat's own turns or the auto-compaction budget.
    * `instructions_refine`: a project's instructions rewritten on an
    * editor's ask (apps/web/lib/chat/refine-instructions.ts).
+   * `prompt_refine`: a library prompt rewritten or drafted on an editor's
+   * ask (apps/web/lib/chat/refine-prompt.ts), one row per model call.
    */
   purpose:
-    'run' | 'optimize' | 'chat' | 'context_window' | 'artifact_digest' | 'instructions_refine';
+    | 'run'
+    | 'optimize'
+    | 'chat'
+    | 'context_window'
+    | 'artifact_digest'
+    | 'instructions_refine'
+    | 'prompt_refine';
   /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;
