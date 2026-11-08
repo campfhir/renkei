@@ -63,7 +63,7 @@ export default function AskFormCard({
   return (
     <section
       aria-label="Questions for you"
-      className="my-3 max-w-xl rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950"
+      className="my-3 max-w-md rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-800 dark:bg-gray-950"
     >
       <h3 className="mb-1 text-xs font-semibold tracking-wide text-gray-500 uppercase">
         Questions for you
@@ -130,7 +130,7 @@ function AnsweredCard({ answers }: { answers: AskFormAnswers }) {
   return (
     <section
       aria-label="Questions for you"
-      className="my-3 max-w-xl rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
+      className="my-3 max-w-md rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950"
     >
       <button
         type="button"
