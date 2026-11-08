@@ -230,17 +230,30 @@ test('the assistant asks a form in the chat, and the answers go back as the next
   await form.getByLabel('db').check();
   await form.getByRole('button', { name: 'Send answers' }).click();
 
-  // The answers become the person's next message, which opens the next turn.
-  await expect(page.getByText('Q: Which file should I review?').first()).toBeVisible();
+  // The answers go to the model as the next turn, but are not a bubble in the thread:
+  // the form collapses to one line, opened on a click to what was asked and said.
   await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible({ timeout: 60_000 });
-  await expect(form.getByText('Answered — your answers are in the message below.')).toBeVisible();
-  await expect(form.getByLabel('security')).toBeDisabled();
+  await expect(page.getByText('My answers:')).toHaveCount(0);
+  const answered = page.getByRole('region', { name: 'Questions for you' });
+  const toggle = answered.getByRole('button', { name: /Answered 3 of 3 questions/ });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(answered.getByRole('button', { name: 'Send answers' })).toHaveCount(0);
+  await expect(answered.getByText('src/billing.ts')).toBeHidden();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(answered.getByText('Which file should I review?')).toBeVisible();
+  await expect(answered.getByText('src/billing.ts')).toBeVisible();
+  await expect(answered.getByText('performance')).toBeVisible();
+  await expect(answered.getByText('api, db')).toBeVisible();
 
-  // After a reload the card is still a record, not a form waiting to be filled.
+  // After a reload it is the same collapsed record, read back from the stored message.
   await page.reload();
   const again = page.getByRole('region', { name: 'Questions for you' });
-  await expect(again.getByText('Answered — your answers are in the message below.')).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(again.getByRole('button', { name: /Answered 3 of 3 questions/ })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+    { timeout: 30_000 }
+  );
+  await expect(page.getByText('My answers:')).toHaveCount(0);
   await expect(again.getByRole('button', { name: 'Send answers' })).toHaveCount(0);
 });

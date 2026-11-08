@@ -79,5 +79,51 @@ export function askFormAnswersText(
   return `My answers:\n\n${answersForAgent(request.form, answers)}`;
 }
 
-/** Whether a message is the person's answers to a form (the card shows itself answered after one). */
+/** What an answers message begins with: how the thread tells it from anything the person typed. */
 export const ASK_FORM_ANSWER_PREFIX = 'My answers:\n\n';
+
+/** What `answersForAgent` writes for a question left blank. */
+const SKIPPED_ANSWER = '(skipped — no answer given)';
+
+/** Whether a message is the person's answers to a form. */
+export function isAskFormAnswers(text: string): boolean {
+  return text.startsWith(ASK_FORM_ANSWER_PREFIX);
+}
+
+export interface AskFormAnswerRow {
+  question: string;
+  /** What they answered; null when they left it blank. */
+  answer: string | null;
+}
+
+export interface AskFormAnswers {
+  rows: AskFormAnswerRow[];
+  /** What they wrote in the closing "Anything else?" box, when they wrote something. */
+  also: string | null;
+}
+
+/**
+ * An answers message read back into its questions and answers — the card
+ * collapses to this, after a reload as well as the moment it was sent,
+ * because the message is all that is kept. Null when the text is not one.
+ */
+export function parseAskFormAnswers(text: string): AskFormAnswers | null {
+  if (!isAskFormAnswers(text)) return null;
+  const rows: AskFormAnswerRow[] = [];
+  let also: string | null = null;
+  for (const block of text.slice(ASK_FORM_ANSWER_PREFIX.length).split(/\n\n(?=Q: |Also: )/)) {
+    if (block.startsWith('Also: ')) {
+      also = block.slice('Also: '.length);
+    } else if (block.startsWith('Q: ')) {
+      const rest = block.slice('Q: '.length);
+      const split = rest.indexOf('\nA: ');
+      if (split < 0) continue;
+      const answer = rest.slice(split + '\nA: '.length);
+      rows.push({
+        question: rest.slice(0, split),
+        answer: answer === SKIPPED_ANSWER ? null : answer,
+      });
+    }
+  }
+  return { rows, also };
+}

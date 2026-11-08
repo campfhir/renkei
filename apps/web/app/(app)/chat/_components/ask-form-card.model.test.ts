@@ -1,9 +1,16 @@
 import {
-  parseAskFormRequest,
   ASK_FORM_ANSWER_PREFIX,
+  askFormAnswersText,
+  parseAskFormRequest,
   type AskFormRequest,
 } from '@/lib/chat/ask-form';
-import { askFormMode, askFormNote, askFormSubmission, formLaterOf } from './ask-form-card.model';
+import {
+  askFormMode,
+  askFormNote,
+  askFormSubmission,
+  askFormSummary,
+  formLaterOf,
+} from './ask-form-card.model';
 
 function request(): AskFormRequest {
   const parsed = parseAskFormRequest({
@@ -53,38 +60,71 @@ describe('sending the answers', () => {
   });
 });
 
+const ANSWERS = {
+  rows: [
+    { question: 'Which file should I review?', answer: 'src/billing.ts' },
+    { question: 'What should I focus on?', answer: null },
+  ],
+  also: null,
+};
+
 describe('who can fill the card in', () => {
   it('the owner, while nothing has come after it', () => {
-    expect(askFormMode({ later: 'none', canAnswer: true })).toBe('fill');
+    expect(askFormMode({ later: { kind: 'none' }, canAnswer: true })).toBe('fill');
     expect(askFormNote('fill')).toBeNull();
   });
 
-  it('nobody once answered, and it points at the message that holds the answers', () => {
-    expect(askFormMode({ later: 'answers', canAnswer: true })).toBe('answered');
-    expect(askFormNote('answered')).toContain('message below');
+  it('nobody once answered: the card is then a collapsed record', () => {
+    expect(askFormMode({ later: { kind: 'answers', answers: ANSWERS }, canAnswer: true })).toBe(
+      'answered'
+    );
+    expect(askFormNote('answered')).toBeNull();
   });
 
   it('nobody once the person said something else instead, and it says so', () => {
-    expect(askFormMode({ later: 'other', canAnswer: true })).toBe('closed');
+    expect(askFormMode({ later: { kind: 'other' }, canAnswer: true })).toBe('closed');
     expect(askFormNote('closed')).toContain('moved on');
   });
 
   it('someone who cannot send only reads it', () => {
-    expect(askFormMode({ later: 'none', canAnswer: false })).toBe('view');
+    expect(askFormMode({ later: { kind: 'none' }, canAnswer: false })).toBe('view');
     expect(askFormNote('view')).toContain('owns this chat');
   });
 });
 
 describe('what came after the form', () => {
+  const sent = askFormAnswersText(request(), { q1: 'src/a.ts', q2: 'high' });
+
   it('nothing when no turn follows', () => {
-    expect(formLaterOf(null)).toBe('none');
+    expect(formLaterOf(null)).toEqual({ kind: 'none' });
   });
 
-  it('the answers when the next turn opens with them', () => {
-    expect(formLaterOf([`${ASK_FORM_ANSWER_PREFIX}Q: Which file?\nA: a.ts`])).toBe('answers');
+  it('the answers, read back, when the next turn opens with them', () => {
+    const later = formLaterOf([sent]);
+    expect(later.kind).toBe('answers');
+    expect(later.kind === 'answers' && later.answers.rows[0]).toEqual({
+      question: 'Which file?',
+      answer: 'src/a.ts',
+    });
   });
 
   it('something else when the person wrote their own message instead', () => {
-    expect(formLaterOf(['Actually, never mind.'])).toBe('other');
+    expect(formLaterOf(['Actually, never mind.'])).toEqual({ kind: 'other' });
+  });
+});
+
+describe('the collapsed card’s line', () => {
+  it('says how many questions were answered of how many', () => {
+    expect(askFormSummary(ANSWERS)).toBe('Answered 1 of 2 questions');
+  });
+
+  it('is singular for one question', () => {
+    expect(askFormSummary({ rows: [ANSWERS.rows[0]], also: null })).toBe(
+      'Answered 1 of 1 question'
+    );
+  });
+
+  it('just says answered when there were no questions to count', () => {
+    expect(askFormSummary({ rows: [], also: 'Be brief.' })).toBe('Answered');
   });
 });

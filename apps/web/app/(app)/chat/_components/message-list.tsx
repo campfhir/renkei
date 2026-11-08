@@ -102,6 +102,7 @@ import Markdown from './markdown';
 import ImageCard from './image-card';
 import MockupCard from './mockup-card';
 import AskFormCard from './ask-form-card';
+import { isAskFormAnswers } from '@/lib/chat/ask-form';
 import { formLaterOf, type AskFormLater } from './ask-form-card.model';
 import WidgetCard from './widget-card';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
@@ -249,9 +250,13 @@ export default function MessageList({
       <div className="mx-auto flex max-w-3xl flex-col gap-5">
         {turns.map((group, groupIndex) => (
           <div key={group.key} className="flex flex-col gap-5">
-            {group.prompts.map((message) => (
-              <UserMessage key={message.id} message={message} actions={promptActions} />
-            ))}
+            {group.prompts
+              // A form's answers went to the model as a message; the form's card, collapsed,
+              // is where the person sees them, not a bubble of their own.
+              .filter((message) => !isAskFormAnswers(messageText(message)))
+              .map((message) => (
+                <UserMessage key={message.id} message={message} actions={promptActions} />
+              ))}
             {group.replies.length > 0 ? (
               <Reply
                 chatId={chatId}
@@ -1271,10 +1276,12 @@ function Cursor() {
   return <span className="chat-cursor" aria-hidden="true" />;
 }
 
+/** The text of one message: its text blocks, joined. */
+function messageText(message: ChatMessageView): string {
+  return message.blocks.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n');
+}
+
 /** The texts of the person's prompts in a turn, or null when there is no such turn. */
 function promptTexts(turn: { prompts: ChatMessageView[] } | undefined): string[] | null {
-  if (!turn) return null;
-  return turn.prompts.map((message) =>
-    message.blocks.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('\n')
-  );
+  return turn ? turn.prompts.map(messageText) : null;
 }

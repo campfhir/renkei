@@ -1,5 +1,11 @@
 import { flattenFormFields } from '@renkei/agents';
-import { ASK_FORM_ANSWER_PREFIX, askFormAnswersText, parseAskFormRequest } from './ask-form';
+import {
+  ASK_FORM_ANSWER_PREFIX,
+  askFormAnswersText,
+  isAskFormAnswers,
+  parseAskFormAnswers,
+  parseAskFormRequest,
+} from './ask-form';
 
 const parsed = (input: unknown) => {
   const result = parseAskFormRequest(input);
@@ -98,5 +104,51 @@ describe('the answers the person sends back', () => {
     expect(askFormAnswersText(request, { q1: 'x', anything_else: 'Be brief.' })).toContain(
       'Also: Be brief.'
     );
+  });
+});
+
+describe('reading an answers message back', () => {
+  const request = parsed({
+    questions: [
+      { question: 'Which file?', type: 'text' },
+      { question: 'Which areas?', type: 'multi', options: ['api', 'ui'] },
+      { question: 'Why does it matter?', type: 'longtext' },
+      { question: 'When?', type: 'date' },
+    ],
+  });
+
+  it('tells an answers message from anything the person typed', () => {
+    expect(isAskFormAnswers(askFormAnswersText(request, { q1: 'a' }))).toBe(true);
+    expect(isAskFormAnswers('My answers are below')).toBe(false);
+    expect(isAskFormAnswers('Hello')).toBe(false);
+  });
+
+  it('gets each question and answer back, a blank one as skipped', () => {
+    const text = askFormAnswersText(request, { q1: 'src/a.ts', q2: ['api', 'ui'] });
+    expect(parseAskFormAnswers(text)).toEqual({
+      rows: [
+        { question: 'Which file?', answer: 'src/a.ts' },
+        { question: 'Which areas?', answer: 'api, ui' },
+        { question: 'Why does it matter?', answer: null },
+        { question: 'When?', answer: null },
+      ],
+      also: null,
+    });
+  });
+
+  it('keeps an answer that runs over several paragraphs whole', () => {
+    const why = 'It blocks billing.\n\nAnd it has for a week.';
+    const parsed = parseAskFormAnswers(askFormAnswersText(request, { q3: why }));
+    expect(parsed?.rows[2]).toEqual({ question: 'Why does it matter?', answer: why });
+    expect(parsed?.rows).toHaveLength(4);
+  });
+
+  it('gets the closing box back as what they also said', () => {
+    const text = askFormAnswersText(request, { q1: 'a', anything_else: 'Be brief.' });
+    expect(parseAskFormAnswers(text)?.also).toBe('Be brief.');
+  });
+
+  it('is nothing for text that is not an answers message', () => {
+    expect(parseAskFormAnswers('Q: Which file?\nA: a')).toBeNull();
   });
 });

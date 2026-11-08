@@ -118,8 +118,10 @@ ride in the call's stored input.
 In the thread a finished, successful call is a `form` segment (`segment.ts`), drawn by `ask-form-card.tsx` with the
 same controls an agent's question card uses (`app/(app)/question-form.tsx`, shared), checked with the server's own
 `checkQuestionAnswers`. What came after the form decides the card (`formLaterOf`, from the next turn's prompts):
-nothing yet and the viewer is the owner — fill in; the next turn opens with `My answers:` — answered, a record;
-anything else — closed. A sub-agent is not offered the tool (it has no thread). A prompt-library prompt with
+nothing yet and the viewer is the owner — fill in; the next turn opens with `My answers:` — answered: the form
+collapses to one line ("Answered 3 of 4 questions") that opens to each question and what was said (read back from
+that message by `parseAskFormAnswers`, so a reload keeps it), and the answers message itself is **not drawn as a
+bubble** in the thread (`isAskFormAnswers`; it is still the model's next prompt); anything else — closed. A sub-agent is not offered the tool (it has no thread). A prompt-library prompt with
 `{{variables}}` can reach the model as written ("Let the assistant ask" in the prompt form), and the tool's
 description tells it to ask for every placeholder, reading the trailing `` ```variables `` block
 (`lib/chat/prompt-variables.ts`) for each one's type, options and bounds.

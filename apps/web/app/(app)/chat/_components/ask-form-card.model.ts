@@ -7,8 +7,9 @@
 
 import { flattenFormFields, type QuestionAnswerValue } from '@renkei/agents';
 import {
-  ASK_FORM_ANSWER_PREFIX,
   askFormAnswersText,
+  parseAskFormAnswers,
+  type AskFormAnswers,
   type AskFormRequest,
 } from '@/lib/chat/ask-form';
 import { checkBeforeSend } from '../../question-actions.model';
@@ -27,20 +28,24 @@ export function askFormSubmission(
 }
 
 /** What came after the form in the thread: nothing yet, the answers, or something else. */
-export type AskFormLater = 'none' | 'answers' | 'other';
+export type AskFormLater =
+  { kind: 'none' } | { kind: 'answers'; answers: AskFormAnswers } | { kind: 'other' };
 
 export type AskFormMode = 'fill' | 'answered' | 'closed' | 'view';
 
 /**
  * What the thread did after a form, from the prompts of the turn that
- * follows it: the form's own answers (a message that begins with them), or
- * anything else the person said instead.
+ * follows it: the form's own answers (a message that begins with them,
+ * read back into its questions and answers), or anything else the person
+ * said instead.
  */
 export function formLaterOf(nextTurnPromptTexts: string[] | null): AskFormLater {
-  if (nextTurnPromptTexts === null) return 'none';
-  return nextTurnPromptTexts.some((text) => text.startsWith(ASK_FORM_ANSWER_PREFIX))
-    ? 'answers'
-    : 'other';
+  if (nextTurnPromptTexts === null) return { kind: 'none' };
+  for (const text of nextTurnPromptTexts) {
+    const answers = parseAskFormAnswers(text);
+    if (answers) return { kind: 'answers', answers };
+  }
+  return { kind: 'other' };
 }
 
 /**
@@ -48,9 +53,17 @@ export function formLaterOf(nextTurnPromptTexts: string[] | null): AskFormLater 
  * only while nothing has come after it — the model is waiting on it.
  */
 export function askFormMode(input: { later: AskFormLater; canAnswer: boolean }): AskFormMode {
-  if (input.later === 'answers') return 'answered';
-  if (input.later === 'other') return 'closed';
+  if (input.later.kind === 'answers') return 'answered';
+  if (input.later.kind === 'other') return 'closed';
   return input.canAnswer ? 'fill' : 'view';
+}
+
+/** The collapsed card's one line: how much of the form they answered. */
+export function askFormSummary(answers: AskFormAnswers): string {
+  const total = answers.rows.length;
+  if (total === 0) return 'Answered';
+  const answered = answers.rows.filter((row) => row.answer !== null).length;
+  return `Answered ${answered} of ${total} ${total === 1 ? 'question' : 'questions'}`;
 }
 
 /** What Send is called. */
@@ -58,7 +71,6 @@ export const ASK_FORM_SEND_LABEL = 'Send answers';
 
 /** What the card says in place of Send. */
 export function askFormNote(mode: AskFormMode): string | null {
-  if (mode === 'answered') return 'Answered — your answers are in the message below.';
   if (mode === 'closed') return 'Closed — the conversation moved on without these answers.';
   if (mode === 'view') return 'Only the person who owns this chat can answer.';
   return null;
