@@ -172,6 +172,8 @@ interface RunListOptions {
    */
   q?: string;
   limit?: number;
+  /** Rows of the same order to skip first, for paging. */
+  offset?: number;
 }
 
 async function listRuns(
@@ -190,8 +192,45 @@ async function listRuns(
     ...(q ? { q } : {}),
     ...(q && isUuid(q) ? { matchId: q } : {}),
     limit: options.limit ?? 50,
+    ...(options.offset ? { offset: options.offset } : {}),
   });
   return rows.map(summaryOf);
+}
+
+/** How many of an agent's runs are in one live status, and when the oldest was created. */
+export interface LiveRunCount {
+  agentId: string;
+  status: 'queued' | 'running' | 'waiting';
+  count: number;
+  oldestCreatedAt: string;
+}
+
+function isLiveStatus(status: string): status is LiveRunCount['status'] {
+  return status === 'queued' || status === 'running' || status === 'waiting';
+}
+
+/**
+ * The live runs of these agents, per agent and status — the agents page's
+ * overview of what is in flight. Content-free (counts and times), so it is
+ * the same for every audience; the CALLER passes only agents it has already
+ * resolved access to (the viewer's own, and those shared with them).
+ */
+export async function listLiveRunCounts(agentIds: readonly string[]): Promise<LiveRunCount[]> {
+  const ids = agentIds.filter(isUuid);
+  if (ids.length === 0) return [];
+  const rows = await getDataStore().agentRuns.summarizeLive(ids);
+  return rows.flatMap((row) =>
+    isLiveStatus(row.status)
+      ? [
+          {
+            agentId: row.agentId,
+            status: row.status,
+            count: row.count,
+            oldestCreatedAt: row.oldestCreatedAt.toISOString(),
+          },
+        ]
+      : []
+  );
 }
 
 export async function listRunsForOwner(

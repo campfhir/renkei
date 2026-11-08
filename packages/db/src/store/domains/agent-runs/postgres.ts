@@ -84,7 +84,7 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
 
   return {
     ...postgresAgentRunSweeps(db),
-    async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
+    async list({ agentId, ownerSubject, audience, status, q, matchId, limit, offset }) {
       let query = db().selectFrom('agent_runs').select(RUN_COLUMNS).where('agent_id', '=', agentId);
       if (ownerSubject !== null) query = query.where('owner_subject', '=', ownerSubject);
       if (status) query = query.where('status', '=', status);
@@ -105,8 +105,36 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           ])
         );
       }
-      const rows = await query.orderBy('created_at', 'desc').orderBy('id').limit(limit).execute();
+      const rows = await query
+        .orderBy('created_at', 'desc')
+        .orderBy('id')
+        .limit(limit)
+        .offset(offset ?? 0)
+        .execute();
       return rows.map(summaryFromRow);
+    },
+    async summarizeLive(agentIds) {
+      if (agentIds.length === 0) return [];
+      const rows = await db()
+        .selectFrom('agent_runs')
+        .select((eb) => [
+          'agent_id',
+          'status',
+          eb.fn.countAll<string>().as('count'),
+          eb.fn.min('created_at').as('oldest'),
+        ])
+        .where('agent_id', 'in', [...agentIds])
+        .where('status', 'in', [...LIVE_STATUSES])
+        .groupBy(['agent_id', 'status'])
+        .orderBy('agent_id')
+        .orderBy('status')
+        .execute();
+      return rows.map((row) => ({
+        agentId: row.agent_id,
+        status: row.status,
+        count: Number(row.count),
+        oldestCreatedAt: new Date(row.oldest),
+      }));
     },
     async findDetail({ agentId, runId, ownerSubject, audience }) {
       let query = db()

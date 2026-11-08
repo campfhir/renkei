@@ -526,6 +526,46 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agentRuns.list',
+    name: 'paging: an offset skips that many rows of the same order',
+    fixture,
+    run: async (store) => {
+      const pageOf = async (offset: number | undefined) =>
+        (
+          await store.agentRuns.list({
+            ...listing,
+            ownerSubject: null,
+            audience: 'admin',
+            limit: 2,
+            ...(offset === undefined ? {} : { offset }),
+          })
+        ).map((r) => r.id);
+      return [await pageOf(undefined), await pageOf(0), await pageOf(2), await pageOf(4)];
+    },
+  },
+  {
+    method: 'agentRuns.summarizeLive',
+    name: 'per agent and live status: count and oldest; finished runs and other agents left out',
+    fixture: {
+      agents: [...agents, { id: id(3), owner_subject: 'cy', name: 'Cy agent' }],
+      agent_runs: [
+        run(61, 1, 'ann', 9, { status: 'queued', trigger_kind: 'schedule' }),
+        run(62, 1, 'ann', 4, { status: 'queued', trigger_kind: 'schedule' }),
+        run(63, 1, 'ann', 7, { status: 'queued', trigger_kind: 'schedule' }),
+        run(64, 1, 'ann', 2, { status: 'running' }),
+        run(65, 1, 'ann', 1, { status: 'succeeded' }),
+        run(66, 2, 'bob', 6, { status: 'waiting', waiting_until: at(50) }),
+        run(67, 2, 'bob', 3, { status: 'failed' }),
+        run(68, 3, 'cy', 5, { status: 'queued' }),
+      ],
+    },
+    run: async (store) => [
+      await store.agentRuns.summarizeLive([id(2), id(1)]),
+      await store.agentRuns.summarizeLive([id(9)]),
+      await store.agentRuns.summarizeLive([]),
+    ],
+  },
+  {
+    method: 'agentRuns.list',
     name: 'search: error, trigger kind, input (admin: failed only), escaped wildcards, id',
     fixture,
     run: async (store) => {

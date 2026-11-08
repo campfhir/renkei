@@ -11,9 +11,21 @@ import RunsSearch from '../../runs-search';
 import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { pageFromParam, pageQuery, pageWindow, runsPageHref } from './runs-page.model';
 
-/** The status tabs the pages offer; 'queued' stays reachable via All. */
-const STATUS_TABS = ['succeeded', 'failed', 'stopped', 'waiting', 'running', 'canceled'] as const;
+/**
+ * The status tabs the page offers. Queued has its own: the agents page's
+ * overview links a stuck queue straight to it.
+ */
+const STATUS_TABS = [
+  'succeeded',
+  'failed',
+  'stopped',
+  'waiting',
+  'running',
+  'queued',
+  'canceled',
+] as const;
 
 /**
  * The run list, full visibility: the owner, or a grantee through an
@@ -25,10 +37,10 @@ export default async function AgentRunsPage({
   searchParams,
 }: {
   params: Promise<{ agentId: string }>;
-  searchParams: Promise<{ status?: string; q?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; page?: string }>;
 }): Promise<React.ReactNode> {
   const { agentId } = await params;
-  const { status, q } = await searchParams;
+  const { status, q, page: pageParam } = await searchParams;
 
   const session = await getSessionFromCookies();
   if (!session) {
@@ -41,19 +53,21 @@ export default async function AgentRunsPage({
 
   const filter = isRunStatus(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
-  const runs = await listRunsForOwner(access.ownerSubject, agentId, {
+  const page = pageFromParam(pageParam);
+  const fetched = await listRunsForOwner(access.ownerSubject, agentId, {
     status: filter,
     ...(query ? { q: query } : {}),
+    ...pageQuery(page),
   });
+  const paging = pageWindow(fetched, page);
+  const runs = paging.rows;
 
   const basePath = `/agents/${agentId}/runs`;
-  const tabHref = (tabStatus?: string) => {
-    const params = new URLSearchParams();
-    if (tabStatus) params.set('status', tabStatus);
-    if (query) params.set('q', query);
-    const search = params.toString();
-    return search ? `${basePath}?${search}` : basePath;
-  };
+  // A tab or a search starts again from page 1.
+  const tabHref = (tabStatus?: string) =>
+    runsPageHref(basePath, { status: tabStatus, q: query, page: 1 });
+  const pageHref = (target: number) =>
+    runsPageHref(basePath, { status: filter, q: query, page: target });
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -85,39 +99,97 @@ export default async function AgentRunsPage({
 
       {runs.length === 0 ? (
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          {query || filter ? 'No runs match.' : 'No runs yet.'}
+          {page > 1 ? 'No runs on this page.' : query || filter ? 'No runs match.' : 'No runs yet.'}
         </p>
       ) : (
-        <ul className="space-y-2">
-          {runs.map((run) => (
-            <li key={run.id}>
-              <Link
-                href={`/agents/${agentId}/runs/${run.id}`}
-                className="flex items-center justify-between rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
-              >
-                <span className="flex items-center gap-2">
-                  <StatusPill status={run.status} errorKind={run.errorKind} />
-                  <span className="text-gray-600 dark:text-gray-400">via {run.triggerKind}</span>
-                  {run.errorKind ? (
-                    <span className="text-xs text-red-600 dark:text-red-400">
-                      {errorSummary(run.errorKind)}
+        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+              <tr>
+                <th scope="col" className="py-2 pl-3 pr-2 font-medium">
+                  Started
+                </th>
+                <th scope="col" className="px-2 py-2 font-medium">
+                  Status
+                </th>
+                <th scope="col" className="hidden px-2 py-2 font-medium sm:table-cell">
+                  Trigger
+                </th>
+                <th
+                  scope="col"
+                  className="hidden py-2 pl-2 pr-3 text-right font-medium sm:table-cell"
+                >
+                  Duration
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => (
+                <tr
+                  key={run.id}
+                  className="border-t border-gray-100 align-top hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
+                >
+                  <td className="whitespace-nowrap py-2 pl-3 pr-2">
+                    <Link
+                      href={`/agents/${agentId}/runs/${run.id}`}
+                      className="text-blue-700 hover:underline dark:text-blue-400"
+                    >
+                      <LocalTime at={run.createdAt} />
+                    </Link>
+                  </td>
+                  <td className="px-2 py-2">
+                    <StatusPill status={run.status} errorKind={run.errorKind} />
+                    {run.errorKind ? (
+                      <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">
+                        {errorSummary(run.errorKind)}
+                      </span>
+                    ) : null}
+                    {/* On a phone the trigger column is gone; it rides here. */}
+                    <span className="mt-0.5 block text-xs text-gray-500 sm:hidden">
+                      via {run.triggerKind}
                     </span>
-                  ) : null}
-                </span>
-                <span className="text-xs text-gray-500">
-                  <LocalTime at={run.createdAt} />
-                  {run.durationMs !== null ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : ''}
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+                  </td>
+                  <td className="hidden px-2 py-2 text-gray-600 dark:text-gray-400 sm:table-cell">
+                    {run.triggerKind}
+                  </td>
+                  <td className="hidden whitespace-nowrap py-2 pl-2 pr-3 text-right text-gray-600 tabular-nums dark:text-gray-400 sm:table-cell">
+                    {run.durationMs !== null ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
-      {runs.length === 50 ? (
-        <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
-          Showing the newest 50 matching runs — narrow with the search or a status tab to reach
-          older ones.
-        </p>
+      {paging.hasPrevious || paging.hasNext ? (
+        <nav
+          aria-label="Runs pages"
+          className="mt-3 flex items-center justify-between gap-2 text-sm"
+        >
+          {paging.hasPrevious ? (
+            <Link
+              href={pageHref(page - 1)}
+              className="rounded-md border border-gray-300 px-3 py-1.5 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              ← Newer
+            </Link>
+          ) : (
+            <span />
+          )}
+          <span className="text-xs text-gray-500 dark:text-gray-400">
+            {paging.range ?? `Page ${page}`}
+          </span>
+          {paging.hasNext ? (
+            <Link
+              href={pageHref(page + 1)}
+              className="rounded-md border border-gray-300 px-3 py-1.5 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
+            >
+              Older →
+            </Link>
+          ) : (
+            <span />
+          )}
+        </nav>
       ) : null}
     </div>
   );

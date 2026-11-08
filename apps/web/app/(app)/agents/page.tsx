@@ -7,6 +7,11 @@ import { signInUrl } from '@/lib/sign-in-url';
 import { listAgents } from '@/lib/agents/store';
 import { listAgentsSharedWith } from '@/lib/agents/access-grants';
 import { AgentsList } from './agents-list';
+import AgentsOverview from './agents-overview';
+import { overviewOf } from './agents-overview.model';
+import { agentsPageHref, cardsPage, listPage, pageFromParam } from './agents-page.model';
+import ListPager from './list-pager';
+import { listLiveRunCounts } from '@/lib/agents/runs-view';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 /**
@@ -15,7 +20,11 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * oversight page) — plus, grouped separately, the agents colleagues shared
  * with them through access grants.
  */
-export default async function AgentsPage(): Promise<React.ReactNode> {
+export default async function AgentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ inflight?: string; page?: string }>;
+}): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
   if (!session) {
     redirect(signInUrl(`/agents`));
@@ -25,6 +34,33 @@ export default async function AgentsPage(): Promise<React.ReactNode> {
     listAgents(session.subject),
     listAgentsSharedWith(session.subject),
   ]);
+
+  // What every agent has in flight, above the cards: the viewer's own
+  // agents and the ones shared with them, both access-resolved above.
+  const overviewAgents = [
+    ...agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      enabled: agent.enabled,
+      shared: false,
+    })),
+    ...shared.map((listing) => ({
+      id: listing.agent.id,
+      name: listing.agent.name,
+      enabled: listing.agent.enabled,
+      shared: true,
+    })),
+  ];
+  const liveCounts = await listLiveRunCounts(overviewAgents.map((agent) => agent.id));
+  const overview = overviewOf(overviewAgents, liveCounts, Date.now());
+
+  // Ten to a page, the overview and the cards each with their own place.
+  const requested = await searchParams;
+  const inflightPage = listPage(overview.rows, pageFromParam(requested.inflight));
+  const cards = cardsPage(agents, shared, pageFromParam(requested.page));
+  const places = { inflight: inflightPage.page, page: cards.paging.page };
+  const inflightHref = (to: number) => agentsPageHref({ ...places, inflight: to });
+  const cardsHref = (to: number) => agentsPageHref({ ...places, page: to }, 'agents-list');
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -53,16 +89,31 @@ export default async function AgentsPage(): Promise<React.ReactNode> {
         Step-by-step helpers you draft yourself — they act with your own connections, on your
         triggers, and keep a full history of every run.
       </p>
-      <CoachTarget name="agents-list">
-        <AgentsList
-          agents={agents}
-          shared={shared.map((listing) => ({
-            agent: listing.agent,
-            sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
-            expiresAt: listing.expiresAt,
-          }))}
+      <AgentsOverview
+        overview={overview}
+        page={inflightPage}
+        previousHref={inflightPage.hasPrevious ? inflightHref(inflightPage.page - 1) : null}
+        nextHref={inflightPage.hasNext ? inflightHref(inflightPage.page + 1) : null}
+      />
+      {/* The cards' pager lands here (#agents-list), not at the page top. */}
+      <div id="agents-list" className="scroll-mt-4">
+        <CoachTarget name="agents-list">
+          <AgentsList
+            agents={cards.agents}
+            shared={cards.shared.map((listing) => ({
+              agent: listing.agent,
+              sharedBy: listing.ownerName || listing.ownerEmail || 'a colleague',
+              expiresAt: listing.expiresAt,
+            }))}
+          />
+        </CoachTarget>
+        <ListPager
+          label="Agent pages"
+          range={cards.paging.range ? `Agents ${cards.paging.range}` : null}
+          previousHref={cards.paging.hasPrevious ? cardsHref(cards.paging.page - 1) : null}
+          nextHref={cards.paging.hasNext ? cardsHref(cards.paging.page + 1) : null}
         />
-      </CoachTarget>
+      </div>
     </div>
   );
 }

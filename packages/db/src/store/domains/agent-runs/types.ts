@@ -19,6 +19,14 @@ export interface RunSummaryRecord {
   resumedAt: Date | null;
 }
 
+/** How many of an agent's runs are in one live status, and the oldest one's age. */
+export interface AgentLiveRunsRecord {
+  agentId: string;
+  status: string;
+  count: number;
+  oldestCreatedAt: Date;
+}
+
 /** One agent_run_steps row; `detail` as stored (its content half sealed). */
 export interface RunStepRecord {
   stepId: string;
@@ -160,7 +168,17 @@ export interface AgentRunStore extends AgentRunSweepStore {
     q?: string;
     matchId?: string;
     limit: number;
+    /** Rows to skip first, for paging through the same order. Default 0. */
+    offset?: number;
   }): Promise<RunSummaryRecord[]>;
+  /**
+   * The live runs (queued, running, waiting) of these agents, one row per
+   * agent and status: how many, and when the oldest of them was created.
+   * By agent id, then status; an agent with no live run has no row. For
+   * the agents page's overview of what is in flight and what is stuck —
+   * content-free, so the caller's access check on the agents is enough.
+   */
+  summarizeLive(agentIds: readonly string[]): Promise<AgentLiveRunsRecord[]>;
   /** One run with its turns and batches, or null (scoped like `list`). */
   findDetail(options: {
     agentId: string;

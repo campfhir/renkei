@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-08',
     entries: [
       {
+        kind: 'added',
+        title: 'See what every agent has in flight, and page through all its runs',
+        detail:
+          "The Agents page opens with an In flight table: for each agent, how many runs are queued, running or waiting on you, how old the oldest is, and whether anything looks stuck (queued or running for over two hours). Stuck agents come first, and each row opens the runs behind it. On a phone the overview shows as cards. The overview and the agent cards each page ten at a time, holding their height so the page buttons stay put, and an agent's runs are now a table you can page through 50 at a time, with a Queued tab of its own.",
+      },
+      {
         kind: 'fixed',
         title: 'A stuck run you stopped shows as canceled',
         detail:
