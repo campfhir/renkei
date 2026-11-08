@@ -23,11 +23,14 @@ export default function PromptFormDialog({
   title,
   variables,
   onInsert,
+  onAskInChat,
   onClose,
 }: {
   title: string;
   variables: PromptVariables;
   onInsert: (text: string) => void;
+  /** Put the template in the box as written, for the assistant to ask the questions. */
+  onAskInChat: () => void;
   onClose: () => void;
 }) {
   const [state, dispatch] = useReducer(questionReducer, {
@@ -80,7 +83,15 @@ export default function PromptFormDialog({
             ))}
           </ul>
         ) : null}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={onAskInChat}
+            title="Insert the prompt as written; the assistant asks for the answers in the chat"
+            className="mr-auto rounded-md px-2 py-1.5 text-sm text-blue-700 hover:underline dark:text-blue-300"
+          >
+            Let the assistant ask
+          </button>
           <button
             type="button"
             onClick={onClose}

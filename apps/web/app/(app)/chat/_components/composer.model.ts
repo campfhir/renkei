@@ -76,7 +76,7 @@ export interface ComposerState<F extends NamedFile = NamedFile> {
   dragging: boolean;
   prompts: boolean;
   /** A picked prompt with variables, waiting on the form that fills them. */
-  variables: { title: string; variables: PromptVariables } | null;
+  variables: { title: string; body: string; variables: PromptVariables } | null;
   dictating: boolean;
   /** The microphone hears speech right now. */
   hearing: boolean;
@@ -163,7 +163,7 @@ export type ComposerAction<F extends NamedFile = NamedFile> =
   | { type: 'promptsClosed' }
   | { type: 'promptPicked'; body: string }
   /** The picked prompt asks questions first: the picker closes and the form opens. */
-  | { type: 'promptNeedsAnswers'; title: string; variables: PromptVariables }
+  | { type: 'promptNeedsAnswers'; title: string; body: string; variables: PromptVariables }
   /** The form was filled in: its text goes in the box like a picked prompt. */
   | { type: 'promptFilled'; text: string }
   | { type: 'promptFormClosed' }
@@ -309,12 +309,17 @@ export function composerReducer<F extends NamedFile>(
     case 'promptsClosed':
       return { ...state, prompts: false };
     case 'promptPicked':
-      return { ...state, prompts: false, text: insertPrompt(state.text, action.body) };
+      return {
+        ...state,
+        prompts: false,
+        variables: null,
+        text: insertPrompt(state.text, action.body),
+      };
     case 'promptNeedsAnswers':
       return {
         ...state,
         prompts: false,
-        variables: { title: action.title, variables: action.variables },
+        variables: { title: action.title, body: action.body, variables: action.variables },
       };
     case 'promptFilled':
       return { ...state, variables: null, text: insertPrompt(state.text, action.text) };

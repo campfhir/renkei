@@ -912,7 +912,12 @@ export default function Composer({
           onPick={(prompt) => {
             const variables = parsePromptVariables(prompt.body);
             if (variables.fields.length > 0) {
-              dispatch({ type: 'promptNeedsAnswers', variables, title: prompt.title });
+              dispatch({
+                type: 'promptNeedsAnswers',
+                variables,
+                title: prompt.title,
+                body: prompt.body,
+              });
               return;
             }
             // No questions: the prompt goes in as written, minus any unused variables block.
@@ -929,6 +934,11 @@ export default function Composer({
         <PromptFormDialog
           title={variables.title}
           variables={variables.variables}
+          onAskInChat={() => {
+            // The template goes in as written, block and all: the assistant asks for the values.
+            dispatch({ type: 'promptPicked', body: variables.body });
+            textareaRef.current?.focus();
+          }}
           onInsert={(text) => {
             dispatch({ type: 'promptFilled', text });
             textareaRef.current?.focus();

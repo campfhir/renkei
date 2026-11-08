@@ -10,6 +10,7 @@ import { TASK_COMPLETE_TOOL } from './auto-mode';
 import { isSubagentTool } from './subagent-tools';
 import { MOCKUP_TOOL, parseMockupRequest, type MockupRequest } from '@/lib/mockups/request';
 import { IMAGE_TOOL } from './image-size';
+import { ASK_FORM_TOOL, parseAskFormRequest, type AskFormRequest } from './ask-form';
 
 export type ToolResult = Extract<ChatBlock, { type: 'tool_result' }>;
 
@@ -41,6 +42,14 @@ export type Segment =
    * pending, or one the tool refused, sits in `work` like any other.
    */
   | { kind: 'mockup'; step: Extract<WorkStep, { kind: 'call' }>; request: MockupRequest }
+  /**
+   * A form the model asked (chat_ask_form): the questions drawn inline for
+   * the person to answer, never folded. Whether it has been answered is the
+   * thread's to say (the answers are the next turn's prompt, not in this
+   * reply's rows). Only a call that succeeded and whose input still parses
+   * gets one.
+   */
+  | { kind: 'form'; step: Extract<WorkStep, { kind: 'call' }>; request: AskFormRequest }
   /**
    * A picture the model had drawn (chat_generate_image): shown inline, never
    * folded, from the moment the call starts — an outline of its shape while
@@ -99,7 +108,7 @@ export function segment(
   // call the person is already watching.
   const cards = new Map<
     string,
-    Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' | 'mockup' | 'image' }>
+    Extract<Segment, { kind: 'milestone' | 'subagent' | 'widget' | 'mockup' | 'image' | 'form' }>
   >();
   for (const message of messages) {
     if (message.role !== 'assistant') {
@@ -144,6 +153,19 @@ export function segment(
             const card: Extract<Segment, { kind: 'image' }> = { kind: 'image', step };
             out.push(card);
             cards.set(block.id, card);
+          } else if (block.name === ASK_FORM_TOOL && step.result && !step.result.isError) {
+            const parsed = parseAskFormRequest(block.input);
+            if (parsed.ok) {
+              const card: Extract<Segment, { kind: 'form' }> = {
+                kind: 'form',
+                step,
+                request: parsed.request,
+              };
+              out.push(card);
+              cards.set(block.id, card);
+            } else {
+              work(message).steps.push(step);
+            }
           } else if (block.name === MOCKUP_TOOL && step.result && !step.result.isError) {
             const parsed = parseMockupRequest(block.input);
             if (parsed.ok) {

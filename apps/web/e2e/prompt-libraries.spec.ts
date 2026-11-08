@@ -16,7 +16,8 @@ import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, Page } from '@playwright/test';
 import { isRecord } from '@renkei/guards';
 import { test, expect } from './fixtures';
-import { removeModel } from './support/stub-model';
+import { LLM_STUB_REPLY } from './constants';
+import { removeModel, scripted, toolStep } from './support/stub-model';
 import { createChat, createCodeProject, setUpCode } from './support/code-host';
 
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -188,4 +189,58 @@ test('a prompt with variables asks first, then puts the filled-in text in the bo
   await expect(composer(page)).toHaveValue(
     'Review src/billing.ts for performance in api, db, severity 4.\nNotes: '
   );
+});
+
+test('the assistant asks a form in the chat, and the answers go back as the next message', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto(`/chat/${plainChatId}`);
+  await expect(composer(page)).toBeVisible({ timeout: 30_000 });
+  await composer(page).fill(
+    scripted('Plan the review for me.', [
+      toolStep('chat_ask_form', {
+        intro: 'Two things before I plan it.',
+        questions: [
+          { question: 'Which file should I review?', required: true, help: 'A path' },
+          {
+            question: 'What should I focus on?',
+            type: 'choice',
+            options: ['security', 'performance', 'readability'],
+          },
+          { question: 'Which areas does it touch?', type: 'multi', options: ['api', 'ui', 'db'] },
+        ],
+      }),
+    ])
+  );
+  await page.getByRole('button', { name: 'Send' }).filter({ visible: true }).click();
+
+  // The form is drawn in the thread, and the turn is over: nothing was guessed.
+  const form = page.getByRole('region', { name: 'Questions for you' });
+  await expect(form.getByText('Two things before I plan it.')).toBeVisible({ timeout: 60_000 });
+  await expect(form.getByLabel('security')).toBeVisible();
+
+  // A required question left blank is refused under its field; nothing is sent.
+  await form.getByRole('button', { name: 'Send answers' }).click();
+  await expect(form.getByText('Needs an answer.')).toBeVisible();
+
+  await form.getByLabel('Which file should I review?').fill('src/billing.ts');
+  await form.getByLabel('performance').check();
+  await form.getByLabel('api').check();
+  await form.getByLabel('db').check();
+  await form.getByRole('button', { name: 'Send answers' }).click();
+
+  // The answers become the person's next message, which opens the next turn.
+  await expect(page.getByText('Q: Which file should I review?').first()).toBeVisible();
+  await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible({ timeout: 60_000 });
+  await expect(form.getByText('Answered — your answers are in the message below.')).toBeVisible();
+  await expect(form.getByLabel('security')).toBeDisabled();
+
+  // After a reload the card is still a record, not a form waiting to be filled.
+  await page.reload();
+  const again = page.getByRole('region', { name: 'Questions for you' });
+  await expect(again.getByText('Answered — your answers are in the message below.')).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(again.getByRole('button', { name: 'Send answers' })).toHaveCount(0);
 });

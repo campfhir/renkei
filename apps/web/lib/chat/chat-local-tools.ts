@@ -25,6 +25,7 @@ import { chartTools } from './chart-tools';
 import { chatRenameTool } from './chat-title-tools';
 import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
+import { askFormTools } from './ask-form-tool';
 import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
@@ -50,6 +51,9 @@ export async function chatLocalTools(
   // worker and no project — every chat, a code project's included, can
   // show one (mockup-tools.ts).
   tools.push(...mockupTools());
+  // A form of questions drawn in the thread, answered as the person's next
+  // message (ask-form-tool.ts): asking changes nothing, so every chat has it.
+  tools.push(...askFormTools());
   // A file of the chat's own, or one its project holds.
   const hasFiles =
     (await getDataStore().artifacts.listByChat(context.chatId)).length > 0 ||
