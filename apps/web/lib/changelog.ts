@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-08',
     entries: [
       {
+        kind: 'fixed',
+        title: 'No sliver of text above a day heading in the chat list',
+        detail:
+          'On a phone, as the chat list scrolled, a hairline of the row passing under the Today or This week heading could show above it. The heading now covers it.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A new chat shows in the menu as soon as you send its first message',
+        detail:
+          "A chat started with + New used to stay out of the menu's chat list until its first reply had finished, which on a long reply looked like the list never updated. It is now listed the moment the first message is sent, under a title taken from it.",
+      },
+      {
         kind: 'added',
         title: 'See what every agent has in flight, and page through all its runs',
         detail:
