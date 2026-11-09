@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-09',
     entries: [
       {
+        kind: 'changed',
+        title: 'Picking runs on the Agent queue starts with Select',
+        detail:
+          'The Agent queue shows no checkboxes until you press Select; until then, a press anywhere on a run opens it. After Select, a press anywhere on a run or card picks it instead, Select all is always there to pick every run the tab matches, and Done goes back to browsing. Halting one run is now Select, the run, then Halt 1 selected.',
+      },
+      {
         kind: 'added',
         title:
           'Dead agent runs are halted automatically, and the Agent queue can halt every run at once',
