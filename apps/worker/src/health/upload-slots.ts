@@ -23,17 +23,21 @@ export function createUploadSlotsSweep() {
     const store = getDataStore();
     const expiredCount = await store.uploadSlots.expireStale();
     if (expiredCount > 0) {
-      logger.info('expired {count} stale upload slot(s)', {
-        component: 'uploadslots/sweep',
-        count: expiredCount,
-      });
+      logger.info(
+        'marked {count} pending upload slot(s) as expired: their deadline passed with no upload',
+        {
+          component: 'uploadslots/sweep',
+          count: expiredCount,
+        }
+      );
     }
 
     const deleted = await store.uploadSlots.pruneSettled(RETENTION_DAYS, RETENTION_BATCH);
     if (deleted > 0) {
-      logger.info('retention pruned {count} upload slot(s)', {
+      logger.info('pruned {count} settled upload slot(s) older than {days} day(s)', {
         component: 'uploadslots/sweep',
         count: deleted,
+        days: RETENTION_DAYS,
       });
     }
   };

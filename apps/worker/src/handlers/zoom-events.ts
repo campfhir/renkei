@@ -20,9 +20,11 @@ import { enqueueKnowledgeEvent } from '../enqueue';
 import { publishDomainEvent, BODY_PREVIEW_CHARS } from '../domain-events';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
-import { resolveZoomHostAccess } from './zoom-access';
+import { resolveZoomHostAccess, type ZoomHostAccess } from './zoom-access';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { isRecord } from '@renkei/guards';
+import type { ActorFields } from '@renkei/db';
 
 const COMPONENT = 'zoom/ingest';
 
@@ -55,6 +57,33 @@ function factsOf(event: ClaimedEvent): ZoomEventFacts {
   };
 }
 
+/**
+ * The host as log attributes: the Renkei user behind the grant when it has
+ * one, else the host's Zoom address — never nobody.
+ */
+async function hostFields(access: ZoomHostAccess): Promise<ActorFields> {
+  if (access.subject) return whoIs(access.subject);
+  return {
+    subject: access.accountId,
+    user: access.hostEmail,
+    email: access.hostEmail,
+    actor: access.hostEmail,
+  };
+}
+
+/** What every line about a meeting carries: the host, the meeting's name and ids. */
+async function about(access: ZoomHostAccess, facts: ZoomEventFacts) {
+  return {
+    component: COMPONENT,
+    ...(await hostFields(access)),
+    accountId: access.accountId,
+    hostEmail: access.hostEmail,
+    meetingId: facts.meetingId,
+    meetingUuid: facts.meetingUuid,
+    meeting: facts.topic || facts.meetingUuid,
+  };
+}
+
 export function createZoomTranscriptHandler(
   deps: { publish?: typeof publishDomainEvent } = {}
 ): EventHandler {
@@ -67,10 +96,15 @@ export function createZoomTranscriptHandler(
     if (!access) {
       // No grant means no owner subject either — nothing to ingest AND no
       // agents to fire under the owner-scoped fan-out rule.
-      logger.info('host {hostEmail} has no zoom grant; transcript skipped', {
-        component: COMPONENT,
-        hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
-      });
+      logger.info(
+        'the Zoom host {hostEmail} has not connected Zoom; the transcript of "{meeting}" was skipped and no agent fired',
+        {
+          component: COMPONENT,
+          hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
+          meetingUuid: facts.meetingUuid,
+          meeting: facts.topic || facts.meetingUuid,
+        }
+      );
       return 'skipped';
     }
 
@@ -90,10 +124,10 @@ export function createZoomTranscriptHandler(
     if (!vtt.ok) throw new Error(`could not download transcript for ${facts.meetingUuid}`);
     const text = vttToText(vtt.val);
     if (!text.trim()) {
-      logger.warn('transcript for {meetingUuid} was empty', {
-        component: COMPONENT,
-        meetingUuid: facts.meetingUuid,
-      });
+      logger.warn(
+        'the transcript of {actor}\'s Zoom meeting "{meeting}" was empty; nothing of it will be indexed',
+        await about(access, facts)
+      );
     }
 
     // Knowledge indexing is optional (the embedder may be off, the text may
@@ -126,14 +160,15 @@ export function createZoomTranscriptHandler(
         // embed in parallel.
         `zoom/${refId}`
       );
-      logger.info('queued transcript for {meetingUuid} for indexing', {
-        component: COMPONENT,
-        meetingUuid: facts.meetingUuid,
-      });
+      logger.info(
+        'queued the transcript of {actor}\'s Zoom meeting "{meeting}" for indexing',
+        await about(access, facts)
+      );
     } else if (!embedder) {
-      logger.info('knowledge layer off; transcript not indexed', {
-        component: COMPONENT,
-      });
+      logger.info(
+        'the knowledge layer is off for this org; the transcript of {actor}\'s Zoom meeting "{meeting}" was not indexed (their agents still fire)',
+        await about(access, facts)
+      );
     }
 
     // The handler's LAST act (the retry contract in domain-events.ts): the
@@ -174,10 +209,15 @@ export function createZoomSummaryHandler(
     const access = await resolveZoomHostAccess(facts.hostId, facts.hostEmail);
     if (!access) {
       // No grant → no owner subject → no agents to fire either; skip whole.
-      logger.info('host {hostEmail} has no zoom grant; summary skipped', {
-        component: COMPONENT,
-        hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
-      });
+      logger.info(
+        'the Zoom host {hostEmail} has not connected Zoom; the AI summary of "{meeting}" was skipped and no agent fired',
+        {
+          component: COMPONENT,
+          hostEmail: facts.hostEmail ?? facts.hostId ?? '(unknown)',
+          meetingUuid: facts.meetingUuid,
+          meeting: facts.topic || facts.meetingUuid,
+        }
+      );
       return 'skipped';
     }
 
@@ -212,10 +252,10 @@ export function createZoomSummaryHandler(
       .filter(Boolean)
       .join('\n\n');
     if (!text.trim()) {
-      logger.warn('summary for {meetingId} carried no content', {
-        component: COMPONENT,
-        meetingId: facts.meetingId,
-      });
+      logger.warn(
+        'the AI summary of {actor}\'s Zoom meeting "{meeting}" carried no content; nothing of it will be indexed',
+        await about(access, facts)
+      );
     }
 
     // As in the transcript handler: the embedder gates ONLY the knowledge
@@ -241,12 +281,15 @@ export function createZoomSummaryHandler(
         },
         `zoom/${refId}`
       );
-      logger.info('queued AI summary for meeting {meetingId} for indexing', {
-        component: COMPONENT,
-        meetingId: facts.meetingId,
-      });
+      logger.info(
+        'queued the AI summary of {actor}\'s Zoom meeting "{meeting}" for indexing',
+        await about(access, facts)
+      );
     } else if (!embedder) {
-      logger.info('knowledge layer off; summary not indexed', { component: COMPONENT });
+      logger.info(
+        'the knowledge layer is off for this org; the AI summary of {actor}\'s Zoom meeting "{meeting}" was not indexed (their agents still fire)',
+        await about(access, facts)
+      );
     }
 
     // Last act — see the transcript handler. Keys mirror the catalog row.

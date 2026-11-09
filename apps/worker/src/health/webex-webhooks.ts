@@ -27,6 +27,7 @@
 import { getDataStore } from '@renkei/db';
 import { getPublicBaseUrl, getOrgSettings } from '@renkei/settings';
 import { logger } from '../logger';
+import { whoHas } from '../log-actor';
 import {
   WebexClient,
   webexUserWebhookTargetUrl,
@@ -61,7 +62,9 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
 
   const baseUrl = getPublicBaseUrl();
   if (!baseUrl) {
-    logger.warn('PUBLIC_BASE_URL not set; skipping sweep', { component: 'webex/webhook-health' });
+    logger.warn('the public base URL is not set; the WebEx webhook sweep did nothing', {
+      component: 'webex/webhook-health',
+    });
     return;
   }
 
@@ -73,7 +76,7 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
       equals: { allSpaces: 'true' },
     });
   } catch (error) {
-    logger.error('could not enumerate opted-in grants: {error}', {
+    logger.error('the opted-in WebEx grants could not be listed; this sweep did nothing: {error}', {
       component: 'webex/webhook-health',
       error: error instanceof Error ? error.message : String(error),
     });
@@ -118,9 +121,14 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
 
     const access = await resolveAccess(row.accountId);
     if (!access) {
-      logger.warn('opted-in grant has no usable token; webhook may rot', {
-        component: 'webex/webhook-health',
-      });
+      logger.warn(
+        '{actor} opted into all-spaces capture, but their WebEx grant is unusable; their webhook could not be checked and may rot',
+        {
+          component: 'webex/webhook-health',
+          ...(await whoHas(row.accountId)),
+          accountId: row.accountId,
+        }
+      );
       continue;
     }
 
@@ -140,13 +148,18 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
     );
 
     if (!reconciled.ok) {
-      logger.error('WebEx API error; will retry in {minutes}m: {kind} {message}', {
-        component: 'webex/webhook-health',
-        minutes: Math.round(dueMs / 60_000),
-        kind: reconciled.err.type,
-        message:
-          typeof reconciled.err.message === 'string' ? reconciled.err.message.slice(0, 300) : '',
-      });
+      logger.error(
+        "{actor}'s all-spaces webhook could not be checked (WebEx answered {kind}); it is checked again in {minutes} minutes: {error}",
+        {
+          component: 'webex/webhook-health',
+          ...(await whoHas(row.accountId)),
+          accountId: row.accountId,
+          minutes: Math.round(dueMs / 60_000),
+          kind: reconciled.err.type,
+          error:
+            typeof reconciled.err.message === 'string' ? reconciled.err.message.slice(0, 300) : '',
+        }
+      );
       continue;
     }
     if (reconciled.val.changed) {
@@ -156,10 +169,15 @@ export async function sweepWebexWebhooks(deps: WebhookSweepDeps = {}): Promise<v
           (registration) => `${registration.resource}/${registration.event} ${registration.action}`
         )
         .join(', ');
-      logger.warn('repaired all-spaces webhook: {repairs} — events were being lost', {
-        component: 'webex/webhook-health',
-        repairs,
-      });
+      logger.warn(
+        "repaired {actor}'s all-spaces webhook ({repairs}); events were being lost until now",
+        {
+          component: 'webex/webhook-health',
+          ...(await whoHas(row.accountId)),
+          accountId: row.accountId,
+          repairs,
+        }
+      );
     }
   }
 }

@@ -15,6 +15,7 @@ import type { BatchJobRow } from '../batch-jobs/store';
 import { enqueueItem } from '../batch-jobs/enqueue';
 import { announceBatchFinished, announceBatchStarted } from '../batch-jobs/lifecycle';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'batch-jobs/run';
@@ -34,6 +35,17 @@ async function finalize(transition: Promise<BatchJobRow | undefined>): Promise<v
   if (finished) await announceBatchFinished(finished);
 }
 
+/** What every line about a batch carries: its owner, its name, its id and kind. */
+async function about(batch: Pick<BatchJobRow, 'id' | 'subject' | 'name' | 'kind'>) {
+  return {
+    component: COMPONENT,
+    ...(await whoIs(batch.subject)),
+    batchJobId: batch.id,
+    name: batch.name,
+    kind: batch.kind,
+  };
+}
+
 export function createBatchDiscoverHandler(producer: QueueProducer): EventHandler {
   return async (event) => {
     const payload: unknown = event.payload;
@@ -41,7 +53,7 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
 
     const batch = batchJobId ? await store.getBatch(batchJobId) : undefined;
     if (!batch) {
-      logger.warn('batch {batchJobId} not found; dropping discover message', {
+      logger.warn('a discover message named a batch that no longer exists; it was dropped', {
         component: COMPONENT,
         batchJobId: batchJobId || '(missing)',
       });
@@ -53,13 +65,13 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
         // A previous delivery died mid-discovery — do NOT re-run (would
         // create duplicate items). Finalize and let the caller start over.
         await finalize(store.failBatch(batch.id, 'worker restarted mid-discovery'));
-        logger.warn('batch {batchJobId} failed: {error}', {
-          component: COMPONENT,
-          batchJobId: batch.id,
-          kind: batch.kind,
-          subject: batch.subject,
-          error: 'worker restarted mid-discovery',
-        });
+        logger.warn(
+          '{actor}\'s batch "{name}" was ended as failed: the worker restarted mid-discovery, and discovery is never re-run: {error}',
+          {
+            ...(await about(batch)),
+            error: 'worker restarted mid-discovery',
+          }
+        );
       }
       return; // Terminal, or just finalized: a redelivery is an idempotent no-op.
     }
@@ -73,13 +85,13 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     const kind = getBatchJobKind(claimed.kind);
     if (!kind) {
       await finalize(store.failBatch(claimed.id, `Unknown batch kind "${claimed.kind}".`));
-      logger.warn('batch {batchJobId} failed: {error}', {
-        component: COMPONENT,
-        batchJobId: claimed.id,
-        kind: claimed.kind,
-        subject: claimed.subject,
-        error: `Unknown batch kind "${claimed.kind}".`,
-      });
+      logger.warn(
+        '{actor}\'s batch "{name}" was ended as failed: its kind "{kind}" is unknown to this worker',
+        {
+          ...(await about(claimed)),
+          error: `Unknown batch kind "${claimed.kind}".`,
+        }
+      );
       return;
     }
 
@@ -87,27 +99,27 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     try {
       discovered = await kind.discover(claimed);
     } catch (error) {
-      logger.error('batch {batchJobId} discovery threw: {error}', {
-        component: COMPONENT,
-        batchJobId: claimed.id,
-        kind: claimed.kind,
-        subject: claimed.subject,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      logger.error(
+        '{actor}\'s batch "{name}" was ended as failed: discovering its items threw: {error}',
+        {
+          ...(await about(claimed)),
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       await finalize(
         store.failBatch(claimed.id, error instanceof Error ? error.message : String(error))
       );
       return;
     }
     if (!discovered.ok) {
-      logger.warn('batch {batchJobId} failed: {error}', {
-        component: COMPONENT,
-        batchJobId: claimed.id,
-        kind: claimed.kind,
-        subject: claimed.subject,
-        error: discovered.error ?? 'Discovery failed.',
-      });
+      logger.warn(
+        '{actor}\'s batch "{name}" was ended as failed: its items could not be discovered: {error}',
+        {
+          ...(await about(claimed)),
+          error: discovered.error ?? 'Discovery failed.',
+        }
+      );
       await finalize(store.failBatch(claimed.id, discovered.error ?? 'Discovery failed.'));
       return;
     }
@@ -145,12 +157,14 @@ export function createBatchDiscoverHandler(producer: QueueProducer): EventHandle
     await finalize(
       store.activateBatch(claimed.id, created + skippedItems.length, skippedItems.length)
     );
-    logger.info('batch {batchJobId} discovered {count} item(s), skipped {skipped}', {
-      component: COMPONENT,
-      batchJobId: claimed.id,
-      count: created,
-      skipped: skippedItems.length,
-    });
+    logger.info(
+      '{actor}\'s batch "{name}" discovered {count} item(s), each now queued, and skipped {skipped} already processed',
+      {
+        ...(await about(claimed)),
+        count: created,
+        skipped: skippedItems.length,
+      }
+    );
   };
 }
 
@@ -163,11 +177,14 @@ export function createBatchItemHandler(): EventHandler {
     const batch = batchJobId ? await store.getBatch(batchJobId) : undefined;
     const item = itemId ? await store.getItem(itemId) : undefined;
     if (!batch || !item || item.batch_id !== batch.id) {
-      logger.warn('batch item {itemId} not found; dropping message', {
-        component: COMPONENT,
-        batchJobId: batchJobId || '(missing)',
-        itemId: itemId || '(missing)',
-      });
+      logger.warn(
+        'an item message named a batch item (or batch) that no longer exists; it was dropped',
+        {
+          component: COMPONENT,
+          batchJobId: batchJobId || '(missing)',
+          itemId: itemId || '(missing)',
+        }
+      );
       return;
     }
 
@@ -181,13 +198,13 @@ export function createBatchItemHandler(): EventHandler {
             error: 'worker restarted mid-item',
           })
         );
-        logger.warn('batch {batchJobId} item {itemId} failed: worker restarted mid-item', {
-          component: COMPONENT,
-          batchJobId: batch.id,
-          itemId: item.id,
-          kind: batch.kind,
-          subject: batch.subject,
-        });
+        logger.warn(
+          'an item of {actor}\'s batch "{name}" was ended as failed: the worker restarted mid-item, and item work is never re-run',
+          {
+            ...(await about(batch)),
+            itemId: item.id,
+          }
+        );
       }
       return; // Terminal: a redelivery is an idempotent no-op.
     }
@@ -203,12 +220,13 @@ export function createBatchItemHandler(): EventHandler {
           error: `Unknown batch kind "${batch.kind}".`,
         })
       );
-      logger.error('batch {batchJobId}: unknown batch kind "{kind}"', {
-        component: COMPONENT,
-        batchJobId: batch.id,
-        kind: batch.kind,
-        subject: batch.subject,
-      });
+      logger.error(
+        'an item of {actor}\'s batch "{name}" was ended as failed: its kind "{kind}" is unknown to this worker',
+        {
+          ...(await about(batch)),
+          itemId: claimed.id,
+        }
+      );
       return;
     }
 
@@ -217,26 +235,23 @@ export function createBatchItemHandler(): EventHandler {
       outcome = await kind.runItem(batch, claimed);
     } catch (error) {
       outcome = { ok: false, error: error instanceof Error ? error.message : String(error) };
-      logger.error('batch {batchJobId} item {itemId} threw: {error}', {
-        component: COMPONENT,
-        batchJobId: batch.id,
+      logger.error('an item of {actor}\'s batch "{name}" threw and was ended as failed: {error}', {
+        ...(await about(batch)),
         itemId: claimed.id,
-        kind: batch.kind,
-        subject: batch.subject,
         error: outcome.error,
         stack: error instanceof Error ? error.stack : undefined,
       });
     }
     if (!outcome.ok) {
       // The item row keeps the reason too, but only the log reaches Activity.
-      logger.warn('batch {batchJobId} item {itemId} failed: {error}', {
-        component: COMPONENT,
-        batchJobId: batch.id,
-        itemId: claimed.id,
-        kind: batch.kind,
-        subject: batch.subject,
-        error: outcome.error,
-      });
+      logger.warn(
+        'an item of {actor}\'s batch "{name}" failed; the batch page shows the reason beside the item: {error}',
+        {
+          ...(await about(batch)),
+          itemId: claimed.id,
+          error: outcome.error,
+        }
+      );
     }
     // Whichever item lands last finalizes the batch and announces it —
     // `finalize` is outside the try so an announcement problem is never

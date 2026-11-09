@@ -57,14 +57,18 @@ export async function resolveLinkedWebexUserAccess(
   try {
     row = await getDataStore().providerGrants.findByHolderEmail(WEBEX_USER, email.toLowerCase());
   } catch (error) {
-    logger.warn('database unavailable; skipping cross-space search: {error}', {
-      component: 'webex/forward-context',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      'the WebEx grant of {email} could not be looked up (database unavailable); the cross-space search was skipped: {error}',
+      {
+        component: 'webex/forward-context',
+        email,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
   if (!row) {
-    logger.debug('no webex-user grant on file for {email}; skipping cross-space search', {
+    logger.debug('{email} has not connected WebEx; the cross-space search was skipped', {
       component: 'webex/forward-context',
       email,
     });
@@ -74,11 +78,14 @@ export async function resolveLinkedWebexUserAccess(
   const grant: GrantRef = { provider: WEBEX_USER, accountId: row.accountId };
   const described = await delegateGrants().describe(grant);
   if (!described.ok) {
-    logger.warn('webex-user grant row exists but could not be read: {error}', {
-      component: 'webex/forward-context',
-      email,
-      error: described.err.type,
-    });
+    logger.warn(
+      '{email} has a WebEx grant on file, but it could not be read; the cross-space search was skipped: {error}',
+      {
+        component: 'webex/forward-context',
+        email,
+        error: described.err.type,
+      }
+    );
     return null;
   }
 

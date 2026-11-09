@@ -9,7 +9,7 @@
  * pointless re-consent.
  */
 
-import { getDataStore } from '@renkei/db';
+import { actorFields, describeAccountActor, getDataStore, type ActorFields } from '@renkei/db';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { getGrant, deleteGrant, sealGrantToken } from './store';
@@ -20,56 +20,94 @@ import type { GrantLogger, ProviderAdapter, RefreshedTokens, RefreshError } from
 /** A lock older than this belongs to a crashed process and is reclaimed. */
 const STALE_LOCK_MS = 5 * 60 * 1000;
 
-async function acquireRefreshLock(
-  provider: string,
-  accountId: string,
-  logger: GrantLogger
-): Promise<boolean> {
+/**
+ * `provider_grants.provider` keys → the names people know them by, for the
+ * log lines (the web app's provider-labels.ts says the same; a package
+ * cannot import it). An unknown key logs as itself.
+ */
+const PROVIDER_LABELS: Record<string, string> = {
+  atlassian: 'Jira',
+  'atlassian-jsm': 'Jira Service Management',
+  'atlassian-confluence': 'Confluence',
+  'atlassian-bitbucket': 'Bitbucket',
+  'atlassian-admin': 'Jira Administration',
+  microsoft: 'Microsoft 365',
+  'entra-developer': 'Entra Developer',
+  webex: 'WebEx',
+  zoom: 'Zoom',
+  github: 'GitHub',
+  onbase: 'OnBase',
+  'onbase-admin': 'OnBase Administration',
+  salesforce: 'Salesforce',
+};
+
+/** What every line about one grant's refresh carries: whose grant, to which provider. */
+interface RefreshContext extends ActorFields {
+  provider: string;
+  providerName: string;
+  accountId: string;
+  /** A GrantLogger's context is a plain record; the fields above are what it holds. */
+  [key: string]: unknown;
+}
+
+async function refreshContext(provider: string, accountId: string): Promise<RefreshContext> {
+  return {
+    ...actorFields(await describeAccountActor(accountId)),
+    provider,
+    providerName: PROVIDER_LABELS[provider] ?? provider,
+    accountId,
+  };
+}
+
+async function acquireRefreshLock(about: RefreshContext, logger: GrantLogger): Promise<boolean> {
   try {
-    return await getDataStore().providerGrants.acquireRefreshLock(provider, accountId, new Date());
+    return await getDataStore().providerGrants.acquireRefreshLock(
+      about.provider,
+      about.accountId,
+      new Date()
+    );
   } catch (error) {
-    logger.warn('[Refresh] Could not take the refresh lock: {error}', {
-      provider,
-      accountId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "the refresh lock for {actor}'s {providerName} grant could not be taken; waiting for whoever holds it, then refreshing anyway: {error}",
+      {
+        ...about,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return false;
   }
 }
 
-async function releaseRefreshLock(
-  provider: string,
-  accountId: string,
-  logger: GrantLogger
-): Promise<void> {
+async function releaseRefreshLock(about: RefreshContext, logger: GrantLogger): Promise<void> {
   try {
-    await getDataStore().providerGrants.releaseRefreshLock(provider, accountId);
+    await getDataStore().providerGrants.releaseRefreshLock(about.provider, about.accountId);
   } catch (error) {
     // Not fatal — a held lock goes stale and is reclaimed — but worth seeing.
-    logger.warn('[Refresh] Could not release the refresh lock: {error}', {
-      provider,
-      accountId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "the refresh lock for {actor}'s {providerName} grant could not be released; it goes stale and is reclaimed in five minutes: {error}",
+      {
+        ...about,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 
 /** Poll with exponential backoff until the holder finishes, max ~10 seconds. */
-async function waitForRefreshLock(
-  provider: string,
-  accountId: string,
-  logger: GrantLogger
-): Promise<void> {
+async function waitForRefreshLock(about: RefreshContext, logger: GrantLogger): Promise<void> {
   let attempts = 0;
   const maxAttempts = 20;
 
   while (attempts < maxAttempts) {
-    const lockedAt = await getDataStore().providerGrants.findRefreshLock(provider, accountId);
+    const lockedAt = await getDataStore().providerGrants.findRefreshLock(
+      about.provider,
+      about.accountId
+    );
 
     if (!lockedAt) return;
 
     if (Date.now() - lockedAt.getTime() > STALE_LOCK_MS) {
-      await releaseRefreshLock(provider, accountId, logger);
+      await releaseRefreshLock(about, logger);
       return;
     }
 
@@ -85,44 +123,50 @@ export async function refreshGrantTokens(
   logger: GrantLogger = silentLogger
 ): Promise<Result<RefreshedTokens, RefreshError>> {
   const provider = adapter.provider;
-  logger.debug('[Refresh] Starting token refresh', { provider, accountId });
+  // The owner is named from the grant row (its subject) once, up front:
+  // every line below, the lock lines included, is about one person's
+  // connection to one provider.
+  const about = await refreshContext(provider, accountId);
+  logger.debug("refreshing {actor}'s {providerName} tokens", about);
 
   try {
-    const lockAcquired = await acquireRefreshLock(provider, accountId, logger);
+    const lockAcquired = await acquireRefreshLock(about, logger);
     if (!lockAcquired) {
-      logger.debug('[Refresh] Lock not acquired, waiting for other process', {
-        provider,
-        accountId,
-      });
-      await waitForRefreshLock(provider, accountId, logger);
+      logger.debug(
+        "another process is refreshing {actor}'s {providerName} tokens; waiting for it to finish",
+        about
+      );
+      await waitForRefreshLock(about, logger);
       // The other process may have refreshed already — reuse its result.
       const refetch = await getGrant(provider, accountId);
       if (refetch.ok && refetch.val) {
-        logger.debug('[Refresh] Using refreshed token from other process', {
-          provider,
-          accountId,
-        });
+        logger.debug(
+          "{actor}'s {providerName} tokens were refreshed by another process meanwhile; reusing them",
+          about
+        );
         return ok({
           accessToken: refetch.val.accessToken,
           refreshToken: refetch.val.refreshToken,
           expiresAt: new Date(refetch.val.expiresAt),
         });
       }
-      logger.debug('[Refresh] Re-fetch failed, proceeding with refresh', {
-        provider,
-        accountId,
-      });
+      logger.debug(
+        "{actor}'s {providerName} grant could not be re-read after waiting; refreshing it here",
+        about
+      );
     }
 
     const grantResult = await getGrant(provider, accountId);
     if (!grantResult.ok || !grantResult.val) {
-      logger.error('[Refresh] No usable grant found: {error}', {
-        provider,
-        accountId,
-        error: grantResult.ok
-          ? 'no grant stored'
-          : `${grantResult.err.type} ${grantResult.err.message ?? ''}`.trim(),
-      });
+      logger.error(
+        "{actor}'s {providerName} tokens were not refreshed: no usable grant is stored: {error}",
+        {
+          ...about,
+          error: grantResult.ok
+            ? 'no grant stored'
+            : `${grantResult.err.type} ${grantResult.err.message ?? ''}`.trim(),
+        }
+      );
       return err('REFRESH_FAILED' as const);
     }
     const grant = grantResult.val;
@@ -130,23 +174,25 @@ export async function refreshGrantTokens(
     const refreshed = await adapter.refreshTokens(grant.clientId, grant.refreshToken);
     if (!refreshed.ok) {
       if (refreshed.err.type === 'GRANT_REVOKED') {
-        logger.warn('[Refresh] Refresh token rejected by provider, deleting grant', {
-          provider,
-          accountId,
-        });
+        logger.warn(
+          "{providerName} rejected {actor}'s refresh token; the grant was deleted and they must connect {providerName} again",
+          about
+        );
         await deleteGrant(provider, accountId);
         return err('GRANT_REVOKED' as const);
       }
       // The kind and the provider's own words: without them this line
       // cannot distinguish an expired refresh token from a network blip
       // from a misconfigured client, which are three different fixes.
-      logger.error('[Refresh] Provider refresh failed: {kind} {message}', {
-        provider,
-        accountId,
-        kind: refreshed.err.type,
-        message:
-          typeof refreshed.err.message === 'string' ? refreshed.err.message.slice(0, 300) : '',
-      });
+      logger.error(
+        "{providerName} did not refresh {actor}'s tokens ({kind}); the stored tokens are unchanged: {error}",
+        {
+          ...about,
+          kind: refreshed.err.type,
+          error:
+            typeof refreshed.err.message === 'string' ? refreshed.err.message.slice(0, 300) : '',
+        }
+      );
       return err('REFRESH_FAILED' as const);
     }
 
@@ -161,24 +207,26 @@ export async function refreshGrantTokens(
     // Sealed under the owner's key (store.ts). A grant that opened has an
     // owner, so the subject is there to seal for.
     if (!grant.subject) {
-      logger.error('[Refresh] Grant has no owner to seal the refreshed tokens for', {
-        provider,
-        accountId,
-      });
+      logger.error(
+        "{providerName} refreshed {actor}'s tokens, but the grant has no owner to seal them for; nothing was persisted",
+        about
+      );
       return err('REFRESH_FAILED' as const);
     }
     const sealedAccess = await sealGrantToken(grant.subject, accessToken);
     const sealedRefresh = await sealGrantToken(grant.subject, refreshToken);
     if (!sealedAccess.ok || !sealedRefresh.ok) {
-      logger.error('[Refresh] Could not seal refreshed tokens: {error}', {
-        provider,
-        accountId,
-        error: !sealedAccess.ok
-          ? sealedAccess.err.message
-          : !sealedRefresh.ok
-            ? sealedRefresh.err.message
-            : '',
-      });
+      logger.error(
+        "{actor}'s refreshed {providerName} tokens could not be sealed; nothing was persisted: {error}",
+        {
+          ...about,
+          error: !sealedAccess.ok
+            ? sealedAccess.err.message
+            : !sealedRefresh.ok
+              ? sealedRefresh.err.message
+              : '',
+        }
+      );
       return err('REFRESH_FAILED' as const);
     }
     const updateResult = await wrapAsync(
@@ -193,28 +241,34 @@ export async function refreshGrantTokens(
     );
 
     if (!updateResult.ok) {
-      logger.error('[Refresh] Failed to persist refreshed tokens: {error}', {
-        provider,
-        accountId,
-        error: updateResult.err.message,
-      });
+      logger.error(
+        "{actor}'s refreshed {providerName} tokens could not be persisted; the next call refreshes again: {error}",
+        {
+          ...about,
+          error: updateResult.err.message,
+        }
+      );
       return updateResult;
     }
 
-    logger.debug('[Refresh] Token refreshed successfully', {
-      provider,
-      accountId,
-      expiresAt: expiresAt.toISOString(),
-    });
+    logger.debug(
+      "{actor}'s {providerName} tokens were refreshed and persisted; they expire at {expiresAt}",
+      {
+        ...about,
+        expiresAt: expiresAt.toISOString(),
+      }
+    );
     return ok({ accessToken, refreshToken, expiresAt });
   } catch (error) {
-    logger.error('[Refresh] Unexpected error during refresh', {
-      provider,
-      accountId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      "refreshing {actor}'s {providerName} tokens threw; nothing was persisted: {error}",
+      {
+        ...about,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return err('REFRESH_FAILED' as const);
   } finally {
-    await releaseRefreshLock(provider, accountId, logger);
+    await releaseRefreshLock(about, logger);
   }
 }

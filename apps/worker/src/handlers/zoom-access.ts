@@ -53,9 +53,11 @@ export async function resolveZoomHostAccess(
   if (!described) return null;
   if (!described.ok) {
     if (described.err.type === 'NO_GRANT') {
-      logger.info('no zoom grant for host {host}; skipping', {
+      logger.info('the Zoom host {host} has not connected Zoom; their meeting was skipped', {
         component: 'zoom/ingest',
-        host: hostId ?? hostEmail ?? '(unknown)',
+        host: hostEmail ?? hostId ?? '(unknown)',
+        hostId,
+        hostEmail,
       });
       return null;
     }

@@ -27,6 +27,7 @@ import { getDataStore, type PrPipelineSubscriptionRecord } from '@renkei/db';
 import type { EventHandler } from '../handlers';
 import type { ClaimedEvent } from '../queue';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { GITHUB, ATLASSIAN_BITBUCKET } from '@renkei/provider-grants';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { resolveGitHubSubjectAccess, resolveBitbucketSubjectAccess } from './repo-access';
@@ -111,6 +112,12 @@ async function actOnSubscription(
 
   let actionTaken: ActionTaken = null;
   const target = { fullName: subscription.repoFullName };
+  const about = {
+    component: COMPONENT,
+    ...(await whoIs(subscription.subscriberSubject)),
+    pr: subscription.prNumber,
+    repo: subscription.repoFullName,
+  };
 
   if (conclusion === 'success' && subscription.autoMerge) {
     const access =
@@ -124,20 +131,16 @@ async function actOnSubscription(
       : { ok: false as const, error: 'The subscriber has no live grant for this host.' };
     if (merged.ok) {
       actionTaken = 'merged';
-      logger.info('merged pull request #{pr} on {repo} after a green subscribed pipeline', {
-        component: COMPONENT,
-        pr: subscription.prNumber,
-        repo: subscription.repoFullName,
-      });
+      logger.info(
+        "{actor}'s subscription merged pull request #{pr} on {repo} after its pipeline went green",
+        about
+      );
     } else {
       actionTaken = 'merge_failed';
-      logger.warn('could not merge pull request #{pr} on {repo}: {error}', {
-        component: COMPONENT,
-        subject: subscription.subscriberSubject,
-        pr: subscription.prNumber,
-        repo: subscription.repoFullName,
-        error: merged.error,
-      });
+      logger.warn(
+        "{actor}'s subscription could not merge pull request #{pr} on {repo} after a green pipeline; the pull request stays open: {error}",
+        { ...about, error: merged.error }
+      );
     }
   } else if (conclusion === 'failure' && subscription.autoFix && subscription.chatId) {
     try {
@@ -148,12 +151,14 @@ async function actOnSubscription(
       actionTaken = 'fix_started';
     } catch (error) {
       actionTaken = 'fix_failed';
-      logger.warn('could not post the pipeline-failure note into chat {chatId}: {error}', {
-        component: COMPONENT,
-        subject: subscription.subscriberSubject,
-        chatId: subscription.chatId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "the pipeline-failure note for pull request #{pr} on {repo} was not posted into {actor}'s chat; nobody was told: {error}",
+        {
+          ...about,
+          chatId: subscription.chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 

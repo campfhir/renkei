@@ -32,6 +32,7 @@ import type { EventHandler } from '../handlers';
 import { resolveWebexUserAccessByAccount } from './webex-linked-user';
 import { publishDomainEvent, BODY_PREVIEW_CHARS } from '../domain-events';
 import { logger } from '../logger';
+import { whoHas, whoIs } from '../log-actor';
 
 /** How many messages of surrounding history ride along with the trigger. */
 const NEARBY_MESSAGE_COUNT = 25;
@@ -114,9 +115,15 @@ export function createWebexUserMessageHandler(
     if (!access) {
       // Grant revoked or unreadable — nothing to act as. The registration
       // itself rots away via 404s on the receipt route.
-      logger.warn('no usable grant for all-spaces delivery; dropping', {
-        component: 'webex/user-ingest',
-      });
+      logger.warn(
+        "an all-spaces delivery arrived for {actor}'s webhook, but their WebEx grant is unusable (revoked or unreadable); the message was dropped",
+        {
+          component: 'webex/user-ingest',
+          ...(await whoHas(payload.accountId)),
+          accountId: payload.accountId,
+          messageId: payload.messageId,
+        }
+      );
       return 'skipped';
     }
 
@@ -132,10 +139,15 @@ export function createWebexUserMessageHandler(
     // that may have posted it. Anything else — including messages the
     // watcher typed themselves — goes through.
     if (await wasSent(message.id)) {
-      logger.debug('skipping a message Renkei sent: {messageId}', {
-        component: 'webex/user-ingest',
-        messageId: message.id,
-      });
+      logger.debug(
+        'a message Renkei itself posted as {actor} came back through their webhook; it was skipped',
+        {
+          component: 'webex/user-ingest',
+          ...(await whoIs(access.subject)),
+          accountId: payload.accountId,
+          messageId: message.id,
+        }
+      );
       return 'skipped';
     }
     if (!message.text) return 'skipped';

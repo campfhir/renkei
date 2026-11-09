@@ -141,7 +141,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       if (deps.maxHoldMs !== undefined && Date.now() - heldSince >= deps.maxHoldMs) {
         stop();
         logger.warn(
-          'event {eventId} ({source}/{type}) held past {maxHoldMs}ms; no longer renewing its lease',
+          'event {eventId} ({source}/{type}) has been held for over {maxHoldMs}ms; its lease is no longer renewed, so another consumer may reclaim it',
           {
             component,
             eventId: event.id,
@@ -157,20 +157,26 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         .then((held) => {
           if (held || stopped) return;
           stop();
-          logger.warn('event {eventId} ({source}/{type}) lost its lease while being handled', {
-            component,
-            eventId: event.id,
-            source: event.source,
-            type: event.type,
-          });
+          logger.warn(
+            'event {eventId} ({source}/{type}) lost its lease while being handled; another consumer may be running it too',
+            {
+              component,
+              eventId: event.id,
+              source: event.source,
+              type: event.type,
+            }
+          );
         })
         .catch((error: unknown) => {
           // A database blip: the next tick tries again, well inside the lease.
-          logger.warn('event {eventId} lease renewal failed: {error}', {
-            component,
-            eventId: event.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            'the lease on event {eventId} was not renewed this tick; the next tick tries again: {error}',
+            {
+              component,
+              eventId: event.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
         })
         .finally(() => {
           renewing = false;
@@ -192,7 +198,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
     // Claiming was previously silent on success — the only way to tell a
     // message was ever picked up was the absence of a failure log, which
     // looks identical to "never claimed at all". This line disambiguates.
-    logger.debug('claimed event {eventId} ({source}/{type}), attempt {attempts}', {
+    logger.debug('claimed event {eventId} ({source}/{type}) on attempt {attempts}', {
       component,
       eventId: event.id,
       source: event.source,
@@ -207,7 +213,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         `no handler registered for ${event.source}/${event.type}`
       );
       logger.warn(
-        'no handler for {source}/{type} (event {eventId}, attempt {attempts}) → {status}',
+        'no handler is registered for {source}/{type}; event {eventId} (attempt {attempts}) was marked {status}',
         {
           component,
           source: event.source,
@@ -227,29 +233,34 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       stopRenewing();
       const outcome = resolution === 'skipped' ? 'skipped' : 'processed';
       await deps.complete(event, outcome);
-      logger.debug('completed event {eventId} ({outcome})', {
+      logger.debug('completed event {eventId} ({source}/{type}): {outcome}', {
         component,
         eventId: event.id,
+        source: event.source,
+        type: event.type,
         outcome,
       });
     } catch (error) {
       stopRenewing();
       if (error instanceof MessageReleased && deps.release) {
         await deps.release(event);
-        logger.warn('event {eventId} ({source}/{type}) released on attempt {attempts}: {reason}', {
-          component,
-          eventId: event.id,
-          source: event.source,
-          type: event.type,
-          attempts: event.attempts,
-          reason: error.message,
-        });
+        logger.warn(
+          'event {eventId} ({source}/{type}) was released back to the queue on attempt {attempts}, to be picked up at once: {reason}',
+          {
+            component,
+            eventId: event.id,
+            source: event.source,
+            type: event.type,
+            attempts: event.attempts,
+            reason: error.message,
+          }
+        );
         return true;
       }
       const message = error instanceof Error ? error.message : String(error);
       const disposition = await deps.fail(event, message);
       logger.error(
-        'event {eventId} ({source}/{type}) failed on attempt {attempts}: {error} → {status}',
+        'event {eventId} ({source}/{type}) failed on attempt {attempts} and was marked {status}: {error}',
         {
           component,
           eventId: event.id,
@@ -273,11 +284,14 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       } catch (error) {
         // A claim/complete failure here is a database problem, not an event
         // problem; back off and let the loop retry.
-        logger.error('loop error: {error}', {
-          component,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        logger.error(
+          'the queue could not be claimed or settled (a database problem, not an event); backing off, then trying again: {error}',
+          {
+            component,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
       }
       await sleep(hadWork ? busyDelayMs : idleDelayMs);
     }
@@ -352,12 +366,12 @@ export function schedulePeriodicSweep(
   let timer: ReturnType<typeof setTimeout> | null = null;
 
   async function tick(): Promise<void> {
-    logger.debug(`${label} sweep starting`, { component });
+    logger.debug(`the ${label} sweep is starting`, { component });
     try {
       await sweep();
-      logger.debug(`${label} sweep finished`, { component });
+      logger.debug(`the ${label} sweep finished`, { component });
     } catch (error) {
-      logger.error(`${label} sweep error: {error}`, {
+      logger.error(`the ${label} sweep failed; the next pass runs in ${intervalMs}ms: {error}`, {
         component,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -368,7 +382,9 @@ export function schedulePeriodicSweep(
 
   // The organization's log level (admin → Settings → Data & logs) must be
   // debug for the two lines above to actually show; it defaults to info.
-  logger.debug(`${label} sweep scheduled every ${intervalMs}ms`, { component });
+  logger.debug(`the ${label} sweep is scheduled every ${intervalMs}ms, with a first pass now`, {
+    component,
+  });
   void tick(); // first pass at boot, concurrent with event processing starting up
   return () => {
     stopped = true;

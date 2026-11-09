@@ -55,6 +55,7 @@ import type { BatchOutcome, ReindexKind } from '@renkei/knowledge';
 import { enqueueKnowledgeEvent } from '../enqueue';
 import type { EventHandler } from '../handlers';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'knowledge/reindex';
@@ -105,14 +106,22 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     // A run the admin no longer has (deleted, or already ended) is done.
     if (!run || (run.status !== 'queued' && run.status !== 'running')) return 'skipped';
 
+    // The admin who started the run; an older row may not record one, and
+    // then the line says "the … run" rather than naming nobody.
+    const admin = await whoIs(run.requestedBy);
+    const about = {
+      component: COMPONENT,
+      ...admin,
+      kind,
+      runId,
+      whose: run.requestedBy ? `${admin.actor}'s` : 'the',
+    };
     const fail = async (message: string): Promise<void> => {
       await runs.failRun(runId, message);
-      logger.warn('reindex {kind} run {runId} failed: {error}', {
-        component: COMPONENT,
-        kind,
-        runId,
-        error: message,
-      });
+      logger.warn(
+        '{whose} {kind} reindex run {runId} failed and stopped; it can be resumed from its cursor once the cause is fixed: {error}',
+        { ...about, error: message }
+      );
     };
 
     if (run.status === 'queued') {
@@ -190,11 +199,7 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     });
 
     if (outcome.done) {
-      logger.info('reindex {kind} run {runId} finished', {
-        component: COMPONENT,
-        kind,
-        runId,
-      });
+      logger.info('{whose} {kind} reindex run {runId} finished; every object was walked', about);
       return;
     }
 
@@ -208,11 +213,10 @@ export function createKnowledgeReindexBatchHandler(deps: ReindexHandlerDeps = {}
     // from the row's own cursor.
     const current = await runs.get(runId);
     if (current?.status !== 'running') {
-      logger.info('reindex {kind} run {runId} paused', {
-        component: COMPONENT,
-        kind,
-        runId,
-      });
+      logger.info(
+        '{whose} {kind} reindex run {runId} was paused; no further batch was queued and its cursor is kept',
+        about
+      );
       return;
     }
 

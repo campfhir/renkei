@@ -24,7 +24,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { getDataStore } from '@renkei/db';
-import { actorForAccount } from '../log-actor';
+import { actorFields, actorForAccount } from '../log-actor';
 import {
   initialDeltaUrl,
   runDeltaRound,
@@ -103,10 +103,16 @@ export async function runDriveWatchSync(
     // enumeration only: no re-download, no re-embed.
     if (round.err.cause === 410) {
       await watches.restartCursor(row.id);
-      logger.info('drive delta token expired for {scope}; will re-enumerate', {
-        component: COMPONENT,
-        scope: row.scope_label ?? driveId,
-      });
+      logger.info(
+        'the delta token of {actor}\'s watch on the library "{scope}" expired; it is re-enumerated from scratch (unchanged files are not re-embedded)',
+        {
+          component: COMPONENT,
+          ...actorFields(await actorForAccount(row.account_id)),
+          accountId: row.account_id,
+          scope: row.scope_label ?? driveId,
+          driveId,
+        }
+      );
       return {
         items: 0,
         skipped: 0,
@@ -250,8 +256,8 @@ export async function runDriveWatchSync(
     scope: row.scope_label ?? driveId,
     // The opaque drive id stays searchable in the metadata.
     driveId,
-    userName: actor.displayName,
-    subject: actor.subject,
+    ...actorFields(actor),
+    accountId: row.account_id,
     items: result.items,
     skipped: result.skipped,
     unsupported: result.unsupported,
@@ -264,14 +270,14 @@ export async function runDriveWatchSync(
   };
   if (result.items > 0 || result.removed > 0) {
     logger.info(
-      'indexed {items} doc(s) from {scope} for {userName}: {documents} — {skipped} unchanged, {unsupported} unsupported, {oversized} oversized, {removed} removed',
+      '{actor}\'s watch on the library "{scope}" took in {items} document(s): {documents} — {skipped} unchanged, {unsupported} unsupported, {oversized} oversized, {removed} removed',
       fields
     );
   } else {
     // "0 doc(s), 0 unchanged, 0 unsupported, 0 oversized, 0 removed" is a
     // poll that found nothing — true, frequent, and not worth a line
     // someone has to read past.
-    logger.debug('no new docs from {scope} for {userName}', fields);
+    logger.debug('{actor}\'s watch on the library "{scope}" found nothing new', fields);
   }
 
   return result;

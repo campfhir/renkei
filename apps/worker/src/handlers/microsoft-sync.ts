@@ -44,6 +44,7 @@ import {
   BODY_PREVIEW_CHARS,
 } from '../domain-events';
 import { logger } from '../logger';
+import { whoHas } from '../log-actor';
 import type { MicrosoftAccess } from './microsoft-access';
 import { isRecord } from '@renkei/guards';
 
@@ -136,6 +137,7 @@ export async function ensureMicrosoftSubscriptions(
   publicBaseUrl: string
 ): Promise<SubscriptionRow[]> {
   const subscriptions = getDataStore().webhookSubscriptions;
+  const owner = await whoHas(access.accountId);
 
   const notificationUrl = `${publicBaseUrl.replace(/\/+$/, '')}/api/webhooks/microsoft/${encodeURIComponent(access.accountId)}`;
 
@@ -165,10 +167,15 @@ export async function ensureMicrosoftSubscriptions(
       if (row.subscription_id !== null) {
         const removed = await deleteGraphSubscription(access.auth, row.subscription_id);
         if (!removed.ok) {
-          logger.warn('could not delete Graph subscription for {resource}', {
-            component: COMPONENT,
-            resource: row.resource,
-          });
+          logger.warn(
+            '{actor} opted out of {resource}, but its Graph subscription could not be deleted; Graph may keep notifying until it expires',
+            {
+              component: COMPONENT,
+              ...owner,
+              accountId: access.accountId,
+              resource: row.resource,
+            }
+          );
         }
         await subscriptions.setProviderSubscription(row.id, {
           subscriptionId: null,
@@ -192,10 +199,15 @@ export async function ensureMicrosoftSubscriptions(
       });
       if (!created.ok) {
         // Loud but not fatal to the rest of the set: the sweep retries.
-        logger.warn('could not create Graph subscription for {resource}', {
-          component: COMPONENT,
-          resource: row.resource,
-        });
+        logger.warn(
+          "a Graph subscription to {actor}'s {resource} could not be created; the next sweep tries again",
+          {
+            component: COMPONENT,
+            ...owner,
+            accountId: access.accountId,
+            resource: row.resource,
+          }
+        );
         continue;
       }
       await subscriptions.setProviderSubscription(row.id, {
@@ -223,10 +235,15 @@ export async function ensureMicrosoftSubscriptions(
       } else {
         // A renewal that fails is usually a subscription Graph already
         // dropped; clear it so the next pass recreates instead of renewing.
-        logger.warn('renewal failed for {resource}; will recreate next pass', {
-          component: COMPONENT,
-          resource: row.resource,
-        });
+        logger.warn(
+          "{actor}'s Graph subscription to {resource} could not be renewed; it is cleared and the next sweep recreates it",
+          {
+            component: COMPONENT,
+            ...owner,
+            accountId: access.accountId,
+            resource: row.resource,
+          }
+        );
         await subscriptions.setProviderSubscription(row.id, {
           subscriptionId: null,
           expiresAt: null,
@@ -297,10 +314,15 @@ export async function runSubscriptionSync(
     // their resources, so this row is being torn down by the ensure pass;
     // until then it must not be polled — and it must never be mistaken for
     // a mailbox feed.
-    logger.info('skipping delta round for retired resource {resource}', {
-      component: COMPONENT,
-      resource: row.resource,
-    });
+    logger.info(
+      "a delta round over {actor}'s {resource} was skipped: that resource is retired and no longer indexed",
+      {
+        component: COMPONENT,
+        ...(await whoHas(access.accountId)),
+        accountId: access.accountId,
+        resource: row.resource,
+      }
+    );
     return { changed: 0, removed: 0 };
   }
 
@@ -318,10 +340,15 @@ export async function runSubscriptionSync(
     // dead-letters, forever, because the poisoned cursor never changes.
     if (round.err.cause === 410 && row.delta_link !== null) {
       await getDataStore().webhookSubscriptions.restartDelta(row.id);
-      logger.info('delta token expired for {resource}; restarting the series', {
-        component: COMPONENT,
-        resource: row.resource,
-      });
+      logger.info(
+        "the delta token for {actor}'s {resource} expired; the series restarts from scratch",
+        {
+          component: COMPONENT,
+          ...(await whoHas(access.accountId)),
+          accountId: access.accountId,
+          resource: row.resource,
+        }
+      );
       return runSubscriptionSync(access, { ...row, delta_link: null });
     }
     // The Graph status and URL ride along — "delta round failed" alone once

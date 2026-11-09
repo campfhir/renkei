@@ -69,10 +69,13 @@ export async function attachPersistentLogging(): Promise<void> {
 
   const ready = checkDataStore();
   if (!ready.ok) {
-    logger.error('Could not attach Postgres log adapter; logging to console only', {
-      component: 'worker/logging',
-      error: String(ready.err),
-    });
+    logger.error(
+      'the Postgres log adapter was not attached because the data store is not ready; this worker logs to the console only: {error}',
+      {
+        component: 'worker/logging',
+        error: String(ready.err),
+      }
+    );
     return;
   }
   // Encryption is mandatory on the direct-Postgres path: a missing or malformed
@@ -93,10 +96,13 @@ export async function attachPersistentLogging(): Promise<void> {
     decrypt: cipher.decrypt,
   });
   if (!built.ok) {
-    logger.error('Could not attach Postgres log adapter; logging to console only', {
-      component: 'worker/logging',
-      error: String(built.err),
-    });
+    logger.error(
+      'the Postgres log adapter could not be built; this worker logs to the console only: {error}',
+      {
+        component: 'worker/logging',
+        error: String(built.err),
+      }
+    );
     return;
   }
   const adapter = built.val;
@@ -105,10 +111,13 @@ export async function attachPersistentLogging(): Promise<void> {
     // when something is missing (see migrateLogTables).
     await migrateLogTables(adapter);
   } catch (error) {
-    logger.error('Log table migration failed; logging to console only', {
-      component: 'worker/logging',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'the log tables could not be migrated; this worker logs to the console only: {error}',
+      {
+        component: 'worker/logging',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return;
   }
   logger.addAdapter(adapter);
@@ -117,10 +126,13 @@ export async function attachPersistentLogging(): Promise<void> {
 function attachHttpShipping(endpoint: string): void {
   const apiKey = process.env.LOG_SHIP_API_KEY;
   if (!apiKey) {
-    logger.error('LOG_SHIP_ENDPOINT is set but LOG_SHIP_API_KEY is not; logging to console only', {
-      component: 'worker/logging',
-      endpoint,
-    });
+    logger.error(
+      'LOG_SHIP_ENDPOINT is set but LOG_SHIP_API_KEY is not; no logs are shipped and this worker logs to the console only',
+      {
+        component: 'worker/logging',
+        endpoint,
+      }
+    );
     return;
   }
 
@@ -151,11 +163,14 @@ function attachHttpShipping(endpoint: string): void {
   // leave when batchSize fills, which on a quiet worker is never.
   adapter.start();
   logger.addAdapter(adapter);
-  logger.info('shipping logs to {endpoint} (e2e encrypted)', {
-    component: 'worker/logging',
-    endpoint,
-    identity: signingKeys ? 'persistent' : 'per-boot',
-  });
+  logger.info(
+    'shipping logs to {endpoint}, end-to-end encrypted, under a {identity} signing identity',
+    {
+      component: 'worker/logging',
+      endpoint,
+      identity: signingKeys ? 'persistent' : 'per-boot',
+    }
+  );
 }
 
 /** LOG_SHIP_SIGNING_KEYS: the JWK pair `generate:log-ship-keys` prints. */
@@ -168,10 +183,13 @@ function parseSigningKeys(): E2ESigningKeysJwk | undefined {
     if (!parsed.publicJwk || !parsed.privateJwk) throw new Error('missing publicJwk/privateJwk');
     return parsed;
   } catch (error) {
-    logger.error('LOG_SHIP_SIGNING_KEYS is malformed; using a per-boot identity: {error}', {
-      component: 'worker/logging',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'LOG_SHIP_SIGNING_KEYS is malformed; logs ship under a per-boot signing identity instead: {error}',
+      {
+        component: 'worker/logging',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return undefined;
   }
 }

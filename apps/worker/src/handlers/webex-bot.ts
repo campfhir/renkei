@@ -16,24 +16,25 @@ export async function webexBotClient(): Promise<WebexClient | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
-    const configResult = await readConnectorConfigCached(
-      WEBEX_BOT_CONNECTOR,
-      keyResult.val
-    );
+    const configResult = await readConnectorConfigCached(WEBEX_BOT_CONNECTOR, keyResult.val);
     if (!configResult.ok) {
-      logger.warn('could not read the webex-bot connector config', {
-        component: 'webex/bot',
-      });
+      logger.warn(
+        "the WebEx bot connector config could not be read; notes go to each person's own space instead",
+        { component: 'webex/bot' }
+      );
       return null;
     }
     const config = configResult.val;
     if (!config || !config.enabled || !config.secrets.botToken) return null;
     return new WebexClient(config.secrets.botToken, { lane: 'background' });
   } catch (error) {
-    logger.warn('webex-bot lookup errored: {error}', {
-      component: 'webex/bot',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "looking up the WebEx bot errored; notes go to each person's own space instead: {error}",
+      {
+        component: 'webex/bot',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }

@@ -21,19 +21,30 @@ import {
   type BlackoutEntry,
 } from '@renkei/agents';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { isRecord } from '@renkei/guards';
+import type { ActorFields } from '@renkei/db';
 
 const COMPONENT = 'worker/batch-jobs-schedule';
 const MAX_PER_PASS = 25;
 
 /** Same calendar overlay the agent schedule sweep applies — see its own comment. */
-async function calendarDatesOf(calendarId: string): Promise<BlackoutEntry[]> {
+async function calendarDatesOf(
+  calendarId: string,
+  schedule: { owner: ActorFields; scheduleId: string; name: string }
+): Promise<BlackoutEntry[]> {
   const dates = await getDataStore().batchJobSchedules.calendarDates(calendarId);
   if (dates === undefined) {
-    logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
-      component: 'worker/batch-jobs-schedule',
-      calendarId,
-    });
+    logger.warn(
+      '{actor}\'s batch schedule "{name}" names a blackout calendar that no longer exists; it fires without blackouts',
+      {
+        component: 'worker/batch-jobs-schedule',
+        ...schedule.owner,
+        scheduleId: schedule.scheduleId,
+        name: schedule.name,
+        calendarId,
+      }
+    );
     return [];
   }
   return Array.isArray(dates) ? dates.filter(isBlackoutEntry) : [];
@@ -45,22 +56,25 @@ export function createBatchScheduleSweep(producer: QueueProducer) {
     const due = await schedules.listDue(MAX_PER_PASS);
 
     for (const row of due) {
+      const owner = await whoIs(row.subject);
+      const about = { component: COMPONENT, ...owner, scheduleId: row.id, name: row.name };
       const config = parseScheduleConfig(row.scheduleConfig);
       if (!config) {
         await schedules.recordError(row.id, 'The schedule is malformed and was turned off.', {
           disable: true,
         });
-        logger.warn('batch schedule {scheduleId} is malformed and was turned off', {
-          component: COMPONENT,
-          scheduleId: row.id,
-          subject: row.subject,
-        });
+        logger.warn(
+          '{actor}\'s batch schedule "{name}" is malformed and was turned off; no batch was started',
+          about
+        );
         continue;
       }
 
       const observed = row.nextRunAt;
       if (!observed) continue;
-      const calendarDates = config.calendarId ? await calendarDatesOf(config.calendarId) : [];
+      const calendarDates = config.calendarId
+        ? await calendarDatesOf(config.calendarId, { owner, scheduleId: row.id, name: row.name })
+        : [];
       let next: Date;
       try {
         next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
@@ -70,11 +84,10 @@ export function createBatchScheduleSweep(producer: QueueProducer) {
           'No next occurrence could be found (check blackout dates); turned off.',
           { disable: true }
         );
-        logger.warn('batch schedule {scheduleId} has no next occurrence and was turned off', {
-          component: COMPONENT,
-          scheduleId: row.id,
-          subject: row.subject,
-        });
+        logger.warn(
+          '{actor}\'s batch schedule "{name}" has no next occurrence (check its blackout dates) and was turned off; no batch was started',
+          about
+        );
         continue;
       }
 
@@ -91,20 +104,19 @@ export function createBatchScheduleSweep(producer: QueueProducer) {
         });
         await enqueueDiscover(producer, batch.id);
         await schedules.clearError(row.id);
-        logger.debug('schedule fired: batch {batchId} for schedule {scheduleId}', {
-          component: COMPONENT,
-          batchId: batch.id,
-          scheduleId: row.id,
-          subject: row.subject,
-        });
+        logger.debug(
+          '{actor}\'s batch schedule "{name}" fired: batch {batchId} was created and its discovery queued',
+          { ...about, batchId: batch.id }
+        );
       } catch (error) {
-        logger.error('batch schedule {scheduleId} could not start a batch: {error}', {
-          component: COMPONENT,
-          scheduleId: row.id,
-          subject: row.subject,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        logger.error(
+          '{actor}\'s batch schedule "{name}" fired, but no batch was started; the error is recorded on the schedule, which fires again at its next occurrence: {error}',
+          {
+            ...about,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
         await schedules.recordError(
           row.id,
           error instanceof Error ? error.message : 'The batch could not be started.'

@@ -63,7 +63,12 @@ async function main(): Promise<void> {
   registerConnectorHandlers();
   // application/version/commit ride on every line as global attrs (see
   // logger.ts) — this boot line just makes the plain-English announcement.
-  logger.info('started {application} {version}', { component: 'worker/loop' });
+  logger.info(
+    'started {application} {version}, consuming the events queue and running the health sweeps',
+    {
+      component: 'worker/loop',
+    }
+  );
   // Independent of the poll loop below — see schedulePeriodicSweep's doc
   // comment for why. Stopped only once event processing has wound down, so
   // "stopped" in the log means everything actually stopped.
@@ -149,7 +154,9 @@ async function main(): Promise<void> {
 
   await loop.run();
   stopSweeps.forEach((stop) => stop());
-  logger.info('stopped', { component: 'worker/loop' });
+  logger.info('stopped: the events queue is no longer consumed and the sweeps are off', {
+    component: 'worker/loop',
+  });
   // Drain the adapters — the HttpAdapter's queue especially — while the
   // database and event loop are still alive to receive them.
   await logger.flush();
@@ -157,7 +164,10 @@ async function main(): Promise<void> {
 }
 
 function shutdown(signal: string): void {
-  logger.info('{signal} received, finishing current event', { component: 'worker/loop', signal });
+  logger.info('received {signal}; finishing the current event, then stopping', {
+    component: 'worker/loop',
+    signal,
+  });
   loop.stop();
 }
 
