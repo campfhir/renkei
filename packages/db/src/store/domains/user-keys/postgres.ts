@@ -74,7 +74,16 @@ export function postgresUserKeys(db: () => Kysely<DB>): UserKeyStore {
       return rows.map((row) => ({ id: row.id, publicKey: row.public_key }));
     },
     async registerInstance(id, publicKey) {
-      await db().insertInto('delegate_instances').values({ id, public_key: publicKey }).execute();
+      // A persistent instance (one whose key is derived from a configured
+      // secret) registers the same row on every boot and from every
+      // replica: it is live again, with its delegations still sealed to it.
+      await db()
+        .insertInto('delegate_instances')
+        .values({ id, public_key: publicKey })
+        .onConflict((oc) =>
+          oc.column('id').doUpdateSet({ public_key: publicKey, heartbeat_at: sql`NOW()` })
+        )
+        .execute();
     },
     async heartbeatInstance(id, at) {
       await db()
