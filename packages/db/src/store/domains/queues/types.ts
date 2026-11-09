@@ -137,6 +137,15 @@ export interface QueueStore {
   purgeDeadLetters(table: QueueTable, ids: readonly string[]): Promise<number>;
   /** Whether a pending or processing agent_jobs row carries this run (`payload->>'runId'`). */
   hasLiveAgentRunJob(runId: string): Promise<boolean>;
+  /**
+   * One agent's live agent_jobs rows (pending or processing, source
+   * `agents:{agentId}`): its runs and their action batches, oldest first
+   * (ties by id), at most `limit`. What is holding an agent's queue, for the
+   * runs page — content-free (ids, states, counts, the last error).
+   */
+  listAgentJobs(agentId: string, limit: number): Promise<AgentJobRecord[]>;
+  /** The same agent's dead letters, most recently dead first (ties by id, descending). */
+  listAgentDeadLetters(agentId: string, limit: number): Promise<AgentDeadLetterRecord[]>;
 }
 
 /** Every live queue table's dead-letter twin (`<table>_dead_letters`). */
@@ -213,6 +222,34 @@ export interface QueueDeadLetterRecord {
   orderingKey: string | null;
   attempts: number;
   lastError: string | null;
+  deadAt: Date;
+}
+
+/** One live job of an agent's (listAgentJobs). */
+export interface AgentJobRecord {
+  id: string;
+  type: string;
+  /** The run it carries, for a run job (`payload.runId`). */
+  runId: string | null;
+  /** The action batch it carries, for an actions job (`payload.batchId`). */
+  batchId: string | null;
+  status: string;
+  attempts: number;
+  lockedAt: Date | null;
+  runAfter: Date;
+  lastError: string | null;
+  createdAt: Date;
+}
+
+/** One dead letter of an agent's (listAgentDeadLetters). */
+export interface AgentDeadLetterRecord {
+  id: string;
+  type: string;
+  runId: string | null;
+  batchId: string | null;
+  attempts: number;
+  lastError: string | null;
+  createdAt: Date;
   deadAt: Date;
 }
 

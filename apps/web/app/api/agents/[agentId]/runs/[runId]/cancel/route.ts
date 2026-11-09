@@ -6,9 +6,9 @@
  * stuck agent includes being able to stop it. The run still executes on
  * the OWNER's grants; cancel_requested_by records who pressed the button.
  *
- * This route never touches agent_runs.status itself — see
- * requestRunCancellation and, on the other side, engine.ts's per-step
- * checkpoint. It only asks; the engine is what makes it real.
+ * A queued run is canceled in the request (it has not started, so nothing
+ * needs winding down); any other only asks — see requestRunCancellation
+ * and, on the other side, engine.ts's per-step checkpoint.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -50,7 +50,10 @@ export async function POST(
         },
         { status: 409 }
       );
+    case 'canceled':
+      // It had not started: canceled now, nothing left to wait for.
+      return NextResponse.json({ ok: true, canceled: true });
     case 'canceling':
-      return NextResponse.json({ ok: true });
+      return NextResponse.json({ ok: true, canceled: false });
   }
 }

@@ -108,19 +108,23 @@ export async function POST(
       ? { ...run.initialState }
       : undefined;
 
-  const created = await createAgentRun(agentJobsQueue().producer, {
-    agentId,
-    ownerSubject: agent.ownerSubject,
-    definition: agentDefinitionOf(agent),
-    llmModelId: agent.llmModelId,
-    // Not the original trigger row: this run was started by a person
-    // pressing a button, and the history should say so. The trigger's DATA
-    // rides along in initialState, which is what the run actually reads.
-    triggerId: null,
-    triggerKind: 'manual',
-    triggeredBySubject: session.subject,
-    ...(initialState ? { initialState } : {}),
-  });
+  const created = await createAgentRun(
+    agentJobsQueue().producer,
+    {
+      agentId,
+      ownerSubject: agent.ownerSubject,
+      definition: agentDefinitionOf(agent),
+      llmModelId: agent.llmModelId,
+      // Not the original trigger row: this run was started by a person
+      // pressing a button, and the history should say so. The trigger's DATA
+      // rides along in initialState, which is what the run actually reads.
+      triggerId: null,
+      triggerKind: 'manual',
+      triggeredBySubject: session.subject,
+      ...(initialState ? { initialState } : {}),
+    },
+    { log: (message, meta) => logger.debug(message, meta) }
+  );
   if (!created.ok) {
     const message =
       created.err.type === 'DAILY_RUN_CAP'

@@ -80,19 +80,23 @@ export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer:
         ...(run.vars.summary ? [`Its summary: ${run.vars.summary}`] : []),
         ...(run.vars.result ? [`Its result:\n${run.vars.result}`] : []),
       ].join('\n');
-      const result = await createAgentRun(agentProducer, {
-        agentId: trigger.agentId,
-        ownerSubject: trigger.ownerSubject,
-        definition: agentDefinitionOf(trigger),
-        llmModelId: trigger.llmModelId,
-        triggerId: trigger.triggerId,
-        triggerKind: 'agent',
-        parentRunId: run.runId,
-        lineage: [...parentLineage, run.agentId],
-        initialState: {
-          parentSummary: `The agent “${finishedAgent?.name ?? run.agentId}” finished successfully.${produced ? `\n${produced}` : ''}`,
+      const result = await createAgentRun(
+        agentProducer,
+        {
+          agentId: trigger.agentId,
+          ownerSubject: trigger.ownerSubject,
+          definition: agentDefinitionOf(trigger),
+          llmModelId: trigger.llmModelId,
+          triggerId: trigger.triggerId,
+          triggerKind: 'agent',
+          parentRunId: run.runId,
+          lineage: [...parentLineage, run.agentId],
+          initialState: {
+            parentSummary: `The agent “${finishedAgent?.name ?? run.agentId}” finished successfully.${produced ? `\n${produced}` : ''}`,
+          },
         },
-      });
+        { log: (message, meta) => logger.debug(message, meta) }
+      );
       if (result.ok) {
         await store.agents.markTriggerFired(trigger.triggerId);
       } else {

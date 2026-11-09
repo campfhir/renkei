@@ -91,16 +91,20 @@ export function createDomainDispatchHandler(): EventHandler {
     const knowledge = KNOWLEDGE_SUBSCRIBERS[`${payload.provider}/${event.type}`];
     if (knowledge) await knowledge(payload);
 
-    const { started, filtered } = await fanOutAgentEvents(queue.producer, {
-      source: payload.provider,
-      type: event.type,
-      ownerSubject: payload.ownerSubject,
-      payload: payload.data,
-      // Firing-lock fallback for payloads without a stable id of their
-      // own — a replay of this row (the retry window in the header) then
-      // still counts as the same firing.
-      eventId: event.id,
-    });
+    const { started, filtered } = await fanOutAgentEvents(
+      queue.producer,
+      {
+        source: payload.provider,
+        type: event.type,
+        ownerSubject: payload.ownerSubject,
+        payload: payload.data,
+        // Firing-lock fallback for payloads without a stable id of their
+        // own — a replay of this row (the retry window in the header) then
+        // still counts as the same firing.
+        eventId: event.id,
+      },
+      { log: (message, meta) => logger.debug(message, meta) }
+    );
     if (started.length > 0) {
       logger.debug('{count} agent run(s) started for {source}/{type}', {
         component: 'worker/domain-dispatch',

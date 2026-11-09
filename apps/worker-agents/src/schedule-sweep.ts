@@ -94,16 +94,20 @@ export function createScheduleSweep(producer: QueueProducer) {
       // The optimistic lock: one replica advances the row, the rest lose.
       if (!(await agents.advanceScheduleTrigger(row.triggerId, observed, next))) continue;
 
-      const result = await createAgentRun(producer, {
-        agentId: row.agentId,
-        ownerSubject: row.ownerSubject,
-        definition: agentDefinitionOf(row),
-        llmModelId: row.llmModelId,
-        triggerId: row.triggerId,
-        triggerKind: 'schedule',
-        // Just time/date, per spec: a schedule carries no other context.
-        initialState: { scheduledFor, timezone: config.timezone },
-      });
+      const result = await createAgentRun(
+        producer,
+        {
+          agentId: row.agentId,
+          ownerSubject: row.ownerSubject,
+          definition: agentDefinitionOf(row),
+          llmModelId: row.llmModelId,
+          triggerId: row.triggerId,
+          triggerKind: 'schedule',
+          // Just time/date, per spec: a schedule carries no other context.
+          initialState: { scheduledFor, timezone: config.timezone },
+        },
+        { log: (message, meta) => logger.debug(message, meta) }
+      );
       if (!result.ok) {
         const error = result.err.message ?? `The run could not be started (${result.err.type}).`;
         await agents.setTriggerError(row.triggerId, error);

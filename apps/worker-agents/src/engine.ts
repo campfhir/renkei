@@ -634,7 +634,19 @@ export function createAgentRunHandler(deps: EngineDeps) {
     try {
       await executeRun(run);
     } catch (error) {
-      if (error instanceof TransientFailure) throw error; // → queue backoff
+      if (error instanceof TransientFailure) {
+        // Said with the owner's subject, so it shows in their own Activity:
+        // the queue's own failure line names only the job, and "queued" on
+        // the run says nothing of why it has not moved.
+        logger.warn('run {runId} could not go on and will be tried again: {error}', {
+          component: 'worker-agents/engine',
+          runId,
+          agentId: run.agentId,
+          subject: run.ownerSubject,
+          error: error.message,
+        });
+        throw error; // → queue backoff
+      }
       if (error instanceof ExecutorStopping) {
         logger.info('run {runId} handed back: this executor is stopping', {
           component: 'worker-agents/engine',
@@ -642,6 +654,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
         });
         throw new MessageReleased('the agents worker is stopping');
       }
+      logger.error('run {runId} failed in its worker: {error}', {
+        component: 'worker-agents/engine',
+        runId,
+        agentId: run.agentId,
+        subject: run.ownerSubject,
+        error: error instanceof Error ? error.message : String(error),
+      });
       throw error;
     }
   }

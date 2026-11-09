@@ -354,6 +354,69 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
       `.execute(db());
       return Number(result.numAffectedRows ?? 0);
     },
+    async listAgentJobs(agentId, limit) {
+      const rows = await db()
+        .selectFrom('agent_jobs')
+        .select([
+          'id',
+          'type',
+          sql<string | null>`payload->>'runId'`.as('run_id'),
+          sql<string | null>`payload->>'batchId'`.as('batch_id'),
+          'status',
+          'attempts',
+          'locked_at',
+          'run_after',
+          'last_error',
+          'created_at',
+        ])
+        .where('source', '=', `agents:${agentId}`)
+        .where('status', 'in', ['pending', 'processing'])
+        .orderBy('created_at')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        runId: row.run_id,
+        batchId: row.batch_id,
+        status: row.status,
+        attempts: row.attempts,
+        lockedAt: row.locked_at === null ? null : new Date(row.locked_at),
+        runAfter: new Date(row.run_after),
+        lastError: row.last_error,
+        createdAt: new Date(row.created_at),
+      }));
+    },
+    async listAgentDeadLetters(agentId, limit) {
+      const rows = await db()
+        .selectFrom('agent_jobs_dead_letters')
+        .select([
+          'id',
+          'type',
+          sql<string | null>`payload->>'runId'`.as('run_id'),
+          sql<string | null>`payload->>'batchId'`.as('batch_id'),
+          'attempts',
+          'last_error',
+          'created_at',
+          'dead_at',
+        ])
+        .where('source', '=', `agents:${agentId}`)
+        .orderBy('dead_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        type: row.type,
+        runId: row.run_id,
+        batchId: row.batch_id,
+        attempts: row.attempts,
+        lastError: row.last_error,
+        createdAt: new Date(row.created_at),
+        deadAt: new Date(row.dead_at),
+      }));
+    },
     async hasLiveAgentRunJob(runId) {
       const live = await db()
         .selectFrom('agent_jobs')

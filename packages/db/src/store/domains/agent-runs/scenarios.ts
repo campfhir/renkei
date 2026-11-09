@@ -605,6 +605,46 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'agentRuns.listLiveForOrg',
+    name: 'live runs of every agent, oldest first, with agent name and owner email; paged and filtered',
+    fixture: {
+      identities: [{ subject: 'ann', email: 'ann@example.test', display_name: 'Ann' }],
+      agents: [...agents, { id: id(3), owner_subject: 'cy', name: 'Cy agent' }],
+      agent_runs: [
+        run(71, 1, 'ann', 9, { status: 'queued', trigger_kind: 'schedule' }),
+        run(72, 2, 'bob', 4, { status: 'running', started_at: at(5) }),
+        run(73, 3, 'cy', 4, {
+          status: 'queued',
+          cancel_requested_at: at(6),
+          cancel_requested_by: 'cy',
+        }),
+        run(74, 1, 'ann', 2, { status: 'waiting', waiting_until: at(50), resumed_at: at(3) }),
+        run(75, 1, 'ann', 1, { status: 'succeeded' }),
+        run(76, 2, 'bob', 3, { status: 'canceled' }),
+      ],
+    },
+    run: async (store) => [
+      await store.agentRuns.listLiveForOrg({ limit: 10 }),
+      (await store.agentRuns.listLiveForOrg({ limit: 2, offset: 1 })).map((r) => r.id),
+      (await store.agentRuns.listLiveForOrg({ statuses: ['queued'], limit: 10 })).map((r) => r.id),
+      await store.agentRuns.listLiveForOrg({ statuses: ['succeeded'], limit: 10 }),
+    ],
+  },
+  {
+    method: 'agentRuns.countLiveForOrg',
+    name: 'live runs of the whole organization by status; finished runs left out',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(81, 1, 'ann', 1, { status: 'queued' }),
+        run(82, 2, 'bob', 2, { status: 'queued' }),
+        run(83, 2, 'bob', 3, { status: 'running' }),
+        run(84, 1, 'ann', 4, { status: 'failed' }),
+      ],
+    },
+    run: async (store) => [await store.agentRuns.countLiveForOrg()],
+  },
+  {
     method: 'agentRuns.list',
     name: 'search: error, trigger kind, input (admin: failed only), escaped wildcards, id',
     fixture,
@@ -846,6 +886,42 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
         ownerSubject: 'ann',
       }),
     ],
+  },
+  {
+    method: 'agentRuns.cancelQueued',
+    name: 'only a queued run, once; the cancel request recorded, an earlier one kept',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(11, 1, 'ann', 1, { status: 'queued' }),
+        run(12, 1, 'ann', 2, {
+          status: 'queued',
+          cancel_requested_at: at(3),
+          cancel_requested_by: 'bob',
+        }),
+        run(13, 1, 'ann', 3, { status: 'running' }),
+        run(14, 1, 'ann', 4, { status: 'waiting' }),
+      ],
+    },
+    run: async (store) => {
+      const outcomes = [
+        await store.agentRuns.cancelQueued(id(11), 'ann'),
+        await store.agentRuns.cancelQueued(id(11), 'ann'),
+        await store.agentRuns.cancelQueued(id(12), 'ann'),
+        await store.agentRuns.cancelQueued(id(13), 'ann'),
+        await store.agentRuns.cancelQueued(id(14), 'ann'),
+      ];
+      const state = async (n: number) => {
+        const found = await store.agentRuns.findCancelState(id(n));
+        return found && [found.status, found.cancelRequestedAt !== null];
+      };
+      return {
+        outcomes,
+        states: await Promise.all([11, 12, 13, 14].map(state)),
+        // The first request is kept, not overwritten by the cancel that carried it out.
+        earlier: (await store.agentRuns.findCancelState(id(12)))?.cancelRequestedAt,
+      };
+    },
   },
   {
     method: 'agentRuns.forceCancel',

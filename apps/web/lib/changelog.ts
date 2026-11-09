@@ -46,6 +46,23 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-09',
+    entries: [
+      {
+        kind: 'fixed',
+        title: "Canceling a queued run is instant, and you can see what is holding an agent's runs",
+        detail:
+          "Canceling a run that has not started now cancels it straight away, instead of waiting behind every job ahead of it in the agent's queue. An agent's runs page has a Queue panel that says which run is at the head of its queue and what state it is in (being worked on, retrying after an error, held by a worker that stopped, or not being picked up at all), with how many runs wait behind it, the last error, and anything the queue gave up on this week. Your Activity now shows when a run fails and will be retried, when a run is canceled, and when one is halted.",
+      },
+      {
+        kind: 'added',
+        title: "Operators can see every agent's queue at once, and clear it",
+        detail:
+          "Agent oversight has an Agent queue page (also linked from the Agents page for operators): every run in the organization that has not finished, oldest first, with its agent, its owner, its status and how long it has been in the queue. Halt one run from its row, or pick several and halt them together to clear a backlog. With the organization's log level set to debug, Activity also notes each run as it is queued.",
+      },
+    ],
+  },
+  {
     date: '2026-11-08',
     entries: [
       {

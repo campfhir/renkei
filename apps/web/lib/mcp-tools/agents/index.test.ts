@@ -1134,7 +1134,9 @@ describe('agent_run_now', () => {
         triggeredBySubject: 'auth0|alice',
         definition: { instructions: AGENT.instructions, tools: AGENT.tools },
         initialState: expect.objectContaining({ timezone: 'America/Chicago' }),
-      })
+      }),
+      // Each started run is noted in the logs (debug), as the owner's.
+      { log: expect.any(Function) }
     );
   });
 
@@ -1292,7 +1294,8 @@ describe('agent_run_now', () => {
           triggerKind: 'manual',
           triggeredBySubject: 'auth0|alice',
           initialState: { ticket: 'INC-4411', note: 'Customer confirmed the fix' },
-        })
+        }),
+        { log: expect.any(Function) }
       );
     });
 

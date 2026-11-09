@@ -347,6 +347,43 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       const keys = new Set(ids.map((id) => id));
       return tables.delete(DEAD_LETTERS[table], (r) => keys.has(r.id)).length;
     },
+    async listAgentJobs(agentId, limit) {
+      const source = `agents:${agentId}`;
+      const rows = tables.select(
+        'agent_jobs',
+        (r) => r.source === source && (r.status === 'pending' || r.status === 'processing')
+      );
+      return orderBy(rows, [(r) => r.created_at], [(r) => r.id])
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          type: row.type,
+          runId: textAt(row.payload, ['runId']),
+          batchId: textAt(row.payload, ['batchId']),
+          status: row.status,
+          attempts: row.attempts,
+          lockedAt: row.locked_at,
+          runAfter: row.run_after,
+          lastError: row.last_error,
+          createdAt: row.created_at,
+        }));
+    },
+    async listAgentDeadLetters(agentId, limit) {
+      const source = `agents:${agentId}`;
+      const rows = tables.select('agent_jobs_dead_letters', (r) => r.source === source);
+      return orderBy(rows, [(r) => r.dead_at, 'desc'], [(r) => r.id, 'desc'])
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          type: row.type,
+          runId: textAt(row.payload, ['runId']),
+          batchId: textAt(row.payload, ['batchId']),
+          attempts: row.attempts,
+          lastError: row.last_error,
+          createdAt: row.created_at,
+          deadAt: row.dead_at,
+        }));
+    },
     async hasLiveAgentRunJob(runId) {
       return (
         tables.first(
