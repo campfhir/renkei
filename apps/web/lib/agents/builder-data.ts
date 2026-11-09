@@ -17,6 +17,7 @@ import { listAgents } from '@/lib/agents/store';
 import { listChatModels } from '@/lib/chat/models';
 import { loadCalendarOptions } from '@/lib/schedule-calendars';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export interface BuilderData {
   tools: ToolDescriptor[];
@@ -45,21 +46,27 @@ export async function loadBuilderData(
     listAvailableTools(subject),
     listAgents(subject),
     // An agent runs on a chat model; an image generation model cannot answer.
-    listChatModels().catch((error: unknown) => {
-      logger.error('agent builder could not list chat models: {error}', {
-        component: 'web/agents',
-        subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    listChatModels().catch(async (error: unknown) => {
+      logger.error(
+        '{actor} opened the agent builder, but the chat models could not be listed; the model picker is empty: {error}',
+        {
+          component: 'web/agents',
+          ...(await whoIs(subject)),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return [];
     }),
     getOrgSettings(),
-    loadCalendarOptions().catch((error: unknown) => {
-      logger.error('agent builder could not list holiday calendars: {error}', {
-        component: 'web/agents',
-        subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    loadCalendarOptions().catch(async (error: unknown) => {
+      logger.error(
+        '{actor} opened the agent builder, but the holiday calendars could not be listed; the schedule editor offers none: {error}',
+        {
+          component: 'web/agents',
+          ...(await whoIs(subject)),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return [];
     }),
   ]);

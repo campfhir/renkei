@@ -28,6 +28,7 @@ import { getProjectRow, type ProjectRow } from '@/lib/chat/projects';
 import { getChatRow } from '@/lib/chat/store';
 import { openNoteTurn, type OpenWakeTurn } from '@/lib/chat/tasks/wake';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { startProjectClone, type CodeOutcome } from './projects';
 import { codeProjectTarget } from './scope';
@@ -226,14 +227,18 @@ export function startCheckoutPreparation(input: {
       ...(input.origin ? { origin: input.origin } : {}),
     });
     if (outcome.ok) reg.readyUntil.set(chat.id, Date.now() + READY_MEMORY_MS);
-    logger.info('code chat checkout prepared ahead of its turn: {outcome}', {
-      component: 'code/checkout',
-      chatId: chat.id,
-      projectId: project.id,
-      subject: input.subject,
-      outcome: outcome.ok ? `ready on ${outcome.worktree.branch}` : outcome.message,
-      seconds: outcome.seconds,
-    });
+    logger.info(
+      "{actor}'s code chat had its checkout of {repo} prepared ahead of its turn, in {seconds}s: {outcome}",
+      {
+        component: 'code/checkout',
+        ...(await whoIs(input.subject)),
+        chatId: chat.id,
+        projectId: project.id,
+        repo: project.repo.fullName,
+        outcome: outcome.ok ? `ready on ${outcome.worktree.branch}` : outcome.message,
+        seconds: outcome.seconds,
+      }
+    );
     const wake = reg.wakes.get(chat.id);
     if (wake) {
       reg.wakes.delete(chat.id);
@@ -244,12 +249,16 @@ export function startCheckoutPreparation(input: {
     }
     return outcome;
   })()
-    .catch((error: unknown): null => {
-      logger.warn('code chat checkout preparation failed: {error}', {
-        component: 'code/checkout',
-        chatId: input.chatId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    .catch(async (error: unknown): Promise<null> => {
+      logger.warn(
+        "{actor}'s code chat checkout could not be prepared ahead of its turn; the turn will prepare it itself: {error}",
+        {
+          component: 'code/checkout',
+          ...(await whoIs(input.subject)),
+          chatId: input.chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return null;
     })
     .finally(() => {
@@ -296,17 +305,26 @@ async function deliverWake(
   for (;;) {
     const opened = await options.open({ session, chatId, text });
     if (opened.ok) {
-      logger.info('chat woke on its checkout', { component: 'code/checkout', chatId });
+      logger.info("{actor}'s code chat woke on its checkout; a note turn was opened", {
+        component: 'code/checkout',
+        ...(await whoIs(session.subject)),
+        chatId,
+      });
       return;
     }
     // Mid-turn (the turn that registered the wake is still answering):
     // try again shortly, for a while.
     if (!opened.running || Date.now() >= deadline) {
-      logger.warn('chat could not be woken on its checkout; wake dropped', {
-        component: 'code/checkout',
-        chatId,
-        running: opened.running,
-      });
+      logger.warn(
+        "{actor}'s code chat could not be woken on its checkout ({why}); the wake was dropped and the chat will not be told",
+        {
+          component: 'code/checkout',
+          ...(await whoIs(session.subject)),
+          chatId,
+          running: opened.running,
+          why: opened.running ? 'still mid-turn after every retry' : 'the turn could not be opened',
+        }
+      );
       return;
     }
     await sleep(options.retryMs);

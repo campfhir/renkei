@@ -24,6 +24,7 @@
 import { createHash } from 'node:crypto';
 import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { currentRunId } from '@/lib/mcp-tools/run-context';
 
@@ -94,12 +95,20 @@ export async function recordPhiAccess(input: PhiAccessInput): Promise<boolean> {
     });
     return true;
   } catch (error) {
-    logger.warn('PHI access not recorded: {error}', {
-      component: 'phi-access',
-      subject: input.subject,
-      tool: input.toolName,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s {action} of {connector} data through {tool}{asAgent} was not recorded as PHI access; the access log is missing it: {error}",
+      {
+        component: 'phi-access',
+        ...(await whoIs(input.subject)),
+        ...(input.agentId ? await whichAgent(input.agentId) : {}),
+        asAgent: input.agentId ? ' by an agent' : '',
+        action: input.action,
+        connector: input.connector,
+        tool: input.toolName,
+        ...(runId ? { runId } : {}),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return false;
   }
 }

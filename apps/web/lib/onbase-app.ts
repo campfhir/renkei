@@ -58,18 +58,22 @@ export async function getOnBaseApp(
 ): Promise<OnBaseApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/onbase',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the {connector} registration cannot be read; no {connector} flow can start',
+      { component: 'connectors/onbase', connector }
+    );
     return null;
   }
 
   const configResult = await readConnectorConfigCached(connector, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read {connector} connector config', {
-      component: 'connectors/onbase',
-      connector,
-    });
+    logger.error(
+      'the {connector} connector config could not be read; no {connector} flow can start',
+      {
+        component: 'connectors/onbase',
+        connector,
+      }
+    );
     return null;
   }
   const config = configResult.val;
@@ -89,10 +93,10 @@ export async function getOnBaseApp(
     typeof idpScopeName !== 'string' ||
     !idpScopeName
   ) {
-    logger.warn('{connector} connector config is incomplete', {
-      component: 'connectors/onbase',
-      connector,
-    });
+    logger.warn(
+      'the {connector} connector is switched on but its config lacks its API base URL, IdP issuer, client id or scope name; no {connector} flow can start',
+      { component: 'connectors/onbase', connector }
+    );
     return null;
   }
 

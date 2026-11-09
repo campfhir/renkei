@@ -28,23 +28,19 @@ export interface WebexUserApp {
 }
 
 /** The tenant's WebEx integration, or null when not (fully) configured. */
-export async function getWebexUserApp(
-  origin: string
-): Promise<WebexUserApp | null> {
+export async function getWebexUserApp(origin: string): Promise<WebexUserApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/webex-user',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the WebEx registration cannot be read; no WebEx flow can start',
+      { component: 'connectors/webex-user' }
+    );
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(
-    WEBEX_USER_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(WEBEX_USER_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read webex-user connector config', {
+    logger.error('the WebEx connector config could not be read; no WebEx flow can start', {
       component: 'connectors/webex-user',
     });
     return null;
@@ -55,9 +51,10 @@ export async function getWebexUserApp(
   const clientId = config.settings.clientId;
   const clientSecret = config.secrets.clientSecret;
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
-    logger.warn('webex-user connector config missing clientId or clientSecret', {
-      component: 'connectors/webex-user',
-    });
+    logger.warn(
+      'the WebEx connector is switched on but its config lacks a client id or client secret; no WebEx flow can start',
+      { component: 'connectors/webex-user' }
+    );
     return null;
   }
 

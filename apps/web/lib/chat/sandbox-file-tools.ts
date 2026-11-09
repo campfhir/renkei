@@ -38,6 +38,7 @@ import {
 import type { ContentCipher } from './content-crypto';
 import { formatByteSize } from '@/lib/byte-size';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { checkFilename, KEPT_LINE } from './file-tools';
 import { errorResult, textResult, type LocalTool, type LocalToolContext } from './local-tools';
 import { DIGEST_INPUT_PROPERTIES, digestFieldsOf } from './artifact-digest-input';
@@ -157,13 +158,17 @@ export function sandboxFileTools(): LocalTool[] {
           try {
             rows = await filesOf(context);
           } catch (error) {
-            logger.error('chat files could not be listed for the sandbox: {error}', {
-              component: 'chat/sandbox-files',
-              subject: context.subject,
-              chatId: context.chatId,
-              error: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-            });
+            logger.error(
+              '{actor}\'s chat could not list its files to stage "{wanted}" in the sandbox; the model was told the files could not be read: {error}',
+              {
+                component: 'chat/sandbox-files',
+                ...(await whoIs(context.subject)),
+                chatId: context.chatId,
+                wanted,
+                error: error instanceof Error ? error.message : String(error),
+                stack: error instanceof Error ? error.stack : undefined,
+              }
+            );
             return errorResult('This chat’s files could not be read just now.');
           }
           const picked = pickByName(rows, wanted);

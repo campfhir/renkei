@@ -12,6 +12,7 @@
 import { describeSchedule, type TriggerDraft } from '@renkei/agents';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 import { saveDescription } from '@/lib/agents/store';
 import { parseReviewNotes, type ReviewNote } from '@/lib/agents/notes';
 import {
@@ -118,13 +119,20 @@ export async function generateAgentDescription(agent: {
   /** Whose save asked for it, so a failure shows in their Activity. */
   subject?: string;
 }): Promise<{ description: string | null; reviewNotes: ReviewNote[] }> {
+  // The agent with its owner, and the person whose save asked, resolved
+  // once: the retry callback below is synchronous.
+  const saver = agent.subject ? await whoIs(agent.subject) : null;
+  const about = {
+    component: 'agents/describe',
+    ...(await whichAgent(agent.id)),
+    ...(saver ? { subject: saver.subject, user: saver.user, email: saver.email } : {}),
+    afterSave: saver ? ` after ${saver.actor} saved it` : '',
+  };
   const failed = async (reason: string) => {
-    logger.warn('agent description generation failed: {reason}', {
-      component: 'agents/describe',
-      ...(agent.subject ? { subject: agent.subject } : {}),
-      agentId: agent.id,
-      reason,
-    });
+    logger.warn(
+      'agent "{agent}" of {owner} got no description{afterSave} ({reason}); the agent shows none',
+      { ...about, reason }
+    );
     await saveDescription(agent.id, { status: 'failed' });
     return { description: null, reviewNotes: [] };
   };
@@ -165,10 +173,9 @@ export async function generateAgentDescription(agent: {
         backoffOffset: RETRY_BACKOFF_OFFSET_MS,
         onRetry: (attempt, error, nextDelayMs) => {
           logger.debug(
-            'agent description generation retry {attempt}: {error} (waiting {delay}ms before retry)',
+            'the description of agent "{agent}" of {owner} is being asked for again (attempt {attempt}) after {error}; waiting {delay}ms',
             {
-              component: 'agents/describe',
-              agentId: agent.id,
+              ...about,
               attempt,
               error: error.message,
               delay: nextDelayMs,

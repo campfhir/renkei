@@ -23,6 +23,7 @@ import { ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import {
   finishChangeRequest,
@@ -55,21 +56,45 @@ function failure(label: string, detail: string): ApplyResults {
   return { operations: [{ label, outcome: 'failed', detail }] };
 }
 
-function finishedWith(change: ChangeRequest, status: ChangeRequestStatus, results: ApplyResults) {
+/** The requester as {actor}, with the operator who approved it beside them. */
+async function aboutChange(change: ChangeRequest) {
+  const approver = change.approvedBy ? await whoIs(change.approvedBy) : null;
+  return {
+    component: COMPONENT,
+    ...(await whoIs(change.subject)),
+    ...(approver
+      ? {
+          approver: approver.actor,
+          approverSubject: approver.subject,
+          approverEmail: approver.email,
+        }
+      : {}),
+    approvedBy: approver ? `, approved by ${approver.actor},` : '',
+    changeId: change.id,
+    kind: change.kind,
+    title: change.title,
+  };
+}
+
+async function finishedWith(
+  change: ChangeRequest,
+  status: ChangeRequestStatus,
+  results: ApplyResults
+): Promise<void> {
   const outcome = status === 'applied' || status === 'partial' ? status : 'failed';
   if (outcome !== 'applied') {
     const failed = results.operations.filter((result) => result.outcome === 'failed');
-    logger.warn('salesforce admin change {status}: {detail}', {
-      component: COMPONENT,
-      subject: change.subject,
-      approver: change.approvedBy,
-      changeId: change.id,
-      kind: change.kind,
-      status,
-      deployId: results.deployId ?? null,
-      step: failed[0]?.label ?? null,
-      detail: failed.map((result) => `${result.label}: ${result.detail ?? ''}`).join('; '),
-    });
+    logger.warn(
+      'the Salesforce admin change "{title}" requested by {actor}{approvedBy} ended {status}{atStep}: {detail}',
+      {
+        ...(await aboutChange(change)),
+        status,
+        deployId: results.deployId ?? null,
+        step: failed[0]?.label ?? null,
+        atStep: failed[0]?.label ? ` at "${failed[0].label}"` : '',
+        detail: failed.map((result) => `${result.label}: ${result.detail ?? ''}`).join('; '),
+      }
+    );
   }
   recordAuditEvent({
     actorSubject: change.approvedBy ?? change.subject,
@@ -125,7 +150,7 @@ export async function runApplyJob(changeId: string): Promise<void> {
       results,
       appliedBy: approver ?? change.subject,
     });
-    finishedWith(change, 'failed', results);
+    await finishedWith(change, 'failed', results);
   };
 
   // No deploy id: whether Salesforce started anything is unknown, so it is
@@ -174,12 +199,12 @@ export async function runApplyJob(changeId: string): Promise<void> {
         onStep
       );
       if (outcome.status === 'applying') return; // Still deploying: the sweep follows it up.
-      finishedWith(change, outcome.status, outcome.results);
+      await finishedWith(change, outcome.status, outcome.results);
       return;
     }
     const finished = await getChangeRequestById(change.id);
     if (finished && finished.status !== 'applying' && finished.status !== 'queued') {
-      finishedWith(finished, finished.status, finished.results ?? { operations: [] });
+      await finishedWith(finished, finished.status, finished.results ?? { operations: [] });
     }
   } catch (error) {
     if (error instanceof JobSuspended) {
@@ -187,13 +212,14 @@ export async function runApplyJob(changeId: string): Promise<void> {
       // process's sweep takes it over once its heartbeat has gone quiet.
       return;
     }
-    logger.error('salesforce admin change job threw: {message}', {
-      component: COMPONENT,
-      subject: change.subject,
-      changeId: change.id,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'the Salesforce admin change "{title}" requested by {actor}{approvedBy} crashed while being applied: {message}',
+      {
+        ...(await aboutChange(change)),
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     const fresh = await getChangeRequestById(change.id);
     // A deploy that already started is followed up by the sweep; one that
     // never did is a failure to say plainly.
@@ -236,18 +262,25 @@ export function startApplyJobRecovery(intervalMs = APPLY_SWEEP_MS): () => void {
         inFlight.add(job.id);
         void runApplyJob(job.id)
           .catch((error: unknown) => {
-            logger.error('salesforce admin change job failed: {message}', {
-              component: COMPONENT,
-              message: error instanceof Error ? error.message : String(error),
-            });
+            logger.error(
+              'a queued Salesforce admin change job threw outside its own handler; the change is left for the next sweep: {message}',
+              {
+                component: COMPONENT,
+                changeId: job.id,
+                message: error instanceof Error ? error.message : String(error),
+              }
+            );
           })
           .finally(() => inFlight.delete(job.id));
       }
     } catch (error) {
-      logger.error('salesforce admin change sweep failed: {message}', {
-        component: COMPONENT,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the Salesforce admin change sweep failed; queued changes wait for the next pass: {message}',
+        {
+          component: COMPONENT,
+          message: error instanceof Error ? error.message : String(error),
+        }
+      );
     } finally {
       listing = false;
     }

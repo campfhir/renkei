@@ -39,6 +39,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm, type LlmToolDef, type ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { artifactCipher } from './artifact-access';
 import {
   getAttachments,
@@ -147,16 +148,22 @@ async function resolveDigestLlm(): Promise<ResolvedLlm | null> {
   try {
     const resolved = await resolveAgentLlm(null);
     if (resolved.ok) return resolved.val;
-    logger.debug('artifact digest skipped: {reason}', {
-      component: 'chat/artifact-digest',
-      reason: resolved.err.type,
-    });
+    logger.debug(
+      'no file digest was asked for: the organization has no model to ask ({reason}); the file keeps waiting for one',
+      {
+        component: 'chat/artifact-digest',
+        reason: resolved.err.type,
+      }
+    );
     return null;
   } catch (error) {
-    logger.warn('artifact digest model could not be resolved: {reason}', {
-      component: 'chat/artifact-digest',
-      reason: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "the organization's model could not be resolved for a file digest; the file keeps waiting for one: {reason}",
+      {
+        component: 'chat/artifact-digest',
+        reason: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }
@@ -204,12 +211,16 @@ export async function digestText(input: {
       ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
     });
     if (!completion.ok) {
-      logger.warn('artifact digest not answered: {message}', {
-        component: 'chat/artifact-digest',
-        subject: input.subject,
-        artifactId: input.file.id,
-        message: completion.err.message ?? completion.err.type,
-      });
+      logger.warn(
+        'the model did not answer with a digest of "{filename}" uploaded by {actor}; the file stays pending and will be asked about again: {message}',
+        {
+          component: 'chat/artifact-digest',
+          ...(await whoIs(input.subject)),
+          artifactId: input.file.id,
+          filename: input.file.filename,
+          message: completion.err.message ?? completion.err.type,
+        }
+      );
       return back('pending');
     }
     await recordLlmCall({
@@ -240,21 +251,29 @@ export async function digestText(input: {
     const digest = parseDigest(call?.type === 'tool_use' ? call.input : null);
     await storeDigest(input.file.id, digest);
     if (!digest) {
-      logger.warn('artifact digest failed: the model answered with no usable digest', {
-        component: 'chat/artifact-digest',
-        subject: input.subject,
-        artifactId: input.file.id,
-      });
+      logger.warn(
+        'the model answered with no usable digest of "{filename}" uploaded by {actor}; the file is marked failed and searches will not find it by summary',
+        {
+          component: 'chat/artifact-digest',
+          ...(await whoIs(input.subject)),
+          artifactId: input.file.id,
+          filename: input.file.filename,
+        }
+      );
     }
     return digest ? 'done' : 'failed';
   } catch (error) {
-    logger.warn('artifact digest failed: {message}', {
-      component: 'chat/artifact-digest',
-      subject: input.subject,
-      artifactId: input.file.id,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.warn(
+      'the digest of "{filename}" uploaded by {actor} crashed; the file stays pending and will be asked about again: {message}',
+      {
+        component: 'chat/artifact-digest',
+        ...(await whoIs(input.subject)),
+        artifactId: input.file.id,
+        filename: input.file.filename,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return back('pending');
   }
 }
@@ -386,11 +405,15 @@ export function deferDigest(
     try {
       await digestPendingArtifacts(viewerSubject, rows);
     } catch (error) {
-      logger.warn('deferred artifact digest failed: {message}', {
-        component: 'chat/artifact-digest',
-        subject: viewerSubject,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'the digests of {count} file(s) of {actor} were not asked for after the response; they stay pending: {message}',
+        {
+          component: 'chat/artifact-digest',
+          ...(await whoIs(viewerSubject)),
+          count: rows.length,
+          message: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   };
   try {

@@ -40,6 +40,7 @@ import { chatDelegateTool } from './chat-delegate';
 import { listChatModels } from './models';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
@@ -313,14 +314,18 @@ export async function startChatTurn(
   const llmResult = await resolveAgentLlm(requestedModel);
   if (!llmResult.ok) {
     if (llmResult.err.type !== 'NO_MODEL') {
-      logger.warn('chat model could not be resolved: {kind} {error}', {
-        component: 'chat/turn',
-        subject: input.session.subject,
-        chatId: chat.id,
-        llmModelId: requestedModel,
-        kind: llmResult.err.type,
-        error: llmResult.err.message ?? '',
-      });
+      logger.warn(
+        '{actor} sent a message in the chat "{chat}", but its model could not be resolved ({kind}); the turn did not start: {error}',
+        {
+          component: 'chat/turn',
+          ...(await whoIs(input.session.subject)),
+          chatId: chat.id,
+          chat: chat.title || 'New chat',
+          llmModelId: requestedModel,
+          kind: llmResult.err.type,
+          error: llmResult.err.message ?? '',
+        }
+      );
     }
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -413,13 +418,17 @@ export async function startChatTurn(
       })
     );
   } catch (error) {
-    logger.error('chat turn could not start: {error}', {
-      component: 'chat/turn',
-      subject: input.session.subject,
-      chatId: chat.id,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} sent a message in the chat "{chat}", but the turn did not start; they saw an error: {error}',
+      {
+        component: 'chat/turn',
+        ...(await whoIs(input.session.subject)),
+        chatId: chat.id,
+        chat: chat.title || 'New chat',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return err('DB_ERROR' as const);
   }
   return ok(started);
@@ -487,14 +496,18 @@ export async function executeChatTurn(input: ExecuteTurnInput): Promise<void> {
       .then((canceled) => {
         if (canceled) channel.requestCancel();
       })
-      .catch((error: unknown) => {
-        logger.warn('chat turn heartbeat failed while preparing: {error}', {
-          component: 'chat/turn',
-          subject: input.session.subject,
-          chatId: input.chat.id,
-          turnId: input.turnId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      .catch(async (error: unknown) => {
+        logger.warn(
+          'the turn in {actor}\'s chat "{chat}" could not heartbeat while preparing; left unanswered long enough, the recovery sweep will take it for dead: {error}',
+          {
+            component: 'chat/turn',
+            ...(await whoIs(input.session.subject)),
+            chatId: input.chat.id,
+            chat: input.chat.title || 'New chat',
+            turnId: input.turnId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       });
   }, PREPARING_HEARTBEAT_MS);
   try {

@@ -8,6 +8,7 @@
 
 import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import type { UsageSpan } from './user-utilization';
 
 /** `ocr`: a read by the OCR connector; `summary`: a digest of text; `describe`: a picture described. */
@@ -35,12 +36,16 @@ export async function recordDocumentUsage(input: RecordDocumentUsageInput): Prom
       outputTokens: Math.max(0, Math.round(input.outputTokens ?? 0)),
     });
   } catch (error) {
-    logger.warn('document usage not recorded', {
-      component: 'web/document-usage',
-      subject: input.subject,
-      artifactId: input.artifactId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      'the {kind} of a file of {actor} was not recorded as document usage; the usage report undercounts it: {error}',
+      {
+        component: 'web/document-usage',
+        ...(await whoIs(input.subject)),
+        artifactId: input.artifactId,
+        kind: input.kind,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 

@@ -14,6 +14,7 @@ import { sendPush } from '@renkei/notifications';
 import { getNotificationPrefs } from '@renkei/user-prefs';
 import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export type ArtifactNotificationKind =
   'artifact_shared' | 'artifact_copied' | 'artifact_transferred';
@@ -41,9 +42,29 @@ export function notifyArtifactEvent(input: {
   filename: string;
 }): void {
   if (input.recipientSubject === input.actorSubject) return;
+  // The person who acted as {actor}, the one being told as {recipient}.
+  const about = async () => {
+    const recipient = await whoIs(input.recipientSubject);
+    return {
+      component: 'chat/artifact-notifications',
+      ...(await whoIs(input.actorSubject)),
+      recipient: recipient.actor,
+      recipientSubject: recipient.subject,
+      recipientEmail: recipient.email,
+      artifactId: input.artifactId,
+      filename: input.filename,
+      did:
+        input.kind === 'artifact_shared'
+          ? 'shared'
+          : input.kind === 'artifact_copied'
+            ? 'made a copy of'
+            : 'handed over',
+    };
+  };
   void (async () => {
     const prefs = await getNotificationPrefs(input.recipientSubject, { fresh: true });
     if (!prefs.chatShared.app) return;
+    const fields = await about();
     const who = await getIdentityDisplay(input.actorSubject);
     const actorName = who?.displayName || who?.email || 'Someone';
     const headline = artifactHeadline(input.kind, actorName, input.filename);
@@ -80,13 +101,12 @@ export function notifyArtifactEvent(input: {
           notificationId: id,
           appPath: refUrl,
         },
-        { log: (message, meta) => logger.warn(message, meta) }
+        { log: (message, meta) => logger.warn(message, { ...fields, ...meta }) }
       );
     }
-  })().catch((error: unknown) => {
-    logger.warn('artifact notification not recorded', {
-      component: 'chat/artifact-notifications',
-      artifactId: input.artifactId,
+  })().catch(async (error: unknown) => {
+    logger.warn('{actor} {did} "{filename}", but {recipient} was not notified of it: {error}', {
+      ...(await about()),
       error: error instanceof Error ? error.message : String(error),
     });
   });

@@ -18,6 +18,7 @@ import { resolveWebexUserAccess } from '@/lib/webex-user-access';
 import { sendWebexNote } from '@/lib/webex-note';
 import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export function notifyChatShared(input: {
   /** Who now has access — the notification's reader. */
@@ -27,10 +28,24 @@ export function notifyChatShared(input: {
   chatId: string;
   chatTitle: string | null;
 }): void {
+  // The sharer as {actor} and the person it was shared with as {grantee}.
+  const about = async () => {
+    const grantee = await whoIs(input.granteeSubject);
+    return {
+      component: 'chat/share-notification',
+      ...(await whoIs(input.actorSubject)),
+      grantee: grantee.actor,
+      granteeSubject: grantee.subject,
+      granteeEmail: grantee.email,
+      chatId: input.chatId,
+      chat: input.chatTitle ? `the chat "${input.chatTitle}"` : 'an untitled chat',
+    };
+  };
   void (async () => {
     const prefs = await getNotificationPrefs(input.granteeSubject, { fresh: true });
     const wanted = prefs.chatShared;
     if (!wanted.app && !wanted.email && !wanted.webex) return;
+    const fields = await about();
 
     const who = await getIdentityDisplay(input.actorSubject);
     const sharerName = who?.displayName || who?.email || 'Someone';
@@ -70,7 +85,7 @@ export function notifyChatShared(input: {
             notificationId: id,
             ...(refUrl ? { appPath: refUrl } : {}),
           },
-          { log: (message, meta) => logger.warn(message, meta) }
+          { log: (message, meta) => logger.warn(message, { ...fields, ...meta }) }
         );
       }
     }
@@ -82,11 +97,10 @@ export function notifyChatShared(input: {
           subject: input.granteeSubject,
         });
         if (typeof access === 'string') {
-          logger.warn('chat-shared mail not sent: {reason}', {
-            component: 'chat/share-notification',
-            chatId: input.chatId,
-            reason: access,
-          });
+          logger.warn(
+            '{actor} shared {chat} with {grantee}, but the mail telling them was not sent ({reason})',
+            { ...fields, reason: access }
+          );
         } else {
           const context = { subject: input.granteeSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
@@ -98,11 +112,10 @@ export function notifyChatShared(input: {
             saveToSentItems: false,
           });
           if (!sent.ok) {
-            logger.warn('chat-shared mail not sent: {reason}', {
-              component: 'chat/share-notification',
-              chatId: input.chatId,
-              reason: sent.error,
-            });
+            logger.warn(
+              '{actor} shared {chat} with {grantee}, but the mail telling them was not sent: {reason}',
+              { ...fields, reason: sent.error }
+            );
           }
         }
       }
@@ -113,17 +126,16 @@ export function notifyChatShared(input: {
       if (access) {
         const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
-          logger.warn('chat-shared WebEx note not sent for chat {chatId}', {
-            component: 'chat/share-notification',
-            chatId: input.chatId,
-          });
+          logger.warn(
+            '{actor} shared {chat} with {grantee}, but the WebEx note telling them was not sent',
+            fields
+          );
         }
       }
     }
-  })().catch((error: unknown) => {
-    logger.warn('chat-shared notification not recorded', {
-      component: 'chat/share-notification',
-      chatId: input.chatId,
+  })().catch(async (error: unknown) => {
+    logger.warn('{actor} shared {chat} with {grantee}, but they were not notified: {error}', {
+      ...(await about()),
       error: error instanceof Error ? error.message : String(error),
     });
   });

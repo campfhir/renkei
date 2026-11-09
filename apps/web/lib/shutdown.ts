@@ -22,7 +22,7 @@ import { logger } from '@/lib/logger';
 type ShutdownListener = () => void | Promise<void>;
 
 function logListenerFailure(error: unknown): void {
-  logger.error('shutdown listener failed: {error}', {
+  logger.error('a shutdown listener threw; the process keeps shutting down without it: {error}', {
     component: 'web/shutdown',
     error: error instanceof Error ? error.message : String(error),
     stack: error instanceof Error ? error.stack : undefined,

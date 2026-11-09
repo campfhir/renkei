@@ -38,6 +38,7 @@ import { recordSentWebexMessage } from '@/lib/mcp-tools/webex/sent-ledger';
 import { WebexClient, type OutgoingFile } from '@renkei/connector-webex';
 import { webexBotClient } from '@/lib/webex-bot';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { timeoutSignal, UPLOAD_TIMEOUT_MS, isTimeoutError } from '@/lib/mcp-tools/fetch-guard';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { isRecord } from '@renkei/guards';
@@ -373,11 +374,16 @@ async function webexNoteToSelfAttachment(
         detail: `Sent "${slot.filename}" as a direct message from the org's WebEx bot.`,
       };
     }
-    logger.warn('webex note-to-self upload: the bot could not deliver; posting to the solo space', {
-      component: 'upload-executors',
-      subject: slot.subject,
-      reason: viaBot.ok ? 'no roomId in the bot response' : viaBot.err.message,
-    });
+    logger.warn(
+      '{actor}\'s file "{filename}" could not be delivered by the WebEx bot ({reason}); posting it to their solo space instead',
+      {
+        component: 'upload-executors',
+        ...(await whoIs(slot.subject)),
+        slotId: slot.id,
+        filename: slot.filename,
+        reason: viaBot.ok ? 'no roomId in the bot response' : viaBot.err.message,
+      }
+    );
   }
 
   const user = new WebexClient(access.auth, { lane: 'interactive' });
@@ -524,13 +530,17 @@ export async function completeUploadSlot(
 export async function executeUpload(slot: UploadSlotRow, bytes: Buffer): Promise<UploadOutcome> {
   const outcome = await dispatchUpload(slot, bytes);
   if (!outcome.ok) {
-    logger.warn('upload to {kind} failed: {detail}', {
-      component: 'upload-executors',
-      subject: slot.subject,
-      slotId: slot.id,
-      kind: slot.kind,
-      detail: outcome.detail,
-    });
+    logger.warn(
+      '{actor}\'s upload of "{filename}" to {kind} failed; the slot is finished as failed: {detail}',
+      {
+        component: 'upload-executors',
+        ...(await whoIs(slot.subject)),
+        slotId: slot.id,
+        filename: slot.filename,
+        kind: slot.kind,
+        detail: outcome.detail,
+      }
+    );
   }
   return outcome;
 }

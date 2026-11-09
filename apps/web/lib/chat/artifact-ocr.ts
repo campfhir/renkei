@@ -13,6 +13,7 @@ import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { resolveMistralOcrConfig } from '@renkei/connector-mistral-ocr';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 import { artifactCipher, type ArtifactAccess } from './artifact-access';
 import { digestPendingArtifacts } from './artifact-digest';
@@ -75,20 +76,27 @@ export async function runArtifactOcr(artifactId: string, viewerSubject: string):
       await digestPendingArtifacts(viewerSubject, await getAttachments([artifactId]));
     }
   } catch (error) {
-    logger.error('artifact OCR failed: {message}', {
-      component: 'chat/artifact-ocr',
-      artifactId,
-      subject: viewerSubject,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    await clearStart(artifactId).catch((clearError: unknown) =>
-      logger.error('could not clear the OCR start for {artifactId}: {message}', {
+    const viewer = await whoIs(viewerSubject);
+    logger.error(
+      'the OCR read {actor} asked for crashed; the file is no longer marked in progress: {message}',
+      {
         component: 'chat/artifact-ocr',
+        ...viewer,
         artifactId,
-        subject: viewerSubject,
-        message: clearError instanceof Error ? clearError.message : String(clearError),
-      })
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
+    await clearStart(artifactId).catch((clearError: unknown) =>
+      logger.error(
+        'the OCR read {actor} asked for crashed, and the file could not be unmarked; it looks in progress until the next read: {message}',
+        {
+          component: 'chat/artifact-ocr',
+          ...viewer,
+          artifactId,
+          message: clearError instanceof Error ? clearError.message : String(clearError),
+        }
+      )
     );
   }
 }

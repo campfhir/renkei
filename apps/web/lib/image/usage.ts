@@ -11,6 +11,7 @@
 
 import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 /** What a tool reports about one picture; the person and org are added by the turn. */
 export interface ImageUsageReport {
@@ -45,10 +46,15 @@ export async function recordImageUsage(input: RecordImageUsageInput): Promise<vo
       outputTokens: Math.max(0, Math.round(input.outputTokens ?? 0)),
     });
   } catch (error) {
-    logger.warn('image usage not recorded', {
-      component: 'web/image-usage',
-      subject: input.subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s image generation on {model} was not recorded as usage; the usage report undercounts it: {error}",
+      {
+        component: 'web/image-usage',
+        ...(await whoIs(input.subject)),
+        surface: input.surface,
+        model: input.model,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }

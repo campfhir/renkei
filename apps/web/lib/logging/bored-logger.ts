@@ -13,7 +13,7 @@
  */
 
 import { createLogger, type Logger } from '@campfhir/bored-logs';
-import { getDataStore } from '@renkei/db';
+import { getDataStore, actorFields, type Actor } from '@renkei/db';
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -68,9 +68,25 @@ export async function closeLogger(): Promise<void> {
   }
 }
 
+/**
+ * Who a line is about, in words: the person when the caller has resolved
+ * them (`actor`), else the provider account id, else nobody in particular.
+ * These helpers are synchronous, so the caller resolves the actor where it
+ * is async (`describeAccountActor` / `describeActor` from @renkei/db).
+ */
+function whoFields(actor: Actor | undefined, accountId: string | undefined) {
+  return {
+    ...(actor ? actorFields(actor) : {}),
+    accountId: accountId || undefined,
+    who: actor ? actor.label : accountId ? `the account ${accountId}` : 'an unknown account',
+  };
+}
+
 /** Log a Jira API error. */
 export function logJiraError(attrs: {
   accountId?: string;
+  /** The person behind the account, when the caller knows them. */
+  actor?: Actor;
   method: string;
   path: string;
   statusCode: number;
@@ -81,19 +97,25 @@ export function logJiraError(attrs: {
   if (!loggerResult.ok) return loggerResult;
   const logger = loggerResult.val;
 
-  logger.error('Jira API error: {method} {path} returned {statusCode}', {
-    accountId: attrs.accountId || undefined,
-    method: attrs.method,
-    path: attrs.path,
-    statusCode: attrs.statusCode,
-    statusText: attrs.statusText,
-  });
+  logger.error(
+    "Jira answered {who}'s {method} {path} with HTTP {statusCode}; the call did not go through",
+    {
+      ...whoFields(attrs.actor, attrs.accountId),
+      method: attrs.method,
+      path: attrs.path,
+      statusCode: attrs.statusCode,
+      statusText: attrs.statusText,
+      ...(attrs.message ? { message: attrs.message } : {}),
+    }
+  );
   return ok();
 }
 
 /** Log a grant/auth error. */
 export function logAuthError(attrs: {
   accountId?: string;
+  /** The person behind the account, when the caller knows them. */
+  actor?: Actor;
   reason: 'grant_missing' | 'grant_expired' | 'invalid_token' | 'token_revoked';
 }): Result<void, 'LOGGER_NOT_INITIALIZED'> {
   const loggerResult = getLogger();
@@ -101,15 +123,16 @@ export function logAuthError(attrs: {
   const logger = loggerResult.val;
 
   const messages = {
-    grant_missing: 'Atlassian grant is missing',
-    grant_expired: 'Atlassian grant has expired',
-    invalid_token: 'Token is invalid or revoked',
-    token_revoked: 'Token was revoked by operator',
+    grant_missing: 'has no Atlassian grant',
+    grant_expired: 'has an Atlassian grant that expired',
+    invalid_token: 'presented a token that is invalid or revoked',
+    token_revoked: 'had their token revoked by an operator',
   };
 
-  logger.warn('Auth error: {reason}', {
-    accountId: attrs.accountId || undefined,
+  logger.warn('{who} {what}; the call was refused and they must connect again', {
+    ...whoFields(attrs.actor, attrs.accountId),
     reason: attrs.reason,
+    what: messages[attrs.reason],
     message: messages[attrs.reason],
   });
   return ok();
@@ -118,6 +141,8 @@ export function logAuthError(attrs: {
 /** Log a rate limit hit. */
 export function logRateLimit(attrs: {
   accountId: string;
+  /** The person behind the account, when the caller knows them. */
+  actor?: Actor;
   limit: number;
   windowMinutes: number;
 }): Result<void, 'LOGGER_NOT_INITIALIZED'> {
@@ -125,17 +150,22 @@ export function logRateLimit(attrs: {
   if (!loggerResult.ok) return loggerResult;
   const logger = loggerResult.val;
 
-  logger.warn('Rate limit exceeded: {accountId} hit {limit} calls', {
-    accountId: attrs.accountId,
-    limit: attrs.limit,
-    windowMinutes: attrs.windowMinutes,
-  });
+  logger.warn(
+    '{who} made more than {limit} calls in {windowMinutes} minutes and hit the rate limit; further calls are refused until the window passes',
+    {
+      ...whoFields(attrs.actor, attrs.accountId),
+      limit: attrs.limit,
+      windowMinutes: attrs.windowMinutes,
+    }
+  );
   return ok();
 }
 
 /** Log an MCP tool error. */
 export function logToolError(attrs: {
   accountId: string;
+  /** The person behind the account, when the caller knows them. */
+  actor?: Actor;
   tool: string;
   errorCode?: string;
   message: string;
@@ -144,8 +174,8 @@ export function logToolError(attrs: {
   if (!loggerResult.ok) return loggerResult;
   const logger = loggerResult.val;
 
-  logger.error('MCP tool error: {tool} - {message}', {
-    accountId: attrs.accountId,
+  logger.error('the tool {tool} failed for {who}; the caller was told: {message}', {
+    ...whoFields(attrs.actor, attrs.accountId),
     tool: attrs.tool,
     errorCode: attrs.errorCode || undefined,
     message: attrs.message,

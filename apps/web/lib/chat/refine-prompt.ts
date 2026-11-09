@@ -25,6 +25,7 @@ import { MAX_QUESTION_FIELDS, MAX_QUESTION_FIELD_OPTIONS } from '@renkei/agents'
 import { recordLlmCall } from '@renkei/agents/runs';
 import { isRecord, isString } from '@renkei/guards';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { parsePromptVariables } from './prompt-variables';
 import { PROMPT_BODY_MAX_CHARS, PROMPT_TITLE_MAX_CHARS, type PromptLibraryScope } from './prompts';
 
@@ -203,12 +204,15 @@ async function askOnce(
     ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
   });
   if (!completion.ok) {
-    logger.warn('prompt refine failed: {kind}', {
-      component: 'chat/refine-prompt',
-      subject,
-      kind: completion.err.type,
-      message: completion.err.message?.slice(0, 300),
-    });
+    logger.warn(
+      '{actor} asked for their prompt to be refined, but the model did not answer ({kind}); they saw an error',
+      {
+        component: 'chat/refine-prompt',
+        ...(await whoIs(subject)),
+        kind: completion.err.type,
+        message: completion.err.message?.slice(0, 300),
+      }
+    );
     return {
       ok: false,
       failure: {

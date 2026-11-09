@@ -15,6 +15,7 @@ import { resolveWebexUserAccess } from '@/lib/webex-user-access';
 import { sendWebexNote } from '@/lib/webex-note';
 import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 
 export function notifyAgentShared(input: {
   /** Who now has access — the notification's reader. */
@@ -24,10 +25,24 @@ export function notifyAgentShared(input: {
   agentId: string;
   agentName: string;
 }): void {
+  // The sharer as {actor}, the agent with its {owner}, and the person it
+  // was shared with as {grantee}: who the line is about.
+  const about = async () => {
+    const grantee = await whoIs(input.granteeSubject);
+    return {
+      component: 'agents/share-notification',
+      ...(await whoIs(input.actorSubject)),
+      ...(await whichAgent(input.agentId)),
+      grantee: grantee.actor,
+      granteeSubject: grantee.subject,
+      granteeEmail: grantee.email,
+    };
+  };
   void (async () => {
     const prefs = await getNotificationPrefs(input.granteeSubject, { fresh: true });
     const wanted = prefs.agentShared;
     if (!wanted.app && !wanted.email && !wanted.webex) return;
+    const fields = await about();
 
     const who = await getIdentityDisplay(input.actorSubject);
     const sharerName = who?.displayName || who?.email || 'Someone';
@@ -58,7 +73,7 @@ export function notifyAgentShared(input: {
           input.granteeSubject,
           keyResult.val,
           { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
-          { log: (message, meta) => logger.warn(message, meta) }
+          { log: (message, meta) => logger.warn(message, { ...fields, ...meta }) }
         );
       }
     }
@@ -70,11 +85,10 @@ export function notifyAgentShared(input: {
           subject: input.granteeSubject,
         });
         if (typeof access === 'string') {
-          logger.warn('agent-shared mail not sent: {reason}', {
-            component: 'agents/share-notification',
-            agentId: input.agentId,
-            reason: access,
-          });
+          logger.warn(
+            '{actor} shared agent "{agent}" with {grantee}, but the mail telling them was not sent ({reason})',
+            { ...fields, reason: access }
+          );
         } else {
           const context = { subject: input.granteeSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
@@ -86,11 +100,10 @@ export function notifyAgentShared(input: {
             saveToSentItems: false,
           });
           if (!sent.ok) {
-            logger.warn('agent-shared mail not sent: {reason}', {
-              component: 'agents/share-notification',
-              agentId: input.agentId,
-              reason: sent.error,
-            });
+            logger.warn(
+              '{actor} shared agent "{agent}" with {grantee}, but the mail telling them was not sent: {reason}',
+              { ...fields, reason: sent.error }
+            );
           }
         }
       }
@@ -101,18 +114,20 @@ export function notifyAgentShared(input: {
       if (access) {
         const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
-          logger.warn('agent-shared WebEx note not sent for agent {agentId}', {
-            component: 'agents/share-notification',
-            agentId: input.agentId,
-          });
+          logger.warn(
+            '{actor} shared agent "{agent}" with {grantee}, but the WebEx note telling them was not sent',
+            fields
+          );
         }
       }
     }
-  })().catch((error: unknown) => {
-    logger.warn('agent-shared notification not recorded', {
-      component: 'agents/share-notification',
-      agentId: input.agentId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  })().catch(async (error: unknown) => {
+    logger.warn(
+      '{actor} shared agent "{agent}" with {grantee}, but they were not notified: {error}',
+      {
+        ...(await about()),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   });
 }

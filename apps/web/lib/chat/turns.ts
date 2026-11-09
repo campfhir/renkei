@@ -228,11 +228,15 @@ export async function createTurn(input: {
     if (isUniqueViolation(error)) {
       return err('ALREADY_RUNNING' as const, { message: 'A reply is already in progress.' });
     }
-    logger.error('chat turn could not be created: {error}', {
-      component: 'chat/turns',
-      chatId: input.chatId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'a {kind} turn could not be created for a chat; the message was not sent and the person saw an error: {error}',
+      {
+        component: 'chat/turns',
+        chatId: input.chatId,
+        kind: input.kind ?? 'reply',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return err('DB_ERROR' as const, {
       message: error instanceof Error ? error.message : String(error),
     });

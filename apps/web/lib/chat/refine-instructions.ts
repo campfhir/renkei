@@ -17,6 +17,7 @@ import { resolveAgentLlm, type ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { isRecord, isString } from '@renkei/guards';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { PROJECT_INSTRUCTIONS_MAX_CHARS, type ProjectKind } from './projects';
 
 export const REFINE_TOOL = 'propose_instructions';
@@ -127,12 +128,15 @@ export async function refineInstructions(
     ...(llm.temperature !== undefined ? { temperature: llm.temperature } : {}),
   });
   if (!completion.ok) {
-    logger.warn('instructions refine failed: {kind}', {
-      component: 'chat/refine-instructions',
-      subject,
-      kind: completion.err.type,
-      message: completion.err.message?.slice(0, 300),
-    });
+    logger.warn(
+      '{actor} asked for their instructions to be refined, but the model did not answer ({kind}); they saw an error',
+      {
+        component: 'chat/refine-instructions',
+        ...(await whoIs(subject)),
+        kind: completion.err.type,
+        message: completion.err.message?.slice(0, 300),
+      }
+    );
     return {
       ok: false,
       status: 502,

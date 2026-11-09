@@ -15,6 +15,7 @@ import type { SubagentRecorder } from './subagent-runs';
 import type { ContentCipher } from './content-crypto';
 import type { WidgetDecisionState } from './views';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export interface LocalToolContext {
   subject: string;
@@ -177,14 +178,17 @@ export function createLocalToolSet(tools: LocalTool[]): LocalToolSet {
       try {
         return await tool.execute(args, context);
       } catch (error) {
-        logger.error('chat tool threw: {tool} {error}', {
-          component: 'chat/tools',
-          subject: context.subject,
-          chatId: context.chatId,
-          tool: name,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        logger.error(
+          "the tool {tool} threw in {actor}'s chat; the model was told it failed: {error}",
+          {
+            component: 'chat/tools',
+            ...(await whoIs(context.subject)),
+            chatId: context.chatId,
+            tool: name,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
         return errorResult(
           `${name} failed: ${error instanceof Error ? error.message : String(error)}`
         );

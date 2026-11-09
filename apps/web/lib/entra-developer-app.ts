@@ -23,25 +23,22 @@ export const ENTRA_DEVELOPER_CONNECTOR = 'entra-developer';
 export { DEFAULT_ENTRA_DEVELOPER_SCOPES };
 
 /** The tenant's Entra Developer app registration, or null when not (fully) configured. */
-export async function getEntraDeveloperApp(
-  origin: string
-): Promise<MicrosoftApp | null> {
+export async function getEntraDeveloperApp(origin: string): Promise<MicrosoftApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/entra-developer',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the Entra Developer registration cannot be read; no Entra Developer flow can start',
+      { component: 'connectors/entra-developer' }
+    );
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(
-    ENTRA_DEVELOPER_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(ENTRA_DEVELOPER_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read entra-developer connector config', {
-      component: 'connectors/entra-developer',
-    });
+    logger.error(
+      'the Entra Developer connector config could not be read; no Entra Developer flow can start',
+      { component: 'connectors/entra-developer' }
+    );
     return null;
   }
   const config = configResult.val;
@@ -58,7 +55,7 @@ export async function getEntraDeveloperApp(
     !clientSecret
   ) {
     logger.warn(
-      'entra-developer connector config missing clientId, directoryTenantId or clientSecret',
+      'the Entra Developer connector is switched on but its config lacks a client id, directory id or client secret; no Entra Developer flow can start',
       { component: 'connectors/entra-developer' }
     );
     return null;

@@ -24,6 +24,7 @@ import {
   type McpServer,
 } from '@renkei/connector-mcp';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
 /** The delegate refusals that mean "this person has to connect (again)". */
@@ -101,15 +102,18 @@ export function refreshInBackground(server: McpServer, subject: string): void {
   if (refreshing.has(key)) return;
   refreshing.add(key);
   void refreshToolList(server, subject)
-    .then((outcome) => {
+    .then(async (outcome) => {
       if (!outcome.ok) {
-        logger.warn('MCP tool list refresh failed: {reason}', {
-          component: 'mcp-servers',
-          subject,
-          server: server.slug,
-          reason: outcome.reason,
-          message: outcome.message,
-        });
+        logger.warn(
+          'the tool list of MCP server {server} could not be refreshed for {actor} ({reason}); the list they had stays: {message}',
+          {
+            component: 'mcp-servers',
+            ...(await whoIs(subject)),
+            server: server.slug,
+            reason: outcome.reason,
+            message: outcome.message,
+          }
+        );
       }
     })
     .finally(() => refreshing.delete(key));

@@ -51,6 +51,7 @@ import {
 } from '../admin/usage/window';
 import { resolvePeriod } from './window';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export interface UtilizationReport {
   periodKey: string;
@@ -203,12 +204,15 @@ export async function getUtilizationReport(
       document,
     };
   } catch (error) {
-    logger.error('Could not read the utilization report: {error}', {
-      component: 'actions/utilization',
-      subject,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} opened the utilization report, but it could not be read; they saw an error: {error}',
+      {
+        component: 'actions/utilization',
+        ...who(session),
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };
   }
 }
