@@ -31,6 +31,7 @@ import {
 } from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { isUuid } from '@/lib/uuid';
+import type { RunViewFilter } from './run-views';
 import { unavailableMarker } from '@/lib/chat/content-crypto';
 import { unavailableReasonOf } from '@/lib/chat/chat-keys';
 
@@ -161,6 +162,8 @@ export function isRunStatus(value: string | undefined): value is RunStatus {
 
 interface RunListOptions {
   status?: RunStatus;
+  /** A quick filter's conditions (run-views.ts runViewFilter); combines with `status`. */
+  filter?: RunViewFilter;
   /**
    * Free-text search. The owner sees everything about their own runs, so
    * the search may read content: the error text, the trigger kind, and
@@ -188,6 +191,7 @@ async function listRuns(
     agentId,
     ownerSubject,
     audience,
+    ...(options.filter ?? {}),
     ...(options.status ? { status: options.status } : {}),
     ...(q ? { q } : {}),
     ...(q && isUuid(q) ? { matchId: q } : {}),

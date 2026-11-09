@@ -46,6 +46,31 @@ function candidateOf(row: {
   };
 }
 
+/**
+ * One run of the agent with what the stuck rule reads (status, created,
+ * latest resume), or null. For halting it, and for telling a caller whose
+ * cancel will never land that halting is the way (agent_run_cancel).
+ */
+export async function findHaltCandidate(
+  agentId: string,
+  ownerSubject: string,
+  runId: string
+): Promise<StuckCandidate | null> {
+  if (!isUuid(agentId) || !isUuid(runId)) return null;
+  // The id search matches the run itself, and any run whose text happens to
+  // quote that id: pick the run out by id.
+  const rows = await getDataStore().agentRuns.list({
+    agentId,
+    ownerSubject,
+    audience: 'owner',
+    q: runId,
+    matchId: runId,
+    limit: 50,
+  });
+  const row = rows.find((candidate) => candidate.id === runId);
+  return row ? candidateOf(row) : null;
+}
+
 /** The agent's queued and running runs, oldest last, up to the request's cap. */
 async function liveRuns(agentId: string, ownerSubject: string): Promise<StuckCandidate[]> {
   const runs = getDataStore().agentRuns;
@@ -97,20 +122,7 @@ export async function haltStuckRuns(input: {
   if (!isUuid(input.agentId)) return { outcome: 'not-found' };
 
   if (input.runId !== undefined) {
-    if (!isUuid(input.runId)) return { outcome: 'not-found' };
-    // The id search matches the run itself, and any run whose text happens
-    // to quote that id: pick the run out by id.
-    const wanted = input.runId;
-    const rows = await getDataStore().agentRuns.list({
-      agentId: input.agentId,
-      ownerSubject: input.ownerSubject,
-      audience: 'owner',
-      q: wanted,
-      matchId: wanted,
-      limit: 50,
-    });
-    const row = rows.find((candidate) => candidate.id === wanted);
-    const run = row ? candidateOf(row) : null;
+    const run = await findHaltCandidate(input.agentId, input.ownerSubject, input.runId);
     if (!run) return { outcome: 'not-found' };
     if (!isStuckRun(run, input.nowMs)) return { outcome: 'not-stuck', status: run.status };
     return {

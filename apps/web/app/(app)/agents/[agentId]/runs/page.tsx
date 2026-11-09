@@ -5,31 +5,18 @@ import { redirect, notFound } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
-import { isRunStatus, listLiveRunCounts, listRunsForOwner } from '@/lib/agents/runs-view';
+import { listLiveRunCounts, listRunsForOwner } from '@/lib/agents/runs-view';
+import { RUN_VIEWS, isRunView, runViewFilter, runViewLabel } from '@/lib/agents/run-views';
 import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
 import { ageWords } from '../../agents-overview.model';
 import HaltButton from './halt-button';
 import { StatusPill } from '../../run-timeline';
 import RunsSearch from '../../runs-search';
-import { statusLabel, statusNote } from '@/lib/agents/run-labels';
+import { statusNote } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
 import { pageFromParam, pageQuery, pageWindow, runsPageHref } from './runs-page.model';
 import { DataFrame, DataTable, Pager, Th } from '@/components/data-table';
-
-/**
- * The status tabs the page offers. Queued has its own: the agents page's
- * overview links a stuck queue straight to it.
- */
-const STATUS_TABS = [
-  'succeeded',
-  'failed',
-  'stopped',
-  'waiting',
-  'running',
-  'queued',
-  'canceled',
-] as const;
 
 /**
  * The run list, full visibility: the owner, or a grantee through an
@@ -55,18 +42,19 @@ export default async function AgentRunsPage({
   if (!access) notFound();
   const agent = access.agent;
 
-  const filter = isRunStatus(status) ? status : undefined;
+  // The quick filter: a run status, or a meta status (run-views.ts).
+  const filter = isRunView(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
   const page = pageFromParam(pageParam);
+  const loadedAt = Date.now();
   const fetched = await listRunsForOwner(access.ownerSubject, agentId, {
-    status: filter,
+    ...(filter ? { filter: runViewFilter(filter, loadedAt) } : {}),
     ...(query ? { q: query } : {}),
     ...pageQuery(page),
   });
   const paging = pageWindow(fetched, page);
 
   // Anything queued or running past the stuck horizon: offer to clear it.
-  const loadedAt = Date.now();
   const stuckSince = (await listLiveRunCounts([agentId]))
     .filter((count) => count.status === 'queued' || count.status === 'running')
     .map((count) => loadedAt - Date.parse(count.oldestCreatedAt))
@@ -90,7 +78,7 @@ export default async function AgentRunsPage({
       <CoachTarget name="runs-filters" className="mb-4 flex flex-wrap items-center gap-2 text-sm">
         {[
           { label: 'All', value: undefined },
-          ...STATUS_TABS.map((value) => ({ label: statusLabel(value), value })),
+          ...RUN_VIEWS.map((value) => ({ label: runViewLabel(value), value })),
         ].map((tab) => (
           <Link
             key={tab.label}
