@@ -4,7 +4,8 @@ import {
   initOrgQueue,
   isLiveTab,
   orgQueueReducer,
-  pickAllOffer,
+  isPicked,
+  selectAllLabel,
   queueRows,
   selectAllState,
   tabLabels,
@@ -100,9 +101,9 @@ describe('halting from the queue view', () => {
 
   it('picks rows one by one and sends just those, with their agents', () => {
     const state = fold([
-      { type: 'toggle', runId: 'r2' },
-      { type: 'toggle', runId: 'r3' },
-      { type: 'toggle', runId: 'r3' },
+      { type: 'toggle', runId: 'r2', pageIds: ids },
+      { type: 'toggle', runId: 'r3', pageIds: ids },
+      { type: 'toggle', runId: 'r3', pageIds: ids },
     ]);
     expect(haltRequest(state, rows)).toEqual({ runs: [{ agentId: 'a2', runId: 'r2' }] });
     expect(selectAllState(state, ids)).toBe('some');
@@ -163,7 +164,7 @@ describe('halting from the queue view', () => {
 
   it('a halt the server refused keeps the selection and says why', () => {
     const state = fold([
-      { type: 'toggle', runId: 'r1' },
+      { type: 'toggle', runId: 'r1', pageIds: ids },
       { type: 'haltStarted', runIds: ['r1'] },
       { type: 'haltFailed', runIds: ['r1'], error: 'Unauthorized' },
     ]);
@@ -177,35 +178,53 @@ describe('halting from the queue view', () => {
   });
 });
 
-describe('picking every run of the tab, not just this page', () => {
+describe('selecting', () => {
   const rows = queueRows([run({ id: 'r1' }), run({ id: 'r2' })], NOW);
   const ids = rows.map((row) => row.id);
 
-  it('is offered once the whole page is picked and the tab has more', () => {
-    expect(pickAllOffer(fold([{ type: 'toggle', runId: 'r1' }]), ids, 908)).toBeNull();
-    const page = fold([{ type: 'toggleAll', runIds: ids }]);
-    expect(pickAllOffer(page, ids, 908)).toEqual({
-      text: 'All 2 on this page are picked.',
-      action: 'pick',
-    });
-    // Nothing more to offer when the page is the whole tab.
-    expect(pickAllOffer(page, ids, 2)).toBeNull();
+  it('starts off: no boxes, so a press on a run opens it', () => {
+    expect(initOrgQueue().selecting).toBe(false);
   });
 
-  it('once taken, the button halts them all, and unticking the page lets go', () => {
-    const all = fold([{ type: 'toggleAll', runIds: ids }, { type: 'pickAllMatching' }]);
-    expect(haltSelectedLabel(all, rows, 1078)).toBe('Halt all 1,078');
-    expect(pickAllOffer(all, ids, 1078)).toEqual({
-      text: 'All 1,078 runs are picked.',
-      action: 'clear',
-    });
-    const off = orgQueueReducer(all, { type: 'toggleAll', runIds: ids });
-    expect(off.allMatching).toBe(false);
-    expect(haltSelectedLabel(off, rows, 1078)).toBeNull();
-    expect(orgQueueReducer(all, { type: 'clearAllMatching' })).toMatchObject({
-      allMatching: false,
+  it('Select shows the boxes; done lets go of every pick', () => {
+    const picking = fold([
+      { type: 'startSelecting' },
+      { type: 'toggle', runId: 'r1', pageIds: ids },
+    ]);
+    expect(picking.selecting).toBe(true);
+    expect(isPicked(picking, 'r1')).toBe(true);
+    expect(orgQueueReducer(picking, { type: 'stopSelecting' })).toMatchObject({
+      selecting: false,
       selected: [],
+      allMatching: false,
     });
+  });
+
+  it('Select all is offered from the start, for every run of the tab, and can be taken back', () => {
+    const picking = fold([{ type: 'startSelecting' }]);
+    expect(selectAllLabel(picking, 1078)).toBe('Select all 1,078');
+    const all = orgQueueReducer(picking, { type: 'pickAllMatching' });
+    expect(selectAllLabel(all, 1078)).toBe('Unselect all');
+    expect(ids.map((id) => isPicked(all, id))).toEqual([true, true]);
+    expect(selectAllState(all, ids)).toBe('all');
+    expect(haltSelectedLabel(all, rows, 1078)).toBe('Halt all 1,078');
+    const none = orgQueueReducer(all, { type: 'clearAllMatching' });
+    expect(ids.map((id) => isPicked(none, id))).toEqual([false, false]);
+    expect(haltSelectedLabel(none, rows, 1078)).toBeNull();
+  });
+
+  it('unpicking one run out of all keeps the rest of the page picked', () => {
+    const state = fold([
+      { type: 'pickAllMatching' },
+      { type: 'toggle', runId: 'r1', pageIds: ids },
+    ]);
+    expect(state).toMatchObject({ allMatching: false, selected: ['r2'] });
+    expect(haltSelectedLabel(state, rows, 1078)).toBe('Halt 1 selected');
+  });
+
+  it("unticking the page's box under Select all lets go of everything", () => {
+    const state = fold([{ type: 'pickAllMatching' }, { type: 'toggleAll', runIds: ids }]);
+    expect(state).toMatchObject({ allMatching: false, selected: [] });
   });
 
   it('counts the batches up as they land, and says what it did at the end', () => {
@@ -224,6 +243,7 @@ describe('picking every run of the tab, not just this page', () => {
     const finished = batches.reduce(orgQueueReducer, midway);
     expect(finished).toMatchObject({
       progress: null,
+      selecting: false,
       allMatching: false,
       selected: [],
       done: 'Halted 450 runs.',

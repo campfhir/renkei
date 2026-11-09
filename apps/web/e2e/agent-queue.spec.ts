@@ -72,14 +72,45 @@ test('runs waiting behind another show in the Queue panel, and a queued run canc
     await expect(ours).toHaveCount(2);
     const queued = ours.filter({ hasText: 'in queue' }).last();
     await expect(queued).toContainText(person.subject);
+    const runId = runIds[1];
+
+    // Before Select, a press anywhere on a run opens it.
+    await queued.getByRole('cell').nth(2).click();
+    await expect(page).toHaveURL(new RegExp(`/admin/agents/${agentId}/runs/${runId}$`));
+    await page.goBack();
+
+    // On a phone the runs are cards: while selecting, the whole card picks it.
+    await page.setViewportSize({ width: 390, height: 844 });
+    const card = page
+      .getByRole('main')
+      .getByRole('listitem')
+      .filter({ hasText: `Queue ${tag}` })
+      .filter({ hasText: 'in queue' })
+      .last();
+    await page.getByRole('button', { name: 'Select', exact: true }).click();
+    await card.getByText(`Queue ${tag}`).click();
+    await expect(card.getByRole('checkbox')).toBeChecked();
+    await expect(page.getByRole('button', { name: 'Halt 1 selected' })).toBeVisible();
+    await page.getByRole('button', { name: 'Done' }).click();
+    await expect(card.getByRole('checkbox')).toHaveCount(0);
+    await page.setViewportSize({ width: 1440, height: 900 });
+
+    // After Select, a press on the run picks it instead, and halts from the bar.
+    await expect(page.getByRole('button', { name: /^Select all/ })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Select', exact: true }).click();
+    await expect(page.getByRole('button', { name: /^Select all \d/ })).toBeVisible();
+    await queued.getByRole('cell').nth(2).click();
+    await expect(page).toHaveURL(/\/admin\/agents\/queue$/);
     page.once('dialog', (dialog) => void dialog.accept());
     const halted = page.waitForResponse(
       (response) =>
         response.url().endsWith('/api/admin/agents/runs/halt') &&
         response.request().method() === 'POST'
     );
-    await queued.getByRole('button', { name: /^Halt run / }).click();
-    expect((await halted).status()).toBe(200);
+    await page.getByRole('button', { name: 'Halt 1 selected' }).click();
+    const answer = await halted;
+    expect(answer.status()).toBe(200);
+    expect(answer.request().postDataJSON()).toEqual({ runs: [{ agentId, runId }] });
     // Halted runs leave the queue: only the one being worked on (or next) is left.
     await expect(ours).toHaveCount(1);
   } finally {

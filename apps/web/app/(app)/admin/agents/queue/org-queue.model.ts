@@ -104,6 +104,11 @@ export function tabLabels(
 // ── The table: what is picked, and what halting it answered ──────────────
 
 export interface OrgQueueState {
+  /**
+   * Picking runs, after Select: the boxes show and a press on a row picks
+   * it. Otherwise a press on a row opens the run.
+   */
+  selecting: boolean;
   /** Run ids picked for a halt. */
   selected: string[];
   /** Run ids a halt is in flight for. */
@@ -124,7 +129,11 @@ export interface OrgQueueState {
 }
 
 export type OrgQueueAction =
-  | { type: 'toggle'; runId: string }
+  | { type: 'startSelecting' }
+  /** Done picking: the boxes go and every pick is let go. */
+  | { type: 'stopSelecting' }
+  /** Pick or unpick one run of `pageIds` (this page's runs). */
+  | { type: 'toggle'; runId: string; pageIds: readonly string[] }
   /** The select-all box over these ids: all picked → none, else all. */
   | { type: 'toggleAll'; runIds: readonly string[] }
   | { type: 'haltStarted'; runIds: readonly string[] }
@@ -135,7 +144,7 @@ export type OrgQueueAction =
       refused: readonly { runId: string; error: string }[];
     }
   | { type: 'haltFailed'; runIds: readonly string[]; error: string }
-  /** "Pick all N" over every page of the tab, or back to this page's picks. */
+  /** "Select all N": every run of the tab, on every page; or none again. */
   | { type: 'pickAllMatching' }
   | { type: 'clearAllMatching' }
   | { type: 'allHaltStarted'; total: number }
@@ -145,6 +154,7 @@ export type OrgQueueAction =
 
 export function initOrgQueue(): OrgQueueState {
   return {
+    selecting: false,
     selected: [],
     halting: [],
     halted: [],
@@ -160,14 +170,31 @@ const without = (list: readonly string[], drop: readonly string[]) =>
 
 export function orgQueueReducer(state: OrgQueueState, action: OrgQueueAction): OrgQueueState {
   switch (action.type) {
-    case 'toggle':
+    case 'startSelecting':
+      return { ...state, selecting: true, done: null };
+    case 'stopSelecting':
+      return { ...state, selecting: false, selected: [], allMatching: false };
+    case 'toggle': {
+      if (state.halted.includes(action.runId)) return state;
+      // Unpicking one run out of "all": the rest of this page stays picked.
+      if (state.allMatching) {
+        return {
+          ...state,
+          allMatching: false,
+          selected: action.pageIds.filter(
+            (id) => id !== action.runId && !state.halted.includes(id)
+          ),
+        };
+      }
       return {
         ...state,
         selected: state.selected.includes(action.runId)
           ? without(state.selected, [action.runId])
           : [...state.selected, action.runId],
       };
+    }
     case 'toggleAll': {
+      if (state.allMatching) return { ...state, allMatching: false, selected: [] };
       const open = action.runIds.filter((id) => !state.halted.includes(id));
       const allPicked = open.length > 0 && open.every((id) => state.selected.includes(id));
       return {
@@ -180,7 +207,7 @@ export function orgQueueReducer(state: OrgQueueState, action: OrgQueueAction): O
       };
     }
     case 'pickAllMatching':
-      return { ...state, allMatching: true, done: null };
+      return { ...state, selecting: true, allMatching: true, done: null };
     case 'clearAllMatching':
       return { ...state, allMatching: false, selected: [] };
     case 'allHaltStarted':
@@ -195,6 +222,7 @@ export function orgQueueReducer(state: OrgQueueState, action: OrgQueueAction): O
       return {
         ...state,
         progress: null,
+        selecting: false,
         allMatching: false,
         selected: [],
         done:
@@ -248,6 +276,7 @@ export function selectAllState(
   runIds: readonly string[]
 ): 'all' | 'some' | 'none' {
   const open = runIds.filter((id) => !state.halted.includes(id));
+  if (state.allMatching && open.length > 0) return 'all';
   const picked = open.filter((id) => state.selected.includes(id)).length;
   if (picked === 0) return 'none';
   return picked === open.length ? 'all' : 'some';
@@ -270,26 +299,19 @@ export function haltRequest(
   };
 }
 
+/** Whether the run shows as picked: picked by hand, or under "Select all". */
+export function isPicked(state: OrgQueueState, runId: string): boolean {
+  if (state.halted.includes(runId)) return false;
+  return state.allMatching || state.selected.includes(runId);
+}
+
 /**
- * The offer under a fully picked page when the tab has more runs than the
- * page: "All 50 on this page are picked. Pick all 1,078?" — or, once taken,
- * the way back. Null when there is nothing more to offer.
+ * The Select all button, always there while selecting: "Select all 1,078",
+ * or "Unselect all" once taken. Null while a halt-everything is running.
  */
-export function pickAllOffer(
-  state: OrgQueueState,
-  runIds: readonly string[],
-  total: number
-): { text: string; action: 'pick' | 'clear' } | null {
+export function selectAllLabel(state: OrgQueueState, total: number): string | null {
   if (state.progress) return null;
-  if (state.allMatching) {
-    return { text: `All ${total.toLocaleString('en-US')} runs are picked.`, action: 'clear' };
-  }
-  const open = runIds.filter((id) => !state.halted.includes(id));
-  if (selectAllState(state, runIds) !== 'all' || total <= open.length) return null;
-  return {
-    text: `All ${open.length} on this page are picked.`,
-    action: 'pick',
-  };
+  return state.allMatching ? 'Unselect all' : `Select all ${total.toLocaleString('en-US')}`;
 }
 
 /**
