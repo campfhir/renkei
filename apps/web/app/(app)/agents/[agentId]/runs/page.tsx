@@ -5,27 +5,18 @@ import { redirect, notFound } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
-import { isRunStatus, listRunsForOwner } from '@/lib/agents/runs-view';
+import { listLiveRunCounts, listRunsForOwner } from '@/lib/agents/runs-view';
+import { RUN_VIEWS, isRunView, runViewFilter, runViewLabel } from '@/lib/agents/run-views';
+import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
+import { ageWords } from '../../agents-overview.model';
+import HaltButton from './halt-button';
 import { StatusPill } from '../../run-timeline';
 import RunsSearch from '../../runs-search';
-import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
+import { statusNote } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
 import { pageFromParam, pageQuery, pageWindow, runsPageHref } from './runs-page.model';
-
-/**
- * The status tabs the page offers. Queued has its own: the agents page's
- * overview links a stuck queue straight to it.
- */
-const STATUS_TABS = [
-  'succeeded',
-  'failed',
-  'stopped',
-  'waiting',
-  'running',
-  'queued',
-  'canceled',
-] as const;
+import { DataFrame, DataTable, Pager, Th } from '@/components/data-table';
 
 /**
  * The run list, full visibility: the owner, or a grantee through an
@@ -51,15 +42,24 @@ export default async function AgentRunsPage({
   if (!access) notFound();
   const agent = access.agent;
 
-  const filter = isRunStatus(status) ? status : undefined;
+  // The quick filter: a run status, or a meta status (run-views.ts).
+  const filter = isRunView(status) ? status : undefined;
   const query = typeof q === 'string' && q.trim() ? q.trim() : undefined;
   const page = pageFromParam(pageParam);
+  const loadedAt = Date.now();
   const fetched = await listRunsForOwner(access.ownerSubject, agentId, {
-    status: filter,
+    ...(filter ? { filter: runViewFilter(filter, loadedAt) } : {}),
     ...(query ? { q: query } : {}),
     ...pageQuery(page),
   });
   const paging = pageWindow(fetched, page);
+
+  // Anything queued or running past the stuck horizon: offer to clear it.
+  const stuckSince = (await listLiveRunCounts([agentId]))
+    .filter((count) => count.status === 'queued' || count.status === 'running')
+    .map((count) => loadedAt - Date.parse(count.oldestCreatedAt))
+    .filter((age) => age > STUCK_AFTER_MS);
+  const oldestStuck = stuckSince.length > 0 ? Math.max(...stuckSince) : null;
   const runs = paging.rows;
 
   const basePath = `/agents/${agentId}/runs`;
@@ -78,7 +78,7 @@ export default async function AgentRunsPage({
       <CoachTarget name="runs-filters" className="mb-4 flex flex-wrap items-center gap-2 text-sm">
         {[
           { label: 'All', value: undefined },
-          ...STATUS_TABS.map((value) => ({ label: statusLabel(value), value })),
+          ...RUN_VIEWS.map((value) => ({ label: runViewLabel(value), value })),
         ].map((tab) => (
           <Link
             key={tab.label}
@@ -97,100 +97,111 @@ export default async function AgentRunsPage({
         <RunsSearch basePath={basePath} status={filter} initialQ={query ?? ''} />
       </div>
 
-      {runs.length === 0 ? (
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          {page > 1 ? 'No runs on this page.' : query || filter ? 'No runs match.' : 'No runs yet.'}
-        </p>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs text-gray-500 dark:bg-gray-900 dark:text-gray-400">
-              <tr>
-                <th scope="col" className="py-2 pl-3 pr-2 font-medium">
-                  Started
-                </th>
-                <th scope="col" className="px-2 py-2 font-medium">
-                  Status
-                </th>
-                <th scope="col" className="hidden px-2 py-2 font-medium sm:table-cell">
-                  Trigger
-                </th>
-                <th
-                  scope="col"
-                  className="hidden py-2 pl-2 pr-3 text-right font-medium sm:table-cell"
-                >
-                  Duration
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((run) => (
-                <tr
-                  key={run.id}
-                  className="border-t border-gray-100 align-top hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
-                >
-                  <td className="whitespace-nowrap py-2 pl-3 pr-2">
-                    <Link
-                      href={`/agents/${agentId}/runs/${run.id}`}
-                      className="text-blue-700 hover:underline dark:text-blue-400"
-                    >
-                      <LocalTime at={run.createdAt} />
-                    </Link>
-                  </td>
-                  <td className="px-2 py-2">
-                    <StatusPill status={run.status} errorKind={run.errorKind} />
-                    {run.errorKind ? (
-                      <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">
-                        {errorSummary(run.errorKind)}
-                      </span>
-                    ) : null}
-                    {/* On a phone the trigger column is gone; it rides here. */}
-                    <span className="mt-0.5 block text-xs text-gray-500 sm:hidden">
-                      via {run.triggerKind}
-                    </span>
-                  </td>
-                  <td className="hidden px-2 py-2 text-gray-600 dark:text-gray-400 sm:table-cell">
-                    {run.triggerKind}
-                  </td>
-                  <td className="hidden whitespace-nowrap py-2 pl-2 pr-3 text-right text-gray-600 tabular-nums dark:text-gray-400 sm:table-cell">
-                    {run.durationMs !== null ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {paging.hasPrevious || paging.hasNext ? (
-        <nav
-          aria-label="Runs pages"
-          className="mt-3 flex items-center justify-between gap-2 text-sm"
+      {oldestStuck !== null ? (
+        <div
+          role="alert"
+          className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
-          {paging.hasPrevious ? (
-            <Link
-              href={pageHref(page - 1)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-            >
-              ← Newer
-            </Link>
-          ) : (
-            <span />
-          )}
-          <span className="text-xs text-gray-500 dark:text-gray-400">
-            {paging.range ?? `Page ${page}`}
+          <span>
+            Runs have been stuck for over two hours (the oldest for {ageWords(oldestStuck)}). A
+            cancel never reaches a stuck run; halting closes them out.
           </span>
-          {paging.hasNext ? (
-            <Link
-              href={pageHref(page + 1)}
-              className="rounded-md border border-gray-300 px-3 py-1.5 hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
-            >
-              Older →
-            </Link>
-          ) : (
-            <span />
-          )}
-        </nav>
+          <HaltButton agentId={agentId} label="Halt stuck runs" />
+        </div>
       ) : null}
+      <DataFrame
+        label="Runs"
+        empty={
+          runs.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+              {page > 1
+                ? 'No runs on this page.'
+                : query || filter
+                  ? 'No runs match.'
+                  : 'No runs yet.'}
+            </p>
+          ) : undefined
+        }
+        table={
+          <DataTable
+            head={
+              <>
+                <Th>Started</Th>
+                <Th>Status</Th>
+                <Th className="w-28">Trigger</Th>
+                <Th className="w-24 text-right">Duration</Th>
+              </>
+            }
+          >
+            {runs.map((run) => (
+              <tr
+                key={run.id}
+                className="border-t border-gray-100 align-top hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
+              >
+                <td className="whitespace-nowrap px-3 py-2">
+                  <Link
+                    href={`/agents/${agentId}/runs/${run.id}`}
+                    className="text-blue-700 hover:underline dark:text-blue-400"
+                  >
+                    <LocalTime at={run.createdAt} />
+                  </Link>
+                </td>
+                <td className="px-3 py-2">
+                  <StatusPill status={run.status} errorKind={run.errorKind} />
+                  {/* Why it failed — or nothing, when the pill already says it
+                      (a halted run reads Halted). */}
+                  {statusNote(run.status, run.errorKind) ? (
+                    <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">
+                      {statusNote(run.status, run.errorKind)}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="truncate px-3 py-2 text-gray-600 dark:text-gray-400">
+                  {run.triggerKind}
+                </td>
+                <td className="whitespace-nowrap px-3 py-2 text-right text-gray-600 tabular-nums dark:text-gray-400">
+                  {run.durationMs !== null ? `${(run.durationMs / 1000).toFixed(1)}s` : '—'}
+                </td>
+              </tr>
+            ))}
+          </DataTable>
+        }
+        cards={runs.map((run) => (
+          <li key={run.id}>
+            <Link
+              href={`/agents/${agentId}/runs/${run.id}`}
+              className="block rounded-lg border border-gray-200 px-3 py-2 hover:border-blue-400 dark:border-gray-800"
+            >
+              <span className="flex items-center justify-between gap-2">
+                <span className="text-sm text-blue-700 dark:text-blue-400">
+                  <LocalTime at={run.createdAt} />
+                </span>
+                <StatusPill status={run.status} errorKind={run.errorKind} />
+              </span>
+              <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
+                via {run.triggerKind}
+                {run.durationMs !== null ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : ''}
+                {statusNote(run.status, run.errorKind) ? (
+                  <span className="text-red-600 dark:text-red-400">
+                    {' '}
+                    · {statusNote(run.status, run.errorKind)}
+                  </span>
+                ) : null}
+              </span>
+            </Link>
+          </li>
+        ))}
+        footer={
+          <Pager
+            label="Runs pages"
+            range={paging.range ?? (page > 1 ? `Page ${page}` : null)}
+            previousHref={paging.hasPrevious ? pageHref(page - 1) : null}
+            nextHref={paging.hasNext ? pageHref(page + 1) : null}
+            previousLabel="← Newer"
+            nextLabel="Older →"
+          />
+        }
+      />
     </div>
   );
 }

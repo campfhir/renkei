@@ -543,6 +543,46 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'agentRuns.list',
+    name: 'filters: any of several statuses, error kinds in or out, and the run clock',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(71, 1, 'ann', 1, { status: 'canceled', error_kind: 'agent_failed' }),
+        run(72, 1, 'ann', 2, { status: 'canceled', error_kind: 'force_halted' }),
+        run(73, 1, 'ann', 3, { status: 'canceled', error_kind: null }),
+        run(74, 1, 'ann', 4, { status: 'queued', error_kind: null }),
+        // Created early, but resumed late: its clock is the resume.
+        run(75, 1, 'ann', 5, { status: 'running', error_kind: null, resumed_at: at(40) }),
+        run(76, 1, 'ann', 30, { status: 'running', error_kind: null }),
+        run(77, 1, 'ann', 6, { status: 'waiting', error_kind: 'needs-sign-in' }),
+      ],
+    },
+    run: async (store) => {
+      const ids = async (filter: Record<string, unknown>) =>
+        (
+          await store.agentRuns.list({
+            agentId: id(1),
+            ownerSubject: 'ann',
+            audience: 'owner',
+            limit: 50,
+            ...filter,
+          })
+        ).map((r) => r.id);
+      return {
+        halted: await ids({ status: 'canceled', errorKinds: ['force_halted'] }),
+        plainCanceled: await ids({
+          status: 'canceled',
+          excludeErrorKinds: ['force_halted'],
+        }),
+        stuck: await ids({ statuses: ['queued', 'running'], clockStartedBefore: at(20) }),
+        paused: await ids({ status: 'waiting', errorKinds: ['needs-sign-in'] }),
+        noStatuses: await ids({ statuses: [] }),
+        noKinds: await ids({ errorKinds: [] }),
+      };
+    },
+  },
+  {
     method: 'agentRuns.summarizeLive',
     name: 'per agent and live status: count and oldest; finished runs and other agents left out',
     fixture: {

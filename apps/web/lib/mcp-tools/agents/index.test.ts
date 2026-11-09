@@ -85,6 +85,11 @@ jest.mock('@renkei/agents/runs', () => ({
   resumeAgentRun: jest.fn(),
 }));
 jest.mock('@/lib/agents/run-cancellation', () => ({ requestRunCancellation: jest.fn() }));
+jest.mock('@/lib/agents/run-halt', () => ({
+  MAX_HALTED_PER_REQUEST: 500,
+  findHaltCandidate: jest.fn(async () => null),
+  haltStuckRuns: jest.fn(),
+}));
 jest.mock('@renkei/agents/memory', () => ({
   readAgentMemory: jest.fn(async () => ({ summary: null, entries: [] })),
   renderAgentKnowledgeNotes: jest.fn(async () => ''),
@@ -140,6 +145,9 @@ const notesMock = jest.requireMock<{
 }>('@/lib/agents/agent-notes');
 const cancelMock = jest.requireMock<{ requestRunCancellation: jest.Mock }>(
   '@/lib/agents/run-cancellation'
+);
+const haltMock = jest.requireMock<{ findHaltCandidate: jest.Mock; haltStuckRuns: jest.Mock }>(
+  '@/lib/agents/run-halt'
 );
 const usageMock = jest.requireMock<{
   getAgentTokenUsage: jest.Mock;
@@ -1535,6 +1543,122 @@ describe('sharing — a grantee reaches an agent someone else shared with them',
         canceledBySubject: 'auth0|alice',
       })
     );
+  });
+});
+
+describe('halting stuck runs from chat', () => {
+  const RUN = '33333333-3333-4333-8333-333333333333';
+  const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+
+  it('a cancel on a stuck run says it will likely never land, and points at agent_run_halt', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    cancelMock.requestRunCancellation.mockResolvedValue({ outcome: 'canceling' });
+    haltMock.findHaltCandidate.mockResolvedValue({
+      id: RUN,
+      status: 'queued',
+      createdAt: hoursAgo(30),
+      resumedAt: null,
+    });
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_run_cancel')!({ runId: RUN })).content[0]?.text ?? '';
+
+    expect(text).toContain('stuck');
+    expect(text).toContain('agent_run_halt');
+  });
+
+  it('a cancel on a fresh run reads as before', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    cancelMock.requestRunCancellation.mockResolvedValue({ outcome: 'canceling' });
+    haltMock.findHaltCandidate.mockResolvedValue({
+      id: RUN,
+      status: 'queued',
+      createdAt: hoursAgo(0.5),
+      resumedAt: null,
+    });
+    const handlers = registerAll({});
+
+    const text = (await handlers.get('agent_run_cancel')!({ runId: RUN })).content[0]?.text ?? '';
+
+    expect(text).toMatch(/^Cancellation requested\. agent_run_get/);
+  });
+
+  it('halts one run: the agent comes from the run, the run stays the owner’s', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    haltMock.haltStuckRuns.mockResolvedValue({ outcome: 'halted', runIds: [RUN] });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_halt')!({ runId: RUN });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toMatch(/^Halted\./);
+    expect(haltMock.haltStuckRuns).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'agent-1',
+        runId: RUN,
+        ownerSubject: 'auth0|alice',
+        bySubject: 'auth0|alice',
+      })
+    );
+  });
+
+  it('halts every stuck run of an agent, and says how many', async () => {
+    haltMock.haltStuckRuns.mockResolvedValue({ outcome: 'halted', runIds: ['r1', 'r2', 'r3'] });
+    const handlers = registerAll({});
+
+    const text =
+      (await handlers.get('agent_run_halt')!({ agentId: 'agent-1' })).content[0]?.text ?? '';
+
+    expect(text).toContain('Halted 3 stuck runs of “Triage”');
+    expect(haltMock.haltStuckRuns).toHaveBeenCalledWith(
+      expect.not.objectContaining({ runId: expect.anything() })
+    );
+  });
+
+  it('says so when there is nothing stuck to halt', async () => {
+    haltMock.haltStuckRuns.mockResolvedValue({ outcome: 'halted', runIds: [] });
+    const handlers = registerAll({});
+
+    const text =
+      (await handlers.get('agent_run_halt')!({ agentId: 'agent-1' })).content[0]?.text ?? '';
+
+    expect(text).toContain('has no stuck runs to halt');
+  });
+
+  it('refuses a run that is not stuck yet, and names cancel', async () => {
+    stubDb({ row: { agent_id: 'agent-1' } });
+    haltMock.haltStuckRuns.mockResolvedValue({ outcome: 'not-stuck', status: 'running' });
+    const handlers = registerAll({});
+
+    const result = await handlers.get('agent_run_halt')!({ runId: RUN });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('agent_run_cancel');
+  });
+
+  it('takes exactly one of runId or agentId', async () => {
+    const handlers = registerAll({});
+    expect((await handlers.get('agent_run_halt')!({})).isError).toBe(true);
+    expect(
+      (await handlers.get('agent_run_halt')!({ runId: RUN, agentId: 'agent-1' })).isError
+    ).toBe(true);
+    expect(haltMock.haltStuckRuns).not.toHaveBeenCalled();
+  });
+
+  it('refuses agent-run callers, as cancel does', async () => {
+    const handlers = registerAll({ agent: { agentId: 'agent-9' } });
+    const result = await handlers.get('agent_run_halt')!({ agentId: 'agent-1' });
+    expect(result.isError).toBe(true);
+    expect(haltMock.haltStuckRuns).not.toHaveBeenCalled();
+  });
+
+  it('cannot reach a run the caller has no access to', async () => {
+    stubDb({ row: { agent_id: 'agent-x' } });
+    accessGrantsMock.resolveAgentAccess.mockResolvedValue(null);
+    const handlers = registerAll({});
+    const result = await handlers.get('agent_run_halt')!({ runId: RUN });
+    expect(result.isError).toBe(true);
+    expect(haltMock.haltStuckRuns).not.toHaveBeenCalled();
   });
 });
 

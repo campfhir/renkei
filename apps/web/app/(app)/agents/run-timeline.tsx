@@ -16,7 +16,7 @@
  */
 
 import { friendlyToolName } from '@/lib/tool-name';
-import { statusLabel } from '@/lib/agents/run-labels';
+import { statusLabel, statusTone as toneKey } from '@/lib/agents/run-labels';
 import type { ActionBatchView, AttemptView, RunDetail } from '@/lib/agents/runs-view';
 import { formatDurationMs } from '@/lib/duration';
 import { toolResultText } from '@/lib/agents/tool-result';
@@ -51,6 +51,10 @@ function statusTone(status: string): string {
     case 'waiting':
     case 'proposed':
       return 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
+    // Closed out while stuck (run-labels.ts statusTone): not a quiet cancel,
+    // not a failure of the agent's own making either.
+    case 'halted':
+      return 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300';
     default:
       return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
   }
@@ -58,7 +62,9 @@ function statusTone(status: string): string {
 
 export function StatusPill({ status, errorKind }: { status: string; errorKind?: string | null }) {
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusTone(status)}`}>
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusTone(toneKey(status, errorKind))}`}
+    >
       {statusLabel(status, errorKind)}
     </span>
   );

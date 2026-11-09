@@ -13,8 +13,9 @@
 
 import type { LiveRunCount } from '@/lib/agents/runs-view';
 
-/** Queued or running longer than this, a run reads as stuck. */
-export const STUCK_AFTER_MS = 2 * 60 * 60_000;
+// The same horizon halting a run uses (lib/agents/stuck.ts).
+import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
+export { STUCK_AFTER_MS };
 
 export type OverviewState = 'stuck' | 'needs-you' | 'busy' | 'idle';
 
@@ -95,11 +96,11 @@ function rowFor(agent: OverviewAgent, counts: LiveRunCount[], nowMs: number): Ov
     (age): age is number => age !== null
   );
   const runs = `/agents/${agent.id}/runs`;
-  // Open the runs behind the state: the stuck ones (running before queued,
-  // since a stuck running run is what holds the queue), or the waiting ones.
+  // Open the runs behind the state: the stuck ones (the Stuck quick filter,
+  // run-views.ts), or the waiting ones.
   const href =
     state === 'stuck'
-      ? `${runs}?status=${stuckRunning ? 'running' : 'queued'}`
+      ? `${runs}?status=stuck`
       : state === 'needs-you'
         ? `${runs}?status=waiting`
         : runs;

@@ -36,7 +36,7 @@ describe('the agents overview', () => {
     });
   });
 
-  it('a run queued past the stuck horizon makes the agent stuck, and links to its queued runs', () => {
+  it('a run queued past the stuck horizon makes the agent stuck, and links to its stuck runs', () => {
     const { rows } = overviewOf(
       [agent('a', 'Weekday')],
       [live('a', 'queued', 5, 2 * 24 * HOUR)],
@@ -47,11 +47,11 @@ describe('the agents overview', () => {
       queued: 5,
       inFlight: '5 queued',
       oldestAge: '2 d',
-      href: '/agents/a/runs?status=queued',
+      href: '/agents/a/runs?status=stuck',
     });
   });
 
-  it('a run running past the horizon is stuck too, and its running runs are what to open', () => {
+  it('a run running past the horizon is stuck too, and links to the stuck runs', () => {
     const { rows } = overviewOf(
       [agent('m', 'Mailbox')],
       [live('m', 'queued', 7, 3 * HOUR), live('m', 'running', 3, 7 * 24 * HOUR)],
@@ -61,7 +61,7 @@ describe('the agents overview', () => {
       state: 'stuck',
       inFlight: '7 queued · 3 running',
       oldestAge: '7 d',
-      href: '/agents/m/runs?status=running',
+      href: '/agents/m/runs?status=stuck',
     });
   });
 

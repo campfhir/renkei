@@ -40,7 +40,8 @@ import { discardRunJobs } from './run-jobs';
 export type ForceHaltRunResult =
   { outcome: 'halted' } | { outcome: 'already-final'; status: string } | { outcome: 'not-found' };
 
-const FORCE_HALT_ERROR = 'Force-halted by an admin — the run was stuck and not making progress.';
+/** What a halted run says — the same whoever halted it (an operator, or the owner side through run-halt.ts). */
+const HALTED_ERROR = 'Halted — the run was stuck and not making progress.';
 
 export async function forceHaltRun(input: {
   agentId: string;
@@ -48,6 +49,8 @@ export async function forceHaltRun(input: {
   /** Who clicked it — recorded the same way a graceful cancel would be. */
   haltedBySubject: string;
 }): Promise<ForceHaltRunResult> {
+  const errorKind = 'force_halted';
+  const error = HALTED_ERROR;
   const runs = getDataStore().agentRuns;
   const run = await runs.findStatus({ agentId: input.agentId, runId: input.runId });
   if (!run) return { outcome: 'not-found' };
@@ -65,8 +68,8 @@ export async function forceHaltRun(input: {
   // header for why that updates rather than deletes it.
   const claimed = await runs.forceCancel(input.runId, {
     bySubject: input.haltedBySubject,
-    errorKind: 'force_halted',
-    error: FORCE_HALT_ERROR,
+    errorKind,
+    error,
   });
   if (!claimed) {
     // Reached a terminal status in the gap above — nothing left to force.
@@ -82,8 +85,8 @@ export async function forceHaltRun(input: {
     runId: input.runId,
     ownerSubject: run.ownerSubject,
     status: 'canceled',
-    errorKind: 'force_halted',
-    error: FORCE_HALT_ERROR,
+    errorKind,
+    error,
   });
 
   return { outcome: 'halted' };

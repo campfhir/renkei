@@ -6,7 +6,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getAgentForAdmin, isRunStatus, listRunsForAdmin } from '@/lib/agents/runs-view';
 import { StatusPill } from '../../../../agents/run-timeline';
 import RunsSearch from '../../../../agents/runs-search';
-import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
+import { statusLabel, statusNote } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 
 /** The status tabs the pages offer; 'queued' stays reachable via All. */
@@ -84,11 +84,11 @@ export default async function AdminAgentRunsPage({
                 className="flex items-center justify-between rounded-md border border-gray-200 p-3 text-sm hover:border-blue-400 dark:border-gray-800"
               >
                 <span className="flex items-center gap-2">
-                  <StatusPill status={run.status} />
+                  <StatusPill status={run.status} errorKind={run.errorKind} />
                   <span className="text-gray-600 dark:text-gray-400">via {run.triggerKind}</span>
-                  {run.errorKind ? (
+                  {statusNote(run.status, run.errorKind) ? (
                     <span className="text-xs text-red-600 dark:text-red-400">
-                      {errorSummary(run.errorKind)}
+                      {statusNote(run.status, run.errorKind)}
                     </span>
                   ) : null}
                 </span>

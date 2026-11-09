@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import ListPager from './list-pager';
+import { DataFrame, DataTable, Pager, Th } from '@/components/data-table';
 import { fillerRows, type ListPage } from './agents-page.model';
 import {
   overviewHeadline,
@@ -60,7 +60,7 @@ function Row({ row }: { row: OverviewRow }) {
   const tags = tagsOf(row);
   return (
     <tr className={`${ROW_HEIGHT} border-t border-gray-100 dark:border-gray-800`}>
-      <td className="pl-3 pr-2 align-middle">
+      <td className="px-3 align-middle">
         <div className="flex min-w-0 items-baseline gap-1.5">
           <Link
             href={row.href}
@@ -75,7 +75,7 @@ function Row({ row }: { row: OverviewRow }) {
         </div>
       </td>
       <td
-        className={`truncate px-2 align-middle ${
+        className={`truncate px-3 align-middle ${
           row.state === 'idle'
             ? 'text-gray-500 dark:text-gray-400'
             : 'text-gray-800 dark:text-gray-200'
@@ -83,10 +83,10 @@ function Row({ row }: { row: OverviewRow }) {
       >
         {row.inFlight}
       </td>
-      <td className="truncate px-2 align-middle text-gray-600 dark:text-gray-400">
+      <td className="truncate px-3 align-middle text-gray-600 dark:text-gray-400">
         {row.oldestAge ?? '—'}
       </td>
-      <td className="pl-2 pr-3 text-right align-middle">
+      <td className="px-3 text-right align-middle">
         <StateBadge state={row.state} />
       </td>
     </tr>
@@ -155,37 +155,21 @@ export default function AgentsOverview({
         </h2>
         <p className="text-sm text-gray-600 dark:text-gray-400">{overviewHeadline(overview)}</p>
       </div>
-
-      {/* Phone: cards. */}
-      <ul aria-label="Agents in flight" className="space-y-2 sm:hidden">
-        {page.rows.map((row) => (
-          <Card key={row.agentId} row={row} />
-        ))}
-        {fillers.map((index) => (
-          <li key={`filler-${index}`} aria-hidden="true" className={CARD_HEIGHT} />
-        ))}
-      </ul>
-
-      {/* Wider: a table, fixed layout so the header's widths hold on every page. */}
-      <div className="hidden overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800 sm:block">
-        <table className="w-full table-fixed text-sm">
-          <thead className="bg-gray-50 text-left text-xs font-medium text-gray-500 dark:bg-gray-900 dark:text-gray-400">
-            <tr>
-              <th scope="col" className="w-[44%] py-2 pl-3 pr-2 font-medium">
-                Agent
-              </th>
-              <th scope="col" className="px-2 py-2 font-medium">
-                Queued, running, waiting
-              </th>
-              <th scope="col" className="w-20 px-2 py-2 font-medium">
-                Oldest
-              </th>
-              <th scope="col" className="w-[6.5rem] py-2 pl-2 pr-3 text-right font-medium">
-                <span className="sr-only">State</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+      <DataFrame
+        label="Agents in flight"
+        table={
+          <DataTable
+            head={
+              <>
+                <Th className="w-[44%]">Agent</Th>
+                <Th>Queued, running, waiting</Th>
+                <Th className="w-20">Oldest</Th>
+                <Th className="w-[6.5rem] text-right">
+                  <span className="sr-only">State</span>
+                </Th>
+              </>
+            }
+          >
             {page.rows.map((row) => (
               <Row key={row.agentId} row={row} />
             ))}
@@ -194,16 +178,27 @@ export default function AgentsOverview({
                 <td colSpan={4} />
               </tr>
             ))}
-          </tbody>
-        </table>
-      </div>
-
-      <ListPager
-        label="In flight pages"
-        range={page.range ? `Agents ${page.range}` : null}
-        previousHref={previousHref}
-        nextHref={nextHref}
-        keepScroll
+          </DataTable>
+        }
+        cards={
+          <>
+            {page.rows.map((row) => (
+              <Card key={row.agentId} row={row} />
+            ))}
+            {fillers.map((index) => (
+              <li key={`filler-${index}`} aria-hidden="true" className={CARD_HEIGHT} />
+            ))}
+          </>
+        }
+        footer={
+          <Pager
+            label="In flight pages"
+            range={page.range ? `Agents ${page.range}` : null}
+            previousHref={previousHref}
+            nextHref={nextHref}
+            keepScroll
+          />
+        }
       />
     </section>
   );

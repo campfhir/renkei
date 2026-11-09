@@ -36,7 +36,20 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
 
   return {
     ...memoryAgentRunSweeps(tables),
-    async list({ agentId, ownerSubject, audience, status, q, matchId, limit, offset }) {
+    async list({
+      agentId,
+      ownerSubject,
+      audience,
+      status,
+      statuses,
+      errorKinds,
+      excludeErrorKinds,
+      clockStartedBefore,
+      q,
+      matchId,
+      limit,
+      offset,
+    }) {
       const agent = agentId;
       const id = matchId ? matchId : undefined;
       const pattern = q ? likePattern(q) : null;
@@ -44,6 +57,14 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         if (r.agent_id !== agent) return false;
         if (ownerSubject !== null && r.owner_subject !== ownerSubject) return false;
         if (status && r.status !== status) return false;
+        if (statuses && !statuses.includes(r.status)) return false;
+        const kind: string | null = r.error_kind ?? null;
+        if (errorKinds && (kind === null || !errorKinds.includes(kind))) return false;
+        if (excludeErrorKinds && kind !== null && excludeErrorKinds.includes(kind)) return false;
+        if (clockStartedBefore) {
+          const clock: Date = r.resumed_at ?? r.created_at;
+          if (clock.getTime() >= clockStartedBefore.getTime()) return false;
+        }
         if (pattern === null) return true;
         const input =
           r.initial_state === null || (audience === 'admin' && r.status !== 'failed')

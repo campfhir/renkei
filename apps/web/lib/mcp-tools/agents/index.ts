@@ -140,7 +140,10 @@ import {
   type PendingApproval,
   type PendingQuestion,
 } from '@/lib/agents/approvals';
+import { RUN_VIEWS, isRunView, runViewFilter } from '@/lib/agents/run-views';
 import { requestRunCancellation } from '@/lib/agents/run-cancellation';
+import { MAX_HALTED_PER_REQUEST, findHaltCandidate, haltStuckRuns } from '@/lib/agents/run-halt';
+import { isStuckRun } from '@/lib/agents/stuck';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings, type ActApprovalPolicy } from '@renkei/settings';
 import { agentJobsQueue } from '@renkei/queue';
@@ -1035,16 +1038,25 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "One of your agents' (or one shared with you) recent runs: status (including " +
         "'waiting' for staged changes or a question), " +
-        'what failed, trigger, timing, and the tokens each run spent. Use ' +
-        'agent_run_get on a runId for the full story; agent_usage_get for the agent as a whole.',
+        'what failed, trigger, timing, and the tokens each run spent. Filter by a status or a ' +
+        "quick filter: 'stuck' (queued or running for over two hours — what agent_run_halt " +
+        "clears), 'halted', 'paused' (waiting on the owner's sign-in). Page past the first " +
+        'runs with offset. Use agent_run_get on a runId for the full story; agent_usage_get for ' +
+        'the agent as a whole.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
         status: z
-          .enum(['succeeded', 'failed', 'stopped', 'waiting', 'running', 'queued', 'canceled'])
+          .enum(RUN_VIEWS)
           .optional()
-          .describe('Only runs in this state'),
+          .describe('Only runs in this state, or under this quick filter'),
         limit: z.number().int().min(1).max(50).optional().describe('Max runs (default 20)'),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Skip this many of the newest matching runs first (paging)'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -1055,19 +1067,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       const limit =
         typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 20;
-      const status =
-        args.status === 'succeeded' ||
-        args.status === 'failed' ||
-        args.status === 'stopped' ||
-        args.status === 'waiting' ||
-        args.status === 'running' ||
-        args.status === 'queued' ||
-        args.status === 'canceled'
-          ? args.status
-          : undefined;
+      const view = isRunView(args.status) ? args.status : undefined;
+      const offset =
+        typeof args.offset === 'number' && args.offset > 0 ? Math.trunc(args.offset) : 0;
       const runs = await listRunsForOwner(access.ownerSubject, agent.id, {
-        status,
+        ...(view ? { filter: runViewFilter(view, Date.now()) } : {}),
         limit,
+        ...(offset ? { offset } : {}),
       });
       if (runs.length === 0) return textResult('No runs match.');
 
@@ -1307,10 +1313,103 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ? 'That run was already canceled.'
               : `That run already ${result.status} — nothing to stop.`
           );
-        case 'canceling':
+        case 'canceling': {
+          // A cancel only asks, and a stuck run is never reached to be asked:
+          // say so, and name what does clear it, rather than promise a cancel
+          // that will never land.
+          const candidate = await findHaltCandidate(access.agent.id, access.ownerSubject, runId);
+          const stuck = candidate !== null && isStuckRun(candidate, Date.now());
           return textResult(
-            'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
+            stuck
+              ? 'Cancellation requested — but this run has been queued or running for over two ' +
+                  'hours, so it is stuck and the request will likely never land. agent_run_halt ' +
+                  'on this runId closes it out now.'
+              : 'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
           );
+        }
+      }
+    }
+  );
+
+  server.registerTool(
+    'agent_run_halt',
+    {
+      title: 'Agents · Act — Halt stuck runs',
+      description:
+        'Halt runs that are stuck: queued or running for over two hours, which a cancel never ' +
+        'reaches (a cancel only asks, and a stuck run has no worker to ask). Halting closes the ' +
+        'run out at once as Halted and clears its queued jobs; it cannot be undone or resumed. ' +
+        'Pass runId to halt one run, or agentId to halt every stuck run of that agent (up to ' +
+        `${MAX_HALTED_PER_REQUEST} at a time — call again for more). A run younger than two ` +
+        'hours is refused: use agent_run_cancel. Find stuck runs with agent_runs_list ' +
+        "status 'stuck'. Your agents or ones shared with you; refuses agent-run callers, same " +
+        'as agent_run_cancel.',
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: z.object({
+        runId: z.string().min(1).optional().describe('One run to halt (from agent_runs_list)'),
+        agentId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Halt every stuck run of this agent instead (from agent_list)'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText('Agent runs cannot halt runs from here — that is a human/API decision.');
+      }
+      const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
+      const agentIdArg = typeof args.agentId === 'string' ? args.agentId.trim() : '';
+      if ((runId === '') === (agentIdArg === '')) {
+        return errText('Pass exactly one of runId (one run) or agentId (all its stuck runs).');
+      }
+
+      let agentId = agentIdArg;
+      if (runId) {
+        if (!isUuid(runId)) return errText('No run of yours has that id.');
+        // The run says which agent it belongs to; access is checked on that.
+        const runRow = await getDataStore().agentRuns.findRunAgent(runId);
+        if (!runRow) return errText('No run of yours has that id.');
+        agentId = runRow.agentId;
+      }
+      const access = await resolveAgentAccess(context.subject, agentId);
+      if (!access) return errText(runId ? 'No run of yours has that id.' : NOT_FOUND);
+
+      const result = await haltStuckRuns({
+        agentId: access.agent.id,
+        ownerSubject: access.ownerSubject,
+        bySubject: context.subject,
+        ...(runId ? { runId } : {}),
+        nowMs: Date.now(),
+      });
+      switch (result.outcome) {
+        case 'not-found':
+          return errText(runId ? 'No run of yours has that id.' : NOT_FOUND);
+        case 'not-stuck':
+          return errText(
+            result.status === 'queued' || result.status === 'running'
+              ? 'That run has not been stuck for two hours yet — use agent_run_cancel instead.'
+              : `That run is ${result.status}, not stuck — nothing to halt.`
+          );
+        case 'halted': {
+          if (runId) {
+            return textResult(
+              result.runIds.length > 0
+                ? 'Halted. The run is closed out and will not go any further.'
+                : 'That run finished on its own before it could be halted.'
+            );
+          }
+          const count = result.runIds.length;
+          if (count === 0) return textResult(`“${access.agent.name}” has no stuck runs to halt.`);
+          return textResult(
+            `Halted ${count} stuck run${count === 1 ? '' : 's'} of “${access.agent.name}”` +
+              (count >= MAX_HALTED_PER_REQUEST
+                ? ' — the most one call halts; call again for any that remain.'
+                : '.') +
+              `\n\n${result.runIds.map((id) => `- ${id}`).join('\n')}`
+          );
+        }
       }
     }
   );
