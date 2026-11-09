@@ -10,23 +10,27 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseSharePayload } from '@/lib/file-shares/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ shareId: string }> }
 ): Promise<NextResponse> {
   const { shareId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const share = await getShare(shareId);
   if (!share.ok) {
-    logger.error('Could not read the share: {error}', {
-      component: 'api/admin/file-shares',
-      shareId,
-      error: share.err.message ?? share.err.type,
-    });
+    logger.error(
+      '{actor} opened a file share, but it could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/file-shares',
+        ...who(session),
+        shareId,
+        error: share.err.message ?? share.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
   }
   if (!share.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -53,10 +57,11 @@ export async function PATCH(
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'A share with that name exists' }, { status: 409 });
     }
-    logger.error('Could not update the share: {error}', {
+    logger.error('{actor} saved the file share "{name}", but it was not updated: {error}', {
       component: 'api/admin/file-shares',
-      subject: session.subject,
+      ...who(session),
       shareId,
+      name: parsed.input.name,
       error: updated.err.message ?? updated.err.type,
     });
     return NextResponse.json({ error: 'Could not update the share' }, { status: 500 });
@@ -88,10 +93,11 @@ export async function DELETE(
 
   const deleted = await deleteShare(shareId);
   if (!deleted.ok) {
-    logger.error('Could not delete the share: {error}', {
+    logger.error('{actor} deleted the file share "{name}", but it was not deleted: {error}', {
       component: 'api/admin/file-shares',
-      subject: session.subject,
+      ...who(session),
       shareId,
+      name,
       error: deleted.err.message ?? deleted.err.type,
     });
     return NextResponse.json({ error: 'Could not delete the share' }, { status: 500 });

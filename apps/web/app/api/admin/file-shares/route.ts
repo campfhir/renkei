@@ -10,18 +10,22 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { parseSharePayload } from '@/lib/file-shares/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const shares = await listShares();
   if (!shares.ok) {
-    logger.error('Could not read shares: {error}', {
-      component: 'api/admin/file-shares',
-      error: shares.err.message ?? shares.err.type,
-    });
+    logger.error(
+      '{actor} opened the file shares, but the list could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/file-shares',
+        ...who(session),
+        error: shares.err.message ?? shares.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read shares' }, { status: 500 });
   }
 
@@ -46,11 +50,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'A share with that name exists' }, { status: 409 });
     }
-    logger.error('Could not create the share: {error}', {
-      component: 'api/admin/file-shares',
-      subject: session.subject,
-      error: created.err.message ?? created.err.type,
-    });
+    logger.error(
+      '{actor} added the file share "{name}" ({protocol} on {host}), but it was not created: {error}',
+      {
+        component: 'api/admin/file-shares',
+        ...who(session),
+        name: parsed.input.name,
+        protocol: parsed.input.protocol,
+        host: parsed.input.host,
+        error: created.err.message ?? created.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not create the share' }, { status: 500 });
   }
 

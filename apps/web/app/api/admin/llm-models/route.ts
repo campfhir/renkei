@@ -14,6 +14,7 @@ import { invalidateLlmCache } from '@renkei/agent-llm';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseModelPayload } from '@/lib/agents/llm-model-payload';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
@@ -38,9 +39,8 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
   const parsed = parseModelPayload(body);
@@ -51,10 +51,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('Could not load the token encryption key: {error}', {
-      component: 'api/admin/llm-models',
-      error: keyResult.err.message ?? keyResult.err.type,
-    });
+    logger.error(
+      '{actor} added the LLM model "{label}", but the token encryption key could not be loaded; nothing was saved: {error}',
+      {
+        component: 'api/admin/llm-models',
+        ...who(session),
+        label: parsed.label,
+        error: keyResult.err.message ?? keyResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 

@@ -11,21 +11,23 @@ import { loadKeyring } from '@renkei/crypto';
 import { getConnectorConfig } from '@renkei/connector-config';
 import { VOICE_CONNECTOR, createVoiceProvider, parseVoiceConfig } from '@renkei/voice';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function POST(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function POST(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('Could not load the token encryption key: {error}', {
-      component: 'api/admin/connectors/voice/test',
-      subject: access.subject,
-      error: keyResult.err.message ?? keyResult.err.type,
-    });
+    logger.error(
+      '{actor} tested the voice connection, but the token encryption key could not be loaded; no test was run: {error}',
+      {
+        component: 'api/admin/connectors/voice/test',
+        ...who(access),
+        error: keyResult.err.message ?? keyResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
   const configResult = await getConnectorConfig(VOICE_CONNECTOR, keyResult.val);
@@ -38,12 +40,15 @@ export async function POST(
   }
   const result = await createVoiceProvider(config).listVoices();
   if (!result.ok) {
-    logger.warn('Voice connection test failed ({kind}): {error}', {
-      component: 'api/admin/connectors/voice/test',
-      subject: access.subject,
-      kind: result.error.kind,
-      error: result.error.message,
-    });
+    logger.warn(
+      '{actor} tested the voice connection, but the speech service did not list its voices ({kind}); the form shows the failure: {error}',
+      {
+        component: 'api/admin/connectors/voice/test',
+        ...who(access),
+        kind: result.error.kind,
+        error: result.error.message,
+      }
+    );
     return NextResponse.json(
       { error: result.error.message, kind: result.error.kind },
       { status: 502 }

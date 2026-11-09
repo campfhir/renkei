@@ -12,6 +12,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getDataStore } from '@renkei/db';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who, whoIs } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -36,11 +37,19 @@ export async function POST(
     targetLabel: subject,
     details: { subject, ...counts },
   });
-  logger.info("Operator revoked a person's sessions and tokens", {
-    component: 'admin/access',
-    subject,
-    ...counts,
-  });
+  const owner = await whoIs(subject);
+  logger.info(
+    '{actor} signed {owner} out everywhere: {sessions} browser sessions, {accessTokens} access tokens and {refreshTokens} refresh tokens were revoked',
+    {
+      component: 'admin/access',
+      ...who(access),
+      ownerSubject: owner.subject,
+      ownerName: owner.user,
+      ownerEmail: owner.email,
+      owner: owner.actor,
+      ...counts,
+    }
+  );
   void request;
   return NextResponse.json({ success: true, revoked: counts });
 }

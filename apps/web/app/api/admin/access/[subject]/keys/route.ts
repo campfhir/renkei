@@ -16,6 +16,7 @@ import { getDataStore } from '@renkei/db';
 import { delegateClient } from '@renkei/delegate-client';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who, whoIs } from '@/lib/log-actor';
 
 export async function DELETE(
   request: NextRequest,
@@ -33,11 +34,19 @@ export async function DELETE(
   }
   const shredded = await delegateClient().shredUserKey(subject);
   if (!shredded.ok) {
-    logger.error('The key service could not be reached: {error}', {
-      component: 'api/admin/access/keys',
-      subject: access.subject,
-      error: shredded.err.message ?? shredded.err.type,
-    });
+    const owner = await whoIs(subject);
+    logger.error(
+      '{actor} asked to shred the encryption key of {owner}, but the key service could not be reached; nothing was shredded and their sessions still stand: {error}',
+      {
+        component: 'api/admin/access/keys',
+        ...who(access),
+        ownerSubject: owner.subject,
+        ownerName: owner.user,
+        ownerEmail: owner.email,
+        owner: owner.actor,
+        error: shredded.err.message ?? shredded.err.type,
+      }
+    );
     return NextResponse.json({ error: 'The key service could not be reached.' }, { status: 503 });
   }
   await getDataStore().sessions.deleteForSubject(subject);
