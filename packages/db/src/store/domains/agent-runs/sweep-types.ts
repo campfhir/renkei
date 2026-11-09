@@ -61,7 +61,9 @@ export interface AgentRunSweepStore {
    * Live runs that are dead, oldest first (created, then id): queued or
    * running whose clock (the latest resume, else creation) started before
    * `clockBefore`; waiting whose wait ran out before `waitDueBefore`; and
-   * waiting with no deadline whose clock started before `clockBefore`.
+   * waiting with no deadline whose clock started before `clockBefore` —
+   * except a run parked for its owner's sign-in (error_kind
+   * `needs-sign-in`), which waits without a deadline on purpose.
    */
   listDead(
     cutoffs: { clockBefore: Date; waitDueBefore: Date },

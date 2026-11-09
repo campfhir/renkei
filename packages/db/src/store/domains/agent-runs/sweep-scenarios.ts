@@ -185,7 +185,7 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agentRuns.listDead',
-    name: 'old queued or running, overdue waits, old waits with no deadline; resumes reset the clock',
+    name: 'old queued or running, overdue waits, old waits with no deadline but not sign-in parks; resumes reset the clock',
     fixture: {
       agents,
       agent_runs: [
@@ -198,6 +198,7 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
         run(57, 1, 'waiting', { created_at: at(7) }),
         run(58, 1, 'waiting', { created_at: at(95) }),
         run(59, 1, 'succeeded', { created_at: at(1) }),
+        run(60, 1, 'waiting', { created_at: at(8), error_kind: 'needs-sign-in' }),
       ],
     },
     run: async (store) => {

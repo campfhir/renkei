@@ -104,9 +104,12 @@ export function postgresAgentRunSweeps(db: () => Kysely<DB>): AgentRunSweepStore
           eb.or([
             eb.and([eb('status', 'in', ['queued', 'running']), eb(clock, '<', clockBefore)]),
             eb.and([eb('status', '=', 'waiting'), eb('waiting_until', '<', waitDueBefore)]),
+            // A run parked for its owner's sign-in (error_kind needs-sign-in)
+            // waits with no deadline on purpose: the next sign-in runs it.
             eb.and([
               eb('status', '=', 'waiting'),
               eb('waiting_until', 'is', null),
+              eb.or([eb('error_kind', 'is', null), eb('error_kind', '!=', 'needs-sign-in')]),
               eb(clock, '<', clockBefore),
             ]),
           ])
