@@ -119,10 +119,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(response, { status: 201 });
   } catch (error) {
-    logger.error('Registration error: {detail}', {
-      component: 'auth/oauth-register',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'an OAuth client registration{named} failed with an unexpected error; no client was created: {error}',
+      {
+        component: 'auth/oauth-register',
+        clientName: client_name ?? null,
+        named: client_name ? ` for "${client_name}"` : '',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json(
       { error: 'server_error', error_description: 'An error occurred during registration' },
       { status: 500 }

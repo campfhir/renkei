@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
-import { getSessionFromRequest } from '@/lib/session';
+import { getSessionFromRequest, type Session } from '@/lib/session';
 import { redirectToConsent } from '@/lib/consent-redirect';
 import { getGitHubApp } from '@/lib/github-app';
 import { ALL_GITHUB_SCOPES } from '@/lib/github-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /**
  * Authorize against Renkei's GitHub App. As with Bitbucket, a GitHub
@@ -20,9 +21,10 @@ import { logger } from '@/lib/logger';
  * installed yet — one click either way.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  let session: Session | null = null;
   try {
     // The resulting grant is bound to whoever completes this flow.
-    const session = await getSessionFromRequest(request);
+    session = await getSessionFromRequest(request);
     if (!session) {
       return NextResponse.json(
         { error: 'Not signed in', error_description: 'Sign in before connecting' },
@@ -32,11 +34,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth',
-        subject: session.subject,
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        '{actor} started connecting GitHub, but the app origin could not be resolved; nothing was started and they saw a config error: {error}',
+        {
+          component: 'auth/oauth',
+          ...who(session),
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const app = await getGitHubApp(originResult.val);
@@ -85,17 +90,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authUrl.searchParams.append('redirect_uri', app.redirectUri);
     authUrl.searchParams.append('state', state);
 
-    logger.debug('GitHub authorize redirect', {
+    logger.info('{actor} started connecting GitHub{narrowed}; sent to GitHub to authorize', {
       component: 'auth/oauth',
+      ...who(session),
+      narrowed: requestedParam ? ' with narrowed capabilities' : '',
+      scopes: effectiveScopes,
       clientId: app.clientId,
     });
     // Bound to this browser: the callback requires the cookie this sets.
     return await redirectToConsent(authUrl, state);
   } catch (error) {
-    logger.error('GitHub authorize error: {error}', {
-      component: 'auth/oauth',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{starter} started connecting GitHub, but it failed with an unexpected error; nothing was started and they saw "Failed to initiate authorization": {error}',
+      {
+        component: 'auth/oauth',
+        ...(session ? who(session) : {}),
+        starter: session ? who(session).actor : 'a browser with no session',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }

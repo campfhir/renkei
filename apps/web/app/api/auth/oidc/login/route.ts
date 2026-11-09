@@ -42,10 +42,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Get OIDC config
     const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
-      logger.error('Failed to retrieve OIDC configuration: {error}', {
-        component: 'auth/oidc',
-        error: oidcResult.err.message ?? oidcResult.err.type,
-      });
+      logger.error(
+        'a sign-in could not start: the OIDC configuration could not be read, and the browser saw an error: {error}',
+        {
+          component: 'auth/oidc',
+          error: oidcResult.err.message ?? oidcResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
     const oidc = oidcResult.val;
@@ -97,10 +100,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         authorizationEndpoint = `${baseIssuer}/oauth2/v2.0/authorize`;
       }
     } catch (error) {
-      logger.error('Failed to fetch discovery document: {detail}', {
-        component: 'auth/oidc',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "a sign-in is starting, but the IdP's discovery document could not be fetched; falling back to the Azure AD v2.0 authorize endpoint: {error}",
+        {
+          component: 'auth/oidc',
+          issuer: oidc.issuer,
+          discoveryUrl,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       // Fallback to Azure AD OAuth2 v2.0 endpoint
       // Strip trailing /v2.0 from issuer if present to avoid duplication
       const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;
@@ -110,10 +118,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Build OIDC authorization URL
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oidc',
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        'a sign-in could not start: the app origin could not be resolved, and the browser saw a config error: {error}',
+        {
+          component: 'auth/oidc',
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
@@ -157,11 +168,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return response;
   } catch (error) {
-    logger.error('OIDC login setup failed: {error}', {
-      component: 'auth/oidc',
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'a sign-in could not start: an unexpected error, and the browser saw "Authentication setup failed": {error}',
+      {
+        component: 'auth/oidc',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return NextResponse.json({ error: 'Authentication setup failed' }, { status: 500 });
   }
 }

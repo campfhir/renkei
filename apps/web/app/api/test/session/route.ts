@@ -19,7 +19,7 @@
 
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { getMemoryDataStore } from '@renkei/db';
+import { getMemoryDataStore, actorFields, actorFrom } from '@renkei/db';
 import { upsertIdentity } from '@/lib/identity';
 import {
   SESSION_TTL_SECONDS,
@@ -57,20 +57,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const email = stringOf(input.email) ?? subject;
   const displayName = stringOf(input.displayName);
 
+  const actor = actorFields(actorFrom(subject, displayName, email));
   const recorded = await upsertIdentity(subject, { email, displayName, idpGroups: [] });
   if (!recorded.ok) {
-    logger.error('Could not record: {error}', {
-      component: 'api/test/session',
-      error: recorded.err.message ?? recorded.err.type,
-    });
+    logger.error(
+      '{actor} could not be signed in for the browser suite: the identity row was not written: {error}',
+      {
+        component: 'api/test/session',
+        ...actor,
+        roles,
+        error: recorded.err.message ?? recorded.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not record' }, { status: 500 });
   }
   const session = await createSession(subject, roles, SESSION_TTL_SECONDS);
   if (!session.ok) {
-    logger.error('Could not sign in: {error}', {
-      component: 'api/test/session',
-      error: session.err.message ?? session.err.type,
-    });
+    logger.error(
+      '{actor} could not be signed in for the browser suite: no session was created: {error}',
+      {
+        component: 'api/test/session',
+        ...actor,
+        roles,
+        error: session.err.message ?? session.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not sign in' }, { status: 500 });
   }
 

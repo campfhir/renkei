@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { getOrgSettings, type OrgSettings } from '@renkei/settings';
 import { getDataStore } from '@renkei/db';
 import { randomUUID } from 'crypto';
@@ -39,10 +40,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const settingsResult = await getOrgSettings();
   if (!settingsResult.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'auth/oauth-token',
-      error: settingsResult.err.message ?? settingsResult.err.type,
-    });
+    logger.error(
+      'a token request could not be served: the org settings could not be read; refused with server_error: {error}',
+      {
+        component: 'auth/oauth-token',
+        error: settingsResult.err.message ?? settingsResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
   const settings = settingsResult.val;
@@ -97,10 +101,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
   } catch (error) {
-    logger.error('Error: {detail}', {
-      component: 'auth/oauth-token',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'a token request failed with an unexpected error; refused with server_error: {error}',
+      {
+        component: 'auth/oauth-token',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -133,11 +140,14 @@ async function authenticateClient(
     if (secretCheck === 'unusable') {
       // Not the client's fault, and not something it can act on: no digest is
       // stored for this row, so nothing it presents can ever match.
-      logger.error('Client row has no usable secret digest', {
-        component: 'auth/oauth-token',
-        client_id,
-        hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
-      });
+      logger.error(
+        'OAuth client {client_id} has no secret digest on record, so no secret it presents can ever match; its token request was refused as invalid_client',
+        {
+          component: 'auth/oauth-token',
+          client_id,
+          hint: 'oauth_clients.client_secret_hash is NULL or absent — check migration 012 has run',
+        }
+      );
     }
     return NextResponse.json(
       {
@@ -283,10 +293,14 @@ async function redeemCode(
       scope: authCode.scope || 'openid profile email',
     });
   } catch (error) {
-    logger.error('Authorization code grant error: {detail}', {
-      component: 'auth/oauth-token',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'redeeming an authorization code for OAuth client {client_id} failed with an unexpected error; no token was issued: {error}',
+      {
+        component: 'auth/oauth-token',
+        client_id,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -350,12 +364,15 @@ async function exchangeRefreshToken(
     });
 
     if (outcome.outcome === 'reused') {
-      logger.warn('Refresh token reuse detected; family revoked', {
-        component: 'auth/oauth-token',
-        client_id,
-        subject: outcome.subject,
-        familyId: outcome.familyId,
-      });
+      logger.warn(
+        "{actor}'s refresh token for OAuth client {client_id} was presented again after it had already been rotated; the whole token family was revoked and the request refused",
+        {
+          component: 'auth/oauth-token',
+          ...(await whoIs(outcome.subject)),
+          client_id,
+          familyId: outcome.familyId,
+        }
+      );
     }
     if (outcome.outcome !== 'rotated') {
       const refusal = {
@@ -378,10 +395,14 @@ async function exchangeRefreshToken(
       scope: outcome.scope || 'openid profile email',
     });
   } catch (error) {
-    logger.error('Refresh token grant error: {detail}', {
-      component: 'auth/oauth-token',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'rotating a refresh token for OAuth client {client_id} failed with an unexpected error; no token was issued: {error}',
+      {
+        component: 'auth/oauth-token',
+        client_id,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

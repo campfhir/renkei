@@ -24,6 +24,7 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { jiraAdminGet } from '@/lib/mcp-tools/jira-admin/client';
 import { resolveAutomationAccess } from '@/lib/mcp-tools/jira-admin/automation-client';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TOKEN_MAX = 1024;
@@ -71,22 +72,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     metadata: { email, cloudId: site.cloudId, siteUrl: site.siteUrl },
   });
   if (!stored.ok) {
-    logger.error('Could not store the token: {error}', {
-      component: 'api/atlassian-admin/token',
-      subject: session.subject,
-      error: stored.err.message ?? stored.err.type,
-    });
+    logger.error(
+      '{actor} saved an Atlassian API token for {tokenEmail}, but it was not stored: {error}',
+      {
+        component: 'api/atlassian-admin/token',
+        ...who(session),
+        tokenEmail: email,
+        accountId: admin.val.accountId,
+        error: stored.err.message ?? stored.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not store the token.' }, { status: 500 });
   }
 
   // Checked the only way the token may be used: a call through the delegate.
   const access = await resolveAutomationAccess({ subject: session.subject });
   if (typeof access === 'string') {
-    logger.error('Could not resolve Jira automation access for the stored token: {error}', {
-      component: 'api/atlassian-admin/token',
-      subject: session.subject,
-      error: access,
-    });
+    logger.error(
+      '{actor} saved an Atlassian API token for {tokenEmail}, but it could not be checked because the Jira automation access could not be resolved; the token stays stored unchecked: {error}',
+      {
+        component: 'api/atlassian-admin/token',
+        ...who(session),
+        tokenEmail: email,
+        accountId: admin.val.accountId,
+        error: access,
+      }
+    );
     return NextResponse.json({ error: access }, { status: 500 });
   }
   const probe = await jiraAdminGet(
@@ -95,12 +106,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     '/rest/v1/rule/summary?limit=1'
   );
   if (!probe.ok) {
-    logger.warn('Checking the Jira admin API token failed ({status}): {error}', {
-      component: 'api/atlassian-admin/token',
-      subject: session.subject,
-      status: probe.status,
-      error: probe.error,
-    });
+    logger.warn(
+      '{actor} saved an Atlassian API token for {tokenEmail}, but checking it against the Automation API failed ({status}); {outcome}: {error}',
+      {
+        component: 'api/atlassian-admin/token',
+        ...who(session),
+        tokenEmail: email,
+        accountId: admin.val.accountId,
+        status: probe.status,
+        outcome:
+          probe.status === 401
+            ? 'Atlassian refused it, so it was dropped again'
+            : 'it was kept with a note',
+        error: probe.error,
+      }
+    );
   }
   if (!probe.ok && probe.status === 401) {
     await delegateGrants().delete({
@@ -147,11 +167,15 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     accountId: grant.accountId,
   });
   if (!deleted.ok) {
-    logger.error('Could not remove the token: {error}', {
-      component: 'api/atlassian-admin/token',
-      subject: session.subject,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} tried to remove their Atlassian API token, but it was not removed: {error}',
+      {
+        component: 'api/atlassian-admin/token',
+        ...who(session),
+        accountId: grant.accountId,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not remove the token' }, { status: 500 });
   }
   recordAuditEvent({

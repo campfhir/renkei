@@ -26,6 +26,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { clientFailure, fsTestConnection } from '@/lib/file-shares/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/file-shares/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { isRecord } from '@renkei/guards';
 
 /** Whether the body carries any credential field (vs. exposure-only). */
@@ -45,12 +46,15 @@ export async function POST(
 
   const share = await getShare(shareId);
   if (!share.ok) {
-    logger.error('Could not read the share: {error}', {
-      component: 'api/fileshares/connection',
-      subject: session.subject,
-      shareId,
-      error: share.err.message ?? share.err.type,
-    });
+    logger.error(
+      '{actor} tried to connect a file share, but it could not be read; nothing was changed: {error}',
+      {
+        component: 'api/fileshares/connection',
+        ...who(session),
+        shareId,
+        error: share.err.message ?? share.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the share' }, { status: 500 });
   }
   if (!share.val || !share.val.summary.enabled) {
@@ -75,12 +79,16 @@ export async function POST(
       exposure.allowDelete
     );
     if (!updated.ok) {
-      logger.error('Could not update the connection: {error}', {
-        component: 'api/fileshares/connection',
-        subject: session.subject,
-        shareId,
-        error: updated.err.message ?? updated.err.type,
-      });
+      logger.error(
+        '{actor} changed the LLM exposure of their connection to file share "{name}", but it was not saved: {error}',
+        {
+          component: 'api/fileshares/connection',
+          ...who(session),
+          shareId,
+          name: share.val.summary.name,
+          error: updated.err.message ?? updated.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Could not update the connection' }, { status: 500 });
     }
     if (!updated.val) {
@@ -101,13 +109,18 @@ export async function POST(
       failure.status === 403 || tested.err.kind === 'op'
         ? `The file server did not accept these credentials: ${failure.message}`
         : failure.message;
-    logger.warn('File share connection test failed ({status}): {error}', {
-      component: 'api/fileshares/connection',
-      subject: session.subject,
-      shareId,
-      status: failure.status,
-      error: failure.message,
-    });
+    logger.warn(
+      '{actor} tried to connect file share "{name}" as "{username}", but the connection test failed ({status}); nothing was stored: {error}',
+      {
+        component: 'api/fileshares/connection',
+        ...who(session),
+        shareId,
+        name: share.val.summary.name,
+        username: parsed.credentials.username,
+        status: failure.status,
+        error: failure.message,
+      }
+    );
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
@@ -117,12 +130,17 @@ export async function POST(
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
-    logger.warn('Could not seal the File share credentials: {error}', {
-      component: 'api/fileshares/connection',
-      subject: session.subject,
-      shareId,
-      error: sealed.err.message ?? sealed.err.type,
-    });
+    logger.warn(
+      '{actor} tried to connect file share "{name}", but the credentials could not be sealed under their key ({reason}); nothing was stored: {error}',
+      {
+        component: 'api/fileshares/connection',
+        ...who(session),
+        shareId,
+        name: share.val.summary.name,
+        reason: sealed.err.type,
+        error: sealed.err.message ?? sealed.err.type,
+      }
+    );
     return sealed.err.type === 'NEEDS_DELEGATION' ||
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
@@ -142,12 +160,17 @@ export async function POST(
     allowDelete: parsed.allowDelete,
   });
   if (!stored.ok) {
-    logger.error('Could not store the connection: {error}', {
-      component: 'api/fileshares/connection',
-      subject: session.subject,
-      shareId,
-      error: stored.err.message ?? stored.err.type,
-    });
+    logger.error(
+      '{actor} connected file share "{name}" as "{username}", but the connection was not stored: {error}',
+      {
+        component: 'api/fileshares/connection',
+        ...who(session),
+        shareId,
+        name: share.val.summary.name,
+        username: parsed.credentials.username,
+        error: stored.err.message ?? stored.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not store the connection' }, { status: 500 });
   }
 
@@ -176,24 +199,30 @@ export async function DELETE(
 
   const existing = await getConnection(shareId, session.subject);
   if (!existing.ok) {
-    logger.error('Could not read the connection: {error}', {
-      component: 'api/fileshares/connection',
-      subject: session.subject,
-      shareId,
-      error: existing.err.message ?? existing.err.type,
-    });
+    logger.error(
+      '{actor} tried to disconnect a file share, but their connection could not be read; nothing was changed: {error}',
+      {
+        component: 'api/fileshares/connection',
+        ...who(session),
+        shareId,
+        error: existing.err.message ?? existing.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
 
   const deleted = await deleteConnection(shareId, session.subject);
   if (!deleted.ok) {
-    logger.error('Could not disconnect: {error}', {
-      component: 'api/fileshares/connection',
-      subject: session.subject,
-      shareId,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} tried to disconnect a file share, but the connection was not removed: {error}',
+      {
+        component: 'api/fileshares/connection',
+        ...who(session),
+        shareId,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 

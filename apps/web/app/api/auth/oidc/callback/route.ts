@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
-import { getDataStore } from '@renkei/db';
+import { getDataStore, actorFields, actorFrom, type ActorFields } from '@renkei/db';
 import { getTenantOidc } from '@/lib/tenant-operations';
 import { getOrigin } from '@/lib/get-origin';
 import {
@@ -72,6 +72,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
   }
 
+  // The person signing in, once the id_token names them — for every line
+  // from then on, the catch-all included.
+  let signingIn: ActorFields | null = null;
   try {
     // Look up pending OIDC state
     const pendingSignIn = await pendingSignins.findByState(state);
@@ -94,9 +97,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const stateCookie = request.cookies.get('oidc_state')?.value;
     if (!stateCookie || stateCookie !== state) {
       await pendingSignins.deleteByState(state);
-      logger.warn('OIDC state cookie missing or mismatched; rejecting callback', {
-        component: 'auth/oidc',
-      });
+      logger.warn(
+        'a sign-in callback arrived without the state cookie its login step set in the browser; rejected and the state consumed, so nobody was signed in',
+        { component: 'auth/oidc' }
+      );
       const response = NextResponse.json({ error: 'Invalid state' }, { status: 400 });
       response.cookies.delete('oidc_state');
       return response;
@@ -105,10 +109,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Get OIDC config
     const oidcResult = await getTenantOidc();
     if (!oidcResult.ok) {
-      logger.error('Failed to retrieve OIDC configuration: {error}', {
-        component: 'auth/oidc',
-        error: oidcResult.err.message ?? oidcResult.err.type,
-      });
+      logger.error(
+        'a sign-in callback could not be served: the OIDC configuration could not be read; nobody was signed in: {error}',
+        {
+          component: 'auth/oidc',
+          error: oidcResult.err.message ?? oidcResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Failed to retrieve OIDC configuration' }, { status: 500 });
     }
     const oidc = oidcResult.val;
@@ -140,10 +147,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         tokenEndpoint = `${baseIssuer}/oauth2/v2.0/token`;
       }
     } catch (error) {
-      logger.error('Failed to fetch discovery document: {detail}', {
-        component: 'auth/oidc',
-        detail: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "a sign-in callback could not fetch the IdP's discovery document; falling back to the Azure AD v2.0 token endpoint: {error}",
+        {
+          component: 'auth/oidc',
+          issuer: oidc.issuer,
+          discoveryUrl,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       // Fallback to Azure AD OAuth2 v2.0 endpoint
       // Strip trailing /v2.0 from issuer if present to avoid duplication
       const baseIssuer = oidc.issuer.endsWith('/v2.0') ? oidc.issuer.slice(0, -5) : oidc.issuer;
@@ -153,10 +165,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Exchange code for token
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oidc',
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        'a sign-in callback could not resolve the app origin; nobody was signed in: {error}',
+        {
+          component: 'auth/oidc',
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const origin = originResult.val;
@@ -169,10 +184,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       await assertPublicHttpsUrl(tokenEndpoint);
     } catch (tokenUrlError) {
       if (tokenUrlError instanceof BlockedUrlError) {
-        logger.error('Token endpoint is not an allowed URL: {detail}', {
-          component: 'auth/oidc',
-          detail: tokenUrlError.message,
-        });
+        logger.error(
+          "the IdP's token endpoint {tokenEndpoint} is not an allowed URL, so the sign-in code was not exchanged; nobody was signed in: {error}",
+          {
+            component: 'auth/oidc',
+            tokenEndpoint,
+            error: tokenUrlError.message,
+          }
+        );
         return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
       }
       throw tokenUrlError;
@@ -196,10 +215,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       });
     } catch (tokenFetchError) {
       if (tokenFetchError instanceof BlockedUrlError) {
-        logger.error('Token endpoint is not an allowed URL: {detail}', {
-          component: 'auth/oidc',
-          detail: tokenFetchError.message,
-        });
+        logger.error(
+          "the IdP's token endpoint {tokenEndpoint} is not an allowed URL, so the sign-in code was not exchanged; nobody was signed in: {error}",
+          {
+            component: 'auth/oidc',
+            tokenEndpoint,
+            error: tokenFetchError.message,
+          }
+        );
         return NextResponse.json({ error: 'Invalid token endpoint' }, { status: 400 });
       }
       throw tokenFetchError;
@@ -207,11 +230,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
-      logger.warn('OIDC token exchange failed ({status}): {detail}', {
-        component: 'auth/oidc',
-        status: tokenResponse.status,
-        detail: errorText.slice(0, 500),
-      });
+      logger.warn(
+        'the IdP refused to exchange the sign-in code ({status}); nobody was signed in: {detail}',
+        {
+          component: 'auth/oidc',
+          status: tokenResponse.status,
+          tokenEndpoint,
+          detail: errorText.slice(0, 500),
+        }
+      );
       return NextResponse.json({ error: 'Failed to exchange code for token' }, { status: 400 });
     }
 
@@ -227,14 +254,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const subject = typeof decoded?.sub === 'string' ? decoded.sub : null;
 
     if (!subject) {
-      logger.error("No 'sub' claim in id_token; cannot establish session", {
-        component: 'auth/oidc',
-      });
+      logger.error(
+        "the IdP's id_token carried no sub claim, so there is nobody to sign in; the browser saw an error",
+        { component: 'auth/oidc' }
+      );
       return NextResponse.json(
         { error: 'Identity provider did not return a subject claim' },
         { status: 400 }
       );
     }
+    // Named from the claims as presented — the identity row does not exist
+    // yet — so every line from here reads as a person, not a subject.
+    signingIn = actorFields(
+      actorFrom(
+        subject,
+        typeof decoded?.name === 'string' ? decoded.name : null,
+        typeof decoded?.email === 'string' ? decoded.email : null
+      )
+    );
+    const actor = signingIn;
 
     // Validate the id_token's claims. The token is fetched over the TLS
     // back-channel directly from the token endpoint, so signature verification
@@ -248,9 +286,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
     if (claimError) {
       await pendingSignins.deleteByState(state);
-      logger.error('id_token claim validation failed: {detail}', {
+      logger.error("{actor}'s id_token failed claim validation ({reason}); nobody was signed in", {
         component: 'auth/oidc',
-        detail: claimError,
+        ...actor,
+        reason: claimError,
       });
       const response = NextResponse.json({ error: 'Invalid id_token' }, { status: 400 });
       response.cookies.delete('oidc_state');
@@ -277,30 +316,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       // Renkei does not follow the pointer, so this person has no groups on
       // record and every audience-scoped connector is closed to them.
       logger.warn(
-        'id_token omits the groups claim (groups overage); audience rules fail closed for this subject',
-        { component: 'auth/oidc', subject, groupsClaim }
+        '{actor} is signing in with an id_token that omits the groups claim (groups overage); they are recorded in no groups and audience rules fail closed for them',
+        { component: 'auth/oidc', ...actor, groupsClaim }
       );
     }
     if (identityClaims) {
       const recorded = await upsertIdentity(subject, identityClaims);
       if (!recorded.ok) {
-        logger.warn('Could not record identity for subject; gates will fail closed: {error}', {
-          component: 'auth/oidc',
-          subject,
-          error: recorded.err.message ?? recorded.err.type,
-        });
+        logger.warn(
+          '{actor} is signing in, but their identity (email, groups) could not be recorded; gates will fail closed for them: {error}',
+          {
+            component: 'auth/oidc',
+            ...actor,
+            error: recorded.err.message ?? recorded.err.type,
+          }
+        );
       }
     } else {
-      logger.warn('id_token carries no email claim; gates will fail closed for this user', {
-        component: 'auth/oidc',
-        subject,
-      });
+      logger.warn(
+        '{actor} is signing in with an id_token that carries no email claim; gates will fail closed for them',
+        {
+          component: 'auth/oidc',
+          ...actor,
+        }
+      );
       const forgotten = await clearIdpGroups(subject);
       if (!forgotten.ok) {
-        logger.warn('could not clear recorded groups for a subject whose claims were unreadable', {
-          component: 'auth/oidc',
-          subject,
-        });
+        logger.warn(
+          "{actor}'s recorded groups could not be cleared after an id_token without readable claims; groups from their last sign-in may remain",
+          {
+            component: 'auth/oidc',
+            ...actor,
+          }
+        );
       }
     }
 
@@ -324,12 +372,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
         // Require user to have at least one renkei role
         if (userRoles.size === 0) {
-          logger.warn('Sign-in refused: no authorized roles in IdP claim {roleClaim}: {claim}', {
-            component: 'auth/oidc',
-            subject,
-            roleClaim: oidc.roleClaim,
-            claim: JSON.stringify(idpClaim),
-          });
+          logger.warn(
+            '{actor} was refused sign-in: no authorized role in IdP claim {roleClaim} ({claim})',
+            {
+              component: 'auth/oidc',
+              ...actor,
+              roleClaim: oidc.roleClaim,
+              claim: JSON.stringify(idpClaim),
+            }
+          );
           return NextResponse.json({ error: 'User role not authorized' }, { status: 403 });
         }
       }
@@ -351,13 +402,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // sign-in expire far sooner than anyone signing in expects.
     const sessionResult = await createSession(subject, Array.from(userRoles), SESSION_TTL_SECONDS);
     if (!sessionResult.ok) {
-      logger.error('Failed to establish session: {error}', {
-        component: 'auth/oidc',
-        error: sessionResult.err.message ?? sessionResult.err.type,
-      });
+      logger.error(
+        '{actor} could not be signed in: no session was created, and they saw "Failed to establish session": {error}',
+        {
+          component: 'auth/oidc',
+          ...actor,
+          error: sessionResult.err.message ?? sessionResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Failed to establish session' }, { status: 500 });
     }
     recordAuditEvent({ actorSubject: subject, action: 'user.signed_in' });
+
+    logger.info('{actor} finished signing in through {issuer}; sent to {redirect}', {
+      component: 'auth/oidc',
+      ...actor,
+      issuer: oidc.issuer,
+      roles: Array.from(userRoles),
+      redirect,
+    });
 
     const response = NextResponse.redirect(new URL(redirect, origin));
     response.cookies.set(
@@ -375,11 +438,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return response;
   } catch (error) {
-    logger.error('OIDC callback failed: {error}', {
-      component: 'auth/oidc',
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'the sign-in{ofWhom} failed with an unexpected error; nobody was signed in and the browser saw "Authentication failed": {error}',
+      {
+        component: 'auth/oidc',
+        ...(signingIn ?? {}),
+        ofWhom: signingIn ? ` of ${signingIn.actor}` : '',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }
