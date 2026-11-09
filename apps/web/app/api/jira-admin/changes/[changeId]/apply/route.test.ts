@@ -1,3 +1,4 @@
+import { actorFrom } from '@renkei/db';
 /**
  * The approve route — the only path by which a Jira admin change reaches
  * Jira. What it must guarantee: a signed-in operator (and only one), a
@@ -88,6 +89,8 @@ beforeEach(() => {
     subject: 'operator',
     roles: ['renkei-user', 'renkei-operator'],
     expiresAt: new Date(Date.now() + 3_600_000),
+
+    actor: actorFrom('operator', null, null),
   });
   // Someone else asked; the operator approves.
   jest.mocked(getChangeRequestById).mockResolvedValue(change({ subject: 'requester' }));
@@ -117,6 +120,8 @@ it('refuses anyone who is not an operator, even the person who asked', async () 
     subject: 'requester',
     roles: ['renkei-user'],
     expiresAt: new Date(Date.now() + 3_600_000),
+
+    actor: actorFrom('requester', null, null),
   });
   const response = await apply();
   expect(response.status).toBe(403);

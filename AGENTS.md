@@ -254,3 +254,20 @@ lines.
   (`FOR UPDATE SKIP LOCKED`, `queues.claim`), advisory locks
   (`advisoryLocks.withTryLock`), pgvector and full-text search; the
   memory store gives single-process equivalents.
+
+# Logs: a line names the person, by name and email, and says what happened
+
+Every `logger.*` call reads as a sentence about a person or an agent and
+carries the shared attribute vocabulary (`docs/logging.md`): a person is
+`...who(session)` in the web app (`lib/log-actor.ts`), `...(await
+actorAttrs(subject))` elsewhere (`@renkei/db`) — `subject`, `user`,
+`email`, `actor` ("Ada Lovelace (ada@example.com)"); an agent is
+`...(await whichAgent(agentId))` / `agentAttrs` — `agentId`, `agent`,
+`owner`, `ownerName`, `ownerEmail`, `ownerSubject`, the owner being who
+the agent acts as. The message uses `{actor}` or `agent "{agent}" of
+{owner}`, names things by what the person calls them, keeps ids in the
+attributes unless the id is the handle a reader must follow, and ends a
+warn or error with what did not happen (`…; nothing was saved`). An
+attribute is searchable without being in the message; a placeholder with
+no attribute prints literally, so a message only references keys that
+are always set. The helpers never throw and cache for five minutes.

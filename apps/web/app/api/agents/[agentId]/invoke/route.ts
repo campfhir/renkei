@@ -28,6 +28,7 @@ import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
 import { hasActiveGrant } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgentOf } from '@/lib/log-actor';
 
 const MAX_STATE_BYTES = 64 * 1024;
 /** Small in-memory burst brake; the daily cap in createAgentRun is the law. */
@@ -173,10 +174,15 @@ export async function POST(
   );
   if (!result.ok) {
     if (result.err.type === 'DB_ERROR') {
-      logger.error('The run could not be started: {error}', {
+      logger.error('{actor} asked agent "{agent}" to run ({how}), but no run was queued: {error}', {
         component: 'api/agents/invoke',
-        subject: triggeredBy ?? agent.ownerSubject,
-        agentId,
+        ...(await whoIs(triggeredBy ?? agent.ownerSubject)),
+        ...(await whichAgentOf({
+          agentId,
+          agentName: agent.name,
+          ownerSubject: agent.ownerSubject,
+        })),
+        how: triggerId ? 'through an API key' : 'with Run now',
         error: result.err.message ?? result.err.type,
       });
     }
