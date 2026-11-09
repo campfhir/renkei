@@ -35,6 +35,10 @@ export default async function OrgQueuePage({
     countOrgQueue(),
   ]);
   const loadedAt = Date.now();
+  // How many runs the tab matches across every page, for "Pick all".
+  const matching = counts
+    .filter((row) => (tab ? row.status === tab : isLiveTab(row.status)))
+    .reduce((sum, row) => sum + row.count, 0);
   const rows = queueRows(fetched.slice(0, ORG_QUEUE_PAGE_SIZE), loadedAt);
   const hasNext = fetched.length > ORG_QUEUE_PAGE_SIZE;
   const first = (page - 1) * ORG_QUEUE_PAGE_SIZE + 1;
@@ -77,6 +81,8 @@ export default async function OrgQueuePage({
       </nav>
       <OrgQueueTable
         rows={rows}
+        total={matching}
+        status={tab}
         empty={
           rows.length > 0
             ? null

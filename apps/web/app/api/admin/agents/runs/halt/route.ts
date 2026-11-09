@@ -1,15 +1,20 @@
 /**
  * Halt a batch of runs across the organization — the operator's queue
- * view (app/(app)/admin/agents/queue) clearing a backlog. Body:
- * `{ runs: [{ agentId, runId }] }`, at most MAX_ORG_HALT. Each run is
+ * view (app/(app)/admin/agents/queue) clearing a backlog. Each run is
  * force-halted as the single-run route does (force-halt.ts); the answer
- * lists which were halted and which were not, and why.
+ * lists which were halted and which were not, and why. The body is one of:
+ *  - `{ runs: [{ agentId, runId }] }`, at most MAX_ORG_HALT: these runs;
+ *  - `{ all: { status? } }`: the oldest ALL_HALT_BATCH live runs (of that
+ *    status, or any), answered with how many still match — the page asks
+ *    again until none are left.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { isRecord } from '@renkei/guards';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
-import { MAX_ORG_HALT, haltRunsAsOperator } from '@/lib/agents/org-queue';
+import { MAX_ORG_HALT, haltAllMatching, haltRunsAsOperator } from '@/lib/agents/org-queue';
+
+const LIVE = ['queued', 'running', 'waiting'];
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
@@ -21,6 +26,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } catch {
     return NextResponse.json({ error: 'The body must be JSON.' }, { status: 400 });
   }
+  if (isRecord(body) && body.all !== undefined) {
+    const all = body.all;
+    const status = isRecord(all) ? all.status : undefined;
+    if (
+      !isRecord(all) ||
+      (status !== undefined && (typeof status !== 'string' || !LIVE.includes(status)))
+    ) {
+      return NextResponse.json(
+        { error: 'all is { status? }, the status one of queued, running, waiting.' },
+        { status: 400 }
+      );
+    }
+    return NextResponse.json(
+      await haltAllMatching(typeof status === 'string' ? [status] : undefined, session.subject)
+    );
+  }
+
   const list = isRecord(body) ? body.runs : undefined;
   if (!Array.isArray(list) || list.length === 0) {
     return NextResponse.json({ error: 'runs must list at least one run.' }, { status: 400 });

@@ -49,6 +49,13 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-09',
     entries: [
       {
+        kind: 'added',
+        title:
+          'Dead agent runs are halted automatically, and the Agent queue can halt every run at once',
+        detail:
+          'Every ten minutes, runs that will never finish on their own are halted: queued or running with no progress for a day, waiting more than an hour past their own deadline, or waiting with no deadline for a day. They show as Halted, and their owners see why. On the Agent queue page, ticking the box over a page now offers to pick every run the tab matches, not just the 50 shown, and Halt all halts them in batches while it counts up.',
+      },
+      {
         kind: 'fixed',
         title: "Canceling a queued run is instant, and you can see what is holding an agent's runs",
         detail:
