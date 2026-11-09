@@ -278,3 +278,163 @@ describe('wakeOnSignal', () => {
     expect(waits).toEqual([]);
   });
 });
+
+describe('createEventLoop giving up', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  /** A handler that stays in flight until `finish` or `fail` is called. */
+  function heldHandler() {
+    let finish: () => void = () => {};
+    let fail: (error: Error) => void = () => {};
+    const done = new Promise<void>((resolve, reject) => {
+      finish = resolve;
+      fail = reject;
+    });
+    return { handler: async () => done, finish: () => finish(), fail: (e: Error) => fail(e) };
+  }
+
+  async function advance(ms: number) {
+    await jest.advanceTimersByTimeAsync(ms);
+  }
+
+  it('stops waiting on a handler held past maxHoldMs, and acknowledges it only once it does finish', async () => {
+    jest.useFakeTimers();
+    const held = heldHandler();
+    const completed: string[] = [];
+    const errors: string[] = [];
+    const loop = createEventLoop<LoopMessage>({
+      claim: async () => message(),
+      complete: async (m) => {
+        completed.push(m.id);
+      },
+      fail: async () => ({ status: 'dead' }),
+      extend: async () => true,
+      extendEveryMs: 1_000,
+      maxHoldMs: 2_500,
+      handlerFor: () => held.handler,
+      logger: { ...logger, error: (text) => errors.push(text) },
+    });
+    let returned = false;
+    const processing = loop.processOne().then((had) => {
+      returned = true;
+      return had;
+    });
+    await advance(2_000);
+    expect(returned).toBe(false);
+    await advance(1_000);
+    // The loop moved on without the handler, saying so, and did not ack.
+    expect(returned).toBe(true);
+    expect(await processing).toBe(true);
+    expect(errors.some((text) => text.includes('held past'))).toBe(true);
+    expect(completed).toEqual([]);
+    // The handler's eventual outcome still reaches the queue.
+    held.finish();
+    await advance(0);
+    expect(completed).toEqual(['m1']);
+  });
+
+  it('puts a late failure to the queue too', async () => {
+    jest.useFakeTimers();
+    const held = heldHandler();
+    const failed: string[] = [];
+    const loop = createEventLoop<LoopMessage>({
+      claim: async () => message(),
+      complete: async () => {},
+      fail: async (m, error) => {
+        failed.push(`${m.id}: ${error}`);
+        return { status: 'retry', delaySeconds: 60 };
+      },
+      maxHoldMs: 1_000,
+      handlerFor: () => held.handler,
+      logger,
+    });
+    const processing = loop.processOne();
+    await advance(1_000);
+    expect(await processing).toBe(true);
+    expect(failed).toEqual([]);
+    held.fail(new Error('boom'));
+    await advance(0);
+    expect(failed).toEqual(['m1: boom']);
+  });
+
+  it('waits on a handler for ever without maxHoldMs', async () => {
+    jest.useFakeTimers();
+    const held = heldHandler();
+    let returned = false;
+    const loop = createEventLoop<LoopMessage>({
+      claim: async () => message(),
+      complete: async () => {},
+      fail: async () => ({ status: 'dead' }),
+      handlerFor: () => held.handler,
+      logger,
+    });
+    const processing = loop.processOne().then(() => {
+      returned = true;
+    });
+    await advance(24 * 60 * 60_000);
+    expect(returned).toBe(false);
+    held.finish();
+    await processing;
+    expect(returned).toBe(true);
+  });
+
+  it('gives up on a claim that does not answer, and hands back what it yields late', async () => {
+    jest.useFakeTimers();
+    let answer: (m: LoopMessage | null) => void = () => {};
+    const released: string[] = [];
+    const handled: string[] = [];
+    const errors: string[] = [];
+    const loop = createEventLoop<LoopMessage>({
+      claim: () =>
+        new Promise<LoopMessage | null>((resolve) => {
+          answer = resolve;
+        }),
+      complete: async () => {},
+      fail: async () => ({ status: 'dead' }),
+      release: async (m) => {
+        released.push(m.id);
+      },
+      claimTimeoutMs: 5_000,
+      handlerFor: () => async (m) => {
+        handled.push(m.id);
+      },
+      logger: { ...logger, error: (text) => errors.push(text) },
+    });
+    const processing = loop.processOne();
+    await advance(5_000);
+    // An idle pass, said out loud: the loop will claim again.
+    expect(await processing).toBe(false);
+    expect(errors.some((text) => text.includes('has not answered a claim'))).toBe(true);
+    // The claim answering afterwards is not run here; the message goes back.
+    answer(message('late'));
+    await advance(0);
+    expect(handled).toEqual([]);
+    expect(released).toEqual(['late']);
+  });
+
+  it('says it is alive every heartbeatMs with what it did since', async () => {
+    jest.useFakeTimers();
+    const lines: string[] = [];
+    let claims = 0;
+    const loop: EventLoop = createEventLoop<LoopMessage>({
+      claim: async () => {
+        claims += 1;
+        if (claims === 4) loop.stop();
+        return claims === 2 ? message() : null;
+      },
+      complete: async () => {},
+      fail: async () => ({ status: 'dead' }),
+      handlerFor: () => async () => {},
+      heartbeatMs: 2_000,
+      idleDelayMs: 1_000,
+      busyDelayMs: 1_000,
+      logger: { ...logger, debug: (text) => lines.push(text) },
+    });
+    const running = loop.run();
+    await advance(10_000);
+    await running;
+    expect(lines.filter((text) => text.startsWith('loop alive')).length).toBeGreaterThan(0);
+  });
+});

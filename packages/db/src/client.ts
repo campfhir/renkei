@@ -40,7 +40,16 @@ function initDatabase(): Result<Pool, 'DB_INIT_ERROR'> {
   }
 
   try {
-    state.pool = new Pool({ connectionString });
+    state.pool = new Pool({
+      connectionString,
+      // TCP keepalive, so a connection the network dropped without a word
+      // (a NAT or firewall idle timeout, a host that vanished) is found
+      // dead by the kernel in minutes and the query on it fails, instead
+      // of waiting for an answer that will never come — which, on a
+      // worker's claim loop, is a consumer that never claims again.
+      keepAlive: true,
+      keepAliveInitialDelayMillis: 30_000,
+    });
     // An IDLE connection dying (Postgres restart, network drop, server-side
     // reap) emits the pool's 'error' event. Without a listener Node treats
     // it as an unhandled 'error' and KILLS THE PROCESS — dumping the raw pg
