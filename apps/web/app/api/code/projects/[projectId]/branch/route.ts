@@ -30,6 +30,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   request: NextRequest,
@@ -48,13 +49,18 @@ export async function GET(
     return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
   const listed = await adapter.listBranches(project.repo!.fullName);
   if (!listed.ok) {
-    logger.warn('Could not list branches from the code host: {error}', {
-      component: 'api/code/projects/branch',
-      subject: session.subject,
-      projectId,
-      chatId,
-      error: listed.error,
-    });
+    logger.warn(
+      '{actor} opened the branch picker of the project "{project}" ({repository}), but the code host did not list the branches; the picker showed the error: {error}',
+      {
+        component: 'api/code/projects/branch',
+        ...who(session),
+        projectId,
+        project: project.name,
+        repository: project.repo!.fullName,
+        chatId,
+        error: listed.error,
+      }
+    );
     return jsonError(502, 'host', listed.error);
   }
   return NextResponse.json({ branches: listed.branches });
@@ -93,15 +99,21 @@ export async function POST(
   if (!status.ok) {
     const failure = clientFailure(status.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-        component: 'api/code/projects/branch',
-        subject: session.subject,
-        projectId,
-        chatId,
-        operation: 'status',
-        status: failure.status,
-        error: 'message' in status.err && status.err.message ? status.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        '{actor} asked to switch the project "{project}" to branch {branch}, but the sandbox did not answer the checkout\'s status ({status}); the branch was not switched: {error}',
+        {
+          component: 'api/code/projects/branch',
+          ...who(session),
+          projectId,
+          project: project.name,
+          branch: ref.ref,
+          chatId,
+          operation: 'status',
+          status: failure.status,
+          error:
+            'message' in status.err && status.err.message ? status.err.message : failure.message,
+        }
+      );
     }
     return jsonError(failure.status, 'status', failure.message);
   }
@@ -131,15 +143,21 @@ export async function POST(
   if (!pulled.ok) {
     const failure = clientFailure(pulled.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-        component: 'api/code/projects/branch',
-        subject: session.subject,
-        projectId,
-        chatId,
-        operation: 'pulled',
-        status: failure.status,
-        error: 'message' in pulled.err && pulled.err.message ? pulled.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        '{actor} asked to switch the project "{project}" to branch {branch}, but the sandbox could not fetch and check it out ({status}); the checkout stays where it was: {error}',
+        {
+          component: 'api/code/projects/branch',
+          ...who(session),
+          projectId,
+          project: project.name,
+          branch: ref.ref,
+          chatId,
+          operation: 'pulled',
+          status: failure.status,
+          error:
+            'message' in pulled.err && pulled.err.message ? pulled.err.message : failure.message,
+        }
+      );
     }
     return jsonError(failure.status, 'switch', failure.message);
   }

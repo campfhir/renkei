@@ -18,7 +18,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDataStore } from '@renkei/db';
+import { actorFields, describeAccountActor, getDataStore } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { logger } from '@/lib/logger';
 import { throttleLog } from '@/lib/log-throttle';
@@ -79,12 +79,17 @@ export async function POST(
       accountId
     );
   } catch (error) {
-    logger.error('Could not read webhook subscriptions for account {accountId}: {error}', {
-      component: 'microsoft/webhook',
-      accountId,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'Graph sent {delivered} notifications for the mailbox of {actor}, but the Graph subscriptions on record could not be read; answered 500 so Graph retries: {error}',
+      {
+        component: 'microsoft/webhook',
+        ...actorFields(await describeAccountActor(accountId)),
+        accountId,
+        delivered: notifications.length,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     // 500 so Graph retries the delivery instead of dropping it.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
@@ -115,10 +120,12 @@ export async function POST(
       );
       if (verdict.log) {
         logger.warn(
-          'Dropped Graph notification with unknown subscription or clientState mismatch' +
+          'Graph sent a notification for the mailbox of {actor} under a subscription Renkei does not know, or with the wrong clientState; dropped, and the health sweep will delete the orphan at Graph' +
             (verdict.suppressed > 0 ? ' ({suppressed} more since the last of these)' : ''),
           {
             component: 'microsoft/webhook',
+            ...actorFields(await describeAccountActor(accountId)),
+            accountId,
             subscriptionId: subscriptionId ?? '(none)',
             suppressed: verdict.suppressed,
           }
@@ -159,10 +166,15 @@ export async function POST(
     if (enqueued.ok) accepted += 1;
   }
 
-  logger.debug('Graph notifications accepted', {
-    component: 'microsoft/webhook',
-    accepted,
-    delivered: notifications.length,
-  });
+  logger.debug(
+    'Graph sent {delivered} notifications for the mailbox of {actor}; {accepted} were queued for a delta round',
+    {
+      component: 'microsoft/webhook',
+      ...actorFields(await describeAccountActor(accountId)),
+      accountId,
+      accepted,
+      delivered: notifications.length,
+    }
+  );
   return NextResponse.json({ accepted }, { status: 202 });
 }

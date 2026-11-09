@@ -7,14 +7,16 @@ import { getAtlassianApp } from '@/lib/atlassian-app';
 import { ATLASSIAN_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  let session: Awaited<ReturnType<typeof getSessionFromRequest>> = null;
   try {
     // Verify tenant exists
     // The resulting grant is bound to whoever completes this flow, so the caller
     // must already be signed in. Without this, anyone holding a tenantId could
     // attach their own Atlassian account to that tenant.
-    const session = await getSessionFromRequest(request);
+    session = await getSessionFromRequest(request);
     if (!session) {
       return NextResponse.json(
         { error: 'Not signed in', error_description: 'Sign in before connecting Jira' },
@@ -26,11 +28,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // the database; without one, no Atlassian flow can start.
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth',
-        subject: session.subject,
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        '{actor} asked to connect Jira, but the app origin could not be resolved; no sign-in was started: {error}',
+        {
+          component: 'auth/oauth',
+          ...who(session),
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const app = await getAtlassianApp(originResult.val);
@@ -93,8 +98,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // silently reusing the previous grant's screen-less approval.
     authUrl.searchParams.append('prompt', 'consent');
 
-    logger.debug('Jira OAuth authorize redirect', {
+    logger.debug('{actor} is being sent to Atlassian to consent to Jira scopes {scopes}', {
       component: 'auth/oauth',
+      ...who(session),
+      scopes: effectiveScopes,
       clientId: app.clientId,
       redirectUri: app.redirectUri,
       urlLength: authUrl.toString().length,
@@ -105,9 +112,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // this warns before a future catalog grows back into the cliff.
     if (authUrl.toString().length > 2600) {
       logger.warn(
-        'authorize URL is {length} chars; Atlassian CDN 414s near ~4k after nested re-encoding',
+        "The Jira consent URL for {actor} is {length} characters; Atlassian's CDN answers 414 near 4k after its nested re-encoding, so the sign-in may fail if the scope catalog grows further",
         {
           component: 'auth/oauth',
+          ...who(session),
           length: authUrl.toString().length,
         }
       );
@@ -116,10 +124,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // Bound to this browser: the callback requires the cookie this sets.
     return await redirectToConsent(authUrl, state);
   } catch (error) {
-    logger.error('MCP authorize error: {error}', {
-      component: 'auth/oauth',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{actor} asked to connect Jira, but the sign-in could not be started; the person saw an error: {error}',
+      {
+        component: 'auth/oauth',
+        ...(session ? who(session) : { actor: '(someone not yet signed in)' }),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }

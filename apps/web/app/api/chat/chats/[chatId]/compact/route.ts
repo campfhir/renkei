@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { startCompactionTurn } from '@/lib/chat/compaction';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -43,12 +44,15 @@ export async function POST(
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', started.err.message ?? 'The model is not usable.');
       default:
-        logger.error('Compaction could not be started: {error}', {
-          component: 'api/chat/chats/compact',
-          subject: session.subject,
-          chatId,
-          error: started.err.message ?? started.err.type,
-        });
+        logger.error(
+          '{actor} asked to compact a chat, but no compaction turn was started: {error}',
+          {
+            component: 'api/chat/chats/compact',
+            ...who(session),
+            chatId,
+            error: started.err.message ?? started.err.type,
+          }
+        );
         return jsonError(500, 'database', 'Compaction could not be started.');
     }
   }

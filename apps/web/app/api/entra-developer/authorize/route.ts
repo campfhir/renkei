@@ -16,6 +16,7 @@ import { getEntraDeveloperApp, ENTRA_DEVELOPER_CONNECTOR } from '@/lib/entra-dev
 import { ENTRA_DEVELOPER_REQUIRED_SCOPES } from '@/lib/entra-developer-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // The resulting grant is bound to whoever completes this flow, so the
@@ -30,11 +31,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/entra-developer/authorize',
-      subject: session.subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      '{actor} asked to connect Entra Developer, but the app origin could not be resolved; no sign-in was started: {error}',
+      {
+        component: 'api/entra-developer/authorize',
+        ...who(session),
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getEntraDeveloperApp(originResult.val);

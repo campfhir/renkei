@@ -26,6 +26,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { resolveWebexUserAccess } from '@/lib/webex-user-access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -44,11 +45,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'webex/all-spaces',
-      subject: session.subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      '{actor} asked to turn the WebEx all-spaces webhook {onOff}, but the app origin could not be resolved; nothing was changed: {error}',
+      {
+        component: 'webex/all-spaces',
+        ...who(session),
+        accountId: access.accountId,
+        onOff: payload.enabled ? 'on' : 'off',
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const targetUrl = webexUserWebhookTargetUrl(originResult.val, access.accountId);
@@ -61,9 +67,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const secret = existingSecret ?? generateSecret();
     const ensured = await ensureWebexWebhooks(client, { targetUrl, secret });
     if (!ensured.ok) {
-      logger.warn('all-spaces webhook registration failed', {
-        component: 'webex/all-spaces',
-      });
+      logger.warn(
+        '{actor} asked to turn the WebEx all-spaces webhook on, but WebEx rejected the registration; it stays off and the person was asked to try again',
+        {
+          component: 'webex/all-spaces',
+          ...who(session),
+          accountId: access.accountId,
+        }
+      );
       return NextResponse.json(
         { error: 'WebEx rejected the webhook registration — try again.' },
         { status: 502 }
@@ -76,11 +87,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   } else {
     const deleted = await deleteWebexWebhooksFor(client, targetUrl);
     if (!deleted.ok) {
-      logger.warn('WebEx rejected the webhook removal — try again: {error}', {
-        component: 'webex/all-spaces',
-        subject: session.subject,
-        error: deleted.err.message ?? deleted.err.type,
-      });
+      logger.warn(
+        '{actor} asked to turn the WebEx all-spaces webhook off, but WebEx rejected the removal; it stays registered and the person was asked to try again: {error}',
+        {
+          component: 'webex/all-spaces',
+          ...who(session),
+          accountId: access.accountId,
+          error: deleted.err.message ?? deleted.err.type,
+        }
+      );
       return NextResponse.json(
         { error: 'WebEx rejected the webhook removal — try again.' },
         { status: 502 }

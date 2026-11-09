@@ -37,6 +37,7 @@ import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { replaceProjectEnv } from '@/lib/code/projects';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const DOTENV_MAX_CHARS = 200_000;
 
@@ -117,18 +118,31 @@ export async function POST(request: NextRequest): Promise<Response> {
     repo: { provider, fullName: repo.fullName, branch },
   });
   if (!projectId) {
-    logger.error('The content encryption key is not configured', {
-      component: 'api/code/projects',
-      subject: session.subject,
-    });
+    logger.error(
+      '{actor} created the code project "{name}" on {repository}, but the content encryption key is not configured; the project was not saved',
+      {
+        component: 'api/code/projects',
+        ...who(session),
+        name,
+        repository: repo.fullName,
+        provider,
+      }
+    );
     return jsonError(500, 'content-key', 'The content encryption key is not configured.');
   }
   const project = await getProjectRow(projectId);
   if (!project) {
-    logger.error('The project could not be read back', {
-      component: 'api/code/projects',
-      subject: session.subject,
-    });
+    logger.error(
+      '{actor} created the code project "{name}" on {repository}, but the saved row could not be read back; the .env was not stored and the person saw an error',
+      {
+        component: 'api/code/projects',
+        ...who(session),
+        projectId,
+        name,
+        repository: repo.fullName,
+        provider,
+      }
+    );
     return jsonError(500, 'internal', 'The project could not be read back.');
   }
 

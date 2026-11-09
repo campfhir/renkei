@@ -20,6 +20,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
+import type { Session } from '@/lib/session';
 import { resolveChatAccess, resolveProjectAccess } from '@/lib/chat/access';
 import {
   createAttachment,
@@ -32,20 +33,27 @@ import { attachToProject, createOwnedArtifact } from '@/lib/chat/artifact-librar
 import { deferDigest } from '@/lib/chat/artifact-digest';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export const runtime = 'nodejs';
 
 function uploadError(
   error: { type: AttachmentError; message?: string },
-  where: { subject: string; chatId: string | null; filename: string }
+  where: { session: Session; chatId: string | null; filename: string }
 ): Response {
   if (error.type !== 'TOO_LARGE' && error.type !== 'UNCONFIGURED') {
-    logger.error('Upload of {filename} failed ({kind}): {error}', {
-      component: 'api/chat/attachments',
-      ...where,
-      kind: error.type,
-      error: error.message ?? error.type,
-    });
+    logger.error(
+      '{actor} uploaded "{filename}"{toChat}, but it was not stored ({kind}); the person saw an error: {error}',
+      {
+        component: 'api/chat/attachments',
+        ...who(where.session),
+        chatId: where.chatId,
+        filename: where.filename,
+        toChat: where.chatId ? ' to a chat' : ' to their library',
+        kind: error.type,
+        error: error.message ?? error.type,
+      }
+    );
   }
   switch (error.type) {
     case 'TOO_LARGE':
@@ -140,7 +148,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
     });
     if (!created.ok) {
       return uploadError(created.err, {
-        subject: session.subject,
+        session,
         chatId: chat.chat.id,
         filename,
       });
@@ -160,7 +168,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
   });
   if (!created.ok) {
     return uploadError(created.err, {
-      subject: session.subject,
+      session,
       chatId: chat?.chat.id ?? null,
       filename,
     });

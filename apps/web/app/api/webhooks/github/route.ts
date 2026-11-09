@@ -56,26 +56,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'github/webhook',
-    });
+    logger.error(
+      'A GitHub webhook delivery arrived, but TOKEN_ENCRYPTION_KEY is missing or malformed so the connector secret cannot be read; answered 500 and the delivery was not queued',
+      {
+        component: 'github/webhook',
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const configResult = await readConnectorConfigCached(GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Connector configuration unavailable: {error}', {
-      component: 'github/webhook',
-      error: configResult.err.message ?? configResult.err.type,
-    });
+    logger.error(
+      'A GitHub webhook delivery arrived, but the GitHub connector configuration could not be read; answered 500 and the delivery was not queued: {error}',
+      {
+        component: 'github/webhook',
+        error: configResult.err.message ?? configResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
   const config = configResult.val;
   const webhookSecret = config?.secrets.webhookSecret;
   if (!config || !config.enabled || typeof webhookSecret !== 'string' || !webhookSecret) {
-    logger.warn('Delivery for a tenant with no GitHub webhook secret configured', {
-      component: 'github/webhook',
-    });
+    logger.warn(
+      'A GitHub {type} delivery arrived, but the GitHub connector is off or has no webhook secret; answered 503 and the delivery was dropped',
+      {
+        component: 'github/webhook',
+        type: eventType ?? 'unknown',
+      }
+    );
     return NextResponse.json(
       { error: 'GitHub connector not configured for webhooks' },
       { status: 503 }
@@ -83,7 +93,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (!verifyGitHubSignature(rawBody, signature, webhookSecret)) {
-    logger.warn('Rejected delivery with bad signature', { component: 'github/webhook' });
+    logger.warn(
+      "A GitHub {type} delivery was rejected (401) because its signature did not verify against the connector's webhook secret; dropped",
+      { component: 'github/webhook', type: eventType ?? 'unknown' }
+    );
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
@@ -118,13 +131,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     orderingKey: repoFullName ? `github/${repoFullName}` : null,
   });
   if (!enqueued.ok) {
-    logger.error('Event NOT accepted: {error}', {
-      component: 'github/webhook',
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      'GitHub sent a verified {type} event for {repository}, but it was not queued for the worker; answered 500 so GitHub retries: {error}',
+      {
+        component: 'github/webhook',
+        type: eventType,
+        repository: repoFullName ?? '(unknown repository)',
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.debug('Event accepted', { component: 'github/webhook', type: eventType });
+  logger.debug(
+    'GitHub sent a verified {type} event for {repository}; it was queued for the worker',
+    {
+      component: 'github/webhook',
+      type: eventType,
+      repository: repoFullName ?? '(unknown repository)',
+    }
+  );
   return NextResponse.json({ accepted: true });
 }

@@ -16,10 +16,13 @@ export async function POST(request: Request): Promise<Response> {
 
   const response = await shipping.register(request);
   if (response.status === 401) {
-    logger.warn('log shipper registration rejected: bad or missing API key', {
-      component: 'web/log-ingest',
-      ip: request.headers.get('x-forwarded-for') ?? undefined,
-    });
+    logger.warn(
+      'A log shipper tried to register its signing key with a bad or missing API key; the registration was refused (401)',
+      {
+        component: 'web/log-ingest',
+        ip: request.headers.get('x-forwarded-for') ?? undefined,
+      }
+    );
   }
   return response;
 }

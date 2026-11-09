@@ -12,6 +12,7 @@ import { getDataStore } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -34,12 +35,15 @@ export async function POST(
     'DB_ERROR' as const
   );
   if (!found.ok) {
-    logger.error('Database error: {error}', {
-      component: 'api/actionable-items/archive',
-      subject: session.subject,
-      itemId,
-      error: found.err.message ?? found.err.type,
-    });
+    logger.error(
+      '{actor} tried to archive a card, but it could not be read from the database; nothing was archived: {error}',
+      {
+        component: 'api/actionable-items/archive',
+        ...who(session),
+        itemId,
+        error: found.err.message ?? found.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const item = found.val;
@@ -79,12 +83,15 @@ export async function DELETE(
     'DB_ERROR' as const
   );
   if (!result.ok) {
-    logger.error('Database error: {error}', {
-      component: 'api/actionable-items/archive',
-      subject: session.subject,
-      itemId,
-      error: result.err.message ?? result.err.type,
-    });
+    logger.error(
+      '{actor} tried to unarchive a card, but the database refused; the card stays archived: {error}',
+      {
+        component: 'api/actionable-items/archive',
+        ...who(session),
+        itemId,
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
 

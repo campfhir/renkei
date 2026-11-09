@@ -17,6 +17,7 @@ import {
 } from '@/lib/chat/user-memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -49,10 +50,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     chatId: null,
   });
   if (!id) {
-    logger.error('The note could not be saved', {
-      component: 'api/chat/memory',
-      subject: session.subject,
-    });
+    logger.error(
+      '{actor} added a memory note of {chars} characters, but it was not saved: the content encryption key is not available',
+      {
+        component: 'api/chat/memory',
+        ...who(session),
+        chars: content.length,
+      }
+    );
     return jsonError(500, 'content-key', 'The note could not be saved.');
   }
   return NextResponse.json({ id }, { status: 201 });

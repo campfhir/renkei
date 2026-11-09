@@ -45,6 +45,7 @@ import {
 } from '@renkei/user-prefs';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 async function readAll(subject: string) {
   const [notifications, theme, voice, image, coachMarks, chatArchive] = await Promise.all([
@@ -140,12 +141,15 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
   for (const { name, write } of patches) {
     const written = await write(session.subject);
     if (!written.ok) {
-      logger.error('Could not save {document}: {error}', {
-        component: 'api/preferences',
-        subject: session.subject,
-        document: name,
-        error: written.err.message ?? written.err.type,
-      });
+      logger.error(
+        '{actor} changed their {document} preferences, but they were not saved: {error}',
+        {
+          component: 'api/preferences',
+          ...who(session),
+          document: name,
+          error: written.err.message ?? written.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Could not save' }, { status: 500 });
     }
   }

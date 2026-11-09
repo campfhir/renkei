@@ -12,6 +12,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
 import { resendFromMessage } from '@/lib/chat/resend';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -70,22 +71,30 @@ export async function POST(
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', resent.err.message ?? 'The model is not usable.');
       case 'CONTENT_KEY':
-        logger.error('The content encryption key is not configured: {error}', {
-          component: 'api/chat/chats/messages/resend',
-          subject: session.subject,
-          chatId,
-          messageId,
-          error: resent.err.message ?? resent.err.type,
-        });
+        logger.error(
+          '{actor} resent a message{edited}, but the content encryption key is not configured; nothing was sent: {error}',
+          {
+            component: 'api/chat/chats/messages/resend',
+            ...who(session),
+            chatId,
+            messageId,
+            edited: text !== null ? ' with edits' : ' as it was',
+            error: resent.err.message ?? resent.err.type,
+          }
+        );
         return jsonError(500, 'content-key', 'The content encryption key is not configured.');
       default:
-        logger.error('The message could not be resent: {error}', {
-          component: 'api/chat/chats/messages/resend',
-          subject: session.subject,
-          chatId,
-          messageId,
-          error: resent.err.message ?? resent.err.type,
-        });
+        logger.error(
+          '{actor} resent a message{edited}, but no new turn was started and nothing was removed: {error}',
+          {
+            component: 'api/chat/chats/messages/resend',
+            ...who(session),
+            chatId,
+            messageId,
+            edited: text !== null ? ' with edits' : ' as it was',
+            error: resent.err.message ?? resent.err.type,
+          }
+        );
         return jsonError(500, 'database', 'The message could not be resent.');
     }
   }

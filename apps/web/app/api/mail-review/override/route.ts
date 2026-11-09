@@ -24,6 +24,7 @@ import { getOwnRow, setOverride } from '@renkei/email-sanitizer';
 import { MICROSOFT } from '@renkei/provider-grants';
 import { objectIdOfMicrosoftRefId } from '@renkei/connector-microsoft';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { isRecord } from '@renkei/guards';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -64,11 +65,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const rowResult = await getOwnRow(userEmail, body.refId);
   if (!rowResult.ok) {
-    logger.error('Could not read your mail review queue: {error}', {
-      component: 'api/mail-review/override',
-      subject: session.subject,
-      error: rowResult.err.message ?? rowResult.err.type,
-    });
+    logger.error(
+      '{actor} asked to {action} a reviewed message, but their mail review queue could not be read; no override was recorded: {error}',
+      {
+        component: 'api/mail-review/override',
+        ...who(session),
+        refId: body.refId,
+        action,
+        error: rowResult.err.message ?? rowResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read your mail review queue' }, { status: 500 });
   }
   const row = rowResult.val;
@@ -82,11 +88,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     senderKey,
   });
   if (!overrideResult.ok) {
-    logger.error('Could not record the override: {error}', {
-      component: 'api/mail-review/override',
-      subject: session.subject,
-      error: overrideResult.err.message ?? overrideResult.err.type,
-    });
+    logger.error(
+      '{actor} asked to {action} a reviewed message{asCategory}, but the override was not recorded; the message is unchanged: {error}',
+      {
+        component: 'api/mail-review/override',
+        ...who(session),
+        refId: row.refId,
+        action,
+        category: category ?? null,
+        asCategory: category ? ` as ${category}` : '',
+        error: overrideResult.err.message ?? overrideResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not record the override' }, { status: 500 });
   }
 
@@ -96,11 +109,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (row.provider === MICROSOFT) {
     const objectId = objectIdOfMicrosoftRefId(row.refId);
     if (!objectId) {
-      logger.error('Malformed refId for this message: {refId}', {
-        component: 'api/mail-review/override',
-        subject: session.subject,
-        refId: row.refId,
-      });
+      logger.error(
+        '{actor} asked to {action} a reviewed Microsoft message, and the override was recorded, but its reference is malformed so it could not be queued for reprocessing: {refId}',
+        {
+          component: 'api/mail-review/override',
+          ...who(session),
+          refId: row.refId,
+          action,
+        }
+      );
       return NextResponse.json({ error: 'Malformed refId for this message' }, { status: 500 });
     }
     const enqueued = await webhookEventsQueue().producer.enqueue({
@@ -116,11 +133,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       orderingKey: `microsoft/override/${row.refId}`,
     });
     if (!enqueued.ok) {
-      logger.error('Could not enqueue the override: {error}', {
-        component: 'api/mail-review/override',
-        subject: session.subject,
-        error: enqueued.err.message ?? enqueued.err.type,
-      });
+      logger.error(
+        '{actor} asked to {action} a reviewed Microsoft message, and the override was recorded, but the reprocessing job was not queued; the message will not be re-cleaned: {error}',
+        {
+          component: 'api/mail-review/override',
+          ...who(session),
+          refId: row.refId,
+          accountId: row.accountId,
+          action,
+          error: enqueued.err.message ?? enqueued.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Could not enqueue the override' }, { status: 500 });
     }
   }

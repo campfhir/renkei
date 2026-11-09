@@ -24,6 +24,7 @@ import { deleteChunksByMetadata } from '@renkei/knowledge';
 import { embeddingJobsQueue } from '@renkei/queue';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /** Where each poller records the scope it pulled an item from. */
 const SCOPE_METADATA_KEY: Record<string, string> = {
@@ -72,11 +73,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const purged = await deleteChunksByMetadata(provider, metadataKey, scopeKey);
   if (!purged.ok) {
-    logger.error('Could not clear the indexed content: {error}', {
-      component: 'api/watches/reindex',
-      subject: session.subject,
-      error: purged.err.message ?? purged.err.type,
-    });
+    logger.error(
+      '{actor} asked to rebuild the {provider} watch "{scope}", but its indexed content could not be purged; nothing was changed: {error}',
+      {
+        component: 'api/watches/reindex',
+        ...who(session),
+        watchId: watch.id,
+        provider,
+        scopeKey,
+        scope: watch.scopeLabel ?? scopeKey,
+        error: purged.err.message ?? purged.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not clear the indexed content.' }, { status: 500 });
   }
 
@@ -97,11 +105,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     { path: queued.scopePath, value: scopeKey },
   ]);
   if (!discarded.ok) {
-    logger.error('Could not clear work already queued for this scope: {error}', {
-      component: 'api/watches/reindex',
-      subject: session.subject,
-      error: discarded.err.message ?? discarded.err.type,
-    });
+    logger.error(
+      '{actor} asked to rebuild the {provider} watch "{scope}": its {purged} indexed chunks were purged, but the ingest work already queued could not be discarded; the cursor was left as it was and the next sweep will not re-read the scope: {error}',
+      {
+        component: 'api/watches/reindex',
+        ...who(session),
+        watchId: watch.id,
+        provider,
+        scopeKey,
+        scope: watch.scopeLabel ?? scopeKey,
+        purged: purged.val,
+        error: discarded.err.message ?? discarded.err.type,
+      }
+    );
     return NextResponse.json(
       { error: 'Could not clear work already queued for this scope.' },
       { status: 500 }

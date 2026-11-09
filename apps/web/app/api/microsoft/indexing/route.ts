@@ -22,6 +22,7 @@ import { webhookEventsQueue } from '@renkei/queue';
 import { MICROSOFT, outlookIndexingOf, OUTLOOK_INDEXING_CATEGORIES } from '@renkei/provider-grants';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 async function grantOf(subject: string) {
   const grants = await wrapAsync(
@@ -65,11 +66,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     'DB_ERROR' as const
   );
   if (!saved.ok) {
-    logger.error('Database unavailable: {error}', {
-      component: 'microsoft/indexing',
-      subject: session.subject,
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} set their Outlook background options ({indexing}), but they were not saved: {error}',
+      {
+        component: 'microsoft/indexing',
+        ...who(session),
+        accountId: grant.accountId,
+        indexing: JSON.stringify(indexing),
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   }
 
@@ -83,10 +89,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     orderingKey: `microsoft/${grant.accountId}`,
   });
   if (!enqueued.ok) {
-    logger.warn('indexing prefs saved but bootstrap not enqueued; sweep will apply', {
-      component: 'microsoft/indexing',
-      subject: session.subject,
-    });
+    logger.warn(
+      '{actor} set their Outlook background options ({indexing}) and they were saved, but the bootstrap job was not queued; the 15-minute subscription sweep will apply them: {error}',
+      {
+        component: 'microsoft/indexing',
+        ...who(session),
+        accountId: grant.accountId,
+        indexing: JSON.stringify(indexing),
+        error: enqueued.err.message ?? enqueued.err.type,
+      }
+    );
   }
 
   return NextResponse.json({ indexing });

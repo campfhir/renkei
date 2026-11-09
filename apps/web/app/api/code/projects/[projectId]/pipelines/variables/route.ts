@@ -23,6 +23,7 @@ import {
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 const TEXT_MAX_CHARS = 200_000;
 
@@ -49,12 +50,19 @@ export async function PUT(
   const auth = await bitbucketAuthFor(request, subject);
   const current = await listVariables(auth, variablesPath(base, environmentUuid));
   if (!current.ok) {
-    logger.warn('Could not list Bitbucket pipeline variables: {error}', {
-      component: 'api/code/projects/pipelines/variables',
-      subject,
-      projectId,
-      error: current.error,
-    });
+    logger.warn(
+      '{actor} saved the {which} pipeline variables of the project "{project}" ({repository}), but Bitbucket did not list the current set; nothing was changed: {error}',
+      {
+        component: 'api/code/projects/pipelines/variables',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        environmentUuid: environmentUuid ?? null,
+        which: environmentUuid ? 'deployment environment' : 'repository',
+        error: current.error,
+      }
+    );
     return jsonError(502, 'bitbucket', current.error);
   }
   const applied = await applyVariableText(

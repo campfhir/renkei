@@ -18,6 +18,7 @@ import {
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { loadChatSidebar } from '@/lib/chat/sidebar';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -45,10 +46,14 @@ export async function POST(request: NextRequest): Promise<Response> {
     toolConfig,
   });
   if (!projectId) {
-    logger.error('The content encryption key is not configured', {
-      component: 'api/chat/projects',
-      subject: session.subject,
-    });
+    logger.error(
+      '{actor} created the project "{name}", but the content encryption key is not configured; the project was not saved',
+      {
+        component: 'api/chat/projects',
+        ...who(session),
+        name,
+      }
+    );
     return jsonError(500, 'content-key', 'The content encryption key is not configured.');
   }
   return NextResponse.json({ projectId }, { status: 201 });

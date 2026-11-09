@@ -22,6 +22,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { resolveGraphAccess, str } from '@/lib/mcp-tools/graph/client';
 import { addressOf, searchDirectoryUsers } from '@/lib/mcp-tools/graph/directory';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const RESULT_MAX = 25;
 
@@ -32,9 +33,7 @@ export interface PersonOption {
   hint: string;
 }
 
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -46,11 +45,14 @@ export async function GET(
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/directory/people',
-      subject: session.subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      '{actor} searched the Microsoft 365 directory, but the app origin could not be resolved; the picker showed an error: {error}',
+      {
+        component: 'api/directory/people',
+        ...who(session),
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 

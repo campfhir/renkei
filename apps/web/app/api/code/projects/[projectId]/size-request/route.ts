@@ -13,6 +13,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { createSizeRequest, validReason, validRequestedBytes } from '@/lib/code/size-requests';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -29,12 +30,16 @@ export async function POST(
   const body = await readJsonBody(request);
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/code/projects/size-request',
-      subject: session.subject,
-      projectId,
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} asked for a larger checkout for the project "{project}", but the org settings could not be read; no request was filed: {error}',
+      {
+        component: 'api/code/projects/size-request',
+        ...who(session),
+        projectId,
+        project: project.name,
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return jsonError(500, 'settings', 'Could not read org settings');
   }
   const bytes = validRequestedBytes(body.requestedBytes, settings.val.sandboxWorkspaceMaxBytes);

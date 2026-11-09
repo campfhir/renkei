@@ -43,11 +43,14 @@ export async function GET(
   // than to the provider's own link — to that unreachable internal address.
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/notifications/open',
-      notificationId,
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      'Someone tapped a notification banner, but the app origin could not be resolved; they saw a config error instead of being sent on: {error}',
+      {
+        component: 'api/notifications/open',
+        notificationId,
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const origin = originResult.val;
