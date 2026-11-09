@@ -4,6 +4,7 @@ import {
   initOrgQueue,
   isLiveTab,
   orgQueueReducer,
+  pickAllOffer,
   queueRows,
   selectAllState,
   tabLabels,
@@ -173,5 +174,83 @@ describe('halting from the queue view', () => {
       error: 'Unauthorized',
     });
     expect(haltSelectedLabel(state, rows)).toBe('Halt 1 selected');
+  });
+});
+
+describe('picking every run of the tab, not just this page', () => {
+  const rows = queueRows([run({ id: 'r1' }), run({ id: 'r2' })], NOW);
+  const ids = rows.map((row) => row.id);
+
+  it('is offered once the whole page is picked and the tab has more', () => {
+    expect(pickAllOffer(fold([{ type: 'toggle', runId: 'r1' }]), ids, 908)).toBeNull();
+    const page = fold([{ type: 'toggleAll', runIds: ids }]);
+    expect(pickAllOffer(page, ids, 908)).toEqual({
+      text: 'All 2 on this page are picked.',
+      action: 'pick',
+    });
+    // Nothing more to offer when the page is the whole tab.
+    expect(pickAllOffer(page, ids, 2)).toBeNull();
+  });
+
+  it('once taken, the button halts them all, and unticking the page lets go', () => {
+    const all = fold([{ type: 'toggleAll', runIds: ids }, { type: 'pickAllMatching' }]);
+    expect(haltSelectedLabel(all, rows, 1078)).toBe('Halt all 1,078');
+    expect(pickAllOffer(all, ids, 1078)).toEqual({
+      text: 'All 1,078 runs are picked.',
+      action: 'clear',
+    });
+    const off = orgQueueReducer(all, { type: 'toggleAll', runIds: ids });
+    expect(off.allMatching).toBe(false);
+    expect(haltSelectedLabel(off, rows, 1078)).toBeNull();
+    expect(orgQueueReducer(all, { type: 'clearAllMatching' })).toMatchObject({
+      allMatching: false,
+      selected: [],
+    });
+  });
+
+  it('counts the batches up as they land, and says what it did at the end', () => {
+    const started = fold([
+      { type: 'toggleAll', runIds: ids },
+      { type: 'pickAllMatching' },
+      { type: 'allHaltStarted', total: 450 },
+    ]);
+    expect(haltSelectedLabel(started, rows, 450)).toBe('Halting… 0 of 450');
+    const midway = orgQueueReducer(started, { type: 'allHaltBatch', halted: 200, remaining: 250 });
+    expect(haltSelectedLabel(midway, rows, 450)).toBe('Halting… 200 of 450');
+    const batches: OrgQueueAction[] = [
+      { type: 'allHaltBatch', halted: 200, remaining: 50 },
+      { type: 'allHaltBatch', halted: 50, remaining: 0 },
+    ];
+    const finished = batches.reduce(orgQueueReducer, midway);
+    expect(finished).toMatchObject({
+      progress: null,
+      allMatching: false,
+      selected: [],
+      done: 'Halted 450 runs.',
+    });
+  });
+
+  it('stops when a batch halts nothing, and says how many are left', () => {
+    const state = fold([
+      { type: 'pickAllMatching' },
+      { type: 'allHaltStarted', total: 10 },
+      { type: 'allHaltBatch', halted: 7, remaining: 3 },
+      { type: 'allHaltBatch', halted: 0, remaining: 3 },
+    ]);
+    expect(state).toMatchObject({ progress: null, done: 'Halted 7; 3 could not be halted.' });
+  });
+
+  it('a failed batch stops it and says how far it got', () => {
+    const state = fold([
+      { type: 'pickAllMatching' },
+      { type: 'allHaltStarted', total: 600 },
+      { type: 'allHaltBatch', halted: 200, remaining: 400 },
+      { type: 'allHaltFailed', error: 'Unauthorized' },
+    ]);
+    expect(state).toMatchObject({
+      progress: null,
+      allMatching: true,
+      error: 'Unauthorized (200 were halted before it stopped.)',
+    });
   });
 });

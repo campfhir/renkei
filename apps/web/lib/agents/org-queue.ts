@@ -14,6 +14,8 @@ import { isUuid } from '@/lib/uuid';
 export const ORG_QUEUE_PAGE_SIZE = 50;
 /** The most runs one halt request takes (two pages' worth). */
 export const MAX_ORG_HALT = 100;
+/** Runs one "halt all" request halts; the page asks again until none are left. */
+export const ALL_HALT_BATCH = 200;
 
 export interface OrgQueueRunView {
   id: string;
@@ -88,4 +90,29 @@ export async function haltRunsAsOperator(
     }
   }
   return result;
+}
+
+/**
+ * One batch of "halt every run the tab matches": the oldest ALL_HALT_BATCH
+ * live runs (of `statuses`, or every live status) halted as the operator,
+ * and how many still match afterwards. Halted and refused runs both leave
+ * the live list, so the next batch starts from the oldest again.
+ */
+export async function haltAllMatching(
+  statuses: readonly string[] | undefined,
+  bySubject: string
+): Promise<OrgHaltResult & { remaining: number }> {
+  const batch = await listOrgQueue({
+    ...(statuses ? { statuses } : {}),
+    limit: ALL_HALT_BATCH,
+    offset: 0,
+  });
+  const result = await haltRunsAsOperator(
+    batch.map((run) => ({ agentId: run.agentId, runId: run.id })),
+    bySubject
+  );
+  const remaining = (await countOrgQueue())
+    .filter((row) => !statuses || statuses.includes(row.status))
+    .reduce((sum, row) => sum + row.count, 0);
+  return { ...result, remaining };
 }

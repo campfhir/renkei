@@ -184,6 +184,32 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'agentRuns.listDead',
+    name: 'old queued or running, overdue waits, old waits with no deadline; resumes reset the clock',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(51, 1, 'queued', { created_at: at(5) }),
+        run(52, 2, 'running', { created_at: at(6) }),
+        run(53, 1, 'queued', { created_at: at(4), resumed_at: at(80) }),
+        run(54, 1, 'queued', { created_at: at(90) }),
+        run(55, 1, 'waiting', { created_at: at(2), waiting_until: at(20) }),
+        run(56, 2, 'waiting', { created_at: at(3), waiting_until: at(40) }),
+        run(57, 1, 'waiting', { created_at: at(7) }),
+        run(58, 1, 'waiting', { created_at: at(95) }),
+        run(59, 1, 'succeeded', { created_at: at(1) }),
+      ],
+    },
+    run: async (store) => {
+      const cutoffs = { clockBefore: at(60), waitDueBefore: at(30) };
+      return [
+        await store.agentRuns.listDead(cutoffs, 10),
+        (await store.agentRuns.listDead(cutoffs, 2)).map((r) => r.id),
+        await store.agentRuns.listDead({ clockBefore: at(0), waitDueBefore: at(0) }, 10),
+      ];
+    },
+  },
+  {
     method: 'agentRuns.closeAbandoned',
     name: 'queued or running runs only, once: failed with the error',
     fixture: {

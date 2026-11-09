@@ -95,6 +95,33 @@ export function postgresAgentRunSweeps(db: () => Kysely<DB>): AgentRunSweepStore
       `.execute(db());
       return deleted.rows.length;
     },
+    async listDead({ clockBefore, waitDueBefore }, limit) {
+      const clock = sql<Date>`coalesce(resumed_at, created_at)`;
+      const rows = await db()
+        .selectFrom('agent_runs')
+        .select(['id', 'agent_id', 'owner_subject', 'status'])
+        .where((eb) =>
+          eb.or([
+            eb.and([eb('status', 'in', ['queued', 'running']), eb(clock, '<', clockBefore)]),
+            eb.and([eb('status', '=', 'waiting'), eb('waiting_until', '<', waitDueBefore)]),
+            eb.and([
+              eb('status', '=', 'waiting'),
+              eb('waiting_until', 'is', null),
+              eb(clock, '<', clockBefore),
+            ]),
+          ])
+        )
+        .orderBy('created_at')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        agentId: row.agent_id,
+        ownerSubject: row.owner_subject,
+        status: row.status,
+      }));
+    },
     async listStaleInProgress(createdBefore, limit) {
       const rows = await db()
         .selectFrom('agent_runs')

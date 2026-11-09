@@ -20,6 +20,7 @@ import {
   haltSelectedLabel,
   initOrgQueue,
   orgQueueReducer,
+  pickAllOffer,
   selectAllState,
   type OrgQueueRow,
 } from './org-queue.model';
@@ -29,12 +30,25 @@ interface HaltAnswer {
   refused: { runId: string; error: string }[];
 }
 
+interface HaltAllAnswer extends HaltAnswer {
+  remaining: number;
+}
+
+/** A batch can't take more than this many tries to empty a queue of `total`. */
+const MAX_BATCHES = 1_000;
+
 export default function OrgQueueTable({
   rows,
+  total,
+  status,
   empty,
   footer,
 }: {
   rows: OrgQueueRow[];
+  /** How many runs the tab matches, across every page. */
+  total: number;
+  /** The tab's status, or undefined for every live run. */
+  status: string | undefined;
   empty: string | null;
   footer: React.ReactNode;
 }): React.ReactNode {
@@ -42,7 +56,9 @@ export default function OrgQueueTable({
   const { refresh, pending } = useRefresh();
   const ids = rows.map((row) => row.id);
   const all = selectAllState(state, ids);
-  const bulkLabel = haltSelectedLabel(state, rows);
+  const bulkLabel = haltSelectedLabel(state, rows, total);
+  const offer = pickAllOffer(state, ids, total);
+  const scope = status ? `${status} run` : 'unfinished run';
 
   const halt = async (runs: { agentId: string; runId: string }[]) => {
     if (runs.length === 0) return;
@@ -66,6 +82,32 @@ export default function OrgQueueTable({
       return;
     }
     dispatch({ type: 'haltAnswered', halted: result.data.halted, refused: result.data.refused });
+    refresh();
+  };
+
+  // Every run the tab matches, in batches on the server, until none are left.
+  const haltAll = async () => {
+    if (
+      !window.confirm(
+        `Halt all ${total.toLocaleString('en-US')} ${scope}s in the organization? Each stops at once and its queue jobs are cleared. This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    dispatch({ type: 'allHaltStarted', total });
+    for (let batch = 0; batch < MAX_BATCHES; batch += 1) {
+      const result = await sendJsonFull<HaltAllAnswer>('/api/admin/agents/runs/halt', 'POST', {
+        all: status ? { status } : {},
+      });
+      if (result.error || !result.data) {
+        dispatch({ type: 'allHaltFailed', error: result.error ?? 'The halt did not go through.' });
+        refresh();
+        return;
+      }
+      const halted = result.data.halted.length;
+      dispatch({ type: 'allHaltBatch', halted, remaining: result.data.remaining });
+      if (result.data.remaining === 0 || halted === 0) break;
+    }
     refresh();
   };
 
@@ -108,8 +150,10 @@ export default function OrgQueueTable({
         {bulkLabel ? (
           <button
             type="button"
-            onClick={() => void halt(haltRequest(state, rows).runs)}
-            disabled={bulkLabel === 'Halting…' || pending}
+            onClick={() =>
+              void (state.allMatching ? haltAll() : halt(haltRequest(state, rows).runs))
+            }
+            disabled={bulkLabel.startsWith('Halting…') || pending}
             className="rounded-md bg-red-600 px-3 py-1 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
             {bulkLabel}
@@ -119,6 +163,27 @@ export default function OrgQueueTable({
             Pick runs to halt them together, or halt one from its row.
           </span>
         )}
+        {offer ? (
+          <span className="text-gray-600 dark:text-gray-400">
+            {offer.text}{' '}
+            <button
+              type="button"
+              onClick={() =>
+                dispatch({ type: offer.action === 'pick' ? 'pickAllMatching' : 'clearAllMatching' })
+              }
+              className="font-medium text-blue-700 hover:underline dark:text-blue-400"
+            >
+              {offer.action === 'pick'
+                ? `Pick all ${total.toLocaleString('en-US')} ${scope}s`
+                : 'Clear the selection'}
+            </button>
+          </span>
+        ) : null}
+        {state.done ? (
+          <span role="status" className="text-green-700 dark:text-green-400">
+            {state.done}
+          </span>
+        ) : null}
         {state.error ? (
           <span role="alert" className="text-red-600 dark:text-red-400">
             {state.error}

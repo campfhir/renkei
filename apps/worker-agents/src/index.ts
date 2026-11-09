@@ -30,6 +30,7 @@ import {
 import { createOptimizationSweep, OPTIMIZATION_SWEEP_INTERVAL_MS } from './optimization-sweep';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
+import { createDeadRunSweep, DEAD_RUN_SWEEP_MS } from './dead-run-sweep';
 import {
   createUsageRetentionSweep,
   createNotificationRetentionSweep,
@@ -143,6 +144,15 @@ async function main(): Promise<void> {
       'worker-agents/janitor',
       JANITOR_SWEEP_MS,
       createStuckRunJanitor()
+    ),
+    // Runs that will never finish: halted, so a stalled backlog clears
+    // itself. On its own timer, so it runs even when the consumer is stuck.
+    schedulePeriodicSweep(
+      logger,
+      'dead runs',
+      'worker-agents/dead-run-sweep',
+      DEAD_RUN_SWEEP_MS,
+      createDeadRunSweep()
     ),
     // Hygiene on the turn stream's own heartbeat table — fixed age, no
     // per-tenant policy to read. Idempotent bounded delete like the sweeps

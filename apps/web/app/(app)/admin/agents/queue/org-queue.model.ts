@@ -112,6 +112,15 @@ export interface OrgQueueState {
   halted: string[];
   /** Why the last halt did not go through, run by run or as a whole. */
   error: string | null;
+  /**
+   * Every run the tab matches is picked, not just this page's: "Halt all"
+   * then halts them on the server in batches.
+   */
+  allMatching: boolean;
+  /** While halting every matching run: how many so far, of how many. */
+  progress: { halted: number; total: number } | null;
+  /** When halting every matching run finished: what it did. */
+  done: string | null;
 }
 
 export type OrgQueueAction =
@@ -125,10 +134,25 @@ export type OrgQueueAction =
       /** Runs that could not be halted, with why. */
       refused: readonly { runId: string; error: string }[];
     }
-  | { type: 'haltFailed'; runIds: readonly string[]; error: string };
+  | { type: 'haltFailed'; runIds: readonly string[]; error: string }
+  /** "Pick all N" over every page of the tab, or back to this page's picks. */
+  | { type: 'pickAllMatching' }
+  | { type: 'clearAllMatching' }
+  | { type: 'allHaltStarted'; total: number }
+  /** One batch of the halt-everything answered; `remaining` still match. */
+  | { type: 'allHaltBatch'; halted: number; remaining: number }
+  | { type: 'allHaltFailed'; error: string };
 
 export function initOrgQueue(): OrgQueueState {
-  return { selected: [], halting: [], halted: [], error: null };
+  return {
+    selected: [],
+    halting: [],
+    halted: [],
+    error: null,
+    allMatching: false,
+    progress: null,
+    done: null,
+  };
 }
 
 const without = (list: readonly string[], drop: readonly string[]) =>
@@ -151,6 +175,41 @@ export function orgQueueReducer(state: OrgQueueState, action: OrgQueueAction): O
         selected: allPicked
           ? without(state.selected, open)
           : [...state.selected, ...open.filter((id) => !state.selected.includes(id))],
+        // Unticking the page's box lets go of every page too.
+        allMatching: allPicked ? false : state.allMatching,
+      };
+    }
+    case 'pickAllMatching':
+      return { ...state, allMatching: true, done: null };
+    case 'clearAllMatching':
+      return { ...state, allMatching: false, selected: [] };
+    case 'allHaltStarted':
+      return { ...state, progress: { halted: 0, total: action.total }, error: null, done: null };
+    case 'allHaltBatch': {
+      if (!state.progress) return state;
+      const halted = state.progress.halted + action.halted;
+      // Finished when nothing is left, or a batch halted nothing (what is
+      // left could not be halted — it would only go round again).
+      const finished = action.remaining === 0 || action.halted === 0;
+      if (!finished) return { ...state, progress: { ...state.progress, halted } };
+      return {
+        ...state,
+        progress: null,
+        allMatching: false,
+        selected: [],
+        done:
+          action.remaining === 0
+            ? `Halted ${halted} ${halted === 1 ? 'run' : 'runs'}.`
+            : `Halted ${halted}; ${action.remaining} could not be halted.`,
+      };
+    }
+    case 'allHaltFailed': {
+      const halted = state.progress?.halted ?? 0;
+      return {
+        ...state,
+        progress: null,
+        error:
+          halted > 0 ? `${action.error} (${halted} were halted before it stopped.)` : action.error,
       };
     }
     case 'haltStarted':
@@ -162,6 +221,7 @@ export function orgQueueReducer(state: OrgQueueState, action: OrgQueueAction): O
     case 'haltAnswered': {
       const done = [...action.halted, ...action.refused.map((r) => r.runId)];
       return {
+        ...state,
         selected: without(state.selected, action.halted),
         halting: without(state.halting, done),
         halted: [...state.halted, ...action.halted.filter((id) => !state.halted.includes(id))],
@@ -210,11 +270,42 @@ export function haltRequest(
   };
 }
 
-/** The bulk button's label: "Halt 3 selected", "Halting…", or null when none are picked. */
+/**
+ * The offer under a fully picked page when the tab has more runs than the
+ * page: "All 50 on this page are picked. Pick all 1,078?" — or, once taken,
+ * the way back. Null when there is nothing more to offer.
+ */
+export function pickAllOffer(
+  state: OrgQueueState,
+  runIds: readonly string[],
+  total: number
+): { text: string; action: 'pick' | 'clear' } | null {
+  if (state.progress) return null;
+  if (state.allMatching) {
+    return { text: `All ${total.toLocaleString('en-US')} runs are picked.`, action: 'clear' };
+  }
+  const open = runIds.filter((id) => !state.halted.includes(id));
+  if (selectAllState(state, runIds) !== 'all' || total <= open.length) return null;
+  return {
+    text: `All ${open.length} on this page are picked.`,
+    action: 'pick',
+  };
+}
+
+/**
+ * The bulk button's label: "Halt 3 selected", "Halt all 1,078", "Halting…
+ * 200 of 1,078", or null when none are picked. `total` is how many runs
+ * the tab matches.
+ */
 export function haltSelectedLabel(
   state: OrgQueueState,
-  rows: readonly OrgQueueRow[]
+  rows: readonly OrgQueueRow[],
+  total = 0
 ): string | null {
+  if (state.progress) {
+    return `Halting… ${state.progress.halted.toLocaleString('en-US')} of ${state.progress.total.toLocaleString('en-US')}`;
+  }
+  if (state.allMatching) return `Halt all ${total.toLocaleString('en-US')}`;
   const count = haltRequest(state, rows).runs.length;
   if (state.halting.length > 0 && count === 0) return 'Halting…';
   return count > 0 ? `Halt ${count} selected` : null;

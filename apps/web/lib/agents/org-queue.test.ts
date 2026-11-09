@@ -9,7 +9,7 @@ jest.mock('@renkei/agents/runs', () => ({
 jest.mock('./run-jobs', () => ({ discardRunJobs: jest.fn(async () => undefined) }));
 
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
-import { countOrgQueue, haltRunsAsOperator, listOrgQueue } from './org-queue';
+import { countOrgQueue, haltAllMatching, haltRunsAsOperator, listOrgQueue } from './org-queue';
 
 const id = (n: number) => `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
 const at = (minute: number) => new Date(Date.UTC(2026, 10, 1, 0, minute));
@@ -90,5 +90,16 @@ describe('the organization queue', () => {
       ],
     });
     expect(await listOrgQueue({ limit: 50, offset: 0 })).toEqual([]);
+  });
+
+  it('halting every run of a status takes only that status, and says none are left', async () => {
+    const result = await haltAllMatching(['queued'], 'operator');
+    expect(result).toEqual({ halted: [id(11)], refused: [], remaining: 0 });
+    expect((await listOrgQueue({ limit: 50, offset: 0 })).map((run) => run.id)).toEqual([id(12)]);
+    expect(await haltAllMatching(undefined, 'operator')).toEqual({
+      halted: [id(12)],
+      refused: [],
+      remaining: 0,
+    });
   });
 });

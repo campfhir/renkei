@@ -117,6 +117,22 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
       deleteRunRows(tables, [...doomed]);
       return deleted;
     },
+    async listDead({ clockBefore, waitDueBefore }, limit) {
+      const rows = tables.select('agent_runs', (r) => {
+        const clock = (r.resumed_at ?? r.created_at).getTime();
+        if (IN_PROGRESS.includes(r.status)) return clock < clockBefore.getTime();
+        if (r.status !== 'waiting') return false;
+        return r.waiting_until === null
+          ? clock < clockBefore.getTime()
+          : r.waiting_until.getTime() < waitDueBefore.getTime();
+      });
+      return page(orderBy(rows, [(r) => r.created_at], [(r) => r.id]), limit).map((r) => ({
+        id: r.id,
+        agentId: r.agent_id,
+        ownerSubject: r.owner_subject,
+        status: r.status,
+      }));
+    },
     async listStaleInProgress(createdBefore, limit) {
       const rows = tables.select(
         'agent_runs',
