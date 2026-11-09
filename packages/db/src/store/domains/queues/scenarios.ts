@@ -145,6 +145,44 @@ export const queueScenarios: Scenario<DataStore>[] = [
   },
   ...consumerScenarios(),
   {
+    method: 'queues.pruneSettled',
+    name: 'settled rows before the cut go oldest first within the limit; live rows stay however old',
+    fixture: {
+      agent_jobs: [
+        message(41, 'run', { runId: 'a' }, { source: 'agents:a', status: 'processed', minute: 1 }),
+        message(42, 'run', { runId: 'b' }, { source: 'agents:a', status: 'skipped', minute: 2 }),
+        message(43, 'run', { runId: 'c' }, { source: 'agents:a', status: 'processed', minute: 50 }),
+        message(44, 'run', { runId: 'd' }, { source: 'agents:a', minute: 1 }),
+        {
+          ...message(
+            45,
+            'run',
+            { runId: 'e' },
+            { source: 'agents:a', status: 'processing', minute: 1 }
+          ),
+          locked_at: at(1),
+        },
+      ],
+      events: [message(46, 'thing', { n: 1 }, { source: 'webex', status: 'processed', minute: 1 })],
+    },
+    run: async (store) => {
+      const cut = new Date(at(10));
+      const remaining = async () =>
+        (await Promise.all([41, 42, 43, 44, 45].map((n) => store.queues.find('agent_jobs', id(n)))))
+          .filter((row) => row !== null)
+          .map((row) => row.id);
+      return [
+        await store.queues.pruneSettled('agent_jobs', cut, 1),
+        await remaining(),
+        await store.queues.pruneSettled('agent_jobs', cut, 10),
+        await remaining(),
+        await store.queues.pruneSettled('agent_jobs', cut, 10),
+        // Another table's rows are not this call's.
+        (await store.queues.find('events', id(46)))?.status ?? null,
+      ];
+    },
+  },
+  {
     method: 'queues.listAgentJobs',
     name: 'one agent’s pending and processing jobs, oldest first, ties by id, limited',
     fixture: {

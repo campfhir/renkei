@@ -125,6 +125,12 @@ export interface QueueStore {
   ): Promise<boolean>;
   /** One live message by id, or null. */
   find(table: QueueTable, id: string): Promise<QueueMessageRecord | null>;
+  /**
+   * Delete up to `limit` settled messages (`processed`, `skipped`) created
+   * before `before`, oldest first (ties by id); returns how many went. The
+   * live rows (pending, processing) are never touched, whatever their age.
+   */
+  pruneSettled(table: QueueTable, before: Date, limit: number): Promise<number>;
   /** The queue's dead letters, most recently dead first (ties by id, descending). */
   listDeadLetters(table: QueueTable, limit: number): Promise<QueueDeadLetterRecord[]>;
   /**
