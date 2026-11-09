@@ -145,6 +145,89 @@ export const queueScenarios: Scenario<DataStore>[] = [
   },
   ...consumerScenarios(),
   {
+    method: 'queues.listAgentJobs',
+    name: 'one agent’s pending and processing jobs, oldest first, ties by id, limited',
+    fixture: {
+      agent_jobs: [
+        {
+          ...live(201, 'agents:a', {
+            minute: 1,
+            status: 'processing',
+            attempts: 47,
+            locked_at: PAST,
+            payload: { runId: 'run-1' },
+          }),
+          type: 'run',
+          last_error: 'stuck',
+        },
+        { ...live(202, 'agents:a', { minute: 2, payload: { runId: 'run-2' } }), type: 'run' },
+        {
+          ...live(203, 'agents:a', { minute: 2, run_after: FUTURE, payload: { batchId: 'b-1' } }),
+          type: 'actions',
+        },
+        { ...live(204, 'agents:a', { minute: 3, status: 'processed' }), type: 'run' },
+        { ...live(205, 'agents:b', { minute: 0, payload: { runId: 'run-9' } }), type: 'run' },
+      ],
+    },
+    run: async (store) => [
+      await store.queues.listAgentJobs('a', 10),
+      await store.queues.listAgentJobs('a', 1),
+      await store.queues.listAgentJobs('nobody', 10),
+    ],
+  },
+  {
+    method: 'queues.listAgentDeadLetters',
+    name: 'one agent’s dead letters, most recently dead first, ties by id descending',
+    fixture: {
+      agent_jobs_dead_letters: [
+        {
+          id: id(211),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'run-1' },
+          attempts: 3,
+          last_error: 'key service unavailable',
+          created_at: at(1),
+          dead_at: at(20),
+        },
+        {
+          id: id(212),
+          source: 'agents:a',
+          type: 'actions',
+          payload: { batchId: 'b-1' },
+          attempts: 5,
+          last_error: 'gave up',
+          created_at: at(2),
+          dead_at: at(20),
+        },
+        {
+          id: id(213),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'run-2' },
+          attempts: 3,
+          last_error: null,
+          created_at: at(3),
+          dead_at: at(10),
+        },
+        {
+          id: id(214),
+          source: 'agents:b',
+          type: 'run',
+          payload: { runId: 'run-9' },
+          attempts: 3,
+          last_error: null,
+          created_at: at(4),
+          dead_at: at(30),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.queues.listAgentDeadLetters('a', 10),
+      await store.queues.listAgentDeadLetters('a', 2),
+    ],
+  },
+  {
     method: 'queues.hasLiveAgentRunJob',
     name: 'pending or processing rows of the run only',
     fixture: {

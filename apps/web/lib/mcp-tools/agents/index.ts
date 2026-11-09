@@ -1272,9 +1272,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Act — Stop a run',
       description:
         'Stop a run of one of your agents (or one shared with you) that has not finished — ' +
-        'queued, waiting on you, or actively running. This only REQUESTS the stop: a queued ' +
-        'or waiting run cancels within a moment, but a running one finishes the call it is ' +
-        'making first and stops before the next — agent_run_get shows when it lands. Refuses ' +
+        'queued, waiting on you, or actively running. A queued run is canceled at once (it has ' +
+        'not started). Otherwise this REQUESTS the stop: a waiting run cancels within a moment, ' +
+        'a running one finishes the call it is making first and stops before the next — ' +
+        'agent_run_get shows when it lands. Refuses ' +
         'agent-run callers, same as agent_run_now: stopping runs outside the chain is a ' +
         'human/API decision, not one an agent makes for itself or another run mid-chain.',
       annotations: { readOnlyHint: false },
@@ -1313,6 +1314,8 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ? 'That run was already canceled.'
               : `That run already ${result.status} — nothing to stop.`
           );
+        case 'canceled':
+          return textResult('Canceled. It had not started yet, so nothing of it ran.');
         case 'canceling': {
           // A cancel only asks, and a stuck run is never reached to be asked:
           // say so, and name what does clear it, rather than promise a cancel

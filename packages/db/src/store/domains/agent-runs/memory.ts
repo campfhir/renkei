@@ -186,6 +186,23 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
           }
         : null;
     },
+    async cancelQueued(wanted, bySubject) {
+      const id = wanted;
+      const now = new Date();
+      return (
+        tables.update(
+          'agent_runs',
+          (r) => r.id === id && r.status === 'queued',
+          (row) => ({
+            status: 'canceled',
+            finished_at: now,
+            updated_at: now,
+            cancel_requested_at: row.cancel_requested_at ?? now,
+            cancel_requested_by: row.cancel_requested_by ?? bySubject,
+          })
+        ).length > 0
+      );
+    },
     async forceCancel(wanted, { bySubject, errorKind, error }) {
       const id = wanted;
       const now = new Date();

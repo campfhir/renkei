@@ -224,6 +224,13 @@ export interface AgentRunStore extends AgentRunSweepStore {
     ownerSubject: string;
   }): Promise<RunRestartSourceRecord | null>;
   /**
+   * Cancel a run that has not started: canceled and finished now, the
+   * cancel request recorded (kept when one was already there) — only while
+   * it is still queued. False when it had left queued (a worker started it
+   * in the meantime, or it had already finished).
+   */
+  cancelQueued(runId: string, bySubject: string): Promise<boolean>;
+  /**
    * The operator's override: a live run straight to canceled with the
    * given error, the cancel request recorded (kept when one was already
    * there), and its running attempt rows closed out as canceled, in one

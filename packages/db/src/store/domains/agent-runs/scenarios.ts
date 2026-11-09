@@ -848,6 +848,42 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
+    method: 'agentRuns.cancelQueued',
+    name: 'only a queued run, once; the cancel request recorded, an earlier one kept',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(11, 1, 'ann', 1, { status: 'queued' }),
+        run(12, 1, 'ann', 2, {
+          status: 'queued',
+          cancel_requested_at: at(3),
+          cancel_requested_by: 'bob',
+        }),
+        run(13, 1, 'ann', 3, { status: 'running' }),
+        run(14, 1, 'ann', 4, { status: 'waiting' }),
+      ],
+    },
+    run: async (store) => {
+      const outcomes = [
+        await store.agentRuns.cancelQueued(id(11), 'ann'),
+        await store.agentRuns.cancelQueued(id(11), 'ann'),
+        await store.agentRuns.cancelQueued(id(12), 'ann'),
+        await store.agentRuns.cancelQueued(id(13), 'ann'),
+        await store.agentRuns.cancelQueued(id(14), 'ann'),
+      ];
+      const state = async (n: number) => {
+        const found = await store.agentRuns.findCancelState(id(n));
+        return found && [found.status, found.cancelRequestedAt !== null];
+      };
+      return {
+        outcomes,
+        states: await Promise.all([11, 12, 13, 14].map(state)),
+        // The first request is kept, not overwritten by the cancel that carried it out.
+        earlier: (await store.agentRuns.findCancelState(id(12)))?.cancelRequestedAt,
+      };
+    },
+  },
+  {
     method: 'agentRuns.forceCancel',
     name: 'live runs only; running attempts closed, other attempts and runs untouched',
     fixture: {

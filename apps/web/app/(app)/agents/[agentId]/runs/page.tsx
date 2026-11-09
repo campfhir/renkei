@@ -5,7 +5,14 @@ import { redirect, notFound } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
-import { listLiveRunCounts, listRunsForOwner } from '@/lib/agents/runs-view';
+import {
+  QUEUE_PANEL_LIMIT,
+  listAgentQueue,
+  listLiveRunCounts,
+  listRunsForOwner,
+} from '@/lib/agents/runs-view';
+import QueuePanel from './queue-panel';
+import { queuePanel } from './queue-panel.model';
 import { RUN_VIEWS, isRunView, runViewFilter, runViewLabel } from '@/lib/agents/run-views';
 import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
 import { ageWords } from '../../agents-overview.model';
@@ -60,6 +67,10 @@ export default async function AgentRunsPage({
     .map((count) => loadedAt - Date.parse(count.oldestCreatedAt))
     .filter((age) => age > STUCK_AFTER_MS);
   const oldestStuck = stuckSince.length > 0 ? Math.max(...stuckSince) : null;
+  // Where the agent's work is in the queue: what is at its head, and what
+  // the queue gave up on (queue-panel.model.ts).
+  const queue = await listAgentQueue(agentId);
+  const panel = queuePanel(queue.jobs, queue.dead, loadedAt, QUEUE_PANEL_LIMIT);
   const runs = paging.rows;
 
   const basePath = `/agents/${agentId}/runs`;
@@ -109,6 +120,7 @@ export default async function AgentRunsPage({
           <HaltButton agentId={agentId} label="Halt stuck runs" />
         </div>
       ) : null}
+      <QueuePanel agentId={agentId} panel={panel} />
       <DataFrame
         label="Runs"
         empty={

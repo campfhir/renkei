@@ -266,6 +266,21 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           }
         : null;
     },
+    async cancelQueued(runId, bySubject) {
+      const result = await db()
+        .updateTable('agent_runs')
+        .set({
+          status: 'canceled',
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+          cancel_requested_at: sql`COALESCE(cancel_requested_at, NOW())`,
+          cancel_requested_by: sql`COALESCE(cancel_requested_by, ${bySubject})`,
+        })
+        .where('id', '=', runId)
+        .where('status', '=', 'queued')
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0) > 0;
+    },
     async forceCancel(runId, { bySubject, errorKind, error }) {
       return db()
         .transaction()

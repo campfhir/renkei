@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-09',
+    entries: [
+      {
+        kind: 'fixed',
+        title: "Canceling a queued run is instant, and you can see what is holding an agent's runs",
+        detail:
+          "Canceling a run that has not started now cancels it straight away, instead of waiting behind every job ahead of it in the agent's queue. An agent's runs page has a Queue panel that says which run is at the head of its queue and what state it is in (being worked on, retrying after an error, held by a worker that stopped, or not being picked up at all), with how many runs wait behind it, the last error, and anything the queue gave up on this week. Your Activity now shows when a run fails and will be retried, when a run is canceled, and when one is halted.",
+      },
+    ],
+  },
+  {
     date: '2026-11-08',
     entries: [
       {
