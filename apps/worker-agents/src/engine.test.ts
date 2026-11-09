@@ -1004,4 +1004,23 @@ maybe('agent run engine', () => {
     expect(run.status).toBe('waiting');
     expect(run.errorKind).toBe('needs-sign-in');
   });
+
+  it('tells the owner once when a run parks for their sign-in, with a way to the run', async () => {
+    const { runId, agentId } = await seedRun();
+    ownerDelegated = false;
+    try {
+      const h = harness(stubLlm(() => finish('done')));
+      await h.handler({ payload: { runId } });
+      // A sweep re-drives the parked run and it parks the same way: no second row.
+      await h.handler({ payload: { runId } });
+    } finally {
+      ownerDelegated = true;
+    }
+    const feed = await getDataStore().notifications.list(subject, { limit: 10 });
+    const paused = feed.filter((row) => row.kind === 'run_paused');
+    expect(paused).toHaveLength(1);
+    expect(paused[0].headline).toMatch(/is paused until you sign in$/);
+    expect(paused[0].refUrl).toBe(`/agents/${agentId}/runs/${runId}`);
+    expect(paused[0].runId).toBe(runId);
+  });
 });

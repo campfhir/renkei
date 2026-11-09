@@ -117,6 +117,7 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
             ownerSubject: r.owner_subject,
             ownerEmail: owner?.email ?? null,
             status: r.status,
+            errorKind: r.error_kind ?? null,
             triggerKind: r.trigger_kind,
             createdAt: r.created_at,
             startedAt: r.started_at ?? null,

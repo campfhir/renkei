@@ -26,7 +26,7 @@ import {
 export interface NotificationCard {
   id: string;
   /**
-   * 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited' |
+   * 'run_started' | 'run_finished' | 'run_failed' | 'run_paused' | 'act' | 'agent_edited' |
    * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed' |
    * 'approval' | 'question' | 'chat_shared' | 'agent_shared' | 'chat_reply' |
    * 'chat_permission' | 'artifact_shared' | 'artifact_copied' | 'artifact_transferred'.

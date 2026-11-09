@@ -12,6 +12,8 @@ import {
 } from '@/lib/agents/agent-usage';
 import { RetentionForm } from './retention-form';
 import OversightCards from './oversight-cards';
+import PausedOwners from './paused-owners';
+import { listPausedOwners } from '@/lib/agents/paused-owners';
 
 /**
  * Agent oversight: every agent in the org, owner-attributed, with run,
@@ -39,11 +41,13 @@ export default async function AdminAgentsPage(): Promise<React.ReactNode> {
   // Run and failure buckets over the durable run log (migration 083), cut
   // on the database session's calendar — the numbers exist to be read
   // against the per-day cap.
-  const [tallies, tokenTotals, tokensByAgent, tokensByModel] = await Promise.all([
+  const [tallies, tokenTotals, tokensByAgent, tokensByModel, pausedOwners] = await Promise.all([
     getRunTallies(),
     getTenantTokenUsage(),
     getTokenUsageByAgent(),
     getTokenUsageByModel(null),
+    // Whose agents cannot run right now, and why (lib/agents/paused-owners.ts).
+    listPausedOwners(),
   ]);
   const totals = tallies.totals.runs;
   const failureTotals = tallies.totals.failures;
@@ -79,6 +83,8 @@ export default async function AdminAgentsPage(): Promise<React.ReactNode> {
           every unfinished run across the organization, to see and clear a backlog
         </span>
       </p>
+
+      <PausedOwners owners={pausedOwners} now={Date.now()} />
 
       <OversightCards
         agents={agents}
