@@ -32,6 +32,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { getDataStore } from '@renkei/db';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import { logger } from '@/lib/logger';
 
 /** The connector key the card capabilities register under. */
@@ -96,9 +97,11 @@ export function registerCardTools(server: McpServer, context: MCPToolContext): v
         createdByAgentId: context.agent?.agentId ?? null,
       });
 
-      logger.info('card_create put a card on the feed', {
+      logger.info('{caller} put the card "{title}" on the feed', {
         component: 'mcp/tool',
+        ...callerFields(context),
         cardId,
+        title,
         byAgent: Boolean(context.agent),
       });
       return textResult(`Card created. cardId: ${cardId}`);

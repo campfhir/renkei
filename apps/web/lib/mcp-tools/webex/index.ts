@@ -39,7 +39,7 @@ import { actMeta } from '@renkei/tool-outcomes';
 import { clientFailure, sandboxConfig, sbWriteFile } from '@/lib/sandbox/service-client';
 import { recordSentWebexMessage } from './sent-ledger';
 import { withScopeGate } from '../capability-gate';
-import { withPresentationHint, type MCPToolContext } from '../common';
+import { callerFields, withPresentationHint, type MCPToolContext } from '../common';
 import { fileLine, targetOf } from '../sandbox/shared';
 import { createUploadSlot } from '../upload-slots';
 import {
@@ -1035,8 +1035,9 @@ export async function registerWebexUserTools(
           lines.push(`Staged ${fileLine(written.val)}`);
         }
 
-        logger.info('webex_download_attachments staged', {
+        logger.info('{caller} staged {staged} of {attempted} WebEx attachment(s) in the sandbox', {
           component: 'mcp/tool',
+          ...callerFields(context),
           messageId,
           staged,
           attempted: selected.length,
@@ -1119,8 +1120,9 @@ export async function registerWebexUserTools(
         createdByAgentId: null,
       });
 
-      logger.info('webex_capture_message captured', {
+      logger.info('{caller} captured a WebEx message onto the card feed for a human decision', {
         component: 'mcp/tool',
+        ...callerFields(context),
         messageId,
       });
       return textResult(`Captured. It is now on the card feed awaiting a human decision.`);
@@ -1178,9 +1180,11 @@ export async function registerWebexUserTools(
       // Recorded BEFORE the tool answers, so the ledger row is in place well
       // ahead of the webhook round-trip that will ask about it.
       await recordSentWebexMessage(str(sent.id), context.accountId);
-      logger.info('webex_send_message sent', {
+      logger.info('{caller} sent a WebEx message to {to}', {
         component: 'mcp/tool',
+        ...callerFields(context),
         roomId: str(sent.roomId),
+        to: toPersonEmail || `space ${str(sent.roomId) || roomId}`,
       });
       // Room id included so a 1:1 send's room is addressable afterward —
       // follow-ups and thread replies need it, and only this response has it.
@@ -1248,8 +1252,9 @@ export async function registerWebexUserTools(
           : null;
         if (viaBot?.ok && viaBot.val.roomId) {
           await recordSentWebexMessage(viaBot.val.id, context.accountId);
-          logger.info('webex_note_to_self sent', {
+          logger.info('{caller} sent themself a WebEx note through the org bot', {
             component: 'mcp/tool',
+            ...callerFields(context),
             roomId: viaBot.val.roomId,
             via: 'bot',
           });
@@ -1267,10 +1272,14 @@ export async function registerWebexUserTools(
             ...(dmUrl ? { _meta: actMeta({ url: dmUrl }) } : {}),
           };
         }
-        logger.warn('webex_note_to_self: the bot could not deliver; posting to the solo space', {
-          component: 'mcp/tool',
-          reason: personEmail ? 'bot send failed' : 'no personEmail on the grant',
-        });
+        logger.warn(
+          "the org bot could not deliver {caller}'s WebEx note to self ({reason}); it is posted to their solo space instead",
+          {
+            component: 'mcp/tool',
+            ...callerFields(context),
+            reason: personEmail ? 'bot send failed' : 'no personEmail on the grant',
+          }
+        );
       }
 
       // Only group rooms can hold a single person — a direct room always has
@@ -1333,10 +1342,12 @@ export async function registerWebexUserTools(
             (sentBody as Record<string, unknown>)
           : {};
       await recordSentWebexMessage(str(sent.id), context.accountId);
-      logger.info('webex_note_to_self sent', {
+      logger.info('{caller} sent themself a WebEx note in their solo space{created}', {
         component: 'mcp/tool',
+        ...callerFields(context),
         roomId,
-        created,
+        created: created ? ', which was created for it' : '',
+        spaceCreated: created,
         via: 'self',
       });
       const noteRoomUrl = webexSpaceUrl(roomId, str(sent.id));
@@ -1439,10 +1450,15 @@ export async function registerWebexUserTools(
         { filename, contentType: str(args.contentType) || undefined }
       );
       if (!slot.ok) return errText(slot.error);
-      logger.info('webex_request_attachment_upload minted {uploadId}', {
-        component: 'mcp/tool',
-        uploadId: slot.uploadId,
-      });
+      logger.info(
+        '{caller} asked for an upload endpoint to send "{filename}" on WebEx; one was minted (upload {uploadId})',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          uploadId: slot.uploadId,
+          filename,
+        }
+      );
       return textResult(slot.instructions);
     }
   );
@@ -1559,9 +1575,11 @@ export async function registerWebexUserTools(
             (body as Record<string, unknown>)
           : {};
       await recordSentWebexMessage(str(sent.id), context.accountId);
-      logger.info('webex_send_message_confirm sent', {
+      logger.info('{caller} confirmed the preview card and sent a WebEx message to {to}', {
         component: 'mcp/tool',
+        ...callerFields(context),
         roomId: str(sent.roomId),
+        to: toPersonEmail || `space ${str(sent.roomId) || roomId}`,
       });
       return textResult(
         `Sent (message id ${str(sent.id) || 'unknown'}` +

@@ -22,6 +22,7 @@ import { ENTRA_DEVELOPER } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
+import { callerAttrs, type CallerContext } from '../common';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
 const LABEL = 'Entra Developer';
@@ -45,7 +46,7 @@ export interface EntraAccess {
 }
 
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
-export interface EntraCallContext {
+export interface EntraCallContext extends CallerContext {
   subject?: string;
   origin?: string;
 }
@@ -138,13 +139,17 @@ export async function entraRequest(
     });
   } catch (error) {
     const timedOut = isTimeoutError(error);
-    logger.warn('Graph API unreachable', {
-      component: 'entra-developer/fetch',
-      subject: context.subject,
-      method,
-      path: pathAndQuery,
-      timedOut,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Microsoft Graph ({why}); the Entra tool reported it as unreachable",
+      {
+        component: 'entra-developer/fetch',
+        ...(await callerAttrs(context)),
+        method,
+        path: pathAndQuery,
+        timedOut,
+        why: timedOut ? 'timed out' : 'connection failed',
+      }
+    );
     const reason = timedOut
       ? `graph.microsoft.com timed out after ${REQUEST_TIMEOUT_MS}ms`
       : 'Could not reach graph.microsoft.com';
@@ -170,14 +175,17 @@ export async function entraRequest(
     // Not JSON — the status decides what the caller hears.
   }
   if (!response.ok) {
-    logger.warn('Graph API non-OK response', {
-      component: 'entra-developer/fetch',
-      subject: context.subject,
-      method,
-      path: pathAndQuery,
-      status: response.status,
-      responseBody: text ? secure(truncateForLog(text)) : undefined,
-    });
+    logger.warn(
+      "Microsoft Graph answered {status} to {caller}'s {method} {path} on the Entra Developer grant",
+      {
+        component: 'entra-developer/fetch',
+        ...(await callerAttrs(context)),
+        method,
+        path: pathAndQuery,
+        status: response.status,
+        responseBody: text ? secure(truncateForLog(text)) : undefined,
+      }
+    );
     return {
       ok: false,
       error: describeStatus(response.status, graphReason(parsed)),

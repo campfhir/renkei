@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { textResult, errText } from '../graph/client';
 import { resolvePeriod, PERIOD_PRESETS } from './period';
@@ -98,12 +98,15 @@ export function registerSummaryTools(
           try {
             return await provider.collect(context, period);
           } catch (error) {
-            logger.warn('summary source could not be read: {connector} {error}', {
-              component: 'mcp/summary',
-              subject: context.subject,
-              connector: provider.connector,
-              error: error instanceof Error ? error.message : String(error),
-            });
+            logger.warn(
+              "{caller}'s daily summary could not read {connector}; that section is left empty and the rest of the summary goes ahead: {error}",
+              {
+                component: 'mcp/summary',
+                ...callerFields(context),
+                connector: provider.connector,
+                error: error instanceof Error ? error.message : String(error),
+              }
+            );
             return {
               connector: provider.connector,
               label: provider.label,
@@ -163,12 +166,15 @@ export function registerSummaryTools(
         try {
           section = await provider.collect(context, period);
         } catch (error) {
-          logger.warn('summary source could not be read: {connector} {error}', {
-            component: 'mcp/summary',
-            subject: context.subject,
-            connector: provider.connector,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            '{caller} asked for a {connector} summary, but it could not be read; the tool answered with an error: {error}',
+            {
+              component: 'mcp/summary',
+              ...callerFields(context),
+              connector: provider.connector,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
           return errText(`Could not read ${provider.label.toLowerCase()} for ${period.label}.`);
         }
         if (!section) {

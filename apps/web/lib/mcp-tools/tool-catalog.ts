@@ -34,6 +34,7 @@ import { buildProjection } from '@/lib/mcp-tools/projection';
 import { resolveAudience } from '@/lib/connectors/audience';
 import { ATLASSIAN, ATLASSIAN_JSM } from '@renkei/provider-grants';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import type { MCPToolContext } from '@/lib/mcp-tools/common';
 import { connectorKeyForTool } from '@/lib/mcp-tools/tool-connector';
 import { PREVIEW_OF_META_KEY } from '@/lib/mcp-tools/act-preview';
@@ -288,11 +289,14 @@ export async function listAvailableTools(
   } catch (error) {
     // A page that cannot enumerate should show usage without the catalog
     // rather than fail outright.
-    logger.warn('tool catalog enumeration failed: {error}', {
-      component: 'mcp/catalog',
-      subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      'the tool catalog for {actor} could not be enumerated; the page shows no catalog this time: {error}',
+      {
+        component: 'mcp/catalog',
+        ...(await whoIs(subject)),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return [];
   }
 

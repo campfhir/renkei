@@ -67,8 +67,13 @@ failure's message, and the ids of the things involved (`runId`, `chatId`,
   `agentAttrsFor(row)` from `@renkei/db`; `describeAccountActor(accountId)`
   for a provider account id (a Graph or Atlassian account) and
   `actorFields(actor)` to turn it into attributes.
-- **MCP tools:** `who(context)` — the tool context carries the caller's
-  `actor` (the run OWNER when an agent is calling, with `agent` beside it).
+- **MCP tools:** `callerFields(context)` (`lib/mcp-tools/common.ts`) — the
+  tool context carries the caller's `actor` and, when an agent is calling,
+  its `agentActor` (the run OWNER's grants, the agent doing the calling).
+  It adds `caller`: `agent "Triage" of Ada Lovelace (ada@example.com)` when
+  an agent calls, else the person's label — the sentence subject of every
+  tool line (`{caller} called jira_create_issue`). `callerAttrs(context)`
+  is the async form for a vendor client reached with only a `subject`.
 
 All of them are total: a lookup that fails names the subject, and a
 missing agent is `(unknown agent)`. Answers are cached for five minutes

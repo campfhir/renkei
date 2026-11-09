@@ -63,8 +63,8 @@ describe('jiraFetch through the grant fetcher', () => {
     await jiraFetch('https://example.test/rest/api/3/myself', auth);
 
     expect(logger.debug).toHaveBeenCalledWith(
-      'Request',
-      expect.objectContaining({ accountId: 'acct-1' })
+      '{actor} is calling Jira: {method} {url}',
+      expect.objectContaining({ accountId: 'acct-1', actor: 'acct-1' })
     );
   });
 
@@ -79,7 +79,7 @@ describe('jiraFetch through the grant fetcher', () => {
     });
 
     const okLog = (logger.debug as jest.Mock).mock.calls.find(
-      ([message]) => message === 'OK response'
+      ([message]) => message === "Jira accepted {actor}'s {method} {url} with {status}"
     );
     expect(okLog).toBeDefined();
     const attributes: Record<string, unknown> = okLog?.[1] ?? {};
@@ -97,7 +97,7 @@ describe('jiraFetch through the grant fetcher', () => {
     }).catch(() => undefined);
 
     const failLog = (logger.warn as jest.Mock).mock.calls.find(
-      ([message]) => message === 'Non-OK response'
+      ([message]) => message === "Jira refused {actor}'s {method} {url} with {status}: {reason}"
     );
     expect(failLog).toBeDefined();
     const attributes: Record<string, unknown> = failLog?.[1] ?? {};

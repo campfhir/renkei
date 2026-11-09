@@ -16,6 +16,7 @@ const inserted: Record<string, unknown>[] = [];
 let dbAvailable = true;
 
 jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
   getDataStore: () => ({
     toolUsage: {
       recordCall: async (row: Record<string, unknown>) => {

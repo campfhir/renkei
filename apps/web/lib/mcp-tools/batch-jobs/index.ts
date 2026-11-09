@@ -39,6 +39,7 @@ import { afterProcessingRefusal, normalizeFolderPath } from '@/lib/batch-jobs/pi
 import { listConnectedShares } from '@renkei/connector-fileshares';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 
 /** The connector key the batch-job capabilities register under. */
 export const BATCH_JOBS_MCP_CONNECTOR = 'batch-jobs';
@@ -295,19 +296,22 @@ export function registerBatchJobTools(server: McpServer, context: MCPToolContext
       const read = await sbReadFile(target, str(args.fileId));
       if (!read.ok) {
         // The answer is user-facing text; the log keeps what the sandbox said.
-        logger.warn('batch OCR could not read sandbox file {fileId}: {error}', {
-          component: 'mcp/batch-jobs',
-          subject: target.subject,
-          fileId: str(args.fileId),
-          kind: read.err.kind,
-          error:
-            read.err.kind === 'unconfigured'
-              ? 'unconfigured'
-              : read.err.kind === 'op'
-                ? (read.err.message ?? read.err.type)
-                : read.err.message,
-          status: read.err.kind === 'op' ? read.err.status : undefined,
-        });
+        logger.warn(
+          '{caller} asked for a batch OCR of a sandbox file, but the file could not be read from the sandbox; no batch was created: {error}',
+          {
+            component: 'mcp/batch-jobs',
+            ...callerFields(context),
+            fileId: str(args.fileId),
+            kind: read.err.kind,
+            error:
+              read.err.kind === 'unconfigured'
+                ? 'unconfigured'
+                : read.err.kind === 'op'
+                  ? (read.err.message ?? read.err.type)
+                  : read.err.message,
+            status: read.err.kind === 'op' ? read.err.status : undefined,
+          }
+        );
         return errText(sandboxClientFailure(read.err).message);
       }
 

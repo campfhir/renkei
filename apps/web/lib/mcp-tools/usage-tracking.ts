@@ -28,7 +28,7 @@
 
 import { randomUUID } from 'node:crypto';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { getDataStore } from '@renkei/db';
+import { actorFields, agentFields, describeActor, describeAgent, getDataStore } from '@renkei/db';
 import { friendlyToolName } from '@renkei/agents';
 import { logger } from '@/lib/logger';
 import { connectorKeyForTool } from './tool-connector';
@@ -112,14 +112,18 @@ function record(
   } catch (error) {
     pending = Promise.reject(error);
   }
-  void pending.catch((error: unknown) => {
+  void pending.catch(async (error: unknown) => {
     // Debug, not warn: a busy server that cannot write telemetry would
     // otherwise flood the log with a problem nobody can act on per-call.
-    logger.debug('tool usage not recorded: {error}', {
-      component: 'mcp/usage',
-      tool,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug(
+      "{caller}'s call to {tool} was not recorded in tool usage (telemetry only; the call itself stands): {error}",
+      {
+        component: 'mcp/usage',
+        ...(await callerOf(context)),
+        tool,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   });
 }
 
@@ -136,31 +140,17 @@ function record(
  * `confluence_update_blogpost` or an OIDC subject. Both exact values ride
  * along in the metadata, so grepping for either still works.
  */
-async function actorFor(context: UsageContext): Promise<{ subject: string; displayName: string }> {
-  const subject = context.subject;
-  if (!subject) return { subject: '(none)', displayName: '(none)' };
-  const now = Date.now();
-  const hit = actorCache.get(subject);
-  if (hit && hit.expiresAt > now) return { subject, displayName: hit.displayName };
-
-  let displayName = subject;
-  try {
-    const identity = await getDataStore().identities.get(subject);
-    displayName = identity?.displayName || identity?.email || subject;
-  } catch {
-    // A log line is never worth failing the work it describes; nor is it
-    // cached, so the next call tries again.
-    return { subject, displayName };
-  }
-  if (actorCache.size >= ACTOR_CACHE_MAX) actorCache.clear();
-  actorCache.set(subject, { displayName, expiresAt: now + ACTOR_CACHE_TTL_MS });
-  return { subject, displayName };
+async function callerOf(context: UsageContext) {
+  // The shared, five-minute-cached lookups (docs/logging.md): the person,
+  // and the agent with its owner when an agent is calling. Neither throws.
+  const actor = await describeActor(context.subject);
+  const agent = context.agentId ? await describeAgent(context.agentId) : null;
+  return {
+    ...actorFields(actor),
+    ...(agent ? agentFields(agent) : {}),
+    caller: agent ? `agent "${agent.agentName}" of ${agent.owner.label}` : actor.label,
+  };
 }
-
-/** Names change rarely and a log line tolerates a stale one: five minutes, bounded. */
-const ACTOR_CACHE_TTL_MS = 5 * 60_000;
-const ACTOR_CACHE_MAX = 2_000;
-const actorCache = new Map<string, { displayName: string; expiresAt: number }>();
 
 async function logToolCall(
   context: UsageContext,
@@ -174,24 +164,22 @@ async function logToolCall(
   // name touches the database, and a log line is never worth failing real
   // work for — so the whole body is defended, and an unresolvable name
   // degrades to the subject rather than taking the line down with it.
-  const actor = await actorFor(context);
   const title = typeof config?.title === 'string' ? config.title : null;
   const fields = {
     component: 'mcp/tools',
-    userName: actor.displayName,
-    subject: actor.subject,
+    ...(await callerOf(context)),
     toolLabel: friendlyToolName(tool, title),
     tool,
     durationMs: Date.now() - startedAt.getTime(),
   };
   if (status === 'error') {
-    logger.warn('{userName}: {toolLabel} failed — {error}', {
+    logger.warn('{caller} called {toolLabel}, which failed after {durationMs}ms: {error}', {
       ...fields,
       error: errorSummary ?? 'no detail',
     });
     return;
   }
-  logger.debug('{userName}: {toolLabel} ok', fields);
+  logger.debug('{caller} called {toolLabel}, which succeeded in {durationMs}ms', fields);
 }
 
 export function withUsageTracking(server: McpServer, context: UsageContext): McpServer {

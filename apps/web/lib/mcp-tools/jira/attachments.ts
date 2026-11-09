@@ -17,7 +17,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { decodeBase64Attachment } from '../fetch-guard';
@@ -100,11 +100,10 @@ export async function registerAttachmentTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_add_attachment invoked', {
+      logger.debug('{caller} called jira_add_attachment', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_add_attachment',
       });
       try {
         const issueKey = str(args.issueKey);
@@ -241,12 +240,16 @@ export async function registerAttachmentTools(
       if (!slot.ok) {
         return { content: [{ type: 'text' as const, text: slot.error }], isError: true };
       }
-      logger.info('jira_request_attachment_upload minted {uploadId}', {
-        component: 'mcp/tool',
-        accountId: context.accountId,
-        uploadId: slot.uploadId,
-        issueKey,
-      });
+      logger.info(
+        '{caller} asked for an upload endpoint to attach "{filename}" to {issueKey}; one was minted (upload {uploadId})',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          uploadId: slot.uploadId,
+          issueKey,
+          filename,
+        }
+      );
       return { content: [{ type: 'text' as const, text: slot.instructions }] };
     }
   );

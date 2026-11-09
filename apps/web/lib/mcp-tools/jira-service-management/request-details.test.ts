@@ -11,6 +11,23 @@ jest.mock('@/lib/logger', () => ({
   secure: (value: unknown) => value,
 }));
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   getCachedDisplayName: () => 'Test User',
   withPresentationHint: (text: string, hint: string) => `${text}\n\n(Presentation hint: ${hint})`,
 }));

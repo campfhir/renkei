@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
+import { issueUrl, withPresentationHint, callerFields } from '../common';
 import { adfToMarkdown } from './adf';
 import { markdownToAdf } from './markdown';
 import { logger } from '@/lib/logger';
@@ -36,11 +36,10 @@ export async function registerWorklogTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_worklogs invoked', {
+      logger.debug('{caller} called jira_list_worklogs', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_worklogs',
       });
       try {
         const { issueKey } = args;
@@ -124,11 +123,10 @@ export async function registerWorklogTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_bulk_get_worklogs invoked', {
+      logger.debug('{caller} called jira_bulk_get_worklogs', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_bulk_get_worklogs',
       });
       try {
         const issueKeys = Array.isArray(args.issueKeys)
@@ -237,11 +235,10 @@ export async function registerWorklogTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_worklog invoked', {
+      logger.debug('{caller} called jira_create_worklog', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_worklog',
       });
       try {
         const { issueKey, timeSpent, comment, started } = args;
@@ -314,11 +311,10 @@ export async function registerWorklogTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_delete_worklog invoked', {
+      logger.debug('{caller} called jira_delete_worklog', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_delete_worklog',
       });
       try {
         const { issueKey, worklogId } = args;

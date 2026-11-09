@@ -52,6 +52,7 @@ import {
 } from '@renkei/connector-admanager';
 import type { AdManagerPermission, ConnectedInstance } from '@renkei/connector-admanager';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import { logger, secure } from '@/lib/logger';
 import { admanagerApi } from '@/lib/admanager/service-client';
 import type {
@@ -401,32 +402,38 @@ export function registerAdManagerTools(
       // (jira/fetch, github/fetch, zoom/fetch, …). The body is secure()-
       // marked since it can carry a real employee's data; the path/query
       // are not, matching those other clients' own `url` field.
-      logger.warn('ADManager Plus worker call failed', {
-        component: 'admanager/fetch',
-        subject: full.subject,
-        instanceId,
-        path: request.path,
-        method: request.method,
-        query: request.query,
-        requestBody: requestBody === undefined ? undefined : secure(truncateForLog(requestBody)),
-        errorKind: answered.err.kind,
-        errorType: answered.err.kind === 'op' ? answered.err.type : undefined,
-        errorMessage: answered.err.kind === 'unconfigured' ? undefined : answered.err.message,
-      });
+      logger.warn(
+        "{caller}'s {method} {path} on ADManager Plus instance {instanceId} failed at the worker ({errorKind}); the tool reported it",
+        {
+          component: 'admanager/fetch',
+          ...callerFields(context),
+          instanceId,
+          path: request.path,
+          method: request.method,
+          query: request.query,
+          requestBody: requestBody === undefined ? undefined : secure(truncateForLog(requestBody)),
+          errorKind: answered.err.kind,
+          errorType: answered.err.kind === 'op' ? answered.err.type : undefined,
+          errorMessage: answered.err.kind === 'unconfigured' ? undefined : answered.err.message,
+        }
+      );
       return { ok: false, message: clientMessage(what, answered.err) };
     }
     if (answered.val.status < 200 || answered.val.status >= 300) {
-      logger.warn('ADManager Plus non-OK response', {
-        component: 'admanager/fetch',
-        subject: full.subject,
-        instanceId,
-        path: request.path,
-        method: request.method,
-        query: request.query,
-        status: answered.val.status,
-        requestBody: requestBody === undefined ? undefined : secure(truncateForLog(requestBody)),
-        responseBody: answered.val.body ? secure(truncateForLog(answered.val.body)) : undefined,
-      });
+      logger.warn(
+        "ADManager Plus instance {instanceId} answered {status} to {caller}'s {method} {path}",
+        {
+          component: 'admanager/fetch',
+          ...callerFields(context),
+          instanceId,
+          path: request.path,
+          method: request.method,
+          query: request.query,
+          status: answered.val.status,
+          requestBody: requestBody === undefined ? undefined : secure(truncateForLog(requestBody)),
+          responseBody: answered.val.body ? secure(truncateForLog(answered.val.body)) : undefined,
+        }
+      );
       return { ok: false, message: upstreamMessage(what, answered.val) };
     }
     return { ok: true, response: answered.val };

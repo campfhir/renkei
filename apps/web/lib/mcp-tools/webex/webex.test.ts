@@ -27,6 +27,7 @@ jest.mock('@/lib/webex-bot', () => ({
   webexBotClient: jest.fn(async () => mockBot),
 }));
 jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
   getDataStore: () => ({
     webexSentMessages: {
       record: async (messageId: string, accountId: string | null) => {

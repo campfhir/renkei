@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { sprintUrl, getCachedDisplayName } from '../common';
+import { sprintUrl, callerFields } from '../common';
 import { loadFieldSchema, lookupField } from './field-schema';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
@@ -59,11 +59,15 @@ export async function sprintMembership(
 
     return { resolved: true, active, closed };
   } catch (error) {
-    logger.debug('Agile issue lookup failed, trying the Sprint field', {
-      component: 'mcp/tool',
-      issueKey,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug(
+      'the Agile API could not say which sprints {issueKey} is in for {caller}; the Sprint field is read instead: {error}',
+      {
+        component: 'mcp/tool',
+        ...callerFields(context),
+        issueKey,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 
   // Fallback: read the Sprint customfield, resolved by name against this site.
@@ -140,11 +144,10 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_sprint invoked', {
+      logger.debug('{caller} called jira_create_sprint', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_sprint',
       });
       try {
         const { boardId, name, startDate, endDate, goal } = args;
@@ -200,11 +203,10 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_move_issue_to_sprint invoked', {
+      logger.debug('{caller} called jira_move_issue_to_sprint', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_move_issue_to_sprint',
       });
       try {
         const { issueKey, sprintId } = args;
@@ -257,11 +259,10 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_remove_issue_from_sprint invoked', {
+      logger.debug('{caller} called jira_remove_issue_from_sprint', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_remove_issue_from_sprint',
       });
       try {
         const { issueKey } = args;
@@ -350,11 +351,10 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_bulk_move_sprint_issues invoked', {
+      logger.debug('{caller} called jira_bulk_move_sprint_issues', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_bulk_move_sprint_issues',
       });
       try {
         const issueKeys: string[] = Array.isArray(args.issueKeys)
@@ -412,11 +412,10 @@ export async function registerSprintTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_complete_sprint invoked', {
+      logger.debug('{caller} called jira_complete_sprint', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_complete_sprint',
       });
       try {
         const { sprintId } = args;

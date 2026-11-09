@@ -8,6 +8,23 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   getCachedDisplayName: () => 'Tester',
   withPresentationHint: (body: string, suggestion: string) =>
     `${body}\n\n(Presentation hint: ${suggestion})`,

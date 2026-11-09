@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
 import { resolveRequestType } from './components';
@@ -55,11 +55,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_get_request_type_fields invoked', {
+      logger.debug('{caller} called jsm_get_request_type_fields', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_get_request_type_fields',
       });
       try {
         const { serviceDeskId, requestTypeId } = args;
@@ -165,11 +164,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_request_approvals invoked', {
+      logger.debug('{caller} called jsm_list_request_approvals', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_request_approvals',
       });
       try {
         const { issueKey } = args;
@@ -254,11 +252,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_get_request_sla invoked', {
+      logger.debug('{caller} called jsm_get_request_sla', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_get_request_sla',
       });
       try {
         const { issueKey } = args;
@@ -337,11 +334,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_request_participants invoked', {
+      logger.debug('{caller} called jsm_list_request_participants', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_request_participants',
       });
       try {
         const { issueKey } = args;
@@ -409,11 +405,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_add_request_participant invoked', {
+      logger.debug('{caller} called jsm_add_request_participant', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_add_request_participant',
       });
       try {
         const { issueKey, accountId } = args;
@@ -462,11 +457,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_remove_request_participant invoked', {
+      logger.debug('{caller} called jsm_remove_request_participant', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_remove_request_participant',
       });
       try {
         const { issueKey, accountId } = args;
@@ -524,11 +518,10 @@ export async function registerRequestDetailsTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_request_attachment_upload invoked', {
+      logger.debug('{caller} called jsm_request_attachment_upload', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_request_attachment_upload',
       });
       const issueKey = typeof args.issueKey === 'string' ? args.issueKey : '';
       const filename = typeof args.filename === 'string' ? args.filename : '';

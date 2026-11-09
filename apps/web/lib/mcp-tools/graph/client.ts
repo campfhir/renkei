@@ -30,6 +30,7 @@ import { MICROSOFT } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
+import { callerAttrs, type CallerContext } from '../common';
 import { REQUEST_TIMEOUT_MS, UPLOAD_TIMEOUT_MS, isTimeoutError } from '../fetch-guard';
 
 const LABEL = 'Microsoft';
@@ -42,7 +43,7 @@ const LABEL = 'Microsoft';
  * id and a JQL limit it has no use for. The connectors page manages the same
  * watches the MCP tools do, so it needs the same client, not a second one.
  */
-export interface GraphCallContext {
+export interface GraphCallContext extends CallerContext {
   /** The caller's OIDC subject — whose grant is used. */
   subject?: string;
   /**
@@ -141,14 +142,24 @@ async function graphCall(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable: {error}', {
-      component: 'graph/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      error: error instanceof Error ? error.message : String(error),
-      timedOut: isTimeoutError(error),
-      mailboxBusy: error instanceof GateTimeoutError,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Microsoft Graph ({why}); the tool reported it as unreachable: {error}",
+      {
+        component: 'graph/fetch',
+        ...(await callerAttrs(context)),
+        method,
+        path: pathAndQuery,
+        error: error instanceof Error ? error.message : String(error),
+        timedOut: isTimeoutError(error),
+        mailboxBusy: error instanceof GateTimeoutError,
+        why:
+          error instanceof GateTimeoutError
+            ? 'the mailbox lane was busy'
+            : isTimeoutError(error)
+              ? 'timed out'
+              : 'connection failed',
+      }
+    );
     return { ok: false, error: describeFetchFailure(error, REQUEST_TIMEOUT_MS) };
   }
 
@@ -159,9 +170,9 @@ async function graphCall(
 
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'graph/fetch',
-      subject: context.subject,
+      ...(await callerAttrs(context)),
       path: pathAndQuery,
       method,
       status: response.status,
@@ -255,14 +266,17 @@ export async function graphPutContent(
   if (refused) return { ok: false, error: refused };
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
-    logger.warn('Graph upload failed', {
-      component: 'graph/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      status: response.status,
-      responseHeaders: headersForLog(response.headers),
-      responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
-    });
+    logger.warn(
+      "Microsoft Graph answered {status} to {caller}'s upload to {path}; nothing was uploaded",
+      {
+        component: 'graph/fetch',
+        ...(await callerAttrs(context)),
+        path: pathAndQuery,
+        status: response.status,
+        responseHeaders: headersForLog(response.headers),
+        responseBody: responseBody ? secure(truncateForLog(responseBody)) : undefined,
+      }
+    );
     return {
       ok: false,
       error: describeStatus(response.status, retryAfterSeconds(response.headers)),
@@ -301,9 +315,9 @@ export async function graphGetText(
   if (refused) return { ok: false, error: refused };
   const text = await response.text().catch(() => '');
   if (!response.ok) {
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'graph/fetch',
-      subject: context.subject,
+      ...(await callerAttrs(context)),
       path: pathAndQuery,
       method: 'GET',
       status: response.status,
@@ -349,9 +363,9 @@ export async function graphPostText(
   if (refused) return { ok: false, error: refused };
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'graph/fetch',
-      subject: context.subject,
+      ...(await callerAttrs(context)),
       path: pathAndQuery,
       method: 'POST',
       status: response.status,
@@ -408,13 +422,16 @@ export async function graphContentDownloadUrl(
   if (response.status >= 300 && response.status < 400 && location) {
     return { ok: true, url: location };
   }
-  logger.warn('Graph /content offered no redirect', {
-    component: 'graph/fetch',
-    subject: context.subject,
-    path,
-    status: response.status,
-    responseHeaders: headersForLog(response.headers),
-  });
+  logger.warn(
+    "Microsoft Graph answered {status} without a download redirect to {caller}'s GET {path}; the file's download URL could not be found",
+    {
+      component: 'graph/fetch',
+      ...(await callerAttrs(context)),
+      path,
+      status: response.status,
+      responseHeaders: headersForLog(response.headers),
+    }
+  );
   return {
     ok: false,
     error: response.ok

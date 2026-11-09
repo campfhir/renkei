@@ -38,7 +38,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import {
   buildFieldUpdates,
@@ -286,6 +286,7 @@ async function loadTargetWorkTypes(auth: JiraAuth, projectId: string): Promise<W
  * the field checks declared skipped rather than silently passed.
  */
 async function loadTargetFields(
+  context: MCPToolContext,
   auth: JiraAuth,
   projectId: string,
   issueTypeId: string
@@ -311,10 +312,14 @@ async function loadTargetFields(
         .filter(Boolean),
     }));
   } catch (error) {
-    logger.debug('Could not read the target create screen', {
-      component: 'jira/move',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug(
+      "the target work type's create screen could not be read for {caller}; the move goes ahead with its field checks declared skipped: {error}",
+      {
+        component: 'jira/move',
+        ...callerFields(context),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }
@@ -326,7 +331,11 @@ async function loadTargetFields(
  * connected as one app — so the caller can say "could not infer" instead
  * of guessing.
  */
-async function loadRequestTypes(auth: JiraAuth, projectKey: string): Promise<RequestType[] | null> {
+async function loadRequestTypes(
+  context: MCPToolContext,
+  auth: JiraAuth,
+  projectKey: string
+): Promise<RequestType[] | null> {
   try {
     const desk = await auth.fetch(
       granularJiraScopes(TOOL, true),
@@ -359,10 +368,14 @@ async function loadRequestTypes(auth: JiraAuth, projectKey: string): Promise<Req
     }
     return out;
   } catch (error) {
-    logger.debug('Could not list the target service desk request types', {
-      component: 'jira/move',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug(
+      "the target service desk's request types could not be listed for {caller}, so the move cannot infer one: {error}",
+      {
+        component: 'jira/move',
+        ...callerFields(context),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }
@@ -537,7 +550,7 @@ async function preflight(
   }
 
   // The target's create screen against what the sources hold.
-  const targetFields = await loadTargetFields(auth, target.id, workType.id);
+  const targetFields = await loadTargetFields(context, auth, target.id, workType.id);
   const schema = await loadFieldSchema(context, auth).catch((): JiraField[] => []);
   const schemaById = new Map(schema.map((field) => [field.id, field]));
 
@@ -625,7 +638,7 @@ async function preflight(
   let requestTypeFieldId: string | null = null;
   if (serviceDesk) {
     requestTypeFieldId = schema.find(isRequestTypeField)?.id ?? null;
-    const requestTypes = await loadRequestTypes(auth, target.key);
+    const requestTypes = await loadRequestTypes(context, auth, target.key);
     const backedBy = (typeId: string) =>
       (requestTypes ?? []).filter((type) => type.issueTypeId === typeId);
     const nameOfType = (typeId: string) =>
@@ -900,11 +913,10 @@ export async function registerMoveTools(
   });
 
   const moveHandler = async (args: Record<string, unknown>) => {
-    const displayName = getCachedDisplayName(context.accountId);
-    logger.debug(`${TOOL} invoked`, {
+    logger.debug(`{caller} called ${TOOL}`, {
       component: 'mcp/tool',
-      accountId: context.accountId,
-      displayName,
+      ...callerFields(context),
+      tool: TOOL,
     });
     try {
       const parsed = parseArgs(args);

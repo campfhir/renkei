@@ -30,7 +30,7 @@ import {
 import { logger } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
 import { registerZoomPreviewLookups } from './preview-lookups';
-import { withPresentationHint, type MCPToolContext } from '../common';
+import { callerFields, withPresentationHint, type MCPToolContext } from '../common';
 import {
   APP_ONLY_META,
   MEETING_PREVIEW_URI,
@@ -421,10 +421,12 @@ export async function registerZoomTools(
       );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
-      logger.info('zoom_create_meeting created', {
+      logger.info('{caller} scheduled {aRecurring}Zoom meeting {meetingId}', {
         component: 'mcp/tool',
+        ...callerFields(context),
         meetingId: String(body.id ?? ''),
         recurring: recurrence.val !== null,
+        aRecurring: recurrence.val !== null ? 'recurring ' : '',
       });
       return {
         ...textResult(scheduledLine(body, recurrence.val)),
@@ -541,11 +543,16 @@ export async function registerZoomTools(
       );
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
-      logger.info('zoom_create_meeting_confirm created', {
-        component: 'mcp/tool',
-        meetingId: String(body.id ?? ''),
-        recurring: recurrence.val !== null,
-      });
+      logger.info(
+        '{caller} confirmed the preview card and scheduled {aRecurring}Zoom meeting {meetingId}',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          meetingId: String(body.id ?? ''),
+          recurring: recurrence.val !== null,
+          aRecurring: recurrence.val !== null ? 'recurring ' : '',
+        }
+      );
       return textResult(scheduledLine(body, recurrence.val));
     }
   );
@@ -652,10 +659,12 @@ export async function registerZoomTools(
         { method: 'PATCH', json: patch }
       );
       if (!result.ok) return errText(result.error);
-      logger.info('zoom_update_meeting updated', {
+      logger.info('{caller} updated {what} Zoom meeting {meetingId} ({fields})', {
         component: 'mcp/tool',
+        ...callerFields(context),
         meetingId,
         ...(occurrenceId ? { occurrenceId } : {}),
+        what: occurrenceId ? 'one occurrence of' : '',
         fields: Object.keys(patch),
       });
       return textResult(
@@ -707,10 +716,12 @@ export async function registerZoomTools(
         { method: 'DELETE' }
       );
       if (!result.ok) return errText(result.error);
-      logger.info('zoom_delete_meeting cancelled', {
+      logger.info('{caller} cancelled {what}Zoom meeting {meetingId}', {
         component: 'mcp/tool',
+        ...callerFields(context),
         meetingId,
         ...(occurrenceId ? { occurrenceId } : {}),
+        what: occurrenceId ? 'one occurrence of ' : '',
       });
       return textResult(
         occurrenceId
@@ -1240,9 +1251,11 @@ export async function registerZoomTools(
       });
       if (!result.ok) return errText(result.error);
       const body = rec(await result.response.json().catch(() => null));
-      logger.info('zoom_create_doc created', {
+      logger.info('{caller} created the Zoom Doc "{name}"', {
         component: 'mcp/tool',
+        ...callerFields(context),
         fileId: str(body.file_id),
+        name: str(args.name),
       });
       return textResult(
         `Created "${str(args.name)}" (id ${str(body.file_id) || 'unknown'}).` +
@@ -1293,8 +1306,9 @@ export async function registerZoomTools(
         { method: 'POST', json: { blocks } }
       );
       if (!result.ok) return errText(result.error);
-      logger.info('zoom_append_to_doc appended', {
+      logger.info('{caller} appended to a Zoom Doc', {
         component: 'mcp/tool',
+        ...callerFields(context),
         fileId,
       });
       return textResult(`Appended to doc ${fileId}.`);

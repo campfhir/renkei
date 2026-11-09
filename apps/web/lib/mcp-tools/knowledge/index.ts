@@ -52,8 +52,10 @@ import {
   createNoteAccessVerifier,
 } from '@renkei/knowledge';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import { registerKnowledgeNoteTools } from './notes';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 /** The connector key knowledge capabilities register under. */
 export const KNOWLEDGE_CONNECTOR = 'knowledge';
@@ -177,10 +179,14 @@ async function microsoftCredentialFor(userEmail: string): Promise<{ auth: Authed
 
   const scopes = grantedScopes ?? requestedScopes;
   if (!scopes.includes('Files.Read.All')) {
-    logger.info('microsoft grant lacks Files.Read.All; withholding drive results', {
-      component: 'knowledge/verify',
-      accountId,
-    });
+    logger.info(
+      "{actor}'s Microsoft grant lacks Files.Read.All, so SharePoint and OneDrive results are withheld from their knowledge search",
+      {
+        component: 'knowledge/verify',
+        ...(await whoIs(subject)),
+        accountId,
+      }
+    );
     return null;
   }
 
@@ -374,9 +380,10 @@ export async function registerKnowledgeTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      logger.debug('search_knowledge invoked', {
+      logger.debug('{caller} called search_knowledge', {
         component: 'mcp/tool',
-        accountId: context.accountId,
+        ...callerFields(context),
+        tool: 'search_knowledge',
       });
 
       const query = typeof args.query === 'string' ? args.query : '';
@@ -465,14 +472,18 @@ export async function registerKnowledgeTools(
       // things — the embedding endpoint, the query (an exact scan, until
       // the corpus earns an ANN index) or a provider's access check — and
       // only the split says which; the tool_calls row keeps the total.
-      logger.info('search_knowledge timings', {
-        component: 'mcp/tool',
-        k,
-        hits: searched.val.hits.length,
-        elided: searched.val.elided,
-        weak: searched.val.weak,
-        ...searched.val.timings,
-      });
+      logger.info(
+        "{caller}'s knowledge search returned {hits} hit(s) for k={k} ({elided} elided, {weak} weak)",
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          k,
+          hits: searched.val.hits.length,
+          elided: searched.val.elided,
+          weak: searched.val.weak,
+          ...searched.val.timings,
+        }
+      );
 
       return {
         content: [
