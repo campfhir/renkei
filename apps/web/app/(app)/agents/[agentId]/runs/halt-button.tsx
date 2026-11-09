@@ -1,51 +1,46 @@
 'use client';
 
 /**
- * Terminate stuck runs — one (the run page) or all of an agent's (the runs
- * page). What it does on each press is terminate-button.model.ts; this
+ * Halt stuck runs — one (the run page) or all of an agent's (the runs
+ * page). What it does on each press is halt-button.model.ts; this
  * sends the request and refreshes the page once it lands.
  */
 
 import { useReducer } from 'react';
 import { useRefresh } from '@/lib/use-refresh';
 import { sendJsonFull } from '@/lib/fetch-json';
-import {
-  initialTerminateState,
-  terminateOutcome,
-  terminateQuestion,
-  terminateReducer,
-} from './terminate-button.model';
+import { initialHaltState, haltOutcome, haltQuestion, haltReducer } from './halt-button.model';
 
 const DANGER =
   'rounded-md border border-red-300 px-2 py-0.5 text-xs font-medium text-red-700 hover:border-red-500 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40';
 
-export default function TerminateButton({
+export default function HaltButton({
   agentId,
   runId,
   label,
 }: {
   agentId: string;
-  /** One run; omit to terminate every stuck run of the agent. */
+  /** One run; omit to halt every stuck run of the agent. */
   runId?: string;
   label: string;
 }) {
   const { refresh, pending } = useRefresh();
-  const [state, dispatch] = useReducer(terminateReducer, initialTerminateState);
+  const [state, dispatch] = useReducer(haltReducer, initialHaltState);
   const single = runId !== undefined;
-  const outcome = terminateOutcome(state, single);
+  const outcome = haltOutcome(state, single);
 
   const send = async () => {
     dispatch({ type: 'confirm' });
-    const result = await sendJsonFull<{ terminated: string[] }>(
-      `/api/agents/${agentId}/runs/terminate`,
+    const result = await sendJsonFull<{ halted: string[] }>(
+      `/api/agents/${agentId}/runs/halt`,
       'POST',
       single ? { runId } : undefined
     );
     if (result.error || !result.data) {
-      dispatch({ type: 'refused', error: result.error ?? 'Could not terminate — try again.' });
+      dispatch({ type: 'refused', error: result.error ?? 'Could not halt — try again.' });
       return;
     }
-    dispatch({ type: 'terminated', count: result.data.terminated.length });
+    dispatch({ type: 'halted', count: result.data.halted.length });
     refresh();
   };
 
@@ -53,12 +48,12 @@ export default function TerminateButton({
     return (
       <span
         role="group"
-        aria-label="Confirm terminate"
+        aria-label="Confirm halt"
         className="inline-flex flex-wrap items-center gap-2 text-xs"
       >
-        <span className="text-gray-700 dark:text-gray-300">{terminateQuestion(single)}</span>
+        <span className="text-gray-700 dark:text-gray-300">{haltQuestion(single)}</span>
         <button type="button" onClick={() => void send()} className={DANGER}>
-          Terminate
+          Halt
         </button>
         <button
           type="button"
@@ -81,7 +76,7 @@ export default function TerminateButton({
           title="Stuck for over two hours: close it out — a cancel never reaches a stuck run"
           className={DANGER}
         >
-          {state.phase === 'busy' ? 'Terminating…' : label}
+          {state.phase === 'busy' ? 'Halting…' : label}
         </button>
       ) : null}
       {outcome ? (

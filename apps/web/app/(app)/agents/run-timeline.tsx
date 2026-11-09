@@ -53,7 +53,7 @@ function statusTone(status: string): string {
       return 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300';
     // Closed out while stuck (run-labels.ts statusTone): not a quiet cancel,
     // not a failure of the agent's own making either.
-    case 'terminated':
+    case 'halted':
       return 'bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300';
     default:
       return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';

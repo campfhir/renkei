@@ -30,15 +30,13 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 /**
- * Canceled runs whose error kind IS the story: closed out from under them
- * while stuck (force-halt.ts), by the owner side or by an operator. Their
- * pill names that itself — "Terminated", not "Canceled" with a note under
- * it — so a list of runs tells a terminated run from one somebody stopped
- * at a glance.
+ * Canceled runs whose error kind IS the story: halted while stuck
+ * (force-halt.ts), by the owner side or by an operator alike. Their pill
+ * names that itself — "Halted", not "Canceled" with a note under it — so a
+ * list of runs tells a halted run from one somebody stopped at a glance.
  */
 const CANCELED_AS: Record<string, string> = {
-  terminated: 'Terminated',
-  force_halted: 'Force-halted',
+  force_halted: 'Halted',
 };
 
 function canceledAs(status: string, errorKind?: string | null): string | null {
@@ -68,11 +66,11 @@ export function statusLabel(status: string, errorKind?: string | null): string {
 const UNSETTLED_RUN_STATUSES = new Set(['queued', 'running', 'waiting']);
 
 /**
- * Which colour a status pill takes: its status, or 'terminated' for a run
- * closed out while stuck (its pill reads Terminated or Force-halted).
+ * Which colour a status pill takes: its status, or 'halted' for a run
+ * halted while stuck (its pill reads Halted).
  */
 export function statusTone(status: string, errorKind?: string | null): string {
-  return canceledAs(status, errorKind) ? 'terminated' : status;
+  return canceledAs(status, errorKind) ? 'halted' : status;
 }
 
 /**
@@ -124,10 +122,8 @@ export function errorSummary(errorKind: string): string {
       return 'Paused until you sign in';
     // Closed out from under a stuck run (force-halt.ts): by its owner or a
     // grantee from the run pages, or by an operator from admin oversight.
-    case 'terminated':
-      return 'Terminated while stuck';
     case 'force_halted':
-      return 'Force-halted by an admin';
+      return 'Halted while stuck';
     default:
       return errorKind;
   }

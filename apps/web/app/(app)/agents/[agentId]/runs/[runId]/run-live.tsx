@@ -24,7 +24,7 @@ import QuestionActions from '../../../../question-actions';
 import RerunButton from './rerun-button';
 import ResumeButton from './resume-button';
 import CancelButton from './cancel-button';
-import TerminateButton from '../terminate-button';
+import HaltButton from '../halt-button';
 import { isStuckRun } from '@/lib/agents/stuck';
 import { renderRunDebugMarkdown } from '@/lib/agents/run-debug';
 import { isRunSettled } from '@/lib/agents/run-labels';
@@ -104,9 +104,9 @@ export default function RunLive({
             <CancelButton agentId={agentId} runId={runId} />
             {/* A cancel only asks, and a stuck run is never reached to be
                 asked: past two hours queued or running, offer to close it
-                out directly (run-termination.ts). */}
+                out directly (run-halt.ts). */}
             {isStuckRun(run, loadedAt) ? (
-              <TerminateButton agentId={agentId} runId={runId} label="Terminate stuck run" />
+              <HaltButton agentId={agentId} runId={runId} label="Halt stuck run" />
             ) : null}
           </>
         ) : (

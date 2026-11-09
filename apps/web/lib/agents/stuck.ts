@@ -1,6 +1,6 @@
 /**
  * When a run counts as stuck — one rule for the Agents page's overview
- * (which flags it) and for terminating it (which only a stuck run allows
+ * (which flags it) and for halting it (which only a stuck run allows
  * its owner). Pure: importable from models, pages and routes alike.
  *
  * A run is stuck when it has been queued or running longer than

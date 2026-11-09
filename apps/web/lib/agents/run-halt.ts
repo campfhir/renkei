@@ -1,15 +1,15 @@
 /**
- * Terminating stuck runs — the owner side of force-halt.ts.
+ * Halting stuck runs — the owner side of force-halt.ts.
  *
  * A cancel only asks (run-cancellation.ts): it sets a flag the engine acts
  * on the next time a worker reaches the run. A run that is stuck — queued
  * behind a job that never finishes, or "running" with no worker left — is
- * never reached, so its cancel never lands. Terminating closes it out
+ * never reached, so its cancel never lands. Halting closes it out
  * directly, the way the operator's force-halt does, and clears its queue
  * jobs so nothing resumes it afterwards.
  *
  * Because it bypasses the engine, only a run that is actually stuck may be
- * terminated (lib/agents/stuck.ts: queued or running for over two hours);
+ * halted (lib/agents/stuck.ts: queued or running for over two hours);
  * anything younger still has a live path, and Cancel is the way to stop it.
  *
  * The caller has resolved access to the agent (owner, or a grantee through
@@ -23,11 +23,11 @@ import { isUuid } from '@/lib/uuid';
 
 /** Read this many runs at a time when gathering an agent's stuck ones. */
 const SCAN_PAGE = 200;
-/** The most one request terminates; a bigger backlog takes another press. */
-export const MAX_TERMINATED_PER_REQUEST = 500;
+/** The most one request halts; a bigger backlog takes another press. */
+export const MAX_HALTED_PER_REQUEST = 500;
 
-export type TerminateResult =
-  | { outcome: 'terminated'; runIds: string[] }
+export type HaltResult =
+  | { outcome: 'halted'; runIds: string[] }
   /** The one run asked for is not stuck (too young, waiting, or finished). */
   | { outcome: 'not-stuck'; status: string }
   | { outcome: 'not-found' };
@@ -61,7 +61,7 @@ async function liveRuns(agentId: string, ownerSubject: string): Promise<StuckCan
         offset,
       });
       found.push(...page.map(candidateOf));
-      if (page.length < SCAN_PAGE || found.length >= MAX_TERMINATED_PER_REQUEST * 2) break;
+      if (page.length < SCAN_PAGE || found.length >= MAX_HALTED_PER_REQUEST * 2) break;
     }
   }
   return found;
@@ -74,18 +74,18 @@ async function haltEach(
 ): Promise<string[]> {
   const halted: string[] = [];
   for (const runId of runIds) {
-    const result = await forceHaltRun({ agentId, runId, haltedBySubject: bySubject, by: 'owner' });
+    const result = await forceHaltRun({ agentId, runId, haltedBySubject: bySubject });
     if (result.outcome === 'halted') halted.push(runId);
   }
   return halted;
 }
 
 /**
- * Terminate `runId` if it is stuck, or — without one — every stuck run of
- * the agent (up to MAX_TERMINATED_PER_REQUEST). `nowMs` is the caller's
+ * Halt `runId` if it is stuck, or — without one — every stuck run of
+ * the agent (up to MAX_HALTED_PER_REQUEST). `nowMs` is the caller's
  * clock, so a test can say when "now" is.
  */
-export async function terminateStuckRuns(input: {
+export async function haltStuckRuns(input: {
   agentId: string;
   /** The agent's owner: whose runs these are. */
   ownerSubject: string;
@@ -93,7 +93,7 @@ export async function terminateStuckRuns(input: {
   bySubject: string;
   runId?: string;
   nowMs: number;
-}): Promise<TerminateResult> {
+}): Promise<HaltResult> {
   if (!isUuid(input.agentId)) return { outcome: 'not-found' };
 
   if (input.runId !== undefined) {
@@ -114,17 +114,17 @@ export async function terminateStuckRuns(input: {
     if (!run) return { outcome: 'not-found' };
     if (!isStuckRun(run, input.nowMs)) return { outcome: 'not-stuck', status: run.status };
     return {
-      outcome: 'terminated',
+      outcome: 'halted',
       runIds: await haltEach(input.agentId, [run.id], input.bySubject),
     };
   }
 
   const stuck = stuckRunIds(await liveRuns(input.agentId, input.ownerSubject), input.nowMs).slice(
     0,
-    MAX_TERMINATED_PER_REQUEST
+    MAX_HALTED_PER_REQUEST
   );
   return {
-    outcome: 'terminated',
+    outcome: 'halted',
     runIds: await haltEach(input.agentId, stuck, input.bySubject),
   };
 }

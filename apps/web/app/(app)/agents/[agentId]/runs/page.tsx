@@ -8,7 +8,7 @@ import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isRunStatus, listLiveRunCounts, listRunsForOwner } from '@/lib/agents/runs-view';
 import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
 import { ageWords } from '../../agents-overview.model';
-import TerminateButton from './terminate-button';
+import HaltButton from './halt-button';
 import { StatusPill } from '../../run-timeline';
 import RunsSearch from '../../runs-search';
 import { statusLabel, statusNote } from '@/lib/agents/run-labels';
@@ -116,9 +116,9 @@ export default async function AgentRunsPage({
         >
           <span>
             Runs have been stuck for over two hours (the oldest for {ageWords(oldestStuck)}). A
-            cancel never reaches a stuck run; terminating closes them out.
+            cancel never reaches a stuck run; halting closes them out.
           </span>
-          <TerminateButton agentId={agentId} label="Terminate stuck runs" />
+          <HaltButton agentId={agentId} label="Halt stuck runs" />
         </div>
       ) : null}
       <DataFrame
@@ -161,7 +161,7 @@ export default async function AgentRunsPage({
                 <td className="px-3 py-2">
                   <StatusPill status={run.status} errorKind={run.errorKind} />
                   {/* Why it failed — or nothing, when the pill already says it
-                      (a terminated run reads Terminated). */}
+                      (a halted run reads Halted). */}
                   {statusNote(run.status, run.errorKind) ? (
                     <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">
                       {statusNote(run.status, run.errorKind)}

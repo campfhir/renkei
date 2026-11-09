@@ -50,9 +50,9 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
-        title: 'Terminate stuck runs, and tables that keep their headings and pager in view',
+        title: 'Halt stuck runs, and tables that keep their headings and pager in view',
         detail:
-          "A run queued or running for over two hours can now be terminated: from its own page, or all of an agent's stuck runs at once from its runs list, where a banner says how long they have been stuck. A cancel only asks a running agent to stop, so it never reached a stuck run. The runs list and the In flight overview now scroll inside their own frame, with the column headings stuck to the top and the pager stuck to the bottom of the screen; on a phone they show as cards with the pager below. The pager always shows how many runs a tab holds, filtered or not.",
+          "A run queued or running for over two hours can now be halted: from its own page, or all of an agent's stuck runs at once from its runs list, where a banner says how long they have been stuck, and a halted run says so on its status. A cancel only asks a running agent to stop, so it never reached a stuck run. The runs list and the In flight overview now scroll inside their own frame, with the column headings stuck to the top and the pager stuck to the bottom of the screen; on a phone they show as cards with the pager below. The pager always shows how many runs a tab holds, filtered or not.",
       },
       {
         kind: 'added',

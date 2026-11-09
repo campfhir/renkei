@@ -1,7 +1,7 @@
 /**
- * Terminate stuck runs of an agent: the one named in the body
+ * Halt stuck runs of an agent: the one named in the body
  * (`{ runId }`), or — with no body — every run of the agent that has been
- * queued or running for over two hours. See run-termination.ts for why
+ * queued or running for over two hours. See run-halt.ts for why
  * this exists beside cancel, and why only stuck runs qualify.
  *
  * Owner or grantee, like the cancel route: troubleshooting someone else's
@@ -12,7 +12,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isRecord } from '@renkei/guards';
 import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
-import { terminateStuckRuns } from '@/lib/agents/run-termination';
+import { haltStuckRuns } from '@/lib/agents/run-halt';
 import { statusLabel } from '@/lib/agents/run-labels';
 import { isUuid } from '@/lib/uuid';
 
@@ -46,7 +46,7 @@ export async function POST(
     }
   }
 
-  const result = await terminateStuckRuns({
+  const result = await haltStuckRuns({
     agentId,
     ownerSubject: access.ownerSubject,
     bySubject: session.subject,
@@ -67,7 +67,7 @@ export async function POST(
         },
         { status: 409 }
       );
-    case 'terminated':
-      return NextResponse.json({ terminated: result.runIds });
+    case 'halted':
+      return NextResponse.json({ halted: result.runIds });
   }
 }

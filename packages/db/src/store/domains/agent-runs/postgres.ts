@@ -84,10 +84,44 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
 
   return {
     ...postgresAgentRunSweeps(db),
-    async list({ agentId, ownerSubject, audience, status, q, matchId, limit, offset }) {
+    async list({
+      agentId,
+      ownerSubject,
+      audience,
+      status,
+      statuses,
+      errorKinds,
+      excludeErrorKinds,
+      clockStartedBefore,
+      q,
+      matchId,
+      limit,
+      offset,
+    }) {
       let query = db().selectFrom('agent_runs').select(RUN_COLUMNS).where('agent_id', '=', agentId);
       if (ownerSubject !== null) query = query.where('owner_subject', '=', ownerSubject);
       if (status) query = query.where('status', '=', status);
+      if (statuses) {
+        query =
+          statuses.length > 0
+            ? query.where('status', 'in', [...statuses])
+            : query.where(sql<boolean>`false`);
+      }
+      if (errorKinds) {
+        query =
+          errorKinds.length > 0
+            ? query.where('error_kind', 'in', [...errorKinds])
+            : query.where(sql<boolean>`false`);
+      }
+      if (excludeErrorKinds && excludeErrorKinds.length > 0) {
+        const excluded = [...excludeErrorKinds];
+        query = query.where((eb) =>
+          eb.or([eb('error_kind', 'is', null), eb('error_kind', 'not in', excluded)])
+        );
+      }
+      if (clockStartedBefore) {
+        query = query.where(sql<Date>`coalesce(resumed_at, created_at)`, '<', clockStartedBefore);
+      }
       if (q) {
         const pattern = likePattern(q);
         query = query.where((eb) =>

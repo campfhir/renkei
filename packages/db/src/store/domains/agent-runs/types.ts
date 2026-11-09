@@ -165,6 +165,17 @@ export interface AgentRunStore extends AgentRunSweepStore {
     ownerSubject: string | null;
     audience: RunAudience;
     status?: string;
+    /** Any of these statuses (with `status`, both must hold). */
+    statuses?: readonly string[];
+    /** Only runs whose error kind is one of these. */
+    errorKinds?: readonly string[];
+    /** Leave out runs whose error kind is one of these (a run with none stays). */
+    excludeErrorKinds?: readonly string[];
+    /**
+     * Only runs whose clock started before this: the latest resume when
+     * there was one, else creation — the stuck-run rule's clock.
+     */
+    clockStartedBefore?: Date;
     q?: string;
     matchId?: string;
     limit: number;

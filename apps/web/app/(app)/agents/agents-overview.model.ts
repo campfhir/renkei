@@ -13,7 +13,7 @@
 
 import type { LiveRunCount } from '@/lib/agents/runs-view';
 
-// The same horizon terminating a run uses (lib/agents/stuck.ts).
+// The same horizon halting a run uses (lib/agents/stuck.ts).
 import { STUCK_AFTER_MS } from '@/lib/agents/stuck';
 export { STUCK_AFTER_MS };
 

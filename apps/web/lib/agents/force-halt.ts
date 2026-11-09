@@ -40,25 +40,17 @@ import { discardRunJobs } from './run-jobs';
 export type ForceHaltRunResult =
   { outcome: 'halted' } | { outcome: 'already-final'; status: string } | { outcome: 'not-found' };
 
-const FORCE_HALT_ERROR = 'Force-halted by an admin — the run was stuck and not making progress.';
-/** What a run its owner (or a grantee) terminated says — see run-termination.ts. */
-const TERMINATED_ERROR =
-  'Terminated after being stuck for over two hours — it will not go any further.';
-
-/** Who closed it out: an operator from admin oversight, or the owner side from the run pages. */
-export type ForceHaltBy = 'operator' | 'owner';
+/** What a halted run says — the same whoever halted it (an operator, or the owner side through run-halt.ts). */
+const HALTED_ERROR = 'Halted — the run was stuck and not making progress.';
 
 export async function forceHaltRun(input: {
   agentId: string;
   runId: string;
   /** Who clicked it — recorded the same way a graceful cancel would be. */
   haltedBySubject: string;
-  /** Default 'operator', the admin route's. */
-  by?: ForceHaltBy;
 }): Promise<ForceHaltRunResult> {
-  const owner = input.by === 'owner';
-  const errorKind = owner ? 'terminated' : 'force_halted';
-  const error = owner ? TERMINATED_ERROR : FORCE_HALT_ERROR;
+  const errorKind = 'force_halted';
+  const error = HALTED_ERROR;
   const runs = getDataStore().agentRuns;
   const run = await runs.findStatus({ agentId: input.agentId, runId: input.runId });
   if (!run) return { outcome: 'not-found' };

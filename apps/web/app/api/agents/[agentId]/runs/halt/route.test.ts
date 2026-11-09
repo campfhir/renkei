@@ -1,5 +1,5 @@
 /**
- * Terminating stuck runs: only runs queued or running for over two hours,
+ * Halting stuck runs: only runs queued or running for over two hours,
  * one by id or all of the agent's at once; they end canceled with the
  * owner-side reason, younger, waiting and finished runs are left alone,
  * and another agent's runs are never touched.
@@ -67,7 +67,7 @@ async function seed() {
 
 function post(body?: unknown) {
   return POST(
-    new NextRequest('http://test.local/terminate', {
+    new NextRequest('http://test.local/halt', {
       method: 'POST',
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     }),
@@ -88,12 +88,12 @@ beforeEach(async () => {
 });
 afterEach(() => resetDataStore());
 
-describe('terminating stuck runs', () => {
-  it('with no run named, terminates every stuck run of the agent and nothing else', async () => {
+describe('halting stuck runs', () => {
+  it('with no run named, halts every stuck run of the agent and nothing else', async () => {
     const response = await post();
     expect(response.status).toBe(200);
-    const body: { terminated: string[] } = await response.json();
-    expect([...body.terminated].sort()).toEqual([id(1), id(2), id(3)]);
+    const body: { halted: string[] } = await response.json();
+    expect([...body.halted].sort()).toEqual([id(1), id(2), id(3)]);
     expect(await Promise.all([1, 2, 3, 4, 5, 6].map((n) => statusOf(n)))).toEqual([
       'canceled',
       'canceled',
@@ -105,7 +105,7 @@ describe('terminating stuck runs', () => {
     expect(await statusOf(7, OTHER_AGENT)).toBe('queued');
   });
 
-  it('a terminated run says why, in its own words', async () => {
+  it('a halted run says why, in its own words', async () => {
     await post({ runId: id(1) });
     const [row] = await getDataStore().agentRuns.list({
       agentId: AGENT,
@@ -114,13 +114,13 @@ describe('terminating stuck runs', () => {
       status: 'canceled',
       limit: 5,
     });
-    expect(row).toMatchObject({ id: id(1), errorKind: 'terminated' });
-    expect(row?.error).toMatch(/stuck for over two hours/);
+    expect(row).toMatchObject({ id: id(1), errorKind: 'force_halted' });
+    expect(row?.error).toMatch(/stuck and not making progress/);
   });
 
-  it('terminates one stuck run by id', async () => {
+  it('halts one stuck run by id', async () => {
     const response = await post({ runId: id(2) });
-    expect(await response.json()).toEqual({ terminated: [id(2)] });
+    expect(await response.json()).toEqual({ halted: [id(2)] });
     expect(await statusOf(2)).toBe('canceled');
     expect(await statusOf(1)).toBe('running');
   });
@@ -150,8 +150,8 @@ describe('terminating stuck runs', () => {
     expect((await post()).status).toBe(404);
   });
 
-  it('a second press finds nothing left to terminate', async () => {
+  it('a second press finds nothing left to halt', async () => {
     await post();
-    expect(await (await post()).json()).toEqual({ terminated: [] });
+    expect(await (await post()).json()).toEqual({ halted: [] });
   });
 });
