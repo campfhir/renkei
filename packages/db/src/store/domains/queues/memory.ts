@@ -356,6 +356,15 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       return moved.length;
     },
 
+    async pruneDeadLetters(table, before, limit) {
+      const old = tables.select(DEAD_LETTERS[table], (r) => r.dead_at.getTime() < before.getTime());
+      const gone = new Set(
+        orderBy(old, [(r) => r.dead_at], [(r) => r.id])
+          .slice(0, limit)
+          .map((r) => r.id)
+      );
+      return tables.delete(DEAD_LETTERS[table], (r) => gone.has(r.id)).length;
+    },
     async purgeDeadLetters(table, ids) {
       if (ids.length === 0) return 0;
       const keys = new Set(ids.map((id) => id));

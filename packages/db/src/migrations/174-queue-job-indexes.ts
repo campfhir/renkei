@@ -15,7 +15,8 @@ import { Kysely, sql } from 'kysely';
  *  - every queue table's settled rows (`processed`, `skipped`) by
  *    `created_at`: what the settled-row retention sweep deletes by
  *    (@renkei/queue, `createSettledRetentionSweep`), so pruning a large
- *    backlog never scans the live rows.
+ *    backlog never scans the live rows; and events' dead letters by
+ *    `dead_at`, which the same sweep's dead-letter retention deletes by.
  */
 
 const QUEUE_TABLES = ['events', 'embedding_jobs', 'agent_jobs', 'batch_job_messages'];
@@ -42,9 +43,15 @@ export async function up(db: Kysely<unknown>): Promise<void> {
         ON ${sql.raw(table)} (created_at) WHERE status IN ('processed', 'skipped')
     `.execute(db);
   }
+  // The dead-letter retention deletes by dead_at; events' twin (013) had
+  // no index on it, the three later queues' do.
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_events_dead_letters_dead_at ON events_dead_letters (dead_at)
+  `.execute(db);
 }
 
 export async function down(db: Kysely<unknown>): Promise<void> {
+  await sql`DROP INDEX IF EXISTS idx_events_dead_letters_dead_at`.execute(db);
   for (const table of QUEUE_TABLES) {
     await sql`DROP INDEX IF EXISTS ${sql.raw(`idx_${table}_settled`)}`.execute(db);
   }

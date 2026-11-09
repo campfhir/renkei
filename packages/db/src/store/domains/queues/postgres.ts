@@ -313,6 +313,18 @@ export function postgresQueues(db: () => Kysely<DB>): QueueStore {
       return Number(result.numAffectedRows ?? 0);
     },
 
+    async pruneDeadLetters(table, before, limit) {
+      const result = await sql`
+        DELETE FROM ${dead(table)} WHERE id IN (
+          SELECT id FROM ${dead(table)}
+          WHERE dead_at < ${before}
+          ORDER BY dead_at, id
+          LIMIT ${limit}
+        )
+      `.execute(db());
+      return Number(result.numAffectedRows ?? 0);
+    },
+
     async listDeadLetters(table, limit) {
       const result = await sql<{
         id: string;

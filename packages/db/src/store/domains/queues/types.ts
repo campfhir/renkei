@@ -131,6 +131,12 @@ export interface QueueStore {
    * live rows (pending, processing) are never touched, whatever their age.
    */
   pruneSettled(table: QueueTable, before: Date, limit: number): Promise<number>;
+  /**
+   * Delete up to `limit` dead letters that died before `before`, oldest
+   * death first (ties by id); returns how many went. Retention on the
+   * dead-letter store; an operator's requeue or purge is by id.
+   */
+  pruneDeadLetters(table: QueueTable, before: Date, limit: number): Promise<number>;
   /** The queue's dead letters, most recently dead first (ties by id, descending). */
   listDeadLetters(table: QueueTable, limit: number): Promise<QueueDeadLetterRecord[]>;
   /**

@@ -183,6 +183,65 @@ export const queueScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'queues.pruneDeadLetters',
+    name: 'dead letters older than the cut go oldest first within the limit; newer and other tables stay',
+    fixture: {
+      agent_jobs_dead_letters: [
+        {
+          id: id(51),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'a' },
+          attempts: 3,
+          created_at: at(1),
+          dead_at: at(5),
+        },
+        {
+          id: id(52),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'b' },
+          attempts: 3,
+          created_at: at(1),
+          dead_at: at(3),
+        },
+        {
+          id: id(53),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'c' },
+          attempts: 3,
+          created_at: at(1),
+          dead_at: at(50),
+        },
+      ],
+      events_dead_letters: [
+        {
+          id: id(54),
+          source: 'webex',
+          type: 'thing',
+          payload: { n: 1 },
+          attempts: 5,
+          created_at: at(1),
+          dead_at: at(2),
+        },
+      ],
+    },
+    run: async (store) => {
+      const cut = new Date(at(10));
+      const left = async () =>
+        (await store.queues.listDeadLetters('agent_jobs', 10)).map((d) => d.id);
+      return [
+        await store.queues.pruneDeadLetters('agent_jobs', cut, 1),
+        await left(),
+        await store.queues.pruneDeadLetters('agent_jobs', cut, 10),
+        await left(),
+        await store.queues.pruneDeadLetters('agent_jobs', cut, 10),
+        (await store.queues.listDeadLetters('events', 10)).map((d) => d.id),
+      ];
+    },
+  },
+  {
     method: 'queues.listAgentJobs',
     name: 'one agent’s pending and processing jobs, oldest first, ties by id, limited',
     fixture: {

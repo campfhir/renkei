@@ -1,6 +1,7 @@
 /**
- * The settled-row sweep: finished rows past the window go, in batches,
- * table by table; live rows and recent rows stay; it says what it did.
+ * The queue retention sweep: finished rows past the window and dead letters
+ * past theirs go, in batches, table by table; live rows and recent rows
+ * stay; it says what it did.
  */
 
 import { createMemoryDataStore, getDataStore, registerDataStore, resetDataStore } from '@renkei/db';
@@ -26,6 +27,20 @@ function row(n: number, status: string, ageDays: number) {
   };
 }
 
+function dead(n: number, ageDays: number) {
+  return {
+    id: id(n),
+    source: 'agents:a',
+    type: 'run',
+    payload: { runId: `r${n}` },
+    ordering_key: null,
+    attempts: 3,
+    last_error: 'boom',
+    created_at: new Date(NOW - (ageDays + 1) * DAY),
+    dead_at: new Date(NOW - ageDays * DAY),
+  };
+}
+
 afterEach(() => resetDataStore());
 
 test('deletes settled rows past the window and leaves the rest', async () => {
@@ -39,6 +54,8 @@ test('deletes settled rows past the window and leaves the rest', async () => {
       row(5, 'processing', 40),
     ],
     events: [row(6, 'processed', 30)],
+    agent_jobs_dead_letters: [dead(7, 45), dead(8, 29)],
+    events_dead_letters: [dead(9, 45)],
   });
   registerDataStore(store);
   const lines: string[] = [];
@@ -61,8 +78,16 @@ test('deletes settled rows past the window and leaves the rest', async () => {
   ]);
   // Only the tables it was given.
   expect((await getDataStore().queues.find('events', id(6)))?.status).toBe('processed');
-  expect(lines).toHaveLength(1);
+  // Dead letters past 30 days go; a newer one and another table's stay.
+  expect((await getDataStore().queues.listDeadLetters('agent_jobs', 10)).map((d) => d.id)).toEqual([
+    id(8),
+  ]);
+  expect((await getDataStore().queues.listDeadLetters('events', 10)).map((d) => d.id)).toEqual([
+    id(9),
+  ]);
+  expect(lines).toHaveLength(2);
   expect(lines[0]).toContain('"count":2');
+  expect(lines[1]).toContain('dead letter');
   await sweep();
-  expect(lines).toHaveLength(1);
+  expect(lines).toHaveLength(2);
 });
