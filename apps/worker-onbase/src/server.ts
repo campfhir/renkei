@@ -53,6 +53,7 @@ import {
   type ConfigError,
   type OnBaseTenantConfig,
 } from './config';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 import type { Result } from '@campfhir/safe-functions/types';
 import { forgetSession, hasOnBaseSession, rememberSession, sessionCookie } from './sessions';
@@ -163,12 +164,23 @@ function sendError(
 ): void {
   if (!UNLOGGED_ERRORS.has(type)) {
     const log = type === 'store' ? logger.error.bind(logger) : logger.warn.bind(logger);
-    log('onbase {op} failed ({type}): {error}', {
-      component: COMPONENT,
-      ...context,
-      op: context?.op ?? 'request',
-      type,
-      error: message ?? type,
+    // Synchronous on purpose (every handler returns through here); the
+    // name lookup is cached and never throws, so the line follows at once.
+    const subject = context?.subject;
+    void actorAttrs(subject).then((who) => {
+      log(
+        'the OnBase {op} request for {forWhom} failed ({type}); the caller got {status}: {error}',
+        {
+          component: COMPONENT,
+          ...context,
+          ...(subject ? who : {}),
+          op: context?.op ?? 'request',
+          forWhom: subject ? who.actor : 'an unnamed caller',
+          type,
+          status: statusForError(type),
+          error: message ?? type,
+        }
+      );
     });
   }
   sendJson(response, statusForError(type), { error: { type, message } });
@@ -604,12 +616,17 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
         const detail = await upstream.text().catch(() => '');
         // 401 is the web side's cue to refresh and retry, not a failure yet.
         if (upstream.status !== 401) {
-          logger.warn('onbase content {path} failed: the OnBase API server answered {status}', {
-            component: COMPONENT,
-            path,
-            status: upstream.status,
-            subject: str(body.subject) || undefined,
-          });
+          const who = str(body.subject) ? await actorAttrs(str(body.subject)) : null;
+          logger.warn(
+            'the OnBase API server answered {status} to the content request of {forWhom} for {path}; the status is passed on to the caller',
+            {
+              component: COMPONENT,
+              ...who,
+              forWhom: who ? who.actor : 'an unnamed caller',
+              path,
+              status: upstream.status,
+            }
+          );
         }
         // The upstream status is forwarded (a JSON body marks it as an
         // error); 401 in particular must reach the web side's refresh logic.
@@ -684,11 +701,16 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
             : { ok: false as const, error: `The OnBase API server answered ${ping.status}.` };
 
       if (!idp.ok || !api.ok) {
-        logger.warn('onbase test-connection for {connector} failed: {error}', {
-          component: COMPONENT,
-          connector,
-          error: [idp.ok ? null : idp.error, api.ok ? null : api.error].filter(Boolean).join(' '),
-        });
+        logger.warn(
+          'the connection test of the {connector} connector failed; the operator sees what did not answer: {error}',
+          {
+            component: COMPONENT,
+            connector,
+            idpOk: idp.ok,
+            apiOk: api.ok,
+            error: [idp.ok ? null : idp.error, api.ok ? null : api.error].filter(Boolean).join(' '),
+          }
+        );
       }
       // A failed test is a successful request.
       sendJson(response, 200, { idp, api });
@@ -810,7 +832,7 @@ export function createOnBaseServer(deps: OnBaseServerDeps): Server {
 
   return createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      logger.error('unhandled onbase op failure: {error}', {
+      logger.error('an OnBase op threw before it answered; the caller got a 500: {error}', {
         component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

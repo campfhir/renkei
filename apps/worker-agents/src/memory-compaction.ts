@@ -20,7 +20,7 @@
  * deletion is by id.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrs, getDataStore } from '@renkei/db';
 import { resolveAgentLlm } from '@renkei/agent-llm';
 import {
   openAgentMemoryContents,
@@ -57,12 +57,14 @@ export function createMemoryCompactionSweep() {
       try {
         await compactOne(candidate.agentId, candidate.ownerSubject);
       } catch (error) {
-        logger.warn('memory compaction failed for agent {agentId}: {error}', {
-          component: 'worker-agents/memory-compaction',
-          agentId: candidate.agentId,
-          subject: candidate.ownerSubject,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          'the memory of agent "{agent}" of {owner} could not be compacted; if it is over the hard cap its oldest entries are dropped instead: {error}',
+          {
+            component: 'worker-agents/memory-compaction',
+            ...(await agentAttrs(candidate.agentId)),
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         await enforceHardCap(candidate.agentId, candidate.ownerSubject);
       }
     }
@@ -133,12 +135,14 @@ async function compactOne(agentId: string, ownerSubject: string): Promise<void> 
     entries.map((entry) => entry.id)
   );
 
-  logger.info('compacted {folded} memory entr(ies) for agent {agentId}', {
-    component: 'worker-agents/memory-compaction',
-    agentId,
-    subject: ownerSubject,
-    folded: entries.length,
-  });
+  logger.info(
+    '{folded} memory entr(ies) of agent "{agent}" of {owner} were folded into its summary',
+    {
+      component: 'worker-agents/memory-compaction',
+      ...(await agentAttrs(agentId)),
+      folded: entries.length,
+    }
+  );
 }
 
 /** The lossy last resort, only past the hard cap: drop the oldest rows. */
@@ -146,11 +150,10 @@ async function enforceHardCap(agentId: string, ownerSubject: string): Promise<vo
   const dropped = await getDataStore().agents.trimMemoryEntries(agentId, MEMORY_HARD_CAP);
   if (dropped === 0) return;
   logger.warn(
-    'memory hard cap: dropped {dropped} oldest entr(ies) for agent {agentId} uncompacted',
+    'agent "{agent}" of {owner} was over its memory hard cap; its {dropped} oldest entr(ies) were dropped without being summarized',
     {
       component: 'worker-agents/memory-compaction',
-      agentId,
-      subject: ownerSubject,
+      ...(await agentAttrs(agentId)),
       dropped,
     }
   );

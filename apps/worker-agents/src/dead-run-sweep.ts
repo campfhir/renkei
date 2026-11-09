@@ -25,7 +25,7 @@
  * guarded claim, so two sweeps (or a sweep and an operator) halt a run once.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrs, getDataStore } from '@renkei/db';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { logger } from './logger';
 
@@ -68,16 +68,18 @@ export function createDeadRunSweep(now: () => number = Date.now) {
         error: HALTED_ERROR,
       });
       halted += 1;
-      logger.warn('run {runId} halted automatically: it was {status} and not moving', {
-        component: 'worker-agents/dead-run-sweep',
-        runId: run.id,
-        agentId: run.agentId,
-        subject: run.ownerSubject,
-        status: run.status,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner} was halted automatically: it had been {status} without moving for too long; its queue jobs were dropped',
+        {
+          component: 'worker-agents/dead-run-sweep',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+          status: run.status,
+        }
+      );
     }
     if (halted > 0) {
-      logger.warn('dead-run sweep halted {halted} runs', {
+      logger.warn('the dead-run sweep halted {halted} run(s) that had stopped moving', {
         component: 'worker-agents/dead-run-sweep',
         halted,
       });

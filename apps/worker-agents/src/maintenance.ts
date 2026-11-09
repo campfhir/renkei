@@ -5,7 +5,7 @@
  * once cost duplicate reads, never wrong writes.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrs, getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { deleteStaleChatPresence } from '@renkei/notifications';
@@ -40,10 +40,14 @@ export function createRetentionSweep() {
       RETENTION_BATCH
     );
     if (deleted > 0) {
-      logger.info('retention pruned {count} runs', {
-        component: 'worker-agents/retention',
-        count: deleted,
-      });
+      logger.info(
+        "retention deleted {count} finished agent run(s) older than the organization's {days}-day window",
+        {
+          component: 'worker-agents/retention',
+          count: deleted,
+          days,
+        }
+      );
     }
   };
 }
@@ -71,10 +75,14 @@ export function createNotificationRetentionSweep() {
       RETENTION_BATCH
     );
     if (deleted > 0) {
-      logger.info('retention pruned {count} notifications', {
-        component: 'worker-agents/notification-retention',
-        count: deleted,
-      });
+      logger.info(
+        "retention deleted {count} notification(s) older than the organization's {days}-day window, read or not",
+        {
+          component: 'worker-agents/notification-retention',
+          count: deleted,
+          days,
+        }
+      );
     }
   };
 }
@@ -130,13 +138,15 @@ export function createStuckRunJanitor() {
               error: ABANDONED_ERROR,
             }
       );
-      logger.warn('janitor closed abandoned run {runId} as {status}', {
-        component: 'worker-agents/janitor',
-        runId: run.id,
-        agentId: run.agentId,
-        subject: run.ownerSubject,
-        status: closed,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner} was abandoned (its job left the queue without finishing); the janitor closed it as {status}',
+        {
+          component: 'worker-agents/janitor',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+          status: closed,
+        }
+      );
     }
   };
 }
@@ -192,7 +202,7 @@ export function createChatPresenceSweep() {
   return async function sweep(): Promise<void> {
     const deleted = await deleteStaleChatPresence(CHAT_PRESENCE_MAX_AGE_MS);
     if (deleted > 0) {
-      logger.info('pruned {count} stale chat presence row(s)', {
+      logger.info('deleted {count} chat presence row(s) whose heartbeat stopped long ago', {
         component: 'worker-agents/chat-presence-sweep',
         count: deleted,
       });

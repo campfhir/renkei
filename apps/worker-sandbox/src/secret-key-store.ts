@@ -21,6 +21,7 @@ import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/p
 import { join } from 'node:path';
 import { decrypt, encrypt } from '@renkei/crypto';
 import { envSecretsKey } from './env-secrets';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 
 export interface SecretOwner {
@@ -100,9 +101,14 @@ export function createSecretKeyStore(
         secretKeySealingKey(rootKey, domain, owner, secretId)
       );
       if (!opened.ok) {
-        logger.warn('a held secret key did not open under its owner’s key; dropping it', {
-          component: 'worker-sandbox/secret-keys',
-        });
+        logger.warn(
+          'a held secret key of {actor} did not open under their key; it was dropped and the secret reads as locked until they unlock it again',
+          {
+            component: 'worker-sandbox/secret-keys',
+            ...(await actorAttrs(owner.subject)),
+            secretId,
+          }
+        );
         await rm(pathFor(secretId), { force: true });
         return null;
       }

@@ -582,7 +582,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     },
     sendError,
     onUnhandledError: (error) => {
-      logger.error('delegate op failed: {error}', {
+      logger.error('a delegate op threw before it answered; the caller got a 500: {error}', {
         component: 'worker-delegate/server',
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

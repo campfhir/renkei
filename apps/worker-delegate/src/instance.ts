@@ -38,21 +38,28 @@ export async function registerInstance(logger: DelegateLogger): Promise<Delegate
   setKeyVault(vault);
   // The fingerprint is what a browser shows when it meets this instance's
   // key for the first time and asks the person; an operator compares it here.
-  logger.info('delegate instance {instanceId} registered, key fingerprint {fingerprint}', {
-    component: 'worker-delegate/instance',
-    instanceId: id,
-    fingerprint: deviceCodeOf(new Uint8Array(pair.publicKey)),
-  });
+  logger.info(
+    'this delegate instance registered itself with key fingerprint {fingerprint}; browsers meeting it for the first time show that code',
+    {
+      component: 'worker-delegate/instance',
+      instanceId: id,
+      fingerprint: deviceCodeOf(new Uint8Array(pair.publicKey)),
+    }
+  );
 
   const beat = async (): Promise<void> => {
     try {
       await instances.heartbeatInstance(id, new Date());
       await instances.deleteStaleInstances(new Date(Date.now() - STALE_AFTER_MS));
     } catch (error) {
-      logger.warn('delegate heartbeat failed: {error}', {
-        component: 'worker-delegate/instance',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "this delegate instance's heartbeat was not written; if it keeps failing the other instances treat it as dead and its delegations lapse: {error}",
+        {
+          component: 'worker-delegate/instance',
+          instanceId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   };
   const timer = setInterval(() => void beat(), HEARTBEAT_MS);

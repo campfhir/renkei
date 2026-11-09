@@ -26,7 +26,7 @@
  *     dead decision.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrs, getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { logger } from './logger';
 
@@ -49,10 +49,14 @@ export function createApprovalSweep(producer: QueueProducer) {
       orderingKey: `agent:${run.agentId}`,
     });
     if (!result.ok) {
-      logger.warn('approval sweep could not enqueue resume for run {runId}', {
-        component: 'worker-agents/approval-sweep',
-        runId: run.id,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner} could not be re-queued to resume; it stays waiting until the next sweep tries again',
+        {
+          component: 'worker-agents/approval-sweep',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+        }
+      );
     }
   };
 
@@ -64,11 +68,18 @@ export function createApprovalSweep(producer: QueueProducer) {
     const dueRuns = await runs.listDueWaiting(new Date(now), ARM_BATCH);
     for (const run of dueRuns) {
       const claimed = await runs.expireWaitingCard(run.id, 'timeout');
-      logger.info('approval wait expired for run {runId} (claimed: {claimed})', {
-        component: 'worker-agents/approval-sweep',
-        runId: run.id,
-        claimed,
-      });
+      logger.info(
+        'the wait of run {runId} of agent "{agent}" of {owner} ran out {how}; the run is re-queued to go on without an answer',
+        {
+          component: 'worker-agents/approval-sweep',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+          claimed,
+          how: claimed
+            ? 'and its card was marked expired'
+            : 'just as someone decided its card (the decision stands)',
+        }
+      );
       // Enqueue REGARDLESS of the claim: a lost claim means a human decided
       // concurrently, and their route's enqueue may have crashed.
       await enqueueResume(run);
@@ -80,10 +91,14 @@ export function createApprovalSweep(producer: QueueProducer) {
       ARM_BATCH
     );
     for (const run of stuck) {
-      logger.warn('waiting run {runId} has a decided card; re-enqueueing resume', {
-        component: 'worker-agents/approval-sweep',
-        runId: run.id,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner} is still waiting although its card was decided minutes ago; it is re-queued to resume',
+        {
+          component: 'worker-agents/approval-sweep',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+        }
+      );
       await enqueueResume(run);
     }
 
@@ -93,10 +108,14 @@ export function createApprovalSweep(producer: QueueProducer) {
       ARM_BATCH
     );
     for (const run of orphans) {
-      logger.warn('waiting run {runId} has no approval card; re-driving the pause', {
-        component: 'worker-agents/approval-sweep',
-        runId: run.id,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner} has been waiting with no card for anyone to decide; it is re-queued to raise the card again',
+        {
+          component: 'worker-agents/approval-sweep',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+        }
+      );
       await enqueueResume(run);
     }
 

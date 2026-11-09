@@ -23,7 +23,7 @@
  *    stopped the whole time.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrsFor, getDataStore } from '@renkei/db';
 import type { Json } from '@renkei/db';
 import {
   ACTION_RESULT_CHARS,
@@ -98,19 +98,21 @@ export function createActionsHandler(deps: ActionsDeps) {
         ? message.payload
         : {};
     if (typeof payload.batchId !== 'string') {
-      logger.error('actions job without batchId; dropping', {
+      logger.error('an actions job arrived naming no batch; it was dropped', {
         component: 'worker-agents/actions',
       });
       return;
     }
     const batch = await store().agentRuns.findBatchState(payload.batchId);
     if (!batch) {
-      logger.warn('actions job for unknown batch {batchId}; dropping', {
+      logger.warn('an actions job named batch {batchId}, which no longer exists; it was dropped', {
         component: 'worker-agents/actions',
         batchId: payload.batchId,
       });
       return;
     }
+    // Who the batch acts as, for every line about it: one cached read.
+    const agent = await agentAttrsFor(batch);
     // Settled already (a duplicate message): make sure the run heard.
     if (batch.status === 'completed' || batch.status === 'declined' || batch.status === 'expired') {
       if (batch.runStatus === 'waiting') await wakeRun(batch.runId, batch.agentId);
@@ -144,13 +146,12 @@ export function createActionsHandler(deps: ActionsDeps) {
       const interrupted = actions[results.length];
       if (interrupted) {
         logger.warn(
-          'staged action {tool} for run {runId} was interrupted; its outcome is unknown',
+          'agent "{agent}" of {owner}: the staged action {tool} in run {runId} was interrupted by a worker dying mid-call; it is recorded as failed with its outcome unknown, and the rest of the batch is skipped',
           {
             component: 'worker-agents/actions',
+            ...agent,
             runId: batch.runId,
-            agentId: batch.agentId,
             batchId: batch.id,
-            subject: batch.ownerSubject,
             tool: interrupted.tool,
           }
         );
@@ -205,14 +206,16 @@ export function createActionsHandler(deps: ActionsDeps) {
           }
           const action = actions[index];
           if (!toolsByName.has(action.tool)) {
-            logger.warn('staged action {tool} failed for run {runId}: the tool is not available', {
-              component: 'worker-agents/actions',
-              runId: batch.runId,
-              agentId: batch.agentId,
-              batchId: batch.id,
-              subject: batch.ownerSubject,
-              tool: action.tool,
-            });
+            logger.warn(
+              'agent "{agent}" of {owner}: the staged action {tool} in run {runId} was not made because the tool is not available; the rest of the batch is skipped',
+              {
+                component: 'worker-agents/actions',
+                ...agent,
+                runId: batch.runId,
+                batchId: batch.id,
+                tool: action.tool,
+              }
+            );
             results.push({
               tool: action.tool,
               outcome: 'failed',
@@ -254,15 +257,17 @@ export function createActionsHandler(deps: ActionsDeps) {
           if (!result.isError) {
             void notifier.act(action.tool, toolKindOf(result.meta), result.meta, null);
           } else {
-            logger.warn('staged action {tool} failed for run {runId}', {
-              component: 'worker-agents/actions',
-              runId: batch.runId,
-              agentId: batch.agentId,
-              batchId: batch.id,
-              subject: batch.ownerSubject,
-              tool: action.tool,
-              error: clip(text, 500),
-            });
+            logger.warn(
+              'agent "{agent}" of {owner}: the staged action {tool} in run {runId} failed; the rest of the batch is skipped and the agent is told: {error}',
+              {
+                component: 'worker-agents/actions',
+                ...agent,
+                runId: batch.runId,
+                batchId: batch.id,
+                tool: action.tool,
+                error: clip(text, 500),
+              }
+            );
           }
         }
       } finally {
@@ -282,12 +287,16 @@ export function createActionsHandler(deps: ActionsDeps) {
       });
     }
     await store().agentRuns.completeBatch(batch.id, results);
-    logger.info('batch {batchId} executed for run {runId}: {summary}', {
-      component: 'worker-agents/actions',
-      batchId: batch.id,
-      runId: batch.runId,
-      summary: results.map((result) => `${result.tool}=${result.outcome}`).join(', '),
-    });
+    logger.info(
+      'agent "{agent}" of {owner}: batch {batchId} of run {runId} was carried out ({summary}); the run is woken to read the results',
+      {
+        component: 'worker-agents/actions',
+        ...agent,
+        batchId: batch.id,
+        runId: batch.runId,
+        summary: results.map((result) => `${result.tool}=${result.outcome}`).join(', '),
+      }
+    );
     await wakeRun(batch.runId, batch.agentId);
   };
 }

@@ -15,7 +15,7 @@
  * means.
  */
 
-import { getDataStore } from '@renkei/db';
+import { actorAttrs, agentAttrs, getDataStore } from '@renkei/db';
 import { mintRunToken, revokeRunToken } from './token';
 import { logger } from './logger';
 
@@ -71,10 +71,13 @@ export function createDraftHandler(deps: { webBaseUrl: string; fetchImpl?: PostJ
     if (!owner) {
       // The draft was deleted, or its agent was and took it with it. Nothing
       // to do and nothing wrong — retrying would never find it.
-      logger.debug('draft {draftId} no longer exists; dropping the job', {
-        component: 'worker-agents/draft',
-        draftId: payload.draftId,
-      });
+      logger.debug(
+        'an agent draft job found its draft gone (deleted, or its agent was); the job was dropped',
+        {
+          component: 'worker-agents/draft',
+          draftId: payload.draftId,
+        }
+      );
       return 'skipped';
     }
 
@@ -102,8 +105,11 @@ export function createDraftHandler(deps: { webBaseUrl: string; fetchImpl?: PostJ
         // where the request never arrived at all.
         throw new Error(`drafting failed for ${payload.draftId}: HTTP ${response.status}`);
       }
-      logger.debug('draft {draftId} completed', {
+      logger.debug('the agent draft of {actor}{forAgent} was written by the web app', {
         component: 'worker-agents/draft',
+        ...(await actorAttrs(owner.subject)),
+        ...(owner.agentId ? await agentAttrs(owner.agentId) : {}),
+        forAgent: owner.agentId ? ' revising an existing agent' : '',
         draftId: payload.draftId,
       });
       return undefined;

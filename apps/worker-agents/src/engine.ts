@@ -35,7 +35,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { describeActor as describeActorRaw, getDataStore } from '@renkei/db';
+import { agentAttrs, agentAttrsFor, getDataStore, type AgentFields } from '@renkei/db';
 import type { AgentRunExecutionRecord, Json } from '@renkei/db';
 import {
   APPROVAL_DEFAULT_TIMEOUT_HOURS,
@@ -439,15 +439,6 @@ export function requestLogFieldOf(
   };
 }
 
-/** The owner's name for a log line — total: a run never fails over a display name. */
-async function describeActor(subject: string): Promise<{ subject: string; displayName: string }> {
-  try {
-    return await describeActorRaw(subject);
-  } catch {
-    return { subject, displayName: subject };
-  }
-}
-
 function resolveTimeArgsOf(input: unknown): ResolveTimeRequest {
   const args = argsOf(input);
   const snap = (value: unknown): 'hour' | 'day' | 'week' | 'month' | undefined =>
@@ -615,14 +606,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
     const payload = isRecord(message.payload) ? message.payload : {};
     if (typeof payload.runId !== 'string') {
       // A malformed pointer can never become valid; log and complete.
-      logger.error('agent job without runId; dropping', { component: 'worker-agents/engine' });
+      logger.error('an agent job arrived naming no run; it was dropped', {
+        component: 'worker-agents/engine',
+      });
       return;
     }
     const runId = payload.runId;
 
     const run = await store().agentRuns.findForExecution(runId);
     if (!run) {
-      logger.warn('agent job for unknown run {runId}; dropping', {
+      logger.warn('an agent job named run {runId}, which no longer exists; it was dropped', {
         component: 'worker-agents/engine',
         runId,
       });
@@ -638,29 +631,37 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // Said with the owner's subject, so it shows in their own Activity:
         // the queue's own failure line names only the job, and "queued" on
         // the run says nothing of why it has not moved.
-        logger.warn('run {runId} could not go on and will be tried again: {error}', {
-          component: 'worker-agents/engine',
-          runId,
-          agentId: run.agentId,
-          subject: run.ownerSubject,
-          error: error.message,
-        });
+        logger.warn(
+          'run {runId} of agent "{agent}" of {owner} could not go on and will be tried again: {error}',
+          {
+            component: 'worker-agents/engine',
+            ...(await agentAttrs(run.agentId)),
+            runId,
+            error: error.message,
+          }
+        );
         throw error; // → queue backoff
       }
       if (error instanceof ExecutorStopping) {
-        logger.info('run {runId} handed back: this executor is stopping', {
-          component: 'worker-agents/engine',
-          runId,
-        });
+        logger.info(
+          'run {runId} of agent "{agent}" of {owner} was handed back to the queue: this executor is stopping',
+          {
+            component: 'worker-agents/engine',
+            ...(await agentAttrs(run.agentId)),
+            runId,
+          }
+        );
         throw new MessageReleased('the agents worker is stopping');
       }
-      logger.error('run {runId} failed in its worker: {error}', {
-        component: 'worker-agents/engine',
-        runId,
-        agentId: run.agentId,
-        subject: run.ownerSubject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'run {runId} of agent "{agent}" of {owner} crashed in its worker; the job goes back to the queue: {error}',
+        {
+          component: 'worker-agents/engine',
+          ...(await agentAttrs(run.agentId)),
+          runId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       throw error;
     }
   }
@@ -685,6 +686,12 @@ export function createAgentRunHandler(deps: EngineDeps) {
       await finalizeRun(run, 'failed', 'config', 'The agent no longer exists.', {});
       return;
     }
+    // The agent and its owner, for every line this run writes.
+    const agent = await agentAttrsFor({
+      agentId: run.agentId,
+      agentName: agentRow.name,
+      ownerSubject: run.ownerSubject,
+    });
 
     // The owner's key must be delegated for anything of theirs to open
     // (docs/delegate-key-design.md). Without it the run is PARKED —
@@ -704,10 +711,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           ? 'Paused: your encryption key is not available to your agents. Sign in to resume.'
           : 'Paused: finish setting up your encryption key by signing in, then this run resumes.',
       });
-      logger.info('run {runId} parked: owner key not delegated', {
-        component: 'worker-agents/engine',
-        runId,
-      });
+      logger.info(
+        'run {runId} of agent "{agent}" of {owner} is parked: the owner\'s encryption key is not delegated to the agents; it resumes when they next sign in',
+        {
+          component: 'worker-agents/engine',
+          ...agent,
+          runId,
+          enrolled: owner.val.enrolled,
+        }
+      );
       return;
     }
 
@@ -856,6 +868,7 @@ export function createAgentRunHandler(deps: EngineDeps) {
         run,
         definition,
         agentName: agentRow.name,
+        agent,
         guardrails: agentRow.guardrails ?? '',
         canAsk,
         autoAccept: agentRow.autoAcceptActions,
@@ -885,6 +898,8 @@ export function createAgentRunHandler(deps: EngineDeps) {
     run: RunRow;
     definition: AgentDefinition;
     agentName: string;
+    /** The agent and its owner as log attributes (docs/logging.md). */
+    agent: AgentFields;
     guardrails: string;
     canAsk: boolean;
     autoAccept: boolean;
@@ -1254,11 +1269,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
           if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
             throw new TransientFailure(`compaction model ${kind}`);
           }
-          logger.warn('run {runId}: compaction failed ({kind}); cutting to fit instead', {
-            component: 'worker-agents/engine',
-            runId: this.runRow.id,
-            kind,
-          });
+          logger.warn(
+            'run {runId} of agent "{agent}" of {owner}: the model could not fold earlier turns into a summary ({kind}); the conversation is cut to fit instead',
+            {
+              component: 'worker-agents/engine',
+              ...this.input.agent,
+              runId: this.runRow.id,
+              kind,
+            }
+          );
           return null;
         }
         addUsage(usage, folded.val.usage);
@@ -1273,12 +1292,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const through = foldable[foldable.length - 1].attempt;
       row.detail.compaction = { summary, through };
       await this.writeTurn(row, 'running');
-      logger.info('run {runId}: folded turns {from}–{through} into a summary', {
-        component: 'worker-agents/engine',
-        runId: this.runRow.id,
-        from: foldable[0].attempt,
-        through,
-      });
+      logger.info(
+        'run {runId} of agent "{agent}" of {owner}: turns {from}–{through} were folded into a summary to make room',
+        {
+          component: 'worker-agents/engine',
+          ...this.input.agent,
+          runId: this.runRow.id,
+          from: foldable[0].attempt,
+          through,
+        }
+      );
       return usage;
     }
 
@@ -1341,10 +1364,14 @@ export function createAgentRunHandler(deps: EngineDeps) {
         // The estimate ran short for this model (the provider's own
         // context_length, chat's overflow recovery): fold what has not been
         // folded yet, then once more at half the budget.
-        logger.warn('run {runId}: the model refused the request as too long; retrying smaller', {
-          component: 'worker-agents/engine',
-          runId: this.runRow.id,
-        });
+        logger.warn(
+          'run {runId} of agent "{agent}" of {owner}: the model refused the request as too long; it is retried at half the budget',
+          {
+            component: 'worker-agents/engine',
+            ...this.input.agent,
+            runId: this.runRow.id,
+          }
+        );
         if (!foldUsage) {
           foldUsage = await this.compact(row, turns);
           if (foldUsage) conversation = this.messagesOf(turns);
@@ -1353,13 +1380,24 @@ export function createAgentRunHandler(deps: EngineDeps) {
       }
       if (!completion.ok) {
         const kind = completion.err.type;
-        logger.error('model error in run {runId}: {kind} {message}', {
-          component: 'worker-agents/engine',
-          runId: this.runRow.id,
-          kind,
-          message: completion.err.message ?? '',
-          ...requestLogFieldOf(completion.err.cause),
-        });
+        const transient = kind === 'rate_limit' || kind === 'overloaded' || kind === 'network';
+        logger.error(
+          'run {runId} of agent "{agent}" of {owner}: the model answered with a {kind} error ({message}); {next}',
+          {
+            component: 'worker-agents/engine',
+            ...this.input.agent,
+            runId: this.runRow.id,
+            kind,
+            message: completion.err.message ?? 'no detail',
+            next:
+              kind === 'auth'
+                ? 'the run fails because the API key was rejected'
+                : transient
+                  ? 'the run will be tried again'
+                  : 'the run fails',
+            ...requestLogFieldOf(completion.err.cause),
+          }
+        );
         if (kind === 'auth') throw new RunAbort('llm_auth', 'The model rejected the API key.');
         if (kind === 'rate_limit' || kind === 'overloaded' || kind === 'network') {
           // The row stays open without a reply; the redelivery calls again.
@@ -1670,17 +1708,18 @@ export function createAgentRunHandler(deps: EngineDeps) {
       const resultText = textOf(result);
       const kind = toolKindOf(result.meta);
       if (result.isError) {
-        logger.warn('agent "{agentName}": {toolLabel} failed — {error}', {
-          component: 'worker-agents/engine',
-          runId: this.runRow.id,
-          agentId: this.runRow.agentId,
-          agentName: this.input.agentName,
-          subject: this.runRow.ownerSubject,
-          toolLabel: friendlyToolName(use.name, null),
-          tool: use.name,
-          durationMs,
-          error: clip(resultText, PREVIEW_CHARS),
-        });
+        logger.warn(
+          'agent "{agent}" of {owner}: {toolLabel} failed in run {runId}; the model is told and goes on: {error}',
+          {
+            component: 'worker-agents/engine',
+            ...this.input.agent,
+            runId: this.runRow.id,
+            toolLabel: friendlyToolName(use.name, null),
+            tool: use.name,
+            durationMs,
+            error: clip(resultText, PREVIEW_CHARS),
+          }
+        );
       }
       return {
         result: {
@@ -1977,11 +2016,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
         );
         return { text: 'Remembered.', isError: false };
       } catch (error) {
-        logger.warn('memory append failed for run {runId}: {error}', {
-          component: 'worker-agents/engine',
-          runId: this.runRow.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          'agent "{agent}" of {owner}: a note from run {runId} was not saved to its memory; the model is told: {error}',
+          {
+            component: 'worker-agents/engine',
+            ...this.input.agent,
+            runId: this.runRow.id,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         return { text: 'Could not save that to memory.', isError: true };
       }
     }
@@ -2088,11 +2131,15 @@ export function createAgentRunHandler(deps: EngineDeps) {
       } else {
         await enqueueBatch(this.runRow, batchId);
       }
-      logger.info('run {runId} staged {count} action(s) ({how})', {
+      logger.info('run {runId} of agent "{agent}" of {owner} staged {count} action(s); {how}', {
         component: 'worker-agents/engine',
+        ...this.input.agent,
         runId: this.runRow.id,
+        batchId,
         count: actions.length,
-        how: reason ? `waiting: ${reason}` : 'auto-accepted',
+        how: reason
+          ? `the run waits for the owner to accept them (${reason})`
+          : 'they were accepted automatically and queued to be made',
       });
     }
 
@@ -2392,10 +2439,16 @@ export function createAgentRunHandler(deps: EngineDeps) {
       model: { provider: llm.providerName, model: llm.model, llmModelId: llm.modelConfigId },
     });
     if (!ledger.ok) {
-      logger.warn('token usage not recorded for run {runId}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner}: its token usage was not written to the ledger; the run goes on and the usage report undercounts',
+        {
+          component: 'worker-agents/engine',
+          ...(await agentAttrs(run.agentId)),
+          runId: run.id,
+          inputTokens: usage.inputTokens,
+          outputTokens: usage.outputTokens,
+        }
+      );
     }
   }
 
@@ -2437,20 +2490,26 @@ export function createAgentRunHandler(deps: EngineDeps) {
     try {
       memoryText = renderAgentMemory(await readAgentMemory(agentId));
     } catch (error) {
-      logger.warn('agent memory unreadable for agent {agentId}: {error}', {
-        component: 'worker-agents/engine',
-        agentId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'the memory of agent "{agent}" of {owner} could not be read; the run starts without it: {error}',
+        {
+          component: 'worker-agents/engine',
+          ...(await agentAttrs(agentId)),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
     try {
       knowledgeText = await renderAgentKnowledgeNotes(agentId);
     } catch (error) {
-      logger.warn('agent knowledge notes unreadable for agent {agentId}: {error}', {
-        component: 'worker-agents/engine',
-        agentId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'the knowledge notes of agent "{agent}" of {owner} could not be read; the run starts without them: {error}',
+        {
+          component: 'worker-agents/engine',
+          ...(await agentAttrs(agentId)),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
     return { memoryText, knowledgeText };
   }
@@ -2516,15 +2575,11 @@ export function createAgentRunHandler(deps: EngineDeps) {
   ): Promise<void> {
     // No turn is ever left "running" under a run that is done.
     await store().agentRuns.finishExecution(run.id, { status, errorKind, error });
-    const actor = await describeActor(run.ownerSubject);
     const agentName = await agentNameOf(run.agentId);
     const common = {
       component: 'worker-agents/engine',
+      ...(await agentAttrsFor({ agentId: run.agentId, agentName, ownerSubject: run.ownerSubject })),
       runId: run.id,
-      agentId: run.agentId,
-      agentName,
-      userName: actor.displayName,
-      subject: actor.subject,
       status,
       errorKind: errorKind ?? undefined,
     };
@@ -2539,12 +2594,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
       void notifier.runFinished(status, error);
     }
     if (status === 'failed') {
-      logger.warn('agent "{agentName}" ({userName}) failed: {error}', {
+      logger.warn('run {runId} of agent "{agent}" of {owner} failed ({errorKind}): {error}', {
         ...common,
+        errorKind: errorKind ?? 'no kind recorded',
         error: error ?? 'no detail recorded',
       });
     } else {
-      logger.debug('agent "{agentName}" ({userName}) run {status}', common);
+      logger.debug('run {runId} of agent "{agent}" of {owner} ended: {status}', common);
     }
     const logged = await recordAgentRunOutcome({
       agentId: run.agentId,
@@ -2555,11 +2611,10 @@ export function createAgentRunHandler(deps: EngineDeps) {
       error,
     });
     if (!logged.ok) {
-      logger.warn('run outcome not logged for run {runId}', {
-        component: 'worker-agents/engine',
-        runId: run.id,
-        subject: run.ownerSubject,
-      });
+      logger.warn(
+        'run {runId} of agent "{agent}" of {owner} ended {status}, but its row in the run log was not written; the usage report misses it',
+        common
+      );
     }
     if (deps.onFinalized) {
       try {
@@ -2574,11 +2629,13 @@ export function createAgentRunHandler(deps: EngineDeps) {
           quiet,
         });
       } catch (hookError) {
-        logger.error('finalize hook failed for run {runId}: {error}', {
-          component: 'worker-agents/engine',
-          runId: run.id,
-          error: hookError instanceof Error ? hookError.message : String(hookError),
-        });
+        logger.error(
+          'run {runId} of agent "{agent}" of {owner} ended {status}, but what follows a run (chained agents, the failure notice) did not happen: {error}',
+          {
+            ...common,
+            error: hookError instanceof Error ? hookError.message : String(hookError),
+          }
+        );
       }
     }
   }

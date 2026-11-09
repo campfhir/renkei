@@ -38,7 +38,7 @@
  * deleted with the chat, pruned here when that did not land.
  */
 
-import { getDataStore } from '@renkei/db';
+import { actorAttrs, getDataStore } from '@renkei/db';
 import { resolveTenantBlobStore, type BlobStore } from '@renkei/blob-store';
 import { getOrgSettings } from '@renkei/settings';
 import { delegateClient } from '@renkei/delegate-client';
@@ -69,13 +69,21 @@ export function createChatTurnJanitor() {
       'The reply stopped unexpectedly and did not finish.'
     );
     for (const row of stale) {
-      logger.warn('interrupted a chat turn whose runner went silent', {
-        component: 'worker-agents/chat-janitor',
-        turnId: row.id,
-        chatId: row.chatId,
-        stage: row.stage ?? '(between rounds)',
-        staleSinceMinutes: Math.round((Date.now() - row.staleSince.getTime()) / MINUTE_MS),
-      });
+      // The turn row names only its chat; the chat names the person.
+      const chat = await getDataStore()
+        .chats.get(row.chatId)
+        .catch(() => null);
+      logger.warn(
+        'a reply in a chat of {actor} had not moved for {staleSinceMinutes} minutes ({stage}); the turn was marked interrupted and the chat says the reply stopped',
+        {
+          component: 'worker-agents/chat-janitor',
+          ...(await actorAttrs(chat?.ownerSubject)),
+          turnId: row.id,
+          chatId: row.chatId,
+          stage: row.stage ?? 'between rounds',
+          staleSinceMinutes: Math.round((Date.now() - row.staleSince.getTime()) / MINUTE_MS),
+        }
+      );
     }
   };
 }
@@ -100,10 +108,14 @@ export function createChatRetentionSweep(store: () => Promise<BlobStore | null> 
       if (deletable.length > 0) {
         await getDataStore().chats.deleteMany(deletable);
         await getDataStore().resourceGrants.deleteForResources('chat', deletable);
-        logger.info('chat retention removed {count} chat(s)', {
-          component: 'worker-agents/chat-retention',
-          count: deletable.length,
-        });
+        logger.info(
+          "retention deleted {count} chat(s) idle past the organization's {days}-day window, attachments included",
+          {
+            component: 'worker-agents/chat-retention',
+            count: deletable.length,
+            days,
+          }
+        );
       }
     }
     await pruneOrphanGrants();
@@ -116,9 +128,10 @@ async function deleteAbandonedChats(): Promise<void> {
     new Date(Date.now() - ABANDONED_CHAT_HOURS * HOUR_MS)
   );
   if (deleted.length === 0) return;
-  logger.info('removed {count} abandoned empty chat(s)', {
+  logger.info('deleted {count} empty chat(s) nobody came back to within {hours} hours', {
     component: 'worker-agents/chat-retention',
     count: deleted.length,
+    hours: ABANDONED_CHAT_HOURS,
   });
 }
 
@@ -133,10 +146,14 @@ async function deleteTemporaryChats(store: () => Promise<BlobStore | null>): Pro
   if (deletable.length === 0) return;
   await getDataStore().chats.deleteMany(deletable);
   await getDataStore().resourceGrants.deleteForResources('chat', deletable);
-  logger.info('removed {count} idle temporary chat(s)', {
-    component: 'worker-agents/chat-retention',
-    count: deletable.length,
-  });
+  logger.info(
+    'deleted {count} temporary chat(s) idle for over {hours} hours, as their owners were told',
+    {
+      component: 'worker-agents/chat-retention',
+      count: deletable.length,
+      hours: TEMPORARY_CHAT_HOURS,
+    }
+  );
 }
 
 /**
@@ -155,10 +172,15 @@ async function archiveIdleChats(orgRetentionDays: number): Promise<void> {
       new Date(Date.now() - days * DAY_MS)
     );
     if (archived.length === 0) continue;
-    logger.info('auto-archived {count} idle chat(s)', {
-      component: 'worker-agents/chat-retention',
-      count: archived.length,
-    });
+    logger.info(
+      '{count} chat(s) of {actor} idle past their {days}-day archive window were archived',
+      {
+        component: 'worker-agents/chat-retention',
+        ...(await actorAttrs(row.subject)),
+        count: archived.length,
+        days,
+      }
+    );
   }
 }
 
@@ -180,10 +202,15 @@ async function deleteAttachmentBlobs(
       await getDataStore().artifacts.delete(attachment.id);
     } else {
       blocked.add(attachment.chatId);
-      logger.warn('chat retention could not delete a blob: {error}', {
-        component: 'worker-agents/chat-retention',
-        error: deleted.err.message ?? deleted.err.type,
-      });
+      logger.warn(
+        'an attachment of a chat due for deletion could not be removed from blob storage; the chat is kept until it can be: {error}',
+        {
+          component: 'worker-agents/chat-retention',
+          chatId: attachment.chatId,
+          attachmentId: attachment.id,
+          error: deleted.err.message ?? deleted.err.type,
+        }
+      );
     }
   }
   return chatIds.filter((id) => !blocked.has(id));

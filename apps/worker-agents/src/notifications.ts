@@ -47,7 +47,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { getDataStore } from '@renkei/db';
+import { agentAttrsFor, getDataStore } from '@renkei/db';
 import { resolveAct } from '@renkei/tool-outcomes';
 import {
   effectiveDelivery,
@@ -237,11 +237,17 @@ async function write(
       meta: null,
     });
   } catch (error) {
-    logger.warn('could not record a notification for run {runId}', {
-      component: 'worker-agents/notifications',
-      runId: context.runId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      'run {runId} of agent "{agent}" of {owner}: the {kind} notification "{headline}" was not recorded; the owner will not see it in the app: {error}',
+      {
+        component: 'worker-agents/notifications',
+        ...(await agentOf(context)),
+        runId: context.runId,
+        kind: row.kind,
+        headline: row.headline,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return false;
   }
 
@@ -256,6 +262,9 @@ async function write(
     // that exact page is the one in front; an act (a ticket filed, a mail
     // sent) is news regardless of what's on screen, so it stays unquiet.
     const quiet = row.kind === 'question' || row.kind === 'approval';
+    // Resolved here, where it can be awaited: the push's own log lines are
+    // written from a callback with no async context of its own.
+    const agent = await agentOf(context);
     void sendPush(
       context.subject,
       keyResult.val,
@@ -268,10 +277,19 @@ async function write(
         ...(quiet && row.refUrl ? { appPath: row.refUrl } : {}),
         ...(quiet ? { quiet: true } : {}),
       },
-      { log: (message, meta) => logger.warn(message, meta) }
+      { log: (message, meta) => logger.warn(message, { ...agent, ...meta }) }
     );
   }
   return true;
+}
+
+/** The agent and its owner (who the notification is for), as log attributes. */
+function agentOf(context: NotificationRowContext) {
+  return agentAttrsFor({
+    agentId: context.agentId,
+    agentName: context.agentName,
+    ownerSubject: context.subject,
+  });
 }
 
 /**
@@ -303,11 +321,16 @@ async function retally(context: NotifierContext, id: string, headline: string): 
   try {
     await getDataStore().notifications.setHeadline(id, headline);
   } catch (error) {
-    logger.warn('could not tally a notification for run {runId}', {
-      component: 'worker-agents/notifications',
-      runId: context.runId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      'run {runId} of agent "{agent}" of {owner}: a notification\'s tally was not updated to "{headline}"; it still shows the earlier count: {error}',
+      {
+        component: 'worker-agents/notifications',
+        ...(await agentOf(context)),
+        runId: context.runId,
+        headline,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 

@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 
 /**
@@ -25,12 +26,17 @@ export function withRequestScope<T>(op: string, subject: string, run: () => T): 
 export function logErrorResponse(status: number, type: string, message?: string): void {
   if (status < 500 || type === 'internal') return;
   const current = scope.getStore();
-  logger.warn('sandbox {op} failed ({type}): {error}', {
-    component: 'worker-sandbox/server',
-    op: current?.op ?? 'request',
-    subject: current?.subject,
-    type,
-    status,
-    error: message ?? type,
+  // `sendError` is synchronous; the name lookup is cached and never throws,
+  // so the line is written as soon as it answers.
+  void actorAttrs(current?.subject).then((who) => {
+    logger.warn('the sandbox could not do {op} for {forWhom} ({type}, {status}): {error}', {
+      component: 'worker-sandbox/server',
+      ...(current?.subject ? who : {}),
+      op: current?.op ?? 'request',
+      forWhom: current?.subject ? who.actor : 'an unnamed caller',
+      type,
+      status,
+      error: message ?? type,
+    });
   });
 }

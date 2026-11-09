@@ -13,7 +13,7 @@
  * three times.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrs, getDataStore, type AgentFields } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import {
   blackoutPredicate,
@@ -34,13 +34,17 @@ const MAX_PER_PASS = 25;
  * rather than disabling the trigger: the schedule itself is intact, only
  * its holiday overlay is gone.
  */
-async function calendarDatesOf(calendarId: string): Promise<BlackoutEntry[]> {
+async function calendarDatesOf(calendarId: string, agent: AgentFields): Promise<BlackoutEntry[]> {
   const row = await getDataStore().scheduleCalendars.find(calendarId);
   if (!row) {
-    logger.warn('schedule calendar {calendarId} not found; firing without blackouts', {
-      component: 'worker-agents/schedule',
-      calendarId,
-    });
+    logger.warn(
+      'the calendar a schedule of agent "{agent}" of {owner} opted into no longer exists; the schedule fires without its blackout dates',
+      {
+        component: 'worker-agents/schedule',
+        ...agent,
+        calendarId,
+      }
+    );
     return [];
   }
   return Array.isArray(row.dates) ? row.dates.filter(isBlackoutEntry) : [];
@@ -55,20 +59,25 @@ export function createScheduleSweep(producer: QueueProducer) {
       // parseScheduleConfig also reads the pre-042 single-recurrence shape,
       // so a not-yet-migrated row still fires during a rolling deploy.
       const config = parseScheduleConfig(row.config);
+      const agent = await agentAttrs(row.agentId);
       if (!config) {
         await agents.disableTrigger(row.triggerId, 'The schedule is malformed and was turned off.');
-        logger.warn('schedule {triggerId} of agent {agentId} is malformed and was turned off', {
-          component: 'worker-agents/schedule',
-          triggerId: row.triggerId,
-          agentId: row.agentId,
-          subject: row.ownerSubject,
-        });
+        logger.warn(
+          'a schedule of agent "{agent}" of {owner} is malformed; it was turned off and the reason left on the trigger',
+          {
+            component: 'worker-agents/schedule',
+            ...agent,
+            triggerId: row.triggerId,
+          }
+        );
         continue;
       }
 
       const observed = row.nextRunAt;
       const scheduledFor = observed.toISOString();
-      const calendarDates = config.calendarId ? await calendarDatesOf(config.calendarId) : [];
+      const calendarDates = config.calendarId
+        ? await calendarDatesOf(config.calendarId, agent)
+        : [];
       let next: Date;
       try {
         next = computeNextRunForSchedule(config, new Date(), blackoutPredicate(calendarDates));
@@ -80,12 +89,11 @@ export function createScheduleSweep(producer: QueueProducer) {
           'No next occurrence could be found (check blackout dates); turned off.'
         );
         logger.warn(
-          'schedule {triggerId} of agent {agentId} has no next occurrence and was turned off',
+          'a schedule of agent "{agent}" of {owner} has no next occurrence (its blackout dates cover every rule); it was turned off',
           {
             component: 'worker-agents/schedule',
+            ...agent,
             triggerId: row.triggerId,
-            agentId: row.agentId,
-            subject: row.ownerSubject,
           }
         );
         continue;
@@ -106,27 +114,34 @@ export function createScheduleSweep(producer: QueueProducer) {
           // Just time/date, per spec: a schedule carries no other context.
           initialState: { scheduledFor, timezone: config.timezone },
         },
-        { log: (message, meta) => logger.debug(message, meta) }
+        { log: (message, meta) => logger.debug(message, { ...agent, ...meta }) }
       );
       if (!result.ok) {
         const error = result.err.message ?? `The run could not be started (${result.err.type}).`;
         await agents.setTriggerError(row.triggerId, error);
-        logger.warn('schedule {triggerId} could not start agent {agentId}: {error}', {
-          component: 'worker-agents/schedule',
-          triggerId: row.triggerId,
-          agentId: row.agentId,
-          subject: row.ownerSubject,
-          error,
-        });
+        logger.warn(
+          'the schedule of agent "{agent}" of {owner} came due for {scheduledFor}, but no run was started; the reason is left on the trigger: {error}',
+          {
+            component: 'worker-agents/schedule',
+            ...agent,
+            triggerId: row.triggerId,
+            scheduledFor,
+            error,
+          }
+        );
         continue;
       }
       await agents.setTriggerError(row.triggerId, null);
-      logger.debug('schedule fired: agent {agentId} run {runId}', {
-        component: 'worker-agents/schedule',
-        agentId: row.agentId,
-        runId: result.val.runId,
-        subject: row.ownerSubject,
-      });
+      logger.debug(
+        'the schedule of agent "{agent}" of {owner} came due for {scheduledFor}; run {runId} was queued',
+        {
+          component: 'worker-agents/schedule',
+          ...agent,
+          triggerId: row.triggerId,
+          runId: result.val.runId,
+          scheduledFor,
+        }
+      );
     }
   };
 }

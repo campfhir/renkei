@@ -81,6 +81,16 @@ per process, so a sweep over fifty rows about one person costs one read;
 `forgetActor` / `forgetAgent` drop a stale entry after a sign-in or a
 rename.
 
+### The one exception: the delegate
+
+`apps/worker-delegate` holds everyone's keys and tokens, and its access
+record is deliberately pseudonymous (docs/delegate-key-design.md,
+"Callers"; `access-log.ts`): a person is named by the hash of their
+subject, which the web app's Activity view computes the same way to find
+their lines, never by name or email. Its lines keep the same sentence
+shape through `pseudonym(subject)`, which fills `actor` with "the person
+3f2a…" and `subjectHash`; the identity helpers above are not used there.
+
 ## Writing the message
 
 1. **A sentence, with the person or agent as its subject.** `{actor}` for
