@@ -11,7 +11,7 @@ import { ageWords } from '../../agents-overview.model';
 import TerminateButton from './terminate-button';
 import { StatusPill } from '../../run-timeline';
 import RunsSearch from '../../runs-search';
-import { errorSummary, statusLabel } from '@/lib/agents/run-labels';
+import { statusLabel, statusNote } from '@/lib/agents/run-labels';
 import LocalTime from '@/components/local-time';
 import CoachTarget from '@/components/coach-marks/anchor';
 import { pageFromParam, pageQuery, pageWindow, runsPageHref } from './runs-page.model';
@@ -160,9 +160,11 @@ export default async function AgentRunsPage({
                 </td>
                 <td className="px-3 py-2">
                   <StatusPill status={run.status} errorKind={run.errorKind} />
-                  {run.errorKind ? (
+                  {/* Why it failed — or nothing, when the pill already says it
+                      (a terminated run reads Terminated). */}
+                  {statusNote(run.status, run.errorKind) ? (
                     <span className="mt-0.5 block text-xs text-red-600 dark:text-red-400">
-                      {errorSummary(run.errorKind)}
+                      {statusNote(run.status, run.errorKind)}
                     </span>
                   ) : null}
                 </td>
@@ -191,10 +193,10 @@ export default async function AgentRunsPage({
               <span className="mt-1 block text-xs text-gray-500 dark:text-gray-400">
                 via {run.triggerKind}
                 {run.durationMs !== null ? ` · ${(run.durationMs / 1000).toFixed(1)}s` : ''}
-                {run.errorKind ? (
+                {statusNote(run.status, run.errorKind) ? (
                   <span className="text-red-600 dark:text-red-400">
                     {' '}
-                    · {errorSummary(run.errorKind)}
+                    · {statusNote(run.status, run.errorKind)}
                   </span>
                 ) : null}
               </span>

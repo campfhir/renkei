@@ -29,11 +29,29 @@ const STATUS_LABELS: Record<string, string> = {
   retired: 'Set aside',
 };
 
+/**
+ * Canceled runs whose error kind IS the story: closed out from under them
+ * while stuck (force-halt.ts), by the owner side or by an operator. Their
+ * pill names that itself — "Terminated", not "Canceled" with a note under
+ * it — so a list of runs tells a terminated run from one somebody stopped
+ * at a glance.
+ */
+const CANCELED_AS: Record<string, string> = {
+  terminated: 'Terminated',
+  force_halted: 'Force-halted',
+};
+
+function canceledAs(status: string, errorKind?: string | null): string | null {
+  return status === 'canceled' && errorKind ? (CANCELED_AS[errorKind] ?? null) : null;
+}
+
 /** Title-case label for a run or attempt status; unknown values capitalize. */
 export function statusLabel(status: string, errorKind?: string | null): string {
   // A run parked for its owner's sign-in waits on nothing the owner can
   // click: say what it waits for instead of "Waiting for you".
   if (status === 'waiting' && errorKind === 'needs-sign-in') return 'Paused: sign in';
+  const named = canceledAs(status, errorKind);
+  if (named) return named;
   return (
     STATUS_LABELS[status] ?? (status ? status.charAt(0).toUpperCase() + status.slice(1) : status)
   );
@@ -48,6 +66,23 @@ export function statusLabel(status: string, errorKind?: string | null): string {
  * whether to keep listening for more updates).
  */
 const UNSETTLED_RUN_STATUSES = new Set(['queued', 'running', 'waiting']);
+
+/**
+ * Which colour a status pill takes: its status, or 'terminated' for a run
+ * closed out while stuck (its pill reads Terminated or Force-halted).
+ */
+export function statusTone(status: string, errorKind?: string | null): string {
+  return canceledAs(status, errorKind) ? 'terminated' : status;
+}
+
+/**
+ * The line a runs list shows under a run's pill: why it failed, or null
+ * when there is nothing to add — no error, or a pill that already says it.
+ */
+export function statusNote(status: string, errorKind?: string | null): string | null {
+  if (!errorKind || canceledAs(status, errorKind)) return null;
+  return errorSummary(errorKind);
+}
 
 /** True once a run can never change again — nothing left for a live view to catch. */
 export function isRunSettled(status: string): boolean {
