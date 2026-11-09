@@ -68,15 +68,18 @@ interface CacheEntry<T> {
 
 const CACHE_TTL_MS = 5 * 60_000;
 const MAX_ENTRIES = 2_000;
-const cache = new Map<string, CacheEntry<unknown>>();
+/** People, by subject or by `account:<id>`. */
+const people = new Map<string, CacheEntry<Actor>>();
+/** Agents, by id. */
+const agents = new Map<string, CacheEntry<AgentActor>>();
 
-function cached<T>(key: string): T | undefined {
+function cached<T>(cache: Map<string, CacheEntry<T>>, key: string): T | undefined {
   const hit = cache.get(key);
-  if (hit && hit.expiresAt > Date.now()) return hit.value as T;
+  if (hit && hit.expiresAt > Date.now()) return hit.value;
   return undefined;
 }
 
-function remember<T>(key: string, value: T): T {
+function remember<T>(cache: Map<string, CacheEntry<T>>, key: string, value: T): T {
   if (cache.size >= MAX_ENTRIES) cache.clear();
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
@@ -126,7 +129,7 @@ export function agentFields(agent: AgentActor): AgentFields {
  */
 export async function describeActor(subject: string | null | undefined): Promise<Actor> {
   if (!subject) return NOBODY;
-  const hit = cached<Actor>(subject);
+  const hit = cached(people, subject);
   if (hit) return hit;
 
   let actor = actorFrom(subject, null, null);
@@ -136,7 +139,7 @@ export async function describeActor(subject: string | null | undefined): Promise
   } catch {
     // Logging is never worth failing the work it describes.
   }
-  return remember(subject, actor);
+  return remember(people, subject, actor);
 }
 
 /**
@@ -146,7 +149,7 @@ export async function describeActor(subject: string | null | undefined): Promise
 export async function describeAccountActor(accountId: string | null | undefined): Promise<Actor> {
   if (!accountId) return NOBODY;
   const key = `account:${accountId}`;
-  const hit = cached<Actor>(key);
+  const hit = cached(people, key);
   if (hit) return hit;
 
   let actor = actorFrom(accountId, null, null);
@@ -160,7 +163,7 @@ export async function describeAccountActor(accountId: string | null | undefined)
   } catch {
     // As above: never fail the work for the sake of its log line.
   }
-  return remember(key, actor);
+  return remember(people, key, actor);
 }
 
 /**
@@ -170,8 +173,7 @@ export async function describeAccountActor(accountId: string | null | undefined)
  */
 export async function describeAgent(agentId: string | null | undefined): Promise<AgentActor> {
   if (!agentId) return { agentId: '(none)', agentName: '(unknown agent)', owner: NOBODY };
-  const key = `agent:${agentId}`;
-  const hit = cached<AgentActor>(key);
+  const hit = cached(agents, agentId);
   if (hit) return hit;
 
   let agent: AgentActor = { agentId, agentName: '(unknown agent)', owner: NOBODY };
@@ -183,7 +185,7 @@ export async function describeAgent(agentId: string | null | undefined): Promise
   } catch {
     // As above.
   }
-  return remember(key, agent);
+  return remember(agents, agentId, agent);
 }
 
 /** `actorFields(await describeActor(subject))`, for a call site in a hurry. */
@@ -216,15 +218,16 @@ export async function agentAttrsFor(row: {
 
 /** Drop what is cached about one subject (after a sign-in refreshed it). */
 export function forgetActor(subject: string): void {
-  cache.delete(subject);
+  people.delete(subject);
 }
 
 /** Drop what is cached about one agent (after a rename or delete). */
 export function forgetAgent(agentId: string): void {
-  cache.delete(`agent:${agentId}`);
+  agents.delete(agentId);
 }
 
 /** Test seam. */
 export function resetActorCache(): void {
-  cache.clear();
+  people.clear();
+  agents.clear();
 }

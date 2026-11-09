@@ -109,10 +109,19 @@ describe('describing people for logs', () => {
       displayName: 'Ada Lovelace',
       idpGroups: [],
     });
-    jest.spyOn(store.providerGrants, 'findByAccount').mockResolvedValue({
-      subject: 'auth0|ada',
+    await store.providerGrants.upsertSealed('atlassian', {
+      accountId: 'acc-1',
+      clientId: 'client',
       displayName: 'ada (jira)',
-    } as never);
+      subject: 'auth0|ada',
+      encryptedAccessToken: 'sealed-access',
+      encryptedRefreshToken: 'sealed-refresh',
+      keepStoredRefreshToken: false,
+      expiresAt: new Date(Date.now() + 3_600_000),
+      requestedScopes: [],
+      grantedScopes: null,
+      metadata: {},
+    });
     expect((await describeAccountActor('acc-1')).label).toBe('Ada Lovelace (ada@example.com)');
   });
 

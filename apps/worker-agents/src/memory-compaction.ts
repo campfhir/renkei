@@ -65,7 +65,7 @@ export function createMemoryCompactionSweep() {
             error: error instanceof Error ? error.message : String(error),
           }
         );
-        await enforceHardCap(candidate.agentId, candidate.ownerSubject);
+        await enforceHardCap(candidate.agentId);
       }
     }
   };
@@ -146,7 +146,7 @@ async function compactOne(agentId: string, ownerSubject: string): Promise<void> 
 }
 
 /** The lossy last resort, only past the hard cap: drop the oldest rows. */
-async function enforceHardCap(agentId: string, ownerSubject: string): Promise<void> {
+async function enforceHardCap(agentId: string): Promise<void> {
   const dropped = await getDataStore().agents.trimMemoryEntries(agentId, MEMORY_HARD_CAP);
   if (dropped === 0) return;
   logger.warn(
