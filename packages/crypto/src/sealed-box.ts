@@ -65,6 +65,22 @@ function privateKeyObject(raw: Buffer): KeyObject {
   });
 }
 
+/**
+ * The keypair a secret stands for: the private key is HKDF-SHA256 of the
+ * secret under `info`, so the same secret always gives the same pair and
+ * two uses of one secret (different `info`) never share a key. For a key
+ * that must outlive a process — a delegate instance's, so a restart opens
+ * what was sealed to it before — without the private key being written
+ * anywhere: only the secret it is derived from is configured.
+ */
+export function x25519KeyPairFromSecret(secret: Buffer | string, info: string): X25519KeyPair {
+  const ikm = typeof secret === 'string' ? Buffer.from(secret, 'utf8') : secret;
+  const privateKey = Buffer.from(
+    hkdfSync('sha256', ikm, Buffer.from('renkei/x25519-from-secret/v1', 'utf8'), info, 32)
+  );
+  return { publicKey: x25519PublicKeyOf(privateKey), privateKey };
+}
+
 /** The public half of a raw private key, for a stored private key whose public half is wanted. */
 export function x25519PublicKeyOf(privateKey: Buffer): Buffer {
   const spki = createPublicKey(privateKeyObject(privateKey)).export({

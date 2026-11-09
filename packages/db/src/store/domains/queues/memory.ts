@@ -141,6 +141,20 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
           match.every((entry) => textAt(r.payload, entry.path) === entry.value)
       ).length;
     },
+    async pruneSettled(table, before, limit) {
+      const settled = tables.select(
+        table,
+        (r) =>
+          (r.status === 'processed' || r.status === 'skipped') &&
+          r.created_at.getTime() < before.getTime()
+      );
+      const gone = new Set(
+        orderBy(settled, [(r) => r.created_at], [(r) => r.id])
+          .slice(0, limit)
+          .map((r) => r.id)
+      );
+      return tables.delete(table, (r) => gone.has(r.id)).length;
+    },
     async listPending(table) {
       const rows = tables.select(table, (r) => r.status === 'pending');
       return orderBy(rows, [(r) => r.created_at], [(r) => r.id]).map((row) => ({
@@ -342,6 +356,15 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       return moved.length;
     },
 
+    async pruneDeadLetters(table, before, limit) {
+      const old = tables.select(DEAD_LETTERS[table], (r) => r.dead_at.getTime() < before.getTime());
+      const gone = new Set(
+        orderBy(old, [(r) => r.dead_at], [(r) => r.id])
+          .slice(0, limit)
+          .map((r) => r.id)
+      );
+      return tables.delete(DEAD_LETTERS[table], (r) => gone.has(r.id)).length;
+    },
     async purgeDeadLetters(table, ids) {
       if (ids.length === 0) return 0;
       const keys = new Set(ids.map((id) => id));

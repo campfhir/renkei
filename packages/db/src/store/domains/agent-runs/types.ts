@@ -36,6 +36,8 @@ export interface OrgLiveRunRecord {
   /** The owner's email, when an identity row has one. */
   ownerEmail: string | null;
   status: string;
+  /** Why a waiting run waits, when it says: `needs-sign-in` for a run parked for its owner's key. */
+  errorKind: string | null;
   triggerKind: string;
   createdAt: Date;
   startedAt: Date | null;

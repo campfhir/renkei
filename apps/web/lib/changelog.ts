@@ -50,6 +50,24 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'changed',
+        title: 'Finished queue work is cleaned up',
+        detail:
+          'The queues behind agents, webhooks, embeddings and batch jobs now drop finished entries after two weeks and dead letters after thirty days, so the admin event monitor and the Agent queue panel stay quick however long Renkei has been running.',
+      },
+      {
+        kind: 'added',
+        title: 'Agent oversight shows whose agents are paused',
+        detail:
+          'A Paused people section at the top of Agent oversight lists everyone with an agent switched on whose agents cannot run while they are away, with why (their key is not delegated, they run only while signed in, they never set up a key), when they were last seen, how many agents they have on and how many runs are parked. A person fixes it by opening the app on a device that holds their key.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Your agents keep running after a Renkei restart',
+        detail:
+          "Every restart of the key service used to forget who had delegated their key to their agents, so the agents of anyone not in the app at the time paused as “Paused: sign in” until their next visit, and nothing said so. With the key service's new instance key configured, a restart keeps every delegation, and your agents carry on while you are away. A run that does pause for your sign-in now sends you a notification that links to it, once, and a paused run is no longer halted automatically after a day: it waits and runs when you next sign in.",
+      },
+      {
+        kind: 'changed',
         title: 'Picking runs on the Agent queue starts with Select',
         detail:
           'The Agent queue shows no checkboxes until you press Select; until then, a press anywhere on a run opens it. After Select, a press anywhere on a run or card picks it instead, Select all is always there to pick every run the tab matches, and Done goes back to browsing. Halting one run is now Select, the run, then Halt 1 selected.',

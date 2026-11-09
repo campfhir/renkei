@@ -60,6 +60,7 @@ export {
 export {
   generateX25519KeyPair,
   x25519PublicKeyOf,
+  x25519KeyPairFromSecret,
   sealToPublicKey,
   openSealedBox,
   isSealedBox,

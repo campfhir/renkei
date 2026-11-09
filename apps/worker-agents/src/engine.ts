@@ -707,7 +707,25 @@ export function createAgentRunHandler(deps: EngineDeps) {
       logger.info('run {runId} parked: owner key not delegated', {
         component: 'worker-agents/engine',
         runId,
+        agentId: run.agentId,
+        subject: run.ownerSubject,
       });
+      // Told once, when the run first parks — not again each time a sweep
+      // re-drives it and it parks the same way. The row is the record in
+      // their feed; the push it triggers is what reaches a person who is
+      // not in the app, which is exactly who this is for.
+      if (run.errorKind !== 'needs-sign-in') {
+        await writeNotificationRow(
+          { subject: run.ownerSubject, agentId: run.agentId, agentName: agentRow.name, runId },
+          {
+            kind: 'run_paused',
+            headline: owner.val.enrolled
+              ? `“${agentRow.name}” is paused until you sign in`
+              : `“${agentRow.name}” is paused until you finish setting up your encryption key`,
+            refUrl: runPagePath(run),
+          }
+        );
+      }
       return;
     }
 

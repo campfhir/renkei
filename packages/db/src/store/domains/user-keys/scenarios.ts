@@ -145,11 +145,16 @@ const write = (sessionId: string, instances: number[], automation: number[]) => 
 export const userKeyScenarios: Scenario<DataStore>[] = [
   {
     method: 'userKeys.registerInstance',
-    name: 'a new instance is live at once',
+    name: 'a new instance is live at once; a known one is live again, once, with its delegations',
     fixture,
     run: async (store) => [
       await store.userKeys.registerInstance(id(5), 'i5'),
       (await store.userKeys.liveInstances(new Date(at(28)))).map((i) => i.id),
+      // Instance 4 went silent at minute 10: registering it again (a restart
+      // of a persistent instance) makes it live without a second row.
+      await store.userKeys.registerInstance(id(4), 'i4-again'),
+      (await store.userKeys.liveInstances(new Date(at(28)))).map((i) => [i.id, i.publicKey]),
+      await store.userKeys.delegationsOf('ann', now),
     ],
   },
   {

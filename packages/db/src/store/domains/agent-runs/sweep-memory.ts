@@ -122,9 +122,9 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
         const clock = (r.resumed_at ?? r.created_at).getTime();
         if (IN_PROGRESS.includes(r.status)) return clock < clockBefore.getTime();
         if (r.status !== 'waiting') return false;
-        return r.waiting_until === null
-          ? clock < clockBefore.getTime()
-          : r.waiting_until.getTime() < waitDueBefore.getTime();
+        if (r.waiting_until !== null) return r.waiting_until.getTime() < waitDueBefore.getTime();
+        // Parked for its owner's sign-in: no deadline by design.
+        return r.error_kind !== 'needs-sign-in' && clock < clockBefore.getTime();
       });
       return page(orderBy(rows, [(r) => r.created_at], [(r) => r.id]), limit).map((r) => ({
         id: r.id,
