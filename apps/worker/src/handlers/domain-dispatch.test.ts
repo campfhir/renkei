@@ -83,7 +83,9 @@ test('webex message: its room-day is marked dirty first, then agents fan out', a
       type: 'message.received',
       ownerSubject: 'auth0|watcher',
       payload: expect.objectContaining({ text: 'the message', roomId: 'room-1' }),
-    })
+    }),
+    // The runs it starts are noted in the logs (debug).
+    { log: expect.any(Function) }
   );
   // Ordering matters: a knowledge failure must throw BEFORE any run starts.
   expect(mockMarkDirty.mock.invocationCallOrder[0]).toBeLessThan(
@@ -96,7 +98,8 @@ test('mail: no knowledge subscriber, agents still fan out', async () => {
   expect(mockMarkDirty).not.toHaveBeenCalled();
   expect(mockFanOut).toHaveBeenCalledWith(
     expect.anything(),
-    expect.objectContaining({ source: 'microsoft', type: 'mail.received' })
+    expect.objectContaining({ source: 'microsoft', type: 'mail.received' }),
+    { log: expect.any(Function) }
   );
 });
 

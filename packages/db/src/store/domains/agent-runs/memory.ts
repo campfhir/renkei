@@ -99,6 +99,44 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
       );
       return orderBy(groups, [(g) => g.agentId], [(g) => g.status]);
     },
+    async listLiveForOrg({ statuses, limit, offset }) {
+      const wanted = (statuses ?? LIVE).filter((status) => LIVE.includes(status));
+      const rows = orderBy(
+        tables.select('agent_runs', (r) => wanted.includes(r.status)),
+        [(r) => r.created_at],
+        [(r) => r.id]
+      ).flatMap((r) => {
+        const agent = tables.first('agents', (a) => a.id === r.agent_id);
+        if (!agent) return [];
+        const owner = tables.first('identities', (i) => i.subject === r.owner_subject);
+        return [
+          {
+            id: r.id,
+            agentId: r.agent_id,
+            agentName: agent.name,
+            ownerSubject: r.owner_subject,
+            ownerEmail: owner?.email ?? null,
+            status: r.status,
+            triggerKind: r.trigger_kind,
+            createdAt: r.created_at,
+            startedAt: r.started_at ?? null,
+            resumedAt: r.resumed_at ?? null,
+            cancelRequestedAt: r.cancel_requested_at ?? null,
+          },
+        ];
+      });
+      return page(rows, limit, offset ?? 0);
+    },
+    async countLiveForOrg() {
+      const live = tables.select('agent_runs', (r) => LIVE.includes(r.status));
+      return orderBy(
+        [...groupBy(live, (r) => r.status).values()].map((group) => ({
+          status: group[0].status,
+          count: group.length,
+        })),
+        [(g) => g.status]
+      );
+    },
     async findDetail({ agentId, runId: wanted, ownerSubject, audience }) {
       const agent = agentId;
       const id = wanted;

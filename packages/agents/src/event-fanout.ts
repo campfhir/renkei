@@ -17,7 +17,7 @@
 import { getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { agentDefinitionOf } from './definition';
-import { createAgentRun } from './runs';
+import { createAgentRun, type CreateAgentRunOptions } from './runs';
 import { matchesTriggerEvent } from './trigger-catalog';
 
 export interface AgentEventInput {
@@ -74,7 +74,8 @@ export interface FanOutResult {
 /** Fire every enabled trigger matching this event. */
 export async function fanOutAgentEvents(
   producer: QueueProducer,
-  event: AgentEventInput
+  event: AgentEventInput,
+  options: CreateAgentRunOptions = {}
 ): Promise<FanOutResult> {
   const store = getDataStore();
   const triggers = await store.agents.listEventTriggers({
@@ -115,15 +116,19 @@ export async function fanOutAgentEvents(
       if (!claimed) continue;
     }
 
-    const result = await createAgentRun(producer, {
-      agentId: trigger.agentId,
-      ownerSubject: trigger.ownerSubject,
-      definition: agentDefinitionOf({ instructions: trigger.instructions, tools: trigger.tools }),
-      llmModelId: trigger.llmModelId,
-      triggerId: trigger.triggerId,
-      triggerKind: 'event',
-      initialState: event.payload,
-    });
+    const result = await createAgentRun(
+      producer,
+      {
+        agentId: trigger.agentId,
+        ownerSubject: trigger.ownerSubject,
+        definition: agentDefinitionOf({ instructions: trigger.instructions, tools: trigger.tools }),
+        llmModelId: trigger.llmModelId,
+        triggerId: trigger.triggerId,
+        triggerKind: 'event',
+        initialState: event.payload,
+      },
+      options
+    );
     if (result.ok) {
       started.push(result.val.runId);
       if (dedupeKey) {

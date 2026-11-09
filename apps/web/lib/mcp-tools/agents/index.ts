@@ -1661,16 +1661,20 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       // Recorded as the manual run it is (trigger_id stays null) — the owner
       // started it, so it is not an externally triggered run for approvals.
-      const result = await createAgentRun(agentJobsQueue().producer, {
-        agentId: agent.id,
-        ownerSubject: access.ownerSubject,
-        definition: agentDefinitionOf(agent),
-        llmModelId: agent.llmModelId,
-        triggerId: null,
-        triggerKind: 'manual',
-        triggeredBySubject: context.subject,
-        initialState,
-      });
+      const result = await createAgentRun(
+        agentJobsQueue().producer,
+        {
+          agentId: agent.id,
+          ownerSubject: access.ownerSubject,
+          definition: agentDefinitionOf(agent),
+          llmModelId: agent.llmModelId,
+          triggerId: null,
+          triggerKind: 'manual',
+          triggeredBySubject: context.subject,
+          initialState,
+        },
+        { log: (message, meta) => logger.debug(message, meta) }
+      );
       if (!result.ok) {
         return errText(result.err.message ?? `The run could not be started (${result.err.type}).`);
       }

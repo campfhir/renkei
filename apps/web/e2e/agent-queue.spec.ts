@@ -6,7 +6,8 @@
  *
  * What the panel says in every state (held, retrying, not picked up,
  * moving, given up on) is queue-panel.model.test.ts's; the queued cancel's
- * rules are run-cancellation.test.ts's. The runs are short on purpose: the
+ * rules are run-cancellation.test.ts's; the operator's queue view's picking
+ * and halting rules are org-queue.model.test.ts's. The runs are short on purpose: the
  * memory server's agents worker is one serial loop every spec shares.
  */
 
@@ -20,7 +21,7 @@ test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 test('runs waiting behind another show in the Queue panel, and a queued run cancels at once', async ({
   page,
-  person: _person,
+  person,
 }, testInfo) => {
   test.setTimeout(90_000);
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
@@ -58,6 +59,29 @@ test('runs waiting behind another show in the Queue panel, and a queued run canc
     await expect(queue).toContainText('waiting behind it');
     await queue.locator('summary').click();
     await expect(queue).toContainText(/being worked on now|is next/);
+
+    // An operator sees every agent's unfinished runs in one place, and clears one.
+    await page.goto('/agents');
+    await page.getByRole('link', { name: 'Organization queue →' }).click();
+    await expect(page).toHaveURL(/\/admin\/agents\/queue$/);
+    const ours = page
+      .getByRole('main')
+      .getByRole('row')
+      .filter({ hasText: `Queue ${tag}` });
+    // The two runs left: one being worked on or next, one waiting behind it.
+    await expect(ours).toHaveCount(2);
+    const queued = ours.filter({ hasText: 'in queue' }).last();
+    await expect(queued).toContainText(person.subject);
+    page.once('dialog', (dialog) => void dialog.accept());
+    const halted = page.waitForResponse(
+      (response) =>
+        response.url().endsWith('/api/admin/agents/runs/halt') &&
+        response.request().method() === 'POST'
+    );
+    await queued.getByRole('button', { name: /^Halt run / }).click();
+    expect((await halted).status()).toBe(200);
+    // Halted runs leave the queue: only the one being worked on (or next) is left.
+    await expect(ours).toHaveCount(1);
   } finally {
     await removeModel(page.request, modelId);
   }

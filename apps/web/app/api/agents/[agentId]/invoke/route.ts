@@ -157,16 +157,20 @@ export async function POST(
     }
   }
 
-  const result = await createAgentRun(agentJobsQueue().producer, {
-    agentId,
-    ownerSubject: agent.ownerSubject,
-    definition: agentDefinitionOf(agent),
-    llmModelId: agent.llmModelId,
-    triggerId,
-    triggerKind: triggerId ? 'api' : 'manual',
-    triggeredBySubject: triggeredBy,
-    initialState: state,
-  });
+  const result = await createAgentRun(
+    agentJobsQueue().producer,
+    {
+      agentId,
+      ownerSubject: agent.ownerSubject,
+      definition: agentDefinitionOf(agent),
+      llmModelId: agent.llmModelId,
+      triggerId,
+      triggerKind: triggerId ? 'api' : 'manual',
+      triggeredBySubject: triggeredBy,
+      initialState: state,
+    },
+    { log: (message, meta) => logger.debug(message, meta) }
+  );
   if (!result.ok) {
     if (result.err.type === 'DB_ERROR') {
       logger.error('The run could not be started: {error}', {

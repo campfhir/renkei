@@ -27,6 +27,22 @@ export interface AgentLiveRunsRecord {
   oldestCreatedAt: Date;
 }
 
+/** A live run anywhere in the organization, for the operator's queue view. */
+export interface OrgLiveRunRecord {
+  id: string;
+  agentId: string;
+  agentName: string;
+  ownerSubject: string;
+  /** The owner's email, when an identity row has one. */
+  ownerEmail: string | null;
+  status: string;
+  triggerKind: string;
+  createdAt: Date;
+  startedAt: Date | null;
+  resumedAt: Date | null;
+  cancelRequestedAt: Date | null;
+}
+
 /** One agent_run_steps row; `detail` as stored (its content half sealed). */
 export interface RunStepRecord {
   stepId: string;
@@ -190,6 +206,19 @@ export interface AgentRunStore extends AgentRunSweepStore {
    * content-free, so the caller's access check on the agents is enough.
    */
   summarizeLive(agentIds: readonly string[]): Promise<AgentLiveRunsRecord[]>;
+  /**
+   * Every live run (queued, running, waiting) in the organization, or only
+   * those in `statuses`, with its agent's name and its owner: oldest first
+   * (created, then id). Content-free, for the operator's queue view; the
+   * caller checks the operator role.
+   */
+  listLiveForOrg(options: {
+    statuses?: readonly string[];
+    limit: number;
+    offset?: number;
+  }): Promise<OrgLiveRunRecord[]>;
+  /** How many live runs the organization has in each live status, by status. */
+  countLiveForOrg(): Promise<{ status: string; count: number }[]>;
   /** One run with its turns and batches, or null (scoped like `list`). */
   findDetail(options: {
     agentId: string;

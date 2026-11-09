@@ -13,6 +13,8 @@ import { agentsPageHref, cardsPage, listPage, pageFromParam } from './agents-pag
 import { Pager } from '@/components/data-table';
 import { listLiveRunCounts } from '@/lib/agents/runs-view';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { ROLE_OPERATOR } from '@/lib/access';
+import { countOrgQueue } from '@/lib/agents/org-queue';
 
 /**
  * Your agents — every signed-in user's own list (agents are per-user
@@ -53,6 +55,11 @@ export default async function AgentsPage({
   ];
   const liveCounts = await listLiveRunCounts(overviewAgents.map((agent) => agent.id));
   const overview = overviewOf(overviewAgents, liveCounts, Date.now());
+  // An operator also gets the way to every agent's queue in the organization.
+  const isOperator = session.roles.includes(ROLE_OPERATOR);
+  const orgLive = isOperator
+    ? (await countOrgQueue()).reduce((sum, row) => sum + row.count, 0)
+    : null;
 
   // Ten to a page, the overview and the cards each with their own place.
   const requested = await searchParams;
@@ -89,6 +96,21 @@ export default async function AgentsPage({
         Step-by-step helpers you draft yourself — they act with your own connections, on your
         triggers, and keep a full history of every run.
       </p>
+      {orgLive !== null ? (
+        <p className="mb-3 text-sm">
+          <Link
+            href="/admin/agents/queue"
+            className="text-blue-700 hover:underline dark:text-blue-400"
+          >
+            Organization queue →
+          </Link>{' '}
+          <span className="text-gray-600 dark:text-gray-400">
+            {orgLive === 0
+              ? 'nothing in flight across the organization'
+              : `${orgLive} unfinished ${orgLive === 1 ? 'run' : 'runs'} across every agent`}
+          </span>
+        </p>
+      ) : null}
       <AgentsOverview
         overview={overview}
         page={inflightPage}
