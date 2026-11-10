@@ -742,6 +742,41 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'chatThreads.interruptIdleSubagentRuns',
+    name: 'running runs of finished turns not touched since, never a running turn’s',
+    fixture,
+    run: async (store) => {
+      // A background run: started under a turn that has since finished.
+      const background = {
+        chatId: CHAT.annA,
+        turnId: T.done,
+        task: 'sealed-bg',
+        instructions: null,
+        readOnly: false,
+        maxSteps: 3,
+        llmModelId: null,
+        provider: null,
+        model: null,
+      };
+      await store.chatThreads.startSubagentRun({ ...background, toolUseId: 'tu-bg-a' });
+      await store.chatThreads.startSubagentRun({ ...background, toolUseId: 'tu-bg-b' });
+      const pick = async (call: string) => {
+        const run = await store.chatThreads.getSubagentRunByCall(CHAT.annA, call);
+        return run && [run.status, run.error, run.finishedAt !== null];
+      };
+      return [
+        // Touched a moment ago: not idle since the distant past.
+        await store.chatThreads.interruptIdleSubagentRuns(at(0), 'process died'),
+        await store.chatThreads.interruptIdleSubagentRuns(FUTURE, 'process died'),
+        await store.chatThreads.interruptIdleSubagentRuns(FUTURE, 'again'),
+        await pick('tu-bg-a'),
+        // The running turn's run is its recovery's to end; a finished run stays.
+        await pick('tu-sub'),
+        await pick('tu-old'),
+      ];
+    },
+  },
+  {
     method: 'chatThreads.stopSubagentRun',
     name: 'a running run of this chat only; a finished one is left as it is',
     fixture,

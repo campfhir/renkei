@@ -45,6 +45,7 @@ import { cipherAsOwner } from './chat-keys';
 import { unavailableCipher } from './content-crypto';
 import { executeChatTurn } from './start-turn';
 import { getChatRow } from './store';
+import { interruptLostSubagentRuns } from './subagent-recovery';
 import { interruptSubagentRunsOfTurn } from './subagent-runs';
 import { friendlyLlmError, type TurnResumeSeed } from './turn-runner';
 import { claimResumableTurns, finishTurn, interruptExhaustedTurns, type TurnRow } from './turns';
@@ -353,6 +354,9 @@ export function startTurnRecovery(intervalMs = RECOVERY_SWEEP_MS): () => void {
     running = true;
     try {
       await recoverOrphanedTurns();
+      // Background sub-agents whose process died after their turn had
+      // ended (subagent-recovery.ts): no turn is left to recover them by.
+      await interruptLostSubagentRuns();
       // Chats suspended on their tasks whose wait timed out (tasks/wake.ts):
       // this process's own timer is gone if it restarted since.
       await fireDueTaskWaits();

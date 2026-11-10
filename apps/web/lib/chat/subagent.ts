@@ -273,14 +273,27 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     run.context.chatId && run.context.toolUseId
       ? watchSubagentStop(run.context.chatId, run.context.toolUseId, controller)
       : () => {};
+  // What the loop set going and its end must stop, however it ends.
+  const cleanup: (() => void)[] = [unwatch];
   try {
-    return await subagentLoop(run, controller);
+    return await subagentLoop(run, controller, cleanup);
   } finally {
-    unwatch();
+    for (const stop of cleanup) stop();
   }
 }
 
-async function subagentLoop(run: SubagentRun, controller: AbortController): Promise<McpToolResult> {
+/**
+ * How often a working sub-agent touches its run row. A run of a process
+ * that died stops being touched, which is how the sweep on the others
+ * tells it from one still at work (subagent-recovery.ts).
+ */
+export const SUBAGENT_HEARTBEAT_MS = 20_000;
+
+async function subagentLoop(
+  run: SubagentRun,
+  controller: AbortController,
+  cleanup: (() => void)[]
+): Promise<McpToolResult> {
   const { llm, tools, context } = run;
   const model = subagentModelOf(llm);
   // The transcript kept for a person carries how long each model call
@@ -312,12 +325,33 @@ async function subagentLoop(run: SubagentRun, controller: AbortController): Prom
           model,
         })
       : null;
+  // The row's heartbeat: the counts as they stand, no tokens added. A
+  // model call or a command can take minutes; the row must not look
+  // abandoned meanwhile.
+  let stepsDone = 0;
+  let closed = false;
+  if (recorder && runId) {
+    const beat = setInterval(() => {
+      if (closed) return;
+      void recorder
+        .progress(runId, {
+          steps: stepsDone,
+          toolCalls: calls.length,
+          lastTool: calls[calls.length - 1] ?? null,
+          usage: { inputTokens: 0, outputTokens: 0 },
+        })
+        .catch(() => {});
+    }, SUBAGENT_HEARTBEAT_MS);
+    beat.unref?.();
+    cleanup.push(() => clearInterval(beat));
+  }
   const close = async (
     status: 'completed' | 'failed' | 'interrupted',
     outcome: string,
     error: string | null,
     steps: number
   ) => {
+    closed = true;
     if (recorder && runId) {
       await recorder.finish(runId, {
         status,
@@ -427,6 +461,7 @@ async function subagentLoop(run: SubagentRun, controller: AbortController): Prom
       return close('completed', report('done', lastText, calls, step), null, step);
     }
     for (const use of uses) calls.push(use.name);
+    stepsDone = step;
     if (recorder && runId) {
       await recorder.progress(runId, {
         steps: step,

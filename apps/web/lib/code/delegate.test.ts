@@ -11,7 +11,7 @@ import type { LlmProvider, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { textResult, type LocalTool, type LocalToolContext } from '@/lib/chat/local-tools';
 import type { SubagentRecorder } from '@/lib/chat/subagent-runs';
-import { retryDelayMs } from '@/lib/chat/subagent';
+import { SUBAGENT_HEARTBEAT_MS, retryDelayMs } from '@/lib/chat/subagent';
 import {
   DELEGATE_AUTO_DEFAULT_STEPS,
   DELEGATE_AUTO_MAX_STEPS,
@@ -625,6 +625,41 @@ describe('code_delegate', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe('The sub-agent was stopped: stopped by Ann.');
     expect(finished).toEqual([{ status: 'interrupted', error: 'stopped by Ann' }]);
+  });
+
+  it('touches its run while a step takes long, so it is not taken for one whose process died', async () => {
+    jest.useFakeTimers();
+    try {
+      let answer: (reply: LlmResponse) => void = () => {};
+      const llm = llmOf({
+        complete: () =>
+          new Promise((resolve) => {
+            answer = (reply) => resolve(ok(reply));
+          }),
+      });
+      const beats: number[] = [];
+      const recorder: SubagentRecorder = {
+        start: async () => 'run-1',
+        progress: async (_runId, state) => {
+          beats.push(state.usage.inputTokens + state.usage.outputTokens);
+        },
+        finish: async () => {},
+      };
+      const running = codeDelegateTool([readTool]).execute(
+        { task: 'think for a long while', readOnly: true },
+        context({ llm, toolUseId: 'd10', subagents: recorder })
+      );
+      await jest.advanceTimersByTimeAsync(SUBAGENT_HEARTBEAT_MS * 3);
+      // Three heartbeats, none adding tokens.
+      expect(beats).toEqual([0, 0, 0]);
+      answer(done('Done thinking.'));
+      await running;
+      const afterEnd = beats.length;
+      await jest.advanceTimersByTimeAsync(SUBAGENT_HEARTBEAT_MS * 3);
+      expect(beats.length).toBe(afterEnd);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('is a tool whose calls in one reply run side by side', () => {

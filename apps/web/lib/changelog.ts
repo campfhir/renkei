@@ -55,6 +55,12 @@ export const CHANGELOG: ChangelogRelease[] = [
           'A code chat can now start sub-agents in the background and keep working while they run, instead of sitting in one long step until they report. While it waits for them the chat is free, so you can write to it and get an answer.',
       },
       {
+        kind: 'fixed',
+        title: 'A sub-agent cut off by a restart no longer looks like it is still working',
+        detail:
+          'If the service restarts while a background sub-agent is working, its card now shows it as interrupted within a couple of minutes and its task is marked failed with the reason, so the assistant is told and can start the work again.',
+      },
+      {
         kind: 'added',
         title: 'Stop a single sub-agent',
         detail:
