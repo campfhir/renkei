@@ -16,8 +16,12 @@ export type MessageRole = 'user' | 'assistant';
  * 'note': a user-role row the code pane wrote for what the person did
  * to the checkout by hand — a save, a commit, a push (lib/code/notes.ts).
  * Shown as a small line too; the model reads it as part of the thread.
+ * 'decision': a user-role row for what the person decided on a preview
+ * card (widget-tools.ts, the card's `ui/update-model-context`). The card
+ * itself shows the outcome as its receipt, so the thread draws no line for
+ * it; the model reads it as the person's cue to reply, like a 'note'.
  */
-export type MessageKind = 'prompt' | 'assistant' | 'tool_results' | 'nudge' | 'note';
+export type MessageKind = 'prompt' | 'assistant' | 'tool_results' | 'nudge' | 'note' | 'decision';
 export type MessageStatus = 'complete' | 'streaming' | 'canceled' | 'interrupted' | 'failed';
 export type TurnStatus = 'running' | 'completed' | 'failed' | 'canceled' | 'interrupted';
 /** 'compaction': a chat_compact pass riding the turn machinery, no messages of its own. */

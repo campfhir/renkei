@@ -448,8 +448,14 @@ body {
 }
 
 /* --- Level badges (LogTable + LogCard) ------------------------------------ */
+/*
+ * `:not([data-log-card])`: the card itself carries `data-level` too (its
+ * left border is coloured by it below), so without the exclusion the badge
+ * rule took the whole card — every line uppercase and bold, and the message
+ * `nowrap`, running off a phone screen instead of wrapping.
+ */
 .log-table [data-level],
-.log-cards [data-level] {
+.log-cards [data-level]:not([data-log-card]) {
   display: inline-block;
   border-radius: 0.25rem;
   padding: 0.0625rem 0.375rem;
@@ -460,27 +466,27 @@ body {
   white-space: nowrap;
 }
 .log-table [data-level='debug' i],
-.log-cards [data-level='debug' i] {
+.log-cards [data-level='debug' i]:not([data-log-card]) {
   background: color-mix(in oklab, var(--color-slate-500) 20%, transparent);
   color: var(--bl-debug);
 }
 .log-table [data-level='info' i],
-.log-cards [data-level='info' i] {
+.log-cards [data-level='info' i]:not([data-log-card]) {
   background: color-mix(in oklab, var(--color-emerald-500) 16%, transparent);
   color: var(--bl-info);
 }
 .log-table [data-level='warn' i],
-.log-cards [data-level='warn' i] {
+.log-cards [data-level='warn' i]:not([data-log-card]) {
   background: color-mix(in oklab, var(--color-amber-500) 18%, transparent);
   color: var(--bl-warn);
 }
 .log-table [data-level='error' i],
-.log-cards [data-level='error' i] {
+.log-cards [data-level='error' i]:not([data-log-card]) {
   background: color-mix(in oklab, var(--color-red-500) 16%, transparent);
   color: var(--bl-error);
 }
 .log-table [data-level='critical' i],
-.log-cards [data-level='critical' i] {
+.log-cards [data-level='critical' i]:not([data-log-card]) {
   background: var(--color-red-600);
   color: #fff;
 }
@@ -635,6 +641,8 @@ body {
   margin: 0.5rem 0;
   color: var(--bl-text);
   font-size: 0.875rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
   word-break: break-word;
 }
 .log-cards [data-log-card-fields] {

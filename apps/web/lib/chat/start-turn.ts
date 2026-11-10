@@ -202,12 +202,13 @@ export interface StartTurnInput {
   timeZone?: string | null;
   /**
    * How the user row is stored and shown: a 'prompt' is what the person
-   * typed, their bubble; a 'note' is what they did outside the composer —
-   * today, a decision on a preview card (widget-tools.ts) — shown as a
-   * small line in the margin, never as a bubble, but the model's cue to
-   * reply all the same.
+   * typed, their bubble; a 'note' is what they did outside the composer,
+   * shown as a small line in the margin, never as a bubble; a 'decision'
+   * is what they decided on a preview card (widget-tools.ts), which the
+   * card's own receipt shows, so the thread draws nothing for it. Either
+   * way the row is the model's cue to reply.
    */
-  kind?: 'prompt' | 'note';
+  kind?: 'prompt' | 'note' | 'decision';
   defer?: (task: () => Promise<void>) => void;
 }
 

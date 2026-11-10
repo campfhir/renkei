@@ -133,7 +133,7 @@ maybe('recordWidgetModelContext', () => {
     expect(recorded.ok).toBe(true);
     if (!recorded.ok) return;
     expect(recorded.turn).not.toBeNull();
-    expect(recorded.message.kind).toBe('note');
+    expect(recorded.message.kind).toBe('decision');
     expect(recorded.message.turnId).toBe(recorded.turn?.turnId ?? null);
     expect(recorded.message.blocks).toEqual([{ type: 'text', text: DECISION }]);
     // The model work was handed off, not run here.
@@ -149,7 +149,7 @@ maybe('recordWidgetModelContext', () => {
       turnId: row.turnId,
     }));
     expect(rows).toEqual([
-      { role: 'user', kind: 'note', status: 'complete', turnId: recorded.turn?.turnId },
+      { role: 'user', kind: 'decision', status: 'complete', turnId: recorded.turn?.turnId },
       { role: 'assistant', kind: 'assistant', status: 'streaming', turnId: recorded.turn?.turnId },
     ]);
   });
@@ -163,7 +163,7 @@ maybe('recordWidgetModelContext', () => {
     });
     expect(recorded).toEqual({ ok: false, reason: 'turn-running' });
     const notes = (await getDataStore().chatThreads.listMessages(chatId)).filter(
-      (row) => row.kind === 'note'
+      (row) => row.kind === 'decision'
     );
     expect(notes).toHaveLength(1);
     expect(deferred).toHaveLength(1);
@@ -189,7 +189,7 @@ maybe('recordWidgetModelContext', () => {
     expect(recorded.ok).toBe(true);
     if (!recorded.ok) return;
     expect(recorded.turn).toBeNull();
-    expect(recorded.message.kind).toBe('note');
+    expect(recorded.message.kind).toBe('decision');
     expect(recorded.message.turnId).toBeNull();
     const store = getDataStore();
     const rows = (await store.chatThreads.listMessages(modellessChatId)).map((row) => ({
@@ -197,7 +197,7 @@ maybe('recordWidgetModelContext', () => {
       kind: row.kind,
       turnId: row.turnId,
     }));
-    expect(rows).toEqual([{ role: 'user', kind: 'note', turnId: null }]);
+    expect(rows).toEqual([{ role: 'user', kind: 'decision', turnId: null }]);
     // No turn was opened: none is running, and no message belongs to one.
     expect(await store.chatThreads.getActiveTurn(modellessChatId)).toBeNull();
     expect(await turnIdsOf(modellessChatId)).toEqual([]);
@@ -447,12 +447,12 @@ maybe('recordWidgetModelContext: batches decisions from one reply', () => {
     expect((await store.chatThreads.getActiveTurn(chatId))?.id).toBe(newTurnId);
     expect(await turnIdsOf(chatId)).toEqual([replyTurnId, newTurnId].sort());
 
-    const noteRows = (await store.chatThreads.listMessages(chatId))
-      .filter((row) => row.kind === 'note')
+    const decisionRows = (await store.chatThreads.listMessages(chatId))
+      .filter((row) => row.kind === 'decision')
       .map((row) => ({ kind: row.kind, turnId: row.turnId }));
-    expect(noteRows).toEqual([
-      { kind: 'note', turnId: null },
-      { kind: 'note', turnId: newTurnId },
+    expect(decisionRows).toEqual([
+      { kind: 'decision', turnId: null },
+      { kind: 'decision', turnId: newTurnId },
     ]);
   });
 });

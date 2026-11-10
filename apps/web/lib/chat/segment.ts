@@ -112,6 +112,10 @@ export function segment(
   >();
   for (const message of messages) {
     if (message.role !== 'assistant') {
+      // A 'decision' row — what the person did on a preview card — is the
+      // model's cue, not the thread's: the card's own receipt shows it, and
+      // a line repeating the receipt (link and all) under the card was only
+      // noise. 'prompt' rows are the person's bubble, drawn elsewhere.
       if (message.kind === 'nudge' || message.kind === 'note') {
         const text = message.blocks
           .flatMap((block) => (block.type === 'text' ? [block.text] : []))

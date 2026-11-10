@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'fixed',
+        title: 'Activity log cards wrap long lines on a phone',
+        detail:
+          'On a phone, a log card drew every line uppercase and bold and cut a long message off at the right edge. Only the level badge is uppercase now, and the message wraps.',
+      },
+      {
+        kind: 'fixed',
+        title: "A preview card's confirmation no longer repeats under the card",
+        detail:
+          "Confirming or cancelling a preview card used to add a small line under it repeating what the card already showed, link and all. The card's own receipt is the record now; the model still replies to the decision.",
+      },
+      {
         kind: 'added',
         title: "Test a Mirth connector's connection",
         detail:
