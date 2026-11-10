@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'fixed',
+        title: 'The assistant knows what a confirmed card created',
+        detail:
+          "When you confirm a preview card, the assistant now receives what the action returned, such as a new Zoom meeting's id and join link or a created issue's key, so it can carry on (send the invite, link the issue) without asking you to paste it. The card still shows only its receipt.",
+      },
+      {
         kind: 'added',
         title: 'Ask a chat about Renkei itself',
         detail:
