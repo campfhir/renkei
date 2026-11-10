@@ -7,6 +7,11 @@
  * sub-agent commits and pushes its own work as it goes: a run can last
  * hours, the checkout dies with the sandbox, and work that waited for
  * the orchestrator to push it was lost whenever a restart came first.
+ * A sub-agent that changes things works in a git worktree of its own, on
+ * a branch started at the chat's branch's last commit (`SubagentCheckout`,
+ * made by lib/code/tools.ts): several run at once without touching each
+ * other's files or the chat's, and the orchestrator merges each branch
+ * when its report is in. A read-only one reads the chat's own checkout.
  * The loop itself, the model roster and the record kept of the
  * run are lib/chat/subagent.ts's, shared with the ordinary chat's
  * `chat_delegate` (lib/chat/chat-delegate.ts); what is this tool's own
@@ -14,6 +19,7 @@
  */
 
 import type { LlmToolDef } from '@renkei/agent-llm';
+import type { McpToolResult } from '@renkei/mcp-client';
 import {
   createLocalToolSet,
   errorResult,
@@ -87,7 +93,55 @@ export const WITHHELD_FROM_SUBAGENTS: ReadonlySet<string> = new Set([
   'code_git_clean',
 ]);
 
-const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output; git is yours too — fetch, branches, stash, rebase or merge when the task calls for it (a rebase or merge that stops on conflicts names the files: fix them and continue, or abort). Save your work as you go: the checkout lives on a sandbox that can restart mid-task, and whatever was never pushed is lost with it. So when you change files, commit each piece that stands (code_git_commit, with a message that says what changed and why) and push it straight away (code_git_push) — every few edits on a long task, work in progress included, and always before your report — on the branch the checkout is already on unless the task names another. Other sub-agents may be working in this same checkout at the same time on other files: touch only what your task covers, commit only the paths you changed (code_git_commit with paths, never everything), do not switch branches, stash, rebase or merge unless the task says to, and if git reports that another process holds the lock or the push is behind the remote, wait for your next step and try again (code_git_pull first for a push that is behind). Never replace a remote branch (no forced push); if a push is refused, say so in your report and carry on. Do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, what you committed and whether it is pushed, and anything you could not do or are unsure of. Be concrete and brief.`;
+const SUB_AGENT_BRIEF = `You are a sub-agent working in a repository's checkout on behalf of an orchestrating assistant, which gave you one task and will read your report. Use the code_* tools to do the task yourself: look before you change anything, make the change, run what proves it (the project's tests, lint or build) and read the output; git is yours too — fetch, branches, stash, rebase or merge when the task calls for it (a rebase or merge that stops on conflicts names the files: fix them and continue, or abort). Save your work as you go: the checkout lives on a sandbox that can restart mid-task, and whatever was never pushed is lost with it. So when you change files, commit each piece that stands (code_git_commit, with a message that says what changed and why) and push it straight away (code_git_push) — every few edits on a long task, work in progress included, and always before your report — on the branch the checkout is already on unless the task names another. Never replace a remote branch (no forced push); if a push is refused, say so in your report and carry on. Do not open pull requests, do not ask questions — decide, act, and report. Your final message is your report: what you did, which files you changed, what you ran and what it said, what you committed and whether it is pushed, and anything you could not do or are unsure of. Be concrete and brief.`;
+
+/** Told to a sub-agent that works in a worktree of its own. */
+function ownWorktreeNote(checkout: { branch: string; from: string }): string {
+  return `You work in a git worktree of your own, on the branch ${checkout.branch}, started at the last commit of the orchestrator's branch ${checkout.from}. Nothing here is shared: no other sub-agent's edits appear in it, yours appear nowhere else, and what the orchestrator had not committed is not in it. Stay on this branch — commit on it and push it; the orchestrator merges it into its own once it has your report, so anything you leave uncommitted is not part of your work. Name the branch in your report.`;
+}
+
+/** Told to a sub-agent that changes things in the chat's own checkout. */
+const SHARED_CHECKOUT_NOTE = `You work in the orchestrator's own checkout, and other sub-agents may be working in it at the same time on other files: touch only what your task covers, commit only the paths you changed (code_git_commit with paths, never everything), do not switch branches, stash, rebase or merge unless the task says to, and if git reports that another process holds the lock or the push is behind the remote, try again at your next step (code_git_pull first for a push that is behind).`;
+
+/**
+ * A sub-agent's own worktree of the repository, for the length of its
+ * run: the checkout tools bound to it, the branch it is on, and how it is
+ * put away.
+ */
+export interface SubagentCheckout {
+  /** The project's code tools, bound to this worktree. */
+  tools: LocalTool[];
+  /** The sub-agent's branch. */
+  branch: string;
+  /** The chat's branch it started from. */
+  from: string;
+  /**
+   * The run is over: keep what was left uncommitted (as a commit on the
+   * branch), take the worktree away — the branch outlives it — and answer
+   * with what the orchestrator needs to know to bring the work in.
+   */
+  close(context: LocalToolContext): Promise<string>;
+}
+
+/** Make a sub-agent's worktree, or say why there is none (it then works in the chat's checkout). */
+export type OpenSubagentCheckout = (
+  context: LocalToolContext,
+  key: string
+) => Promise<{ ok: true; checkout: SubagentCheckout } | { ok: false; reason: string }>;
+
+/**
+ * The branch a sub-agent works on: the chat's branch with a suffix from
+ * the delegation's own id, so the same delegation always names the same
+ * branch and two never share one. Beside the chat's branch, never under
+ * it — git cannot hold both `a` and `a/b`.
+ */
+export function subagentBranchName(from: string, key: string): string {
+  const suffix = key
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(-8)
+    .toLowerCase();
+  return `${from.slice(0, 180)}-sub-${suffix || 'agent'}`;
+}
 
 const PUSH_TOOL = 'code_git_push';
 
@@ -112,6 +166,11 @@ export function subagentPushTool(push: LocalTool): LocalTool {
   };
 }
 
+/** A tool result with one more line of text after it. */
+function withNote(result: McpToolResult, note: string): McpToolResult {
+  return note ? { ...result, content: [...result.content, { type: 'text', text: note }] } : result;
+}
+
 export interface DelegateOptions {
   /**
    * The models the orchestrator may pick from, named in the tool's
@@ -124,6 +183,11 @@ export interface DelegateOptions {
   resolve?: ResolveSubagentLlm;
   /** The chat is in auto mode: a sub-agent gets the long limits above. */
   auto?: boolean;
+  /**
+   * How a sub-agent that changes things gets a worktree of its own
+   * (lib/code/tools.ts). Absent, every sub-agent works in the chat's checkout.
+   */
+  checkout?: OpenSubagentCheckout;
 }
 
 /**
@@ -132,9 +196,11 @@ export interface DelegateOptions {
  * and only the read-only part when the task says so.
  */
 export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = {}): LocalTool {
-  const offered = tools
-    .filter((tool) => !WITHHELD_FROM_SUBAGENTS.has(tool.def.name))
-    .map((tool) => (tool.def.name === PUSH_TOOL ? subagentPushTool(tool) : tool));
+  const forSubagent = (all: LocalTool[]) =>
+    all
+      .filter((tool) => !WITHHELD_FROM_SUBAGENTS.has(tool.def.name))
+      .map((tool) => (tool.def.name === PUSH_TOOL ? subagentPushTool(tool) : tool));
+  const offered = forSubagent(tools);
   const models = options.models ?? [];
   const auto = options.auto === true;
   const defaultSteps = auto ? DELEGATE_AUTO_DEFAULT_STEPS : DELEGATE_DEFAULT_STEPS;
@@ -147,13 +213,16 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
       'same repository tools (reading, searching, editing, running commands, committing and ' +
       'pushing as it goes, so its work survives an interruption — never a forced push), which ' +
       'works until done and answers with a report. Several calls in the same reply run side by ' +
-      'side (up to four at once) in the same checkout, so give sub-agents working at once pieces ' +
-      'that touch different files. This is the usual way to do ' +
+      'side (up to four at once). A sub-agent that changes things works in a git worktree of its ' +
+      'own, on a branch started at your branch’s last commit: commit what it needs before you ' +
+      'delegate (your uncommitted files are not in its worktree), and when its report is in, ' +
+      'merge its branch into yours with code_git_merge — its answer names the branch. A ' +
+      'readOnly one reads this checkout as it is. This is the usual way to do ' +
       'anything that takes more than a handful of tool calls — an investigation, finding every ' +
       'place a change touches, one self-contained piece of a change, a test suite run and fixed — ' +
       'because its calls and results stay in its own conversation and only the report enters ' +
       'this one (readOnly for a pure investigation). Give it a complete, self-contained task and ' +
-      'say what to report and which branch to commit and push to — it sees nothing of this chat ' +
+      'say what to report — it sees nothing of this chat ' +
       '— and read its report critically; you remain responsible for the result, for checking ' +
       'what it claims, and for seeing that everything it changed is committed and pushed. ' +
       `A sub-agent makes at most maxSteps model calls (default ${defaultSteps}). ` +
@@ -179,6 +248,12 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
           type: 'boolean',
           description:
             'Only reading and searching tools: for an investigation that must change nothing.',
+        },
+        inPlace: {
+          type: 'boolean',
+          description:
+            'Work in this chat’s own checkout instead of a worktree of its own — only for a task that ' +
+            'needs your uncommitted files as they are. Never for sub-agents running at once.',
         },
         maxSteps: {
           type: 'integer',
@@ -211,14 +286,31 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
       if (!picked.ok) return picked.error;
       const instructions = str(input.instructions).trim();
       const readOnly = input.readOnly === true || context.readOnly;
+      // A sub-agent that changes things gets a worktree of its own; where
+      // one cannot be made (the chat is not on a branch, the worker's
+      // limit) it works in the chat's checkout, as one asked to does.
+      let checkout: SubagentCheckout | null = null;
+      let unavailable = '';
+      if (!readOnly && input.inPlace !== true && options.checkout) {
+        const opened = await options.checkout(context, context.toolUseId ?? '');
+        if (opened.ok) checkout = opened.checkout;
+        else unavailable = opened.reason;
+      }
       const set = createLocalToolSet(
-        readOnly ? offered.filter((tool) => tool.readOnly === true) : offered
+        readOnly
+          ? offered.filter((tool) => tool.readOnly === true)
+          : checkout
+            ? forSubagent(checkout.tools)
+            : offered
       );
-      return runSubagent({
+      const brief = readOnly
+        ? SUB_AGENT_BRIEF
+        : `${SUB_AGENT_BRIEF}\n\n${checkout ? ownWorktreeNote(checkout) : SHARED_CHECKOUT_NOTE}`;
+      const run = runSubagent({
         llm: picked.llm,
         system: instructions
-          ? `${SUB_AGENT_BRIEF}\n\nInstructions from the orchestrator:\n${instructions}`
-          : SUB_AGENT_BRIEF,
+          ? `${brief}\n\nInstructions from the orchestrator:\n${instructions}`
+          : brief,
         task,
         instructions: instructions || null,
         readOnly,
@@ -236,6 +328,22 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
         },
         context,
       });
+      if (!checkout) {
+        const result = await run;
+        return unavailable
+          ? withNote(
+              result,
+              `[This sub-agent worked in this chat’s own checkout: a worktree of its own could not be made — ${unavailable}]`
+            )
+          : result;
+      }
+      // Whatever the run came to, the worktree is put away and the branch named.
+      const worktree = checkout;
+      const result = await run.catch(async (error: unknown) => {
+        await worktree.close(context).catch(() => {});
+        throw error;
+      });
+      return withNote(result, await worktree.close(context));
     },
   };
 }

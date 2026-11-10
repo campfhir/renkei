@@ -935,6 +935,8 @@ describe('buildSystemPrompt’s code brief', () => {
     // Work only in the worktree is lost when the sandbox restarts mid-run.
     expect(prompt).toContain('Commit and push as the work goes');
     expect(prompt).toContain('commits its work as it goes and pushes');
+    expect(prompt).toContain('works in a git worktree of its own');
+    expect(prompt).toContain('code_git_merge');
     expect(prompt).toContain('the sub-agents run side by side');
   });
 });

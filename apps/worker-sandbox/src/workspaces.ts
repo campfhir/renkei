@@ -771,6 +771,12 @@ export interface WorktreeInput {
   branch: string;
   /** The remote branch to start from; empty means the repository's default branch. */
   startBranch?: string;
+  /**
+   * A local branch to start from instead — a sub-agent's worktree starts
+   * at the last commit of the chat's own branch. Nothing is fetched; a
+   * branch that is not there is a refusal.
+   */
+  startLocal?: string;
   /** When given, the remote is fetched first so the worktree starts from where it is now, not from the clone. */
   gitProxy?: GitProxy;
 }
@@ -799,7 +805,12 @@ export async function addWorktree(input: WorktreeInput): Promise<CloneOutcome> {
   };
   await runGit(run, ['checkout', '--detach']);
   let start = 'HEAD';
-  if (input.gitProxy) {
+  if (input.startLocal) {
+    start = `refs/heads/${input.startLocal}`;
+    if ((await runGit(run, ['rev-parse', '--verify', '--quiet', start])).exitCode !== 0) {
+      return { ok: false, message: `There is no local branch ${input.startLocal} to start from.` };
+    }
+  } else if (input.gitProxy) {
     const fetched = await runGit(run, ['fetch', '--no-tags', 'origin']);
     const remote = `origin/${input.startBranch || 'HEAD'}`;
     // A failed fetch (the remote is down) still gives a usable worktree, from the clone.

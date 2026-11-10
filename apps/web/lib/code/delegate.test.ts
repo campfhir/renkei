@@ -23,7 +23,9 @@ import {
   DELEGATE_WALL_CLOCK_MS,
   codeDelegateTool,
   matchSubagentModel,
+  subagentBranchName,
   subagentPushTool,
+  type OpenSubagentCheckout,
   type SubagentModelChoice,
 } from './delegate';
 import { resourceCipher } from '@/lib/chat/content-crypto';
@@ -486,6 +488,111 @@ describe('code_delegate', () => {
     const tool = codeDelegateTool([readTool, pushTool]);
     await tool.execute({ task: 'look', readOnly: true }, context({ llm, toolUseId: 'd3' }));
     expect(pushes).toEqual([]);
+  });
+
+  describe('a worktree of its own', () => {
+    const edits: string[] = [];
+    const editIn = (where: string): LocalTool => ({
+      def: { name: 'code_edit_file', description: 'edit', inputSchema: { type: 'object' } },
+      async execute() {
+        edits.push(where);
+        return textResult('edited');
+      },
+    });
+    const editThenReport = () =>
+      llmOf(
+        provider([
+          {
+            content: [{ type: 'tool_use', id: 'u1', name: 'code_edit_file', input: {} }],
+            stopReason: 'tool_use',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+          done('Changed a.ts.'),
+        ])
+      );
+    function fakeCheckout() {
+      const opened: string[] = [];
+      const closed: string[] = [];
+      const open: OpenSubagentCheckout = async (_context, key) => {
+        opened.push(key);
+        return {
+          ok: true,
+          checkout: {
+            tools: [editIn('its own worktree')],
+            branch: 'renkei/abc-sub-d5',
+            from: 'renkei/abc',
+            async close() {
+              closed.push(key);
+              return 'Merge renkei/abc-sub-d5.';
+            },
+          },
+        };
+      };
+      return { open, opened, closed };
+    }
+
+    it('is where a sub-agent that changes things works, and is put away with its branch named', async () => {
+      edits.length = 0;
+      const { open, opened, closed } = fakeCheckout();
+      let system = '';
+      const llm = editThenReport();
+      const complete = llm.provider.complete.bind(llm.provider);
+      llm.provider.complete = async (request) => {
+        system = String(request.system);
+        return complete(request);
+      };
+      const tool = codeDelegateTool([editIn('the chat’s checkout')], { checkout: open });
+      const result = await tool.execute({ task: 'change a.ts' }, context({ llm, toolUseId: 'd5' }));
+      expect(edits).toEqual(['its own worktree']);
+      expect(opened).toEqual(['d5']);
+      expect(closed).toEqual(['d5']);
+      expect(system).toContain('renkei/abc-sub-d5');
+      expect(system).toContain('a git worktree of your own');
+      const text = result.content.map((block) => block.text).join('\n');
+      expect(text).toContain('Changed a.ts.');
+      expect(text).toContain('Merge renkei/abc-sub-d5.');
+    });
+
+    it('is not made for a read-only sub-agent, nor for one asked to work in place', async () => {
+      edits.length = 0;
+      const { open, opened } = fakeCheckout();
+      const tool = codeDelegateTool([readTool, editIn('the chat’s checkout')], { checkout: open });
+      await tool.execute(
+        { task: 'look', readOnly: true },
+        context({ llm: llmOf(provider([done('Looked.')])), toolUseId: 'd6' })
+      );
+      await tool.execute(
+        { task: 'change a.ts', inPlace: true },
+        context({ llm: editThenReport(), toolUseId: 'd7' })
+      );
+      expect(opened).toEqual([]);
+      expect(edits).toEqual(['the chat’s checkout']);
+    });
+
+    it('falls back to the chat’s checkout, saying why, when one cannot be made', async () => {
+      edits.length = 0;
+      const tool = codeDelegateTool([editIn('the chat’s checkout')], {
+        checkout: async () => ({
+          ok: false,
+          reason: 'this checkout is not on a branch right now.',
+        }),
+      });
+      const result = await tool.execute(
+        { task: 'change a.ts' },
+        context({ llm: editThenReport(), toolUseId: 'd8' })
+      );
+      expect(edits).toEqual(['the chat’s checkout']);
+      expect(result.content.map((block) => block.text).join('\n')).toContain(
+        'a worktree of its own could not be made — this checkout is not on a branch right now.'
+      );
+    });
+
+    it('names a branch beside the chat’s, from the delegation’s id', () => {
+      expect(subagentBranchName('renkei/abc123', 'toolu_01AbCdEfGh')).toBe(
+        'renkei/abc123-sub-abcdefgh'
+      );
+      expect(subagentBranchName('feature/x', '')).toBe('feature/x-sub-agent');
+    });
   });
 
   it('is a tool whose calls in one reply run side by side', () => {

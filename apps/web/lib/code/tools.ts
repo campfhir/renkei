@@ -48,6 +48,9 @@ import {
   sbServiceStart,
   sbServiceStop,
   sbServicesTail,
+  sbWorkspaceDelete,
+  sbWorkspaceGet,
+  sbWorkspaceWorktree,
   sbWorkspaceEdit,
   sbWorkspaceExec,
   sbWorkspaceFind,
@@ -64,11 +67,21 @@ import {
   sbWorkspaceWrite,
   type SandboxTarget,
 } from '@renkei/sandbox-client';
-import { errorResult, textResult, type LocalTool } from '@/lib/chat/local-tools';
+import {
+  errorResult,
+  textResult,
+  type LocalTool,
+  type LocalToolContext,
+} from '@/lib/chat/local-tools';
 import type { McpToolResult } from '@renkei/mcp-client';
 import { GITHUB } from '@renkei/provider-grants';
 import { commitAuthorFor, resolveWorkspaceGitAccess } from '@/lib/sandbox/workspace-git';
-import { codeDelegateTool, type SubagentModelChoice } from './delegate';
+import {
+  codeDelegateTool,
+  subagentBranchName,
+  type OpenSubagentCheckout,
+  type SubagentModelChoice,
+} from './delegate';
 import { moreGitTools } from './git-tools';
 import { previewTools } from './preview-tools';
 import { DIFF_FENCE_CLOSE, DIFF_FENCE_OPEN } from './diff';
@@ -118,6 +131,11 @@ export interface CodeToolBinding {
    * the code_service_* tools do not exist in the turn.
    */
   servicesEnabled?: boolean;
+  /**
+   * These are a sub-agent's tools, bound to its own worktree
+   * (`subagentCheckout` below): no delegating from here, so none is built.
+   */
+  subagent?: boolean;
 }
 
 /**
@@ -549,6 +567,90 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
     return `\n\n${DIFF_FENCE_OPEN}${clipped.text}${DIFF_FENCE_CLOSE}`;
   };
 
+  /** Who a commit made here is by: the person chatting, as their git host knows them. */
+  const authorOf = async (context: LocalToolContext) => {
+    const credential = await resolveWorkspaceGitAccess(
+      { subject: context.subject, origin: binding.origin, provider: binding.repoProvider },
+      { write: false }
+    );
+    const username = typeof credential === 'string' ? '' : credential.username;
+    return commitAuthorFor(
+      username || context.subject,
+      context.userEmail ?? undefined,
+      binding.repoProvider
+    );
+  };
+
+  /**
+   * A worktree of its own for a sub-agent that changes things
+   * (delegate.ts): a sibling of the chat's, on a branch started at the
+   * chat's branch's last commit, with these same tools bound to it. When
+   * the run ends, anything left uncommitted is committed on that branch
+   * so it is not lost with the worktree, the worktree is removed, and the
+   * orchestrator is told which branch to merge. The branch — in the
+   * project's clone, which every worktree shares — is what carries the
+   * work back, as it does between chats.
+   */
+  const subagentCheckout: OpenSubagentCheckout = async (_context, key) => {
+    const current = await sbWorkspaceGet(target, ref.id);
+    if (!current.ok) return { ok: false, reason: clientFailure(current.err).message };
+    const from = current.val.branch;
+    const baseId = current.val.parentId;
+    if (!baseId) return { ok: false, reason: 'this checkout is not a worktree of a clone.' };
+    if (!from || from === 'HEAD') {
+      return { ok: false, reason: 'this checkout is not on a branch right now.' };
+    }
+    const branch = subagentBranchName(from, key);
+    const made = await sbWorkspaceWorktree(target, { baseId, branch, startLocal: from });
+    if (!made.ok) return { ok: false, reason: clientFailure(made.err).message };
+    const id = made.val.id;
+    return {
+      ok: true,
+      checkout: {
+        tools: codeTools({
+          ...binding,
+          workspaceId: id,
+          workspaceRef: undefined,
+          recover: undefined,
+          subagent: true,
+        }),
+        branch,
+        from,
+        async close(context) {
+          const notes = [
+            `The sub-agent worked in a worktree of its own on the branch ${branch}, started from ${from}. ` +
+              `None of its changes are in this checkout yet: bring them in with code_git_merge (action "start", ref "${branch}"), then push. ` +
+              'If it committed nothing, there is nothing to merge.',
+          ];
+          const status = await sbWorkspaceGitStatus(target, { id });
+          let keep = !status.ok;
+          if (status.ok && status.val.status.trim()) {
+            const saved = await sbWorkspaceGitCommit(target, {
+              id,
+              message: 'Work in progress a sub-agent left uncommitted',
+              author: await authorOf(context),
+            });
+            if (saved.ok) {
+              notes.push(
+                `It left changes uncommitted; they were committed on ${branch} as work in progress (${saved.val.commit}) — look at them before you merge.`
+              );
+            } else {
+              keep = true;
+            }
+          }
+          if (keep) {
+            notes.push(
+              'Its worktree was left on the sandbox because what it had not committed could not be saved; the commits on its branch are still there to merge.'
+            );
+          } else {
+            await sbWorkspaceDelete(target, id);
+          }
+          return notes.join(' ');
+        },
+      },
+    };
+  };
+
   /** What the working tree now has changed, after a command that may have changed it. */
   const changedFilesNote = async (): Promise<string> => {
     const diff = await sbWorkspaceGitDiff(target, { id: ref.id, statOnly: true });
@@ -976,25 +1078,12 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
         const paths = Array.isArray(input.paths)
           ? input.paths.filter((entry): entry is string => typeof entry === 'string')
           : [];
-        const credential = await resolveWorkspaceGitAccess(
-          {
-            subject: context.subject,
-            origin: binding.origin,
-            provider: binding.repoProvider,
-          },
-          { write: false }
-        );
-        const username = typeof credential === 'string' ? '' : credential.username;
         const committed = await sbWorkspaceGitCommit(target, {
           id: ref.id,
           message: str(input.message),
           ...(paths.length ? { paths } : {}),
           ...(str(input.newBranch) ? { newBranch: str(input.newBranch) } : {}),
-          author: commitAuthorFor(
-            username || context.subject,
-            context.userEmail ?? undefined,
-            binding.repoProvider
-          ),
+          author: await authorOf(context),
         });
         if (!committed.ok) return failed(committed.err);
         return textResult(`Committed on ${committed.val.branch}: ${committed.val.commit}`);
@@ -1137,13 +1226,16 @@ export function codeTools(binding: CodeToolBinding): LocalTool[] {
       }
     : null;
   const recovering = recovery ? tools.map((tool) => withCheckoutRecovery(tool, recovery)) : tools;
-  // The sub-agent gets these same tools (minus pushing and delegating),
-  // on whichever of the org's models the orchestrator picks for its task.
+  if (binding.subagent) return recovering;
+  // The sub-agent gets these same tools (minus delegating and what
+  // delegate.ts withholds), bound to a worktree of its own when it changes
+  // things, on whichever of the org's models the orchestrator picks for its task.
   return [
     ...recovering,
     codeDelegateTool(recovering, {
       ...(binding.subagentModels ? { models: binding.subagentModels } : {}),
       ...(binding.auto ? { auto: true } : {}),
+      checkout: subagentCheckout,
     }),
   ];
 }

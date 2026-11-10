@@ -52,7 +52,7 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'changed',
         title: 'Sub-agents run side by side',
         detail:
-          'When a chat hands several independent pieces of work to sub-agents in one reply, they now work at the same time, up to four at once, instead of one after another. In a code project this used to queue; ordinary chats are now told to send independent pieces out together as well.',
+          'When a chat hands several independent pieces of work to sub-agents in one reply, they now work at the same time, up to four at once, instead of one after another. In a code project each sub-agent that changes files works in its own copy of the repository on its own branch, so they cannot overwrite each other, and the chat merges each branch when its report is in.',
       },
       {
         kind: 'changed',
