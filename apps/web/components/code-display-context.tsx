@@ -9,9 +9,11 @@
  * threading the value through its own props.
  *
  * A layout does not re-render on a client-side navigation (see its own
- * comment), so a change saved on the Preferences page takes effect
- * from the next full load — the same lag every other Appearance
- * preference already has.
+ * comment), but it does when the page is asked for again: a change saved
+ * on the Preferences page, or made by the chat's model on the person's
+ * word, is announced (lib/preferences-events.ts) and the shell refreshes
+ * (app/(app)/preferences-sync.tsx), so the gutter follows without a full
+ * load.
  */
 
 import { createContext, useContext } from 'react';

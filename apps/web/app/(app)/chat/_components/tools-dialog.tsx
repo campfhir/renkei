@@ -26,6 +26,8 @@ import { Icon, ICONS } from '@/components/icons';
 import { chatClient } from '@/lib/chat/client';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { subscribePreferencesChanged } from '@/lib/preferences-events';
+import { defaultToolsReload } from '../../preferences-sync.model';
 import {
   connectorLabel,
   effectiveTools,
@@ -132,6 +134,15 @@ export default function ToolsDialog({
       else dispatch({ type: 'connectorsFailed' });
     });
   }, [loadNeeded]);
+
+  // Defaults changed outside this dialog: load them again.
+  useEffect(
+    () =>
+      subscribePreferencesChanged(({ documents }) => {
+        if (defaultToolsReload(documents)) dispatch({ type: 'defaultsChangedElsewhere' });
+      }),
+    []
+  );
 
   // The search and the "Saved" word are for one opening of the dialog.
   useEffect(() => {

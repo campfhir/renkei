@@ -129,6 +129,8 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
   const local = options.localTools.filter(
     (tool) =>
       tool.readOnly === true &&
+      // What the chat itself reaches only through find_tools is not an errand's.
+      tool.deferred !== true &&
       tool.def.name !== CHAT_DELEGATE_TOOL &&
       // A sub-agent has no thread to draw the card in; its mockup would be seen by no one.
       tool.def.name !== MOCKUP_TOOL &&

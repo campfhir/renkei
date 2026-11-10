@@ -97,6 +97,13 @@ describe('the catalog', () => {
     expect(needsConnectors(loaded(), true)).toBe(false);
   });
 
+  test('is fetched again after the defaults were changed somewhere else', () => {
+    const stale = toolsDialogReducer(loaded(), { type: 'defaultsChangedElsewhere' });
+    expect(needsConnectors(stale, false)).toBe(false);
+    expect(needsConnectors(stale, true)).toBe(true);
+    expect(listView(stale)).toEqual({ kind: 'loading' });
+  });
+
   test('shows loading, then the rows; a failed load reads as nothing connected', () => {
     expect(listView(initialToolsDialogState())).toEqual({ kind: 'loading' });
     expect(listView(loaded()).kind).toBe('rows');

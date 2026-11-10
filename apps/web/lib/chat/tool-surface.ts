@@ -114,6 +114,12 @@ export interface DiscoverableTool {
   connector: string;
   def: LlmToolDef;
   /**
+   * What find_tools calls the group this tool belongs to, when the
+   * connector key is not the name for it: the platform's own deferred
+   * tools (platform-tools/), which belong to no connector.
+   */
+  label?: string;
+  /**
    * For a remote MCP server's tool: the server's name and the context its
    * admin wrote for it. Searched by find_tools beside the tool's own words,
    * so "claims" finds a server the admin described as the claims system.

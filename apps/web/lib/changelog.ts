@@ -50,6 +50,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     entries: [
       {
         kind: 'added',
+        title: 'Ask a chat about Renkei itself',
+        detail:
+          "Every chat can now act in Renkei for you: give you a link to any page or setting, tell you how much you have used, read and change your preferences (ask it for dark mode or line numbers and the page switches as it answers), set up a chat project or, with Bitbucket or GitHub connected, a code project, and keep prompts in your prompt libraries. Anything that changes something asks first. Operators can also ask for the organization's usage.",
+      },
+      {
+        kind: 'added',
         title: 'Code sub-agents can work in the background',
         detail:
           'A code chat can now start sub-agents in the background and keep working while they run, instead of sitting in one long step until they report. While it waits for them the chat is free, so you can write to it and get an answer.',

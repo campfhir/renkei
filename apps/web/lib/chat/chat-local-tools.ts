@@ -5,6 +5,8 @@
  * person across every chat they own, recalling their other chats,
  * showing a mockup inline (mockup-tools.ts), settling its preview cards
  * on the person's word (widget-state-tools.ts),
+ * acting in Renkei itself for the person (platform-tools/: links, usage,
+ * preferences, projects, prompt libraries),
  * and compacting its own history (chat_compact, offered unconditionally —
  * see below). Each of the others is registered only when it can do something — no project, no
  * project memory tools; a chat in a project, no personal memory or recall
@@ -35,6 +37,7 @@ import { getImagePrefs } from '@renkei/user-prefs';
 import { imageGenerationTool } from './image-tools';
 import { listImageModels } from './models';
 import { widgetStateTools } from './widget-state-tools';
+import { platformTools } from './platform-tools';
 import { logger } from '@/lib/logger';
 import { whoIs } from '@/lib/log-actor';
 
@@ -122,5 +125,9 @@ export async function chatLocalTools(
   // answerable ("no cards"), and marking one decided writes only the
   // chat's own decision row — the tool refuses under read-only itself.
   tools.push(...widgetStateTools());
+  // Renkei itself (platform-tools/): links into the app, the person's usage
+  // and preferences up front; projects, prompt libraries and the
+  // organization's usage behind find_tools. Every chat has them.
+  tools.push(...(await platformTools(context)));
   return tools;
 }

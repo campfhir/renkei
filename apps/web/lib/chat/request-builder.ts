@@ -81,6 +81,13 @@ export interface SystemPromptInput {
   /** The chat's task list is offered (tasks/tools.ts); absent counts as offered — every chat has it. */
   hasTasks?: boolean;
   /**
+   * The platform tools are among the tools (platform-tools/): the brief
+   * then names what the chat can do in Renkei itself, and that the rest of
+   * it waits behind find_tools — the only signal the model has that a
+   * project or a prompt library can be made from here.
+   */
+  hasPlatformTools?: boolean;
+  /**
    * outlook_search_users is among the tools: there is a live employee
    * directory, so the prompt says to use it — not search_knowledge or a
    * file — for who someone is. Optional so existing callers/fixtures that
@@ -256,6 +263,14 @@ const DELEGATE_BRIEF = `Keep this conversation for the conversation. Anything th
  * keep a plan, and how a background sub-agent and chat_task_wait let the
  * chat suspend rather than sit in a turn waiting.
  */
+/**
+ * When the platform tools are on offer (platform-tools/). The four offered
+ * up front speak for themselves; the deferred ones do not exist for a
+ * model that was never told to look, so this names them and the words
+ * that find them.
+ */
+export const PLATFORM_BRIEF = `You can act in Renkei itself for this person, on their own things. For a link to a page, a setting, or one of their projects or prompt libraries, call renkei_link and hand over the link it returns — never write a Renkei address from memory. renkei_my_usage answers how much they have used; renkei_get_preferences and renkei_set_preferences read and change their preferences (dark mode, line numbers in code, the tools a new chat starts with), and the page they have open follows a change at once. More waits behind find_tools: setting up a chat project or a code project, reading and keeping prompts in their prompt libraries, and for an operator the organization's usage — search for it ("project", "prompt library", "organization usage") when they ask.`;
+
 export const TASKS_BRIEF = `This chat keeps a task list (chat_task_*). For work of several steps, plan it there before you start: one task per step, subtasks for the parts of a step, depends_on for what must finish first. Mark a task in progress as you start it, report progress on long ones, and complete it with its result (or fail or cancel it, saying why) — the person can open the list from the chat's menu at any time, so keep it true. Skip it for a question you answer in a reply or two.`;
 
 /** The task list's other half where sub-agents are offered: background work and suspending. */
@@ -413,6 +428,9 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
           ? `${TASKS_BRIEF}\n\n${CODE_TASKS_DELEGATE_BRIEF}`
           : TASKS_BRIEF
     );
+  }
+  if (input.hasPlatformTools) {
+    sections.push(PLATFORM_BRIEF);
   }
   if (input.hasDiscoverableTools) {
     sections.push(DISCOVERY_BRIEF);

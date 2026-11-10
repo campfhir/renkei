@@ -561,6 +561,18 @@ describe('buildSystemPrompt with search_knowledge', () => {
     expect(without).not.toMatch(/search_knowledge/);
   });
 
+  it('names what the chat can do in Renkei itself, and what of it waits behind find_tools, only when those tools are offered', () => {
+    const withPlatform = buildSystemPrompt({
+      ...base,
+      hasKnowledge: false,
+      hasPlatformTools: true,
+    });
+    expect(withPlatform).toMatch(/renkei_link/);
+    expect(withPlatform).toMatch(/never write a Renkei address from memory/);
+    expect(withPlatform).toMatch(/behind find_tools/);
+    expect(buildSystemPrompt({ ...base, hasKnowledge: false })).not.toMatch(/renkei_/);
+  });
+
   it('says it runs behind live systems and is not the automatic first move, more insistently once other connectors are reachable', () => {
     const alone = buildSystemPrompt({ ...base, hasKnowledge: true, hasDiscoverableTools: false });
     expect(alone).toMatch(/runs behind the live systems it indexes/);

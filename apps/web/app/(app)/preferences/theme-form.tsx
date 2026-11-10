@@ -17,6 +17,7 @@ import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
 import { logFailedResponse } from '@/lib/client-logger';
 import { changedFields } from '@/lib/prefs-patch';
+import { announcePreferencesChanged } from '@/lib/preferences-events';
 
 const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] = [
   { value: 'auto', label: 'Auto', hint: 'Matches your system, and follows it if it changes.' },
@@ -53,6 +54,9 @@ export default function ThemeForm({ initial }: { initial: ThemePrefs }) {
       if (response.ok) {
         setSaved(prefs);
         setStatus('saved');
+        // The shell, and every other tab, renders from the saved theme:
+        // the line-number gutter follows now rather than on the next load.
+        announcePreferencesChanged({ documents: ['theme'] });
       } else {
         await logFailedResponse('preferences', 'could not save the theme', response);
         setStatus('failed');
