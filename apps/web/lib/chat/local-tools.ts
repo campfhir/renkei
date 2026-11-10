@@ -57,6 +57,16 @@ export interface LocalToolContext {
   sandboxScope?: string;
   /** The project's cipher (its memory and files), when the chat is in one. */
   projectCipher?: ContentCipher;
+  /**
+   * Where the person reaches the app, scheme and host with no trailing
+   * slash (lib/get-origin.ts) — what a link handed to them starts with,
+   * since the app stands behind a proxy and a path alone would not survive
+   * being copied out of the thread. Absent, a tool resolves the
+   * deployment's declared address itself.
+   */
+  origin?: string;
+  /** The person's IANA zone, from their browser; absent or null, days are cut in UTC. */
+  timeZone?: string | null;
   /** The person's email from the identity spine, when known — a commit author needs one. */
   userEmail?: string | null;
   /** Org read-only mode: local tools that write refuse under it. */
@@ -99,6 +109,15 @@ export interface LocalToolContext {
    * Absent for a context with no turn behind it.
    */
   emitWidgetDecision?: (decision: { stateKey: string; state: WidgetDecisionState }) => void;
+  /**
+   * Where a tool that changed the person's preferences
+   * (renkei_set_preferences, platform-tools/preferences.ts) says which
+   * documents moved — the turn's own channel again, so the page open on
+   * the thread re-renders what depends on them (the theme, the line-number
+   * gutter, the default toolset) as the tool returns rather than on the
+   * next full load. Absent for a context with no turn behind it.
+   */
+  emitPreferencesChanged?: (change: { documents: string[] }) => void;
   /**
    * The id of the tool_use block being answered — the runner sets it per
    * call, so a tool that keeps a record of its own (a sub-agent's run)
@@ -143,11 +162,20 @@ export interface LocalTool {
    * own limit applies.
    */
   timeoutMs?: number;
+  /**
+   * Not offered up front: the tool's schema reaches the model only once
+   * find_tools (tool-discovery.ts) surfaces it, the way an enabled
+   * connector's tools beyond the core set do. For tools every chat has
+   * but few turns need (platform-tools/), so their schemas do not ride on
+   * every request. Absent, the tool is offered on every turn.
+   */
+  deferred?: boolean;
   execute(input: Record<string, unknown>, context: LocalToolContext): Promise<McpToolResult>;
 }
 
 export interface LocalToolSet {
   has(name: string): boolean;
+  /** The tools offered up front — a `deferred` tool is in the set but not here. */
   defs(): LlmToolDef[];
   /** The names of the tools declared read-only. */
   readOnlyNames(): string[];
@@ -182,7 +210,8 @@ export function createLocalToolSet(tools: LocalTool[]): LocalToolSet {
   const byName = new Map(tools.map((tool) => [tool.def.name, tool]));
   return {
     has: (name) => byName.has(name),
-    defs: () => [...byName.values()].map((tool) => tool.def),
+    defs: () =>
+      [...byName.values()].filter((tool) => tool.deferred !== true).map((tool) => tool.def),
     readOnlyNames: () =>
       [...byName.values()].filter((tool) => tool.readOnly === true).map((tool) => tool.def.name),
     concurrentNames: () =>

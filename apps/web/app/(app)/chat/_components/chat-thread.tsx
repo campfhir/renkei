@@ -44,6 +44,8 @@ import type { WidgetModelContextOutcome } from '@/lib/chat/widget-tools';
 import type { VoicePrefs } from '@renkei/user-prefs/prefs';
 import type { VoiceAvailability } from '@/lib/voice/availability';
 import { voiceClient } from '@/lib/voice/client';
+import { announcePreferencesChanged, subscribePreferencesChanged } from '@/lib/preferences-events';
+import { documentsChangedIn, voiceReloads } from '../../preferences-sync.model';
 import { SpeechQueue, type SpeechQueueState } from '@/lib/voice/speech-queue';
 import { takeSpeakable } from '@/lib/voice/sentences';
 import { LIVE_REPLY_OWNER, replyProse, useReplySpeech } from '@/lib/voice/use-reply-speech';
@@ -323,6 +325,17 @@ export default function ChatThread({
     messages: state.messages,
     activeTurnId,
   });
+  // Voice settings changed outside this menu (the model, on the person's
+  // word; another tab): this copy is read again.
+  useEffect(() => {
+    if (!voiceAvailable) return;
+    return subscribePreferencesChanged(({ documents }) => {
+      if (!voiceReloads(documents)) return;
+      void voiceClient.status().then((result) => {
+        if (result.data?.prefs) setVoicePrefs(result.data.prefs);
+      });
+    });
+  }, [voiceAvailable]);
   const changeVoicePrefs = useCallback(
     (next: VoicePrefs) => {
       // Only what this menu changed: a field the Preferences page saved
@@ -453,6 +466,12 @@ export default function ChatThread({
     if (refresh) router.refresh();
   }, [activeTurnId, router]);
 
+  // The turn whose preference change was already announced live, and the
+  // thread's rows as the stream's handler sees them at the turn's end.
+  const announcedPreferences = useRef<string | null>(null);
+  const messagesRef = useRef(state.messages);
+  messagesRef.current = state.messages;
+
   // One EventSource per running turn.
   useEffect(() => {
     if (!activeTurnId) return;
@@ -461,7 +480,20 @@ export default function ChatThread({
       const parsed = parseEvent(event.data);
       if (!parsed) return;
       dispatch(parsed);
+      // The model changed the person's preferences: everything that
+      // renders from them hears it here (lib/preferences-events.ts).
+      if (parsed.type === 'preferences_changed') {
+        announcedPreferences.current = parsed.turnId;
+        announcePreferencesChanged({ documents: parsed.documents });
+      }
       if (parsed.type === 'turn_end') {
+        // A browser that missed the live event (it reconnected mid-turn)
+        // still has the call in the turn's rows.
+        if (announcedPreferences.current !== parsed.turnId) {
+          announcePreferencesChanged({
+            documents: documentsChangedIn(messagesRef.current, parsed.turnId),
+          });
+        }
         source.close();
         setActiveTurnId(null);
         setCheckoutVersion((version) => version + 1);
@@ -1368,9 +1400,7 @@ export default function ChatThread({
               artifacts={state.artifacts}
               onShowSubagent={setSubagent}
               onWidgetDecision={isOwner ? beginWidgetTurn : null}
-              onAnswerForm={
-                isOwner ? (text) => queueOrSend({ text, attachments: [] }) : null
-              }
+              onAnswerForm={isOwner ? (text) => queueOrSend({ text, attachments: [] }) : null}
               speech={
                 voice && speechQueue
                   ? {

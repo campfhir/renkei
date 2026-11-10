@@ -41,6 +41,8 @@ export interface ResendInput {
   voice?: boolean;
   /** See StartTurnInput.timeZone. */
   timeZone?: string | null;
+  /** See StartTurnInput.origin. */
+  origin?: string | null;
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -146,6 +148,7 @@ export async function resendFromMessage(input: ResendInput): Promise<Result<Rese
     llmModelId: input.llmModelId ?? null,
     voice: input.voice === true,
     timeZone: input.timeZone ?? null,
+    origin: input.origin ?? null,
     defer: input.defer,
   });
   if (!started.ok) return started;

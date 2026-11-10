@@ -79,9 +79,11 @@ import {
 } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
-import { resolveChatToolSurface } from './tool-surface';
+import { resolveChatToolSurface, type DiscoverableTool } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
+import { PLATFORM_CONNECTOR, PLATFORM_LABEL } from './platform-tools';
+import { LINK_TOOL } from './platform-tools/navigation';
 import { openTurnChannel, type TurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS, type TurnResumeSeed } from './turn-runner';
@@ -200,6 +202,14 @@ export interface StartTurnInput {
   voice?: boolean;
   /** The person's IANA zone, from their browser (time-zone.ts); null when it did not say. */
   timeZone?: string | null;
+  /**
+   * Where the person reached the app, from the request that sent the
+   * message (lib/get-origin.ts): the app stands behind a proxy, so a link
+   * a tool hands back is built on this, never on this process's host.
+   * Absent for a turn no request started (a woken chat); the deployment's
+   * declared address stands in.
+   */
+  origin?: string | null;
   /**
    * How the user row is stored and shown: a 'prompt' is what the person
    * typed, their bubble; a 'note' is what they did outside the composer,
@@ -360,6 +370,7 @@ export async function startChatTurn(
           roles: input.session.roles,
           voice: input.voice === true,
           timeZone: input.timeZone ?? null,
+          origin: input.origin ?? null,
         },
       }),
       prompts: chunkedUserBlocks(redacted.text, extraBlocks).map((blocks) => ({
@@ -416,6 +427,7 @@ export async function startChatTurn(
         settings,
         voice: input.voice === true,
         timeZone: input.timeZone ?? null,
+        origin: input.origin ?? null,
       })
     );
   } catch (error) {
@@ -450,6 +462,8 @@ export interface ExecuteTurnInput {
   voice?: boolean;
   /** See StartTurnInput.timeZone. */
   timeZone?: string | null;
+  /** See StartTurnInput.origin. */
+  origin?: string | null;
   /**
    * This is a turn another process left running (turn-recovery.ts): the
    * rows are already reconciled, `assistantMessage` is the fresh row to
@@ -764,6 +778,9 @@ async function executeTurnBody(
       projectId: input.chat.projectId,
       temporary: input.chat.temporary,
       sandboxScope,
+      // Links a tool hands back start here (platform-tools/shared.ts).
+      ...(input.origin ? { origin: input.origin } : {}),
+      timeZone: input.timeZone ?? null,
       userEmail: person?.email ?? null,
       readOnly,
       llm: input.llm,
@@ -783,6 +800,10 @@ async function executeTurnBody(
       // later load reads (chat-view.ts).
       emitWidgetDecision: (decision: { stateKey: string; state: WidgetDecisionState }) =>
         channel.emit({ type: 'widget_decided', turnId: input.turnId, ...decision }),
+      // Preferences the model changed (renkei_set_preferences): the open
+      // page re-renders what they decide as the tool returns.
+      emitPreferencesChanged: (change: { documents: string[] }) =>
+        channel.emit({ type: 'preferences_changed', turnId: input.turnId, ...change }),
       // A chat's sub-agents — code_delegate in a code project, chat_delegate
       // anywhere else — keep their runs (subagent-runs.ts) and report
       // progress on the turn's stream; nothing of theirs enters this
@@ -837,7 +858,17 @@ async function executeTurnBody(
     if (!input.localTools) baseLocalTools.push(...taskTools());
     // Offered even with nothing to find: a new chat starts with core
     // connectors only, and its model should still find the tool when asked.
-    const discoveryTool = findToolsTool(surface.discoverable, {
+    // What find_tools searches: the enabled connectors' tools beyond the
+    // core set, and the local tools not offered up front (platform-tools/).
+    // Either way a find makes the tool callable, and a later turn offers
+    // it again (recallDiscoveredTools).
+    const discoverable: DiscoverableTool[] = [
+      ...surface.discoverable,
+      ...baseLocalTools
+        .filter((tool) => tool.deferred === true)
+        .map((tool) => ({ connector: PLATFORM_CONNECTOR, label: PLATFORM_LABEL, def: tool.def })),
+    ];
+    const discoveryTool = findToolsTool(discoverable, {
       alwaysOffer: true,
       unavailable: surface.unavailable === true,
     });
@@ -863,7 +894,7 @@ async function executeTurnBody(
     // What earlier turns found through find_tools stays offered: the model
     // calls a tool it remembers whether or not its schema is in the request,
     // and only with the schema does it call it right.
-    const recalled = recallDiscoveredTools(history, surface.discoverable);
+    const recalled = recallDiscoveredTools(history, discoverable);
     const chartsAllowed = filesAllowed && (await sandboxChartsEnabled());
     // The document road through sandbox_run_python: the same condition
     // chat-local-tools.ts offers chat_write_file's pointer under.
@@ -881,7 +912,10 @@ async function executeTurnBody(
         chatSummary: summary,
         chatFiles: context.chatFiles,
         hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
+        // The connectors' brief; what the platform keeps behind find_tools
+        // is named by its own (hasPlatformTools).
         hasDiscoverableTools: surface.discoverable.length > 0,
+        hasPlatformTools: localTools.has(LINK_TOOL),
         hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
         voice: input.voice === true,
         hasDelegate: delegate !== null,
@@ -969,7 +1003,7 @@ async function executeTurnBody(
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
         concurrentTools: new Set(localTools.concurrentNames()),
         widgetResourceUris: surface.widgetResourceUris,
-        discoverableTools: surface.discoverable.map((entry) => entry.def),
+        discoverableTools: discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said
         // "always" for that tool (permission-prefs.ts) — or the chat is in
         // auto mode, where nothing asks and only a blocked tool refuses.

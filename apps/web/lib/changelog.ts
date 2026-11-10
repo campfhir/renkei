@@ -49,6 +49,18 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'fixed',
+        title: 'The assistant knows what a confirmed card created',
+        detail:
+          "When you confirm a preview card, the assistant now receives what the action returned, such as a new Zoom meeting's id and join link or a created issue's key, so it can carry on (send the invite, link the issue) without asking you to paste it. The card still shows only its receipt.",
+      },
+      {
+        kind: 'added',
+        title: 'Ask a chat about Renkei itself',
+        detail:
+          "Every chat can now act in Renkei for you: give you a link to any page or setting, tell you how much you have used, read and change your preferences (ask it for dark mode or line numbers and the page switches as it answers), set up a chat project or, with Bitbucket or GitHub connected, a code project, and keep prompts in your prompt libraries. Anything that changes something asks first. Operators can also ask for the organization's usage.",
+      },
+      {
         kind: 'added',
         title: 'Code sub-agents can work in the background',
         detail:

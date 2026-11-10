@@ -57,13 +57,15 @@ export function parseToolPermission(raw: unknown): ToolPermissionRecord | null {
 /**
  * What a process resuming a turn cannot read back off the rows (migration
  * 129's `runner`): the roles of the session that sent it — the tool
- * surface's token carries them — whether it came from voice mode, and the
- * person's browser zone.
+ * surface's token carries them — whether it came from voice mode, the
+ * person's browser zone, and the address they reached the app at.
  */
 export interface TurnRunnerContext {
   roles: string[];
   voice: boolean;
   timeZone?: string | null;
+  /** Where the person reached the app when they sent it (lib/get-origin.ts), for links a tool hands back. */
+  origin?: string | null;
 }
 
 export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
@@ -74,6 +76,7 @@ export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
     roles: record.roles.filter((role): role is string => typeof role === 'string'),
     voice: record.voice === true,
     timeZone: typeof record.timeZone === 'string' ? record.timeZone : null,
+    origin: typeof record.origin === 'string' ? record.origin : null,
   };
 }
 

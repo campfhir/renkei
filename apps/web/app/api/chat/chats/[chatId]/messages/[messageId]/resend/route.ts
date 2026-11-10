@@ -8,6 +8,7 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { isUuid } from '@/lib/uuid';
 import { timeZoneOf } from '@/lib/chat/time-zone';
+import { getOrigin } from '@/lib/get-origin';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
 import { resendFromMessage } from '@/lib/chat/resend';
@@ -23,6 +24,8 @@ export async function POST(
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const body = await readJsonBody(request);
+  // Where the person reached the app, for links a tool hands back (platform-tools/).
+  const origin = await getOrigin(request);
 
   const text = typeof body.text === 'string' ? body.text : null;
   if (text !== null && text.length > USER_MESSAGE_MAX_CHARS) {
@@ -47,6 +50,7 @@ export async function POST(
     llmModelId,
     voice: body.voice === true,
     timeZone: timeZoneOf(body.timeZone),
+    origin: origin.ok ? origin.val : null,
   });
   if (!resent.ok) {
     switch (resent.err.type) {

@@ -108,7 +108,8 @@ test.describe('issue cards', () => {
     await expect(page.getByRole('heading', { level: 1, name: ids.projectName })).toBeVisible();
     const main = page.getByRole('main');
     await expect(main.getByRole('link', { name: /PROJ-9/ })).toBeVisible();
-    await expect(main.getByText('In Progress')).toBeVisible();
+    // Exact: the project's default instructions say "work in progress" too.
+    await expect(main.getByText('In Progress', { exact: true })).toBeVisible();
     await expect(main.getByRole('link', { name: /#41.*open/ })).toBeVisible();
     await shot(page, testInfo, 'issue-cards-both.png');
 

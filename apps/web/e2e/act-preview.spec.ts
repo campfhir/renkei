@@ -19,7 +19,9 @@
  * what only a browser shows:
  *  - one press through: the comment card renders in its iframe, a rewrite
  *    and Post comment reach the route as the `_confirm` twin's call, the
- *    receipt is drawn and the decision opens a turn the model answers;
+ *    receipt is drawn and the decision opens a turn the model answers,
+ *    with what the confirm tool answered in the model's hands and off the
+ *    page (model-context.model.ts has the rule);
  *  - every kind of card draws (a gallery of one card per layout, screenshot
  *    for review) and none overflows a phone-width viewport.
  */
@@ -39,7 +41,7 @@ import {
   registerConnector,
 } from './support/connectors';
 import { connectCodeHost, prepareCodeHost } from './support/code-host';
-import { send } from './support/chat';
+import { readChat, send } from './support/chat';
 import { steady } from './support/settle';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -329,6 +331,9 @@ async function waitForCardHeightBelow(page: Page, maxHeight: number): Promise<vo
   await expect.poll(() => cardHeight(page), COLD).toBeLessThan(maxHeight);
 }
 
+/** In the confirm tool's answer, past the line the receipt shows. */
+const COMMENT_ID_LINE = 'Comment id 10042 on PROJ-12.';
+
 test('a comment card shows the comment, takes the person’s rewrite, and confirms THEIR words', async ({
   page,
   person: _person,
@@ -342,7 +347,12 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
       await route.fulfill({
         json: {
           result: {
-            content: [{ type: 'text', text: 'Commented on PROJ-12.' }],
+            // What Jira answered: the line the receipt shows, and an id
+            // only the model has a use for.
+            content: [
+              { type: 'text', text: 'Commented on PROJ-12.' },
+              { type: 'text', text: COMMENT_ID_LINE },
+            ],
             isError: false,
             meta: {},
           },
@@ -382,6 +392,15 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
     await expect(
       noteLine(page, 'The user confirmed "Comment on PROJ-12" on the preview card')
     ).toHaveCount(0);
+
+    // What the confirm tool answered reached the model with the decision —
+    // the id the next step would need — and none of it is on the page.
+    const chatId = new URL(page.url()).pathname.split('/').pop() ?? '';
+    await expect
+      .poll(async () => JSON.stringify((await readChat(page.request, chatId)).messages), COLD)
+      .toContain(COMMENT_ID_LINE);
+    await expect(page.getByText(COMMENT_ID_LINE)).toHaveCount(0);
+    await expect(frame.getByText(COMMENT_ID_LINE)).toHaveCount(0);
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }

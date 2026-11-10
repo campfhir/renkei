@@ -62,6 +62,12 @@ export interface ToolsDialogState {
 export type ToolsDialogAction =
   | { type: 'connectorsLoaded'; answer: ConnectorsAnswer }
   | { type: 'connectorsFailed' }
+  /**
+   * The person's default toolsets were changed somewhere else — the chat's
+   * model on their word, or another tab (lib/preferences-events.ts): what
+   * was loaded is out of date.
+   */
+  | { type: 'defaultsChangedElsewhere' }
   | { type: 'filterChanged'; filter: string }
   /** The dialog closed: the search and the "Saved" word were for that opening. */
   | { type: 'closed' }
@@ -110,6 +116,10 @@ export function toolsDialogReducer(
       };
     case 'connectorsFailed':
       return { ...state, options: [] };
+    // Forgotten, so it is fetched again: now if the dialog is open, else
+    // when it next opens (needsConnectors).
+    case 'defaultsChangedElsewhere':
+      return { ...state, options: null };
     case 'filterChanged':
       return { ...state, filter: action.filter };
     case 'closed':
