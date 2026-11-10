@@ -26,6 +26,7 @@
  * stamped in the ledger with the model that actually answered.
  */
 
+import { watchSubagentStop } from './subagent-stops';
 import {
   resolveAgentLlm,
   streamOrComplete,
@@ -266,6 +267,33 @@ export interface SubagentRun {
  * the failure — is the tool result the orchestrator reads.
  */
 export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
+  const controller = new AbortController();
+  // Stop on this one sub-agent (subagent-stops.ts) reaches it here.
+  const unwatch =
+    run.context.chatId && run.context.toolUseId
+      ? watchSubagentStop(run.context.chatId, run.context.toolUseId, controller)
+      : () => {};
+  // What the loop set going and its end must stop, however it ends.
+  const cleanup: (() => void)[] = [unwatch];
+  try {
+    return await subagentLoop(run, controller, cleanup);
+  } finally {
+    for (const stop of cleanup) stop();
+  }
+}
+
+/**
+ * How often a working sub-agent touches its run row. A run of a process
+ * that died stops being touched, which is how the sweep on the others
+ * tells it from one still at work (subagent-recovery.ts).
+ */
+export const SUBAGENT_HEARTBEAT_MS = 20_000;
+
+async function subagentLoop(
+  run: SubagentRun,
+  controller: AbortController,
+  cleanup: (() => void)[]
+): Promise<McpToolResult> {
   const { llm, tools, context } = run;
   const model = subagentModelOf(llm);
   // The transcript kept for a person carries how long each model call
@@ -276,7 +304,6 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     { role: 'user', content: [{ type: 'text', text: run.task }] },
   ];
   const deadline = Date.now() + run.wallClockMs;
-  const controller = new AbortController();
   // The turn's Stop (or the process's shutdown) ends the sub-agent too:
   // its model call in flight is aborted here, and its tools see the same
   // signal through the context they run with.
@@ -298,12 +325,33 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
           model,
         })
       : null;
+  // The row's heartbeat: the counts as they stand, no tokens added. A
+  // model call or a command can take minutes; the row must not look
+  // abandoned meanwhile.
+  let stepsDone = 0;
+  let closed = false;
+  if (recorder && runId) {
+    const beat = setInterval(() => {
+      if (closed) return;
+      void recorder
+        .progress(runId, {
+          steps: stepsDone,
+          toolCalls: calls.length,
+          lastTool: calls[calls.length - 1] ?? null,
+          usage: { inputTokens: 0, outputTokens: 0 },
+        })
+        .catch(() => {});
+    }, SUBAGENT_HEARTBEAT_MS);
+    beat.unref?.();
+    cleanup.push(() => clearInterval(beat));
+  }
   const close = async (
-    status: 'completed' | 'failed',
+    status: 'completed' | 'failed' | 'interrupted',
     outcome: string,
     error: string | null,
     steps: number
   ) => {
+    closed = true;
     if (recorder && runId) {
       await recorder.finish(runId, {
         status,
@@ -339,8 +387,14 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
   };
 
   for (let step = 1; step <= run.maxSteps; step += 1) {
+    // Asked to stop from outside — the person's Stop on this run, or its
+    // turn ending under it — the row says so before the signal may.
+    const asked = recorder && runId ? ((await recorder.stopped?.(runId)) ?? null) : null;
+    if (asked !== null) controller.abort();
     if (controller.signal.aborted) {
-      return close('failed', 'The sub-agent was stopped.', 'stopped', step - 1);
+      return asked !== null
+        ? close('interrupted', `The sub-agent was stopped: ${asked}.`, asked, step - 1)
+        : close('failed', 'The sub-agent was stopped.', 'stopped', step - 1);
     }
     if (Date.now() > deadline) {
       const text = report('stopped: out of time', lastText, calls, step - 1);
@@ -371,6 +425,12 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
     }
     // Retries included: what the orchestrator waited for this step.
     const callMs = Date.now() - callStartedAt;
+    if (!result.ok && controller.signal.aborted) {
+      const asked = recorder && runId ? ((await recorder.stopped?.(runId)) ?? null) : null;
+      return asked !== null
+        ? close('interrupted', `The sub-agent was stopped: ${asked}.`, asked, step - 1)
+        : close('failed', 'The sub-agent was stopped.', 'stopped', step - 1);
+    }
     if (!result.ok) {
       const reason = failureReason(result.err, attempts);
       const failure =
@@ -401,6 +461,7 @@ export async function runSubagent(run: SubagentRun): Promise<McpToolResult> {
       return close('completed', report('done', lastText, calls, step), null, step);
     }
     for (const use of uses) calls.push(use.name);
+    stepsDone = step;
     if (recorder && runId) {
       await recorder.progress(runId, {
         steps: step,

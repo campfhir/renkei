@@ -259,7 +259,14 @@ const DELEGATE_BRIEF = `Keep this conversation for the conversation. Anything th
 export const TASKS_BRIEF = `This chat keeps a task list (chat_task_*). For work of several steps, plan it there before you start: one task per step, subtasks for the parts of a step, depends_on for what must finish first. Mark a task in progress as you start it, report progress on long ones, and complete it with its result (or fail or cancel it, saying why) — the person can open the list from the chat's menu at any time, so keep it true. Skip it for a question you answer in a reply or two.`;
 
 /** The task list's other half where sub-agents are offered: background work and suspending. */
-export const TASKS_DELEGATE_BRIEF = `To hand a task to a sub-agent, give chat_delegate its number as \`task\`: the task goes in progress, the sub-agent can record subtasks and progress on it, and its report completes the task. With \`background\` true the sub-agent works while you carry on — start several side by side for independent tasks — and when nothing is left for you to do until they land, tell the person what you are waiting for and call chat_task_wait as your last call: the reply ends, and you are woken with each task's result when they finish (or one fails, or the timeout passes).`;
+export const TASKS_DELEGATE_BRIEF = `To hand a task to a sub-agent, give chat_delegate its number as \`task_id\`: the task goes in progress, the sub-agent can record subtasks and progress on it, and its report completes the task. With \`background\` true the sub-agent works while you carry on — start several side by side for independent tasks — and when nothing is left for you to do until they land, tell the person what you are waiting for and call chat_task_wait as your last call: the reply ends, and you are woken with each task's result when they finish (or one fails, or the timeout passes). When the person asks you to stop a sub-agent, cancel its task with chat_task_cancel: that stops it within moments.`;
+
+/**
+ * A code project's half of the same: code_delegate in the background, so
+ * the orchestrator is not held in one long tool call — it goes on with
+ * its own work, and once it suspends the person can write to it.
+ */
+export const CODE_TASKS_DELEGATE_BRIEF = `A code_delegate call you wait on holds this reply until the sub-agent reports: you can call nothing else meanwhile, and whatever the person writes waits behind it. For anything longer than a few minutes, hand it over in the background instead: make a task for the piece (chat_task_create), then give code_delegate its number as \`task_id\` with \`background\` true. The call answers at once, the sub-agent works in its own worktree, and you carry on — start the other pieces, do your own reading and edits, answer the person. When nothing is left for you until they land, say what you are waiting for and call chat_task_wait as your last call: the reply ends, the chat is free for the person to write in, and you are woken with each task's result (the report, and the branch to merge) when they finish, when one fails, or at the timeout. If the person writes while sub-agents are still working, answer them — the sub-agents keep going — and wait again if there is still nothing else to do. When the person asks you to stop a sub-agent, cancel its task with chat_task_cancel: that stops the sub-agent within moments, and what it had committed stays on its branch. They can also stop one themselves from its card in the thread.`;
 
 /**
  * Memory is only as good as what gets written to it, and a model left
@@ -399,7 +406,13 @@ export function buildSystemPrompt(input: SystemPromptInput): string {
     sections.push(DELEGATE_BRIEF);
   }
   if (input.hasTasks !== false) {
-    sections.push(input.hasDelegate ? `${TASKS_BRIEF}\n\n${TASKS_DELEGATE_BRIEF}` : TASKS_BRIEF);
+    sections.push(
+      input.hasDelegate
+        ? `${TASKS_BRIEF}\n\n${TASKS_DELEGATE_BRIEF}`
+        : input.project?.code?.ready
+          ? `${TASKS_BRIEF}\n\n${CODE_TASKS_DELEGATE_BRIEF}`
+          : TASKS_BRIEF
+    );
   }
   if (input.hasDiscoverableTools) {
     sections.push(DISCOVERY_BRIEF);

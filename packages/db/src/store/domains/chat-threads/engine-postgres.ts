@@ -490,6 +490,50 @@ export function postgresChatTurnEngine(db: () => Kysely<DB>): ChatTurnEngineStor
         .where('status', '=', 'running')
         .execute();
     },
+    async interruptIdleSubagentRuns(idleSince, error) {
+      const rows = await db()
+        .updateTable('chat_subagent_runs')
+        .set({
+          status: 'interrupted',
+          error,
+          updated_at: sql<Date>`NOW()`,
+          finished_at: sql<Date>`NOW()`,
+        })
+        .where('status', '=', 'running')
+        .where('updated_at', '<', idleSince)
+        .where((eb) =>
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom('chat_turns')
+                .select('chat_turns.id')
+                .whereRef('chat_turns.id', '=', 'chat_subagent_runs.turn_id')
+                .where('chat_turns.status', '=', 'running')
+            )
+          )
+        )
+        .returning(['chat_id', 'turn_id', 'tool_use_id'])
+        .execute();
+      return rows
+        .map((row) => ({ chatId: row.chat_id, turnId: row.turn_id, toolUseId: row.tool_use_id }))
+        .sort((a, b) => (a.toolUseId < b.toolUseId ? -1 : a.toolUseId > b.toolUseId ? 1 : 0));
+    },
+    async stopSubagentRun(chatId, toolUseId, error) {
+      const stopped = await db()
+        .updateTable('chat_subagent_runs')
+        .set({
+          status: 'interrupted',
+          error,
+          updated_at: sql<Date>`NOW()`,
+          finished_at: sql<Date>`NOW()`,
+        })
+        .where('chat_id', '=', chatId)
+        .where('tool_use_id', '=', toolUseId)
+        .where('status', '=', 'running')
+        .returning('id')
+        .execute();
+      return stopped.length > 0;
+    },
     async getSubagentRunByCall(chatId, toolUseId) {
       const row = await db()
         .selectFrom('chat_subagent_runs')

@@ -50,6 +50,11 @@ export function createTurnStore(scope: {
   model: LlmCallModel | null;
   /** The chat's cipher: every row this turn writes is sealed under it. */
   cipher: ContentCipher;
+  /**
+   * Whether the turn has sub-agents working in the background as it ends
+   * (start-turn.ts's holds): their runs are still running, and say so.
+   */
+  hasBackgroundWork?: () => boolean;
 }): TurnStore {
   return {
     async appendMessage(input) {
@@ -73,8 +78,10 @@ export function createTurnStore(scope: {
     },
     async finishTurn(outcome) {
       await finishTurn(scope.turnId, outcome);
-      // A sub-agent still marked running now has no turn to report to.
-      await interruptSubagentRunsOfTurn(scope.turnId);
+      // A sub-agent still marked running now has no turn to report to —
+      // unless it was started in the background, to work on past this
+      // turn's end and report to its task: its run closes itself.
+      if (!scope.hasBackgroundWork?.()) await interruptSubagentRunsOfTurn(scope.turnId);
       await touchChat(scope.chatId, {});
     },
     async suspendTurn(iterations) {

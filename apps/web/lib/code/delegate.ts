@@ -12,6 +12,11 @@
  * made by lib/code/tools.ts): several run at once without touching each
  * other's files or the chat's, and the orchestrator merges each branch
  * when its report is in. A read-only one reads the chat's own checkout.
+ * With `task_id` the sub-agent works a task of the chat's list, and with
+ * `background` the call answers at once (lib/chat/subagent-tasks.ts): the
+ * orchestrator's own calls carry on, and once it suspends on
+ * chat_task_wait the chat is idle, so the person can write while the
+ * sub-agents work.
  * The loop itself, the model roster and the record kept of the
  * run are lib/chat/subagent.ts's, shared with the ordinary chat's
  * `chat_delegate` (lib/chat/chat-delegate.ts); what is this tool's own
@@ -39,6 +44,15 @@ import {
   type SubagentModelChoice,
 } from '@/lib/chat/subagent';
 import { CODE_DELEGATE_TOOL } from '@/lib/chat/subagent-tools';
+import {
+  namesTask,
+  settleLinkedTask,
+  startInBackground,
+  startLinkedTask,
+  taskNote,
+} from '@/lib/chat/subagent-tasks';
+import type { ChatTaskView } from '@/lib/chat/tasks/graph';
+import { subagentTaskTools } from '@/lib/chat/tasks/tools';
 
 export { matchSubagentModel, subagentModelOf, type SubagentModelChoice } from '@/lib/chat/subagent';
 /** The delegating tool's own name — start-turn.ts gates auto mode's task_complete nudge on it. */
@@ -255,6 +269,16 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
             'Work in this chat’s own checkout instead of a worktree of its own — only for a task that ' +
             'needs your uncommitted files as they are. Never for sub-agents running at once.',
         },
+        task_id: {
+          type: ['string', 'integer'],
+          description:
+            'A task of this chat’s task list (its number or id) that this sub-agent works: it goes in progress, the sub-agent can add subtasks and progress to it, and the report completes it (or fails it).',
+        },
+        background: {
+          type: 'boolean',
+          description:
+            'Needs task_id. Return at once and let the sub-agent work while you carry on with your own calls; its task completes when it reports, with the branch to merge in its result. Wait for it with chat_task_wait — the chat is then free for the person to write in. Cancelling the task stops it.',
+        },
         maxSteps: {
           type: 'integer',
           minimum: 1,
@@ -286,64 +310,106 @@ export function codeDelegateTool(tools: LocalTool[], options: DelegateOptions = 
       if (!picked.ok) return picked.error;
       const instructions = str(input.instructions).trim();
       const readOnly = input.readOnly === true || context.readOnly;
+      const background = input.background === true;
+      if (background && !namesTask(input.task_id)) {
+        return errorResult(
+          'A background sub-agent needs a task to report to: create one with chat_task_create and pass its number as task_id.'
+        );
+      }
+      if (background && !readOnly && input.inPlace === true) {
+        return errorResult(
+          'A background sub-agent that changes things works in a worktree of its own, not in this checkout, which you go on using: drop inPlace, or drop background.'
+        );
+      }
       // A sub-agent that changes things gets a worktree of its own; where
       // one cannot be made (the chat is not on a branch, the worker's
-      // limit) it works in the chat's checkout, as one asked to does.
+      // limit) it works in the chat's checkout, as one asked to does —
+      // but not in the background, where the chat goes on using it.
       let checkout: SubagentCheckout | null = null;
       let unavailable = '';
       if (!readOnly && input.inPlace !== true && options.checkout) {
         const opened = await options.checkout(context, context.toolUseId ?? '');
         if (opened.ok) checkout = opened.checkout;
-        else unavailable = opened.reason;
+        else if (background) {
+          return errorResult(
+            `A worktree could not be made for this sub-agent — ${opened.reason} Run it without background, or fix that first.`
+          );
+        } else unavailable = opened.reason;
       }
-      const set = createLocalToolSet(
-        readOnly
+      // The task this sub-agent works, when the call names one: it goes in
+      // progress now, and the report completes it.
+      let linked: ChatTaskView | null = null;
+      if (namesTask(input.task_id)) {
+        const started = await startLinkedTask(context, input.task_id);
+        if (!started.ok) {
+          await checkout?.close(context).catch(() => {});
+          return started.error;
+        }
+        linked = started.task;
+      }
+      const set = createLocalToolSet([
+        ...(readOnly
           ? offered.filter((tool) => tool.readOnly === true)
           : checkout
             ? forSubagent(checkout.tools)
-            : offered
-      );
-      const brief = readOnly
-        ? SUB_AGENT_BRIEF
-        : `${SUB_AGENT_BRIEF}\n\n${checkout ? ownWorktreeNote(checkout) : SHARED_CHECKOUT_NOTE}`;
-      const run = runSubagent({
-        llm: picked.llm,
-        system: instructions
-          ? `${brief}\n\nInstructions from the orchestrator:\n${instructions}`
-          : brief,
-        task,
-        instructions: instructions || null,
-        readOnly,
-        maxSteps: stepsOf(input.maxSteps, defaultSteps, maxSteps),
-        wallClockMs,
-        tools: {
-          defs: () => set.defs(),
-          run: (name, args, toolUseId) =>
-            set.run(name, args, {
-              ...context,
-              toolUseId,
-              // A sub-agent's own tools record nothing further: one run, one record.
-              subagents: undefined,
-            }),
-        },
-        context,
-      });
-      if (!checkout) {
-        const result = await run;
-        return unavailable
-          ? withNote(
-              result,
-              `[This sub-agent worked in this chat’s own checkout: a worktree of its own could not be made — ${unavailable}]`
-            )
-          : result;
-      }
-      // Whatever the run came to, the worktree is put away and the branch named.
+            : offered),
+        ...(linked ? subagentTaskTools() : []),
+      ]);
+      const brief =
+        (readOnly
+          ? SUB_AGENT_BRIEF
+          : `${SUB_AGENT_BRIEF}\n\n${checkout ? ownWorktreeNote(checkout) : SHARED_CHECKOUT_NOTE}`) +
+        (linked ? `\n\n${taskNote(linked, 'Besides the repository')}` : '');
       const worktree = checkout;
-      const result = await run.catch(async (error: unknown) => {
-        await worktree.close(context).catch(() => {});
-        throw error;
-      });
-      return withNote(result, await worktree.close(context));
+      const go = async (runContext: LocalToolContext): Promise<McpToolResult> => {
+        const run = runSubagent({
+          llm: picked.llm,
+          system: instructions
+            ? `${brief}\n\nInstructions from the orchestrator:\n${instructions}`
+            : brief,
+          task,
+          instructions: instructions || null,
+          readOnly,
+          maxSteps: stepsOf(input.maxSteps, defaultSteps, maxSteps),
+          wallClockMs,
+          tools: {
+            defs: () => set.defs(),
+            run: (name, args, toolUseId) =>
+              set.run(name, args, {
+                ...runContext,
+                toolUseId,
+                // A sub-agent's own tools record nothing further: one run, one record.
+                subagents: undefined,
+                taskActor: 'subagent',
+              }),
+          },
+          context: runContext,
+        });
+        if (!worktree) {
+          const result = await run;
+          return unavailable
+            ? withNote(
+                result,
+                `[This sub-agent worked in this chat’s own checkout: a worktree of its own could not be made — ${unavailable}]`
+              )
+            : result;
+        }
+        // Whatever the run came to, the worktree is put away and the branch named.
+        const result = await run.catch(async (error: unknown) => {
+          await worktree.close(context).catch(() => {});
+          throw error;
+        });
+        return withNote(result, await worktree.close(context));
+      };
+      if (!linked) return go(context);
+      if (!background) {
+        const outcome = await go(context);
+        await settleLinkedTask(context, linked.id, outcome);
+        return outcome;
+      }
+      // In the background: this call answers now, the orchestrator's own
+      // calls carry on, and the report lands on the task (subagent-tasks.ts).
+      return startInBackground(context, linked, go);
     },
   };
 }

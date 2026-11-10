@@ -11,6 +11,8 @@
  * calls the tools the prompt scripts — the orchestrator `code_delegate`
  * on the "fast" model, the sub-agent `code_grep` in the checkout — before
  * each answers with its fixed reply. Also a viewport pass at phone width.
+ * And Stop on one sub-agent that is still working, from its modal: the
+ * press reaches the server, the run ends stopped, the reply carries on.
  *
  * What the card says — "on <model>" from the delegation's input,
  * read-only when the task says so, "Sub-agent reported" — is
@@ -22,7 +24,8 @@ import path from 'node:path';
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { LLM_STUB_REPLY } from './constants';
-import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
+import { addStubModel, toolStep, releaseStub, removeModel, scripted } from './support/stub-model';
+import { settled, startTurn } from './support/chat';
 import { askAndWait, setUpCode, stageCodeProject } from './support/code-host';
 
 // The stand-in models are staged by an operator.
@@ -130,6 +133,86 @@ test('a code chat’s sub-agent transcript names the model that answered', async
     await shot('code-chat-subagent-mobile.png');
   } finally {
     await removeModel(page.request, fastModelId);
+    await removeModel(page.request, modelId);
+  }
+});
+
+test('a sub-agent still working is stopped from its modal, and the reply carries on', async ({
+  page,
+  request,
+  person: _person,
+}, testInfo) => {
+  test.setTimeout(180_000);
+  const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
+  const hold = `subagent-stop-${tag}`;
+  const shot = (name: string) =>
+    page.screenshot({
+      path: path.join(
+        import.meta.dirname,
+        '..',
+        'test-results',
+        'screens',
+        testInfo.project.name,
+        name
+      ),
+      fullPage: false,
+    });
+  const modelId = await setUpCode(page, request, tag);
+  try {
+    const { chatIds } = await stageCodeProject(page.request, {
+      name: `Billing service (stop ${tag})`,
+      description: 'Invoices and the nightly jobs.',
+      repository: 'acme/billing-service',
+      branch: 'main',
+      chats: [`Audit the retry paths (stop ${tag})`],
+      llmModelId: modelId,
+    });
+    const chatId = chatIds[0];
+    // The sub-agent's first reply is held: it is working for as long as the test looks.
+    const delegate = {
+      task: scripted(TASK, [{ text: 'Never said.', until: hold, delayMs: 120_000 }]),
+      readOnly: true,
+    };
+    await startTurn(
+      page.request,
+      chatId,
+      scripted(PROMPT, [toolStep('code_delegate', delegate)]),
+      modelId
+    );
+    const main = page.getByRole('main');
+    await page.goto(`/chat/${chatId}`);
+    const subagent = main.locator('details[data-subagent]');
+    await subagent.locator('> summary').click();
+    await subagent.getByRole('button', { name: 'Follow the sub-agent' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Sub-agent' });
+    await expect(dialog).toContainText('working');
+    const stop = dialog.getByRole('button', { name: 'Stop sub-agent' });
+    await expect(stop).toBeVisible();
+    await shot('code-chat-subagent-stop.png');
+    // Phone width: the button is still on the page, nothing overflowing.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(stop).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await shot('code-chat-subagent-stop-mobile.png');
+
+    const stopped = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' && /\/subagents\/[^/]+\/stop$/.test(response.url())
+    );
+    await stop.click();
+    expect(await (await stopped).json()).toEqual({ ok: true, running: true });
+
+    // The run ends stopped, by whom, and there is nothing left to stop.
+    await expect(dialog).toContainText('stopped by');
+    await expect(dialog.getByRole('button', { name: /Stop/ })).toHaveCount(0);
+    await shot('code-chat-subagent-stopped-mobile.png');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await shot('code-chat-subagent-stopped.png');
+    // The orchestrator was told, and finished its reply.
+    const view = await settled(page.request, chatId, { timeout: 60_000 });
+    expect(JSON.stringify(view.messages)).toContain('The sub-agent was stopped');
+  } finally {
+    await releaseStub(request, hold);
     await removeModel(page.request, modelId);
   }
 });

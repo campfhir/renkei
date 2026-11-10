@@ -1323,6 +1323,7 @@ export default function ChatThread({
                 )
               )
             }
+            isOwner={isOwner}
             onClose={() => setSubagent(null)}
           />
         ) : null}

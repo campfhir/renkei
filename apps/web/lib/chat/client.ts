@@ -117,6 +117,13 @@ export const chatClient = {
       `${base()}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}`
     ),
 
+  /** Stop one sub-agent that is still working; the rest of the turn carries on. Owner only. */
+  stopSubagentRun: (chatId: string, toolUseId: string) =>
+    sendJsonFull(
+      `${base()}/chats/${chatId}/subagents/${encodeURIComponent(toolUseId)}/stop`,
+      'POST'
+    ),
+
   /**
    * A new chat, in a project or not. In a code project each chat works
    * in a worktree of its own, so any number may be open at once.

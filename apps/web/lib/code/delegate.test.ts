@@ -11,7 +11,7 @@ import type { LlmProvider, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { textResult, type LocalTool, type LocalToolContext } from '@/lib/chat/local-tools';
 import type { SubagentRecorder } from '@/lib/chat/subagent-runs';
-import { retryDelayMs } from '@/lib/chat/subagent';
+import { SUBAGENT_HEARTBEAT_MS, retryDelayMs } from '@/lib/chat/subagent';
 import {
   DELEGATE_AUTO_DEFAULT_STEPS,
   DELEGATE_AUTO_MAX_STEPS,
@@ -593,6 +593,73 @@ describe('code_delegate', () => {
       );
       expect(subagentBranchName('feature/x', '')).toBe('feature/x-sub-agent');
     });
+  });
+
+  it('stops before its next model call once it was asked to, and its run ends interrupted with who asked', async () => {
+    let modelCalls = 0;
+    const llm = llmOf({
+      async complete() {
+        modelCalls += 1;
+        return ok({
+          content: [{ type: 'tool_use', id: `u${modelCalls}`, name: 'code_read_file', input: {} }],
+          stopReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      },
+    });
+    const finished: { status: string; error: string | null }[] = [];
+    const recorder: SubagentRecorder = {
+      start: async () => 'run-1',
+      progress: async () => {},
+      // Asked after its first model call: the second is never made.
+      stopped: async () => (modelCalls >= 1 ? 'stopped by Ann' : null),
+      finish: async (_runId, outcome) => {
+        finished.push({ status: outcome.status, error: outcome.error });
+      },
+    };
+    const result = await codeDelegateTool([readTool]).execute(
+      { task: 'read everything', readOnly: true },
+      context({ llm, toolUseId: 'd9', subagents: recorder })
+    );
+    expect(modelCalls).toBe(1);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('The sub-agent was stopped: stopped by Ann.');
+    expect(finished).toEqual([{ status: 'interrupted', error: 'stopped by Ann' }]);
+  });
+
+  it('touches its run while a step takes long, so it is not taken for one whose process died', async () => {
+    jest.useFakeTimers();
+    try {
+      let answer: (reply: LlmResponse) => void = () => {};
+      const llm = llmOf({
+        complete: () =>
+          new Promise((resolve) => {
+            answer = (reply) => resolve(ok(reply));
+          }),
+      });
+      const beats: number[] = [];
+      const recorder: SubagentRecorder = {
+        start: async () => 'run-1',
+        progress: async (_runId, state) => {
+          beats.push(state.usage.inputTokens + state.usage.outputTokens);
+        },
+        finish: async () => {},
+      };
+      const running = codeDelegateTool([readTool]).execute(
+        { task: 'think for a long while', readOnly: true },
+        context({ llm, toolUseId: 'd10', subagents: recorder })
+      );
+      await jest.advanceTimersByTimeAsync(SUBAGENT_HEARTBEAT_MS * 3);
+      // Three heartbeats, none adding tokens.
+      expect(beats).toEqual([0, 0, 0]);
+      answer(done('Done thinking.'));
+      await running;
+      const afterEnd = beats.length;
+      await jest.advanceTimersByTimeAsync(SUBAGENT_HEARTBEAT_MS * 3);
+      expect(beats.length).toBe(afterEnd);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('is a tool whose calls in one reply run side by side', () => {

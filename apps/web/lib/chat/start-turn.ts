@@ -529,12 +529,17 @@ async function executeTurnBody(
   suspendSignal: AbortSignal,
   prepared: () => void
 ): Promise<void> {
+  // Work the turn started in the background (a background sub-agent,
+  // subagent-tasks.ts) holds the tool surface open past the turn's end;
+  // the last of them to finish releases it.
+  let holds = 0;
   const store = createTurnStore({
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
     chatTitle: input.chat.title,
     cipher: input.cipher,
+    hasBackgroundWork: () => holds > 0,
     model: {
       provider: input.llm.providerName,
       model: input.llm.model,
@@ -558,10 +563,6 @@ async function executeTurnBody(
   // The turn is over (or never got going): a tool surface still resolving
   // then releases itself rather than handing a release to nobody.
   let released = false;
-  // Work the turn started in the background (a background sub-agent,
-  // chat-delegate.ts) holds the tool surface open past the turn's end;
-  // the last of them to finish releases it.
-  let holds = 0;
   let turnOver = false;
   const releaseUnlessHeld = async () => {
     if (!turnOver || holds > 0 || released) return;
