@@ -32,7 +32,7 @@ export async function describeProjectsFromReadme(
         // Written only while still empty: a description typed meanwhile wins.
         const fresh = await getProjectRow(project.id);
         if (fresh?.description?.trim()) continue;
-        if (await updateProject(project.id, { description })) filled += 1;
+        if (await updateProject(project.id, { description, keepUpdatedAt: true })) filled += 1;
       } catch {
         // A host that errors costs this project its fill this visit.
       }

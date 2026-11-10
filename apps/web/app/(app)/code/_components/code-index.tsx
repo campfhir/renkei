@@ -72,7 +72,7 @@ export default function CodeIndex({ projects, enabled, canCreate, accessNotice }
             type="search"
             value={state.query}
             onChange={(event) => dispatch({ type: 'query', value: event.target.value })}
-            placeholder="Search projects by name, repository, description or owner"
+            placeholder="Search projects"
             aria-label="Search code projects"
             className="w-full rounded-md border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"
           />
