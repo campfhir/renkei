@@ -24,6 +24,8 @@ import type { LlmProvider, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import { resourceCipher } from '../content-crypto';
 import { createLocalToolSet, endsTurn, type LocalToolContext } from '../local-tools';
 import { chatDelegateTool } from '../chat-delegate';
+import { codeDelegateTool, type OpenSubagentCheckout } from '@/lib/code/delegate';
+import { startInBackground } from '../subagent-tasks';
 import { listTasks } from './store';
 import { subagentTaskTools, taskTools, TASK_TOOL_NAMES } from './tools';
 import { cancelTaskWait, getTaskWait, wakeIfReady, type OpenWakeTurn } from './wake';
@@ -364,5 +366,133 @@ describe('a sub-agent on a task', () => {
     await call(TASK_TOOL_NAMES.complete, { task: 1 });
     const finished = await delegate().execute({ task: 'x', task_id: 1 }, context({ llm }));
     expect(finished.content[0]).toMatchObject({ text: '#1 is already completed.' });
+  });
+});
+
+describe('a code project’s sub-agent handed a task', () => {
+  const report = (text: string): LlmResponse => ({
+    content: [{ type: 'text', text }],
+    stopReason: 'end_turn',
+    usage: { inputTokens: 3, outputTokens: 2 },
+  });
+  /** A model whose one reply is held until the test lets it go. */
+  function heldModel() {
+    let release: (value: LlmResponse) => void = () => {};
+    const llm: ResolvedLlm = {
+      provider: {
+        complete: () =>
+          new Promise((resolve) => {
+            release = (reply) => resolve(ok(reply));
+          }),
+      },
+      modelConfigId: 'model-1',
+      providerName: 'anthropic',
+      model: 'claude-x',
+      maxOutputTokens: 4096,
+    };
+    return { llm, release: (reply: LlmResponse) => release(reply) };
+  }
+  function worktrees(reason?: string) {
+    const closed: string[] = [];
+    const checkout: OpenSubagentCheckout = async (_context, key) =>
+      reason
+        ? { ok: false, reason }
+        : {
+            ok: true,
+            checkout: {
+              tools: [],
+              branch: 'renkei/abc-sub-d1',
+              from: 'renkei/abc',
+              async close() {
+                closed.push(key);
+                return 'Merge renkei/abc-sub-d1.';
+              },
+            },
+          };
+    return { checkout, closed };
+  }
+  const settle = async (until: () => boolean) => {
+    for (let i = 0; i < 100 && !until(); i += 1) await new Promise((r) => setImmediate(r));
+  };
+
+  it('in the background, answers at once so the orchestrator carries on, and its report and branch land on the task', async () => {
+    await call(TASK_TOOL_NAMES.create, { title: 'Build the parser' });
+    const { llm, release } = heldModel();
+    const { checkout, closed } = worktrees();
+    const holds: string[] = [];
+    const started = await codeDelegateTool([], { checkout }).execute(
+      { task: 'Build the parser', task_id: 1, background: true },
+      context({
+        llm,
+        toolUseId: 'd1',
+        holdTurn: () => {
+          holds.push('held');
+          return () => holds.push('released');
+        },
+      })
+    );
+    // The call is back while the sub-agent has not said a word.
+    expect(started.isError).toBe(false);
+    expect(started.content[0]).toMatchObject({
+      text: expect.stringContaining('Started a background sub-agent on #1'),
+    });
+    expect((await listTasks(chatId, cipher))[0].status).toBe('in_progress');
+    expect(closed).toEqual([]);
+
+    release(report('The parser is built.'));
+    await settle(() => holds.length === 2);
+    expect(holds).toEqual(['held', 'released']);
+    expect(closed).toEqual(['d1']);
+    const [task] = await listTasks(chatId, cipher);
+    expect(task.status).toBe('completed');
+    expect(task.result).toContain('The parser is built.');
+    expect(task.result).toContain('Merge renkei/abc-sub-d1.');
+  });
+
+  it('is not started in the background without a task, in the chat’s own checkout, or when no worktree can be made', async () => {
+    const { llm } = heldModel();
+    const { checkout } = worktrees();
+    const tool = codeDelegateTool([], { checkout });
+    const noTask = await tool.execute({ task: 'x', background: true }, context({ llm }));
+    expect(noTask.content[0]).toMatchObject({ text: expect.stringContaining('needs a task') });
+
+    await call(TASK_TOOL_NAMES.create, { title: 'Piece' });
+    const inPlace = await tool.execute(
+      { task: 'x', task_id: 1, background: true, inPlace: true },
+      context({ llm })
+    );
+    expect(inPlace.isError).toBe(true);
+
+    const none = await codeDelegateTool([], {
+      checkout: worktrees('this checkout is not on a branch right now.').checkout,
+    }).execute({ task: 'x', task_id: 1, background: true }, context({ llm }));
+    expect(none.content[0]).toMatchObject({
+      text: expect.stringContaining('not on a branch right now'),
+    });
+    // Refused before the task was touched.
+    expect((await listTasks(chatId, cipher))[0].status).toBe('pending');
+  });
+
+  it('is stopped when its task is cancelled under it', async () => {
+    await call(TASK_TOOL_NAMES.create, { title: 'Long job' });
+    const [task] = await listTasks(chatId, cipher);
+    let stopped = false;
+    startInBackground(
+      context(),
+      task,
+      (running) =>
+        new Promise((resolve) => {
+          running.signal?.addEventListener('abort', () => {
+            stopped = true;
+            resolve({ content: [{ type: 'text', text: 'Stopped.' }], isError: true, meta: {} });
+          });
+        }),
+      5
+    );
+    await call(TASK_TOOL_NAMES.cancel, { task: 1 });
+    for (let i = 0; i < 100 && !stopped; i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(stopped).toBe(true);
+    // The person's cancel stands; the stopped run does not overwrite it.
+    expect((await listTasks(chatId, cipher))[0].status).toBe('cancelled');
   });
 });

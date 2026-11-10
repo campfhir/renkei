@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'added',
+        title: 'Code sub-agents can work in the background',
+        detail:
+          'A code chat can now start sub-agents in the background and keep working while they run, instead of sitting in one long step until they report. While it waits for them the chat is free, so you can write to it and get an answer; cancelling a sub-agent’s task in the tasks list stops it.',
+      },
+      {
         kind: 'changed',
         title: 'Sub-agents run side by side',
         detail:

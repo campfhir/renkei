@@ -937,6 +937,9 @@ describe('buildSystemPrompt’s code brief', () => {
     expect(prompt).toContain('commits its work as it goes and pushes');
     expect(prompt).toContain('works in a git worktree of its own');
     expect(prompt).toContain('code_git_merge');
+    // A wait holds the reply: the background road keeps the orchestrator and the person free.
+    expect(prompt).toContain('with `background` true');
+    expect(prompt).toContain('the chat is free for the person to write in');
     expect(prompt).toContain('the sub-agents run side by side');
   });
 });

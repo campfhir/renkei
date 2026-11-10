@@ -397,7 +397,7 @@ function waitTool(): LocalTool {
     def: {
       name: TASK_TOOL_NAMES.wait,
       description:
-        'Suspend: end this reply now and be woken when tasks finish — like registering an event listener. Use it when the remaining work is happening elsewhere (a background sub-agent started with chat_delegate and `background`, or the person) and there is nothing useful to do until it lands. ' +
+        'Suspend: end this reply now and be woken when tasks finish — like registering an event listener. Use it when the remaining work is happening elsewhere (a background sub-agent started with chat_delegate or code_delegate and `background`, or the person) and there is nothing useful to do until it lands. ' +
         'You are woken with a note naming each watched task and its result: by default when ALL of them have finished, or at once if one fails or is cancelled; `until` "any" wakes on the first that finishes with one of the `wake_on` outcomes. `timeout_minutes` (default 30, at most 1440) wakes you anyway. ' +
         'If the tasks have already finished it answers at once instead. Say briefly to the person what you are waiting for before calling it; it must be your last call in the reply. `cancel` true removes the wait without waking.',
       inputSchema: {
