@@ -145,6 +145,18 @@ test('a sub-agent still working is stopped from its modal, and the reply carries
   test.setTimeout(180_000);
   const tag = `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
   const hold = `subagent-stop-${tag}`;
+  const shot = (name: string) =>
+    page.screenshot({
+      path: path.join(
+        import.meta.dirname,
+        '..',
+        'test-results',
+        'screens',
+        testInfo.project.name,
+        name
+      ),
+      fullPage: false,
+    });
   const modelId = await setUpCode(page, request, tag);
   try {
     const { chatIds } = await stageCodeProject(page.request, {
@@ -174,17 +186,28 @@ test('a sub-agent still working is stopped from its modal, and the reply carries
     await subagent.getByRole('button', { name: 'Follow the sub-agent' }).click();
     const dialog = page.getByRole('dialog', { name: 'Sub-agent' });
     await expect(dialog).toContainText('working');
+    const stop = dialog.getByRole('button', { name: 'Stop sub-agent' });
+    await expect(stop).toBeVisible();
+    await shot('code-chat-subagent-stop.png');
+    // Phone width: the button is still on the page, nothing overflowing.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(stop).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    await shot('code-chat-subagent-stop-mobile.png');
 
     const stopped = page.waitForResponse(
       (response) =>
         response.request().method() === 'POST' && /\/subagents\/[^/]+\/stop$/.test(response.url())
     );
-    await dialog.getByRole('button', { name: 'Stop sub-agent' }).click();
+    await stop.click();
     expect(await (await stopped).json()).toEqual({ ok: true, running: true });
 
     // The run ends stopped, by whom, and there is nothing left to stop.
     await expect(dialog).toContainText('stopped by');
     await expect(dialog.getByRole('button', { name: /Stop/ })).toHaveCount(0);
+    await shot('code-chat-subagent-stopped-mobile.png');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await shot('code-chat-subagent-stopped.png');
     // The orchestrator was told, and finished its reply.
     const view = await settled(page.request, chatId, { timeout: 60_000 });
     expect(JSON.stringify(view.messages)).toContain('The sub-agent was stopped');
