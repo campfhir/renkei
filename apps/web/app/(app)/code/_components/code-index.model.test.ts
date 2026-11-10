@@ -49,64 +49,67 @@ describe('searching', () => {
   });
 
   it('tells "none yet" from "nothing matches"', () => {
-    expect(codeIndexView([], codeIndexQuery({ q: 'x' })).empty).toBe('none');
-    expect(codeIndexView(list, codeIndexQuery({ q: 'zzz' })).empty).toBe('no-match');
-    expect(codeIndexView(list, codeIndexQuery({})).empty).toBeNull();
+    expect(codeIndexView([], codeIndexQuery({ q: 'x' })).mine.empty).toBe('none');
+    expect(codeIndexView(list, codeIndexQuery({ q: 'zzz' })).mine.empty).toBe('no-match');
+    expect(codeIndexView(list, codeIndexQuery({})).mine.empty).toBeNull();
   });
 });
 
-describe('the list', () => {
-  it('puts mine first, then the ones shared with me', () => {
-    const list = [
-      project(1, { role: 'member', ownerName: 'Ada' }),
-      project(2),
-      project(3, { role: 'member', ownerName: 'Bo' }),
-      project(4),
-    ];
-    expect(ids(codeIndexView(list, codeIndexQuery({})).paging.rows)).toEqual([
-      'p2',
-      'p4',
-      'p1',
-      'p3',
-    ]);
+describe('the two tables', () => {
+  const list = [
+    project(1, { role: 'member', ownerName: 'Ada' }),
+    project(2),
+    project(3, { role: 'member', ownerName: 'Bo' }),
+    project(4),
+  ];
+
+  it('keeps mine and the shared ones apart, each in the order loaded', () => {
+    const view = codeIndexView(list, codeIndexQuery({}));
+    expect(ids(view.mine.paging.rows)).toEqual(['p2', 'p4']);
+    expect(ids(view.shared.paging.rows)).toEqual(['p1', 'p3']);
   });
 
-  it('pages ten at a time, with the range', () => {
-    const first = codeIndexView(many(25), codeIndexQuery({})).paging;
-    expect(first.rows).toHaveLength(10);
-    expect(first.range).toBe('1–10 of 25');
-    const last = codeIndexView(many(25), codeIndexQuery({ page: '3' })).paging;
-    expect(ids(last.rows)).toEqual(['p21', 'p22', 'p23', 'p24', 'p25']);
-    expect(last.range).toBe('21–25 of 25');
-    expect(last.hasNext).toBe(false);
+  it('searches both, and says which one found nothing', () => {
+    const view = codeIndexView(list, codeIndexQuery({ q: 'ada' }));
+    expect(view.mine.empty).toBe('no-match');
+    expect(ids(view.shared.paging.rows)).toEqual(['p1']);
+    expect(codeIndexView(list.filter((p) => p.role === 'owner'), codeIndexQuery({})).shared.empty).toBe(
+      'none'
+    );
+  });
+
+  it('pages each table ten at a time, on its own', () => {
+    const shared = many(25).map((p) => ({ ...p, id: `s${p.id}`, role: 'member' as const }));
+    const all = [...many(12), ...shared];
+    const view = codeIndexView(all, codeIndexQuery({ page: '2', shared: '3' }));
+    expect(ids(view.mine.paging.rows)).toEqual(['p11', 'p12']);
+    expect(view.mine.paging.range).toBe('11–12 of 12');
+    expect(view.shared.paging.rows).toHaveLength(5);
+    expect(view.shared.paging.range).toBe('21–25 of 25');
   });
 
   it('a page past the end shows the last, and a bad page the first', () => {
-    expect(codeIndexView(many(25), codeIndexQuery({ page: '9' })).paging.page).toBe(3);
-    expect(codeIndexView(many(25), codeIndexQuery({ page: 'x' })).paging.page).toBe(1);
+    expect(codeIndexView(many(25), codeIndexQuery({ page: '9' })).mine.paging.page).toBe(3);
+    expect(codeIndexView(many(25), codeIndexQuery({ page: 'x' })).mine.paging.page).toBe(1);
   });
 
-  it('pages the matches, not everything', () => {
-    const view = codeIndexView(many(25), codeIndexQuery({ q: 'project 2' }));
-    expect(view.paging.range).toBe('1–8 of 8');
-  });
-
-  it('says who owns each: "You", or the name', () => {
-    expect(ownerLabel(project(1))).toBe('You');
+  it('names the owner of a shared project', () => {
     expect(ownerLabel(project(2, { role: 'member', ownerName: 'Ada' }))).toBe('Ada');
     expect(ownerLabel(project(3, { role: 'member' }))).toBe('Someone');
   });
 });
 
 describe('links', () => {
-  it('leave out page 1 and an empty search, and keep the search across pages', () => {
-    expect(codeIndexHref({ q: '', page: 1 })).toBe('/code');
-    expect(codeIndexHref({ q: '', page: 3 })).toBe('/code?page=3');
-    expect(codeIndexHref({ q: 'billing api', page: 2 })).toBe('/code?q=billing+api&page=2');
+  it('leave out page 1 and an empty search, and keep the other table’s place', () => {
+    expect(codeIndexHref({ q: '', page: 1, sharedPage: 1 })).toBe('/code');
+    expect(codeIndexHref({ q: '', page: 3, sharedPage: 1 })).toBe('/code?page=3');
+    expect(codeIndexHref({ q: 'billing api', page: 2, sharedPage: 4 })).toBe(
+      '/code?q=billing+api&page=2&shared=4'
+    );
   });
 
   it('read the search trimmed and bounded', () => {
-    expect(codeIndexQuery({ q: '  ledger ' })).toEqual({ q: 'ledger', page: 1 });
+    expect(codeIndexQuery({ q: '  ledger ' })).toEqual({ q: 'ledger', page: 1, sharedPage: 1 });
     expect(codeIndexQuery({ q: 'x'.repeat(500) }).q).toHaveLength(200);
   });
 });

@@ -8,25 +8,24 @@
  */
 
 import { useRouter } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { codeIndexHref } from './code-index.model';
 
 export default function CodeSearch({ initialQ }: { initialQ: string }) {
   const router = useRouter();
   const [value, setValue] = useState(initialQ);
-  const first = useRef(true);
 
   useEffect(() => {
-    // Skip the mount: the URL already says what the box does.
-    if (first.current) {
-      first.current = false;
-      return;
-    }
+    // Only a change from what the URL already says writes it: on mount (and
+    // on strict mode's second mount) the box and the URL agree, and a
+    // replace then would undo a page turned in the meantime.
+    const q = value.trim();
+    if (q === initialQ) return;
     const handle = setTimeout(() => {
-      router.replace(codeIndexHref({ q: value.trim(), page: 1 }));
+      router.replace(codeIndexHref({ q, page: 1, sharedPage: 1 }));
     }, 300);
     return () => clearTimeout(handle);
-  }, [value, router]);
+  }, [value, initialQ, router]);
 
   return (
     <input

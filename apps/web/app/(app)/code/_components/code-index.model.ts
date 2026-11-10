@@ -14,13 +14,23 @@ export { pageFromParam };
 export interface CodeIndexQuery {
   /** The search text, trimmed; empty for none. */
   q: string;
-  /** 1-based, as asked (the view clamps it). */
+  /** 1-based, as asked (the view clamps it): my projects' page … */
   page: number;
+  /** … and the shared ones', each table paging on its own. */
+  sharedPage: number;
 }
 
 /** The query a request's search params spell: text trimmed, a bad page as the first. */
-export function codeIndexQuery(params: { q?: string; page?: string }): CodeIndexQuery {
-  return { q: (params.q ?? '').trim().slice(0, 200), page: pageFromParam(params.page) };
+export function codeIndexQuery(params: {
+  q?: string;
+  page?: string;
+  shared?: string;
+}): CodeIndexQuery {
+  return {
+    q: (params.q ?? '').trim().slice(0, 200),
+    page: pageFromParam(params.page),
+    sharedPage: pageFromParam(params.shared),
+  };
 }
 
 /** Every word typed must appear somewhere in the project's name, repository, description or owner. */
@@ -36,35 +46,52 @@ export function matchingProjects(projects: ProjectListItem[], q: string): Projec
   });
 }
 
-export interface CodeIndexView {
+export interface CodeIndexGroup {
   paging: ListPage<ProjectListItem>;
-  /** Why the list is empty, when it is: nothing exists yet, or the search found nothing. */
+  /** Why the table is empty, when it is: nothing exists yet, or the search found nothing. */
   empty: 'none' | 'no-match' | null;
 }
 
-export function codeIndexView(projects: ProjectListItem[], query: CodeIndexQuery): CodeIndexView {
-  // Mine first, then shared, each in the order the page loaded them.
-  const ordered = [
-    ...projects.filter((project) => project.role === 'owner'),
-    ...projects.filter((project) => project.role !== 'owner'),
-  ];
-  const matches = matchingProjects(ordered, query.q);
+export interface CodeIndexView {
+  mine: CodeIndexGroup;
+  shared: CodeIndexGroup;
+}
+
+function groupOf(all: ProjectListItem[], q: string, page: number): CodeIndexGroup {
+  const matches = matchingProjects(all, q);
   return {
-    paging: listPage(matches, query.page),
-    empty: matches.length > 0 ? null : projects.length === 0 ? 'none' : 'no-match',
+    paging: listPage(matches, page),
+    empty: matches.length > 0 ? null : all.length === 0 ? 'none' : 'no-match',
   };
 }
 
-/** A link to the list at this search and page (page 1 and an empty search left out of the URL). */
-export function codeIndexHref({ q, page }: CodeIndexQuery): string {
+/** My projects and the ones shared with me, each searched and paged on its own, in the order loaded. */
+export function codeIndexView(projects: ProjectListItem[], query: CodeIndexQuery): CodeIndexView {
+  return {
+    mine: groupOf(
+      projects.filter((project) => project.role === 'owner'),
+      query.q,
+      query.page
+    ),
+    shared: groupOf(
+      projects.filter((project) => project.role !== 'owner'),
+      query.q,
+      query.sharedPage
+    ),
+  };
+}
+
+/** A link to the list at this search and these pages (page 1 and an empty search left out of the URL). */
+export function codeIndexHref({ q, page, sharedPage }: CodeIndexQuery): string {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (page > 1) params.set('page', String(page));
+  if (sharedPage > 1) params.set('shared', String(sharedPage));
   const search = params.toString();
   return `/code${search ? `?${search}` : ''}`;
 }
 
-/** What the Owner column says: "You" on mine, the person's name on a shared one. */
+/** Who a shared project belongs to, as the Owner column says it. */
 export function ownerLabel(project: ProjectListItem): string {
-  return project.role === 'owner' ? 'You' : (project.ownerName ?? 'Someone');
+  return project.ownerName ?? 'Someone';
 }
