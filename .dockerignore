@@ -27,6 +27,10 @@
 .legacy
 .claude
 
+# Ad hoc command-line tools (tools/idp: the identity provider CLI) run from
+# a checkout against the database; no image carries them.
+tools
+
 # Build output. The builder stage CREATES .next; it must never receive one,
 # least of all a dev server's.
 **/.next

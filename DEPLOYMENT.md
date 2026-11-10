@@ -1041,6 +1041,45 @@ It is gated by a **setup secret in the app's environment** instead:
 The organization's name, shown on the consent page, is the `organizationName`
 org setting (default "Renkei").
 
+### Replacing the identity provider's client secret when nobody can sign in
+
+Every change to the identity provider in the app needs an operator session,
+and a session needs a sign-in. So once the provider's client secret has
+expired (or the client was re-registered) before an operator replaced it in
+Settings → Identity, nobody can sign in to fix it: sign-in ends at "Failed
+to exchange code for token", and the server log has "the IdP refused to
+exchange the sign-in code".
+
+The identity provider CLI (`tools/idp`) changes the record straight in the
+database. It is not in any image: run it from a checkout of the repository,
+on a machine that can reach the database, with the web app's `DATABASE_URL`
+and `TOKEN_ENCRYPTION_KEY` (or `TOKEN_ENCRYPTION_KEYS`) in the environment.
+Holding those two is the authority; the tool asks for nothing else.
+
+```bash
+pnpm install
+export DATABASE_URL=postgres://…            # the web app's
+export TOKEN_ENCRYPTION_KEY=…               # the web app's
+
+pnpm --filter @renkei/idp-cli idp show                  # what is stored (never the secret)
+pnpm --filter @renkei/idp-cli idp set --client-secret   # asks for the new secret, not echoed
+```
+
+The secret is never taken from the command line. `--client-secret` reads it
+from a prompt, from standard input when piped
+(`vault read … | pnpm --filter @renkei/idp-cli idp set --client-secret`), or
+from `IDP_CLIENT_SECRET`. It is sealed with the encryption key the same way
+the app seals it, and the app reads it on the next sign-in: no restart.
+
+`set` changes only the fields it is given, so the same tool repairs a
+re-registered client or a wrong claim mapping: `--client-id`, `--issuer`
+(the `issuer` of the provider's discovery document, https), `--role-claim`,
+`--operator-value`, `--user-value`, `--groups-claim` (an empty value clears
+one of the last four). It does not create the first record; that is first-run
+setup above. `show` also says when the key in the environment does not open
+the stored secret, which is the other way sign-in breaks for everyone (the
+wrong `TOKEN_ENCRYPTION_KEY` on the web app).
+
 ### Upgrading a deployment that was multi-tenant
 
 Migration `153-single-organization` removes the tenant model: it refuses to

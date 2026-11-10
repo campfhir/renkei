@@ -1,6 +1,8 @@
 packages:
   - 'apps/*'
   - 'packages/*'
+  # Ad hoc command-line tools run from a checkout; no image copies them.
+  - 'tools/*'
 allowBuilds:
   esbuild: true
   sharp: true
