@@ -490,6 +490,22 @@ export function postgresChatTurnEngine(db: () => Kysely<DB>): ChatTurnEngineStor
         .where('status', '=', 'running')
         .execute();
     },
+    async stopSubagentRun(chatId, toolUseId, error) {
+      const stopped = await db()
+        .updateTable('chat_subagent_runs')
+        .set({
+          status: 'interrupted',
+          error,
+          updated_at: sql<Date>`NOW()`,
+          finished_at: sql<Date>`NOW()`,
+        })
+        .where('chat_id', '=', chatId)
+        .where('tool_use_id', '=', toolUseId)
+        .where('status', '=', 'running')
+        .returning('id')
+        .execute();
+      return stopped.length > 0;
+    },
     async getSubagentRunByCall(chatId, toolUseId) {
       const row = await db()
         .selectFrom('chat_subagent_runs')

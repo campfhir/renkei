@@ -234,6 +234,13 @@ export interface ChatTurnEngineStore {
   ): Promise<void>;
   /** Every run of the turn still running ends interrupted with `error`. */
   interruptSubagentRuns(turnId: string, error: string): Promise<void>;
+  /**
+   * One run, asked to stop: still running, it ends interrupted with
+   * `error` and the answer is true; finished already (or not there), it
+   * is left as it is and the answer is false. The loop that runs it reads
+   * the row between steps and stops when it is no longer running.
+   */
+  stopSubagentRun(chatId: string, toolUseId: string, error: string): Promise<boolean>;
   /** One run by the chat and the tool_use id that started it, or null. */
   getSubagentRunByCall(chatId: string, toolUseId: string): Promise<ChatSubagentRunRecord | null>;
 }

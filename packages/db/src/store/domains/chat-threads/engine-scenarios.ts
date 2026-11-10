@@ -742,6 +742,25 @@ export const chatTurnEngineScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'chatThreads.stopSubagentRun',
+    name: 'a running run of this chat only; a finished one is left as it is',
+    fixture,
+    run: async (store) => {
+      const answers = [
+        await store.chatThreads.stopSubagentRun(CHAT.annB, 'tu-sub', 'stopped by Ann'),
+        await store.chatThreads.stopSubagentRun(CHAT.annA, 'tu-sub', 'stopped by Ann'),
+        await store.chatThreads.stopSubagentRun(CHAT.annA, 'tu-sub', 'stopped again'),
+        await store.chatThreads.stopSubagentRun(CHAT.annA, 'tu-old', 'stopped by Ann'),
+        await store.chatThreads.stopSubagentRun(CHAT.annA, 'tu-none', 'stopped by Ann'),
+      ];
+      const pick = async (call: string) => {
+        const run = await store.chatThreads.getSubagentRunByCall(CHAT.annA, call);
+        return run && [run.status, run.error, run.finishedAt !== null];
+      };
+      return [answers, await pick('tu-sub'), await pick('tu-old')];
+    },
+  },
+  {
     method: 'chatThreads.getSubagentRunByCall',
     name: "with the model's label as it reads now; per chat",
     fixture,

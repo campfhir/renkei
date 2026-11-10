@@ -52,7 +52,13 @@ export const CHANGELOG: ChangelogRelease[] = [
         kind: 'added',
         title: 'Code sub-agents can work in the background',
         detail:
-          'A code chat can now start sub-agents in the background and keep working while they run, instead of sitting in one long step until they report. While it waits for them the chat is free, so you can write to it and get an answer; cancelling a sub-agent’s task in the tasks list stops it.',
+          'A code chat can now start sub-agents in the background and keep working while they run, instead of sitting in one long step until they report. While it waits for them the chat is free, so you can write to it and get an answer.',
+      },
+      {
+        kind: 'added',
+        title: 'Stop a single sub-agent',
+        detail:
+          'A sub-agent that is still working can be stopped on its own: open it from its card in the thread and press Stop sub-agent, or ask the assistant in the chat to stop it. The rest of the reply and any other sub-agents carry on.',
       },
       {
         kind: 'changed',

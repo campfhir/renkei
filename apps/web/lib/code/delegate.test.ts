@@ -595,6 +595,38 @@ describe('code_delegate', () => {
     });
   });
 
+  it('stops before its next model call once it was asked to, and its run ends interrupted with who asked', async () => {
+    let modelCalls = 0;
+    const llm = llmOf({
+      async complete() {
+        modelCalls += 1;
+        return ok({
+          content: [{ type: 'tool_use', id: `u${modelCalls}`, name: 'code_read_file', input: {} }],
+          stopReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      },
+    });
+    const finished: { status: string; error: string | null }[] = [];
+    const recorder: SubagentRecorder = {
+      start: async () => 'run-1',
+      progress: async () => {},
+      // Asked after its first model call: the second is never made.
+      stopped: async () => (modelCalls >= 1 ? 'stopped by Ann' : null),
+      finish: async (_runId, outcome) => {
+        finished.push({ status: outcome.status, error: outcome.error });
+      },
+    };
+    const result = await codeDelegateTool([readTool]).execute(
+      { task: 'read everything', readOnly: true },
+      context({ llm, toolUseId: 'd9', subagents: recorder })
+    );
+    expect(modelCalls).toBe(1);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('The sub-agent was stopped: stopped by Ann.');
+    expect(finished).toEqual([{ status: 'interrupted', error: 'stopped by Ann' }]);
+  });
+
   it('is a tool whose calls in one reply run side by side', () => {
     expect(codeDelegateTool([readTool]).concurrent).toBe(true);
   });

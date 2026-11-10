@@ -10,7 +10,7 @@
  * is still going the page asks again every few seconds.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef } from 'react';
 import Modal from '@/components/modal';
 import { LoadingLine } from '@/components/skeleton';
 import { chatClient } from '@/lib/chat/client';
@@ -20,6 +20,15 @@ import { formatDurationMs } from '@/lib/duration';
 import Markdown from './markdown';
 import { useElapsedMs } from './use-elapsed';
 import { StepList, type WorkStep } from './message-list';
+import {
+  canStop,
+  initialSubagentModal,
+  keepsAsking,
+  showsStop,
+  statusWord,
+  stopLabel,
+  subagentModalReducer,
+} from './subagent-modal.model';
 
 const POLL_MS = 3_000;
 
@@ -66,23 +75,11 @@ function turnsOf(transcript: SubagentRunView['transcript']): TranscriptTurn[] {
   return out;
 }
 
-function statusWord(run: SubagentRunView): string {
-  switch (run.status) {
-    case 'running':
-      return 'working';
-    case 'completed':
-      return 'done';
-    case 'failed':
-      return 'failed';
-    case 'interrupted':
-      return 'interrupted';
-  }
-}
-
 export default function SubagentModal({
   chatId,
   toolUseId,
   notStarted = false,
+  isOwner = false,
   onClose,
 }: {
   chatId: string;
@@ -94,44 +91,53 @@ export default function SubagentModal({
    * "not recorded".
    */
   notStarted?: boolean;
+  /** The chat's owner may stop a sub-agent that is still working; a viewer only reads. */
+  isOwner?: boolean;
   onClose: () => void;
 }) {
-  const [run, setRun] = useState<SubagentRunView | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [queued, setQueued] = useState(false);
+  const [state, dispatch] = useReducer(subagentModalReducer, initialSubagentModal);
+  const { run, error, queued } = state;
   const notStartedRef = useRef(notStarted);
   notStartedRef.current = notStarted;
+  const asking = keepsAsking(state);
+  // Which read this is: the first, then one more each time a poll comes due.
+  const [tick, nextTick] = useReducer((count: number) => count + 1, 0);
 
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const load = async () => {
-      const result = await chatClient.getSubagentRun(chatId, toolUseId);
+    void chatClient.getSubagentRun(chatId, toolUseId).then((result) => {
       if (cancelled) return;
-      if (result.data) {
-        setRun(result.data.run);
-        setError(null);
-        setQueued(false);
-        if (result.data.run.status === 'running') timer = setTimeout(() => void load(), POLL_MS);
-      } else if (result.error === 'No such sub-agent run' && notStartedRef.current) {
-        setQueued(true);
-        setError(null);
-        timer = setTimeout(() => void load(), POLL_MS);
-      } else {
-        setQueued(false);
-        setError(
-          result.error === 'No such sub-agent run'
-            ? 'This sub-agent’s run was not recorded — it ran before runs were kept, or its turn was removed.'
-            : (result.error ?? 'The sub-agent’s run could not be read.')
-        );
+      if (result.data) dispatch({ type: 'loaded', run: result.data.run });
+      else {
+        dispatch({
+          type: 'loadFailed',
+          message: result.error,
+          notStarted: notStartedRef.current,
+        });
       }
-    };
-    void load();
+    });
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
     };
-  }, [chatId, toolUseId]);
+  }, [chatId, toolUseId, tick]);
+
+  useEffect(() => {
+    if (!asking) return;
+    const timer = setTimeout(nextTick, POLL_MS);
+    return () => clearTimeout(timer);
+    // Re-armed by each read it starts, for as long as there is something to follow.
+  }, [asking, tick]);
+
+  const stop = async () => {
+    if (!canStop(state, isOwner)) return;
+    dispatch({ type: 'stopPressed' });
+    const result = await chatClient.stopSubagentRun(chatId, toolUseId);
+    if (result.error) dispatch({ type: 'stopRefused', message: result.error });
+    else {
+      dispatch({ type: 'stopAsked' });
+      nextTick();
+    }
+  };
 
   const turns = useMemo(() => (run ? turnsOf(run.transcript) : []), [run]);
   // Counted from the run's own start to its finish, or to now while it works.
@@ -187,7 +193,23 @@ export default function SubagentModal({
             {run.error ? (
               <span className="text-amber-700 dark:text-amber-400">{run.error}</span>
             ) : null}
+            {showsStop(state, isOwner) ? (
+              <button
+                type="button"
+                data-subagent-stop
+                onClick={() => void stop()}
+                disabled={!canStop(state, isOwner)}
+                className="ml-auto rounded-md border border-red-300 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-60 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950/40"
+              >
+                {stopLabel(state)}
+              </button>
+            ) : null}
           </p>
+          {state.stopError ? (
+            <p role="alert" className="text-xs text-red-600 dark:text-red-400">
+              The sub-agent was not stopped: {state.stopError}
+            </p>
+          ) : null}
           <section>
             <h3 className="mb-1 text-xs font-semibold uppercase text-gray-400">Task</h3>
             <p className="whitespace-pre-wrap break-words">{run.task}</p>
