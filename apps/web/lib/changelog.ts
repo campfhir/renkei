@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'changed',
+        title: 'Code projects commit and push as they work',
+        detail:
+          'A code chat now commits and pushes its branch as each piece of work stands instead of once at the end, and its sub-agents can commit and push their own work too (never a forced push). A restart of the sandbox or the server in the middle of a run no longer takes unpushed work with it.',
+      },
+      {
         kind: 'fixed',
         title: 'Activity log cards wrap long lines on a phone',
         detail:

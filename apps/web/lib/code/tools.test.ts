@@ -823,9 +823,8 @@ describe('the rest of git', () => {
     );
   });
 
-  it('keeps publishing, throwing work away and previews from a sub-agent, and offers it the rest of git', () => {
+  it('keeps throwing work away and previews from a sub-agent, and offers it the rest of git, committing and pushing included', () => {
     for (const withheld of [
-      'code_git_push',
       'code_git_reset',
       'code_git_clean',
       'code_preview_start',
@@ -834,6 +833,8 @@ describe('the rest of git', () => {
       expect(WITHHELD_FROM_SUBAGENTS.has(withheld)).toBe(true);
     }
     for (const offered of [
+      'code_git_commit',
+      'code_git_push',
       'code_git_log',
       'code_git_fetch',
       'code_git_branch',

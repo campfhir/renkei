@@ -23,6 +23,7 @@ import {
   DELEGATE_WALL_CLOCK_MS,
   codeDelegateTool,
   matchSubagentModel,
+  subagentPushTool,
   type SubagentModelChoice,
 } from './delegate';
 import { resourceCipher } from '@/lib/chat/content-crypto';
@@ -70,9 +71,11 @@ const readTool: LocalTool = {
     return textResult(`contents of ${String(input.path)}`);
   },
 };
+const pushes: Record<string, unknown>[] = [];
 const pushTool: LocalTool = {
   def: { name: 'code_git_push', description: 'push', inputSchema: { type: 'object' } },
-  async execute() {
+  async execute(input) {
+    pushes.push(input);
     return textResult('pushed');
   },
 };
@@ -436,7 +439,8 @@ describe('code_delegate', () => {
     expect(result.content[0]?.text).toMatch(/rejected/);
   });
 
-  it('runs without a recorder, and withholds pushing from the sub-agent', async () => {
+  it('runs without a recorder, and lets the sub-agent push its own work', async () => {
+    pushes.length = 0;
     const llm = llmOf(
       provider([
         {
@@ -445,7 +449,7 @@ describe('code_delegate', () => {
           usage: { inputTokens: 1, outputTokens: 1 },
         },
         {
-          content: [{ type: 'text', text: 'Could not push.' }],
+          content: [{ type: 'text', text: 'Committed and pushed.' }],
           stopReason: 'end_turn',
           usage: { inputTokens: 1, outputTokens: 1 },
         },
@@ -454,6 +458,55 @@ describe('code_delegate', () => {
     const tool = codeDelegateTool([readTool, pushTool]);
     const result = await tool.execute({ task: 'push it' }, context({ llm, toolUseId: 'd2' }));
     expect(result.isError).toBe(false);
-    expect(result.content[0]?.text).toContain('Could not push.');
+    expect(result.content[0]?.text).toContain('Committed and pushed.');
+    expect(pushes).toEqual([{}]);
+  });
+
+  it('refuses a sub-agent a forced push, and a read-only one any push', async () => {
+    pushes.length = 0;
+    const forced = await subagentPushTool(pushTool).execute({ forceWithLease: true }, context({}));
+    expect(forced.isError).toBe(true);
+    expect(forced.content[0]?.text).toMatch(/does not replace a remote branch/);
+    expect(pushes).toEqual([]);
+
+    const llm = llmOf(
+      provider([
+        {
+          content: [{ type: 'tool_use', id: 'u1', name: 'code_git_push', input: {} }],
+          stopReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+        {
+          content: [{ type: 'text', text: 'Nothing to push with.' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ])
+    );
+    const tool = codeDelegateTool([readTool, pushTool]);
+    await tool.execute({ task: 'look', readOnly: true }, context({ llm, toolUseId: 'd3' }));
+    expect(pushes).toEqual([]);
+  });
+
+  it('tells the sub-agent to commit and push as it goes', async () => {
+    let system = '';
+    const llm = llmOf({
+      async complete(request) {
+        system =
+          typeof request.system === 'string' ? request.system : JSON.stringify(request.system);
+        return ok({
+          content: [{ type: 'text', text: 'Done.' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      },
+    } as LlmProvider);
+    await codeDelegateTool([readTool, pushTool]).execute(
+      { task: 'do it' },
+      context({ llm, toolUseId: 'd4' })
+    );
+    expect(system).toContain('code_git_commit');
+    expect(system).toContain('code_git_push');
+    expect(system).toContain('whatever was never pushed is lost');
   });
 });
