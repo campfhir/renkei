@@ -26,6 +26,9 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWorkspaceGitPull: jest.fn(),
   sbWorkspaceGitPush: jest.fn(),
   sbWorkspaceGitStatus: jest.fn(),
+  sbWorkspaceGet: jest.fn(),
+  sbWorkspaceWorktree: jest.fn(),
+  sbWorkspaceDelete: jest.fn(),
   sbWorkspaceGrep: jest.fn(),
   sbWorkspaceLs: jest.fn(),
   sbWorkspaceMove: jest.fn(),
@@ -823,9 +826,8 @@ describe('the rest of git', () => {
     );
   });
 
-  it('keeps publishing, throwing work away and previews from a sub-agent, and offers it the rest of git', () => {
+  it('keeps throwing work away and previews from a sub-agent, and offers it the rest of git, committing and pushing included', () => {
     for (const withheld of [
-      'code_git_push',
       'code_git_reset',
       'code_git_clean',
       'code_preview_start',
@@ -834,6 +836,8 @@ describe('the rest of git', () => {
       expect(WITHHELD_FROM_SUBAGENTS.has(withheld)).toBe(true);
     }
     for (const offered of [
+      'code_git_commit',
+      'code_git_push',
       'code_git_log',
       'code_git_fetch',
       'code_git_branch',
@@ -987,5 +991,132 @@ describe('previews', () => {
       .get('code_preview_stop')!
       .execute({ name: 'web' }, { ...context, readOnly: true });
     expect(refused.isError).toBe(true);
+  });
+});
+
+describe('a sub-agent’s own worktree', () => {
+  const SUB_ID = '33333333-3333-4333-8333-333333333333';
+  const reply = (content: unknown[], stopReason: string) => ({
+    ok: true,
+    val: { content, stopReason, usage: { inputTokens: 1, outputTokens: 1 } },
+  });
+  /** A model that writes one file, then reports. */
+  function writingModel() {
+    const replies = [
+      reply(
+        [
+          {
+            type: 'tool_use',
+            id: 'u1',
+            name: 'code_write_file',
+            input: { path: 'notes.md', content: 'hello' },
+          },
+        ],
+        'tool_use'
+      ),
+      reply([{ type: 'text', text: 'Wrote notes.md.' }], 'end_turn'),
+    ];
+    let index = 0;
+    return {
+      provider: { complete: jest.fn(async () => replies[Math.min(index++, replies.length - 1)]) },
+      modelConfigId: 'model-1',
+      providerName: 'anthropic',
+      model: 'claude-x',
+      maxOutputTokens: 4096,
+    };
+  }
+  const delegating = (): LocalToolContext =>
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- a fake model for the loop
+    ({ ...context, toolUseId: 'toolu_01AbCdEfGh', llm: writingModel() }) as LocalToolContext;
+
+  beforeEach(() => {
+    git.resolveWorkspaceGitAccess.mockResolvedValue({ username: 'alice', gitProxy: {} });
+    client.sbWorkspaceGet.mockResolvedValue({
+      ok: true,
+      val: { id: WS_ID, branch: 'renkei/abc123', parentId: 'base-1', status: 'ready' },
+    });
+    client.sbWorkspaceWorktree.mockResolvedValue({
+      ok: true,
+      val: { id: SUB_ID, branch: 'renkei/abc123-sub-abcdefgh', parentId: 'base-1' },
+    });
+    client.sbWorkspaceWrite.mockResolvedValue({ ok: true, val: { path: 'notes.md', bytes: 5 } });
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: { branch: 'renkei/abc123-sub-abcdefgh', status: '', inProgress: null, conflicts: [] },
+    });
+    client.sbWorkspaceGitCommit.mockResolvedValue({
+      ok: true,
+      val: { branch: 'renkei/abc123-sub-abcdefgh', commit: 'abc1234 wip' },
+    });
+    client.sbWorkspaceDelete.mockResolvedValue({ ok: true, val: { id: SUB_ID } });
+  });
+
+  it('starts at the chat’s branch, takes the sub-agent’s writes, and is removed with the branch named', async () => {
+    const result = await tools()
+      .get('code_delegate')!
+      .execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceWorktree).toHaveBeenCalledWith(TARGET, {
+      baseId: 'base-1',
+      branch: 'renkei/abc123-sub-abcdefgh',
+      startLocal: 'renkei/abc123',
+    });
+    // The write landed in the sub-agent's worktree, not the chat's.
+    expect(client.sbWorkspaceWrite.mock.calls[0][1]).toMatchObject({ id: SUB_ID });
+    expect(client.sbWorkspaceGitCommit).not.toHaveBeenCalled();
+    expect(client.sbWorkspaceDelete).toHaveBeenCalledWith(TARGET, SUB_ID);
+    const text = result.content.map((block) => block.text).join('\n');
+    expect(text).toContain('Wrote notes.md.');
+    expect(text).toContain('code_git_merge (action "start", ref "renkei/abc123-sub-abcdefgh")');
+  });
+
+  it('commits what the sub-agent left uncommitted before the worktree goes', async () => {
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'renkei/abc123-sub-abcdefgh',
+        status: '?? notes.md',
+        inProgress: null,
+        conflicts: [],
+      },
+    });
+    const result = await tools()
+      .get('code_delegate')!
+      .execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceGitCommit).toHaveBeenCalledWith(
+      TARGET,
+      expect.objectContaining({ id: SUB_ID, author: { name: 'alice', email: 'alice@example.com' } })
+    );
+    expect(client.sbWorkspaceDelete).toHaveBeenCalledWith(TARGET, SUB_ID);
+    expect(result.content.map((block) => block.text).join('\n')).toContain(
+      'committed on renkei/abc123-sub-abcdefgh as work in progress'
+    );
+  });
+
+  it('keeps the worktree when the leftovers cannot be committed', async () => {
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: { branch: 'x', status: '?? notes.md', inProgress: null, conflicts: [] },
+    });
+    client.sbWorkspaceGitCommit.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op', type: 'git_failed', message: 'nope', status: 409 },
+    });
+    await tools().get('code_delegate')!.execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceDelete).not.toHaveBeenCalled();
+  });
+
+  it('works in the chat’s checkout when the chat is not on a branch', async () => {
+    client.sbWorkspaceGet.mockResolvedValue({
+      ok: true,
+      val: { id: WS_ID, branch: 'HEAD', parentId: 'base-1', status: 'ready' },
+    });
+    const result = await tools()
+      .get('code_delegate')!
+      .execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceWorktree).not.toHaveBeenCalled();
+    expect(client.sbWorkspaceWrite.mock.calls[0][1]).toMatchObject({ id: WS_ID });
+    expect(result.content.map((block) => block.text).join('\n')).toContain(
+      'not on a branch right now'
+    );
   });
 });

@@ -419,6 +419,7 @@ describe('buildSystemPrompt', () => {
     };
     const withDelegate = buildSystemPrompt({ ...base, hasDelegate: true });
     expect(withDelegate).toContain('goes to a sub-agent with chat_delegate');
+    expect(withDelegate).toContain('the sub-agents then run side by side');
     expect(withDelegate).toContain('creates, changes or sends something, which only you do');
     expect(buildSystemPrompt(base)).not.toContain('chat_delegate');
     // A voice turn with a sub-agent to hand work to is told to keep its own
@@ -931,5 +932,11 @@ describe('buildSystemPrompt’s code brief', () => {
     expect(prompt).toContain('So delegate');
     expect(prompt).toContain('code_delegate');
     expect(prompt).toContain('trimmed from your context');
+    // Work only in the worktree is lost when the sandbox restarts mid-run.
+    expect(prompt).toContain('Commit and push as the work goes');
+    expect(prompt).toContain('commits its work as it goes and pushes');
+    expect(prompt).toContain('works in a git worktree of its own');
+    expect(prompt).toContain('code_git_merge');
+    expect(prompt).toContain('the sub-agents run side by side');
   });
 });

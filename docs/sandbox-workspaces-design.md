@@ -43,6 +43,16 @@ repository on it, kept apart from ordinary chats:
   (`lib/chat/tasks/wake.ts`), retried while the chat is mid-turn. A wake
   lives in the process that promised it; a restart loses it, and the
   next message does what a first turn always did.
+- **A worktree per sub-agent.** A `code_delegate` sub-agent that changes
+  things gets a worktree of its own for its run (`lib/code/tools.ts`,
+  `subagentCheckout`): the `worktree` verb with `startLocal` naming the
+  chat's current branch, so the new branch
+  (`<chat's branch>-sub-<delegation id>`) starts at the chat's last commit
+  rather than the remote's. Sub-agents started in one reply run at once,
+  each in its own; when one reports, what it left uncommitted is committed
+  on its branch, the worktree is deleted, and the orchestrator merges the
+  branch into the chat's. A run cut short by a restart leaves its worktree
+  for the worker's sweep and its commits on the branch.
 - **A worktree per chat.** Any number of chats in a project work at once.
   The project's clone is its **base**, which no chat edits; each chat
   works in a `git worktree` of it, on a branch of its own

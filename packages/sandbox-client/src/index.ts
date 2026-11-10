@@ -887,11 +887,19 @@ export async function sbWorkspaceClone(
  * A worktree of a ready base clone, on a new branch of its own — one per
  * chat working in a code project. Asked again for the same branch it
  * answers the worktree it already made. With a git proxy the remote is
- * fetched first so the branch starts where the remote is now.
+ * fetched first so the branch starts where the remote is now; with
+ * `startLocal` it starts at that local branch's last commit instead (a
+ * sub-agent's worktree, off the chat's own branch).
  */
 export async function sbWorkspaceWorktree(
   target: SandboxTarget,
-  input: { baseId: string; branch: string; startBranch?: string; gitProxy?: GitProxy }
+  input: {
+    baseId: string;
+    branch: string;
+    startBranch?: string;
+    startLocal?: string;
+    gitProxy?: GitProxy;
+  }
 ): Promise<ClientResult<WireWorkspace>> {
   const result = await workspaceCall('worktree', target, input);
   if (!result.ok) return result;

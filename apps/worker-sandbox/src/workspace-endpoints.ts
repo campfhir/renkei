@@ -466,7 +466,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    * verbs address by id like any checkout, on a new branch, ready when this
    * answers — adding a worktree is a local git operation, not a clone.
    * The same chat asking again gets the worktree it has, when the caller
-   * names one (`branch`) already present.
+   * names one (`branch`) already present. `startLocal` starts the new
+   * branch at a local branch's last commit rather than the remote's: a
+   * sub-agent's worktree, off the chat's own branch.
    */
   async function worktree(
     target: store.WorkspaceTarget,
@@ -503,6 +505,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       if (!start.ok) return sendError(response, 400, 'bad_request', start.message);
       startBranch = start.ref;
     }
+    let startLocal = '';
+    if (str(body.startLocal)) {
+      const start = validateGitRef(body.startLocal);
+      if (!start.ok) return sendError(response, 400, 'bad_request', start.message);
+      startLocal = start.ref;
+    }
     const storageKey = newWorkspaceStorageKey(target.subject);
     const gitProxy = parseGitProxy(body.gitProxy);
     const outcome = await addWorktree({
@@ -511,6 +519,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       identity: identityFor(target),
       branch: ref.ref,
       startBranch,
+      ...(startLocal ? { startLocal } : {}),
       ...(gitProxy ? { gitProxy } : {}),
     });
     if (!outcome.ok) {
