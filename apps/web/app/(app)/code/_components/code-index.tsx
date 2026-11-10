@@ -108,6 +108,7 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
       <h2 className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">{title}</h2>
       <DataFrame
         label={label}
+        stickyFooter={false}
         empty={
           group.empty ? (
             <p className={`p-4 text-sm text-gray-500 ${showOwner ? EMPTY_SHARED : EMPTY_MINE}`}>

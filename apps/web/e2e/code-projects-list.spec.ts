@@ -118,6 +118,15 @@ test('the Code page searches, pages, and describes projects from their README', 
       .getByRole('main')
       .getByRole('group', { name: 'Code projects', exact: true });
     await expect(ownFrame.getByText('You have no code projects yet.')).toBeVisible();
+    // The pager sits under the table's last slot, not over its padding, even
+    // with the frame running past the bottom of a short window.
+    await viewerPage.setViewportSize({ width: 1280, height: 560 });
+    const tableBox = (await sharedFrame.locator('table').boundingBox())!;
+    const pagerBox = (await sharedFrame
+      .getByRole('navigation', { name: 'Shared code projects pages' })
+      .boundingBox())!;
+    expect(pagerBox.y).toBeGreaterThanOrEqual(tableBox.y + tableBox.height - 1);
+    await viewerPage.setViewportSize({ width: 1280, height: 1100 });
     if (SHOTS) await viewerPage.screenshot({ path: `${SHOTS}/5-shared.png`, caret: 'initial' });
   } finally {
     await context.close();

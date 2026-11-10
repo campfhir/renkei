@@ -43,6 +43,7 @@ export function DataFrame({
   empty,
   footer,
   breakpoint = 'sm',
+  stickyFooter = true,
   className = '',
 }: {
   /** The frame's accessible name, e.g. "Runs". */
@@ -56,6 +57,12 @@ export function DataFrame({
   /** Usually a `Pager`. */
   footer?: React.ReactNode;
   breakpoint?: DataTableBreakpoint;
+  /**
+   * Whether the footer rides the bottom edge of the viewport while the
+   * frame runs past it (the default). A short, fixed-height table turns it
+   * off, so its footer stays under its last row.
+   */
+  stickyFooter?: boolean;
   className?: string;
 }): React.ReactNode {
   return (
@@ -78,7 +85,9 @@ export function DataFrame({
         )}
       </div>
       {footer ? (
-        <div className="sticky bottom-0 z-10 rounded-b-lg border-t border-gray-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95">
+        <div
+          className={`${stickyFooter ? 'sticky bottom-0 z-10 ' : ''}rounded-b-lg border-t border-gray-200 bg-white/95 px-3 py-2 backdrop-blur dark:border-gray-800 dark:bg-gray-950/95`}
+        >
           {footer}
         </div>
       ) : null}
