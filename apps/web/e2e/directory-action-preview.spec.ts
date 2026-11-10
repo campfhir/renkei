@@ -203,13 +203,15 @@ test('a long group list stays inside a bounded, scrollable pane, with every grou
       arguments: { groupNames: MANY_GROUPS },
     });
 
-    const note = noteLine(
-      page,
-      'The user confirmed "Copy groups from Sam Source to Jane Doe" on the preview card'
-    );
-    await expect(note).toBeVisible(COLD);
     // The decision opened a turn of its own, and the model answered it.
     await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
+    // The decision row draws no line of its own: the card's receipt shows it.
+    await expect(
+      noteLine(
+        page,
+        'The user confirmed "Copy groups from Sam Source to Jane Doe" on the preview card'
+      )
+    ).toHaveCount(0);
   } finally {
     await removeModel(page.request, modelId);
   }

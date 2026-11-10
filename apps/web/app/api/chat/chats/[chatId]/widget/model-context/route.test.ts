@@ -57,7 +57,7 @@ beforeEach(() => {
       chatId: input.chatId,
       turnId,
       role: 'user',
-      kind: 'note',
+      kind: 'decision',
       status: 'complete',
       blocks: [{ type: 'text', text: input.text }],
       cipher,
@@ -165,7 +165,7 @@ async function turnIdsOf(chatId: string): Promise<string[]> {
 
 async function notesOf(chatId: string): Promise<{ turnId: string | null }[]> {
   return (await getDataStore().chatThreads.listMessages(chatId))
-    .filter((row) => row.kind === 'note')
+    .filter((row) => row.kind === 'decision')
     .map((row) => ({ turnId: row.turnId }));
 }
 
@@ -182,7 +182,7 @@ describe('POST widget/model-context', () => {
     expect(response.status).toBe(202);
     const body = await response.json();
     expect(body.turn).not.toBeNull();
-    expect(body.message).toMatchObject({ kind: 'note', turnId: body.turn.turnId });
+    expect(body.message).toMatchObject({ kind: 'decision', turnId: body.turn.turnId });
     expect(await turnIdsOf(chatId)).toEqual([reply, body.turn.turnId]);
   });
 

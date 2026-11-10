@@ -203,4 +203,23 @@ describe('segment', () => {
       expect(out.filter((part) => part.kind === 'mockup')).toHaveLength(1);
     });
   });
+
+  describe("the person's own rows", () => {
+    function userRow(kind: ChatMessageView['kind'], text: string): ChatMessageView {
+      return { ...assistantMessage('u1', [{ type: 'text', text }]), role: 'user', kind };
+    }
+
+    it("draws a code-pane note as the person's line", () => {
+      const out = segment([userRow('note', 'You edited a.ts')], new Map());
+      expect(out).toEqual([{ kind: 'person', text: 'You edited a.ts' }]);
+    });
+
+    it("draws nothing for a preview card's decision: the card's receipt already shows it", () => {
+      const out = segment(
+        [userRow('decision', 'The user confirmed "Create Jira issue" on the preview card.')],
+        new Map()
+      );
+      expect(out).toEqual([]);
+    });
+  });
 });

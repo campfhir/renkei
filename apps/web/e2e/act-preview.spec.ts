@@ -376,11 +376,12 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
       comment: 'Approved — please ship it today.',
     });
 
-    await expect(
-      noteLine(page, 'The user confirmed "Comment on PROJ-12" on the preview card')
-    ).toBeVisible(COLD);
     // The decision opened a turn of its own, and the model answered it.
     await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
+    // The decision row draws no line of its own: the card's receipt shows it.
+    await expect(
+      noteLine(page, 'The user confirmed "Comment on PROJ-12" on the preview card')
+    ).toHaveCount(0);
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }

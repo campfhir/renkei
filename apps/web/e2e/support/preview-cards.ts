@@ -65,12 +65,12 @@ export async function previewChat(
 export async function turnsOf(
   page: Page,
   chatId: string
-): Promise<{ turns: number; running: boolean; notes: number }> {
+): Promise<{ turns: number; running: boolean; decisions: number }> {
   const view = await readChat(page.request, chatId);
   const turns = new Set(view.messages.map((message) => message.turnId).filter(Boolean));
   return {
     turns: turns.size,
     running: view.chat.activeTurn !== null,
-    notes: view.messages.filter((message) => message.kind === 'note').length,
+    decisions: view.messages.filter((message) => message.kind === 'decision').length,
   };
 }

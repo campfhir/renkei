@@ -107,14 +107,14 @@ function cardFrame(page: Page) {
   return page.getByRole('main').frameLocator('iframe[title="Preview card"]');
 }
 
-/** The turn a decision opened has run its course: a note on it, and nothing running. */
+/** The turn a decision opened has run its course: the decision row on it, and nothing running. */
 async function decided(page: Page, chatId: string): Promise<void> {
   await expect
     .poll(async () => {
-      const { running, notes } = await turnsOf(page, chatId);
-      return { running, noted: notes > 0 };
+      const { running, decisions } = await turnsOf(page, chatId);
+      return { running, decided: decisions > 0 };
     }, COLD)
-    .toEqual({ running: false, noted: true });
+    .toEqual({ running: false, decided: true });
 }
 
 test('a preview tool renders its card, and confirming it runs the real tool call and the model replies @smoke', async ({
@@ -169,11 +169,14 @@ test('a preview tool renders its card, and confirming it runs the real tool call
     summary: 'Rotate the Zoom webhook secret',
   });
 
-  // ui/update-model-context is not mocked: a real note row that is also
+  // ui/update-model-context is not mocked: a real decision row that is also
   // the user row of a new turn, so the model answers the decision at once.
-  const note = noteLine(page, 'The user confirmed "Create Jira issue" on the preview card');
-  await expect(note).toBeVisible(COLD);
+  // The row itself draws no line: the card's receipt above already shows
+  // what was done.
   await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible(COLD);
+  await expect(
+    noteLine(page, 'The user confirmed "Create Jira issue" on the preview card')
+  ).toHaveCount(0);
   await shot(page, testInfo, 'widget-card-replied.png');
   await decided(page, chatId);
   await expect(page.getByRole('button', { name: 'Send', exact: true })).toBeVisible();
@@ -188,10 +191,10 @@ test('a preview tool renders its card, and confirming it runs the real tool call
   );
   await expect(frame.getByRole('button', { name: 'Create' })).toHaveCount(0);
   await expect(frame.locator('.card-title')).toHaveCount(0);
+  await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible();
   await expect(
     noteLine(page, 'The user confirmed "Create Jira issue" on the preview card')
-  ).toBeVisible();
-  await expect(page.getByText(ANSWER).filter({ visible: true })).toBeVisible();
+  ).toHaveCount(0);
 
   // A second device (no localStorage, and no tools/call answer wired up):
   // the same durable decision resolves it there too.
