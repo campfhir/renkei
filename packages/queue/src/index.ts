@@ -28,3 +28,9 @@ export {
   type PostgresQueueConfig,
 } from './postgres';
 export { InMemoryQueue, type MemoryMessage, type InMemoryQueueOptions } from './memory';
+export {
+  createSettledRetentionSweep,
+  DEAD_LETTER_RETENTION_DAYS,
+  SETTLED_RETENTION_DAYS,
+  SETTLED_RETENTION_SWEEP_MS,
+} from './retention';

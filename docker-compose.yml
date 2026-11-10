@@ -302,6 +302,11 @@ services:
       DATABASE_URL: postgres://renkei:${POSTGRES_PASSWORD:-renkei}@postgres:5432/renkei
       DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:-renkei-dev-delegate-key-web},worker=${DELEGATE_KEY_WORKER:-renkei-dev-delegate-key-worker},agents=${DELEGATE_KEY_AGENTS:-renkei-dev-delegate-key-agents},sandbox=${DELEGATE_KEY_SANDBOX:-renkei-dev-delegate-key-sandbox}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
+      # The secret this instance's keypair is derived from: with it a
+      # restart (every deploy) keeps every delegation, so people's agents
+      # keep running while they are away. The dev default is refused in
+      # production; set DELEGATE_INSTANCE_KEY in .env (openssl rand -base64 32).
+      DELEGATE_INSTANCE_KEY: ${DELEGATE_INSTANCE_KEY:-renkei-dev-delegate-instance-key}
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>).
       FILESHARES_WORKER_URL: http://renkei-worker-fileshares:8090

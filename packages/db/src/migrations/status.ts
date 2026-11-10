@@ -197,6 +197,7 @@ export const EXPECTED_MIGRATIONS = [
   '171-chat-tasks',
   '172-drop-email-ingest-jobs',
   '173-prompt-library-scope',
+  '174-queue-job-indexes',
 ];
 
 export interface MigrationStatus {

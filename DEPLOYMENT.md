@@ -40,6 +40,15 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 #   pnpm --filter @renkei/user-keys rekey-chats --all
 # with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
+# The secret the delegate's instance keypair is derived from
+# (docs/delegate-key-design.md, "The delegate"). With it, a restart — every
+# deploy — and every replica are the same instance, so the delegations
+# people's browsers sealed stay open and their agents keep running while
+# they are away. Without it the keypair lives in memory only, and every
+# restart pauses the agents of everyone who does not open the app again.
+# Rotating it is a restart of the old kind: every delegation lapses once.
+# Delegate service only; the compose default is refused in production.
+DELEGATE_INSTANCE_KEY=<32-byte-base64-key>
 # Every process but the delegate reaches it at DELEGATE_WORKER_URL
 # (docker-compose.yaml wires the service name on each one), for keys,
 # provider tokens and the connector workers — each caller with ITS OWN

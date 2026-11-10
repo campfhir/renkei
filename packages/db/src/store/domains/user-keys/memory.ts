@@ -64,6 +64,12 @@ export function memoryUserKeys(tables: MemoryTables): UserKeyStore {
     },
     async registerInstance(id, publicKey) {
       const now = new Date();
+      const instance = id;
+      const known = tables.update('delegate_instances', (r) => r.id === instance, {
+        public_key: publicKey,
+        heartbeat_at: now,
+      });
+      if (known.length > 0) return;
       tables.insert('delegate_instances', {
         id,
         public_key: publicKey,

@@ -10,7 +10,9 @@
  *  - waiting more than WAIT_GRACE_MS past its own deadline: the approval
  *    sweep re-enqueues a run the moment its wait runs out, so one still
  *    waiting an hour later was never woken;
- *  - waiting with no deadline at all for DEAD_AFTER_MS.
+ *  - waiting with no deadline at all for DEAD_AFTER_MS — except a run
+ *    parked for its owner's sign-in (`needs-sign-in`), which waits as long
+ *    as it takes by design: the owner's next sign-in runs it.
  *
  * A halt is the operator's force-halt (apps/web lib/agents/force-halt.ts),
  * done here so it runs whether or not anyone opens a page: the run straight

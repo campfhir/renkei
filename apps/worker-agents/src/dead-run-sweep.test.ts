@@ -42,6 +42,8 @@ beforeEach(async () => {
       run(23, 'waiting', { waiting_until: ago(10 * 60_000) }),
       run(24, 'waiting', { waiting_until: new Date(NOW + 48 * HOUR) }),
       run(25, 'succeeded'),
+      // Parked until its owner signs in: no deadline, and not dead.
+      run(26, 'waiting', { error_kind: 'needs-sign-in' }),
     ],
     agent_jobs: [
       {
@@ -76,12 +78,13 @@ test('halts the dead runs, clears their jobs, and leaves the live ones', async (
     'canceled',
     'canceled',
   ]);
-  expect(await Promise.all([21, 22, 23, 24, 25].map(statusOf))).toEqual([
+  expect(await Promise.all([21, 22, 23, 24, 25, 26].map(statusOf))).toEqual([
     'queued',
     'queued',
     'waiting',
     'waiting',
     'succeeded',
+    'waiting',
   ]);
   // It reads as Halted, and nothing is left in the queue to resume it.
   const halted = await getDataStore().agentRuns.findDetail({

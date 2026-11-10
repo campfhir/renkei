@@ -17,7 +17,11 @@
 
 import { checkDataStore, closeDataStore } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
-import { agentJobsQueue } from '@renkei/queue';
+import {
+  agentJobsQueue,
+  createSettledRetentionSweep,
+  SETTLED_RETENTION_SWEEP_MS,
+} from '@renkei/queue';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentJobsConsumer } from './consumer';
 import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
@@ -144,6 +148,19 @@ async function main(): Promise<void> {
       'worker-agents/janitor',
       JANITOR_SWEEP_MS,
       createStuckRunJanitor()
+    ),
+    // Finished agent_jobs rows past their window: the table used to grow
+    // for ever, and every by-run lookup in it slowed with it.
+    schedulePeriodicSweep(
+      logger,
+      'agent job retention',
+      'worker-agents/job-retention',
+      SETTLED_RETENTION_SWEEP_MS,
+      createSettledRetentionSweep({
+        tables: ['agent_jobs'],
+        logger,
+        component: 'worker-agents/job-retention',
+      })
     ),
     // Runs that will never finish: halted, so a stalled backlog clears
     // itself. On its own timer, so it runs even when the consumer is stuck.
