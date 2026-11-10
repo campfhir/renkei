@@ -58,9 +58,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'bitbucket/webhook',
-    });
+    logger.error(
+      'A Bitbucket webhook delivery arrived, but TOKEN_ENCRYPTION_KEY is missing or malformed so the connector secret cannot be read; answered 500 and the delivery was not queued',
+      {
+        component: 'bitbucket/webhook',
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
@@ -69,18 +72,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     keyResult.val
   );
   if (!configResult.ok) {
-    logger.error('Connector configuration unavailable: {error}', {
-      component: 'bitbucket/webhook',
-      error: configResult.err.message ?? configResult.err.type,
-    });
+    logger.error(
+      'A Bitbucket webhook delivery arrived, but the Bitbucket connector configuration could not be read; answered 500 and the delivery was not queued: {error}',
+      {
+        component: 'bitbucket/webhook',
+        error: configResult.err.message ?? configResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
   const config = configResult.val;
   const webhookSecret = config?.secrets.webhookSecret;
   if (!config || !config.enabled || typeof webhookSecret !== 'string' || !webhookSecret) {
-    logger.warn('Delivery for a tenant with no Bitbucket webhook secret configured', {
-      component: 'bitbucket/webhook',
-    });
+    logger.warn(
+      'A Bitbucket {type} delivery arrived, but the Bitbucket connector is off or has no webhook secret; answered 503 and the delivery was dropped',
+      {
+        component: 'bitbucket/webhook',
+        type: eventKey ?? 'unknown',
+      }
+    );
     return NextResponse.json(
       { error: 'Bitbucket connector not configured for webhooks' },
       { status: 503 }
@@ -88,9 +98,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (!verifyBitbucketSecret(providedSecret, webhookSecret)) {
-    logger.warn('Rejected delivery with a missing or wrong secret', {
-      component: 'bitbucket/webhook',
-    });
+    logger.warn(
+      "A Bitbucket {type} delivery was rejected (401) because the secret it presented is not the connector's webhook secret; dropped",
+      {
+        component: 'bitbucket/webhook',
+        type: eventKey ?? 'unknown',
+      }
+    );
     return NextResponse.json({ error: 'Invalid secret' }, { status: 401 });
   }
 
@@ -118,13 +132,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     orderingKey: repoFullName ? `bitbucket/${repoFullName}` : null,
   });
   if (!enqueued.ok) {
-    logger.error('Event NOT accepted: {error}', {
-      component: 'bitbucket/webhook',
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      'Bitbucket sent a verified {type} event for {repository}, but it was not queued for the worker; answered 500 so Bitbucket retries: {error}',
+      {
+        component: 'bitbucket/webhook',
+        type: eventKey,
+        repository: repoFullName ?? '(unknown repository)',
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.debug('Event accepted', { component: 'bitbucket/webhook', type: eventKey });
+  logger.debug(
+    'Bitbucket sent a verified {type} event for {repository}; it was queued for the worker',
+    {
+      component: 'bitbucket/webhook',
+      type: eventKey,
+      repository: repoFullName ?? '(unknown repository)',
+    }
+  );
   return NextResponse.json({ accepted: true });
 }

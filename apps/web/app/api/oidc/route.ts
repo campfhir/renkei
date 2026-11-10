@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { setTenantOidc, createTenantOidcIfAbsent } from '@/lib/tenant-operations';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
+import type { Session } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { safeFetch, assertSafeHttpsUrl, BlockedUrlError } from '@/lib/safe-fetch';
 import {
   SETUP_SECRET_ENV,
@@ -12,14 +14,12 @@ import {
   verifySetupSecret,
 } from '@/lib/setup-secret';
 
-/** Confirm the caller is an operator. */
-async function requireOperator(): Promise<NextResponse | null> {
-  const access = await checkAccess([ROLE_OPERATOR]);
-  if (!access) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  return null;
+/** The caller's session when they are an operator, else null. */
+async function requireOperator(): Promise<Session | null> {
+  return checkAccess([ROLE_OPERATOR]);
 }
+
+const UNAUTHORIZED = () => NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
 interface OidcConfigRequest {
   discoveryEndpoint: string;
@@ -55,22 +55,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // then on only they may change it -- which is the part that matters,
     // since whoever controls this record controls who becomes an operator.
     const configured = await identityProviderConfigured();
+    const operator = configured ? await requireOperator() : null;
+    // Who is making the change, for the lines below: the operator, or the
+    // setup-secret request a first configuration arrives as.
+    const by = operator ? who(operator) : null;
+    const changedBy = by?.actor ?? 'the setup-secret request';
     if (configured) {
-      const denied = await requireOperator();
-      if (denied) {
-        logger.warn('Rejected unauthorised attempt to change identity provider', {
-          component: 'auth/oidc',
-          status: denied.status,
-        });
+      if (!operator) {
+        const denied = UNAUTHORIZED();
+        logger.warn(
+          'a request without an operator session tried to change the identity provider; refused, nothing was changed',
+          {
+            component: 'auth/oidc',
+            status: denied.status,
+          }
+        );
         return denied;
       }
     } else {
       const verdict = verifySetupSecret(request.headers.get(SETUP_SECRET_HEADER));
       if (verdict !== 'ok') {
-        logger.warn('Rejected identity-provider setup without a valid secret ({verdict})', {
-          component: 'auth/oidc',
-          verdict,
-        });
+        logger.warn(
+          'a request tried to configure the identity provider for the first time without a valid setup secret ({verdict}); refused, nothing was changed',
+          {
+            component: 'auth/oidc',
+            verdict,
+          }
+        );
         return NextResponse.json(
           {
             error:
@@ -140,10 +151,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // a discovery document must not smuggle an internal issuer past the guard.
       assertSafeHttpsUrl(issuer);
 
-      logger.debug('Fetched issuer from discovery: {issuer}', {
-        component: 'auth/oidc',
-        issuer,
-      });
+      logger.debug(
+        '{changedBy}: the discovery document at {discoveryEndpoint} names issuer {issuer}',
+        {
+          component: 'auth/oidc',
+          ...(by ?? {}),
+          changedBy,
+          discoveryEndpoint: body.discoveryEndpoint,
+          issuer,
+        }
+      );
     } catch (error) {
       if (error instanceof BlockedUrlError) {
         return NextResponse.json(
@@ -151,11 +168,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           { status: 400 }
         );
       }
-      logger.error('Failed to fetch discovery endpoint: {error}', {
-        component: 'auth/oidc',
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      logger.error(
+        '{changedBy} tried to set the identity provider, but its discovery document at {discoveryEndpoint} could not be fetched; nothing was saved: {error}',
+        {
+          component: 'auth/oidc',
+          ...(by ?? {}),
+          changedBy,
+          discoveryEndpoint: body.discoveryEndpoint,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
       return NextResponse.json(
         { error: 'Failed to fetch OIDC discovery endpoint' },
         { status: 400 }
@@ -176,16 +199,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Authenticated update.
       const setResult = await setTenantOidc(config);
       if (!setResult.ok) {
-        logger.error('Failed to save OIDC configuration: {error}', {
-          component: 'auth/oidc',
-          error: String(setResult.err),
-        });
+        logger.error(
+          '{changedBy} changed the identity provider to {issuer}, but the configuration was not saved: {error}',
+          {
+            component: 'auth/oidc',
+            ...(by ?? {}),
+            changedBy,
+            issuer,
+            error: String(setResult.err),
+          }
+        );
         return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
       }
 
-      logger.info('Identity provider updated by operator', {
+      logger.info('{changedBy} changed the identity provider to {issuer}', {
         component: 'auth/oidc',
+        ...(by ?? {}),
+        changedBy,
         issuer,
+        clientId: body.clientId,
       });
       return NextResponse.json({ success: true });
     }
@@ -195,17 +227,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // caller; they are told to authenticate instead.
     const createResult = await createTenantOidcIfAbsent(config);
     if (!createResult.ok) {
-      logger.error('Failed to save OIDC configuration: {error}', {
-        component: 'auth/oidc',
-        error: String(createResult.err),
-      });
+      logger.error(
+        'the setup-secret request configured the identity provider {issuer}, but the configuration was not saved: {error}',
+        {
+          component: 'auth/oidc',
+          issuer,
+          error: String(createResult.err),
+        }
+      );
       return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
     }
 
     if (!createResult.val) {
-      logger.warn('Setup lost a race with an existing configuration', {
-        component: 'auth/oidc',
-      });
+      logger.warn(
+        'the setup-secret request to configure the identity provider {issuer} lost a race with a configuration written meanwhile; nothing was changed and the caller was told to sign in as an operator',
+        {
+          component: 'auth/oidc',
+          issuer,
+        }
+      );
       return NextResponse.json(
         {
           error:
@@ -222,20 +262,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Worth a record of its own: this is the one write to this table that
     // no session authenticated — only the setup secret — and it decides
     // who can become an operator.
-    logger.warn('Identity provider configured for a previously unconfigured deployment', {
-      component: 'auth/oidc',
-      issuer,
-      clientId: body.clientId,
-      operatorIdpValue: body.operatorIdpValue || null,
-    });
+    logger.warn(
+      'the identity provider of this previously unconfigured deployment was set to {issuer} with the setup secret, not by a signed-in person; from now on only an operator may change it',
+      {
+        component: 'auth/oidc',
+        issuer,
+        clientId: body.clientId,
+        operatorIdpValue: body.operatorIdpValue || null,
+      }
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    logger.error('Config error: {error}', {
-      component: 'auth/oidc',
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'a request to change the identity provider failed with an unexpected error; nothing was saved: {error}',
+      {
+        component: 'auth/oidc',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return NextResponse.json({ error: 'Failed to save OIDC configuration' }, { status: 500 });
   }
 }
@@ -245,8 +291,8 @@ export async function GET(): Promise<NextResponse> {
   // issuer, client id and the claim mapping that decides who becomes an
   // operator — which is the reconnaissance for an attack on POST, so it is
   // gated even though no secret is in the response.
-  const denied = await requireOperator();
-  if (denied) return denied;
+  const operator = await requireOperator();
+  if (!operator) return UNAUTHORIZED();
 
   try {
     // Get OIDC configuration (the sealed client secret stays out of the answer)
@@ -266,11 +312,15 @@ export async function GET(): Promise<NextResponse> {
       groupsClaim: oidc.groupsClaim,
     });
   } catch (error) {
-    logger.error('Config fetch error: {error}', {
-      component: 'auth/oidc',
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} opened the identity provider settings, but the configuration could not be read: {error}',
+      {
+        component: 'auth/oidc',
+        ...who(operator),
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return NextResponse.json({ error: 'Failed to fetch OIDC configuration' }, { status: 500 });
   }
 }

@@ -6,7 +6,10 @@
  * knowledge operations report per-entry results.
  */
 
-jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
+jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
+  getDataStore: jest.fn(),
+}));
 jest.mock('@/lib/agents/store', () => ({ listAgents: jest.fn() }));
 jest.mock('@/lib/agents/access-grants', () => ({
   resolveAgentAccess: jest.fn(),

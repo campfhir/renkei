@@ -14,6 +14,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { parseCoachMarkRecord } from '@/lib/coach-marks/progress';
 import { listCoachMarkProgress, recordCoachMarkEvent } from '@/lib/coach-marks/store';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -35,11 +36,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const written = await recordCoachMarkEvent(session.subject, record);
   if (!written.ok) {
-    logger.error('Could not record: {error}', {
-      component: 'api/coach-marks',
-      subject: session.subject,
-      error: written.err.message ?? written.err.type,
-    });
+    logger.error(
+      '{actor} reported the "{tour}" tour as {event} at step {step}, but the progress was not recorded; the tour may show again: {error}',
+      {
+        component: 'api/coach-marks',
+        ...who(session),
+        tour: record.tourId,
+        event: record.event,
+        step: record.step,
+        error: written.err.message ?? written.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not record' }, { status: 500 });
   }
   return NextResponse.json({ progress: written.val });

@@ -14,10 +14,9 @@ import {
   setChatToolPermissionPrefs,
 } from '@/lib/chat/permission-prefs';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const prefs = await getChatToolPermissionPrefs(ready.context.session.subject, {
@@ -26,9 +25,7 @@ export async function GET(
   return NextResponse.json(prefs);
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<Response> {
+export async function PUT(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const body = await readJsonBody(request);
@@ -45,10 +42,16 @@ export async function PUT(
   });
   const written = await setChatToolPermissionPrefs(ready.context.session.subject, prefs);
   if (!written.ok) {
-    logger.error('Could not save: {error}', {
-      component: 'api/chat/tool-permissions',
-      error: written.err.message ?? written.err.type,
-    });
+    logger.error(
+      '{actor} changed their tool permissions ({allowed} always allowed, {denied} blocked), but they were not saved: {error}',
+      {
+        component: 'api/chat/tool-permissions',
+        ...who(ready.context.session),
+        allowed: prefs.alwaysAllow.length,
+        denied: prefs.alwaysDeny.length,
+        error: written.err.message ?? written.err.type,
+      }
+    );
     return jsonError(500, 'save-failed', 'Could not save');
   }
   return NextResponse.json(prefs);

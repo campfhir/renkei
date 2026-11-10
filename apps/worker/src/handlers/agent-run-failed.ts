@@ -20,6 +20,7 @@ import type { EventHandler } from '../handlers';
 import { deliverToOwnerChannels } from './owner-channels';
 import { registrationUrl } from './feed-url';
 import { logger } from '../logger';
+import { whichAgentOf } from '../log-actor';
 
 interface FailedPayload {
   runId: string;
@@ -77,9 +78,10 @@ export function createAgentRunFailedHandler(): EventHandler {
   return async (event) => {
     const payload = parsePayload(event);
     if (!payload) {
-      logger.warn('run.failed event with malformed payload; dropping', {
-        component: 'worker/agent-notify',
-      });
+      logger.warn(
+        'an agents/run.failed event arrived with a malformed payload; nobody was notified and it was dropped',
+        { component: 'worker/agent-notify' }
+      );
       return;
     }
     const store = getDataStore();
@@ -110,7 +112,15 @@ export function createAgentRunFailedHandler(): EventHandler {
       webex: wanted.webex,
       heading: `Agent “${agentName}” failed`,
       body: bodyText,
-      log: { component: 'worker/agent-notify', runId: payload.runId },
+      log: {
+        component: 'worker/agent-notify',
+        ...(await whichAgentOf({
+          agentId: payload.agentId,
+          agentName: agent?.name,
+          ownerSubject: payload.ownerSubject,
+        })),
+        runId: payload.runId,
+      },
     });
   };
 }

@@ -14,6 +14,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getTenantOidcClaims, setTenantOidcClaims } from '@/lib/tenant-operations';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const CLAIM_NAME = /^[A-Za-z0-9_.:/-]{1,128}$/;
 
@@ -26,26 +27,25 @@ function optionalString(value: unknown, name: string): string | null | { error: 
   return trimmed;
 }
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export async function GET(_request: NextRequest): Promise<NextResponse> {
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const claims = await getTenantOidcClaims();
   if (!claims.ok) {
-    logger.error('Could not read: {error}', {
-      component: 'api/admin/oidc-claims',
-      error: claims.err.message ?? claims.err.type,
-    });
+    logger.error(
+      '{actor} opened the sign-in claim mappings, but they could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/oidc-claims',
+        ...who(session),
+        error: claims.err.message ?? claims.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read' }, { status: 500 });
   }
   return NextResponse.json({ configured: claims.val !== null, ...(claims.val ?? {}) });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function PUT(request: NextRequest): Promise<NextResponse> {
   const session = await checkAccess([ROLE_OPERATOR]);
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -79,11 +79,16 @@ export async function PUT(
 
   const saved = await setTenantOidcClaims(claims);
   if (!saved.ok) {
-    logger.error('Could not save: {error}', {
-      component: 'api/admin/oidc-claims',
-      subject: session.subject,
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} saved the sign-in claim mappings (roles from {roleClaim}, groups from {groupsClaim}), but they were not saved: {error}',
+      {
+        component: 'api/admin/oidc-claims',
+        ...who(session),
+        roleClaim: claims.roleClaim ?? '(no claim)',
+        groupsClaim: claims.groupsClaim ?? '(no claim)',
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
   if (!saved.val) {

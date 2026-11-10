@@ -33,6 +33,7 @@ import { SALESFORCE_CRM_KIND, type SalesforceKind } from '@/lib/salesforce-kinds
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
+import { callerAttrs, type CallerContext } from '../common';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
 const LABEL = 'Salesforce';
@@ -59,7 +60,7 @@ export interface SalesforceAccess {
 }
 
 /** What the request wrapper needs of its caller — an MCPToolContext satisfies it. */
-export interface SalesforceCallContext {
+export interface SalesforceCallContext extends CallerContext {
   subject?: string;
 }
 
@@ -251,13 +252,17 @@ export async function sfRequest(
     });
   } catch (error) {
     const timedOut = isTimeoutError(error);
-    logger.warn('Salesforce API unreachable', {
-      component: 'salesforce/fetch',
-      subject: context.subject,
-      method,
-      path,
-      timedOut,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Salesforce ({why}); the tool reported it as unreachable",
+      {
+        component: 'salesforce/fetch',
+        ...(await callerAttrs(context)),
+        method,
+        path,
+        timedOut,
+        why: timedOut ? 'timed out' : 'connection failed',
+      }
+    );
     const host = new URL(access.instanceUrl).hostname;
     const reason = timedOut
       ? `${host} timed out after ${REQUEST_TIMEOUT_MS}ms`
@@ -286,9 +291,9 @@ export async function sfRequest(
   }
   if (!response.ok) {
     const errors = errorsOf(parsed);
-    logger.warn('Salesforce API non-OK response', {
+    logger.warn("Salesforce answered {status} to {caller}'s {method} {path}", {
       component: 'salesforce/fetch',
-      subject: context.subject,
+      ...(await callerAttrs(context)),
       method,
       path,
       status: response.status,
@@ -343,12 +348,15 @@ export async function sfDownload(
     } catch {
       // The status decides.
     }
-    logger.warn('Salesforce download non-OK response', {
-      component: 'salesforce/fetch',
-      subject: context.subject,
-      path,
-      status: response.status,
-    });
+    logger.warn(
+      "Salesforce answered {status} to {caller}'s download of {path}; no bytes were read",
+      {
+        component: 'salesforce/fetch',
+        ...(await callerAttrs(context)),
+        path,
+        status: response.status,
+      }
+    );
     return { ok: false, error: describeStatus(response.status, errorsOf(parsed)) };
   }
   const declared = Number(response.headers.get('content-length'));

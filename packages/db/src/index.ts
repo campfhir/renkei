@@ -8,7 +8,24 @@
  * in exactly one place.
  */
 
-export { describeActor, describeAccountActor, resetActorCache, type Actor } from './actors';
+export {
+  describeActor,
+  describeAccountActor,
+  describeAgent,
+  actorFrom,
+  actorFields,
+  agentFields,
+  actorAttrs,
+  agentAttrs,
+  agentAttrsFor,
+  forgetActor,
+  forgetAgent,
+  resetActorCache,
+  type Actor,
+  type ActorFields,
+  type AgentActor,
+  type AgentFields,
+} from './actors';
 export type * from './db.types';
 // The data store: the seam pages and routes read through instead of
 // querying directly, with a Postgres and an in-memory implementation held

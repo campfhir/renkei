@@ -17,7 +17,9 @@ import { getMigrationStatus, memoryDataStoreRequested, MIGRATION_COMMAND } from 
 let lastLoggedError: string | null = null;
 
 export async function GET(): Promise<NextResponse> {
-  logger.debug('Ping', { component: 'web/health' });
+  logger.debug('A health probe arrived; checking the schema against this build', {
+    component: 'web/health',
+  });
 
   if (memoryDataStoreRequested()) {
     return NextResponse.json({ status: 'ok', dataStore: 'memory' });
@@ -30,10 +32,13 @@ export async function GET(): Promise<NextResponse> {
     // appears or changes, not on every probe.
     if (status.error !== lastLoggedError) {
       lastLoggedError = status.error;
-      logger.error('Migration check failed: {error}', {
-        component: 'web/health',
-        error: status.error,
-      });
+      logger.error(
+        'The health probe could not check whether the schema matches this build; answering degraded (503) until it can: {error}',
+        {
+          component: 'web/health',
+          error: status.error,
+        }
+      );
     }
     return NextResponse.json(
       { status: 'degraded', reason: 'migration check failed', detail: status.error },

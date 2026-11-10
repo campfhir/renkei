@@ -36,6 +36,7 @@ import { imageGenerationTool } from './image-tools';
 import { listImageModels } from './models';
 import { widgetStateTools } from './widget-state-tools';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export async function chatLocalTools(
   context: LocalToolContext,
@@ -83,12 +84,16 @@ export async function chatLocalTools(
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.
     const [imageModels, imagePrefs] = await Promise.all([
-      listImageModels().catch((error: unknown) => {
-        logger.warn('image models could not be listed; image tool not offered: {error}', {
-          component: 'chat/tools',
-          subject: context.subject,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      listImageModels().catch(async (error: unknown) => {
+        logger.warn(
+          "{actor}'s chat could not list the image models; the image tool is not offered this turn: {error}",
+          {
+            component: 'chat/tools',
+            ...(await whoIs(context.subject)),
+            chatId: context.chatId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         return [];
       }),
       getImagePrefs(context.subject),

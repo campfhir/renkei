@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import type { BrowserContext } from 'playwright-core';
 import { decrypt, encrypt } from '@renkei/crypto';
 import { envSecretsKey } from './env-secrets';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 import { isRecord } from '@renkei/guards';
 
@@ -125,9 +126,13 @@ export function createBrowserStateStore(
       if (!sealed.startsWith(PREFIX)) return null;
       const opened = decrypt(sealed.slice(PREFIX.length), browserStateKey(rootKey, domain, target));
       if (!opened.ok) {
-        logger.warn('a saved browser session did not open under its caller’s key; dropping it', {
-          component: 'worker-sandbox/browser-state',
-        });
+        logger.warn(
+          'the saved browser session of {actor} did not open under their key; it was dropped and their next call starts a fresh session',
+          {
+            component: 'worker-sandbox/browser-state',
+            ...(await actorAttrs(target.subject)),
+          }
+        );
         await rm(pathFor(target), { force: true });
         return null;
       }

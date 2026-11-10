@@ -16,7 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
 import { atlassianFetch, listOf, rec, str } from '@renkei/connector-atlassian';
 import type { AuthedFetch } from '@renkei/delegate-client';
-import { getSessionFromRequest } from '@/lib/session';
+import { getSessionFromRequest, type Session } from '@/lib/session';
 import {
   resolveAtlassianUserAccess,
   type AtlassianUserProvider,
@@ -30,6 +30,7 @@ import {
   sharePointGet,
 } from './sharepoint-access';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 type WatchProvider = 'jira' | 'confluence' | 'sharepoint';
 type AtlassianWatchProvider = 'jira' | 'confluence';
@@ -51,9 +52,7 @@ const SCOPE_TYPE: Record<WatchProvider, 'project' | 'space' | 'drive'> = {
 };
 
 /** GET — the caller's watches for one provider. */
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -67,11 +66,15 @@ export async function GET(
 
   const result = await listWatches({ subject: session.subject, accountId: '' }, provider);
   if (!result.ok) {
-    logger.error('Could not list watches: {error}', {
-      component: 'api/watches',
-      subject: session.subject,
-      error: result.error,
-    });
+    logger.error(
+      '{actor} opened their {provider} watches, but they could not be listed; the page showed an error: {error}',
+      {
+        component: 'api/watches',
+        ...who(session),
+        provider,
+        error: result.error,
+      }
+    );
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
   return NextResponse.json({ watches: result.watches });
@@ -84,9 +87,7 @@ export async function GET(
  * proves the caller can actually see it, and supplies the display label so
  * the list never has to call out again to render.
  */
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -98,17 +99,10 @@ export async function POST(
   }
 
   if (provider === 'sharepoint') {
-    return watchLibrary(
-      { subject: session.subject },
-      str(rec(body).site).trim(),
-      scopeKey
-    );
+    return watchLibrary(session, str(rec(body).site).trim(), scopeKey);
   }
 
-  const access = await resolveAtlassianUserAccess(
-    session.subject,
-    grantProviderFor(provider)
-  );
+  const access = await resolveAtlassianUserAccess(session.subject, grantProviderFor(provider));
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   const resolved = await resolveScope(provider, access, scopeKey);
@@ -122,20 +116,26 @@ export async function POST(
     resolved.label
   );
   if (!result.ok) {
-    logger.error('Could not create the watch: {error}', {
-      component: 'api/watches',
-      subject: session.subject,
-      error: result.error,
-    });
+    logger.error(
+      '{actor} asked to watch the {provider} {scopeType} "{scope}", but the watch was not saved: {error}',
+      {
+        component: 'api/watches',
+        ...who(session),
+        accountId: access.accountId,
+        provider,
+        scopeType: SCOPE_TYPE[provider],
+        scopeKey: resolved.key,
+        scope: resolved.label,
+        error: result.error,
+      }
+    );
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
   return NextResponse.json({ created: result.created, scopeKey: resolved.key });
 }
 
 /** DELETE — stop watching. Disables rather than deletes, keeping the cursor. */
-export async function DELETE(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -152,11 +152,17 @@ export async function DELETE(
     scopeKey
   );
   if (!result.ok) {
-    logger.error('Could not stop the watch: {error}', {
-      component: 'api/watches',
-      subject: session.subject,
-      error: result.error,
-    });
+    logger.error(
+      '{actor} asked to stop watching the {provider} {scopeType} {scopeKey}, but the watch was not disabled; it keeps polling: {error}',
+      {
+        component: 'api/watches',
+        ...who(session),
+        provider,
+        scopeType: SCOPE_TYPE[provider],
+        scopeKey,
+        error: result.error,
+      }
+    );
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
   return NextResponse.json({ found: result.found });
@@ -173,11 +179,7 @@ export async function DELETE(
  * the "Site / Library" form sharepoint_watch_library writes. A bare driveId
  * would be accepted on faith and stored with no label at all.
  */
-async function watchLibrary(
-  owner: { subject: string },
-  site: string,
-  driveId: string
-): Promise<NextResponse> {
+async function watchLibrary(owner: Session, site: string, driveId: string): Promise<NextResponse> {
   if (!site) {
     return NextResponse.json(
       { error: 'A site is required to watch a SharePoint library.' },
@@ -216,12 +218,17 @@ async function watchLibrary(
     label
   );
   if (!result.ok) {
-    logger.error('Could not watch the SharePoint library: {error}', {
-      component: 'api/watches',
-      subject: owner.subject,
-      driveId,
-      error: result.error,
-    });
+    logger.error(
+      '{actor} asked to watch the SharePoint library "{scope}", but the watch was not saved: {error}',
+      {
+        component: 'api/watches',
+        ...who(owner),
+        accountId: access.accountId,
+        driveId,
+        scope: label,
+        error: result.error,
+      }
+    );
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
   return NextResponse.json({ created: result.created, scopeKey: driveId, label });

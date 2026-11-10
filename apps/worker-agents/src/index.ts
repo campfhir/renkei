@@ -219,12 +219,17 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  logger.info('started {application} {version} (agent_jobs queue)', {
-    component: 'worker-agents/loop',
-  });
+  logger.info(
+    'started {application} {version}; consuming the agent_jobs queue and running the sweeps',
+    {
+      component: 'worker-agents/loop',
+    }
+  );
   await consumer.loop.run();
   for (const stop of stopSweeps) stop();
-  logger.info('stopped', { component: 'worker-agents/loop' });
+  logger.info('stopped: the queue loop ended and every sweep was stopped', {
+    component: 'worker-agents/loop',
+  });
   await logger.flush();
   await closeDataStore();
 }

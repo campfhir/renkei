@@ -43,10 +43,14 @@ export async function resolveWebexUserAccessByEmail(
   const identity = await getDataStore()
     .identities.findByEmail(email.toLowerCase())
     .catch((error: unknown) => {
-      logger.error('identity lookup by email failed for WebEx access: {error}', {
-        component: 'webex/user-access',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the identity behind {email} could not be looked up for WebEx access; no WebEx note goes to them: {error}',
+        {
+          component: 'webex/user-access',
+          email,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return null;
     });
   const subject = identity?.subject ?? null;

@@ -22,6 +22,7 @@ import { enqueueKnowledgeEvent } from '../enqueue';
 import { resolveWebexUserAccessByAccount } from '../handlers/webex-linked-user';
 import { windowDayOf, type WindowClient } from '../handlers/webex-windows';
 import { logger } from '../logger';
+import { whoHas, whoIs } from '../log-actor';
 
 const COMPONENT = 'webex/window-sweep';
 
@@ -65,11 +66,14 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
       // Nobody in this org can read the room any more. Drop the mark:
       // keeping it would re-select it every pass forever.
       await windows.delete(row.roomId, row.day);
-      logger.info('no opted-in watcher; window {roomId}/{day} dropped', {
-        component: COMPONENT,
-        roomId: row.roomId,
-        day: row.day,
-      });
+      logger.info(
+        'nobody in this org watches WebEx any more; the transcript rebuild of room {roomId} for {day} was dropped',
+        {
+          component: COMPONENT,
+          roomId: row.roomId,
+          day: row.day,
+        }
+      );
       continue;
     }
 
@@ -82,12 +86,16 @@ async function enqueueDirtyWindows(deps: WindowSweepDeps): Promise<void> {
         { strict: true }
       );
     } catch (error) {
-      logger.error('could not enqueue window {roomId}/{day}: {error}', {
-        component: COMPONENT,
-        roomId: row.roomId,
-        day: row.day,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        "the transcript rebuild of WebEx room {roomId} for {day}, with {actor}'s grant, was not queued; the mark stays and the next pass retries: {error}",
+        {
+          component: COMPONENT,
+          ...(await whoIs(subject)),
+          roomId: row.roomId,
+          day: row.day,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       continue; // the mark stays; next pass retries
     }
     // Only the mark we read: a message that arrived meanwhile re-marked
@@ -115,10 +123,15 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
 
     const rooms = await client.listRooms(BACKFILL_ROOMS);
     if (!rooms.ok) {
-      logger.warn('backfill: could not list rooms: {error}', {
-        component: COMPONENT,
-        error: rooms.err.message ?? 'unknown',
-      });
+      logger.warn(
+        "{actor}'s WebEx rooms could not be listed for their history backfill; it is tried again next pass: {error}",
+        {
+          component: COMPONENT,
+          ...(await whoHas(grant.accountId)),
+          accountId: grant.accountId,
+          error: rooms.err.message ?? 'unknown',
+        }
+      );
       continue; // not marked done; retried next pass
     }
 
@@ -141,12 +154,16 @@ async function backfillNewWatchers(deps: WindowSweepDeps): Promise<void> {
       { windowsBackfilledAt: new Date().toISOString() },
       { touch: false }
     );
-    logger.info('backfill: marked {marked} window(s) across {rooms} room(s) for {subject}', {
-      component: COMPONENT,
-      marked,
-      rooms: rooms.val.length,
-      subject: grant.subject ?? grant.accountId,
-    });
+    logger.info(
+      "backfilled {actor}'s WebEx history: {marked} room-day window(s) across {rooms} room(s) were marked for rebuild",
+      {
+        component: COMPONENT,
+        ...(await whoHas(grant.accountId)),
+        accountId: grant.accountId,
+        marked,
+        rooms: rooms.val.length,
+      }
+    );
   }
 }
 

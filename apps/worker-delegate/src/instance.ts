@@ -105,8 +105,8 @@ export async function registerInstance(
   // key for the first time and asks the person; an operator compares it here.
   logger.info(
     persistent
-      ? 'delegate instance {instanceId} registered, key fingerprint {fingerprint} (persistent: delegations survive a restart)'
-      : 'delegate instance {instanceId} registered, key fingerprint {fingerprint}',
+      ? 'this delegate instance registered itself with key fingerprint {fingerprint}, the code a browser meeting it for the first time shows; its key is persistent, so delegations survive a restart'
+      : 'this delegate instance registered itself with key fingerprint {fingerprint}, the code a browser meeting it for the first time shows',
     {
       component: 'worker-delegate/instance',
       instanceId: id,
@@ -115,7 +115,7 @@ export async function registerInstance(
   );
   if (!persistent) {
     logger.warn(
-      '{env} is not set: this instance key lives in memory only, and a restart drops every delegation sealed to it — the agents of everyone who does not open the app again pause until they do',
+      '{env} is not set: this instance key lives in memory only, and a restart drops every delegation sealed to it; the agents of everyone who does not open the app again pause until they do',
       { component: 'worker-delegate/instance', env: INSTANCE_KEY_ENV }
     );
   }
@@ -128,10 +128,14 @@ export async function registerInstance(
       // none does there is no one here to prune it.
       await instances.deleteStaleInstances(new Date(Date.now() - STALE_AFTER_MS));
     } catch (error) {
-      logger.warn('delegate heartbeat failed: {error}', {
-        component: 'worker-delegate/instance',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "this delegate instance's heartbeat was not written; if it keeps failing the other instances treat it as dead and its delegations lapse: {error}",
+        {
+          component: 'worker-delegate/instance',
+          instanceId: id,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   };
   const timer = setInterval(() => void beat(), HEARTBEAT_MS);

@@ -33,25 +33,22 @@ export interface MicrosoftApp {
 }
 
 /** The tenant's Entra app registration, or null when not (fully) configured. */
-export async function getMicrosoftApp(
-  origin: string
-): Promise<MicrosoftApp | null> {
+export async function getMicrosoftApp(origin: string): Promise<MicrosoftApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/microsoft',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the Microsoft 365 registration cannot be read; no Microsoft 365 flow can start',
+      { component: 'connectors/microsoft' }
+    );
     return null;
   }
 
-  const configResult = await readConnectorConfigCached(
-    MICROSOFT_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(MICROSOFT_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read microsoft connector config', {
-      component: 'connectors/microsoft',
-    });
+    logger.error(
+      'the Microsoft 365 connector config could not be read; no Microsoft 365 flow can start',
+      { component: 'connectors/microsoft' }
+    );
     return null;
   }
   const config = configResult.val;
@@ -67,9 +64,10 @@ export async function getMicrosoftApp(
     !directoryTenantId ||
     !clientSecret
   ) {
-    logger.warn('microsoft connector config missing clientId, directoryTenantId or clientSecret', {
-      component: 'connectors/microsoft',
-    });
+    logger.warn(
+      'the Microsoft 365 connector is switched on but its config lacks a client id, directory id or client secret; no Microsoft 365 flow can start',
+      { component: 'connectors/microsoft' }
+    );
     return null;
   }
 

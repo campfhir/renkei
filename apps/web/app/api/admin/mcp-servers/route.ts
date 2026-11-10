@@ -14,17 +14,21 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { parseServerPayload, serverSummary, slugFor } from '@/lib/mcp-servers/parse';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const servers = await listServers();
   if (!servers.ok) {
-    logger.error('Could not read servers: {error}', {
-      component: 'api/admin/mcp-servers',
-      error: servers.err.message ?? servers.err.type,
-    });
+    logger.error(
+      '{actor} opened the MCP servers, but the list could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        error: servers.err.message ?? servers.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read servers' }, { status: 500 });
   }
   return NextResponse.json({ servers: servers.val.map(serverSummary) });
@@ -50,11 +54,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   if (input.clientSecret) {
     const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!key.ok) {
-      logger.error('Could not load the token encryption key: {error}', {
-        component: 'api/admin/mcp-servers',
-        subject: session.subject,
-        error: key.err.message ?? key.err.type,
-      });
+      logger.error(
+        '{actor} registered the MCP server "{name}" with a client secret, but the token encryption key could not be loaded; nothing was saved: {error}',
+        {
+          component: 'api/admin/mcp-servers',
+          ...who(session),
+          name: input.name,
+          url: input.url,
+          error: key.err.message ?? key.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     encryptedClientSecret = encrypt(input.clientSecret, key.val);
@@ -79,11 +88,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { status: 409 }
       );
     }
-    logger.error('Could not create the server: {error}', {
-      component: 'api/admin/mcp-servers',
-      subject: session.subject,
-      error: created.err.message ?? created.err.type,
-    });
+    logger.error(
+      '{actor} registered the MCP server "{name}" at {url}, but it was not created: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        name: input.name,
+        url: input.url,
+        error: created.err.message ?? created.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not create the server' }, { status: 500 });
   }
   recordAuditEvent({

@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { buildFieldUpdates } from './field-schema';
 import { writeWithFieldFallback, type FieldWritePlan } from './field-write';
@@ -36,11 +36,10 @@ export async function registerBulkTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_bulk_update_issues invoked', {
+      logger.debug('{caller} called jira_bulk_update_issues', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_bulk_update_issues',
       });
       try {
         const { jql, fields } = args;
@@ -193,11 +192,10 @@ export async function registerBulkTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_bulk_transition_issues invoked', {
+      logger.debug('{caller} called jira_bulk_transition_issues', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_bulk_transition_issues',
       });
       try {
         const { jql, transitionName } = args;

@@ -7,6 +7,7 @@ import { getAtlassianConfluenceApp } from '@/lib/atlassian-app';
 import { ATLASSIAN_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /**
  * Authorize against the third Atlassian app ("Renkei Confluence") — its
@@ -16,9 +17,10 @@ import { logger } from '@/lib/logger';
  * provider + scopes for the shared callback.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  let session: Awaited<ReturnType<typeof getSessionFromRequest>> = null;
   try {
     // The resulting grant is bound to whoever completes this flow.
-    const session = await getSessionFromRequest(request);
+    session = await getSessionFromRequest(request);
     if (!session) {
       return NextResponse.json(
         { error: 'Not signed in', error_description: 'Sign in before connecting' },
@@ -28,11 +30,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth',
-        subject: session.subject,
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        '{actor} asked to connect Confluence, but the app origin could not be resolved; no sign-in was started: {error}',
+        {
+          component: 'auth/oauth',
+          ...who(session),
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const app = await getAtlassianConfluenceApp(originResult.val);
@@ -83,18 +88,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authUrl.searchParams.append('state', state);
     authUrl.searchParams.append('prompt', 'consent');
 
-    logger.debug('Atlassian Confluence authorize redirect', {
+    logger.debug('{actor} is being sent to Confluence to consent to scopes {scopes}', {
       component: 'auth/oauth',
+      ...who(session),
       clientId: app.clientId,
+      scopes: effectiveScopes,
       urlLength: authUrl.toString().length,
     });
     // Bound to this browser: the callback requires the cookie this sets.
     return await redirectToConsent(authUrl, state);
   } catch (error) {
-    logger.error('Atlassian Confluence authorize error: {error}', {
-      component: 'auth/oauth',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{actor} asked to connect Confluence, but the sign-in could not be started; the person saw an error: {error}',
+      {
+        component: 'auth/oauth',
+        ...(session ? who(session) : { actor: '(someone not yet signed in)' }),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }

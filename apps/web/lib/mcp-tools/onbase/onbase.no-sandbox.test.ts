@@ -9,6 +9,7 @@
  */
 
 jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
   // Every data-store method rejects, as an unreachable database does.
   getDataStore: () =>
     new Proxy(

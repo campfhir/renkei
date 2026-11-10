@@ -92,7 +92,7 @@ import {
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { createAgentRun, findInProgressRun, resumeAgentRun } from '@renkei/agents/runs';
-import { keywordsFieldSchema, type MCPToolContext } from '../common';
+import { callerFields, keywordsFieldSchema, type MCPToolContext } from '../common';
 import { listAgents, type TriggerPayload } from '@/lib/agents/store';
 import {
   resolveAgentAccess,
@@ -149,6 +149,7 @@ import { DEFAULT_ORG_SETTINGS, getOrgSettings, type ActApprovalPolicy } from '@r
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { whichAgentOf } from '@/lib/log-actor';
 
 /** The connector key the agents capabilities register under. */
 export const AGENTS_CONNECTOR = 'agents';
@@ -882,10 +883,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               'wait ran out and it was treated as declined.'
           );
         case 'decided': {
-          logger.info('agent_approval_decide decided a staged batch', {
+          logger.info('{caller} {did} the staged batch of run {runId}', {
             component: 'mcp/tool',
+            ...callerFields(context),
             runId: result.runId,
             decision: result.decision,
+            did: result.decision === 'approve' ? 'approved' : 'declined',
           });
           return textResult(
             [
@@ -1014,9 +1017,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               'wait ran out and the run treated it as unanswered.'
           );
         case 'answered': {
-          logger.info('agent_question_answer answered a paused run', {
+          logger.info('{caller} answered the question run {runId} was paused on{resumed}', {
             component: 'mcp/tool',
+            ...callerFields(context),
             runId: result.runId,
+            resumed: result.resumed ? '; it was queued to resume' : '',
           });
           return textResult(
             [
@@ -1489,11 +1494,21 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
       }
 
-      logger.info('agent_run_resume resumed a failed run', {
-        component: 'mcp/tool',
-        agentId: agent.id,
-        runId: resumed.val.runId,
-      });
+      logger.info(
+        '{caller} resumed failed run {runId} of agent "{agent}" of {owner}{withGuidance}',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          ...(await whichAgentOf({
+            agentId: agent.id,
+            agentName: agent.name,
+            ownerSubject: access.ownerSubject,
+          })),
+          runId: resumed.val.runId,
+          withGuidance:
+            typeof args.guidance === 'string' && args.guidance.trim() ? ' with guidance' : '',
+        }
+      );
       return textResult(
         [
           `Resumed run ${runId} of "${agent.name}" where it stopped, with a fresh budget.`,
@@ -1679,9 +1694,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         return errText(result.err.message ?? `The run could not be started (${result.err.type}).`);
       }
 
-      logger.info('agent_run_now started an agent by hand', {
+      logger.info('{caller} started agent "{agent}" of {owner} by hand; run {runId} was queued', {
         component: 'mcp/tool',
-        agentId: agent.id,
+        ...callerFields(context),
+        ...(await whichAgentOf({
+          agentId: agent.id,
+          agentName: agent.name,
+          ownerSubject: access.ownerSubject,
+        })),
         runId: result.val.runId,
         viaApiTrigger: hasApiTrigger,
       });
@@ -1832,12 +1852,21 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
         const result = await forgetAgentMemory(agent.id, { kind: 'all' });
         // Memory does not come back, so the wipe leaves a trace somewhere.
-        logger.info('agent_memory_forget cleared an agent memory', {
-          component: 'mcp/tool',
-          agentId: agent.id,
-          entriesDeleted: result.entriesDeleted,
-          summaryCleared: result.summaryCleared,
-        });
+        logger.info(
+          '{caller} cleared all of agent "{agent}" of {owner}\'s memory: {entriesDeleted} entries{andSummary} forgotten',
+          {
+            component: 'mcp/tool',
+            ...callerFields(context),
+            ...(await whichAgentOf({
+              agentId: agent.id,
+              agentName: agent.name,
+              ownerSubject: access.ownerSubject,
+            })),
+            entriesDeleted: result.entriesDeleted,
+            summaryCleared: result.summaryCleared,
+            andSummary: result.summaryCleared ? ' and the rolling summary' : '',
+          }
+        );
         return textResult(
           `Cleared "${agent.name}"'s memory: ${entryCount(result.entriesDeleted)}` +
             `${result.summaryCleared ? ' and the rolling summary' : ''} forgotten.`
@@ -2306,11 +2335,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
       kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
     } catch (error) {
-      logger.warn('agent save hints could not be read: {error}', {
-        component: 'mcp/agents',
-        subject: context.subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "the approval hints for {caller}'s agent save could not be read (org settings or the tool catalog); the reply omits them: {error}",
+        {
+          component: 'mcp/agents',
+          ...callerFields(context),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return [];
     }
     const acts = draft.tools.filter((tool) => kinds.get(tool) !== 'read');
@@ -2385,9 +2417,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      logger.info('agent_create persisted a new agent', {
+      logger.info('{caller} created agent "{agent}" (disabled until reviewed in the builder)', {
         component: 'mcp/tool',
-        agentId: result.agentId,
+        ...callerFields(context),
+        ...(await whichAgentOf({
+          agentId: result.agentId,
+          agentName: result.normalized.name,
+          ownerSubject: context.subject,
+        })),
       });
       return textResult(
         [
@@ -2636,9 +2673,15 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      logger.info('agent_patch changed an agent definition', {
+      logger.info('{caller} changed agent "{agent}" of {owner}: {changed}', {
         component: 'mcp/tool',
-        agentId: result.agentId,
+        ...callerFields(context),
+        ...(await whichAgentOf({
+          agentId: result.agentId,
+          agentName: result.normalized.name,
+          ownerSubject: access.ownerSubject,
+        })),
+        changed,
       });
       return textResult(
         [
@@ -2725,10 +2768,19 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      logger.info('agent_update rewrote an agent definition', {
-        component: 'mcp/tool',
-        agentId: result.agentId,
-      });
+      logger.info(
+        '{caller} rewrote the definition of agent "{agent}" of {owner}; it stays {state}',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          ...(await whichAgentOf({
+            agentId: result.agentId,
+            agentName: result.normalized.name,
+            ownerSubject: access.ownerSubject,
+          })),
+          state: enabled ? 'enabled' : 'disabled',
+        }
+      );
       return textResult(
         [
           `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}).`,

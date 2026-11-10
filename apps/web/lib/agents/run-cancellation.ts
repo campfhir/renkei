@@ -25,6 +25,7 @@ import { isUuid } from '@/lib/uuid';
 import type { QueueProducer } from '@renkei/queue';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 import { discardRunJobs } from './run-jobs';
 
 export type RequestCancelRunResult =
@@ -73,12 +74,11 @@ export async function requestRunCancellation(
       ownerSubject: input.ownerSubject,
       status: 'canceled',
     });
-    logger.info('run {runId} canceled before it started', {
+    logger.info('{actor} canceled run {runId} of agent "{agent}" of {owner} before it started', {
       component: 'agents/cancel',
+      ...(await whoIs(input.canceledBySubject)),
+      ...(await whichAgent(input.agentId)),
       runId: input.runId,
-      agentId: input.agentId,
-      subject: input.ownerSubject,
-      canceledBy: input.canceledBySubject,
     });
     return { outcome: 'canceled' };
   }
@@ -92,14 +92,16 @@ export async function requestRunCancellation(
     return { outcome: 'canceling' };
   }
 
-  logger.info('cancel requested for run {runId} ({status}); the engine stops it next', {
-    component: 'agents/cancel',
-    runId: input.runId,
-    agentId: input.agentId,
-    status: run.status,
-    subject: input.ownerSubject,
-    canceledBy: input.canceledBySubject,
-  });
+  logger.info(
+    '{actor} asked to cancel run {runId} of agent "{agent}" of {owner} while it was {status}; the engine stops it next',
+    {
+      component: 'agents/cancel',
+      ...(await whoIs(input.canceledBySubject)),
+      ...(await whichAgent(input.agentId)),
+      runId: input.runId,
+      status: run.status,
+    }
+  );
 
   // Queued and waiting runs have no worker actively driving them right
   // now — wake one, exactly the way an approval decision does, so the

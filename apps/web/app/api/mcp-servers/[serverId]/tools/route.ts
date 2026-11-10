@@ -10,6 +10,7 @@ import { getServer, getToolLists } from '@renkei/connector-mcp';
 import { getSessionFromRequest } from '@/lib/session';
 import { refreshToolList } from '@/lib/mcp-servers/remote';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 type Params = { params: Promise<{ serverId: string }> };
 
@@ -19,12 +20,15 @@ export async function GET(request: NextRequest, { params }: Params): Promise<Nex
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const lists = await getToolLists(session.subject);
   if (!lists.ok) {
-    logger.error('Database error: {error}', {
-      component: 'api/mcp-servers/tools',
-      subject: session.subject,
-      serverId,
-      error: lists.err.message ?? lists.err.type,
-    });
+    logger.error(
+      '{actor} opened the tool list of an MCP server, but their cached tool lists could not be read from the database; the page showed an error: {error}',
+      {
+        component: 'api/mcp-servers/tools',
+        ...who(session),
+        serverId,
+        error: lists.err.message ?? lists.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const cached = lists.val.get(serverId);
@@ -44,12 +48,15 @@ export async function POST(request: NextRequest, { params }: Params): Promise<Ne
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
   const server = await getServer(serverId);
   if (!server.ok) {
-    logger.error('Database error: {error}', {
-      component: 'api/mcp-servers/tools',
-      subject: session.subject,
-      serverId,
-      error: server.err.message ?? server.err.type,
-    });
+    logger.error(
+      '{actor} asked to refresh the tools of an MCP server, but the server could not be read from the database; the list was not refreshed: {error}',
+      {
+        component: 'api/mcp-servers/tools',
+        ...who(session),
+        serverId,
+        error: server.err.message ?? server.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   if (!server.val || !server.val.enabled) {

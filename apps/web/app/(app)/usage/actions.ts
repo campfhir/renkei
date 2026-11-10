@@ -33,6 +33,7 @@ import {
   type UsagePoint,
 } from './window';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export interface ToolUsageRow {
   tool: string;
@@ -236,12 +237,16 @@ export async function getUsageReport(
       byUser,
     };
   } catch (error) {
-    logger.error('Could not read the tool usage report: {error}', {
-      component: 'actions/usage',
-      subject: ownSubject,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} opened the tool usage report ({scope}), but it could not be read; they saw an error: {error}',
+      {
+        component: 'actions/usage',
+        ...who(session),
+        scope,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return {
       ...EMPTY,
       scope,
@@ -356,13 +361,16 @@ export async function getToolDetail(
       })),
     };
   } catch (error) {
-    logger.error('Could not read the tool usage detail: {error}', {
-      component: 'actions/usage',
-      subject: ownSubject,
-      tool,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} opened the usage detail of tool {tool}, but it could not be read; they saw an error: {error}',
+      {
+        component: 'actions/usage',
+        ...who(session),
+        tool,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return { ...empty, scope, error: error instanceof Error ? error.message : 'Could not read' };
   }
 }

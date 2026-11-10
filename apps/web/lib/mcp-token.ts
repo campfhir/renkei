@@ -13,6 +13,7 @@ import type { NextRequest } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { sha256Hex, generateSecret } from '@renkei/crypto';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 /**
  * Digest a bearer credential for storage.
@@ -164,7 +165,15 @@ export async function resolveAccessToken(
 
   if (row.expiresAt < new Date()) {
     await tokens.deleteAccessToken(tokenHash);
-    logger.debug('Expired access token discarded', { component: 'mcp/token' });
+    logger.debug(
+      '{actor} presented an expired {application} access token; it was discarded and the call refused',
+      {
+        component: 'mcp/token',
+        ...(await whoIs(row.subject)),
+        application,
+        clientId: row.clientId,
+      }
+    );
     return null;
   }
 

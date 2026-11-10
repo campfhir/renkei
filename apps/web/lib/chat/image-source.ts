@@ -13,6 +13,7 @@
 
 import { sanitizeBytes } from '@renkei/document-render';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { fileCipherFor } from './artifact-access';
 import { listAttachments, readAttachmentBytes, type AttachmentRow } from './attachments';
 import type { ContentCipher } from './content-crypto';
@@ -90,13 +91,17 @@ export async function loadSourceImage(scope: SourceScope, wanted: string): Promi
   try {
     rows = await listAttachments({ chatId: scope.chatId });
   } catch (error) {
-    logger.error('chat images could not be listed: {error}', {
-      component: 'chat/image-source',
-      subject: scope.subject,
-      chatId: scope.chatId,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor}\'s chat could not list its files to find the picture "{wanted}"; the model was told the files could not be read: {error}',
+      {
+        component: 'chat/image-source',
+        ...(await whoIs(scope.subject)),
+        chatId: scope.chatId,
+        wanted,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return { ok: false, reason: 'This chat’s files could not be read just now.' };
   }
   const picked = pickSourceImage(rows, wanted);

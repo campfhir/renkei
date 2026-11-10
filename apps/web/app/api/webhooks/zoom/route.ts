@@ -63,35 +63,47 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'zoom/webhook',
-    });
+    logger.error(
+      'A Zoom webhook delivery arrived, but TOKEN_ENCRYPTION_KEY is missing or malformed so the connector secret cannot be read; answered 500 and the delivery was not queued',
+      {
+        component: 'zoom/webhook',
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const configResult = await readConnectorConfigCached(ZOOM_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Connector configuration unavailable: {error}', {
-      component: 'zoom/webhook',
-      error: configResult.err.message ?? configResult.err.type,
-    });
+    logger.error(
+      'A Zoom webhook delivery arrived, but the Zoom connector configuration could not be read; answered 500 and the delivery was not queued: {error}',
+      {
+        component: 'zoom/webhook',
+        error: configResult.err.message ?? configResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Connector configuration unavailable' }, { status: 500 });
   }
   const config = configResult.val;
   const secretToken = config?.secrets.secretToken;
   if (!config || !config.enabled || typeof secretToken !== 'string' || !secretToken) {
-    logger.warn('Delivery for a tenant without an enabled zoom connector (or no Secret Token)', {
-      component: 'zoom/webhook',
-    });
+    logger.warn(
+      'A Zoom webhook delivery arrived, but the Zoom connector is off or has no Secret Token; answered 503 and the delivery was dropped',
+      {
+        component: 'zoom/webhook',
+      }
+    );
     return NextResponse.json({ error: 'Zoom connector not configured' }, { status: 503 });
   }
 
   // Signature + freshness on EVERY delivery, url_validation included — the
   // challenge proves possession of the Secret Token in both directions.
   if (!verifyZoomSignature(rawBody, signature, timestamp, secretToken)) {
-    logger.warn('Rejected delivery with bad signature or stale timestamp', {
-      component: 'zoom/webhook',
-    });
+    logger.warn(
+      'A Zoom webhook delivery was rejected (401) because its signature did not verify against the Secret Token or its timestamp was stale; dropped',
+      {
+        component: 'zoom/webhook',
+      }
+    );
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
@@ -124,13 +136,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     orderingKey: payload.val.meetingUuid ? `zoom/${payload.val.meetingUuid}` : null,
   });
   if (!enqueued.ok) {
-    logger.error('Event NOT accepted: {error}', {
-      component: 'zoom/webhook',
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      'Zoom sent a verified {type} event{forMeeting}, but it was not queued for the worker; answered 500 so Zoom retries: {error}',
+      {
+        component: 'zoom/webhook',
+        type: payload.val.type,
+        meetingUuid: payload.val.meetingUuid ?? null,
+        forMeeting: payload.val.meetingUuid ? ` for meeting ${payload.val.meetingUuid}` : '',
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 
-  logger.debug('Event accepted', { component: 'zoom/webhook', type: payload.val.type });
+  logger.debug('Zoom sent a verified {type} event{forMeeting}; it was queued for the worker', {
+    component: 'zoom/webhook',
+    type: payload.val.type,
+    meetingUuid: payload.val.meetingUuid ?? null,
+    forMeeting: payload.val.meetingUuid ? ` for meeting ${payload.val.meetingUuid}` : '',
+  });
   return NextResponse.json({ accepted: true });
 }

@@ -29,6 +29,7 @@ import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import { resolveAgentLlm, type LlmUsage } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
+import { whichAgentOf } from '@/lib/log-actor';
 import { retryWithBackoff } from '@/lib/retry-with-backoff';
 import { agentMarkdown } from '@/lib/agents/export-markdown';
 import { getRunForOwner, listRunsForOwner } from '@/lib/agents/runs-view';
@@ -331,6 +332,11 @@ export async function optimizeAgent(
   }
   const llm = llmResult.val;
 
+  // Resolved once: the retry callback below is synchronous.
+  const about = {
+    component: 'agents/optimize',
+    ...(await whichAgentOf({ agentId: agent.id, agentName: agent.name, ownerSubject })),
+  };
   const evidence = await gatherOptimizationEvidence(ownerSubject, agent, windowDays);
   if (evidence.stats.runs === 0 && evidence.failures.length === 0) {
     return {
@@ -367,13 +373,15 @@ export async function optimizeAgent(
       backoffStrategy: 'exponential',
       backoffOffset: RETRY_BACKOFF_OFFSET_MS,
       onRetry: (attempt, error, nextDelayMs) => {
-        logger.debug('agent optimization retry {attempt}: {error} (waiting {delay}ms)', {
-          component: 'agents/optimize',
-          agentId: agent.id,
-          attempt,
-          error: error.message,
-          delay: nextDelayMs,
-        });
+        logger.debug(
+          'the analysis of agent "{agent}" of {owner} is being asked for again (attempt {attempt}) after {error}; waiting {delay}ms',
+          {
+            ...about,
+            attempt,
+            error: error.message,
+            delay: nextDelayMs,
+          }
+        );
       },
     }
   );
@@ -381,14 +389,15 @@ export async function optimizeAgent(
   if (!completion.ok) {
     const kind = completion.err.type;
     const message = completion.err.message?.slice(0, 300);
-    logger.warn('agent optimization failed: {kind}', {
-      component: 'agents/optimize',
-      subject: ownerSubject,
-      agentId: agent.id,
-      message,
-      kind,
-      ms: Date.now() - startedAt,
-    });
+    logger.warn(
+      'the analysis of agent "{agent}" of {owner} was not completed: the model did not answer ({kind}) after {ms}ms; the person saw an error',
+      {
+        ...about,
+        message,
+        kind,
+        ms: Date.now() - startedAt,
+      }
+    );
     return {
       error:
         kind === 'auth'
@@ -403,10 +412,12 @@ export async function optimizeAgent(
     .flatMap((block) => (block.type === 'text' ? [block.text] : []))
     .join('\n');
   const report = parseOptimizationReply(text, summary);
-  logger.info('agent optimization {result} in {ms}ms', {
-    component: 'agents/optimize',
-    agentId: agent.id,
+  logger.info('the analysis of agent "{agent}" of {owner} {outcome} after {ms}ms', {
+    ...about,
     result: report ? 'succeeded' : 'unparseable',
+    outcome: report
+      ? `succeeded with ${report.findings.length} finding(s)`
+      : 'came back in a shape that could not be read; the person was asked to try again',
     ms: Date.now() - startedAt,
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,

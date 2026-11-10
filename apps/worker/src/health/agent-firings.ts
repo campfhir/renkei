@@ -23,9 +23,10 @@ export function createAgentFiringsSweep() {
       RETENTION_BATCH
     );
     if (deleted > 0) {
-      logger.info('retention pruned {count} trigger firing(s)', {
+      logger.info('pruned {count} trigger-firing record(s) older than {days} day(s)', {
         component: 'agentfirings/sweep',
         count: deleted,
+        days: RETENTION_DAYS,
       });
     }
   };

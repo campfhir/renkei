@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { listInstancesWithConnection } from '@renkei/connector-mirth';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -17,11 +18,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const instances = await listInstancesWithConnection(session.subject);
   if (!instances.ok) {
-    logger.error('Could not read the instances: {error}', {
-      component: 'api/mirth',
-      subject: session.subject,
-      error: instances.err.message ?? instances.err.type,
-    });
+    logger.error(
+      '{actor} opened the Mirth connectors, but the instances could not be read; the list was not shown: {error}',
+      {
+        component: 'api/mirth',
+        ...who(session),
+        error: instances.err.message ?? instances.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the instances' }, { status: 500 });
   }
 

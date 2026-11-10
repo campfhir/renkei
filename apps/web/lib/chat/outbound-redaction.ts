@@ -55,7 +55,7 @@ export function createOutboundRedactor(
         // The gate's own rule: a redactor that throws must not swallow
         // the message. Returning the text unredacted mirrors what the MCP
         // gate does for a result it could not process.
-        logger.error('outbound redaction failed; text passed unredacted: {error}', {
+        logger.error('the outbound redactor threw; the text was passed on unredacted: {error}', {
           component: 'chat/redaction',
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,

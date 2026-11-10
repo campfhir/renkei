@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import {
@@ -150,11 +150,10 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_projects invoked', {
+      logger.debug('{caller} called jira_list_projects', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_projects',
       });
       try {
         const max = typeof args.max === 'number' ? args.max : 50;
@@ -217,11 +216,10 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_components invoked', {
+      logger.debug('{caller} called jira_list_components', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_components',
       });
       try {
         const { projectKey } = args;
@@ -313,11 +311,10 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_fields invoked', {
+      logger.debug('{caller} called jira_list_fields', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_fields',
       });
       try {
         const response = await auth.fetch(
@@ -479,11 +476,10 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_search_users invoked', {
+      logger.debug('{caller} called jira_search_users', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_search_users',
       });
       try {
         const { query, maxResults = 10 } = args;
@@ -603,11 +599,10 @@ export async function registerProjectTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_transitions invoked', {
+      logger.debug('{caller} called jira_list_transitions', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_transitions',
       });
       try {
         const { issueKey } = args;

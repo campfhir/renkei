@@ -22,6 +22,7 @@
 
 import { getDataStore, type ChatTaskWaitRecord } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { chatCipherById } from '../chat-keys';
 import { waitFiring, wakeNoteText, type TaskWaitView, type WaitEvent } from './graph';
 import { listTasks } from './store';
@@ -69,12 +70,16 @@ export const openNoteTurn: OpenWakeTurn = async (input) => {
     // than through Next's after(), which needs a request around it — the
     // way a resumed turn runs (turn-recovery.ts).
     defer: (task) => {
-      void task().catch((error: unknown) =>
-        logger.error('woken chat turn crashed: {error}', {
-          component: 'chat/tasks',
-          chatId: input.chatId,
-          error: error instanceof Error ? error.message : String(error),
-        })
+      void task().catch(async (error: unknown) =>
+        logger.error(
+          "the turn that woke {actor}'s chat crashed; the chat shows no answer to the wake: {error}",
+          {
+            component: 'chat/tasks',
+            ...(await whoIs(input.session.subject)),
+            chatId: input.chatId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        )
       );
     },
   });
@@ -98,18 +103,22 @@ function clearTimer(chatId: string): void {
 }
 
 /** Look again when the deadline comes, in this process; the sweep covers a restart. */
-function scheduleTimer(chatId: string, deadlineAt: Date | null, now: Date): void {
+function scheduleTimer(chatId: string, subject: string, deadlineAt: Date | null, now: Date): void {
   clearTimer(chatId);
   if (!deadlineAt) return;
   const delay = Math.max(0, deadlineAt.getTime() - now.getTime()) + 250;
   const timer = setTimeout(() => {
     timers().delete(chatId);
-    void wakeIfReady(chatId).catch((error: unknown) =>
-      logger.warn('task wait timer could not fire: {error}', {
-        component: 'chat/tasks',
-        chatId,
-        error: error instanceof Error ? error.message : String(error),
-      })
+    void wakeIfReady(chatId).catch(async (error: unknown) =>
+      logger.warn(
+        "the task-wait deadline of {actor}'s chat came, but the chat could not be checked; the sweep will look again: {error}",
+        {
+          component: 'chat/tasks',
+          ...(await whoIs(subject)),
+          chatId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      )
     );
   }, delay);
   timer.unref?.();
@@ -136,7 +145,7 @@ export async function suspendOnTasks(input: {
     subject: input.session.subject,
     roles: input.session.roles,
   });
-  scheduleTimer(input.chatId, deadlineAt, input.now);
+  scheduleTimer(input.chatId, input.session.subject, deadlineAt, input.now);
   return waitViewOf(wait);
 }
 
@@ -164,7 +173,7 @@ export async function wakeIfReady(
   const tasks = await listTasks(chatId, cipher);
   const firing = waitFiring(waitViewOf(wait), tasks, now);
   if (!firing) {
-    if (!timers().has(chatId)) scheduleTimer(chatId, wait.deadlineAt, now);
+    if (!timers().has(chatId)) scheduleTimer(chatId, wait.subject, wait.deadlineAt, now);
     return false;
   }
   if (!(await store.clearWait(chatId))) return false;
@@ -176,10 +185,10 @@ export async function wakeIfReady(
     text: wakeNoteText(firing, tasks),
   });
   if (opened.ok) {
-    logger.info('chat woke on its tasks ({reason})', {
+    logger.info("{actor}'s chat woke on its tasks ({reason}); a note turn was opened", {
       component: 'chat/tasks',
+      ...(await whoIs(wait.subject)),
       chatId,
-      subject: wait.subject,
       reason: firing.reason,
     });
     return true;
@@ -197,23 +206,29 @@ export async function wakeIfReady(
     });
     return false;
   }
-  logger.warn('chat could not be woken on its tasks; wait dropped', {
-    component: 'chat/tasks',
-    chatId,
-    subject: wait.subject,
-    reason: firing.reason,
-  });
+  logger.warn(
+    "{actor}'s chat could not be woken on its tasks ({reason}); the wait was dropped and the chat will not be told",
+    {
+      component: 'chat/tasks',
+      ...(await whoIs(wait.subject)),
+      chatId,
+      reason: firing.reason,
+    }
+  );
   return false;
 }
 
 /** wakeIfReady that logs rather than throws: for callers that must not fail on it. */
 export function wakeSoon(chatId: string): void {
   void wakeIfReady(chatId).catch((error: unknown) =>
-    logger.warn('task wait check failed: {error}', {
-      component: 'chat/tasks',
-      chatId,
-      error: error instanceof Error ? error.message : String(error),
-    })
+    logger.warn(
+      "a chat's task wait could not be checked after a task changed; the sweep will look again: {error}",
+      {
+        component: 'chat/tasks',
+        chatId,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    )
   );
 }
 

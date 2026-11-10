@@ -19,6 +19,7 @@ import {
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 const FILE_MAX_CHARS = 200_000;
 const MESSAGE_MAX_CHARS = 500;
@@ -34,12 +35,17 @@ export async function GET(
   const auth = await bitbucketAuthFor(request, subject);
   const file = await readPipelineConfigFile(auth, project.repo.fullName, project.repo.branch);
   if (!file.ok) {
-    logger.warn('Could not read the Bitbucket pipeline file: {error}', {
-      component: 'api/code/projects/pipelines/config-file',
-      subject,
-      projectId,
-      error: file.error,
-    });
+    logger.warn(
+      '{actor} opened the pipeline file of the project "{project}" ({repository}), but Bitbucket did not return it; the editor showed the error: {error}',
+      {
+        component: 'api/code/projects/pipelines/config-file',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        error: file.error,
+      }
+    );
     return jsonError(502, 'bitbucket', file.error);
   }
   return NextResponse.json({ ref: file.ref, text: file.text });
@@ -71,12 +77,18 @@ export async function PUT(
     message
   );
   if (!committed.ok) {
-    logger.warn('Could not commit the Bitbucket pipeline file: {error}', {
-      component: 'api/code/projects/pipelines/config-file',
-      subject,
-      projectId,
-      error: committed.error,
-    });
+    logger.warn(
+      '{actor} saved the pipeline file of the project "{project}" ({repository}), but Bitbucket refused the commit to {branch}; the file is unchanged: {error}',
+      {
+        component: 'api/code/projects/pipelines/config-file',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        branch: project.repo.branch,
+        error: committed.error,
+      }
+    );
     return jsonError(502, 'bitbucket', committed.error);
   }
   recordAuditEvent({

@@ -31,6 +31,7 @@ import type { AuthedFetch } from '@renkei/delegate-client';
 import type { EventHandler } from '../handlers';
 import { resolveMicrosoftAccess } from './microsoft-access';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'mailjobs/run';
@@ -178,12 +179,22 @@ export function createMailBulkJobHandler(): EventHandler {
 
     const job = jobId ? await jobs.get(jobId) : null;
     if (!job) {
-      logger.warn('mail bulk job {jobId} not found; dropping', {
-        component: COMPONENT,
-        jobId: jobId || '(missing)',
-      });
+      logger.warn(
+        'a bulk-action message named a mail bulk job that no longer exists; it was dropped',
+        {
+          component: COMPONENT,
+          jobId: jobId || '(missing)',
+        }
+      );
       return;
     }
+    const about = {
+      component: COMPONENT,
+      ...(await whoIs(job.subject)),
+      jobId: job.id,
+      accountId: job.accountId,
+      action: job.action,
+    };
 
     if (job.status !== 'queued') {
       if (job.status === 'running') {
@@ -191,17 +202,12 @@ export function createMailBulkJobHandler(): EventHandler {
         // returns new ids, a re-run double-acts. Finalize and stop.
         const succeeded = Number(job.succeeded ?? 0);
         const lastError = `worker restarted mid-job; ${succeeded} of ${job.total ?? '?'} had completed`;
-        await jobs.finish(job.id, {
-          status: succeeded > 0 ? 'partial' : 'failed',
-          lastError,
-        });
-        logger.warn('mail bulk job {jobId} failed: {error}', {
-          component: COMPONENT,
-          jobId: job.id,
-          subject: job.subject,
-          accountId: job.accountId,
-          error: lastError,
-        });
+        const status = succeeded > 0 ? 'partial' : 'failed';
+        await jobs.finish(job.id, { status, lastError });
+        logger.warn(
+          '{actor}\'s bulk "{action}" mail job was ended as {status}: the worker restarted mid-job, and a job is never re-run: {error}',
+          { ...about, status, error: lastError }
+        );
       }
       // Terminal (or just finalized): a redelivery is an idempotent no-op.
       return;
@@ -213,17 +219,12 @@ export function createMailBulkJobHandler(): EventHandler {
     // running-guard above (harmless but noisy). Every failure lands on the
     // row instead.
     const fail = async (message: string, counts?: { succeeded: number; total: number | null }) => {
-      logger.warn('mail bulk job {jobId} failed: {error}', {
-        component: COMPONENT,
-        jobId: job.id,
-        subject: job.subject,
-        accountId: job.accountId,
-        error: message,
-      });
-      await jobs.finish(job.id, {
-        status: counts && counts.succeeded > 0 ? 'partial' : 'failed',
-        lastError: message,
-      });
+      const status = counts && counts.succeeded > 0 ? 'partial' : 'failed';
+      logger.warn(
+        '{actor}\'s bulk "{action}" mail job ended as {status}; nothing more was changed in their mailbox: {error}',
+        { ...about, status, error: message }
+      );
+      await jobs.finish(job.id, { status, lastError: message });
     };
 
     try {
@@ -323,17 +324,12 @@ export function createMailBulkJobHandler(): EventHandler {
         await graphBatch(access.auth, requests, { lane: 'background', onChunk: record });
       }
 
-      await jobs.finish(job.id, {
-        status: failed === 0 ? 'succeeded' : succeeded > 0 ? 'partial' : 'failed',
-      });
-      logger.info('mail bulk job {jobId} finished: {succeeded} ok, {failed} failed', {
-        component: COMPONENT,
-        jobId: job.id,
-        subject: job.subject,
-        action,
-        succeeded,
-        failed,
-      });
+      const status = failed === 0 ? 'succeeded' : succeeded > 0 ? 'partial' : 'failed';
+      await jobs.finish(job.id, { status });
+      logger.info(
+        '{actor}\'s bulk "{action}" mail job finished as {status}: {succeeded} message(s) changed, {failed} failed',
+        { ...about, status, succeeded, failed }
+      );
     } catch (error) {
       await fail(error instanceof Error ? error.message : String(error));
     }

@@ -17,7 +17,9 @@ import { MICROSOFT } from '@renkei/provider-grants';
 import { deleteGraphSubscription, listGraphSubscriptions } from '@renkei/connector-microsoft';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { logger } from '../logger';
+import { whoHas } from '../log-actor';
 import { resolveMicrosoftAccess } from '../handlers/microsoft-access';
+import type { ActorFields } from '@renkei/db';
 import { ensureMicrosoftSubscriptions, runSubscriptionSync } from '../handlers/microsoft-sync';
 
 const COMPONENT = 'microsoft/subscription-health';
@@ -35,15 +37,21 @@ const STALE_SYNC_MS = 6 * 60 * 60 * 1000;
  */
 async function reapOrphanedGraphSubscriptions(
   accountId: string,
+  owner: ActorFields,
   auth: AuthedFetch,
   baseUrl: string
 ): Promise<void> {
   const listed = await listGraphSubscriptions(auth);
   if (!listed.ok) {
-    logger.warn('could not list Graph subscriptions to reconcile: {message}', {
-      component: COMPONENT,
-      message: typeof listed.err.message === 'string' ? listed.err.message.slice(0, 200) : '',
-    });
+    logger.warn(
+      "{actor}'s Graph subscriptions could not be listed; an orphaned one, if any, keeps delivering until it expires: {error}",
+      {
+        component: COMPONENT,
+        ...owner,
+        accountId,
+        error: typeof listed.err.message === 'string' ? listed.err.message.slice(0, 200) : '',
+      }
+    );
     return;
   }
 
@@ -60,19 +68,29 @@ async function reapOrphanedGraphSubscriptions(
     if (!url.startsWith(baseUrl) || !url.includes(`/${accountId}`)) continue;
 
     const deleted = await deleteGraphSubscription(auth, subscription.id);
-    logger.warn('deleted orphaned Graph subscription {subscriptionId} (no row here)', {
-      component: COMPONENT,
-      subscriptionId: subscription.id,
-      resource: subscription.resource,
-      succeeded: deleted.ok,
-    });
+    logger.warn(
+      "a Graph subscription to {actor}'s {resource} had no row in this deployment; {outcome}",
+      {
+        component: COMPONENT,
+        ...owner,
+        accountId,
+        subscriptionId: subscription.id,
+        resource: subscription.resource ?? '(unknown resource)',
+        succeeded: deleted.ok,
+        outcome: deleted.ok
+          ? 'it was deleted'
+          : 'deleting it failed, so it keeps delivering until it expires',
+      }
+    );
   }
 }
 
 export async function sweepMicrosoftSubscriptions(): Promise<void> {
   const baseUrl = getPublicBaseUrl();
   if (!baseUrl) {
-    logger.warn('PUBLIC_BASE_URL not set; skipping sweep', { component: COMPONENT });
+    logger.warn('the public base URL is not set; the Microsoft subscription sweep did nothing', {
+      component: COMPONENT,
+    });
     return;
   }
 
@@ -82,7 +100,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
   try {
     grants = await store.providerGrants.listWithMetadata(MICROSOFT);
   } catch (error) {
-    logger.error('could not enumerate microsoft grants: {error}', {
+    logger.error('the Microsoft 365 grants could not be listed; this sweep did nothing: {error}', {
       component: COMPONENT,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -96,13 +114,19 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
   for (const row of allRows) {
     if (!grantKeys.has(row.accountId)) {
       await store.webhookSubscriptions.delete(row.id);
-      logger.warn('dropped orphaned subscription row (grant gone)', {
-        component: COMPONENT,
-      });
+      logger.warn(
+        'dropped a Graph subscription row to {resource} whose Microsoft 365 grant is gone; it served nobody',
+        {
+          component: COMPONENT,
+          accountId: row.accountId,
+          resource: row.resource,
+        }
+      );
     }
   }
 
   for (const { accountId } of grants) {
+    const owner = await whoHas(accountId);
     try {
       const access = await resolveMicrosoftAccess(accountId);
       const rows = await ensureMicrosoftSubscriptions(access, baseUrl);
@@ -121,7 +145,7 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
       // one Entra app registration is commonly shared by several
       // deployments, and a dev box reaping by table-absence alone would
       // happily delete production's subscriptions.
-      await reapOrphanedGraphSubscriptions(accountId, access.auth, baseUrl);
+      await reapOrphanedGraphSubscriptions(accountId, owner, access.auth, baseUrl);
 
       const staleBefore = Date.now() - STALE_SYNC_MS;
       const stale = await store.webhookSubscriptions.listStale(
@@ -142,20 +166,29 @@ export async function sweepMicrosoftSubscriptions(): Promise<void> {
         if (synced.changed > 0 || synced.removed > 0) {
           // Loud on purpose: catch-up finding changes means notifications
           // were being missed until now.
-          logger.warn('stale catch-up on {resource}: {changed} changed, {removed} removed', {
-            component: COMPONENT,
-            resource: row.resource,
-            changed: synced.changed,
-            removed: synced.removed,
-          });
+          logger.warn(
+            "a catch-up delta round over {actor}'s {resource} found {changed} changed and {removed} removed item(s); notifications had been missed until now",
+            {
+              component: COMPONENT,
+              ...owner,
+              accountId,
+              resource: row.resource,
+              changed: synced.changed,
+              removed: synced.removed,
+            }
+          );
         }
       }
     } catch (error) {
-      logger.warn('sweep skipped grant {accountId}: {error}', {
-        component: COMPONENT,
-        accountId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "{actor}'s Microsoft 365 subscriptions could not be checked this pass; they are tried again next sweep: {error}",
+        {
+          component: COMPONENT,
+          ...owner,
+          accountId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 }

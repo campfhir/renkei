@@ -52,6 +52,7 @@ import {
 } from '@renkei/connector-admanager';
 import type { Result } from '@campfhir/safe-functions/types';
 import { createJsonRpcServer, sendJson, str } from '@renkei/worker-kit';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 import {
   dialUpstream,
@@ -167,13 +168,23 @@ function sendError(
 ): void {
   if (!UNLOGGED_ERRORS.has(type)) {
     const log = type === 'store' ? logger.error.bind(logger) : logger.warn.bind(logger);
-    log('admanager {op} failed ({type}): {error}', {
-      component: COMPONENT,
-      op: context?.op ?? 'request',
-      type,
-      error: message ?? type,
-      instanceId: context?.instanceId,
-      subject: context?.subject,
+    // Synchronous on purpose (every handler returns through here); the
+    // name lookup is cached and never throws, so the line follows at once.
+    const subject = context?.subject;
+    void actorAttrs(subject).then((who) => {
+      log(
+        'the ADManager Plus {op} request for {forWhom} failed ({type}); the caller got {status}: {error}',
+        {
+          component: COMPONENT,
+          ...(subject ? who : {}),
+          op: context?.op ?? 'request',
+          forWhom: subject ? who.actor : 'an unnamed caller',
+          type,
+          status: statusForError(type),
+          error: message ?? type,
+          instanceId: context?.instanceId,
+        }
+      );
     });
   }
   sendJson(response, statusForError(type), { error: { type, message } });
@@ -453,12 +464,16 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       );
       if ('failed' in ping) {
         // A failed probe is a successful request.
-        logger.warn('admanager probe of {baseUrl} failed: {error}', {
-          component: COMPONENT,
-          baseUrl: instance.summary.baseUrl,
-          instanceId: instance.summary.id || undefined,
-          error: `The ADManager Plus server ${ping.detail}.`,
-        });
+        logger.warn(
+          'the probe of the ADManager Plus instance "{instance}" at {baseUrl} failed; the operator is told it is unreachable: {error}',
+          {
+            component: COMPONENT,
+            instance: instance.summary.name || '(unsaved)',
+            baseUrl: instance.summary.baseUrl,
+            instanceId: instance.summary.id || undefined,
+            error: `The ADManager Plus server ${ping.detail}.`,
+          }
+        );
         return sendJson(response, 200, {
           ok: false,
           error: `The ADManager Plus server ${ping.detail}.`,
@@ -466,12 +481,16 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
       }
       const reachable = ping.status === 401 || ping.status === 200;
       if (!reachable) {
-        logger.warn('admanager probe of {baseUrl} failed: answered {status}', {
-          component: COMPONENT,
-          baseUrl: instance.summary.baseUrl,
-          instanceId: instance.summary.id || undefined,
-          status: ping.status,
-        });
+        logger.warn(
+          'the probe of the ADManager Plus instance "{instance}" at {baseUrl} got HTTP {status} where 200 or 401 was expected; the operator is told it is not reachable',
+          {
+            component: COMPONENT,
+            instance: instance.summary.name || '(unsaved)',
+            baseUrl: instance.summary.baseUrl,
+            instanceId: instance.summary.id || undefined,
+            status: ping.status,
+          }
+        );
       }
       sendJson(response, 200, {
         ok: reachable,
@@ -487,7 +506,7 @@ export function createAdManagerServer(deps: AdManagerServerDeps): Server {
     handlers,
     sendError,
     onUnhandledError: (error) => {
-      logger.error('unhandled admanager op failure: {error}', {
+      logger.error('a ADManager Plus op threw before it answered; the caller got a 500: {error}', {
         component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

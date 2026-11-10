@@ -26,10 +26,14 @@ export function createWebexSentSweep() {
       RETENTION_BATCH
     );
     if (deleted > 0) {
-      logger.info('retention pruned {count} sent WebEx message record(s)', {
-        component: 'webexsent/sweep',
-        count: deleted,
-      });
+      logger.info(
+        'pruned {count} record(s) of messages Renkei sent on WebEx older than {days} day(s)',
+        {
+          component: 'webexsent/sweep',
+          count: deleted,
+          days: RETENTION_DAYS,
+        }
+      );
     }
   };
 }

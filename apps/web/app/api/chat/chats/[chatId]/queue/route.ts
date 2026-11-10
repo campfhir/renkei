@@ -10,6 +10,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getChatForOwner } from '@/lib/chat/store';
 import { parseQueue, saveQueuedSends } from '@/lib/chat/queued-sends';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function PUT(
   request: NextRequest,
@@ -27,13 +28,18 @@ export async function PUT(
   try {
     await saveQueuedSends(chat.id, queue);
   } catch (error) {
-    logger.error('The queue could not be saved: {error}', {
-      component: 'api/chat/chats/queue',
-      subject: session.subject,
-      chatId,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} queued {queued} sends in the chat "{chatTitle}", but the queue was not saved: {error}',
+      {
+        component: 'api/chat/chats/queue',
+        ...who(session),
+        chatId,
+        chatTitle: chat.title ?? '(untitled)',
+        queued: queue.length,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return jsonError(500, 'database', 'The queue could not be saved.');
   }
   return NextResponse.json({ ok: true });

@@ -66,6 +66,7 @@ import { openText, sealText, type ContentCipher } from './content-crypto';
 import { createTurn, finishTurn } from './turns';
 import { openTurnChannel } from './turn-events';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 /** A chat is compacted once its unfolded history passes this many characters. */
 export const CHAT_COMPACT_CHAR_THRESHOLD = 320_000;
@@ -488,13 +489,17 @@ export async function startCompactionTurn(input: {
   const llmResult = await resolveAgentLlm(chat.llmModelId ?? null);
   if (!llmResult.ok) {
     if (llmResult.err.type !== 'NO_MODEL') {
-      logger.warn('chat compaction model could not be resolved: {kind} {error}', {
-        component: 'chat/compaction',
-        subject: input.session.subject,
-        chatId: chat.id,
-        kind: llmResult.err.type,
-        error: llmResult.err.message ?? '',
-      });
+      logger.warn(
+        '{actor} asked to compact the chat "{chat}", but its model could not be resolved ({kind}); nothing was compacted: {error}',
+        {
+          component: 'chat/compaction',
+          ...(await whoIs(input.session.subject)),
+          chatId: chat.id,
+          chat: chat.title || 'New chat',
+          kind: llmResult.err.type,
+          error: llmResult.err.message ?? '',
+        }
+      );
     }
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -554,13 +559,16 @@ async function runCompactionTurn(input: {
   } catch (caught) {
     status = 'failed';
     error = caught instanceof Error ? caught.message : String(caught);
-    logger.warn('chat compaction turn failed: {message}', {
-      component: 'chat/compaction',
-      subject: input.subject,
-      chatId: input.chatId,
-      turnId: input.turnId,
-      message: error,
-    });
+    logger.warn(
+      'the compaction {actor} asked for failed; the chat is left as it was and the turn shows the error: {message}',
+      {
+        component: 'chat/compaction',
+        ...(await whoIs(input.subject)),
+        chatId: input.chatId,
+        turnId: input.turnId,
+        message: error,
+      }
+    );
   }
   await finishTurn(input.turnId, {
     status,

@@ -50,6 +50,7 @@ import {
 } from '@renkei/connector-mirth';
 import type { ConnectedInstance, MirthPermission } from '@renkei/connector-mirth';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import { mirthApi } from '@/lib/mirth/service-client';
 import type {
   MirthApiRequest,
@@ -560,20 +561,26 @@ export function registerMirthTools(
         contentType: 'application/xml',
       });
       if (!audited.ok) {
-        logger.warn('Mirth PHI audit event not recorded: {error}', {
-          component: 'mcp/mirth',
-          subject: context.subject,
-          instanceId,
-          error: audited.message,
-        });
+        logger.warn(
+          "the PHI audit event for {caller}'s read on Mirth instance {instanceId} was not recorded in Mirth's own event log (Renkei's trail stands): {error}",
+          {
+            component: 'mcp/mirth',
+            ...callerFields(context),
+            instanceId,
+            error: audited.message,
+          }
+        );
       }
     } catch (error) {
-      logger.warn('Mirth PHI audit event not recorded: {error}', {
-        component: 'mcp/mirth',
-        subject: context.subject,
-        instanceId,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "the PHI audit event for {caller}'s read on Mirth instance {instanceId} was not recorded in Mirth's own event log (Renkei's trail stands): {error}",
+        {
+          component: 'mcp/mirth',
+          ...callerFields(context),
+          instanceId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   };
   const recordMessageAccess = async (input: {

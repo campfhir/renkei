@@ -37,14 +37,12 @@ export async function getWebexBot(): Promise<WebexBot | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
   try {
-    const configResult = await readConnectorConfigCached(
-      WEBEX_BOT_CONNECTOR,
-      keyResult.val
-    );
+    const configResult = await readConnectorConfigCached(WEBEX_BOT_CONNECTOR, keyResult.val);
     if (!configResult.ok) {
-      logger.warn('Could not read webex-bot connector config', {
-        component: 'connectors/webex-bot',
-      });
+      logger.warn(
+        "the WebEx bot connector config could not be read; notes go out from the person's own account instead of the bot",
+        { component: 'connectors/webex-bot' }
+      );
       return null;
     }
     const config = configResult.val;
@@ -58,10 +56,13 @@ export async function getWebexBot(): Promise<WebexBot | null> {
       email: typeof config.settings.email === 'string' ? config.settings.email : null,
     };
   } catch (error) {
-    logger.warn('webex-bot lookup errored: {error}', {
-      component: 'connectors/webex-bot',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "the WebEx bot lookup threw; notes go out from the person's own account instead of the bot: {error}",
+      {
+        component: 'connectors/webex-bot',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }

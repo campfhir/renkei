@@ -23,6 +23,7 @@ import { IMPORT_MAX_UPLOAD_BYTES, readUploadFiles } from '@/lib/data-portability
 import { applyImport } from '@/lib/data-portability/apply-import';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export const maxDuration = 300;
 
@@ -105,13 +106,18 @@ export async function POST(request: NextRequest): Promise<Response> {
     },
   });
   if (outcome.stopped) {
-    logger.warn('Import stopped early: {stopped}', {
-      component: 'api/account/import',
-      subject: session.subject,
-      stopped: outcome.stopped,
-      memories: outcome.memoriesAdded,
-      chats: outcome.chatsAdded,
-    });
+    logger.warn(
+      '{actor} imported "{name}", but the import stopped early ({stopped}); {memories} memories and {chats} chats were kept, the rest were not written',
+      {
+        component: 'api/account/import',
+        ...who(session),
+        name,
+        sources: plan.sources,
+        stopped: outcome.stopped,
+        memories: outcome.memoriesAdded,
+        chats: outcome.chatsAdded,
+      }
+    );
   }
   return NextResponse.json({ imported: outcome, notes: plan.notes });
 }

@@ -104,12 +104,15 @@ export function startEgressProxy(deps: EgressProxyDeps = {}): Promise<EgressProx
     if (!target) return refuse(clientSocket, 400, 'Bad Request');
     void verifiedTarget(target.host, target.port).then((verdict) => {
       if (!verdict.ok) {
-        logger.info('browser egress refused CONNECT {host}:{port}: {reason}', {
-          component: 'worker-sandbox/browser-proxy',
-          host: target.host,
-          port: target.port,
-          reason: verdict.reason,
-        });
+        logger.info(
+          'the browser proxy refused a CONNECT to {host}:{port} ({reason}); the page gets a 403',
+          {
+            component: 'worker-sandbox/browser-proxy',
+            host: target.host,
+            port: target.port,
+            reason: verdict.reason,
+          }
+        );
         return refuse(clientSocket, 403, 'Forbidden');
       }
       const upstream = net.connect({ host: verdict.address, port: target.port });
@@ -151,12 +154,15 @@ export function startEgressProxy(deps: EgressProxyDeps = {}): Promise<EgressProx
     const port = url.port ? Number(url.port) : 80;
     void verifiedTarget(url.hostname, port).then((verdict) => {
       if (!verdict.ok) {
-        logger.info('browser egress refused {host}:{port}: {reason}', {
-          component: 'worker-sandbox/browser-proxy',
-          host: url.hostname,
-          port,
-          reason: verdict.reason,
-        });
+        logger.info(
+          'the browser proxy refused a request to {host}:{port} ({reason}); the page gets a 403',
+          {
+            component: 'worker-sandbox/browser-proxy',
+            host: url.hostname,
+            port,
+            reason: verdict.reason,
+          }
+        );
         response.writeHead(403, { connection: 'close' }).end();
         return;
       }

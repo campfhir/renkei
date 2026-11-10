@@ -18,7 +18,11 @@ import {
   DEFAULT_ATLASSIAN_CONFLUENCE_SCOPES,
 } from '@/lib/atlassian-app';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { isRecord } from '@renkei/guards';
+
+/** The connector as a log line names it. */
+const CONNECTOR_LABEL = 'Confluence';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
@@ -28,21 +32,29 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('Could not load the token encryption key: {error}', {
-      component: 'api/admin/connectors/atlassian-confluence',
-      subject: access.subject,
-      error: keyResult.err.message ?? keyResult.err.type,
-    });
+    logger.error(
+      '{actor} opened the {connector} connector settings, but the token encryption key could not be loaded; the page got a 500: {error}',
+      {
+        component: 'api/admin/connectors/atlassian-confluence',
+        ...who(access),
+        connector: CONNECTOR_LABEL,
+        error: keyResult.err.message ?? keyResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
   const configResult = await getConnectorConfig(ATLASSIAN_CONFLUENCE_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read connector config: {error}', {
-      component: 'api/admin/connectors/atlassian-confluence',
-      subject: access.subject,
-      error: configResult.err.message ?? configResult.err.type,
-    });
+    logger.error(
+      '{actor} opened the {connector} connector settings, but the stored configuration could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/connectors/atlassian-confluence',
+        ...who(access),
+        connector: CONNECTOR_LABEL,
+        error: configResult.err.message ?? configResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read connector config' }, { status: 500 });
   }
 
@@ -83,11 +95,15 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('Could not load the token encryption key: {error}', {
-      component: 'api/admin/connectors/atlassian-confluence',
-      subject: access.subject,
-      error: keyResult.err.message ?? keyResult.err.type,
-    });
+    logger.error(
+      '{actor} saved the {connector} connector settings, but the token encryption key could not be loaded; nothing was saved: {error}',
+      {
+        component: 'api/admin/connectors/atlassian-confluence',
+        ...who(access),
+        connector: CONNECTOR_LABEL,
+        error: keyResult.err.message ?? keyResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
 
@@ -116,11 +132,17 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
     keyResult.val
   );
   if (!writeResult.ok) {
-    logger.error('Could not store connector config: {error}', {
-      component: 'api/admin/connectors/atlassian-confluence',
-      subject: access.subject,
-      error: writeResult.err.message ?? writeResult.err.type,
-    });
+    logger.error(
+      '{actor} saved the {connector} connector settings (switched {onOff}), but they were not stored: {error}',
+      {
+        component: 'api/admin/connectors/atlassian-confluence',
+        ...who(access),
+        connector: CONNECTOR_LABEL,
+        enabled,
+        onOff: enabled ? 'on' : 'off',
+        error: writeResult.err.message ?? writeResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not store connector config' }, { status: 500 });
   }
 

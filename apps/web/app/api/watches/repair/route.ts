@@ -25,6 +25,7 @@ import {
 } from '@/lib/atlassian-user-access';
 import { repairWatch } from '@/lib/mcp-tools/content-watches';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 type AtlassianWatchProvider = 'jira' | 'confluence';
 
@@ -41,9 +42,7 @@ const SCOPE_TYPE: Record<AtlassianWatchProvider, 'project' | 'space'> = {
   confluence: 'space',
 };
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -59,10 +58,7 @@ export async function POST(
 
   // The caller's grant is resolved right now — a repair that rebinds a
   // watch onto another dead grant would only move the failure, not fix it.
-  const access = await resolveAtlassianUserAccess(
-    session.subject,
-    grantProviderFor(provider)
-  );
+  const access = await resolveAtlassianUserAccess(session.subject, grantProviderFor(provider));
   if (typeof access === 'string') return NextResponse.json({ error: access }, { status: 400 });
 
   const result = await repairWatch(
@@ -72,11 +68,17 @@ export async function POST(
     scopeKey
   );
   if (!result.ok) {
-    logger.error('Could not repair the watch: {error}', {
-      component: 'api/watches/repair',
-      subject: session.subject,
-      error: result.error,
-    });
+    logger.error(
+      '{actor} asked to repair the {provider} watch on {scopeKey} with their own grant, but it was not rebound: {error}',
+      {
+        component: 'api/watches/repair',
+        ...who(session),
+        accountId: access.accountId,
+        provider,
+        scopeKey,
+        error: result.error,
+      }
+    );
     return NextResponse.json({ error: result.error }, { status: 500 });
   }
   if (result.repaired === 0) {

@@ -24,7 +24,7 @@
  * it once. That is why this is a warning rather than a debug line.
  */
 
-import { getDataStore } from '@renkei/db';
+import { actorFields, describeAccountActor, getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 /**
@@ -40,19 +40,29 @@ export async function recordSentWebexMessage(
   if (!messageId) {
     // No id in the response — nothing to match on later. Worth saying,
     // because it means the loop guard cannot cover this message.
-    logger.warn('WebEx send returned no message id; it cannot be excluded from ingest', {
-      component: 'mcp/webex-sent-ledger',
-    });
+    logger.warn(
+      "WebEx returned no message id for {actor}'s send, so the message cannot be excluded from ingest",
+      {
+        component: 'mcp/webex-sent-ledger',
+        ...actorFields(await describeAccountActor(accountId)),
+        accountId,
+      }
+    );
     return;
   }
   try {
     // A retried send of the same id is the same fact (a no-op).
     await getDataStore().webexSentMessages.record(messageId, accountId);
   } catch (error) {
-    logger.warn('could not record sent WebEx message {messageId}: {error}', {
-      component: 'mcp/webex-sent-ledger',
-      messageId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      'the WebEx message {actor} just sent could not be recorded in the sent ledger; ingest may echo it back: {error}',
+      {
+        component: 'mcp/webex-sent-ledger',
+        ...actorFields(await describeAccountActor(accountId)),
+        accountId,
+        messageId,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }

@@ -45,6 +45,7 @@ import { publishDomainEvent } from '../domain-events';
 import { deliverToOwnerChannels } from '../handlers/owner-channels';
 import { registrationUrl } from '../handlers/feed-url';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 
 const COMPONENT = 'batch-jobs/lifecycle';
 
@@ -123,6 +124,11 @@ export function batchEventData(batch: BatchJobRow, phase: BatchPhase): Record<st
   };
 }
 
+/** The verb a log line uses for the phase: a batch "started" or "finished". */
+function phraseFor(phase: BatchPhase): string {
+  return phase === 'started' ? 'started' : 'finished';
+}
+
 /** The feed row's kind: 'partial' is a finish with news in it, not a failure. */
 function notificationKindFor(batch: BatchJobRow, phase: BatchPhase): string {
   if (phase === 'started') return 'batch_started';
@@ -155,13 +161,18 @@ async function publish(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
       orderingKey: `batch/${batch.id}`,
     });
   } catch (error) {
-    logger.warn('batch {batchJobId} {phase} event not published: {error}', {
-      component: COMPONENT,
-      batchJobId: batch.id,
-      subject: batch.subject,
-      phase,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      '{actor}\'s batch "{name}" {phrase}, but the event for agents was not published; no trigger will fire on it: {error}',
+      {
+        component: COMPONENT,
+        ...(await whoIs(batch.subject)),
+        batchJobId: batch.id,
+        name: batch.name,
+        phase,
+        phrase: phraseFor(phase),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 
@@ -175,6 +186,7 @@ async function notifyOwner(batch: BatchJobRow, phase: BatchPhase): Promise<void>
 
   const headline = headlineFor(batch, phase);
   const kindLabel = batchKindLabel(batch.kind);
+  const owner = await whoIs(batch.subject);
 
   // Only persist to app if user has app notifications enabled for this event
   if (wanted.app) {
@@ -210,16 +222,36 @@ async function notifyOwner(batch: BatchJobRow, phase: BatchPhase): Promise<void>
             refUrl: null,
             notificationId: id,
           },
-          { log: (message, meta) => logger.warn(message, meta) }
+          {
+            // sendPush's own words ride as {outcome}; the owner and batch
+            // are resolved here, where the async context is.
+            log: (message, meta) =>
+              logger.warn(
+                '{actor} was not reached by push about batch "{name}" ({outcome}): {error}',
+                {
+                  ...meta,
+                  ...owner,
+                  batchJobId: batch.id,
+                  name: batch.name,
+                  outcome: message,
+                  error: meta.error ?? '',
+                }
+              ),
+          }
         );
       }
     } catch (error) {
-      logger.warn('could not record a notification for batch {batchJobId}: {error}', {
-        component: COMPONENT,
-        batchJobId: batch.id,
-        subject: batch.subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        '{actor}\'s batch "{name}" {phrase}, but no notification was recorded in their feed and no push was sent: {error}',
+        {
+          component: COMPONENT,
+          ...owner,
+          batchJobId: batch.id,
+          name: batch.name,
+          phrase: phraseFor(phase),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 
@@ -236,7 +268,7 @@ async function notifyOwner(batch: BatchJobRow, phase: BatchPhase): Promise<void>
       webex: wanted.webex,
       heading: headline,
       body,
-      log: { component: COMPONENT, batchJobId: batch.id, subject: batch.subject },
+      log: { component: COMPONENT, ...owner, batchJobId: batch.id, name: batch.name },
     });
   }
 }
@@ -248,12 +280,17 @@ async function announce(batch: BatchJobRow, phase: BatchPhase): Promise<void> {
   try {
     await notifyOwner(batch, phase);
   } catch (error) {
-    logger.warn('could not notify the owner of batch {batchJobId}: {error}', {
-      component: COMPONENT,
-      batchJobId: batch.id,
-      subject: batch.subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      '{actor}\'s batch "{name}" {phrase}, but they were not notified; the batch page still shows it: {error}',
+      {
+        component: COMPONENT,
+        ...(await whoIs(batch.subject)),
+        batchJobId: batch.id,
+        name: batch.name,
+        phrase: phraseFor(phase),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 

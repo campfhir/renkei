@@ -18,6 +18,7 @@ import { resumeRunsNeedingSignIn } from '@/lib/agents/needs-sign-in';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, sealedDelegationsOf, setAutomationDays } from '@/lib/keys/status';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
@@ -53,11 +54,17 @@ export async function POST(request: NextRequest): Promise<Response> {
       case 'SESSION_MISMATCH':
         return jsonError(403, 'session', 'This session cannot hold your key.');
       default:
-        logger.error('The key service could not be reached: {error}', {
-          component: 'api/keys/delegate',
-          subject: session.subject,
-          error: delegated.err.message ?? delegated.err.type,
-        });
+        logger.error(
+          '{actor} sent fresh key delegations from their browser ({sessionBoxes} session, {automationBoxes} automation), but the key service could not be reached; nothing was delegated: {error}',
+          {
+            component: 'api/keys/delegate',
+            ...who(session),
+            sessionBoxes: sessionDelegations.length,
+            automationBoxes: automation.length,
+            automationDays: days ?? null,
+            error: delegated.err.message ?? delegated.err.type,
+          }
+        );
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }

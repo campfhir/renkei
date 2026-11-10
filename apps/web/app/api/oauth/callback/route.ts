@@ -26,7 +26,7 @@ import { getWebexUserApp } from '@/lib/webex-app';
 import { getMicrosoftApp, type MicrosoftApp } from '@/lib/microsoft-app';
 import { getEntraDeveloperApp } from '@/lib/entra-developer-app';
 import { getZoomApp } from '@/lib/zoom-app';
-import { getDataStore } from '@renkei/db';
+import { getDataStore, type ActorFields } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import {
   ATLASSIAN,
@@ -62,6 +62,7 @@ import { getOrigin } from '@/lib/get-origin';
 import { getSessionFromRequest } from '@/lib/session';
 import { clearConnectFlow, isConnectFlowBound } from '@/lib/connect-flow-binding';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { cacheUserDisplayName } from '@/lib/mcp-tools/common';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -148,37 +149,104 @@ async function jsonRecord(response: Response): Promise<Record<string, unknown> |
     : null;
 }
 
+/**
+ * The connector a pending row's provider names, in the words the connectors
+ * page uses — for log lines about a callback before its handler runs.
+ */
+function connectorLabel(provider: string | null): string {
+  switch (provider) {
+    case null:
+    case ATLASSIAN:
+      return 'Jira';
+    case ATLASSIAN_JSM:
+      return 'Atlassian JSM';
+    case ATLASSIAN_CONFLUENCE:
+      return 'Confluence';
+    case ATLASSIAN_ADMIN:
+      return 'Jira Administration';
+    case ATLASSIAN_BITBUCKET:
+      return 'Bitbucket';
+    case 'webex-user':
+      return 'WebEx';
+    case GITHUB:
+      return 'GitHub';
+    case MICROSOFT:
+      return 'Microsoft 365';
+    case ENTRA_DEVELOPER:
+      return 'Entra Developer';
+    case ZOOM:
+      return 'Zoom';
+    case 'onbase':
+      return 'OnBase';
+    case 'onbase-admin':
+      return 'OnBase Administration';
+  }
+  if (salesforceKindOfProvider(provider)) return 'Salesforce';
+  if (serverIdOfProvider(provider)) return 'a remote MCP server';
+  return provider;
+}
+
 /** A pending-token request that failed to send reads as a 502 with an empty body. */
 async function pendingGet(
   pending: AuthedFetch,
   url: string,
+  actor: ActorFields,
   headers: Record<string, string> = {}
 ): Promise<Response> {
   try {
     return await pending(url, { headers: { Accept: 'application/json', ...headers } });
   } catch (error) {
-    logger.warn('Identity lookup through the delegate failed: {detail}', {
-      component: 'oauth-callback',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s identity lookup at {host} through the delegate could not be sent; it counts as a 502 and the connect falls back on what else is known: {error}",
+      {
+        component: 'oauth-callback',
+        ...actor,
+        host: new URL(url).host,
+        url,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return new Response('identity lookup failed', { status: 502 });
   }
+}
+
+/** The app origin could not be resolved: logged with the connect it stops, phrased for the browser. */
+function originFailed(
+  label: string,
+  actor: ActorFields,
+  error: { type: string; message?: string }
+): NextResponse {
+  logger.error(
+    '{actor} authorized {label}, but the app origin could not be resolved; the grant was not stored and the person saw a config error: {error}',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      label,
+      error: error.message ?? error.type,
+    }
+  );
+  return NextResponse.json({ error: 'Config error' }, { status: 500 });
 }
 
 /** The delegate could not exchange the code: logged, and phrased for the browser. */
 function exchangeFailed(
   label: string,
+  actor: ActorFields,
   error: { type: GrantOpError; message?: string }
 ): NextResponse {
-  logger.error('{label} token exchange failed: {reason}', {
-    component: 'auth/oauth',
-    label,
-    reason: error.type,
-    // The delegate relays the provider's own error_description — no token
-    // material reaches a failed exchange's body, and this is exactly what a
-    // wrong client secret needs to diagnose instead of a bare tag.
-    detail: error.message,
-  });
+  logger.error(
+    '{actor} authorized {label}, but the code could not be exchanged for tokens ({reason}); the grant was not stored and the person saw an error: {error}',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      label,
+      reason: error.type,
+      // The delegate relays the provider's own error_description — no token
+      // material reaches a failed exchange's body, and this is exactly what a
+      // wrong client secret needs to diagnose instead of a bare tag.
+      error: error.message ?? error.type,
+    }
+  );
   const unconfigured = error.type === 'NOT_CONFIGURED' || error.type === 'DELEGATE_UNCONFIGURED';
   return NextResponse.json(
     {
@@ -190,26 +258,39 @@ function exchangeFailed(
 }
 
 /** The delegate could not seal the grant (the handle expired, or the row would not store). */
-function storeFailed(label: string, error: { type: GrantOpError; message?: string }): NextResponse {
-  logger.error('Failed to store {label} grant: {reason}', {
-    component: 'auth/oauth',
-    label,
-    reason: error.type,
-    detail: error.message,
-  });
+function storeFailed(
+  label: string,
+  actor: ActorFields,
+  error: { type: GrantOpError; message?: string }
+): NextResponse {
+  logger.error(
+    '{actor} authorized {label}, but the grant was not stored ({reason}); the person saw an error: {error}',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      label,
+      reason: error.type,
+      error: error.message ?? error.type,
+    }
+  );
   return NextResponse.json({ error: `Failed to store ${label} grant` }, { status: 500 });
 }
 
-function logExchanged(label: string, outcome: ExchangeOutcome): void {
+function logExchanged(label: string, actor: ActorFields, outcome: ExchangeOutcome): void {
   // Only whether tokens came back, never any of their bytes: these records
   // are persisted by the Postgres log adapter and are readable over HTTP by
   // tenant users — and the bytes are in the delegate anyway.
-  logger.debug('{label} token exchange OK', {
-    component: 'auth/oauth',
-    label,
-    expiresAt: outcome.expiresAt,
-    hasRefreshToken: outcome.hasRefreshToken,
-  });
+  logger.debug(
+    '{actor}: the {label} code was exchanged for tokens{withRefresh}; the access token expires at {expiresAt}',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      label,
+      expiresAt: outcome.expiresAt,
+      hasRefreshToken: outcome.hasRefreshToken,
+      withRefresh: outcome.hasRefreshToken ? ' with a refresh token' : ' without a refresh token',
+    }
+  );
 }
 
 /**
@@ -247,6 +328,10 @@ async function handleCallback(
     return NextResponse.json({ error: 'Missing code or state' }, { status: 400 });
   }
 
+  // Who started the flow and which connector it is for, once the pending
+  // row is known: what every line below, the catch-all included, names.
+  let startedBy: ActorFields | null = null;
+  let connector = 'a connector';
   try {
     // Look up the pending authorization by state (single-use token). The
     // pending record tells us which tenant this flow is for and which
@@ -257,6 +342,9 @@ async function handleCallback(
       return NextResponse.json({ error: 'Invalid or expired state' }, { status: 400 });
     }
     flow.stateKnown = true;
+    connector = connectorLabel(pendingSignIn.provider);
+    const actor = await whoIs(pendingSignIn.subject);
+    startedBy = actor;
 
     // CSRF / grant-planting defense (lib/connect-flow-binding.ts): the state
     // must match the cookie the authorize route set in THIS browser, and the
@@ -266,20 +354,32 @@ async function handleCallback(
     // either way, so it cannot be retried with a different browser.
     if (!isConnectFlowBound(request, state)) {
       await store.pendingSignins.deleteByState(state);
-      logger.warn('Connect flow state cookie missing or mismatched; rejecting callback', {
-        component: 'auth/oauth',
-        provider: pendingSignIn.provider ?? 'atlassian',
-      });
+      logger.warn(
+        'the {connector} connect started by {actor} came back without the state cookie its authorize step set in the browser; the callback was rejected and the state consumed, so nothing was stored',
+        {
+          component: 'auth/oauth',
+          ...actor,
+          connector,
+          provider: pendingSignIn.provider ?? 'atlassian',
+        }
+      );
       return NextResponse.json({ error: 'Invalid state' }, { status: 400 });
     }
     const session = await getSessionFromRequest(request);
     if (!session || !pendingSignIn.subject || session.subject !== pendingSignIn.subject) {
       await store.pendingSignins.deleteByState(state);
-      logger.warn('Connect flow completed by a different session than started it; rejecting', {
-        component: 'auth/oauth',
-        provider: pendingSignIn.provider ?? 'atlassian',
-        signedIn: Boolean(session),
-      });
+      logger.warn(
+        'the {connector} connect started by {actor} was completed by {completedBy}; the callback was rejected and the state consumed, so nothing was stored',
+        {
+          component: 'auth/oauth',
+          ...actor,
+          connector,
+          provider: pendingSignIn.provider ?? 'atlassian',
+          signedIn: Boolean(session),
+          completedBy: session ? (await whoIs(session.subject)).actor : 'a browser with no session',
+          completedBySubject: session?.subject ?? null,
+        }
+      );
       return NextResponse.json(
         { error: 'Sign in as the person who started this connection, then try again' },
         { status: 403 }
@@ -290,9 +390,14 @@ async function handleCallback(
     // one predates per-user grants; completing it would produce an unowned grant
     // that no caller can use, so send the user back through a fresh sign-in.
     if (!pendingSignIn.subject) {
-      logger.error('Pending sign-in has no subject; cannot assign grant owner', {
-        component: 'auth/oauth',
-      });
+      logger.error(
+        'a {connector} connect callback arrived on a pending row that names no person (from before per-user grants); no grant can be owned, so the person was sent to sign in again',
+        {
+          component: 'auth/oauth',
+          connector,
+          provider: pendingSignIn.provider ?? 'atlassian',
+        }
+      );
       return NextResponse.json({ error: 'Sign in again before connecting Jira' }, { status: 400 });
     }
 
@@ -407,21 +512,17 @@ async function handleCallback(
       );
     }
 
-    logger.debug('Jira callback', { component: 'auth/oauth' });
+    logger.debug("{actor} returned from Jira's consent screen with an authorization code", {
+      component: 'auth/oauth',
+      ...actor,
+    });
 
     // The org's Atlassian app registration, from connector config: the
     // redirect URI the authorize step used (the exchange must present the
     // same one), the client id the grant records, and the default scopes.
     // The client secret stays in the delegate's reading of the same config.
     const appOriginResult = await getOrigin(request);
-    if (!appOriginResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth',
-        subject: session.subject,
-        error: appOriginResult.err.message ?? appOriginResult.err.type,
-      });
-      return NextResponse.json({ error: 'Config error' }, { status: 500 });
-    }
+    if (!appOriginResult.ok) return originFailed('Jira', actor, appOriginResult.err);
     const atlassianApp = await getAtlassianApp(appOriginResult.val);
     if (!atlassianApp) {
       return NextResponse.json(
@@ -430,8 +531,17 @@ async function handleCallback(
       );
     }
 
-    logger.debug('Exchanging code for tokens', { component: 'auth/oauth' });
-    const connect = await exchangeAtlassianCode('Jira', ATLASSIAN, code, atlassianApp.redirectUri);
+    logger.debug('{actor}: exchanging the Jira authorization code at the delegate', {
+      component: 'auth/oauth',
+      ...actor,
+    });
+    const connect = await exchangeAtlassianCode(
+      'Jira',
+      ATLASSIAN,
+      code,
+      atlassianApp.redirectUri,
+      actor
+    );
     if (connect instanceof NextResponse) return connect;
     const { handle, pending, resources } = connect;
 
@@ -458,26 +568,33 @@ async function handleCallback(
       }
 
       if (!cloudId) {
-        logger.error('No accessible resources, no site ARI in code claims, no prior grant', {
-          component: 'auth/oauth',
-        });
+        logger.error(
+          '{actor} authorized Jira, but no site could be found for the token (no accessible resources, no site in the code claims, no prior grant); the grant was not stored',
+          { component: 'auth/oauth', ...actor }
+        );
         return NextResponse.json({ error: 'No Jira sites accessible' }, { status: 400 });
       }
-      logger.debug('No accessible resources (jira-less scopes); using fallback site identity', {
-        component: 'auth/oauth',
-        cloudId,
-      });
+      logger.debug(
+        '{actor}: the Jira token lists no accessible sites (jira-less scopes); using the site from the code claims or a prior grant',
+        {
+          component: 'auth/oauth',
+          ...actor,
+          cloudId,
+        }
+      );
     }
 
-    logger.debug('Fetching user info', {
+    logger.debug('{actor}: asking Jira who authorized (/myself)', {
       component: 'auth/oauth',
+      ...actor,
       cloudId,
     });
     // Get user info via API gateway path for OAuth 2.0 3LO, on the pending token.
-    let identity = await atlassianMyself(pending, cloudId);
+    let identity = await atlassianMyself(pending, cloudId, actor);
     if (identity) {
-      logger.debug('User info received', {
+      logger.debug('{actor}: Jira named the authorizing Atlassian account', {
         component: 'auth/oauth',
+        ...actor,
         accountId: identity.accountId,
       });
     } else {
@@ -486,17 +603,22 @@ async function handleCallback(
       // the caller's existing grant the fallback behind that.
       const accountId = await atlassianAccountIdOffline(pendingSignIn.subject, code);
       if (!accountId) {
-        logger.error('Failed to fetch user info and no identity hint in code claims or grants', {
-          component: 'auth/oauth',
-        });
+        logger.error(
+          '{actor} authorized Jira, but the Atlassian account could not be identified (/myself refused, no sub in the code claims, no prior grant); the grant was not stored',
+          { component: 'auth/oauth', ...actor }
+        );
         return NextResponse.json({ error: 'Failed to get user info' }, { status: 400 });
       }
       const priorName = await store.providerGrants.find(ATLASSIAN, accountId);
       identity = { accountId, displayName: priorName?.displayName || null };
-      logger.debug('User identity from code claims (jira-less scopes)', {
-        component: 'auth/oauth',
-        accountId,
-      });
+      logger.debug(
+        '{actor}: /myself is closed to this Jira token (jira-less scopes); the Atlassian account was taken from the code claims or a prior grant',
+        {
+          component: 'auth/oauth',
+          ...actor,
+          accountId,
+        }
+      );
     }
     const accountId = identity.accountId;
     const displayName = identity.displayName || accountId;
@@ -504,9 +626,14 @@ async function handleCallback(
     // Cache the displayName for logging
     cacheUserDisplayName(accountId, displayName);
 
-    logger.debug('Storing Jira grant', {
+    logger.debug('{actor}: sealing the Jira grant as "{atlassianUser}" on site {site}', {
       component: 'auth/oauth',
-      subject: pendingSignIn.subject,
+      ...actor,
+      accountId,
+      atlassianUser: displayName,
+      cloudId,
+      siteUrl,
+      site: siteUrl || cloudId,
     });
     // Seal the grant: the delegate stores the tokens it holds behind the
     // handle, with the identity and site decided here. Site identity is
@@ -526,9 +653,20 @@ async function handleCallback(
       requestedScopes: (pendingSignIn.scopes || atlassianApp.scopes).split(' '),
       metadata: { cloudId, siteUrl },
     });
-    if (!stored.ok) return storeFailed('Jira', stored.err);
+    if (!stored.ok) return storeFailed('Jira', actor, stored.err);
 
-    logger.info('Jira grant stored successfully', { component: 'auth/oauth' });
+    logger.info(
+      '{actor} connected Jira as "{atlassianUser}" on site {site}; sent back to the connectors page',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        accountId,
+        atlassianUser: displayName,
+        cloudId,
+        siteUrl,
+        site: siteUrl || cloudId,
+      }
+    );
     recordAuditEvent({
       actorSubject: pendingSignIn.subject,
       action: 'connector.connected',
@@ -538,17 +676,24 @@ async function handleCallback(
     invalidateToolCatalogCache(pendingSignIn.subject);
     // Back to the connectors page, which shows the fresh connection status.
     const connectorsUrl = new URL(`/connectors`, appOriginResult.val);
-    logger.debug('Redirecting', {
+    logger.debug('{actor}: redirecting to {url} after the Jira connect', {
       component: 'auth/oauth',
+      ...actor,
       url: connectorsUrl.toString(),
     });
     return NextResponse.redirect(connectorsUrl);
   } catch (err) {
-    logger.error('Callback error', {
-      component: 'auth/oauth',
-      error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
-    });
+    logger.error(
+      'the {connector} connect{startedByPhrase} failed with an unexpected error; nothing was stored and the person saw "Authentication failed": {error}',
+      {
+        component: 'auth/oauth',
+        ...(startedBy ?? {}),
+        connector,
+        startedByPhrase: startedBy ? ` started by ${startedBy.actor}` : '',
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      }
+    );
     return NextResponse.json({ error: 'Authentication failed' }, { status: 500 });
   }
 }
@@ -574,34 +719,48 @@ async function exchangeAtlassianCode(
   label: string,
   provider: string,
   code: string,
-  redirectUri: string
+  redirectUri: string,
+  actor: ActorFields
 ): Promise<AtlassianConnect | NextResponse> {
   const exchanged = await delegateGrants().exchange({
     provider,
     form: { grant_type: 'authorization_code', code, redirect_uri: redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed(label, exchanged.err);
-  logExchanged(label, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(label, actor, exchanged.err);
+  logExchanged(label, actor, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider, pending: handle });
 
-  logger.debug('Fetching accessible resources', { component: 'auth/oauth' });
+  logger.debug('{actor}: listing the Atlassian sites the {label} token reaches', {
+    component: 'auth/oauth',
+    ...actor,
+    label,
+  });
   const response = await pendingGet(
     pending,
-    'https://api.atlassian.com/oauth/token/accessible-resources'
+    'https://api.atlassian.com/oauth/token/accessible-resources',
+    actor
   );
   const list: unknown = response.ok ? await response.json().catch(() => null) : null;
   if (!response.ok) {
     // A token with no Jira scopes is refused here; the fallbacks below
     // (code claims, prior grants) take over, so this is a debug line.
-    logger.debug('accessible-resources not readable on this token', {
-      component: 'auth/oauth',
-      status: response.status,
-    });
+    logger.debug(
+      '{actor}: Atlassian refused accessible-resources for the {label} token ({status}); the site will come from the code claims or a prior grant',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        label,
+        status: response.status,
+      }
+    );
   }
   const resources = isResourceArray(list) ? list : [];
-  logger.debug('Resources received', {
+  logger.debug('{actor}: the {label} token reaches {count} Atlassian site(s)', {
     component: 'auth/oauth',
+    ...actor,
+    label,
+    count: resources.length,
     resources: resources.map((resource) => ({ id: resource.id, url: resource.url })),
   });
   return { handle, pending, resources };
@@ -615,11 +774,13 @@ interface AtlassianIdentity {
 /** /myself on the pending token: the real account id and name, when the token carries Jira scopes. */
 async function atlassianMyself(
   pending: AuthedFetch,
-  cloudId: string
+  cloudId: string,
+  actor: ActorFields
 ): Promise<AtlassianIdentity | null> {
   const response = await pendingGet(
     pending,
-    `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`
+    `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`,
+    actor
   );
   if (!response.ok) return null;
   const me: unknown = await response.json().catch(() => null);
@@ -676,10 +837,14 @@ async function handleAtlassianJsmCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Atlassian JSM callback', { component: 'auth/oauth' });
+  const actor = await whoIs(subject);
+  logger.debug("{actor} returned from Atlassian JSM's consent screen with an authorization code", {
+    component: 'auth/oauth',
+    ...actor,
+  });
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!originResult.ok) return originFailed('Atlassian JSM', actor, originResult.err);
   const app = await getAtlassianJsmApp(originResult.val);
   if (!app) {
     return NextResponse.json({ error: 'Atlassian JSM connector not configured' }, { status: 503 });
@@ -689,7 +854,8 @@ async function handleAtlassianJsmCallback(
     'Atlassian JSM',
     ATLASSIAN_JSM,
     code,
-    app.redirectUri
+    app.redirectUri,
+    actor
   );
   if (connect instanceof NextResponse) return connect;
   const { handle, pending, resources } = connect;
@@ -702,9 +868,10 @@ async function handleAtlassianJsmCallback(
     cloudIdFromCodeClaims(code) ??
     (await priorCloudId([ATLASSIAN, ATLASSIAN_JSM]));
   if (!cloudId) {
-    logger.error('Atlassian JSM callback could not resolve a cloud id', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      '{actor} authorized Atlassian JSM, but no Jira site could be resolved for the token (no accessible resources, no site in the code claims, no prior grant); the grant was not stored',
+      { component: 'auth/oauth', ...actor }
+    );
     return NextResponse.json({ error: 'No Jira site resolvable for this token' }, { status: 502 });
   }
 
@@ -714,12 +881,12 @@ async function handleAtlassianJsmCallback(
   // exists (same human, same Atlassian account).
   const accountId =
     (await atlassianAccountIdOffline(subject, code)) ??
-    (await atlassianMyself(pending, cloudId))?.accountId;
+    (await atlassianMyself(pending, cloudId, actor))?.accountId;
   if (!accountId) {
-    logger.warn('Token carries no account identity', {
-      component: 'auth/oauth',
-      subject,
-    });
+    logger.warn(
+      '{actor} authorized Atlassian JSM, but the token names no Atlassian account; the grant was not stored',
+      { component: 'auth/oauth', ...actor, cloudId }
+    );
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
   const jiraGrantRow = await callerJiraGrant(subject);
@@ -735,12 +902,18 @@ async function handleAtlassianJsmCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { cloudId, siteUrl: '' },
   });
-  if (!stored.ok) return storeFailed('Atlassian JSM', stored.err);
+  if (!stored.ok) return storeFailed('Atlassian JSM', actor, stored.err);
 
-  logger.info('Atlassian JSM grant stored', {
-    component: 'auth/oauth',
-    subject,
-  });
+  logger.info(
+    '{actor} connected Atlassian JSM as "{atlassianUser}"; sent back to the connectors page',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      accountId,
+      atlassianUser: displayName,
+      cloudId,
+    }
+  );
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -766,10 +939,14 @@ async function handleAtlassianConfluenceCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Atlassian Confluence callback', { component: 'auth/oauth' });
+  const actor = await whoIs(subject);
+  logger.debug("{actor} returned from Confluence's consent screen with an authorization code", {
+    component: 'auth/oauth',
+    ...actor,
+  });
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!originResult.ok) return originFailed('Atlassian Confluence', actor, originResult.err);
   const app = await getAtlassianConfluenceApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -782,7 +959,8 @@ async function handleAtlassianConfluenceCallback(
     'Atlassian Confluence',
     ATLASSIAN_CONFLUENCE,
     code,
-    app.redirectUri
+    app.redirectUri,
+    actor
   );
   if (connect instanceof NextResponse) return connect;
   const { handle, pending, resources } = connect;
@@ -796,9 +974,10 @@ async function handleAtlassianConfluenceCallback(
     cloudIdFromCodeClaims(code) ??
     (await priorCloudId([ATLASSIAN, ATLASSIAN_JSM, ATLASSIAN_CONFLUENCE]));
   if (!cloudId) {
-    logger.error('Atlassian Confluence callback could not resolve a cloud id', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      '{actor} authorized Confluence, but no site could be resolved for the token (no accessible resources, no site in the code claims, no prior grant); the grant was not stored',
+      { component: 'auth/oauth', ...actor }
+    );
     return NextResponse.json(
       { error: 'No Confluence site resolvable for this token' },
       { status: 502 }
@@ -811,12 +990,12 @@ async function handleAtlassianConfluenceCallback(
   // exists (same human, same Atlassian account).
   const accountId =
     (await atlassianAccountIdOffline(subject, code)) ??
-    (await atlassianMyself(pending, cloudId))?.accountId;
+    (await atlassianMyself(pending, cloudId, actor))?.accountId;
   if (!accountId) {
-    logger.warn('Token carries no account identity', {
-      component: 'auth/oauth',
-      subject,
-    });
+    logger.warn(
+      '{actor} authorized Confluence, but the token names no Atlassian account; the grant was not stored',
+      { component: 'auth/oauth', ...actor, cloudId }
+    );
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
   const jiraGrantRow = await callerJiraGrant(subject);
@@ -832,12 +1011,18 @@ async function handleAtlassianConfluenceCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { cloudId, siteUrl: '' },
   });
-  if (!stored.ok) return storeFailed('Atlassian Confluence', stored.err);
+  if (!stored.ok) return storeFailed('Atlassian Confluence', actor, stored.err);
 
-  logger.info('Atlassian Confluence grant stored', {
-    component: 'auth/oauth',
-    subject,
-  });
+  logger.info(
+    '{actor} connected Confluence as "{atlassianUser}"; sent back to the connectors page',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      accountId,
+      atlassianUser: displayName,
+      cloudId,
+    }
+  );
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -866,10 +1051,14 @@ async function handleAtlassianAdminCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Atlassian Jira Admin callback', { component: 'auth/oauth' });
+  const actor = await whoIs(subject);
+  logger.debug(
+    "{actor} returned from Jira Administration's consent screen with an authorization code",
+    { component: 'auth/oauth', ...actor }
+  );
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!originResult.ok) return originFailed('Atlassian Jira Admin', actor, originResult.err);
   const app = await getAtlassianAdminApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -882,7 +1071,8 @@ async function handleAtlassianAdminCallback(
     'Atlassian Jira Admin',
     ATLASSIAN_ADMIN,
     code,
-    app.redirectUri
+    app.redirectUri,
+    actor
   );
   if (connect instanceof NextResponse) return connect;
   const { handle, pending, resources } = connect;
@@ -898,21 +1088,22 @@ async function handleAtlassianAdminCallback(
   const cloudId = site?.id ?? cloudIdFromCodeClaims(code) ?? (jiraCloudId || null);
   const siteUrl = site?.url ?? '';
   if (!cloudId) {
-    logger.error('Atlassian Jira Admin callback could not resolve a cloud id', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      '{actor} authorized Jira Administration, but no Jira site could be resolved for the token; the grant was not stored',
+      { component: 'auth/oauth', ...actor }
+    );
     return NextResponse.json({ error: 'No Jira site resolvable for this token' }, { status: 502 });
   }
 
   // read:jira-user lets /myself answer with the real name; the code's
   // claims and the borrowed Jira identity stand behind it.
-  const myself = await atlassianMyself(pending, cloudId);
+  const myself = await atlassianMyself(pending, cloudId, actor);
   const accountId = myself?.accountId ?? (await atlassianAccountIdOffline(subject, code));
   if (!accountId) {
-    logger.warn('Token carries no account identity', {
-      component: 'auth/oauth',
-      subject,
-    });
+    logger.warn(
+      '{actor} authorized Jira Administration, but the token names no Atlassian account; the grant was not stored',
+      { component: 'auth/oauth', ...actor, cloudId, siteUrl }
+    );
     return NextResponse.json({ error: 'Token carries no account identity' }, { status: 502 });
   }
   const displayName = myself?.displayName || jiraGrantRow?.display_name || accountId;
@@ -927,12 +1118,20 @@ async function handleAtlassianAdminCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { cloudId, siteUrl },
   });
-  if (!stored.ok) return storeFailed('Atlassian Jira Admin', stored.err);
+  if (!stored.ok) return storeFailed('Atlassian Jira Admin', actor, stored.err);
 
-  logger.info('Atlassian Jira Admin grant stored', {
-    component: 'auth/oauth',
-    subject,
-  });
+  logger.info(
+    '{actor} connected Jira Administration as "{atlassianUser}" on site {site}; sent back to the connectors page',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      accountId,
+      atlassianUser: displayName,
+      cloudId,
+      siteUrl,
+      site: siteUrl || cloudId,
+    }
+  );
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -958,10 +1157,14 @@ async function handleAtlassianBitbucketCallback(
   code: string,
   requestedScopes: string | null
 ): Promise<NextResponse> {
-  logger.debug('Bitbucket callback', { component: 'auth/oauth' });
+  const actor = await whoIs(subject);
+  logger.debug("{actor} returned from Bitbucket's consent screen with an authorization code", {
+    component: 'auth/oauth',
+    ...actor,
+  });
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) return NextResponse.json({ error: 'Config error' }, { status: 500 });
+  if (!originResult.ok) return originFailed('Bitbucket', actor, originResult.err);
   const app = await getAtlassianBitbucketApp(originResult.val);
   if (!app) {
     return NextResponse.json({ error: 'Bitbucket connector not configured' }, { status: 503 });
@@ -971,8 +1174,8 @@ async function handleAtlassianBitbucketCallback(
     provider: ATLASSIAN_BITBUCKET,
     form: { grant_type: 'authorization_code', code },
   });
-  if (!exchanged.ok) return exchangeFailed('Bitbucket', exchanged.err);
-  logExchanged('Bitbucket', exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('Bitbucket', actor, exchanged.err);
+  logExchanged('Bitbucket', actor, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({
     provider: ATLASSIAN_BITBUCKET,
@@ -982,14 +1185,18 @@ async function handleAtlassianBitbucketCallback(
   // Identity: Bitbucket tokens are opaque (no JWT claims to decode), so the
   // /2.0/user read is the only source. Its uuid is the durable account key;
   // the username is display material and rides in metadata.
-  const userResponse = await pendingGet(pending, 'https://api.bitbucket.org/2.0/user');
+  const userResponse = await pendingGet(pending, 'https://api.bitbucket.org/2.0/user', actor);
   const user = (await jsonRecord(userResponse)) ?? {};
   const accountId = typeof user.uuid === 'string' ? user.uuid : '';
   if (!userResponse.ok || !accountId) {
-    logger.error('Bitbucket identity read failed', {
-      component: 'auth/oauth',
-      status: userResponse.status,
-    });
+    logger.error(
+      '{actor} authorized Bitbucket, but GET /2.0/user did not name the account ({status}); the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        status: userResponse.status,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the Bitbucket account' }, { status: 502 });
   }
   const username = typeof user.username === 'string' ? user.username : '';
@@ -1009,12 +1216,18 @@ async function handleAtlassianBitbucketCallback(
     grantedScopes: exchanged.val.scope ? exchanged.val.scope.split(' ').filter(Boolean) : undefined,
     metadata: { username },
   });
-  if (!stored.ok) return storeFailed('Bitbucket', stored.err);
+  if (!stored.ok) return storeFailed('Bitbucket', actor, stored.err);
 
-  logger.info('Bitbucket grant stored', {
-    component: 'auth/oauth',
-    subject,
-  });
+  logger.info(
+    '{actor} connected Bitbucket as "{bitbucketUser}"; sent back to the connectors page',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      accountId,
+      bitbucketUser: displayName,
+      username,
+    }
+  );
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -1039,21 +1252,16 @@ async function handleWebexUserCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('WebEx pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      'a WebEx connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
     return NextResponse.json({ error: 'Sign in again before connecting WebEx' }, { status: 400 });
   }
+  const actor = await whoIs(subject);
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed('WebEx', actor, originResult.err);
   const app = await getWebexUserApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -1066,8 +1274,8 @@ async function handleWebexUserCallback(
     provider: WEBEX_USER,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed('WebEx', exchanged.err);
-  logExchanged('WebEx', exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('WebEx', actor, exchanged.err);
+  logExchanged('WebEx', actor, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider: WEBEX_USER, pending: handle });
 
@@ -1075,18 +1283,26 @@ async function handleWebexUserCallback(
   // access verifier checks room membership against. Requires the always-on
   // spark:people_read scope — a 403 here means the Integration at
   // developer.webex.com does not have it selected.
-  const meResponse = await pendingGet(pending, 'https://webexapis.com/v1/people/me');
+  const meResponse = await pendingGet(pending, 'https://webexapis.com/v1/people/me', actor);
   const me = await jsonRecord(meResponse);
   const personId = typeof me?.id === 'string' ? me.id : null;
   if (!meResponse.ok || !personId) {
-    logger.error('WebEx /people/me failed; cannot identify grantor', {
-      component: 'auth/oauth',
-      status: meResponse.status,
-      hint:
-        meResponse.status === 403
-          ? 'Select spark:people_read on the Integration at developer.webex.com'
-          : undefined,
-    });
+    logger.error(
+      '{actor} authorized WebEx, but /people/me did not identify them ({status}){because}; the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        status: meResponse.status,
+        because:
+          meResponse.status === 403
+            ? ' because the Integration lacks the spark:people_read scope'
+            : '',
+        hint:
+          meResponse.status === 403
+            ? 'Select spark:people_read on the Integration at developer.webex.com'
+            : undefined,
+      }
+    );
     return NextResponse.json(
       {
         error: 'Could not identify WebEx user',
@@ -1116,9 +1332,15 @@ async function handleWebexUserCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { personEmail: emails[0] ?? null },
   });
-  if (!stored.ok) return storeFailed('WebEx', stored.err);
+  if (!stored.ok) return storeFailed('WebEx', actor, stored.err);
 
-  logger.info('WebEx user grant stored', { component: 'auth/oauth', subject });
+  logger.info('{actor} connected WebEx as "{webexUser}"; sent back to the connectors page', {
+    component: 'auth/oauth',
+    ...actor,
+    accountId: personId,
+    webexUser: displayName,
+    personEmail: emails[0] ?? null,
+  });
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -1148,21 +1370,16 @@ async function handleGitHubCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('GitHub pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      'a GitHub connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
     return NextResponse.json({ error: 'Sign in again before connecting GitHub' }, { status: 400 });
   }
+  const actor = await whoIs(subject);
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed('GitHub', actor, originResult.err);
   const app = await getGitHubApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -1175,25 +1392,29 @@ async function handleGitHubCallback(
     provider: GITHUB,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed('GitHub', exchanged.err);
-  logExchanged('GitHub', exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('GitHub', actor, exchanged.err);
+  logExchanged('GitHub', actor, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider: GITHUB, pending: handle });
 
   // Who granted this. The account id (a stable numeric id, not the login,
   // which can be renamed) is the durable key; login is what API paths and
   // the connect card display.
-  const meResponse = await pendingGet(pending, 'https://api.github.com/user', {
+  const meResponse = await pendingGet(pending, 'https://api.github.com/user', actor, {
     Accept: 'application/vnd.github+json',
   });
   const me = await jsonRecord(meResponse);
   const accountId = typeof me?.id === 'number' ? String(me.id) : null;
   const login = typeof me?.login === 'string' ? me.login : null;
   if (!meResponse.ok || !accountId || !login) {
-    logger.error('GitHub /user failed; cannot identify grantor', {
-      component: 'auth/oauth',
-      status: meResponse.status,
-    });
+    logger.error(
+      '{actor} authorized GitHub, but GET /user did not identify the account ({status}); the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        status: meResponse.status,
+      }
+    );
     return NextResponse.json({ error: 'Could not identify GitHub user' }, { status: 502 });
   }
   const displayName = typeof me?.name === 'string' && me.name ? me.name : login;
@@ -1208,9 +1429,15 @@ async function handleGitHubCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { login },
   });
-  if (!stored.ok) return storeFailed('GitHub', stored.err);
+  if (!stored.ok) return storeFailed('GitHub', actor, stored.err);
 
-  logger.info('GitHub grant stored', { component: 'auth/oauth', subject });
+  logger.info('{actor} connected GitHub as "{login}"; sent back to the connectors page', {
+    component: 'auth/oauth',
+    ...actor,
+    accountId,
+    login,
+    githubUser: displayName,
+  });
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -1238,24 +1465,19 @@ async function handleMicrosoftCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('Microsoft pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      'a Microsoft 365 connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
     return NextResponse.json(
       { error: 'Sign in again before connecting Microsoft' },
       { status: 400 }
     );
   }
+  const actor = await whoIs(subject);
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed('Microsoft', actor, originResult.err);
   const app = await getMicrosoftApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -1264,7 +1486,14 @@ async function handleMicrosoftCallback(
     );
   }
 
-  const exchanged = await exchangeMicrosoftCode('Microsoft', app, MICROSOFT, code, requestedScopes);
+  const exchanged = await exchangeMicrosoftCode(
+    'Microsoft',
+    app,
+    MICROSOFT,
+    code,
+    requestedScopes,
+    actor
+  );
   if (exchanged instanceof NextResponse) return exchanged;
   const { handle, oid, tid, upn, displayName, email } = exchanged;
 
@@ -1276,11 +1505,15 @@ async function handleMicrosoftCallback(
     const prior = await getDataStore()
       .providerGrants.find(MICROSOFT, oid)
       .catch((error: unknown) => {
-        logger.warn('Could not read the prior Microsoft grant; indexing opt-in not carried over: {error}', {
-          component: 'auth/oauth',
-          subject,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          '{actor} is reconnecting Microsoft 365, but their earlier grant could not be read; the indexing opt-in was not carried over: {error}',
+          {
+            component: 'auth/oauth',
+            ...actor,
+            accountId: oid,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         return null;
       });
     const priorMetadata =
@@ -1307,7 +1540,7 @@ async function handleMicrosoftCallback(
     // the refIds and the access verifier are built from.
     metadata: { tid, upn, email: email ?? null, ...carriedIndexing },
   });
-  if (!stored.ok) return storeFailed('Microsoft', stored.err);
+  if (!stored.ok) return storeFailed('Microsoft', actor, stored.err);
 
   // Subscription creation + initial delta backfill belong in the worker: the
   // Graph handshake POSTs to our webhook route while the create call is in
@@ -1319,15 +1552,24 @@ async function handleMicrosoftCallback(
     orderingKey: `microsoft/${oid}`,
   });
   if (!enqueued.ok) {
-    logger.error('Could not enqueue microsoft/grant.connected; sweep will bootstrap', {
-      component: 'auth/oauth',
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.warn(
+      "{actor} connected Microsoft 365, but the grant.connected event was not queued; the worker's sweep will set up their Graph subscriptions and backfill instead: {error}",
+      {
+        component: 'auth/oauth',
+        ...actor,
+        accountId: oid,
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
   }
 
-  logger.info('Microsoft grant stored', {
+  logger.info('{actor} connected Microsoft 365 as {upn}; sent back to the connectors page', {
     component: 'auth/oauth',
-    subject,
+    ...actor,
+    accountId: oid,
+    tid,
+    upn,
+    microsoftUser: displayName ?? upn,
   });
   recordAuditEvent({
     actorSubject: subject,
@@ -1362,7 +1604,8 @@ async function exchangeMicrosoftCode(
   app: MicrosoftApp,
   provider: string,
   code: string,
-  requestedScopes: string | null
+  requestedScopes: string | null,
+  actor: ActorFields
 ): Promise<MicrosoftExchange | NextResponse> {
   const exchanged = await delegateGrants().exchange({
     provider,
@@ -1374,8 +1617,8 @@ async function exchangeMicrosoftCode(
     },
     directoryTenantId: app.directoryTenantId,
   });
-  if (!exchanged.ok) return exchangeFailed(label, exchanged.err);
-  logExchanged(label, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(label, actor, exchanged.err);
+  logExchanged(label, actor, exchanged.val);
   const handle = exchanged.val.handle;
 
   // Who granted this. The id_token claims answer directly; /me is the
@@ -1389,7 +1632,7 @@ async function exchangeMicrosoftCode(
 
   if (!oid || !upn || !email) {
     const pending = grantFetch({ provider, pending: handle });
-    const meResponse = await pendingGet(pending, 'https://graph.microsoft.com/v1.0/me');
+    const meResponse = await pendingGet(pending, 'https://graph.microsoft.com/v1.0/me', actor);
     const me = await jsonRecord(meResponse);
     if (meResponse.ok && me) {
       oid = oid ?? (typeof me.id === 'string' ? me.id : null);
@@ -1399,10 +1642,14 @@ async function exchangeMicrosoftCode(
     }
   }
   if (!oid || !upn) {
-    logger.error('Could not identify {label} user from id_token claims or /me', {
-      component: 'auth/oauth',
-      label,
-    });
+    logger.error(
+      '{actor} authorized {label}, but neither the id_token claims nor /me identified the account; the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        label,
+      }
+    );
     return NextResponse.json({ error: `Could not identify ${label} user` }, { status: 502 });
   }
 
@@ -1423,24 +1670,19 @@ async function handleEntraDeveloperCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('Entra Developer pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      'an Entra Developer connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
     return NextResponse.json(
       { error: 'Sign in again before connecting Entra Developer' },
       { status: 400 }
     );
   }
+  const actor = await whoIs(subject);
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed('Entra Developer', actor, originResult.err);
   const app = await getEntraDeveloperApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -1454,7 +1696,8 @@ async function handleEntraDeveloperCallback(
     app,
     ENTRA_DEVELOPER,
     code,
-    requestedScopes
+    requestedScopes,
+    actor
   );
   if (exchanged instanceof NextResponse) return exchanged;
   const { handle, oid, tid, upn, displayName, email } = exchanged;
@@ -1471,11 +1714,15 @@ async function handleEntraDeveloperCallback(
     // person on the card and in the tools' "connected as" line.
     metadata: { tid, upn, email: email ?? null },
   });
-  if (!stored.ok) return storeFailed('Entra Developer', stored.err);
+  if (!stored.ok) return storeFailed('Entra Developer', actor, stored.err);
 
-  logger.info('Entra Developer grant stored', {
+  logger.info('{actor} connected Entra Developer as {upn}; sent back to the connectors page', {
     component: 'auth/oauth',
-    subject,
+    ...actor,
+    accountId: oid,
+    tid,
+    upn,
+    microsoftUser: displayName ?? upn,
   });
   recordAuditEvent({
     actorSubject: subject,
@@ -1512,30 +1759,31 @@ async function handleSalesforceCallback(
   connectorKey: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('Salesforce pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      'a Salesforce connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
     return NextResponse.json(
       { error: 'Sign in again before connecting Salesforce' },
       { status: 400 }
     );
   }
+  const actor = await whoIs(subject);
   if (!codeVerifier || !connectorKey) {
-    logger.error('Salesforce pending flow carries no code_verifier or connector', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      '{actor} came back from Salesforce, but the pending row carries no PKCE verifier or connector key; nothing was stored and the person was told to start the connection again',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        hadCodeVerifier: Boolean(codeVerifier),
+        connector: connectorKey,
+      }
+    );
     return NextResponse.json({ error: 'Start the Salesforce connection again' }, { status: 400 });
   }
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed('Salesforce', actor, originResult.err);
   const connector = await getSalesforceConnector(originResult.val, connectorKey, kind);
   if (!connector) {
     return NextResponse.json(
@@ -1554,17 +1802,23 @@ async function handleSalesforceCallback(
       code_verifier: codeVerifier,
     },
   });
-  if (!exchanged.ok) return exchangeFailed('Salesforce', exchanged.err);
-  logExchanged('Salesforce', exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('Salesforce', actor, exchanged.err);
+  logExchanged('Salesforce', actor, exchanged.val);
   const { handle, instanceUrl, identityUrl } = exchanged.val;
 
   if (!instanceUrl || !sameOrg(instanceUrl, connector.myDomain)) {
-    logger.warn('Salesforce token is for a different org than the connector; refusing', {
-      component: 'auth/oauth',
-      instanceUrl,
-      connector: connector.key,
-      myDomain: connector.myDomain,
-    });
+    logger.warn(
+      "{actor} authorized Salesforce, but the token is for {tokenOrg} rather than the {connectorName} connector's org {myDomain}; refused, nothing was stored",
+      {
+        component: 'auth/oauth',
+        ...actor,
+        instanceUrl,
+        tokenOrg: instanceUrl ?? '(no instance_url)',
+        connector: connector.key,
+        connectorName: connector.name,
+        myDomain: connector.myDomain,
+      }
+    );
     return NextResponse.json(
       {
         error: 'That Salesforce login belongs to a different org',
@@ -1575,9 +1829,15 @@ async function handleSalesforceCallback(
   }
   const identity = identityUrl ? parseIdentityUrl(identityUrl) : null;
   if (!identity) {
-    logger.error('Salesforce token answer has no identity URL; cannot identify grantor', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      '{actor} authorized Salesforce ({connectorName}), but the token answer named no identity URL; the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        connector: connector.key,
+        connectorName: connector.name,
+      }
+    );
     return NextResponse.json({ error: 'Could not identify Salesforce user' }, { status: 502 });
   }
   const orgId = to18(identity.orgId);
@@ -1586,7 +1846,11 @@ async function handleSalesforceCallback(
 
   // Who granted this, in words: name and username for the card.
   const pending = grantFetch({ provider: kind.provider, pending: handle });
-  const infoResponse = await pendingGet(pending, `${connector.myDomain}/services/oauth2/userinfo`);
+  const infoResponse = await pendingGet(
+    pending,
+    `${connector.myDomain}/services/oauth2/userinfo`,
+    actor
+  );
   const info = infoResponse.ok ? await jsonRecord(infoResponse) : null;
   const username = typeof info?.preferred_username === 'string' ? info.preferred_username : userId;
   const displayName = typeof info?.name === 'string' && info.name ? info.name : username;
@@ -1607,7 +1871,7 @@ async function handleSalesforceCallback(
       connector: connector.key,
     },
   });
-  if (!stored.ok) return storeFailed('Salesforce', stored.err);
+  if (!stored.ok) return storeFailed('Salesforce', actor, stored.err);
 
   // One connection per person per connector: an earlier one to this org as
   // someone else goes (revoked at Salesforce too).
@@ -1618,11 +1882,21 @@ async function handleSalesforceCallback(
     await delegateGrants().revoke({ provider: kind.provider, accountId: connection.accountId });
   }
 
-  logger.info('Salesforce grant stored', {
-    component: 'auth/oauth',
-    subject,
-    connector: connector.key,
-  });
+  logger.info(
+    '{actor} connected Salesforce ({connectorName}) as {salesforceUser}{replacing}; sent back to the connectors page',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      accountId,
+      connector: connector.key,
+      connectorName: connector.name,
+      salesforceUser: username,
+      replacing:
+        earlier.length > 0
+          ? `, replacing ${earlier.length} earlier connection(s) to it as someone else`
+          : '',
+    }
+  );
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -1650,21 +1924,16 @@ async function handleZoomCallback(
   requestedScopes: string | null
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('Zoom pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-    });
+    logger.error(
+      'a Zoom connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      { component: 'auth/oauth' }
+    );
     return NextResponse.json({ error: 'Sign in again before connecting Zoom' }, { status: 400 });
   }
+  const actor = await whoIs(subject);
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed('Zoom', actor, originResult.err);
   const app = await getZoomApp(originResult.val);
   if (!app) {
     return NextResponse.json(
@@ -1677,8 +1946,8 @@ async function handleZoomCallback(
     provider: ZOOM,
     form: { grant_type: 'authorization_code', code, redirect_uri: app.redirectUri },
   });
-  if (!exchanged.ok) return exchangeFailed('Zoom', exchanged.err);
-  logExchanged('Zoom', exchanged.val);
+  if (!exchanged.ok) return exchangeFailed('Zoom', actor, exchanged.err);
+  logExchanged('Zoom', actor, exchanged.val);
   const handle = exchanged.val.handle;
   const pending = grantFetch({ provider: ZOOM, pending: handle });
   // The token-response echo names what the app was actually minted —
@@ -1691,10 +1960,14 @@ async function handleZoomCallback(
   // instead of letting the 400 speak for itself (a granular Marketplace app
   // without the scope, or one that dropped it from the build flow).
   if (scopeEcho && !scopeEcho.split(/[\s,]+/).includes('user:read:user')) {
-    logger.error('Zoom token was minted without user:read:user; cannot identify grantor', {
-      component: 'auth/oauth',
-      scopeEcho,
-    });
+    logger.error(
+      '{actor} authorized Zoom, but the token was minted without user:read:user, so the account cannot be identified; the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        scopeEcho,
+      }
+    );
     // The echo names what WAS minted, which distinguishes the causes: an
     // empty/default set means the app ignored or lacks the requested
     // scopes; a near-complete set missing only this one means it is
@@ -1715,7 +1988,7 @@ async function handleZoomCallback(
   // Who granted this. The Zoom user id is the durable key — it is also what
   // webhook deliveries carry as host_id, which is how a transcript event
   // finds its way back to this grant.
-  const meResponse = await pendingGet(pending, 'https://api.zoom.us/v2/users/me');
+  const meResponse = await pendingGet(pending, 'https://api.zoom.us/v2/users/me', actor);
   const meBodyText = await meResponse.text().catch(() => '');
   let meData: unknown = null;
   try {
@@ -1728,12 +2001,16 @@ async function handleZoomCallback(
   if (!meResponse.ok || !zoomUserId) {
     // Zoom's error body names the missing scope (code 4711) — without it
     // this failure was undiagnosable from the log line alone.
-    logger.error('Zoom /users/me failed; cannot identify grantor', {
-      component: 'auth/oauth',
-      status: meResponse.status,
-      body: meBodyText.slice(0, 300),
-      scopeEcho: scopeEcho ?? '(none echoed)',
-    });
+    logger.error(
+      '{actor} authorized Zoom, but /users/me did not identify them ({status}); the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        status: meResponse.status,
+        body: meBodyText.slice(0, 300),
+        scopeEcho: scopeEcho ?? '(none echoed)',
+      }
+    );
     const zoomMessage = typeof me?.message === 'string' ? me.message : null;
     return NextResponse.json(
       {
@@ -1760,9 +2037,15 @@ async function handleZoomCallback(
     requestedScopes: (requestedScopes || app.scopes).split(' '),
     metadata: { email, zoomAccountId: typeof me?.account_id === 'string' ? me.account_id : null },
   });
-  if (!stored.ok) return storeFailed('Zoom', stored.err);
+  if (!stored.ok) return storeFailed('Zoom', actor, stored.err);
 
-  logger.info('Zoom grant stored', { component: 'auth/oauth', subject });
+  logger.info('{actor} connected Zoom as "{zoomUser}"; sent back to the connectors page', {
+    component: 'auth/oauth',
+    ...actor,
+    accountId: zoomUserId,
+    zoomUser: displayName,
+    zoomEmail: email,
+  });
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -1798,17 +2081,11 @@ async function handleMcpServerCallback(
   if (!server.ok || !server.val || !server.val.enabled) {
     return NextResponse.json({ error: 'That MCP server is no longer available' }, { status: 404 });
   }
-  const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  const actor = await whoIs(subject);
   const provider = `mcp:${serverId}`;
   const label = server.val.name;
+  const originResult = await getOrigin(request);
+  if (!originResult.ok) return originFailed(label, actor, originResult.err);
 
   const exchanged = await delegateGrants().exchange({
     provider,
@@ -1820,8 +2097,8 @@ async function handleMcpServerCallback(
       resource: server.val.url,
     },
   });
-  if (!exchanged.ok) return exchangeFailed(label, exchanged.err);
-  logExchanged(label, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(label, actor, exchanged.err);
+  logExchanged(label, actor, exchanged.val);
 
   const idClaims = exchanged.val.idToken ? decodeJwtPayload(exchanged.val.idToken) : null;
   const displayName =
@@ -1839,20 +2116,34 @@ async function handleMcpServerCallback(
     grantedScopes: exchanged.val.scope?.split(/\s+/).filter(Boolean),
     metadata: { serverUrl: server.val.url },
   });
-  if (!stored.ok) return storeFailed(label, stored.err);
+  if (!stored.ok) return storeFailed(label, actor, stored.err);
 
   // The first listing, so the tools are there the moment the person lands
   // back on the page. A failure is not fatal: the cache refills on demand.
   const listed = await refreshToolList(server.val, subject);
   if (!listed.ok) {
-    logger.warn('MCP tools could not be listed right after connecting: {reason}', {
-      component: 'auth/oauth',
-      server: server.val.slug,
-      reason: listed.reason,
-    });
+    logger.warn(
+      '{actor} connected MCP server "{label}", but its tools could not be listed right away ({reason}); the list fills on demand',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        label,
+        server: server.val.slug,
+        reason: listed.reason,
+      }
+    );
   }
   ensureWatching(server.val, subject);
-  logger.info('{label} grant stored', { component: 'auth/oauth', label, subject });
+  logger.info(
+    '{actor} connected MCP server "{label}" as "{mcpUser}"; sent back to the connectors page',
+    {
+      component: 'auth/oauth',
+      ...actor,
+      label,
+      server: server.val.slug,
+      mcpUser: displayName,
+    }
+  );
   recordAuditEvent({
     actorSubject: subject,
     action: 'connector.connected',
@@ -1907,33 +2198,34 @@ async function handleOnBaseCallback(
   spec: OnBaseCallbackSpec
 ): Promise<NextResponse> {
   if (!subject) {
-    logger.error('{label} pending flow has no subject; cannot assign grant owner', {
-      component: 'auth/oauth',
-      label: spec.label,
-    });
+    logger.error(
+      'a {label} connect callback arrived on a pending row that names no person; no grant can be owned, so the person was sent to sign in again',
+      {
+        component: 'auth/oauth',
+        label: spec.label,
+      }
+    );
     return NextResponse.json(
       { error: `Sign in again before connecting ${spec.label}` },
       { status: 400 }
     );
   }
+  const actor = await whoIs(subject);
   if (!codeVerifier) {
     // Every OnBase authorize stores one; a row without it is not ours.
-    logger.error('{label} pending flow carries no code_verifier', {
-      component: 'auth/oauth',
-      label: spec.label,
-    });
+    logger.error(
+      '{actor} came back from {label}, but the pending row carries no PKCE verifier; nothing was stored and the person was told to start the connect again',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        label: spec.label,
+      }
+    );
     return NextResponse.json({ error: `Start the ${spec.label} connect again` }, { status: 400 });
   }
 
   const originResult = await getOrigin(request);
-  if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth',
-      subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
-    return NextResponse.json({ error: 'Config error' }, { status: 500 });
-  }
+  if (!originResult.ok) return originFailed(spec.label, actor, originResult.err);
   const app = await getOnBaseApp(originResult.val, spec.connector);
   if (!app) {
     return NextResponse.json(
@@ -1951,19 +2243,23 @@ async function handleOnBaseCallback(
       code_verifier: codeVerifier,
     },
   });
-  if (!exchanged.ok) return exchangeFailed(spec.label, exchanged.err);
-  logExchanged(spec.label, exchanged.val);
+  if (!exchanged.ok) return exchangeFailed(spec.label, actor, exchanged.err);
+  logExchanged(spec.label, actor, exchanged.val);
   const { handle, idToken, hasRefreshToken } = exchanged.val;
 
   const idClaims = idToken ? decodeJwtPayload(idToken) : null;
   const accountId = typeof idClaims?.sub === 'string' ? idClaims.sub : null;
   if (!accountId) {
     // Without a subject there is no durable key to store the grant under.
-    logger.error('{label} id_token carried no sub claim; cannot identify grantor', {
-      component: 'auth/oauth',
-      label: spec.label,
-      hadIdToken: idToken !== null,
-    });
+    logger.error(
+      '{actor} authorized {label}, but the id_token carried no sub claim, so the account cannot be identified; the grant was not stored',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        label: spec.label,
+        hadIdToken: idToken !== null,
+      }
+    );
     return NextResponse.json(
       {
         error: `Could not identify ${spec.label} user`,
@@ -1989,23 +2285,30 @@ async function handleOnBaseCallback(
     requestedScopes: (requestedScopes || `openid offline_access ${app.idpScopeName}`).split(' '),
     metadata: { issuer: app.idpIssuer },
   });
-  if (!stored.ok) return storeFailed(spec.label, stored.err);
+  if (!stored.ok) return storeFailed(spec.label, actor, stored.err);
 
   // No refresh token means the connection dies with this access token —
   // an IdP-side setting (offline_access), worth a log line now instead of
   // a mystery disconnect later.
   if (!hasRefreshToken) {
-    logger.warn('{label} grant stored without a refresh token (offline_access not granted?)', {
-      component: 'auth/oauth',
-      label: spec.label,
-      subject,
-    });
+    logger.warn(
+      '{actor} connected {label}, but without a refresh token (offline_access not granted?); the connection will end when the access token expires',
+      {
+        component: 'auth/oauth',
+        ...actor,
+        label: spec.label,
+        accountId,
+      }
+    );
   }
 
-  logger.info('{label} grant stored', {
+  logger.info('{actor} connected {label} as "{onbaseUser}"; sent back to the connectors page', {
     component: 'auth/oauth',
+    ...actor,
     label: spec.label,
-    subject,
+    accountId,
+    onbaseUser: displayName,
+    issuer: app.idpIssuer,
   });
   recordAuditEvent({
     actorSubject: subject,

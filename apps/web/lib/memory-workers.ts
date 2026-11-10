@@ -40,8 +40,11 @@ export function startMemoryWorkers(): void {
   const url = webBaseUrl();
   startEmbeddedAgentsWorker({ webBaseUrl: url, wake: store.queueSignal('agent_jobs') });
   startEmbeddedEventDispatcher({ wake: store.queueSignal('events') });
-  logger.warn('In-process agents worker and event dispatcher for the in-memory store ({url})', {
-    component: 'web/memory-workers',
-    url,
-  });
+  logger.warn(
+    'the in-process agents worker and event dispatcher are running on the in-memory store, reaching the web app at {url}',
+    {
+      component: 'web/memory-workers',
+      url,
+    }
+  );
 }

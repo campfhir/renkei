@@ -29,10 +29,14 @@ export function createOptimizationSweep() {
       'The analysis stopped unexpectedly and did not finish. Try again.'
     );
     if (rescued > 0) {
-      logger.warn('failed {count} optimization(s) stuck mid-flight', {
-        component: 'worker-agents/optimization-sweep',
-        count: rescued,
-      });
+      logger.warn(
+        'marked {count} agent analysis run(s) failed that had been running for over {minutes} minutes; their requesters are told to try again',
+        {
+          component: 'worker-agents/optimization-sweep',
+          count: rescued,
+          minutes: STUCK_MINUTES,
+        }
+      );
     }
 
     const pruned = await store.pruneBefore(
@@ -40,9 +44,10 @@ export function createOptimizationSweep() {
       RETENTION_BATCH
     );
     if (pruned > 0) {
-      logger.info('retention pruned {count} optimization(s)', {
+      logger.info('retention deleted {count} agent analysis record(s) older than {days} days', {
         component: 'worker-agents/optimization-sweep',
         count: pruned,
+        days: RETENTION_DAYS,
       });
     }
   };

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 
@@ -44,11 +45,15 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     // reach the tools while their Jira access is still stored.
     await store.providerGrants.disconnectWithMcpTokens('atlassian', session.subject);
 
-    logger.info('Revoked by owner', {
-      component: 'grants/store',
-      subject: session.subject,
-      accountId: grant.accountId,
-    });
+    logger.info(
+      '{actor} disconnected their Jira account {account}; the grant and the MCP tokens issued against it were deleted',
+      {
+        component: 'grants/store',
+        ...who(session),
+        accountId: grant.accountId,
+        account: grant.displayName,
+      }
+    );
     recordAuditEvent({
       actorSubject: session.subject,
       action: 'connector.disconnected',
@@ -68,11 +73,14 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
         'access at Atlassian, remove it from your account settings there.',
     });
   } catch (error) {
-    logger.error('Revocation failed', {
-      component: 'grants/store',
-      subject: session.subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{actor} asked to disconnect their Jira account, but the grant was not deleted; it is still connected: {error}',
+      {
+        component: 'grants/store',
+        ...who(session),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'Failed to disconnect' }, { status: 500 });
   }
 }

@@ -48,7 +48,12 @@ function registerKnowledgeHandlers(): void {
     createKnowledgeIngestWebexWindowHandler()
   );
   registerHandler(KNOWLEDGE_SOURCE, 'reindex.batch', createKnowledgeReindexBatchHandler());
-  logger.info('knowledge handlers registered', { component: 'worker/embeddings-loop' });
+  logger.info(
+    'registered the knowledge handlers (ingest, delete, purge, reconcile, enrich, reindex)',
+    {
+      component: 'worker/embeddings-loop',
+    }
+  );
 }
 
 const loop = createEventLoop({
@@ -62,17 +67,19 @@ const loop = createEventLoop({
 async function main(): Promise<void> {
   await attachPersistentLogging();
   registerKnowledgeHandlers();
-  logger.info('started {application} {version} (embedding queue)', {
+  logger.info('started {application} {version}, consuming the embedding queue', {
     component: 'worker/embeddings-loop',
   });
   await loop.run();
-  logger.info('stopped', { component: 'worker/embeddings-loop' });
+  logger.info('stopped: the embedding queue is no longer consumed', {
+    component: 'worker/embeddings-loop',
+  });
   await logger.flush();
   await closeDataStore();
 }
 
 function shutdown(signal: string): void {
-  logger.info('{signal} received, finishing current event', {
+  logger.info('received {signal}; finishing the current event, then stopping', {
     component: 'worker/embeddings-loop',
     signal,
   });

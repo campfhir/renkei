@@ -18,7 +18,7 @@ import {
   type AuthedFetch,
 } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+import { callerAttrs, type CallerContext, type MCPToolContext } from '../common';
 import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
@@ -72,9 +72,7 @@ export async function resolveBitbucketAccess(
   };
 }
 
-interface BitbucketLogScope {
-  subject?: string;
-}
+type BitbucketLogScope = CallerContext;
 
 /** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
 function truncateForLog(text: string): string {
@@ -113,13 +111,17 @@ export async function bitbucketRequest(
     });
   } catch (error) {
     const timedOut = isTimeoutError(error);
-    logger.warn('Bitbucket API unreachable', {
-      component: 'bitbucket/fetch',
-      subject: scope.subject,
-      path: pathAndQuery,
-      method: init?.method ?? 'GET',
-      timedOut,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Bitbucket ({why}); the tool reported it as unreachable",
+      {
+        component: 'bitbucket/fetch',
+        ...(await callerAttrs(scope)),
+        path: pathAndQuery,
+        method: init?.method ?? 'GET',
+        timedOut,
+        why: timedOut ? 'timed out' : 'connection failed',
+      }
+    );
     return {
       ok: false,
       error: timedOut
@@ -131,12 +133,15 @@ export async function bitbucketRequest(
   if (refusal) {
     // The delegate's own refusal never reached Bitbucket — the resolver's
     // words, not Bitbucket's anonymous 404.
-    logger.warn('Delegate refused the Bitbucket call', {
-      component: 'bitbucket/fetch',
-      subject: scope.subject,
-      path: pathAndQuery,
-      refusal,
-    });
+    logger.warn(
+      "the delegate refused {caller}'s Bitbucket call ({refusal}) before it reached Bitbucket; {path} was not made",
+      {
+        component: 'bitbucket/fetch',
+        ...(await callerAttrs(scope)),
+        path: pathAndQuery,
+        refusal,
+      }
+    );
     return { ok: false, error: grantRefusalText(refusal, 'Bitbucket') };
   }
   if (!response.ok) {
@@ -144,9 +149,9 @@ export async function bitbucketRequest(
       .clone()
       .text()
       .catch(() => '');
-    logger.warn('Bitbucket API non-OK response', {
+    logger.warn("Bitbucket answered {status} to {caller}'s {method} {path}", {
       component: 'bitbucket/fetch',
-      subject: scope.subject,
+      ...(await callerAttrs(scope)),
       path: pathAndQuery,
       method: init?.method ?? 'GET',
       status: response.status,

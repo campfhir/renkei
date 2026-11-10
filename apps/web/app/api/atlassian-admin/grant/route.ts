@@ -12,6 +12,7 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { ATLASSIAN_ADMIN } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -34,11 +35,15 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     accountId: grant.accountId,
   });
   if (!deleted.ok) {
-    logger.error('Could not disconnect: {error}', {
-      component: 'api/atlassian-admin/grant',
-      subject: session.subject,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} tried to disconnect Jira Administration, but the grant was not removed: {error}',
+      {
+        component: 'api/atlassian-admin/grant',
+        ...who(session),
+        accountId: grant.accountId,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({

@@ -13,7 +13,7 @@
  */
 
 import type { AuthedFetch } from '@renkei/delegate-client';
-import { jiraFetch } from './common';
+import { callerFields, jiraFetch, type CallerContext } from './common';
 import { logger } from '@/lib/logger';
 
 export interface UserSearchResult {
@@ -51,7 +51,7 @@ export function clearUserCache(): void {
   accountIdCache.clear();
 }
 
-interface ResolverContext {
+interface ResolverContext extends CallerContext {
   apiBaseUrl: string;
   /** The caller's Jira grant as a fetcher; null when Jira is not connected. */
   jiraAuth: AuthedFetch | null;
@@ -148,9 +148,12 @@ export async function resolveAccountId(
     displayName: user.displayName,
     expiresAt: Date.now() + CACHE_TTL_MS,
   });
-  logger.debug('Resolved email to accountId', {
+  logger.debug('{caller} named {lookedUp} and Jira resolved it to {jiraDisplayName}; cached', {
     component: 'jira/user-resolver',
-    accountId,
+    ...callerFields(context),
+    lookedUp: emailOrAccountId,
+    jiraDisplayName: user.displayName,
+    resolvedAccountId: accountId,
   });
 
   return accountId;

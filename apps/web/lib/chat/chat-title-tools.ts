@@ -13,6 +13,7 @@
 import type { ResolvedLlm } from '@renkei/agent-llm';
 import { recordLlmCall } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { errorResult, textResult, type LocalTool } from './local-tools';
 import { claimAutoTitle, renameChatIfTitledAs, updateChat } from './store';
 import { CHAT_RENAME_TOOL, cleanTitle } from './titles';
@@ -116,11 +117,14 @@ export async function autoTitleChat(input: {
     if (!title) return;
     await renameChatIfTitledAs(input.chatId, claimed.placeholder, title);
   } catch (error) {
-    logger.warn('chat auto title failed: {message}', {
-      component: 'chat/title',
-      subject: input.subject,
-      chatId: input.chatId,
-      message: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s chat was not given a title automatically; it keeps its placeholder: {message}",
+      {
+        component: 'chat/title',
+        ...(await whoIs(input.subject)),
+        chatId: input.chatId,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }

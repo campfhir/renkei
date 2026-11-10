@@ -21,6 +21,7 @@ import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { deleteGraphSubscription } from '@renkei/connector-microsoft';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -49,10 +50,15 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     if (!row.subscriptionId) continue;
     const deleted = await deleteGraphSubscription(auth, row.subscriptionId);
     if (!deleted.ok) {
-      logger.warn('Could not delete Graph subscription on disconnect; it will lapse', {
-        component: 'connectors/microsoft',
-        subscriptionId: row.subscriptionId,
-      });
+      logger.warn(
+        '{actor} is disconnecting Microsoft 365, but one of their Graph subscriptions could not be deleted at Microsoft; it will lapse on its own and its deliveries are dropped meanwhile',
+        {
+          component: 'connectors/microsoft',
+          ...who(session),
+          accountId,
+          subscriptionId: row.subscriptionId,
+        }
+      );
     }
   }
 
@@ -69,19 +75,28 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   if (upn) {
     const purged = await deleteObjectChunks(MICROSOFT, `${upn}/`, { prefixOnly: true });
     if (!purged.ok) {
-      logger.warn('Could not purge knowledge chunks on disconnect', {
-        component: 'connectors/microsoft',
-      });
+      logger.warn(
+        '{actor} is disconnecting Microsoft 365, but the knowledge indexed from their mailbox could not be purged; it stays until a retention sweep removes it',
+        {
+          component: 'connectors/microsoft',
+          ...who(session),
+          accountId,
+        }
+      );
     }
   }
 
   const deleted = await delegateGrants().delete({ provider: MICROSOFT, accountId });
   if (!deleted.ok) {
-    logger.error('Could not disconnect: {error}', {
-      component: 'connectors/microsoft',
-      subject: session.subject,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} asked to disconnect Microsoft 365, but the delegate did not delete the grant; it is still connected, though its Graph subscriptions and indexed mail are already gone: {error}',
+      {
+        component: 'connectors/microsoft',
+        ...who(session),
+        accountId,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   recordAuditEvent({

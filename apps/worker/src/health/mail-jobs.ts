@@ -28,17 +28,22 @@ export function createMailJobsSweep() {
       'job stalled; the worker likely restarted mid-run'
     );
     if (stalledCount > 0) {
-      logger.warn('failed {count} stalled mail bulk job(s)', {
-        component: 'mailjobs/sweep',
-        count: stalledCount,
-      });
+      logger.warn(
+        'ended {count} stalled mail bulk job(s) as failed: their worker went quiet for over {minutes} minutes mid-run',
+        {
+          component: 'mailjobs/sweep',
+          count: stalledCount,
+          minutes: STALL_MINUTES,
+        }
+      );
     }
 
     const deleted = await store.mailBulkJobs.pruneFinished(RETENTION_DAYS, RETENTION_BATCH);
     if (deleted > 0) {
-      logger.info('retention pruned {count} mail bulk job(s)', {
+      logger.info('pruned {count} finished mail bulk job(s) older than {days} day(s)', {
         component: 'mailjobs/sweep',
         count: deleted,
+        days: RETENTION_DAYS,
       });
     }
   };

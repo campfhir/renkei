@@ -1083,7 +1083,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
   const server: SandboxServer = Object.assign(
     createServer((request, response) => {
       void handle(request, response).catch((error: unknown) => {
-        logger.error('unhandled sandbox op failure: {error}', {
+        logger.error('a sandbox op threw before it answered; the caller got a 500: {error}', {
           component: 'worker-sandbox/server',
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
@@ -1100,7 +1100,7 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
         if (draining) return;
         draining = true;
         const interrupted = interruptRunningProcesses();
-        logger.info('draining: {interrupted} command(s) interrupted', {
+        logger.info('draining: {interrupted} running command(s) were interrupted and told so', {
           component: 'worker-sandbox/server',
           interrupted,
         });
@@ -1140,11 +1140,15 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
           }
           await store.deleteById(file.id);
         } catch (error) {
-          logger.warn('sweep could not remove {id}: {error}', {
-            component: 'worker-sandbox/sweep',
-            id: file.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            'the sweep could not remove the expired file "{filename}"; it is tried again next pass: {error}',
+            {
+              component: 'worker-sandbox/sweep',
+              id: file.id,
+              filename: file.filename,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
         }
       }
       // Workspaces past their lifetime: the checkout, then the row.
@@ -1163,11 +1167,14 @@ export function createSandboxServer(deps: SandboxServerDeps): SandboxServer {
           await vault.lock(secret.id);
           await secretsStore.deleteSecretById(secret.id);
         } catch (error) {
-          logger.warn('sweep could not remove secret {id}: {error}', {
-            component: 'worker-sandbox/sweep',
-            id: secret.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            'the sweep could not remove an expired browser secret; it is tried again next pass: {error}',
+            {
+              component: 'worker-sandbox/sweep',
+              id: secret.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
         }
       }
     })();

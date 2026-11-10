@@ -53,6 +53,7 @@ import {
 import { DockerError, type DockerEngine, type RegistryAuth } from './docker';
 import * as store from './service-store';
 import * as rules from './image-rules-store';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 
 export const SERVICE_LABEL = 'renkei.sandbox.service';
@@ -226,11 +227,16 @@ export class ServiceManager {
     try {
       ports = await this.engine.imagePorts(image.canonical);
     } catch (error) {
-      logger.warn('could not read the ports of {image}: {error}', {
-        component: 'worker-sandbox/services',
-        image: image.canonical,
-        error: engineMessage(error),
-      });
+      logger.warn(
+        'the ports of {image} could not be read for the service "{name}" of {actor}; it starts with none recorded: {error}',
+        {
+          component: 'worker-sandbox/services',
+          ...(await actorAttrs(target.subject)),
+          name: input.name,
+          image: image.canonical,
+          error: engineMessage(error),
+        }
+      );
     }
     let containerId: string;
     const limits = await this.limits();
@@ -286,11 +292,11 @@ export class ServiceManager {
       host: state.ip,
       ports,
     });
-    logger.info('started service {name} ({image}) for {subject} as {container}', {
+    logger.info('{actor} started the service "{name}" from {image}', {
       component: 'worker-sandbox/services',
+      ...(await actorAttrs(target.subject)),
       name: input.name,
       image: image.canonical,
-      subject: target.subject,
       container: containerId,
     });
     return (
@@ -316,11 +322,16 @@ export class ServiceManager {
     try {
       state = await this.engine.inspectContainer(service.containerId, this.network);
     } catch (error) {
-      logger.warn('could not inspect {container}: {error}', {
-        component: 'worker-sandbox/services',
-        container: service.containerId,
-        error: engineMessage(error),
-      });
+      logger.warn(
+        'the container of the service "{name}" of {actor} could not be inspected; its last known state stands: {error}',
+        {
+          component: 'worker-sandbox/services',
+          ...(await actorAttrs(service.subject)),
+          name: service.name,
+          container: service.containerId,
+          error: engineMessage(error),
+        }
+      );
       return service;
     }
     if (!state) {
@@ -449,10 +460,10 @@ export class ServiceManager {
   async stop(target: store.ServiceTarget, name: string): Promise<store.StoredService> {
     const service = await this.get(target, name);
     await this.remove(service);
-    logger.info('stopped service {name} for {subject}', {
+    logger.info('{actor} stopped the service "{name}"; its container was removed', {
       component: 'worker-sandbox/services',
+      ...(await actorAttrs(target.subject)),
       name,
-      subject: target.subject,
     });
     return { ...service, status: 'stopped', host: null };
   }
@@ -498,17 +509,23 @@ export class ServiceManager {
     for (const service of expired) {
       try {
         await this.remove(service);
-        logger.info('swept expired service {name} ({id})', {
+        logger.info('the service "{name}" of {actor} outlived its lifetime and was removed', {
           component: 'worker-sandbox/services',
+          ...(await actorAttrs(service.subject)),
           name: service.name,
           id: service.id,
         });
       } catch (error) {
-        logger.warn('sweep could not remove service {id}: {error}', {
-          component: 'worker-sandbox/services',
-          id: service.id,
-          error: engineMessage(error),
-        });
+        logger.warn(
+          'the expired service "{name}" of {actor} could not be removed; it is tried again next pass: {error}',
+          {
+            component: 'worker-sandbox/services',
+            ...(await actorAttrs(service.subject)),
+            name: service.name,
+            id: service.id,
+            error: engineMessage(error),
+          }
+        );
       }
     }
     try {
@@ -518,16 +535,19 @@ export class ServiceManager {
       for (const container of labelled) {
         if (claimed.has(container.id)) continue;
         await this.engine.removeContainer(container.id);
-        logger.info('removed orphaned service container {container}', {
+        logger.info('a service container that no row claims was removed', {
           component: 'worker-sandbox/services',
           container: container.id,
         });
       }
     } catch (error) {
-      logger.warn('sweep could not check for orphaned service containers: {error}', {
-        component: 'worker-sandbox/services',
-        error: engineMessage(error),
-      });
+      logger.warn(
+        'the sweep could not list service containers to find orphans; they wait for the next pass: {error}',
+        {
+          component: 'worker-sandbox/services',
+          error: engineMessage(error),
+        }
+      );
     }
   }
 }

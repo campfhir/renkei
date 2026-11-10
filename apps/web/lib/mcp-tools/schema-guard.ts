@@ -39,11 +39,14 @@ export function withSchemaGuard(server: McpServer): McpServer {
           const [name, config] = args;
           const problem = convertible(config.inputSchema) ?? convertible(config.outputSchema);
           if (problem !== null) {
-            logger.error('tool {tool} left out: its schema does not convert: {error}', {
-              component: 'mcp/schema-guard',
-              tool: name,
-              error: problem,
-            });
+            logger.error(
+              'the tool {tool} was left out of the tool surface because its schema does not convert to JSON Schema: {error}',
+              {
+                component: 'mcp/schema-guard',
+                tool: name,
+                error: problem,
+              }
+            );
             return undefined;
           }
           return target.registerTool(...args);

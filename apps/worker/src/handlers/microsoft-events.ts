@@ -33,6 +33,7 @@ import {
   type SubscriptionRow,
 } from './microsoft-sync';
 import { logger } from '../logger';
+import { whoHas } from '../log-actor';
 import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'microsoft/events';
@@ -99,11 +100,16 @@ export function createMicrosoftGrantConnectedHandler(): EventHandler {
       const synced = await runSubscriptionSync(access, row);
       indexed += synced.changed;
     }
-    logger.info('microsoft bootstrap complete: {subscriptions} subscriptions, {indexed} objects', {
-      component: COMPONENT,
-      subscriptions: rows.length,
-      indexed,
-    });
+    logger.info(
+      "{actor}'s Microsoft 365 connection was set up: {subscriptions} Graph subscription(s) ensured and {indexed} object(s) seen in the first delta round",
+      {
+        component: COMPONENT,
+        ...(await whoHas(accountId)),
+        accountId,
+        subscriptions: rows.length,
+        indexed,
+      }
+    );
   };
 }
 
@@ -120,10 +126,15 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     );
     if (!found) {
       // Disconnected between delivery and processing — nothing to sync.
-      logger.info('notification for a subscription that no longer exists; dropping', {
-        component: COMPONENT,
-        subscriptionId,
-      });
+      logger.info(
+        'a Graph notification arrived for a subscription {actor} no longer has; it was dropped',
+        {
+          component: COMPONENT,
+          ...(await whoHas(accountId)),
+          accountId,
+          subscriptionId,
+        }
+      );
       return 'skipped';
     }
 
@@ -137,12 +148,17 @@ export function createMicrosoftChangeNotificationHandler(): EventHandler {
     };
     const access = await resolveMicrosoftAccess(accountId);
     const synced = await runSubscriptionSync(access, row);
-    logger.debug('delta round for {resource}: {changed} changed, {removed} removed', {
-      component: COMPONENT,
-      resource: row.resource,
-      changed: synced.changed,
-      removed: synced.removed,
-    });
+    logger.debug(
+      "a delta round over {actor}'s {resource} found {changed} changed and {removed} removed item(s)",
+      {
+        component: COMPONENT,
+        ...(await whoHas(accountId)),
+        accountId,
+        resource: row.resource,
+        changed: synced.changed,
+        removed: synced.removed,
+      }
+    );
   };
 }
 
@@ -166,10 +182,15 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
       }
       // Renewal refused — fall through to the removed path so the sweep
       // recreates from scratch.
-      logger.warn('reauthorization renewal failed; clearing for recreate', {
-        component: COMPONENT,
-        subscriptionId,
-      });
+      logger.warn(
+        "Graph asked for {actor}'s subscription to be reauthorized, but renewing it failed; it is cleared so the next sweep recreates it",
+        {
+          component: COMPONENT,
+          ...(await whoHas(accountId)),
+          accountId,
+          subscriptionId,
+        }
+      );
     }
 
     // subscriptionRemoved / missed / failed renewal: clear the provider-side
@@ -179,10 +200,16 @@ export function createMicrosoftLifecycleHandler(): EventHandler {
       subscriptionId: null,
       expiresAt: null,
     });
-    logger.warn('lifecycle {lifecycleEvent}: subscription cleared for recreate', {
-      component: COMPONENT,
-      lifecycleEvent: lifecycleEvent || '(unknown)',
-    });
+    logger.warn(
+      'Graph reported "{lifecycleEvent}" for {actor}\'s subscription; it is cleared so the next sweep recreates it, and the delta cursor is kept',
+      {
+        component: COMPONENT,
+        ...(await whoHas(accountId)),
+        accountId,
+        subscriptionId,
+        lifecycleEvent: lifecycleEvent || '(unknown)',
+      }
+    );
   };
 }
 
@@ -221,9 +248,15 @@ export function createMicrosoftMessageOverrideHandler(): EventHandler {
     const access = await resolveMicrosoftAccess(accountId);
     const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
-      logger.warn('message-override skipped: knowledge layer is off for this org', {
-        component: COMPONENT,
-      });
+      logger.warn(
+        '{actor} corrected the classification of a mail message, but the knowledge layer is off for this org; nothing was re-indexed',
+        {
+          component: COMPONENT,
+          ...(await whoHas(accountId)),
+          accountId,
+          refId,
+        }
+      );
       return;
     }
 

@@ -35,6 +35,7 @@ import { markWebexWindowDirty, windowDayOf } from './webex-windows';
 import type { ClaimedEvent } from '../queue';
 import type { EventHandler } from '../handlers';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 import { isRecord } from '@renkei/guards';
 
 const queue = agentJobsQueue();
@@ -91,6 +92,9 @@ export function createDomainDispatchHandler(): EventHandler {
     const knowledge = KNOWLEDGE_SUBSCRIBERS[`${payload.provider}/${event.type}`];
     if (knowledge) await knowledge(payload);
 
+    // The event's owner, resolved once here: the fan-out's own lines are
+    // written from a synchronous adapter below.
+    const owner = await whoIs(payload.ownerSubject);
     const { started, filtered } = await fanOutAgentEvents(
       queue.producer,
       {
@@ -103,11 +107,12 @@ export function createDomainDispatchHandler(): EventHandler {
         // still counts as the same firing.
         eventId: event.id,
       },
-      { log: (message, meta) => logger.debug(message, meta) }
+      { log: (message, meta) => logger.debug(message, { ...meta, ...owner }) }
     );
     if (started.length > 0) {
-      logger.debug('{count} agent run(s) started for {source}/{type}', {
+      logger.debug("a {source}/{type} event started {count} run(s) of {actor}'s agents", {
         component: 'worker/domain-dispatch',
+        ...owner,
         source: payload.provider,
         type: event.type,
         count: started.length,
@@ -118,12 +123,16 @@ export function createDomainDispatchHandler(): EventHandler {
       // an event away on its own filters is the answer to "why didn't my
       // agent run", and without this line the event simply vanishes —
       // indistinguishable from nothing having been listening at all.
-      logger.info('{count} trigger(s) filtered out {source}/{type}', {
-        component: 'worker/domain-dispatch',
-        source: payload.provider,
-        type: event.type,
-        count: filtered,
-      });
+      logger.info(
+        "{count} of {actor}'s trigger(s) filtered out a {source}/{type} event on their own filters; no run was started for it",
+        {
+          component: 'worker/domain-dispatch',
+          ...owner,
+          source: payload.provider,
+          type: event.type,
+          count: filtered,
+        }
+      );
     }
   };
 }

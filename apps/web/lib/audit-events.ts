@@ -17,6 +17,7 @@
 import { randomUUID } from 'node:crypto';
 import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export type AuditAction =
   | 'user.signed_in'
@@ -177,11 +178,22 @@ export function recordAuditEvent(event: AuditEventInput): void {
         details: event.details ?? null,
       })
     )
-    .catch((error: unknown) => {
-      logger.warn('audit event not recorded: {action}', {
-        component: 'audit',
-        action: event.action,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    .catch(async (error: unknown) => {
+      const actor = event.actorSubject ? await whoIs(event.actorSubject) : null;
+      logger.warn(
+        'the audit event {action}{byWhom}{onTarget} was not recorded; the audit trail is missing it: {error}',
+        {
+          component: 'audit',
+          ...(actor ?? {}),
+          byWhom: actor ? ` by ${actor.actor}` : '',
+          action: event.action,
+          onTarget: event.targetLabel
+            ? ` on ${event.targetKind ?? 'the'} "${event.targetLabel}"`
+            : '',
+          ...(event.targetKind ? { targetKind: event.targetKind } : {}),
+          ...(event.targetLabel ? { targetLabel: event.targetLabel } : {}),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     });
 }

@@ -18,10 +18,9 @@ import {
 } from '@/lib/chat/tool-config';
 import { getDefaultChatTools, setDefaultChatTools } from '@/lib/chat/tool-prefs';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -40,9 +39,7 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<Response> {
+export async function PUT(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -56,11 +53,15 @@ export async function PUT(
     if (!config) return jsonError(400, 'invalid-tool-config', 'Invalid tool configuration');
     const written = await setDefaultChatTools(session.subject, config, kind);
     if (!written.ok) {
-      logger.error('Could not save: {error}', {
-        component: 'api/chat/tools',
-        subject: session.subject,
-        error: written.err.message ?? written.err.type,
-      });
+      logger.error(
+        '{actor} saved their default toolset for new {kind} chats, but it was not stored: {error}',
+        {
+          component: 'api/chat/tools',
+          ...who(session),
+          kind,
+          error: written.err.message ?? written.err.type,
+        }
+      );
       return jsonError(500, 'save-failed', 'Could not save');
     }
     return NextResponse.json({ userDefault: toolConfigJson(config), kind });
@@ -68,11 +69,15 @@ export async function PUT(
 
   const written = await setDefaultChatTools(session.subject, null, kind);
   if (!written.ok) {
-    logger.error('Could not save: {error}', {
-      component: 'api/chat/tools',
-      subject: session.subject,
-      error: written.err.message ?? written.err.type,
-    });
+    logger.error(
+      '{actor} cleared their default toolset for new {kind} chats, but the change was not stored: {error}',
+      {
+        component: 'api/chat/tools',
+        ...who(session),
+        kind,
+        error: written.err.message ?? written.err.type,
+      }
+    );
     return jsonError(500, 'save-failed', 'Could not save');
   }
   return NextResponse.json({ userDefault: null, kind });

@@ -192,20 +192,26 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         .then((held) => {
           if (held || stopped) return;
           stop();
-          logger.warn('event {eventId} ({source}/{type}) lost its lease while being handled', {
-            component,
-            eventId: event.id,
-            source: event.source,
-            type: event.type,
-          });
+          logger.warn(
+            'event {eventId} ({source}/{type}) lost its lease while being handled; another consumer may be running it too',
+            {
+              component,
+              eventId: event.id,
+              source: event.source,
+              type: event.type,
+            }
+          );
         })
         .catch((error: unknown) => {
           // A database blip: the next tick tries again, well inside the lease.
-          logger.warn('event {eventId} lease renewal failed: {error}', {
-            component,
-            eventId: event.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            'the lease on event {eventId} was not renewed this tick; the next tick tries again: {error}',
+            {
+              component,
+              eventId: event.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
         })
         .finally(() => {
           renewing = false;
@@ -271,7 +277,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         async (error: unknown) => {
           const done = await settleError(event, error);
           logger.warn(
-            'event {eventId} ({source}/{type}) failed after the loop stopped waiting for it: {error} → {status}',
+            'event {eventId} ({source}/{type}) failed after the loop stopped waiting for it and was marked {status}: {error}',
             {
               ...eventFields(event),
               error: error instanceof Error ? error.message : String(error),
@@ -281,10 +287,13 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         }
       )
       .catch((error: unknown) => {
-        logger.error('event {eventId} could not be settled late: {error}', {
-          ...eventFields(event),
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error(
+          'event {eventId} finished after the loop stopped waiting for it, but its outcome could not be put to the queue; the lease decides what happens to it: {error}',
+          {
+            ...eventFields(event),
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       });
   }
 
@@ -303,23 +312,26 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       throw claimed.error;
     }
     logger.error(
-      'the queue has not answered a claim in {claimTimeoutMs}ms; leaving it and claiming again',
+      'the queue has not answered a claim in {claimTimeoutMs}ms; that claim is abandoned and a new one made on a fresh connection',
       { component, claimTimeoutMs }
     );
     pending
       .then(async (late) => {
         if (!late) return;
         logger.warn(
-          'event {eventId} ({source}/{type}) arrived from a claim the loop had given up on; handing it back',
+          'event {eventId} ({source}/{type}) arrived from a claim the loop had given up on; it was handed back untouched',
           eventFields(late)
         );
         if (deps.release) await deps.release(late);
       })
       .catch((error: unknown) => {
-        logger.warn('the abandoned claim failed: {error}', {
-          component,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          'the claim the loop had given up on failed in the end, which changes nothing: {error}',
+          {
+            component,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       });
     return null;
   }
@@ -332,7 +344,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
     // message was ever picked up was the absence of a failure log, which
     // looks identical to "never claimed at all". This line disambiguates.
     logger.debug(
-      'claimed event {eventId} ({source}/{type}), attempt {attempts}',
+      'claimed event {eventId} ({source}/{type}) on attempt {attempts}',
       eventFields(event)
     );
 
@@ -343,7 +355,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
         `no handler registered for ${event.source}/${event.type}`
       );
       logger.warn(
-        'no handler for {source}/{type} (event {eventId}, attempt {attempts}) → {status}',
+        'no handler is registered for {source}/{type}; event {eventId} (attempt {attempts}) was marked {status}',
         { ...eventFields(event), status: disposition.status }
       );
       return true;
@@ -359,7 +371,7 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       // reclaim the message, and this loop goes on to the next one rather
       // than sitting behind a handler that may never return.
       logger.error(
-        'event {eventId} ({source}/{type}) held past {maxHoldMs}ms; no longer waiting for it or renewing its lease',
+        'event {eventId} ({source}/{type}) was held past {maxHoldMs}ms; the loop stops waiting for it and renewing its lease, so the queue can reclaim it',
         { ...eventFields(event), maxHoldMs: deps.maxHoldMs }
       );
       settleLate(event, work);
@@ -367,9 +379,11 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
     }
     if (result.ok) {
       const outcome = await settle(event, result.value);
-      logger.debug('completed event {eventId} ({outcome})', {
+      logger.debug('completed event {eventId} ({source}/{type}): {outcome}', {
         component,
         eventId: event.id,
+        source: event.source,
+        type: event.type,
         outcome,
       });
       return true;
@@ -377,14 +391,17 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
     const error = result.error;
     const done = await settleError(event, error);
     if (done.status === 'released') {
-      logger.warn('event {eventId} ({source}/{type}) released on attempt {attempts}: {reason}', {
-        ...eventFields(event),
-        reason: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'event {eventId} ({source}/{type}) was released back to the queue on attempt {attempts}, to be picked up at once: {reason}',
+        {
+          ...eventFields(event),
+          reason: error instanceof Error ? error.message : String(error),
+        }
+      );
       return true;
     }
     logger.error(
-      'event {eventId} ({source}/{type}) failed on attempt {attempts}: {error} → {status}',
+      'event {eventId} ({source}/{type}) failed on attempt {attempts} and was marked {status}: {error}',
       {
         ...eventFields(event),
         error: error instanceof Error ? error.message : String(error),
@@ -409,11 +426,14 @@ export function createEventLoop<M extends LoopMessage>(deps: EventLoopDeps<M>): 
       } catch (error) {
         // A claim/complete failure here is a database problem, not an event
         // problem; back off and let the loop retry.
-        logger.error('loop error: {error}', {
-          component,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        logger.error(
+          'the loop itself threw outside any handler; it sleeps a beat and goes on claiming: {error}',
+          {
+            component,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
       }
       claims += 1;
       if (hadWork) {
@@ -512,11 +532,14 @@ export function schedulePeriodicSweep(
       await sweep();
       logger.debug(`${label} sweep finished`, { component });
     } catch (error) {
-      logger.error(`${label} sweep error: {error}`, {
-        component,
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-      });
+      logger.error(
+        `the ${label} sweep threw and did not finish this pass; the next pass runs on schedule: {error}`,
+        {
+          component,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
     }
     if (!stopped) timer = setTimeout(tick, intervalMs);
   }

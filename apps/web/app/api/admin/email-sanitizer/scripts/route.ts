@@ -20,28 +20,30 @@ import {
 import { recordAuditEvent } from '@/lib/audit-events';
 import { describeKinds, parseContentKinds } from '@/lib/email-sanitizer/content-kinds';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
+  const access = await checkAccess([ROLE_OPERATOR]);
+  if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   const scripts = await listCleanerScripts();
   if (!scripts.ok) {
-    logger.error('Could not read scripts: {error}', {
-      component: 'api/admin/email-sanitizer/scripts',
-      error: scripts.err.message ?? scripts.err.type,
-    });
+    logger.error(
+      '{actor} opened the cleaner scripts, but they could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/email-sanitizer/scripts',
+        ...who(access),
+        error: scripts.err.message ?? scripts.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read scripts' }, { status: 500 });
   }
   return NextResponse.json({ scripts: scripts.val });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -96,11 +98,16 @@ export async function POST(
     appliesTo,
   });
   if (!saved.ok) {
-    logger.error('Could not save: {error}', {
-      component: 'api/admin/email-sanitizer/scripts',
-      subject: access.subject,
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} saved the cleaner script "{script}" ({reach}), but it was not saved: {error}',
+      {
+        component: 'api/admin/email-sanitizer/scripts',
+        ...who(access),
+        script: name,
+        reach: describeKinds(appliesTo),
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
 

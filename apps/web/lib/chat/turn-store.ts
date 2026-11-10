@@ -8,6 +8,7 @@
 import { recordLlmCall, type LlmCallModel } from '@renkei/agents/runs';
 import { getOrgSettings } from '@renkei/settings';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { after } from 'next/server';
 import { createAttachment, toAttachmentView } from './attachments';
 import { deferDigest, storeDigest } from './artifact-digest';
@@ -151,15 +152,18 @@ export function createTurnStore(scope: {
           if (file.digest) await storeDigest(created.val.id, file.digest);
           else deferDigest(scope.subject, [created.val], after);
         } else if (created.err.type !== 'UNCONFIGURED') {
-          logger.warn('chat artifact not stored: {reason} {message}', {
-            component: 'chat/turn',
-            subject: scope.subject,
-            chatId: scope.chatId,
-            turnId: scope.turnId,
-            filename: file.filename,
-            reason: created.err.type,
-            message: created.err.message ?? '',
-          });
+          logger.warn(
+            'the model wrote "{filename}" in {actor}\'s chat, but the file was not stored ({reason}); the chat has no such file: {message}',
+            {
+              component: 'chat/turn',
+              ...(await whoIs(scope.subject)),
+              chatId: scope.chatId,
+              turnId: scope.turnId,
+              filename: file.filename,
+              reason: created.err.type,
+              message: created.err.message ?? '',
+            }
+          );
         }
       }
       return kept;

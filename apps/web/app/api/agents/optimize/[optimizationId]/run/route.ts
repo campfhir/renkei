@@ -17,6 +17,7 @@ import {
 } from '@/lib/agents/optimization-store';
 import { optimizeAgent } from '@/lib/agents/optimize';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -75,11 +76,16 @@ export async function POST(
     return NextResponse.json({ status: 'succeeded' });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.error('optimization {optimizationId} threw: {error}', {
-      component: 'api/agents-optimize-run',
-      optimizationId,
-      error: message,
-    });
+    logger.error(
+      'the analysis of agent "{agent}" for {actor} crashed; it is marked failed so the page stops waiting: {error}',
+      {
+        component: 'api/agents-optimize-run',
+        ...(await whoIs(record.subject)),
+        ...(await whichAgent(optimization.agentId)),
+        optimizationId,
+        error: message,
+      }
+    );
     await finishOptimization(optimizationId, { status: 'failed', error: message });
     return NextResponse.json({ error: message }, { status: 500 });
   }

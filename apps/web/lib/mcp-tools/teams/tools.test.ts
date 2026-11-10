@@ -26,7 +26,10 @@ jest.mock('@renkei/delegate-client', () => {
   };
 });
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
-jest.mock('@renkei/db', () => ({ getDataStore: () => ({}) }));
+jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
+  getDataStore: () => ({}),
+}));
 jest.mock('@/lib/logger', () => ({
   logger: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
   secure: (value: unknown) => value,

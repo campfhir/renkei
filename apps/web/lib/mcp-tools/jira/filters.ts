@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
@@ -32,11 +32,10 @@ export async function registerFilterTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_filters invoked', {
+      logger.debug('{caller} called jira_list_filters', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_filters',
       });
       try {
         const { expand } = args;
@@ -98,11 +97,10 @@ export async function registerFilterTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_get_filter invoked', {
+      logger.debug('{caller} called jira_get_filter', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_get_filter',
       });
       try {
         const { filterId } = args;
@@ -158,11 +156,10 @@ export async function registerFilterTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_filter invoked', {
+      logger.debug('{caller} called jira_create_filter', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_filter',
       });
       try {
         const { name, jql, description, favourite } = args;
@@ -225,11 +222,10 @@ export async function registerFilterTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_delete_filter invoked', {
+      logger.debug('{caller} called jira_delete_filter', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_delete_filter',
       });
       try {
         const { filterId } = args;

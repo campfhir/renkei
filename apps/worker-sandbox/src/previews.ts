@@ -43,6 +43,7 @@ import {
   type PreviewStatus,
 } from '@renkei/connector-sandbox';
 import { childEnvironment, shellPrelude, wrapCommand, type ExecIdentity } from './workspaces';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 
 export interface PreviewTarget {
@@ -295,10 +296,10 @@ export class PreviewManager {
       });
     });
     this.previews.set(preview.id, preview);
-    logger.info('started preview {name} for {subject} on port(s) {ports}', {
+    logger.info('{actor} started the preview "{name}" on port(s) {ports}', {
       component: 'worker-sandbox/previews',
+      ...(await actorAttrs(target.subject)),
       name: preview.name,
-      subject: target.subject,
       ports: ports.map((binding) => `${binding.name}=${binding.port}`).join(','),
     });
 
@@ -416,10 +417,10 @@ export class PreviewManager {
     if (!preview) throw new PreviewOpError('not_found', `No preview named ${name} — see the list.`);
     await this.kill(preview);
     this.previews.delete(preview.id);
-    logger.info('stopped preview {name} for {subject}', {
+    logger.info('{actor} stopped the preview "{name}"', {
       component: 'worker-sandbox/previews',
+      ...(await actorAttrs(target.subject)),
       name,
-      subject: target.subject,
     });
     return this.summary(preview);
   }
@@ -520,10 +521,10 @@ export class PreviewManager {
       await this.kill(preview);
       this.previews.delete(preview.id);
       swept += 1;
-      logger.info('swept idle preview {name} ({subject})', {
+      logger.info('the preview "{name}" of {actor} sat idle past its lifetime and was stopped', {
         component: 'worker-sandbox/previews',
+        ...(await actorAttrs(preview.subject)),
         name: preview.name,
-        subject: preview.subject,
       });
     }
     return swept;

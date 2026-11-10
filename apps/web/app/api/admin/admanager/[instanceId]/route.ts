@@ -17,23 +17,27 @@ import {
 } from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/admanager/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ instanceId: string }> }
 ): Promise<NextResponse> {
   const { instanceId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const instance = await getInstance(instanceId);
   if (!instance.ok) {
-    logger.error('Could not read the instance: {error}', {
-      component: 'api/admin/admanager',
-      instanceId,
-      error: instance.err.message ?? instance.err.type,
-    });
+    logger.error(
+      '{actor} opened a ADManager Plus instance, but it could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/admanager',
+        ...who(session),
+        instanceId,
+        error: instance.err.message ?? instance.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
   if (!instance.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -71,12 +75,16 @@ export async function PATCH(
     if (updated.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });
     }
-    logger.error('Could not update the instance: {error}', {
-      component: 'api/admin/admanager',
-      subject: session.subject,
-      instanceId,
-      error: updated.err.message ?? updated.err.type,
-    });
+    logger.error(
+      '{actor} saved the ADManager Plus instance "{name}", but it was not updated: {error}',
+      {
+        component: 'api/admin/admanager',
+        ...who(session),
+        instanceId,
+        name: parsed.input.name,
+        error: updated.err.message ?? updated.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not update the instance' }, { status: 500 });
   }
   if (!updated.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -117,12 +125,16 @@ export async function DELETE(
 
   const deleted = await deleteInstance(instanceId);
   if (!deleted.ok) {
-    logger.error('Could not delete the instance: {error}', {
-      component: 'api/admin/admanager',
-      subject: session.subject,
-      instanceId,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} deleted the ADManager Plus instance "{name}", but it was not deleted: {error}',
+      {
+        component: 'api/admin/admanager',
+        ...who(session),
+        instanceId,
+        name,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not delete the instance' }, { status: 500 });
   }
   if (!deleted.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });

@@ -14,6 +14,7 @@ import { getProjectRow } from '@/lib/chat/projects';
 import { getChatForOwner } from '@/lib/chat/store';
 import { appendChatNote, noteFromInput } from '@/lib/code/notes';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -34,11 +35,18 @@ export async function POST(
   const appended = await appendChatNote({ chatId: chat.id, note });
   if (!appended.ok) {
     if (appended.reason === 'failed') {
-      logger.error('The note could not be written', {
-        component: 'api/chat/chats/notes',
-        subject: session.subject,
-        chatId,
-      });
+      logger.error(
+        '{actor} made a {noteKind} note from the code pane in the chat "{chatTitle}" of project "{project}", but it was not written to the transcript',
+        {
+          component: 'api/chat/chats/notes',
+          ...who(session),
+          chatId,
+          chatTitle: chat.title ?? '(untitled)',
+          projectId: project.id,
+          project: project.name,
+          noteKind: note.type,
+        }
+      );
     }
     return appended.reason === 'turn-running'
       ? jsonError(409, 'turn-running', 'Wait for the current reply to finish first.')

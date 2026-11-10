@@ -26,6 +26,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { admanagerClientFailure, admanagerTestConnection } from '@/lib/admanager/service-client';
 import { parseConnectPayload, parseExposurePayload } from '@/lib/admanager/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { isRecord } from '@renkei/guards';
 
 /** Whether the body carries any credential field (vs. exposure-only). */
@@ -45,12 +46,15 @@ export async function POST(
 
   const instance = await getInstance(instanceId);
   if (!instance.ok) {
-    logger.error('Could not read the instance: {error}', {
-      component: 'api/admanager/connection',
-      subject: session.subject,
-      instanceId,
-      error: instance.err.message ?? instance.err.type,
-    });
+    logger.error(
+      '{actor} tried to connect an ADManager Plus instance, but it could not be read; nothing was changed: {error}',
+      {
+        component: 'api/admanager/connection',
+        ...who(session),
+        instanceId,
+        error: instance.err.message ?? instance.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the instance' }, { status: 500 });
   }
   if (!instance.val || !instance.val.summary.enabled) {
@@ -74,12 +78,16 @@ export async function POST(
       exposure.permissions
     );
     if (!updated.ok) {
-      logger.error('Could not update the connection: {error}', {
-        component: 'api/admanager/connection',
-        subject: session.subject,
-        instanceId,
-        error: updated.err.message ?? updated.err.type,
-      });
+      logger.error(
+        '{actor} changed the LLM exposure of their connection to ADManager Plus instance "{name}", but it was not saved: {error}',
+        {
+          component: 'api/admanager/connection',
+          ...who(session),
+          instanceId,
+          name: instance.val.summary.name,
+          error: updated.err.message ?? updated.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Could not update the connection' }, { status: 500 });
     }
     if (!updated.val) {
@@ -104,13 +112,17 @@ export async function POST(
       tested.err.kind === 'op' && tested.err.type === 'bad_credentials'
         ? 'The ADManager Plus server did not accept this authtoken.'
         : failure.message;
-    logger.warn('ADManager Plus connection test failed ({status}): {error}', {
-      component: 'api/admanager/connection',
-      subject: session.subject,
-      instanceId,
-      status: failure.status,
-      error: failure.message,
-    });
+    logger.warn(
+      '{actor} tried to connect ADManager Plus instance "{name}", but the connection test failed ({status}); nothing was stored: {error}',
+      {
+        component: 'api/admanager/connection',
+        ...who(session),
+        instanceId,
+        name: instance.val.summary.name,
+        status: failure.status,
+        error: failure.message,
+      }
+    );
     return NextResponse.json({ error: message }, { status: failure.status });
   }
 
@@ -120,12 +132,17 @@ export async function POST(
     JSON.stringify(parsed.credentials),
   ]);
   if (!sealed.ok) {
-    logger.warn('Could not seal the ADManager Plus credentials: {error}', {
-      component: 'api/admanager/connection',
-      subject: session.subject,
-      instanceId,
-      error: sealed.err.message ?? sealed.err.type,
-    });
+    logger.warn(
+      '{actor} tried to connect ADManager Plus instance "{name}", but the authtoken could not be sealed under their key ({reason}); nothing was stored: {error}',
+      {
+        component: 'api/admanager/connection',
+        ...who(session),
+        instanceId,
+        name: instance.val.summary.name,
+        reason: sealed.err.type,
+        error: sealed.err.message ?? sealed.err.type,
+      }
+    );
     return sealed.err.type === 'NEEDS_DELEGATION' ||
       sealed.err.type === 'NEEDS_SESSION' ||
       sealed.err.type === 'NOT_ENROLLED'
@@ -144,12 +161,17 @@ export async function POST(
     permissions: parsed.permissions,
   });
   if (!stored.ok) {
-    logger.error('Could not store the connection: {error}', {
-      component: 'api/admanager/connection',
-      subject: session.subject,
-      instanceId,
-      error: stored.err.message ?? stored.err.type,
-    });
+    logger.error(
+      '{actor} connected ADManager Plus instance "{name}" as technician "{technicianName}", but the connection was not stored: {error}',
+      {
+        component: 'api/admanager/connection',
+        ...who(session),
+        instanceId,
+        name: instance.val.summary.name,
+        technicianName: parsed.technicianName,
+        error: stored.err.message ?? stored.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not store the connection' }, { status: 500 });
   }
 
@@ -173,24 +195,30 @@ export async function DELETE(
 
   const existing = await getConnection(instanceId, session.subject);
   if (!existing.ok) {
-    logger.error('Could not read the connection: {error}', {
-      component: 'api/admanager/connection',
-      subject: session.subject,
-      instanceId,
-      error: existing.err.message ?? existing.err.type,
-    });
+    logger.error(
+      '{actor} tried to disconnect an ADManager Plus instance, but their connection could not be read; nothing was changed: {error}',
+      {
+        component: 'api/admanager/connection',
+        ...who(session),
+        instanceId,
+        error: existing.err.message ?? existing.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the connection' }, { status: 500 });
   }
   if (!existing.val) return NextResponse.json({ error: 'Not connected' }, { status: 404 });
 
   const deleted = await deleteConnection(instanceId, session.subject);
   if (!deleted.ok) {
-    logger.error('Could not disconnect: {error}', {
-      component: 'api/admanager/connection',
-      subject: session.subject,
-      instanceId,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} tried to disconnect an ADManager Plus instance, but the connection was not removed: {error}',
+      {
+        component: 'api/admanager/connection',
+        ...who(session),
+        instanceId,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
 

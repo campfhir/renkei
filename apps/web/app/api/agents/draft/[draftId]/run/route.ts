@@ -27,6 +27,7 @@ import { claimDraft, finishDraft, getDraft } from '@/lib/agents/draft-store';
 import { listAgentNames } from '@/lib/agents/store';
 import { draftAgentFromProse, type TriggerVarInfo } from '@/lib/agents/draft-from-prose';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 
 /** Accept {name, description} entries, tolerating the older bare-string form. */
 function parseTriggerVars(value: unknown): TriggerVarInfo[] {
@@ -115,11 +116,16 @@ export async function POST(
     // be retried, and the builder would poll it until it gave up. Recording
     // the failure is what turns a crash into something a person can read.
     const message = error instanceof Error ? error.message : String(error);
-    logger.error('draft {draftId} threw: {error}', {
-      component: 'api/agents-draft-run',
-      draftId,
-      error: message,
-    });
+    logger.error(
+      'the agent draft for {actor} crashed while being written; it is marked failed so the builder stops waiting: {error}',
+      {
+        component: 'api/agents-draft-run',
+        ...(await whoIs(record.subject)),
+        ...(draft.agentId ? await whichAgent(draft.agentId) : {}),
+        draftId,
+        error: message,
+      }
+    );
     await finishDraft(draftId, { status: 'failed', error: message });
     // 500 so the queue records a failure too — the row is already terminal,
     // so the retry finds it claimed and stops. The job's error is the trail.

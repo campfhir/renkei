@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import {
   analyzeTranscript,
   formatActionsAsMarkdown,
@@ -64,11 +64,10 @@ export async function registerUtilityTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('analyze_transcript invoked', {
+      logger.debug('{caller} called analyze_transcript', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'analyze_transcript',
       });
       try {
         const { transcript, projectKey, issueKey, meetingType, durationMinutes, sprintId } = args;
@@ -88,13 +87,16 @@ export async function registerUtilityTools(
           sprintId: typeof sprintId === 'string' ? sprintId : undefined,
         });
 
-        logger.debug('analyze_transcript results', {
-          component: 'mcp/tool',
-          accountId: context.accountId,
-          meetingType: analysis.meeting.type,
-          meetingSource: analysis.meeting.source,
-          actions: analysis.actions.length,
-        });
+        logger.debug(
+          '{caller} analyzed a {meetingType} transcript ({meetingSource}); {actions} suggested action(s) came out',
+          {
+            component: 'mcp/tool',
+            ...callerFields(context),
+            meetingType: analysis.meeting.type,
+            meetingSource: analysis.meeting.source,
+            actions: analysis.actions.length,
+          }
+        );
 
         return {
           content: [{ type: 'text' as const, text: formatActionsAsMarkdown(analysis) }],
@@ -120,11 +122,10 @@ export async function registerUtilityTools(
       annotations: { readOnlyHint: true },
     },
     async (_args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_connect invoked', {
+      logger.debug('{caller} called jira_connect', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_connect',
       });
       try {
         // The caller's own grant only. A tenant-wide query here reported

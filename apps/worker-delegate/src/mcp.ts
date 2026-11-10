@@ -70,14 +70,20 @@ export class McpPreparer {
 
   async prepare(body: Record<string, unknown>, response: ServerResponse): Promise<void> {
     const serverId = str(body.serverId);
+    // The server's name once it is read; its id until then.
+    let serverName = serverId;
     const fail = (type: McpPrepareError, message?: string): void => {
       if (statusFor(type) >= 500) {
-        this.logger.warn('MCP server {serverId} sign-in preparation failed ({type}): {error}', {
-          component: COMPONENT,
-          serverId,
-          type,
-          error: message ?? type,
-        });
+        this.logger.warn(
+          'sign-in to the MCP server "{serverName}" could not be prepared ({type}); the person saw an error and no sign-in started: {error}',
+          {
+            component: COMPONENT,
+            serverId,
+            serverName,
+            type,
+            error: message ?? type,
+          }
+        );
       }
       sendJson(response, statusFor(type), { error: { type, message } });
     };
@@ -86,6 +92,7 @@ export class McpPreparer {
     const read = await getServer(serverId);
     if (!read.ok || !read.val || !read.val.enabled) return fail('unknown_server');
     let server = read.val;
+    serverName = server.name;
     if (server.authMode === 'none') return sendJson(response, 200, { authMode: 'none' });
 
     try {

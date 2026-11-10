@@ -11,10 +11,9 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { recordAuditEvent } from '@/lib/audit-events';
 import { automationDaysOfBody, keyMaterialOf, sealedDelegationsOf } from '@/lib/keys/status';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function POST(
-  request: NextRequest
-): Promise<Response> {
+export async function POST(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
@@ -52,11 +51,14 @@ export async function POST(
       case 'KEY_MISMATCH':
         return jsonError(400, 'bad_request', 'The keys this browser sent do not fit together.');
       default:
-        logger.error('The key service could not be reached: {error}', {
-          component: 'api/keys/rotate',
-          subject: session.subject,
-          error: rotated.err.message ?? rotated.err.type,
-        });
+        logger.error(
+          '{actor} rotated their user key, but the key service could not be reached; the old key stays in force: {error}',
+          {
+            component: 'api/keys/rotate',
+            ...who(session),
+            error: rotated.err.message ?? rotated.err.type,
+          }
+        );
         return jsonError(503, 'delegate', 'The key service could not be reached.');
     }
   }

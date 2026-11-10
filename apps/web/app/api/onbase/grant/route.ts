@@ -17,6 +17,7 @@ import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { ONBASE } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -37,16 +38,26 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   // kill; revoking it usually invalidates the pair), then deletes the grant.
   const revoked = await delegateGrants().revoke({ provider: ONBASE, accountId });
   if (!revoked.ok) {
-    logger.error('OnBase grant could not be deleted: {reason}', {
-      component: 'connectors/onbase',
-      reason: revoked.err.type,
-    });
+    logger.error(
+      '{actor} tried to disconnect OnBase, but the grant was not deleted ({reason}); they are still connected',
+      {
+        component: 'connectors/onbase',
+        ...who(session),
+        accountId,
+        reason: revoked.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   if (!revoked.val.revokedAtProvider) {
-    logger.warn('OnBase token revocation failed; the grant was deleted regardless', {
-      component: 'connectors/onbase',
-    });
+    logger.warn(
+      '{actor} disconnected OnBase, but the token could not be revoked at the Hyland IdP; the grant was deleted regardless',
+      {
+        component: 'connectors/onbase',
+        ...who(session),
+        accountId,
+      }
+    );
   }
   recordAuditEvent({
     actorSubject: session.subject,

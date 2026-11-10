@@ -273,7 +273,7 @@ export class ChartRenderer implements ChartVerbs {
     this.gate = new Gate(deps.maxConcurrent ?? CHART_MAX_CONCURRENT);
     if (!this.bundle) {
       logger.warn(
-        'the Mermaid bundle was not found: every chart will be refused (set SANDBOX_MERMAID_BUNDLE or install mermaid)',
+        'the Mermaid bundle was not found, so every chart will be refused; set SANDBOX_MERMAID_BUNDLE or install mermaid',
         { component: 'worker-sandbox/charts' }
       );
     }
@@ -294,18 +294,24 @@ export class ChartRenderer implements ChartVerbs {
           const expected = this.closed || this.browser !== browser;
           if (this.browser === browser) this.browser = null;
           if (!expected) {
-            logger.warn('chart browser process disconnected', {
-              component: 'worker-sandbox/charts',
-            });
+            logger.warn(
+              "the chart renderer's browser process disconnected on its own; the next chart relaunches it",
+              {
+                component: 'worker-sandbox/charts',
+              }
+            );
           }
         });
         this.browser = browser;
         return browser;
       } catch (error) {
-        logger.error('chart browser launch failed: {error}', {
-          component: 'worker-sandbox/charts',
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error(
+          "the chart renderer's browser could not be launched; every chart fails until it can be: {error}",
+          {
+            component: 'worker-sandbox/charts',
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         throw new ChartRenderError(
           'charts_unavailable',
           'The chart renderer could not be started on this deployment.'
@@ -444,8 +450,9 @@ export class ChartRenderer implements ChartVerbs {
     } catch (error) {
       if (error instanceof ChartRenderError) throw error;
       const message = error instanceof Error ? error.message : String(error);
-      logger.warn('chart render failed: {error}', {
+      logger.warn('a {format} chart could not be rendered; the caller is told why: {error}', {
         component: 'worker-sandbox/charts',
+        format: String(request.format),
         error: message,
       });
       throw new ChartRenderError('render_failed', `The chart could not be rendered: ${message}`);

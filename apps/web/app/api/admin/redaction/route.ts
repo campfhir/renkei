@@ -18,20 +18,22 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { knownDetectors, describeFormatProblem } from '@renkei/redaction';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export async function GET(_request: NextRequest): Promise<NextResponse> {
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/admin/redaction',
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} opened the redaction settings, but the org settings could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/redaction',
+        ...who(session),
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({
@@ -41,12 +43,9 @@ export async function GET(
   });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -104,10 +103,15 @@ export async function PUT(
 
   const saved = await setOrgSettings(updates);
   if (!saved.ok) {
-    logger.error('Could not save settings: {error}', {
-      component: 'api/admin/redaction',
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} saved the redaction settings ({changed}), but the org settings were not saved: {error}',
+      {
+        component: 'api/admin/redaction',
+        ...who(session),
+        changed: Object.keys(updates).join(', ') || 'nothing changed',
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
   }
   return NextResponse.json({ ok: true });

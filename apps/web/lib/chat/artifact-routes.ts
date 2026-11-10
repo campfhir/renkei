@@ -14,6 +14,8 @@ import { getOrgSettings } from '@renkei/settings';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
+import type { Session } from '@/lib/session';
 import { isGrantRole } from './access';
 import { isReferenceMode, listProjectArtifacts, type ReferenceMode } from './attachments';
 import { resolveArtifactAccess } from './artifact-access';
@@ -46,19 +48,22 @@ import { parseExpiry } from './grant-input';
 import { resolveProjectAccess } from './access';
 import { chatRequestContext, jsonError, readJsonBody } from './route-support';
 
-/** What a failed act was, so a store or key failure reaches the log with its owner. */
+/** What a failed act was, so a store or key failure reaches the log with the person who tried it. */
 interface ActFailure {
   action: string;
-  subject: string;
+  session: Pick<Session, 'subject' | 'actor'>;
   artifactId: string;
   projectId?: string;
 }
 
 function actError(error: ArtifactActError, failure?: ActFailure): Response {
   if (failure && (error === 'CONTENT_KEY' || error === 'STORE' || error === 'UNCONFIGURED')) {
-    logger.warn('artifact {action} failed: {error}', {
+    logger.warn('{actor} tried to {action} a file, but it failed ({error}); nothing was changed', {
       component: 'chat/artifacts',
-      ...failure,
+      ...who(failure.session),
+      action: failure.action,
+      artifactId: failure.artifactId,
+      ...(failure.projectId ? { projectId: failure.projectId } : {}),
       error,
     });
   }
@@ -183,7 +188,7 @@ export async function replaceArtifactRoute(
     redactor: settings ? createOutboundRedactor(settings) : null,
   });
   if (!replaced.ok) {
-    return actError(replaced.err.type, { action: 'replace', subject: session.subject, artifactId });
+    return actError(replaced.err.type, { action: 'replace', session, artifactId });
   }
   deferDigest(session.subject, [replaced.val], after);
   return NextResponse.json({ ok: true, extractStatus: replaced.val.extractStatus });
@@ -258,7 +263,7 @@ export async function transferRoute(request: NextRequest, artifactId: string): P
     newOwnerSubject,
   });
   if (!result.ok) {
-    return actError(result.err.type, { action: 'transfer', subject: session.subject, artifactId });
+    return actError(result.err.type, { action: 'transfer', session, artifactId });
   }
   return NextResponse.json({ ok: true });
 }
@@ -286,7 +291,7 @@ export async function copyRoute(request: NextRequest, artifactId: string): Promi
   if (!result.ok) {
     return result.err.type === 'SELF'
       ? jsonError(400, 'self', 'It is yours already; a copy is for a file someone shared with you.')
-      : actError(result.err.type, { action: 'copy', subject: session.subject, artifactId });
+      : actError(result.err.type, { action: 'copy', session, artifactId });
   }
   // A copy of an undigested file is digested as the copier's own.
   deferDigest(session.subject, [result.val], after);
@@ -326,7 +331,7 @@ export async function addArtifactGrantRoute(
     expiresAt,
   });
   if (!result.ok) {
-    return actError(result.err.type, { action: 'share', subject: session.subject, artifactId });
+    return actError(result.err.type, { action: 'share', session, artifactId });
   }
   return NextResponse.json({ ok: true });
 }
@@ -396,7 +401,7 @@ export async function attachArtifactRoute(
   if (!result.ok) {
     return actError(result.err.type, {
       action: 'attach',
-      subject: session.subject,
+      session,
       artifactId,
       projectId,
     });
@@ -424,7 +429,7 @@ export async function setArtifactModeRoute(
   if (!result.ok) {
     return actError(result.err.type, {
       action: 'set mode',
-      subject: session.subject,
+      session,
       artifactId,
       projectId,
     });
@@ -449,7 +454,7 @@ export async function detachArtifactRoute(
   if (!result.ok) {
     return actError(result.err.type, {
       action: 'detach',
-      subject: session.subject,
+      session,
       artifactId,
       projectId,
     });

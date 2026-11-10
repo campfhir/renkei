@@ -14,6 +14,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { getChatForOwner } from '@/lib/chat/store';
 import { recordWidgetModelContext } from '@/lib/chat/widget-tools';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -39,11 +40,15 @@ export async function POST(
   });
   if (!recorded.ok) {
     if (recorded.reason === 'failed') {
-      logger.error('The widget model context could not be recorded', {
-        component: 'api/chat/chats/widget/model-context',
-        subject: session.subject,
-        chatId,
-      });
+      logger.error(
+        '{actor} acted on a card in the chat "{chatTitle}", but what they did was not recorded; the model will not see it',
+        {
+          component: 'api/chat/chats/widget/model-context',
+          ...who(session),
+          chatId,
+          chatTitle: chat.title ?? '(untitled)',
+        }
+      );
     }
     return recorded.reason === 'turn-running'
       ? jsonError(409, 'turn-running', 'Wait for the current reply to finish first.')

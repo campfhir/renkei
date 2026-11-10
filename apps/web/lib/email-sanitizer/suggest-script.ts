@@ -130,11 +130,15 @@ export async function suggestCleanerScript(
   ]).finally(() => clearTimeout(timer));
   if (completion === 'timeout') return { error: 'The model took too long — try again.' };
   if (!completion.ok) {
-    logger.warn('script drafting failed: {kind} {message}', {
-      component: 'email-sanitizer/suggest',
-      kind: completion.err.type,
-      message: completion.err.message?.slice(0, 300) ?? '',
-    });
+    logger.warn(
+      'the model did not answer with a {kind2} cleaner script ({kind}); the operator saw an error: {message}',
+      {
+        component: 'email-sanitizer/suggest',
+        kind2: kind,
+        kind: completion.err.type,
+        message: completion.err.message?.slice(0, 300) ?? '',
+      }
+    );
     return { error: 'The model could not draft a script — try again later.' };
   }
 

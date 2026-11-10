@@ -44,10 +44,13 @@ async function build(): Promise<LogShippingHandlers | null> {
   try {
     store = getDataStore();
   } catch (error) {
-    logger.error('Log shipping unavailable: no data store', {
-      component: 'web/log-ingest',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'log shipping is unavailable: there is no data store to write shipped records to, so shippers get no endpoint: {error}',
+      {
+        component: 'web/log-ingest',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 
@@ -84,10 +87,13 @@ async function build(): Promise<LogShippingHandlers | null> {
 
   const { authorizeLogShipment } = await import('@/lib/log-ship-auth');
   const onError = (err: unknown) => {
-    logger.error('log shipping handler error: {error}', {
-      component: 'web/log-ingest',
-      error: err instanceof Error ? err.message : String(err),
-    });
+    logger.error(
+      'a log shipping request failed; the shipment was refused and the shipper will retry: {error}',
+      {
+        component: 'web/log-ingest',
+        error: err instanceof Error ? err.message : String(err),
+      }
+    );
   };
 
   return {
@@ -114,7 +120,7 @@ function parseServerKeys(): E2EKeyPairJwk | undefined {
   const raw = process.env.LOG_E2E_SERVER_KEYS;
   if (!raw) {
     logger.info(
-      'LOG_E2E_SERVER_KEYS not set; using per-boot server keys (shippers re-register after each restart)',
+      'LOG_E2E_SERVER_KEYS is not set, so log shipping uses per-boot server keys; shippers re-register after each restart',
       {
         component: 'web/log-ingest',
       }
@@ -127,10 +133,13 @@ function parseServerKeys(): E2EKeyPairJwk | undefined {
     if (!parsed.publicJwk || !parsed.privateJwk) throw new Error('missing publicJwk/privateJwk');
     return parsed;
   } catch (error) {
-    logger.error('LOG_E2E_SERVER_KEYS is malformed; using per-boot server keys: {error}', {
-      component: 'web/log-ingest',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'LOG_E2E_SERVER_KEYS is malformed, so log shipping uses per-boot server keys; shippers re-register after each restart: {error}',
+      {
+        component: 'web/log-ingest',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return undefined;
   }
 }

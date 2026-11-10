@@ -26,6 +26,7 @@ import {
 import { getOrigin } from '@/lib/get-origin';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   request: NextRequest,
@@ -39,14 +40,19 @@ export async function GET(
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
     if (failure.status === 503) return NextResponse.json({ previews: [] });
-    logger.warn('Sandbox request failed ({status}): {error}', {
-      component: 'api/code/projects/previews',
-      subject: ready.context.session.subject,
-      projectId,
-      operation: 'listed',
-      status: failure.status,
-      error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
-    });
+    logger.warn(
+      '{actor} opened the previews of the project "{project}", but the sandbox did not list them ({status}); the page showed the error: {error}',
+      {
+        component: 'api/code/projects/previews',
+        ...who(ready.context.session),
+        projectId,
+        project: ready.context.project.name,
+        chatId,
+        operation: 'listed',
+        status: failure.status,
+        error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
+      }
+    );
     return jsonError(failure.status, 'sandbox', failure.message);
   }
   return NextResponse.json({
@@ -90,12 +96,15 @@ export async function POST(
     const failure = clientFailure(started.err);
     if (failure.status !== 400 && failure.status !== 404) {
       logger[failure.status >= 500 ? 'error' : 'warn'](
-        'Sandbox request failed ({status}): {error}',
+        '{actor} asked to start the preview "{name}" of the project "{project}", but the sandbox refused ({status}); nothing is running: {error}',
         {
           component: 'api/code/projects/previews',
-          subject: session.subject,
+          ...who(session),
           projectId,
+          project: project.name,
           chatId,
+          name: input.name,
+          command: input.command,
           operation: 'started',
           status: failure.status,
           error:

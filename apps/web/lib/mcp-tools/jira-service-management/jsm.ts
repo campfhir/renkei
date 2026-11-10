@@ -8,13 +8,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { actMeta } from '@renkei/tool-outcomes';
-import {
-  JiraApiError,
-  getCachedDisplayName,
-  issueUrl,
-  requestUrl,
-  withPresentationHint,
-} from '../common';
+import { JiraApiError, issueUrl, requestUrl, withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import {
   APP_ONLY_META,
@@ -87,11 +81,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_service_desks invoked', {
+      logger.debug('{caller} called jsm_list_service_desks', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_service_desks',
       });
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
@@ -152,11 +145,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_request_types invoked', {
+      logger.debug('{caller} called jsm_list_request_types', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_request_types',
       });
       try {
         const { serviceDeskId } = args;
@@ -232,11 +224,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_requests invoked', {
+      logger.debug('{caller} called jsm_list_requests', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_requests',
       });
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
@@ -401,11 +392,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_get_request invoked', {
+      logger.debug('{caller} called jsm_get_request', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_get_request',
       });
       try {
         const { issueKey } = args;
@@ -475,11 +465,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_components invoked', {
+      logger.debug('{caller} called jsm_list_components', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_components',
       });
       try {
         const desk = await resolveServiceDesk(auth, str(args.serviceDeskId));
@@ -597,11 +586,10 @@ export async function registerJsmTools(
       .optional(),
   });
   const createRequestHandler = async (args: Record<string, any>) => {
-    const displayName = getCachedDisplayName(context.accountId);
-    logger.debug('jsm_create_request invoked', {
+    logger.debug('{caller} called jsm_create_request', {
       component: 'mcp/tool',
-      accountId: context.accountId,
-      displayName,
+      ...callerFields(context),
+      tool: 'jsm_create_request',
     });
     try {
       const { serviceDeskId, requestTypeId, summary, description, components } = args;
@@ -1206,11 +1194,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_add_request_comment invoked', {
+      logger.debug('{caller} called jsm_add_request_comment', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_add_request_comment',
       });
       try {
         const { issueKey, comment, isInternal = false } = args;
@@ -1272,11 +1259,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_request_transitions invoked', {
+      logger.debug('{caller} called jsm_list_request_transitions', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_request_transitions',
       });
       try {
         const { issueKey } = args;
@@ -1327,11 +1313,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_transition_request invoked', {
+      logger.debug('{caller} called jsm_transition_request', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_transition_request',
       });
       try {
         const { issueKey, transitionName } = args;
@@ -1414,11 +1399,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_customers invoked', {
+      logger.debug('{caller} called jsm_list_customers', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_customers',
       });
       try {
         const { serviceDeskId, maxResults = 10 } = args;

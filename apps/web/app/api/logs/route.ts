@@ -14,10 +14,13 @@ export async function POST(request: Request): Promise<Response> {
 
   const response = await shipping.ingest(request);
   if (response.status === 401) {
-    logger.warn('log shipment rejected: bad or missing API key', {
-      component: 'web/log-ingest',
-      ip: request.headers.get('x-forwarded-for') ?? undefined,
-    });
+    logger.warn(
+      'A log shipper sent a batch with a bad or missing API key; the batch was refused (401) and nothing was stored',
+      {
+        component: 'web/log-ingest',
+        ip: request.headers.get('x-forwarded-for') ?? undefined,
+      }
+    );
   }
   return response;
 }

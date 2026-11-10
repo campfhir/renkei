@@ -30,7 +30,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { htmlToDocumentText } from '@renkei/document-text';
 import type { MCPToolContext } from '../common';
-import { withPresentationHint } from '../common';
+import { callerFields, withPresentationHint } from '../common';
 import { withScopeGate } from '../capability-gate';
 import type { GraphAuth } from '../graph/graph-auth';
 import { registerOneNotePreviewLookups } from './preview-lookups';
@@ -414,10 +414,11 @@ export async function registerOneNoteTools(
         'text/html'
       );
       if (!created.ok) return errText(created.error);
-      logger.info('onenote_create_page created', {
+      logger.info('{caller} created the OneNote page "{title}"', {
         component: 'mcp/tool',
-        subject: context.subject,
+        ...callerFields(context),
         sectionId,
+        title,
       });
       const link = webLink(created.body);
       return textResult(
@@ -502,9 +503,9 @@ export async function registerOneNoteTools(
         `${root.root}/pages/${encodeURIComponent(pageId)}`
       );
       if (!result.ok) return errText(result.error);
-      logger.info('onenote_delete_page deleted', {
+      logger.info('{caller} deleted a OneNote page', {
         component: 'mcp/tool',
-        subject: context.subject,
+        ...callerFields(context),
         pageId,
       });
       return textResult('Deleted the page.');

@@ -27,6 +27,7 @@ import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export const CHANGE_REQUEST_NOTIFICATION_KIND = 'change_request';
 export const CHANGE_RESULT_NOTIFICATION_KIND = 'change_result';
@@ -70,6 +71,7 @@ async function notify(input: {
   });
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return;
+  const recipient = await whoIs(input.subject);
   void sendPush(
     input.subject,
     keyResult.val,
@@ -81,17 +83,40 @@ async function notify(input: {
       notificationId: id,
       appPath: input.path,
     },
-    { log: (message, meta) => logger.warn(message, meta) }
+    {
+      log: (message, meta) =>
+        logger.warn(message, { ...recipient, changeId: input.changeId, ...meta }),
+    }
   );
 }
 
-function swallow(what: string, changeId: string): (error: unknown) => void {
-  return (error) =>
-    logger.warn(`${what} notification not recorded`, {
+/**
+ * The failure of one notice: about the change by its title, and about the
+ * person it was for when the failure was theirs alone.
+ */
+function swallow(
+  what: 'change request' | 'change outcome',
+  change: { changeId: string; title: string },
+  recipientSubject?: string
+): (error: unknown) => Promise<void> {
+  return async (error) => {
+    const recipient = recipientSubject ? await whoIs(recipientSubject) : null;
+    logger.warn('the {what} notification about "{title}" was not recorded{notTold}: {error}', {
       component: 'admin-changes/notify',
-      changeId,
+      changeId: change.changeId,
+      title: change.title,
+      what,
+      ...(recipient
+        ? {
+            recipient: recipient.actor,
+            recipientSubject: recipient.subject,
+            recipientEmail: recipient.email,
+          }
+        : {}),
+      notTold: recipient ? `; ${recipient.actor} was not told` : '; its recipients were not told',
       error: error instanceof Error ? error.message : String(error),
     });
+  };
 }
 
 /** A request is waiting: tell every operator but the person who filed it. */
@@ -119,10 +144,10 @@ export function notifyOperatorsOfRequest(input: {
           body: input.freeText ? 'Review the request' : 'Review it and approve to deploy',
           path: changePath(input.connector, input.changeId),
           changeId: input.changeId,
-        }).catch(swallow('change request', input.changeId))
+        }).catch(swallow('change request', input, subject))
       )
     );
-  })().catch(swallow('change request', input.changeId));
+  })().catch(swallow('change request', input));
 }
 
 /** A queued change ended: tell the person who asked and the operator who approved. */
@@ -169,8 +194,8 @@ export function notifyChangeOutcome(input: {
           body,
           path: changePath(input.connector, input.changeId),
           changeId: input.changeId,
-        }).catch(swallow('change outcome', input.changeId))
+        }).catch(swallow('change outcome', input, subject))
       )
     );
-  })().catch(swallow('change outcome', input.changeId));
+  })().catch(swallow('change outcome', input));
 }

@@ -62,6 +62,7 @@ import {
   type RankedUserRow,
 } from './window';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /** How many people the leaderboard names before the selected person's own rank. */
 const TOP_USERS = 5;
@@ -242,12 +243,15 @@ export async function getOrgUsageReport(
       selectedImageUser: imagers.selected,
     };
   } catch (error) {
-    logger.error('Could not read the organization usage report: {error}', {
-      component: 'actions/admin/usage',
-      subject: session.subject,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} opened the organization usage report, but it could not be read; they saw an error: {error}',
+      {
+        component: 'actions/admin/usage',
+        ...who(session),
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return { ...empty, error: error instanceof Error ? error.message : 'Could not read usage' };
   }
 }

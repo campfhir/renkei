@@ -14,10 +14,19 @@ import type { ImageUsageReport } from '@/lib/image/usage';
 import type { SubagentRecorder } from './subagent-runs';
 import type { ContentCipher } from './content-crypto';
 import type { WidgetDecisionState } from './views';
+import type { ActorFields } from '@renkei/db';
 import { logger } from '@/lib/logger';
 
 export interface LocalToolContext {
   subject: string;
+  /**
+   * The person behind `subject` as a log line names them (docs/logging.md),
+   * resolved by the server-side turn that builds this context. Resolved
+   * HERE, not looked up here: this module is shared with the browser bundle
+   * (a UI model imports its result helpers), so it may import nothing that
+   * reaches the data store. Absent, lines name the subject.
+   */
+  actor?: ActorFields;
   /**
    * The roles of the session the turn runs as: what a chat suspended on its
    * tasks (tasks/wake.ts) is woken with. Absent, a woken turn has none.
@@ -177,14 +186,22 @@ export function createLocalToolSet(tools: LocalTool[]): LocalToolSet {
       try {
         return await tool.execute(args, context);
       } catch (error) {
-        logger.error('chat tool threw: {tool} {error}', {
-          component: 'chat/tools',
-          subject: context.subject,
-          chatId: context.chatId,
-          tool: name,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        });
+        logger.error(
+          "the tool {tool} threw in {actor}'s chat; the model was told it failed: {error}",
+          {
+            component: 'chat/tools',
+            ...(context.actor ?? {
+              subject: context.subject,
+              user: context.subject,
+              email: null,
+              actor: context.subject,
+            }),
+            chatId: context.chatId,
+            tool: name,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
         return errorResult(
           `${name} failed: ${error instanceof Error ? error.message : String(error)}`
         );

@@ -14,6 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { parseClientLogBody } from '@/lib/client-log-body';
 
 const LIMITS = {
@@ -40,7 +41,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   const fields = {
     ...body.attrs,
     component: `client/${body.component}`,
-    subject: session.subject,
+    ...who(session),
     ...(body.page ? { page: body.page } : {}),
     ...(body.stack ? { stack: body.stack } : {}),
     userAgent: request.headers.get('user-agent') ?? undefined,

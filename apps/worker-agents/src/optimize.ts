@@ -13,7 +13,7 @@
  * the outcome.
  */
 
-import { getDataStore } from '@renkei/db';
+import { actorAttrs, agentAttrs, getDataStore } from '@renkei/db';
 import { mintRunToken, revokeRunToken } from './token';
 import { logger } from './logger';
 
@@ -61,10 +61,13 @@ export function createOptimizeHandler(deps: { webBaseUrl: string; fetchImpl?: Po
 
     const owner = await ownerOf(payload.optimizationId);
     if (!owner) {
-      logger.debug('optimization {optimizationId} no longer exists; dropping the job', {
-        component: 'worker-agents/optimize',
-        optimizationId: payload.optimizationId,
-      });
+      logger.debug(
+        'an agent analysis job found its request gone (deleted, or its agent was); the job was dropped',
+        {
+          component: 'worker-agents/optimize',
+          optimizationId: payload.optimizationId,
+        }
+      );
       return 'skipped';
     }
 
@@ -94,10 +97,15 @@ export function createOptimizeHandler(deps: { webBaseUrl: string; fetchImpl?: Po
           `optimization failed for ${payload.optimizationId}: HTTP ${response.status}`
         );
       }
-      logger.debug('optimization {optimizationId} completed', {
-        component: 'worker-agents/optimize',
-        optimizationId: payload.optimizationId,
-      });
+      logger.debug(
+        'the analysis of agent "{agent}" that {actor} asked for was written by the web app',
+        {
+          component: 'worker-agents/optimize',
+          ...(await actorAttrs(owner.subject)),
+          ...(await agentAttrs(owner.agentId)),
+          optimizationId: payload.optimizationId,
+        }
+      );
       return undefined;
     } finally {
       await revokeRunToken(token);

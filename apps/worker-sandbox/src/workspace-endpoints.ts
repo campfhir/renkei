@@ -109,6 +109,7 @@ import {
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
 import { createGitVerbs, operationState } from './git-verbs';
 import type { PreviewManager } from './previews';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 import { logErrorResponse } from './request-log';
 import { isRecord } from '@renkei/guards';
@@ -280,14 +281,18 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       const why = callerOnDisk
         ? `this worker has the project’s other files but not this checkout, so the checkout alone was removed (${where})`
         : `this worker has no files for this project at all, so it is not the worker that cloned it — one started without the workspaces volume mounted, or a second worker instance behind the same address (${where})`;
-      logger.warn('workspace {id} is ready but its checkout is missing from disk: {why}', {
-        component: 'worker-sandbox/workspaces',
-        id: workspace.id,
-        subject: workspace.subject,
-        why,
-        callerOnDisk,
-        worker: workerInstance(),
-      });
+      logger.warn(
+        "the checkout of {repo} of {actor} is missing from this worker's disk although the workspace reads ready ({why}); it is marked failed and will be cloned again",
+        {
+          component: 'worker-sandbox/workspaces',
+          ...(await actorAttrs(workspace.subject)),
+          id: workspace.id,
+          repo: workspace.repoFullName,
+          why,
+          callerOnDisk,
+          worker: workerInstance(),
+        }
+      );
       await store.setWorkspaceStatus(workspace.id, 'failed', {
         error: `The checkout is no longer on the worker’s disk: ${why}.`,
       });
@@ -391,6 +396,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     // ready or failed — a crash mid-clone leaves `cloning`, which the
     // sweep retires once the row's lifetime lapses.
     void (async () => {
+      const who = await actorAttrs(target.subject);
       const outcome = await cloneRepository({
         storageKey,
         identity: identityFor(target),
@@ -401,10 +407,10 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         sparsePaths,
       });
       if (!outcome.ok) {
-        logger.warn('workspace clone failed for {repo}: {error}', {
+        logger.warn("{actor}'s clone of {repo} failed; the workspace is marked failed: {error}", {
           component: 'worker-sandbox/workspaces',
+          ...who,
           id: row.id,
-          subject: target.subject,
           repo: repo.fullName,
           error: outcome.message,
         });
@@ -417,26 +423,32 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       // keeping files, and the row should say that rather than `ready`.
       if (!(await checkoutExists(storageKey))) {
         const error = `The checkout vanished right after cloning on worker ${workerInstance()} (up ${workerUptime()}): this worker’s workspaces disk is not keeping files.`;
-        logger.error('workspace {id} vanished right after cloning', {
-          component: 'worker-sandbox/workspaces',
-          id: row.id,
-          subject: target.subject,
-          worker: workerInstance(),
-        });
+        logger.error(
+          "{actor}'s checkout of {repo} vanished right after cloning: this worker's workspaces disk is not keeping files; the workspace is marked failed",
+          {
+            component: 'worker-sandbox/workspaces',
+            ...who,
+            id: row.id,
+            repo: repo.fullName,
+            worker: workerInstance(),
+          }
+        );
         await store.setWorkspaceStatus(row.id, 'failed', { error });
         return;
       }
       await store.setWorkspaceStatus(row.id, 'ready', { sizeBytes, branch: outcome.branch });
-      logger.info('workspace cloned {repo} ({bytes} bytes)', {
+      logger.info('{actor} cloned {repo} ({bytes} bytes); the workspace is ready', {
         component: 'worker-sandbox/workspaces',
+        ...who,
+        id: row.id,
         repo: repo.fullName,
         bytes: sizeBytes,
       });
-    })().catch((error: unknown) => {
-      logger.error('workspace clone crashed: {error}', {
+    })().catch(async (error: unknown) => {
+      logger.error("{actor}'s clone of {repo} crashed; the workspace is marked failed: {error}", {
         component: 'worker-sandbox/workspaces',
+        ...(await actorAttrs(target.subject)),
         id: row.id,
-        subject: target.subject,
         repo: repo.fullName,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -502,13 +514,17 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       ...(gitProxy ? { gitProxy } : {}),
     });
     if (!outcome.ok) {
-      logger.warn('worktree {branch} of workspace {baseId} failed: {error}', {
-        component: 'worker-sandbox/workspaces',
-        baseId: base.id,
-        branch: ref.ref,
-        subject: target.subject,
-        error: outcome.message,
-      });
+      logger.warn(
+        "{actor}'s worktree {branch} on {repo} could not be added; nothing was created: {error}",
+        {
+          component: 'worker-sandbox/workspaces',
+          ...(await actorAttrs(target.subject)),
+          baseId: base.id,
+          repo: base.repoFullName,
+          branch: ref.ref,
+          error: outcome.message,
+        }
+      );
       return sendError(response, 409, 'worktree_failed', outcome.message);
     }
     const row = await store.insertWorkspace({
@@ -1850,11 +1866,16 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         }
         await store.deleteWorkspaceById(workspace.id);
       } catch (error) {
-        logger.warn('sweep could not remove workspace {id}: {error}', {
-          component: 'worker-sandbox/workspaces',
-          id: workspace.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          'the expired workspace of {repo} of {actor} could not be removed; it is tried again next pass: {error}',
+          {
+            component: 'worker-sandbox/workspaces',
+            ...(await actorAttrs(workspace.subject)),
+            id: workspace.id,
+            repo: workspace.repoFullName,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       }
     }
   }

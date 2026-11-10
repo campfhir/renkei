@@ -58,13 +58,16 @@ export async function proxy(request: NextRequest) {
     requestHeaders.set(PATHNAME_HEADER, `${pathname}${request.nextUrl.search}`);
     return NextResponse.next({ request: { headers: requestHeaders } });
   } catch (error) {
-    logger.error('Proxy error: {error}', {
-      component: 'web/proxy',
-      error: error instanceof Error ? error.message : String(error),
-      method: request.method,
-      pathname,
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'the request proxy threw on {method} {pathname}; the request was passed on to the app unchanged: {error}',
+      {
+        component: 'web/proxy',
+        error: error instanceof Error ? error.message : String(error),
+        method: request.method,
+        pathname,
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return NextResponse.next();
   }
 }

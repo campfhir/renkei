@@ -28,6 +28,7 @@ import { getOrgSettings, getKeyDomain } from '@renkei/settings';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { recordDocumentUsage } from '@/lib/usage/document-usage';
 import { openBytes, openText, sealBytes, sealText, type ContentCipher } from './content-crypto';
 import type { OutboundRedactor } from './outbound-redaction';
@@ -200,7 +201,8 @@ export function cleanContentType(value: string | null): string {
 async function extract(
   bytes: Uint8Array,
   filename: string,
-  contentType: string
+  contentType: string,
+  ownerSubject: string
 ): Promise<{ text: string | null; status: string }> {
   if (TEXT_TYPES.has(contentType) || contentType.startsWith('text/')) {
     const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
@@ -217,14 +219,18 @@ async function extract(
   });
   if (!result.ok) {
     if (result.err.type !== 'UNSUPPORTED_FORMAT' && result.err.type !== 'INPUT_TOO_LARGE') {
-      logger.warn('text extraction failed for {filename}: {reason}', {
-        component: 'chat/attachments',
-        filename,
-        contentType,
-        sizeBytes: bytes.byteLength,
-        reason: result.err.type,
-        ...('message' in result.err && result.err.message ? { detail: result.err.message } : {}),
-      });
+      logger.warn(
+        'the text of "{filename}" uploaded by {actor} could not be extracted ({reason}); the file is stored without searchable text',
+        {
+          component: 'chat/attachments',
+          ...(await whoIs(ownerSubject)),
+          filename,
+          contentType,
+          sizeBytes: bytes.byteLength,
+          reason: result.err.type,
+          ...('message' in result.err && result.err.message ? { detail: result.err.message } : {}),
+        }
+      );
     }
     return {
       text: null,
@@ -264,15 +270,18 @@ export async function ocrOne(
   try {
     status = await ocrAttempt(row, redactor, cipher, startedAt);
   } catch (error) {
-    logger.error('OCR threw for {filename}: {error}', {
-      component: 'chat/ocr',
-      artifactId: row.id,
-      subject: row.ownerSubject,
-      filename: row.filename,
-      contentType: row.contentType,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'the OCR read of "{filename}" of {actor} crashed; the file is no longer marked in progress: {error}',
+      {
+        component: 'chat/ocr',
+        ...(await whoIs(row.ownerSubject)),
+        artifactId: row.id,
+        filename: row.filename,
+        contentType: row.contentType,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     await store.artifacts.update(row.id, { ocrStartedAt: null });
     throw error;
   }
@@ -293,13 +302,21 @@ export async function ocrOne(
  * Records why an OCR read did not finish, with the file it was for. The
  * library shows only the status, so this is where the reason is kept.
  */
-function logOcrFailure(row: AttachmentRow, outcome: 'failed' | 'deferred', reason: string): void {
-  logger.warn('OCR {outcome} for {filename}: {reason}', {
+async function logOcrFailure(
+  row: AttachmentRow,
+  outcome: 'failed' | 'deferred',
+  reason: string
+): Promise<void> {
+  logger.warn('"{filename}" of {actor} was not read by OCR ({reason}); {consequence}', {
     component: 'chat/ocr',
     outcome,
+    consequence:
+      outcome === 'failed'
+        ? 'the file is marked ocr_failed and will not be tried again'
+        : 'it stays needs_ocr and will be tried again',
+    // The owner puts the line in their own Activity view.
+    ...(await whoIs(row.ownerSubject)),
     artifactId: row.id,
-    // The owner's subject puts the line in their own Activity view.
-    subject: row.ownerSubject,
     filename: row.filename,
     contentType: row.contentType,
     sizeBytes: Number(row.sizeBytes),
@@ -323,10 +340,10 @@ async function ocrAttempt(
       bytes.err.message ? `: ${bytes.err.message}` : ''
     })`;
     if (bytes.err.type === 'UNCONFIGURED' || bytes.err.type === 'CONTENT_KEY') {
-      logOcrFailure(row, 'deferred', reason);
+      await logOcrFailure(row, 'deferred', reason);
       return NEEDS_OCR;
     }
-    logOcrFailure(row, 'failed', reason);
+    await logOcrFailure(row, 'failed', reason);
     return 'ocr_failed';
   }
   const ocr = await callMistralOcr(
@@ -444,7 +461,7 @@ export async function createAttachment(input: {
 
   const filename = cleanFilename(input.filename);
   const contentType = cleanContentType(input.contentType);
-  const extracted = await extract(input.bytes, filename, contentType);
+  const extracted = await extract(input.bytes, filename, contentType, input.ownerSubject);
   let sealedText: string | null = null;
   if (extracted.text !== null) {
     const text = input.redactor ? input.redactor.apply(extracted.text).text : extracted.text;
@@ -493,7 +510,7 @@ export async function createAttachment(input: {
  * (no key, as the marker says) still reads it, and leaves it for the next.
  */
 export async function readAttachmentBytes(
-  file: { blobKey: string },
+  file: { blobKey: string; filename?: string; ownerSubject?: string },
   cipher: ContentCipher
 ): Promise<Result<Uint8Array, ReadBytesError>> {
   const store = await resolveTenantBlobStore();
@@ -510,27 +527,34 @@ export async function readAttachmentBytes(
       ? ok(opened.val)
       : err('CONTENT_KEY' as const, { message: opened.err.message });
   }
-  await sealInPlace(store.val, file.blobKey, object.val.bytes, cipher);
+  await sealInPlace(store.val, file, object.val.bytes, cipher);
   return ok(object.val.bytes);
 }
 
 /** Seals a file the store still holds in the clear; best effort, the read already has the bytes. */
 async function sealInPlace(
   store: BlobStore,
-  blobKey: string,
+  file: { blobKey: string; filename?: string; ownerSubject?: string },
   bytes: Uint8Array,
   cipher: ContentCipher
 ): Promise<void> {
   if (cipher.unavailable || cipher.keyId === null) return;
   const sealed = sealBytes(bytes, cipher);
   if (!sealed.ok) return;
-  const put = await store.putObject(blobKey, sealed.val, SEALED_CONTENT_TYPE);
+  const put = await store.putObject(file.blobKey, sealed.val, SEALED_CONTENT_TYPE);
   if (!put.ok) {
-    logger.warn('file not sealed in place: {key} {message}', {
-      component: 'chat/attachments',
-      key: blobKey,
-      message: put.err.message ?? put.err.type,
-    });
+    const owner = file.ownerSubject ? await whoIs(file.ownerSubject) : null;
+    logger.warn(
+      'the file {file} was read in the clear but could not be sealed in place; it stays unsealed in storage until the next read: {message}',
+      {
+        component: 'chat/attachments',
+        ...(owner ?? {}),
+        file: `${file.filename ? `"${file.filename}"` : 'at ' + file.blobKey}${owner ? ` of ${owner.actor}` : ''}`,
+        ...(file.filename ? { filename: file.filename } : {}),
+        key: file.blobKey,
+        message: put.err.message ?? put.err.type,
+      }
+    );
   }
 }
 

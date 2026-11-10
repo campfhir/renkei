@@ -62,7 +62,7 @@ export async function sweepLogRetention(): Promise<void> {
       });
     }
   } catch (error) {
-    logger.error('log purge failed: {error}', {
+    logger.error('the log purge failed partway; the remainder waits for the next pass: {error}', {
       component: COMPONENT,
       error: error instanceof Error ? error.message : String(error),
     });

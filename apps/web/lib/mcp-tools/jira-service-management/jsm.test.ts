@@ -15,6 +15,23 @@ jest.mock('@/lib/logger', () => ({
 // jsm.ts imports helpers from ../common, which transitively pulls in
 // @renkei/db (ESM-only kysely) for exports this suite never touches.
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   getCachedDisplayName: () => 'Test User',
   issueUrl: (site: string, key: string) => `${site}/browse/${key}`,
   requestUrl: (site: string, key: string) => `${site}/servicedesk/customer/portal/${key}`,

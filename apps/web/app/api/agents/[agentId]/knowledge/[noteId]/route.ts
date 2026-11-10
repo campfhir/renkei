@@ -8,16 +8,17 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionFromRequest } from '@/lib/session';
+import { getSessionFromRequest, type Session } from '@/lib/session';
 import { getIdentityEmail } from '@/lib/identity';
-import { resolveAgentAccess } from '@/lib/agents/access-grants';
+import { resolveAgentAccess, type AgentAccess } from '@/lib/agents/access-grants';
 import { deleteAgentNote, parseNotePayload, updateAgentNote } from '@/lib/agents/agent-notes';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 
 async function ownedContext(
   request: NextRequest,
   agentId: string
-): Promise<{ ownerEmail: string; subject: string } | NextResponse> {
+): Promise<{ ownerEmail: string; session: Session; access: AgentAccess } | NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
 
@@ -32,13 +33,25 @@ async function ownedContext(
       { status: 409 }
     );
   }
-  return { ownerEmail, subject: session.subject };
+  return { ownerEmail, session, access };
 }
 
-function errorResponse(
+async function errorResponse(
   outcome: string,
-  where: { subject: string; agentId: string; noteId: string }
-): NextResponse {
+  did: 'replace' | 'delete',
+  where: { session: Session; access: AgentAccess; agentId: string; noteId: string }
+): Promise<NextResponse> {
+  const about = async () => ({
+    component: 'api/agents/knowledge',
+    ...who(where.session),
+    ...(await whichAgentOf({
+      agentId: where.agentId,
+      agentName: where.access.agent.name,
+      ownerSubject: where.access.ownerSubject,
+    })),
+    noteId: where.noteId,
+    did,
+  });
   switch (outcome) {
     case 'NOT_FOUND':
       return NextResponse.json({ error: 'Note not found' }, { status: 404 });
@@ -48,20 +61,22 @@ function errorResponse(
         { status: 409 }
       );
     case 'EMBEDDING_FAILED':
-      logger.warn('The embedding provider could not process the note', {
-        component: 'api/agents/knowledge',
-        ...where,
-      });
+      logger.warn(
+        '{actor} tried to {did} a note of agent "{agent}", but the embedding provider could not process it; the note is unchanged',
+        await about()
+      );
       return NextResponse.json(
         { error: 'The embedding provider could not process the note' },
         { status: 502 }
       );
     default:
-      logger.error('The note could not be saved: {error}', {
-        component: 'api/agents/knowledge',
-        ...where,
-        error: outcome,
-      });
+      logger.error(
+        '{actor} tried to {did} a note of agent "{agent}", but it was not saved: {error}',
+        {
+          ...(await about()),
+          error: outcome,
+        }
+      );
       return NextResponse.json({ error: 'The note could not be saved' }, { status: 500 });
   }
 }
@@ -87,7 +102,7 @@ export async function PUT(
     content: payload.content,
   });
   if (outcome !== 'OK') {
-    return errorResponse(outcome, { subject: context.subject, agentId, noteId });
+    return errorResponse(outcome, 'replace', { ...context, agentId, noteId });
   }
   return NextResponse.json({ ok: true });
 }
@@ -106,7 +121,7 @@ export async function DELETE(
     noteId,
   });
   if (outcome !== 'OK') {
-    return errorResponse(outcome, { subject: context.subject, agentId, noteId });
+    return errorResponse(outcome, 'delete', { ...context, agentId, noteId });
   }
   return NextResponse.json({ ok: true });
 }

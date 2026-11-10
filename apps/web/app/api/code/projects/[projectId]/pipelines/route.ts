@@ -29,6 +29,7 @@ import {
 } from '@/lib/code/bitbucket-pipelines';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export async function GET(
   request: NextRequest,
@@ -45,12 +46,17 @@ export async function GET(
     readSwitch: configureNeeds === null,
   });
   if (!read.ok) {
-    logger.warn('Could not read the Bitbucket pipeline setup: {error}', {
-      component: 'api/code/projects/pipelines',
-      subject,
-      projectId,
-      error: read.error,
-    });
+    logger.warn(
+      '{actor} opened the Pipelines page of the project "{project}" ({repository}), but Bitbucket did not answer; the page showed the error: {error}',
+      {
+        component: 'api/code/projects/pipelines',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        error: read.error,
+      }
+    );
     return jsonError(502, 'bitbucket', read.error);
   }
   const setup = configureNeeds ? { ...read.setup, enabledError: configureNeeds } : read.setup;
@@ -76,12 +82,18 @@ export async function PUT(
   const auth = await bitbucketAuthFor(request, subject);
   const set = await setPipelinesEnabled(auth, project.repo.fullName, body.enabled);
   if (!set.ok) {
-    logger.warn('Could not switch Bitbucket pipelines: {error}', {
-      component: 'api/code/projects/pipelines',
-      subject,
-      projectId,
-      error: set.error,
-    });
+    logger.warn(
+      '{actor} switched pipelines {onOff} for the project "{project}" ({repository}), but Bitbucket refused; the switch is unchanged: {error}',
+      {
+        component: 'api/code/projects/pipelines',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        onOff: body.enabled ? 'on' : 'off',
+        error: set.error,
+      }
+    );
     return jsonError(502, 'bitbucket', set.error);
   }
   recordAuditEvent({

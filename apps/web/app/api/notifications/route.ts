@@ -23,6 +23,7 @@ import { getDataStore } from '@renkei/db';
 import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -88,11 +89,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     'DB_ERROR' as const
   );
   if (!read.ok) {
-    logger.error('Database unavailable: {error}', {
-      component: 'api/notifications',
-      subject: session.subject,
-      error: read.err.message ?? read.err.type,
-    });
+    logger.error(
+      '{actor} polled their notifications, but they could not be read from the database; the feed showed an error: {error}',
+      {
+        component: 'api/notifications',
+        ...who(session),
+        limit,
+        error: read.err.message ?? read.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   }
   const [rows, unread] = read.val;
@@ -153,11 +158,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     'DB_ERROR' as const
   );
   if (!marked.ok) {
-    logger.error('Database unavailable: {error}', {
-      component: 'api/notifications',
-      subject: session.subject,
-      error: marked.err.message ?? marked.err.type,
-    });
+    logger.error(
+      '{actor} marked {which} notifications {state}, but the change was not saved: {error}',
+      {
+        component: 'api/notifications',
+        ...who(session),
+        which: ids ? String(ids.length) : 'all',
+        state: toUnread ? 'unread' : 'read',
+        error: marked.err.message ?? marked.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });
   }
   return NextResponse.json({ marked: marked.val });
@@ -191,9 +201,10 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
     'DB_ERROR' as const
   );
   if (!deleted.ok) {
-    logger.error('Database unavailable: {error}', {
+    logger.error('{actor} dismissed {which} notifications, but none were deleted: {error}', {
       component: 'api/notifications',
-      subject: session.subject,
+      ...who(session),
+      which: ids ? String(ids.length) : 'all',
       error: deleted.err.message ?? deleted.err.type,
     });
     return NextResponse.json({ error: 'Database unavailable' }, { status: 500 });

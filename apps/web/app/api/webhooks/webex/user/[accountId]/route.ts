@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getDataStore } from '@renkei/db';
+import { actorFields, describeAccountActor, getDataStore } from '@renkei/db';
 import { webhookEventsQueue } from '@renkei/queue';
 import { WEBEX_USER } from '@renkei/provider-grants';
 import { verifyWebexSignature, parseWebhookPayload } from '@renkei/connector-webex';
@@ -46,12 +46,16 @@ export async function POST(
   try {
     grant = await getDataStore().providerGrants.find(WEBEX_USER, accountId);
   } catch (error) {
-    logger.error('Could not read the WebEx grant for account {accountId}: {error}', {
-      component: 'webex/webhook',
-      accountId,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'WebEx sent a delivery for the all-spaces webhook of {actor}, but the grant could not be read; answered 500 so WebEx retries: {error}',
+      {
+        component: 'webex/webhook',
+        ...actorFields(await describeAccountActor(accountId)),
+        accountId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     // 500 so WebEx retries instead of dropping the delivery.
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
@@ -66,9 +70,14 @@ export async function POST(
   }
 
   if (!verifyWebexSignature(rawBody, signature, metadata.allSpacesSecret)) {
-    logger.warn('Rejected user delivery with bad signature', {
-      component: 'webex/webhook',
-    });
+    logger.warn(
+      "A WebEx delivery for the all-spaces webhook of {actor} was rejected (401) because its signature did not verify against the grant's secret; dropped",
+      {
+        component: 'webex/webhook',
+        ...actorFields(await describeAccountActor(accountId)),
+        accountId,
+      }
+    );
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 
@@ -97,10 +106,16 @@ export async function POST(
     orderingKey: payload.val.roomId ? `webex/${accountId}/${payload.val.roomId}` : null,
   });
   if (!enqueued.ok) {
-    logger.error('Event NOT accepted: {error}', {
-      component: 'webex/webhook',
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      'WebEx sent a verified messages.created event for {actor}, but it was not queued for the worker; answered 500 so WebEx retries: {error}',
+      {
+        component: 'webex/webhook',
+        ...actorFields(await describeAccountActor(accountId)),
+        accountId,
+        roomId: payload.val.roomId ?? null,
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     return NextResponse.json({ error: 'Could not accept event' }, { status: 500 });
   }
 

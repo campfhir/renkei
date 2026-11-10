@@ -22,6 +22,7 @@ import { createDraft, latestReadyDraft } from '@/lib/agents/draft-store';
 import { getAgent } from '@/lib/agents/store';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { who, whichAgent } from '@/lib/log-actor';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -82,11 +83,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     orderingKey: `draft:${session.subject}`,
   });
   if (!enqueued.ok) {
-    logger.error('could not enqueue draft job {draftId}: {error}', {
-      component: 'api/agents-draft',
-      draftId,
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      '{actor} asked for an agent draft{forAgent}, but the drafting job was not queued; the builder will see no draft: {error}',
+      {
+        component: 'api/agents-draft',
+        ...who(session),
+        ...(agentId ? await whichAgent(agentId) : {}),
+        forAgent: agentId ? ' revising an existing agent' : '',
+        draftId,
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     return NextResponse.json(
       { error: 'Could not start drafting. Try again in a moment.' },
       { status: 503 }

@@ -26,6 +26,7 @@ import {
   type SandboxTarget,
 } from '@renkei/sandbox-client';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export type LanguageGapReason = 'no_server' | 'not_installed';
 
@@ -87,11 +88,16 @@ export function noteLanguageGap(input: {
       reason,
       samplePath: input.path.slice(0, 1_000),
     });
-  })().catch((error: unknown) => {
-    logger.warn('language gap not recorded for {path}: {error}', {
-      component: 'code/language-gaps',
-      path: input.path,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  })().catch(async (error: unknown) => {
+    logger.warn(
+      "the {language} gap {actor}'s sandbox hit on {path} was not recorded; the gaps report is missing it: {error}",
+      {
+        component: 'code/language-gaps',
+        ...(await whoIs(input.target.subject)),
+        language: input.language,
+        path: input.path,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   });
 }

@@ -21,6 +21,7 @@ import {
   MAX_AGENT_NOTE_TITLE_CHARS,
 } from '@/lib/agents/agent-notes';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 import { isRecord } from '@renkei/guards';
 
 export async function GET(
@@ -81,22 +82,38 @@ export async function POST(
       );
     }
     if (created === 'EMBEDDING_FAILED') {
-      logger.warn('The embedding provider could not process the note; nothing was saved', {
-        component: 'api/agents/knowledge',
-        subject: session.subject,
-        agentId,
-      });
+      logger.warn(
+        '{actor} added the note "{title}" to agent "{agent}", but the embedding provider could not process it; nothing was saved',
+        {
+          component: 'api/agents/knowledge',
+          ...who(session),
+          ...(await whichAgentOf({
+            agentId,
+            agentName: access.agent.name,
+            ownerSubject: access.ownerSubject,
+          })),
+          title: payload.title,
+        }
+      );
       return NextResponse.json(
         { error: 'The embedding provider could not process the note; nothing was saved' },
         { status: 502 }
       );
     }
-    logger.error('The note could not be saved: {error}', {
-      component: 'api/agents/knowledge',
-      subject: session.subject,
-      agentId,
-      error: created,
-    });
+    logger.error(
+      '{actor} added the note "{title}" to agent "{agent}", but it was not saved: {error}',
+      {
+        component: 'api/agents/knowledge',
+        ...who(session),
+        ...(await whichAgentOf({
+          agentId,
+          agentName: access.agent.name,
+          ownerSubject: access.ownerSubject,
+        })),
+        title: payload.title,
+        error: created,
+      }
+    );
     return NextResponse.json({ error: 'The note could not be saved' }, { status: 500 });
   }
   return NextResponse.json({ noteId: created.noteId }, { status: 201 });

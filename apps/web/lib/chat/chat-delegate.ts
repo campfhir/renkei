@@ -49,6 +49,7 @@ import {
 import { MOCKUP_TOOL } from '@/lib/mockups/request';
 import { ASK_FORM_TOOL } from './ask-form';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { onShutdown } from '@/lib/shutdown';
 import { descendantsOf, findTask, isFinished, taskRef, type ChatTaskView } from './tasks/graph';
 import { changeTask, listTasks } from './tasks/store';
@@ -150,11 +151,17 @@ async function settleLinkedTask(
       new Date()
     );
     if (!settled.ok) {
-      logger.warn('a sub-agent’s task could not be settled: {reason}', {
-        component: 'chat/delegate',
-        chatId: context.chatId,
-        reason: settled.reason,
-      });
+      logger.warn(
+        "a sub-agent of {actor}'s chat finished, but its task could not be marked {status} ({reason}); the task stays open",
+        {
+          component: 'chat/delegate',
+          ...(await whoIs(context.subject)),
+          chatId: context.chatId,
+          taskId,
+          status: outcome.isError ? 'failed' : 'completed',
+          reason: settled.reason,
+        }
+      );
     }
   }
   wakeSoon(context.chatId);
@@ -362,12 +369,16 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
       void go({ ...context, signal: stop.signal })
         .then((outcome) => settleLinkedTask(context, taskId, outcome))
         .catch(async (error: unknown) => {
-          logger.warn('background sub-agent failed: {error}', {
-            component: 'chat/delegate',
-            subject: context.subject,
-            chatId: context.chatId,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            "a background sub-agent of {actor}'s chat stopped unexpectedly; its task is marked failed: {error}",
+            {
+              component: 'chat/delegate',
+              ...(await whoIs(context.subject)),
+              chatId: context.chatId,
+              taskId,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
           await settleLinkedTask(
             context,
             taskId,

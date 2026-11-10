@@ -19,10 +19,13 @@ import { logger } from '@/lib/logger';
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/mcp/.well-known/oauth-protected-resource',
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      'An MCP client asked for the protected resource metadata, but the app origin could not be resolved; it was answered with a config error: {error}',
+      {
+        component: 'api/mcp/.well-known/oauth-protected-resource',
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const issuer = `${originResult.val}/api/mcp`;

@@ -20,6 +20,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { redirectToConsent } from '@/lib/consent-redirect';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   request: NextRequest,
@@ -35,12 +36,15 @@ export async function GET(
   }
   const server = await getServer(serverId);
   if (!server.ok) {
-    logger.error('Database error: {error}', {
-      component: 'mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: server.err.message ?? server.err.type,
-    });
+    logger.error(
+      '{actor} asked to connect an MCP server, but the server could not be read from the database; no sign-in was started: {error}',
+      {
+        component: 'mcp-servers',
+        ...who(session),
+        serverId,
+        error: server.err.message ?? server.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   if (!server.val || !server.val.enabled) {
@@ -52,24 +56,33 @@ export async function GET(
 
   const origin = await getOrigin(request);
   if (!origin.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: origin.err.message ?? origin.err.type,
-    });
+    logger.error(
+      '{actor} asked to connect the MCP server "{server}", but the app origin could not be resolved; no sign-in was started: {error}',
+      {
+        component: 'mcp-servers',
+        ...who(session),
+        serverId,
+        server: server.val.name,
+        error: origin.err.message ?? origin.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const redirectUri = `${origin.val}/api/oauth/callback`;
 
   const prepared = await delegateGrants().mcpPrepare({ serverId, redirectUri });
   if (!prepared.ok) {
-    logger.warn('MCP connect could not be prepared: {reason}', {
-      component: 'mcp-servers',
-      server: server.val.slug,
-      reason: prepared.err.type,
-      detail: prepared.err.message,
-    });
+    logger.warn(
+      '{actor} asked to connect the MCP server "{server}", but the delegate could not prepare the sign-in ({reason}); the person saw an error instead of the server\'s sign-in page',
+      {
+        component: 'mcp-servers',
+        ...who(session),
+        serverId,
+        server: server.val.slug,
+        reason: prepared.err.type,
+        detail: prepared.err.message,
+      }
+    );
     const status = prepared.err.type === 'NEEDS_CLIENT' ? 409 : 502;
     return NextResponse.json(
       {

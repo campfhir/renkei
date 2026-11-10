@@ -36,6 +36,7 @@
 import { getDataStore } from '@renkei/db';
 import { recordAgentRunOutcome } from '@renkei/agents/runs';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgent } from '@/lib/log-actor';
 import { discardRunJobs } from './run-jobs';
 
 export type ForceHaltRunResult =
@@ -79,13 +80,16 @@ export async function forceHaltRun(input: {
 
   await discardRunJobs(input.runId);
 
-  logger.warn('run {runId} halted while stuck', {
-    component: 'agents/halt',
-    runId: input.runId,
-    agentId: input.agentId,
-    subject: run.ownerSubject,
-    haltedBy: input.haltedBySubject,
-  });
+  logger.warn(
+    '{actor} halted run {runId} of agent "{agent}" of {owner}, which was stuck while {status}; its queued jobs were discarded',
+    {
+      component: 'agents/halt',
+      ...(await whoIs(input.haltedBySubject)),
+      ...(await whichAgent(input.agentId)),
+      runId: input.runId,
+      status: run.status,
+    }
+  );
 
   // Best-effort, same posture as the janitor: the status flip above is what
   // matters, the usage/history ledger is secondary.

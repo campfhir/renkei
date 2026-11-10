@@ -311,11 +311,14 @@ export async function recoverOrphanedTurns(): Promise<number> {
   });
   for (const id of exhausted) {
     await interruptSubagentRunsOfTurn(id);
-    logger.warn('chat turn interrupted after {max} resumes', {
-      component: 'chat/turn-recovery',
-      turnId: id,
-      max: MAX_TURN_RESUMES,
-    });
+    logger.warn(
+      'a chat turn was resumed {max} times without finishing and was interrupted; its chat shows the error and its sub-agent runs were stopped',
+      {
+        component: 'chat/turn-recovery',
+        turnId: id,
+        max: MAX_TURN_RESUMES,
+      }
+    );
   }
   const claimed = await claimResumableTurns({
     staleSeconds: STALE_HEARTBEAT_SECONDS,
@@ -324,12 +327,15 @@ export async function recoverOrphanedTurns(): Promise<number> {
   });
   for (const turn of claimed) {
     void resumeChatTurn(turn).catch((error: unknown) => {
-      logger.error('chat turn resume crashed: {message}', {
-        component: 'chat/turn-recovery',
-        chatId: turn.chatId,
-        turnId: turn.id,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the resume of an orphaned chat turn crashed; the turn stays as the claim left it until the next sweep: {message}',
+        {
+          component: 'chat/turn-recovery',
+          chatId: turn.chatId,
+          turnId: turn.id,
+          message: error instanceof Error ? error.message : String(error),
+        }
+      );
     });
   }
   return claimed.length;
@@ -351,10 +357,13 @@ export function startTurnRecovery(intervalMs = RECOVERY_SWEEP_MS): () => void {
       // this process's own timer is gone if it restarted since.
       await fireDueTaskWaits();
     } catch (error) {
-      logger.error('chat turn recovery sweep failed: {message}', {
-        component: 'chat/turn-recovery',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the chat turn recovery sweep failed; orphaned turns and due task waits wait for the next pass: {message}',
+        {
+          component: 'chat/turn-recovery',
+          message: error instanceof Error ? error.message : String(error),
+        }
+      );
     } finally {
       running = false;
     }

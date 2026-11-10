@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { resolveProject } from './work-types';
@@ -38,11 +38,10 @@ export async function registerVersionTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_versions invoked', {
+      logger.debug('{caller} called jira_list_versions', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_versions',
       });
       try {
         const { projectKey, orderBy = 'sequence', expand } = args;
@@ -123,11 +122,10 @@ export async function registerVersionTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_version invoked', {
+      logger.debug('{caller} called jira_create_version', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_version',
       });
       try {
         const { projectKey, name, description, startDate, releaseDate, released } = args;
@@ -218,11 +216,10 @@ export async function registerVersionTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_get_version invoked', {
+      logger.debug('{caller} called jira_get_version', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_get_version',
       });
       try {
         const { versionId } = args;

@@ -11,7 +11,7 @@ import { randomUUID } from 'crypto';
 import { cache } from 'react';
 import type { NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
-import { getDataStore } from '@renkei/db';
+import { getDataStore, describeActor, actorFields, type Actor } from '@renkei/db';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings } from '@renkei/settings';
 import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
@@ -56,6 +56,13 @@ export interface Session {
   subject: string;
   roles: string[];
   expiresAt: Date;
+  /**
+   * Who the subject is, for log lines and audit rows: the recorded display
+   * name and email beside the id (`who(session)` in lib/log-actor.ts turns
+   * it into log attributes). Resolved once per request from the identity
+   * cache, never from the cookie.
+   */
+  actor: Actor;
 }
 
 export function sessionCookieOptions(maxAgeSeconds: number) {
@@ -76,24 +83,26 @@ export async function createSession(
   const id = randomUUID();
   const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
+  const actor = await describeActor(subject);
   try {
     await getDataStore().sessions.create({ id, subject, roles, expiresAt });
   } catch (error) {
-    logger.error('Failed to create session', {
+    logger.error('{actor} could not be signed in: the session row was not written: {error}', {
       component: 'auth/session',
-      subject,
+      ...actorFields(actor),
+      roles,
       error: error instanceof Error ? error.message : String(error),
     });
     return err('SESSION_ERROR' as const);
   }
 
-  logger.info('Created', {
+  logger.info('{actor} signed in with roles {roles}; the session lasts until {expiresAt}', {
     component: 'auth/session',
-    subject,
+    ...actorFields(actor),
     roles,
     expiresAt: expiresAt.toISOString(),
   });
-  return ok({ id, subject, roles, expiresAt });
+  return ok({ id, subject, roles, expiresAt, actor });
 }
 
 /**
@@ -111,7 +120,12 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
   const now = new Date();
   if (row.expiresAt < now) {
     await sessions.delete(sessionId);
-    logger.debug('Expired session discarded', { component: 'auth/session', sessionId });
+    logger.debug('{actor} arrived with a session past its {expiresAt} lifetime; signed out', {
+      component: 'auth/session',
+      ...actorFields(await describeActor(row.subject)),
+      sessionId,
+      expiresAt: row.expiresAt.toISOString(),
+    });
     return null;
   }
 
@@ -122,8 +136,9 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
   const idleFor = now.getTime() - row.lastUsedAt.getTime();
   if (idleFor > (await idleTimeoutMs())) {
     await sessions.delete(sessionId);
-    logger.info('Idle session ended', {
+    logger.info('{actor} was idle for {idleMinutes} minutes, past the org timeout; signed out', {
       component: 'auth/session',
+      ...actorFields(await describeActor(row.subject)),
       sessionId,
       idleMinutes: Math.round(idleFor / 60_000),
     });
@@ -137,6 +152,7 @@ export async function getSessionById(sessionId: string): Promise<Session | null>
     subject: row.subject,
     roles: row.roles,
     expiresAt: row.expiresAt,
+    actor: await describeActor(row.subject),
   };
 }
 

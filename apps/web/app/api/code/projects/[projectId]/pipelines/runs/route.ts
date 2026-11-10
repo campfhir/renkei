@@ -19,6 +19,7 @@ import {
 import { recordAuditEvent } from '@/lib/audit-events';
 import { missingScope, pipelinesProjectContext } from '@/lib/code/pipelines-access';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -35,12 +36,20 @@ export async function POST(
   const auth = await bitbucketAuthFor(request, subject);
   const started = await triggerPipeline(auth, project.repo.fullName, input.input);
   if (!started.ok) {
-    logger.warn('Could not start the Bitbucket pipeline: {error}', {
-      component: 'api/code/projects/pipelines/runs',
-      subject,
-      projectId,
-      error: started.error,
-    });
+    logger.warn(
+      '{actor} asked to start a pipeline on {refType} {ref} of the project "{project}" ({repository}), but Bitbucket refused; no run was started: {error}',
+      {
+        component: 'api/code/projects/pipelines/runs',
+        ...(await whoIs(subject)),
+        projectId,
+        project: project.name,
+        repository: project.repo.fullName,
+        ref: input.input.ref,
+        refType: input.input.refType,
+        pattern: input.input.pattern || null,
+        error: started.error,
+      }
+    );
     return jsonError(502, 'bitbucket', started.error);
   }
   recordAuditEvent({

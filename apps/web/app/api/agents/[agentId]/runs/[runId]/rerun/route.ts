@@ -33,6 +33,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -135,11 +136,15 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 409 });
   }
 
-  logger.info('run {runId} re-run as {newRunId} by {subject}', {
-    component: 'web/agents',
-    runId,
-    newRunId: created.val.runId,
-    subject: session.subject,
-  });
+  logger.info(
+    '{actor} re-ran run {runId} of agent "{agent}" on the same input, as run {newRunId}',
+    {
+      component: 'web/agents',
+      ...who(session),
+      ...(await whichAgentOf({ agentId, agentName: agent.name, ownerSubject: agent.ownerSubject })),
+      runId,
+      newRunId: created.val.runId,
+    }
+  );
   return NextResponse.json({ runId: created.val.runId });
 }
