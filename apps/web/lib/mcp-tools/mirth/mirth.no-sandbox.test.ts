@@ -67,6 +67,7 @@ const ARGS: Record<string, Record<string, unknown>> = {
   mirth_list_channels: { instanceId: INSTANCE },
   mirth_get_channel: { instanceId: INSTANCE, channelId: 'c1' },
   mirth_channel_status: { instanceId: INSTANCE, channelId: 'c1' },
+  mirth_test_connector: { instanceId: INSTANCE, channelId: 'c1', metaDataId: 1 },
   mirth_channel_statistics: { instanceId: INSTANCE },
   mirth_list_channel_groups: { instanceId: INSTANCE },
   mirth_search_messages: { instanceId: INSTANCE, channelId: 'c1' },

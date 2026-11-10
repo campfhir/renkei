@@ -84,6 +84,14 @@ import {
 import { isRecord } from '@renkei/guards';
 import { connectorEndpointsOf, endpointLine, matchesEndpoint } from './endpoints';
 import {
+  TESTABLE_TRANSPORTS,
+  channelConnectorsOf,
+  connectionTestLine,
+  connectionTestOf,
+  connectionTestResultOf,
+  connectorLabel,
+} from './connection-test';
+import {
   alertModelsOf,
   alertSummaryOf,
   channelCoverage,
@@ -954,6 +962,108 @@ export function registerMirthTools(
         ),
       ].filter(Boolean);
       return textResult(lines.join('\n'));
+    }
+  );
+
+  gated('channels.read').registerTool(
+    'mirth_test_connector',
+    {
+      title: "Mirth · Read — Test a connector's connection",
+      description:
+        "The Administrator's Test Connection / Test Read / Test Write for a channel's " +
+        'connectors, run from the Mirth server with the settings the channel holds: a TCP ' +
+        'Sender opens its socket, an HTTP or Web Service Sender reaches its URL, a File Reader ' +
+        'or File Writer reads or writes its directory (file, FTP, SFTP, SMB, S3, WebDAV), a ' +
+        'Document Writer writes its directory. Answers SUCCESS, TIMED OUT or FAILED with ' +
+        "Mirth's message per connector. Name one connector (0 = source, 1.. = destinations, " +
+        `or its name), or omit it to test every connector of the channel Mirth can test ` +
+        `(${TESTABLE_TRANSPORTS}); a listener, database, channel writer, JavaScript writer, ` +
+        'JMS, DICOM or SMTP connector has no test — use mirth_channel_status for its state. ' +
+        'Nothing on the channel changes.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({
+        instanceId: instanceIdField,
+        channelId: channelIdField,
+        metaDataId: connectorField
+          .optional()
+          .describe(
+            'The connector to test (0 = source, 1.. = destinations), by metaDataId or name. Omit ' +
+              'for every testable connector of the channel.'
+          ),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      const instanceId = str(args.instanceId);
+      const wanted =
+        typeof args.metaDataId === 'number'
+          ? args.metaDataId
+          : str(args.metaDataId).trim() !== ''
+            ? Number(args.metaDataId)
+            : undefined;
+      const answered = await call(instanceId, 'read the channel', {
+        method: 'GET',
+        path: `/channels/${encodeURIComponent(str(args.channelId))}`,
+        accept: 'application/xml',
+      });
+      if (!answered.ok) return errText(answered.message);
+      const channel = channelConnectorsOf(answered.response.body);
+      if (!channel) return errText('Mirth has no channel with that id.');
+      if (wanted !== undefined && !Number.isInteger(wanted)) {
+        return errText(
+          `"${textOf(args.metaDataId)}" is not a connector of channel "${channel.name}"; it has ` +
+            channel.connectors.map((connector) => connectorLabel(connector)).join(', ') +
+            '.'
+        );
+      }
+      const connectors =
+        wanted === undefined
+          ? channel.connectors
+          : channel.connectors.filter((connector) => connector.metaDataId === wanted);
+      if (wanted !== undefined && connectors.length === 0) {
+        return errText(
+          `Channel "${channel.name}" has no connector ${textOf(args.metaDataId)}; it has ` +
+            channel.connectors.map((connector) => connectorLabel(connector)).join(', ') +
+            '.'
+        );
+      }
+
+      const lines: string[] = [];
+      let tested = 0;
+      for (const connector of connectors) {
+        const plan = connectionTestOf(connector);
+        if (!plan) {
+          const why =
+            `Mirth has no connection test for a ${connector.transportName || 'connector of this type'} ` +
+            `(it offers one for ${TESTABLE_TRANSPORTS}).`;
+          if (wanted !== undefined) return errText(`${connectorLabel(connector)}: ${why}`);
+          lines.push(`${connectorLabel(connector)}: not testable — ${why}`);
+          continue;
+        }
+        tested += 1;
+        const probe = await call(instanceId, `test ${connectorLabel(connector)}`, {
+          method: 'POST',
+          path: plan.path,
+          query: { channelId: channel.id, channelName: channel.name },
+          body: plan.body,
+          contentType: plan.contentType,
+          accept: 'application/json',
+        });
+        if (!probe.ok) {
+          if (wanted !== undefined) return errText(probe.message);
+          lines.push(`${connectorLabel(connector)}: not tested — ${probe.message}`);
+          continue;
+        }
+        const result = connectionTestResultOf(parseJson(probe.response.body));
+        lines.push(connectionTestLine(connector, plan, result));
+      }
+      if (connectors.length === 0) {
+        return textResult(`Channel "${channel.name}" (id ${channel.id}) has no connectors.`);
+      }
+      const heading =
+        wanted === undefined
+          ? `Connection tests on channel "${channel.name}" (id ${channel.id}) — ${tested} of ${connectors.length} connector(s) testable:`
+          : `Connection test on channel "${channel.name}" (id ${channel.id}):`;
+      return textResult([heading, ...lines].join('\n'));
     }
   );
 

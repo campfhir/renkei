@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'added',
+        title: "Test a Mirth connector's connection",
+        detail:
+          "Ask an assistant to test a channel's connectors the way the Mirth Administrator's Test Connection, Test Read and Test Write buttons do: a TCP, HTTP or Web Service Sender reaches its endpoint, a File Reader or Writer its directory, a Document Writer its folder, with Mirth's own verdict per connector. Name one connector or test the whole channel; it needs only the Read channels permission and changes nothing.",
+      },
+      {
         kind: 'changed',
         title: 'Log lines name the person and the agent',
         detail:
