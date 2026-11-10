@@ -46,6 +46,17 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-10',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Log lines name the person and the agent',
+        detail:
+          'Every line in Activity and the log search now says who did what, by display name and email, and names an agent with its owner, so a review reads what happened without looking up ids. Ids stay as searchable attributes.',
+      },
+    ],
+  },
+  {
     date: '2026-11-09',
     entries: [
       {
