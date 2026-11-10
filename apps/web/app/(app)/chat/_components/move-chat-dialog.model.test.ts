@@ -16,6 +16,7 @@ const project = (id: string, name: string): ProjectListItem => ({
   role: 'owner',
   updatedAt: '2026-11-01T00:00:00.000Z',
   repoFullName: null,
+  description: null,
 });
 const HIRING = project('p-hiring', 'Hiring');
 const BUDGET = project('p-budget', 'Budget');
