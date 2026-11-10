@@ -1,38 +1,31 @@
 /**
- * The Code page's project list: a search box over name, repository,
- * description and owner, and pages of PAGE_SIZE. Searching returns to the
- * first page; a page past the end (a search that narrowed) is clamped.
- * The page loads every project; this narrows and slices them.
+ * The Code page's project list: one table — mine first, then the ones
+ * shared with me — searched with `?q=` and paged ten at a time with
+ * `?page=`, both in the URL so a view is linkable (the shape the runs list
+ * has). The page loads every project the person can open; this narrows
+ * and slices them, and says where the links go. Pure.
  */
 
 import type { ProjectListItem } from '@/lib/chat/sidebar';
+import { listPage, pageFromParam, type ListPage } from '../../agents/agents-page.model';
 
-export const PAGE_SIZE = 10;
+export { pageFromParam };
 
-export interface CodeIndexState {
-  query: string;
-  /** Zero-based, per group. */
-  pages: { mine: number; shared: number };
+export interface CodeIndexQuery {
+  /** The search text, trimmed; empty for none. */
+  q: string;
+  /** 1-based, as asked (the view clamps it). */
+  page: number;
 }
 
-export type CodeIndexAction =
-  | { type: 'query'; value: string }
-  | { type: 'page'; group: 'mine' | 'shared'; page: number };
-
-export const initialCodeIndex: CodeIndexState = { query: '', pages: { mine: 0, shared: 0 } };
-
-export function codeIndexReducer(state: CodeIndexState, action: CodeIndexAction): CodeIndexState {
-  switch (action.type) {
-    case 'query':
-      return { query: action.value, pages: { mine: 0, shared: 0 } };
-    case 'page':
-      return { ...state, pages: { ...state.pages, [action.group]: Math.max(0, action.page) } };
-  }
+/** The query a request's search params spell: text trimmed, a bad page as the first. */
+export function codeIndexQuery(params: { q?: string; page?: string }): CodeIndexQuery {
+  return { q: (params.q ?? '').trim().slice(0, 200), page: pageFromParam(params.page) };
 }
 
 /** Every word typed must appear somewhere in the project's name, repository, description or owner. */
-export function matchingProjects(projects: ProjectListItem[], query: string): ProjectListItem[] {
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+export function matchingProjects(projects: ProjectListItem[], q: string): ProjectListItem[] {
+  const words = q.toLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return projects;
   return projects.filter((project) => {
     const haystack = [project.name, project.repoFullName, project.description, project.ownerName]
@@ -43,35 +36,35 @@ export function matchingProjects(projects: ProjectListItem[], query: string): Pr
   });
 }
 
-export interface ProjectsPage {
-  items: ProjectListItem[];
-  /** Matches before paging. */
-  total: number;
-  page: number;
-  pageCount: number;
-  /** 1-based "from–to" of the rows shown, or null with none. */
-  range: [number, number] | null;
+export interface CodeIndexView {
+  paging: ListPage<ProjectListItem>;
+  /** Why the list is empty, when it is: nothing exists yet, or the search found nothing. */
+  empty: 'none' | 'no-match' | null;
 }
 
-export function projectsPage(
-  projects: ProjectListItem[],
-  state: CodeIndexState,
-  group: 'mine' | 'shared'
-): ProjectsPage {
-  const matches = matchingProjects(projects, state.query);
-  const pageCount = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
-  const page = Math.min(state.pages[group], pageCount - 1);
-  const items = matches.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+export function codeIndexView(projects: ProjectListItem[], query: CodeIndexQuery): CodeIndexView {
+  // Mine first, then shared, each in the order the page loaded them.
+  const ordered = [
+    ...projects.filter((project) => project.role === 'owner'),
+    ...projects.filter((project) => project.role !== 'owner'),
+  ];
+  const matches = matchingProjects(ordered, query.q);
   return {
-    items,
-    total: matches.length,
-    page,
-    pageCount,
-    range: items.length ? [page * PAGE_SIZE + 1, page * PAGE_SIZE + items.length] : null,
+    paging: listPage(matches, query.page),
+    empty: matches.length > 0 ? null : projects.length === 0 ? 'none' : 'no-match',
   };
 }
 
-/** What an empty group says: nothing yet, or nothing matching the search. */
-export function emptyKind(all: ProjectListItem[], query: string): 'none' | 'no-match' {
-  return all.length === 0 || query.trim() === '' ? 'none' : 'no-match';
+/** A link to the list at this search and page (page 1 and an empty search left out of the URL). */
+export function codeIndexHref({ q, page }: CodeIndexQuery): string {
+  const params = new URLSearchParams();
+  if (q) params.set('q', q);
+  if (page > 1) params.set('page', String(page));
+  const search = params.toString();
+  return `/code${search ? `?${search}` : ''}`;
+}
+
+/** What the Owner column says: "You" on mine, the person's name on a shared one. */
+export function ownerLabel(project: ProjectListItem): string {
+  return project.role === 'owner' ? 'You' : (project.ownerName ?? 'Someone');
 }

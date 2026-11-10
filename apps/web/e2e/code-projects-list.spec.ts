@@ -42,31 +42,38 @@ test('the Code page searches, pages, and describes projects from their README', 
     .toBeGreaterThan(0);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/1-list.png` });
 
-  // Paging: ten a page.
-  const mine = main.locator('section', { has: page.getByRole('heading', { name: 'Mine' }) });
-  await expect(mine.locator('li')).toHaveCount(10);
-  await expect(mine.getByText('1–10 of 13')).toBeVisible();
-  await mine.getByRole('navigation', { name: 'Mine pages' }).scrollIntoViewIfNeeded();
+  // Paging: ten a page, the pager riding the bottom edge of the frame.
+  const frame = main.getByRole('group', { name: 'Code projects' });
+  const rows = frame.locator('tbody tr:not([aria-hidden])');
+  await expect(rows).toHaveCount(10);
+  await expect(frame.getByText('Projects 1–10 of 13')).toBeVisible();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/1b-pager.png` });
-  await mine.getByRole('button', { name: 'Next' }).click();
-  await expect(mine.locator('li')).toHaveCount(3);
-  await expect(mine.getByText('11–13 of 13')).toBeVisible();
+  await frame.getByRole('link', { name: 'Next →' }).click();
+  await expect(page).toHaveURL(/\/code\?page=2$/);
+  await expect(rows).toHaveCount(3);
+  await expect(frame.getByText('Projects 11–13 of 13')).toBeVisible();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/2-page-two.png` });
 
-  // Search by the hand-typed description, back on page one.
-  await main.getByRole('searchbox', { name: 'Search code projects' }).fill('invoicing');
-  await expect(mine.locator('li')).toHaveCount(1);
-  await expect(mine.getByText(names[0]!)).toBeVisible();
+  // Search by the hand-typed description: in the URL, back on page one.
+  const search = main.getByRole('searchbox', { name: 'Search code projects' });
+  await search.fill('invoicing');
+  await expect(page).toHaveURL(/\/code\?q=invoicing$/);
+  await expect(rows).toHaveCount(1);
+  await expect(rows.getByText(names[0]!)).toBeVisible();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/3-search.png` });
 
   // Nothing matching says so.
-  await main.getByRole('searchbox', { name: 'Search code projects' }).fill('zzzz-nothing');
-  await expect(main.getByText('No projects match your search.').first()).toBeVisible();
+  await search.fill('zzzz-nothing');
+  await expect(main.getByText('No projects match your search.')).toBeVisible();
 
-  // Phone width.
-  await main.getByRole('searchbox', { name: 'Search code projects' }).fill('');
+  // Phone width: cards, not a table, the pager still at the bottom.
+  await search.fill('');
+  await expect(rows).toHaveCount(10);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(mine.locator('li')).toHaveCount(10);
+  const cards = frame.getByRole('list', { name: 'Code projects' }).locator('li:not([aria-hidden])');
+  await expect(cards).toHaveCount(10);
+  await expect(frame.locator('table')).toBeHidden();
+  await frame.getByRole('navigation', { name: 'Code project pages' }).scrollIntoViewIfNeeded();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/4-phone.png` });
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)

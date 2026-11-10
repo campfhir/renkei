@@ -1,21 +1,23 @@
 'use client';
 
-import { useReducer } from 'react';
 import Link from 'next/link';
-import { Icon, ICONS } from '@/components/icons';
 import type { ProjectListItem } from '@/lib/chat/sidebar';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import { DataFrame, DataTable, Pager, Th } from '@/components/data-table';
+import { fillerRows } from '../../agents/agents-page.model';
 import {
-  codeIndexReducer,
-  emptyKind,
-  initialCodeIndex,
-  projectsPage,
-  type CodeIndexAction,
-  type CodeIndexState,
+  codeIndexHref,
+  ownerLabel,
+  type CodeIndexQuery,
+  type CodeIndexView,
 } from './code-index.model';
+import CodeSearch from './code-search';
 
-export default function CodeIndex({ projects, enabled, canCreate, accessNotice }: {
+export default function CodeIndex({ projects, query, view, enabled, canCreate, accessNotice }: {
+  /** Every project the person can open (what the search and pages slice). */
   projects: ProjectListItem[];
+  query: CodeIndexQuery;
+  view: CodeIndexView;
   /** The deployment runs code workspaces; without them nothing here can be made. */
   enabled: boolean;
   /** This person's Bitbucket or GitHub connection carries what a project runs on (lib/code/access.ts). */
@@ -23,10 +25,8 @@ export default function CodeIndex({ projects, enabled, canCreate, accessNotice }
   /** When it does not: what to connect, said the Connectors page's way. */
   accessNotice: string | null;
 }) {
-  const mine = projects.filter((project) => project.role === 'owner');
-  const shared = projects.filter((project) => project.role !== 'owner');
-
-  const [state, dispatch] = useReducer(codeIndexReducer, initialCodeIndex);
+  const rows = view.paging.rows;
+  const fillers = Array.from({ length: fillerRows(view.paging) }, (_, index) => index);
   const newAnchor = useCoachAnchor('code-new');
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -68,109 +68,144 @@ export default function CodeIndex({ projects, enabled, canCreate, accessNotice }
           </p>
         ) : null}
         {projects.length > 0 ? (
-          <input
-            type="search"
-            value={state.query}
-            onChange={(event) => dispatch({ type: 'query', value: event.target.value })}
-            placeholder="Search projects"
-            aria-label="Search code projects"
-            className="w-full rounded-md border border-gray-300 bg-transparent px-3 py-2 text-sm dark:border-gray-700"
-          />
-        ) : null}
-        <Group
-          title="Mine"
-          group="mine"
-          projects={mine}
-          state={state}
-          dispatch={dispatch}
-          empty="You have no code projects yet."
-        />
-        <Group
-          title="Shared with me"
-          group="shared"
-          projects={shared}
-          state={state}
-          dispatch={dispatch}
-          empty="Nothing has been shared with you."
-        />
+          <div className="space-y-3">
+            <CodeSearch initialQ={query.q} />
+            <DataFrame
+              label="Code projects"
+              empty={
+                view.empty ? (
+                  <p className="p-4 text-sm text-gray-500">
+                    {view.empty === 'no-match'
+                      ? 'No projects match your search.'
+                      : 'No code projects yet.'}
+                  </p>
+                ) : undefined
+              }
+              table={
+                <DataTable
+                  head={
+                    <>
+                      <Th className="w-[46%]">Project</Th>
+                      <Th>Repository</Th>
+                      <Th className="w-[20%]">Owner</Th>
+                    </>
+                  }
+                >
+                  {rows.map((project) => (
+                    <Row key={project.id} project={project} />
+                  ))}
+                  {fillers.map((index) => (
+                    <tr key={`filler-${index}`} aria-hidden="true" className={ROW_HEIGHT}>
+                      <td colSpan={3} />
+                    </tr>
+                  ))}
+                </DataTable>
+              }
+              cards={
+                <>
+                  {rows.map((project) => (
+                    <Card key={project.id} project={project} />
+                  ))}
+                  {fillers.map((index) => (
+                    <li key={`filler-${index}`} aria-hidden="true" className={CARD_HEIGHT} />
+                  ))}
+                </>
+              }
+              footer={
+                <Pager
+                  label="Code project pages"
+                  range={view.paging.range ? `Projects ${view.paging.range}` : null}
+                  previousHref={
+                    view.paging.hasPrevious
+                      ? codeIndexHref({ q: query.q, page: view.paging.page - 1 })
+                      : null
+                  }
+                  nextHref={
+                    view.paging.hasNext
+                      ? codeIndexHref({ q: query.q, page: view.paging.page + 1 })
+                      : null
+                  }
+                />
+              }
+            />
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">
+            You have no code projects yet, and nothing has been shared with you.
+          </p>
+        )}
       </div>
     </div>
   );
 }
 
-function Group({ title, group, projects, state, dispatch, empty }: {
-  title: string;
-  group: 'mine' | 'shared';
-  projects: ProjectListItem[];
-  state: CodeIndexState;
-  dispatch: (action: CodeIndexAction) => void;
-  empty: string;
-}) {
-  const shown = projectsPage(projects, state, group);
+/**
+ * Every row and card is a fixed height — long names and descriptions
+ * truncate — so a page of ten is always the same height and the pager
+ * under it holds its place; short last pages are padded to match.
+ */
+const ROW_HEIGHT = 'h-14';
+const CARD_HEIGHT = 'h-[5.75rem]';
+
+/** One project as a table row: from the `sm` breakpoint up. */
+function Row({ project }: { project: ProjectListItem }) {
   return (
-    <section>
-      <h2 className="mb-2 text-xs font-semibold tracking-wide text-gray-500 uppercase">{title}</h2>
-      {shown.total === 0 ? (
-        <p className="text-sm text-gray-500">
-          {emptyKind(projects, state.query) === 'none' ? empty : 'No projects match your search.'}
-        </p>
-      ) : (
-        <>
-          <ul className="divide-y divide-gray-200 rounded-lg border border-gray-200 dark:divide-gray-800 dark:border-gray-800">
-            {shown.items.map((project) => (
-              <li key={project.id}>
-                <Link
-                  href={`/code/${project.id}`}
-                  className="flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-gray-50 dark:hover:bg-gray-900"
-                >
-                  <Icon path={ICONS.code} className="h-5 w-5 shrink-0 text-gray-400" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{project.name}</span>
-                    <span className="block truncate font-mono text-xs text-gray-500">
-                      {project.repoFullName ?? ''}
-                      {project.ownerName ? ` · shared by ${project.ownerName}` : ''}
-                    </span>
-                    {project.description ? (
-                      <span className="line-clamp-2 text-xs text-gray-600 dark:text-gray-400">
-                        {project.description}
-                      </span>
-                    ) : null}
-                  </span>
-                  <Icon path={ICONS.chevron} className="h-4 w-4 text-gray-400" />
-                </Link>
-              </li>
-            ))}
-          </ul>
-          {shown.pageCount > 1 && shown.range ? (
-            <nav
-              aria-label={`${title} pages`}
-              className="mt-2 flex items-center justify-between text-xs text-gray-500"
-            >
-              <span>
-                {shown.range[0]}–{shown.range[1]} of {shown.total}
-              </span>
-              <span className="flex gap-2">
-                <button
-                  type="button"
-                  disabled={shown.page === 0}
-                  onClick={() => dispatch({ type: 'page', group, page: shown.page - 1 })}
-                  className="rounded-md border border-gray-300 px-2 py-1 disabled:opacity-40 dark:border-gray-700"
-                >
-                  Previous
-                </button>
-                <button
-                  type="button"
-                  disabled={shown.page >= shown.pageCount - 1}
-                  onClick={() => dispatch({ type: 'page', group, page: shown.page + 1 })}
-                  className="rounded-md border border-gray-300 px-2 py-1 disabled:opacity-40 dark:border-gray-700"
-                >
-                  Next
-                </button>
-              </span>
-            </nav>
+    <tr className={`${ROW_HEIGHT} border-t border-gray-100 dark:border-gray-800`}>
+      <td className="px-3 align-middle">
+        <Link
+          href={`/code/${project.id}`}
+          title={project.name}
+          className="block truncate font-medium text-gray-900 hover:text-blue-700 hover:underline dark:text-gray-100 dark:hover:text-blue-400"
+        >
+          {project.name}
+        </Link>
+        {project.description ? (
+          <span
+            title={project.description}
+            className="block truncate text-xs text-gray-600 dark:text-gray-400"
+          >
+            {project.description}
+          </span>
+        ) : null}
+      </td>
+      <td className="truncate px-3 align-middle font-mono text-xs text-gray-600 dark:text-gray-400">
+        {project.repoFullName ?? '—'}
+      </td>
+      <td className="truncate px-3 align-middle text-gray-600 dark:text-gray-400">
+        {ownerLabel(project)}
+      </td>
+    </tr>
+  );
+}
+
+/** One project as a card, on a phone: the whole card is the link. */
+function Card({ project }: { project: ProjectListItem }) {
+  return (
+    <li className={CARD_HEIGHT}>
+      <Link
+        href={`/code/${project.id}`}
+        title={project.name}
+        className="flex h-full flex-col justify-center gap-0.5 rounded-lg border border-gray-200 px-3 hover:border-blue-400 dark:border-gray-800"
+      >
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="truncate font-medium text-gray-900 dark:text-gray-100">
+            {project.name}
+          </span>
+          {project.role !== 'owner' ? (
+            <span className="ml-auto shrink-0 text-xs text-gray-500 dark:text-gray-400">
+              {ownerLabel(project)}
+            </span>
           ) : null}
-        </>
-      )}
-    </section>
+        </span>
+        <span className="truncate font-mono text-xs text-gray-500">
+          {project.repoFullName ?? ''}
+        </span>
+        {project.description ? (
+          <span className="truncate text-xs text-gray-600 dark:text-gray-400">
+            {project.description}
+          </span>
+        ) : null}
+      </Link>
+    </li>
   );
 }
