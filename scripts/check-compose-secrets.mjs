@@ -15,6 +15,7 @@ import { join } from 'node:path';
 const OWNERS = {
   DELEGATE_WORKER_API_KEYS: ['worker-delegate'],
   USER_KEY_ENCRYPTION_KEY: ['worker-delegate'],
+  DELEGATE_INSTANCE_KEY: ['worker-delegate'],
   FILESHARES_WORKER_API_KEY: ['worker-delegate', 'worker-fileshares'],
   ONBASE_WORKER_API_KEY: ['worker-delegate', 'worker-onbase'],
   MIRTH_WORKER_API_KEY: ['worker-delegate', 'worker-mirth'],

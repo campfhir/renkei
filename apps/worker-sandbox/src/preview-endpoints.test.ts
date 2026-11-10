@@ -79,6 +79,8 @@ class H(BaseHTTPRequestHandler):
             return self._send(302, '', {'Location': '/hello'})
         if self.path.startswith('/env'):
             return self._send(200, 'PORT=%s URL=%s SECRET=%s' % (os.environ.get('PORT'), os.environ.get('RENKEI_PREVIEW_URL'), os.environ.get('NPM_TOKEN')))
+        if self.path.startswith('/headers'):
+            return self._send(200, 'auth=%s subject=%s' % (self.headers.get('Authorization'), self.headers.get('X-Sandbox-Subject')))
         if self.path.startswith('/ports'):
             return self._send(200, ' '.join('%s=%s' % (k, v) for k, v in sorted(os.environ.items()) if k.startswith('PORT_')))
         if self.path.startswith('/neighbours'):
@@ -242,6 +244,10 @@ describe('a preview', () => {
     const hello = await through('/v1/previews/proxy/web/hello/there?x=1');
     expect(hello.status).toBe(200);
     expect(hello.text).toBe(`hi /hello/there?x=1 host=127.0.0.1:${port}`);
+
+    // The worker's own bearer key and trusted subject stop at the worker:
+    // the server behind the proxy runs the project's code.
+    expect((await through('/v1/previews/proxy/web/headers')).text).toBe('auth=None subject=None');
 
     const env = await through('/v1/previews/proxy/web/env');
     expect(env.text).toBe(

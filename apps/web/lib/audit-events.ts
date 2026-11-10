@@ -38,6 +38,8 @@ export type AuditAction =
   | 'agent.enabled'
   | 'agent.disabled'
   | 'agent.deleted'
+  /** An operator halted runs from the org-wide queue (details: scope, status or runIds, outcome). */
+  | 'agent.runs_halted'
   | 'agent.shared'
   | 'agent.unshared'
   | 'agent.access_granted'

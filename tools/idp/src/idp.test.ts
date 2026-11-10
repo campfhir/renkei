@@ -4,7 +4,14 @@
  */
 
 import { randomBytes } from 'node:crypto';
-import { decrypt, encrypt, parseKeyring } from '@renkei/crypto';
+import {
+  AAD_PURPOSE,
+  aadFor,
+  decryptBoundValue,
+  encrypt,
+  isBoundEnvelope,
+  parseKeyring,
+} from '@renkei/crypto';
 import { createMemoryDataStore, type DataStore } from '@renkei/db';
 import { UsageError, applyChange, parseArgs, showIdp, summaryLines } from './idp';
 
@@ -21,7 +28,7 @@ async function configured(): Promise<DataStore> {
     id: '00000000-0000-4000-8000-0000000001dc',
     issuer: 'https://idp.example.com',
     clientId: 'renkei',
-    clientSecret: encrypt('expired-secret', keyring),
+    clientSecret: encrypt('expired-secret', keyring, aadFor(AAD_PURPOSE.oidcClientSecret)),
     roleClaim: 'roles',
     operatorIdpValue: 'renkei-operator',
     userIdpValue: 'renkei-user',
@@ -33,7 +40,13 @@ async function configured(): Promise<DataStore> {
 async function storedSecret(store: DataStore): Promise<string | null> {
   const record = await store.oidcConfig.get();
   if (!record) return null;
-  const opened = decrypt(record.clientSecret, keyring);
+  // Written as the web app reads it: bound to its purpose, never the legacy form.
+  if (!isBoundEnvelope(record.clientSecret)) return null;
+  const opened = decryptBoundValue(
+    record.clientSecret,
+    keyring,
+    aadFor(AAD_PURPOSE.oidcClientSecret)
+  );
   return opened.ok ? opened.val : null;
 }
 

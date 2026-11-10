@@ -21,6 +21,7 @@ import {
   publicPreviewPath,
   stripCookies,
   stripHopByHop,
+  upstreamRequestHeaders,
   validatePreviewName,
   validatePreviewPorts,
 } from './previews';
@@ -188,5 +189,21 @@ describe('proxy headers', () => {
     expect(proxyResponseHeaders({ location: '//evil.example/x' }, '/p/')).toEqual({
       location: '//evil.example/x',
     });
+  });
+});
+
+describe('upstreamRequestHeaders', () => {
+  it("keeps the worker's bearer key and trusted subject away from the preview's server", () => {
+    expect(
+      upstreamRequestHeaders({
+        Authorization: 'Bearer worker-key',
+        'Proxy-Authorization': 'Basic x',
+        'X-Sandbox-Subject': 'ann',
+        connection: 'keep-alive',
+        host: 'worker:8092',
+        accept: 'text/html',
+        cookie: 'theme=dark',
+      })
+    ).toEqual({ accept: 'text/html', cookie: 'theme=dark' });
   });
 });

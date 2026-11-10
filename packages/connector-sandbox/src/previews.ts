@@ -319,6 +319,23 @@ export function stripHopByHop(
 }
 
 /**
+ * What the worker's own callers send it that the preview's server must never
+ * see: the bearer key that is this worker's whole boundary, and the subject
+ * it trusts beside it. The server on the other side runs a repository's or
+ * a model's code.
+ */
+const WORKER_ONLY_HEADERS = new Set(['authorization', 'proxy-authorization', 'x-sandbox-subject']);
+
+/** The headers a preview's server is sent: no hop-by-hop ones, none of the worker's own. */
+export function upstreamRequestHeaders(
+  headers: Record<string, HeaderValue>
+): Record<string, string | string[]> {
+  const out = stripHopByHop(headers);
+  for (const name of WORKER_ONLY_HEADERS) delete out[name];
+  return out;
+}
+
+/**
  * A `cookie` header without the named cookies — the web app's own
  * session cookie must never reach a project's server, which is running
  * the project's own code: a repository that captured it would hold the

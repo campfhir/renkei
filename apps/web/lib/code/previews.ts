@@ -174,6 +174,26 @@ export function withAddresses(
 const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
 
 /**
+ * The web app's own cookies. A preview is served on the app's origin and
+ * runs a repository's or a model's code, so it is neither sent these nor
+ * allowed to set them: the session, and the sign-in and connect-flow state.
+ */
+function isAppCookie(name: string): boolean {
+  return (
+    name === sessionCookieName() || name.startsWith('oidc_') || name.startsWith('connect_state_')
+  );
+}
+
+/** A `cookie` header without the app's own cookies; empty when nothing is left. */
+function withoutAppCookies(cookieHeader: string): string {
+  const names = cookieHeader
+    .split(';')
+    .map((pair) => pair.trim().split('=')[0]?.trim() ?? '')
+    .filter(isAppCookie);
+  return stripCookies(cookieHeader, names);
+}
+
+/**
  * One browser request relayed to a preview's port through the worker and
  * the answer streamed back. The web app's own session cookie never goes
  * along (the preview runs the project's own code), hop-by-hop headers
@@ -207,7 +227,7 @@ export async function previewRelay(
   for (const [name, value] of Object.entries(incoming)) {
     if (name === 'authorization' || name === 'x-sandbox-subject') continue;
     if (name === 'cookie') {
-      const kept = stripCookies(String(value), [sessionCookieName()]);
+      const kept = withoutAppCookies(String(value));
       if (kept) headers.set('cookie', kept);
       continue;
     }
@@ -262,7 +282,14 @@ export async function previewRelay(
   const responseHeaders = new Headers();
   for (const [name, value] of Object.entries(outgoing)) {
     if (name === 'content-length' || name === 'content-encoding') continue;
+    // Cookies are set one header each, below, and never the app's own.
+    if (name === 'set-cookie') continue;
     responseHeaders.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+  for (const cookie of upstream.headers.getSetCookie()) {
+    if (!isAppCookie(cookie.slice(0, cookie.indexOf('=')).trim())) {
+      responseHeaders.append('set-cookie', cookie);
+    }
   }
   responseHeaders.set('cache-control', 'no-store');
   return new Response(NULL_BODY_STATUSES.has(upstream.status) ? null : upstream.body, {

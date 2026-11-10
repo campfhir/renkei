@@ -429,6 +429,12 @@ services:
       # image from before the map existed, so either reads them.
       DELEGATE_WORKER_API_KEYS: web=${DELEGATE_KEY_WEB:?set DELEGATE_KEY_WEB in .env (openssl rand -base64 32)},worker=${DELEGATE_KEY_WORKER:?set DELEGATE_KEY_WORKER in .env (openssl rand -base64 32)},agents=${DELEGATE_KEY_AGENTS:?set DELEGATE_KEY_AGENTS in .env (openssl rand -base64 32)},sandbox=${DELEGATE_KEY_SANDBOX:?set DELEGATE_KEY_SANDBOX in .env (openssl rand -base64 32)}
       USER_KEY_ENCRYPTION_KEY: ${USER_KEY_ENCRYPTION_KEY:-}
+      # What makes this delegate the same one across restarts: with it set
+      # (openssl rand -base64 32) delegations survive a deploy; unset, the
+      # delegate is ephemeral and every restart pauses agents until people
+      # sign in again. It opens every delegation, so it is the delegate's
+      # alone.
+      DELEGATE_INSTANCE_KEY:
       # The connector workers the delegate forwards to, with the person's
       # credential attached (forward/<connector>/<op>); the bearer keys
       # (*_WORKER_API_KEY) come from .env.
@@ -575,6 +581,7 @@ services:
       SANDBOX_ENV_SECRETS_KEYS:
       SANDBOX_DOCKER_HOST:
       SANDBOX_SERVICES_NETWORK:
+      SANDBOX_PREVIEW_PORTS:
       # A fixed Node heap, well inside the container limit, so the worker's
       # own process can never be what pushes the container over it — the
       # browser gets the rest.
