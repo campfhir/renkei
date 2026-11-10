@@ -1,7 +1,14 @@
 import { compareAsc, orderBy } from '../../memory/order';
 import { wakeQueue } from '../../memory/signals';
 import { toJson, type MemoryTables, type Row } from '../../memory/tables';
-import type { QueueClaimOptions, QueueDeadLetterTable, QueueStore, QueueTable } from './types';
+import {
+  LEASE_EXPIRED_ERROR,
+  type QueueClaimOptions,
+  type QueueDeadLetterTable,
+  type QueueLeaseGuard,
+  type QueueStore,
+  type QueueTable,
+} from './types';
 
 const DEAD_LETTERS: Record<QueueTable, QueueDeadLetterTable> = {
   events: 'events_dead_letters',
@@ -12,15 +19,32 @@ const DEAD_LETTERS: Record<QueueTable, QueueDeadLetterTable> = {
 
 type LiveRow = Row<QueueTable>;
 
-/** Pending past run_after, or processing under a lease older than the stale horizon. */
+/** Processing under a lease older than the stale horizon. */
+function isStaleLease(row: LiveRow, now: number, options: QueueClaimOptions): boolean {
+  return (
+    row.status === 'processing' &&
+    row.locked_at !== null &&
+    row.locked_at.getTime() < now - options.staleClaimMinutes * 60_000
+  );
+}
+
+/** Delivered as often as the claim allows: an expired lease is dead-lettered, never reclaimed. */
+function spentBudget(row: LiveRow, options: QueueClaimOptions): boolean {
+  return options.maxAttempts !== undefined && row.attempts >= options.maxAttempts;
+}
+
+/** Pending past run_after, or a stale lease still inside the delivery budget. */
 function isDue(row: LiveRow, now: number, options: QueueClaimOptions): boolean {
   if (row.status === 'pending') return row.run_after.getTime() <= now;
-  if (row.status === 'processing') {
-    return (
-      row.locked_at !== null && row.locked_at.getTime() < now - options.staleClaimMinutes * 60_000
-    );
-  }
-  return false;
+  return isStaleLease(row, now, options) && !spentBudget(row, options);
+}
+
+/** The settle guard: only the delivery that still holds the lease. */
+function heldAt(row: LiveRow, guard: QueueLeaseGuard | undefined): boolean {
+  return (
+    guard?.attempts === undefined ||
+    (row.status === 'processing' && row.attempts === guard.attempts)
+  );
 }
 
 function inSources(row: LiveRow, options: QueueClaimOptions): boolean {
@@ -51,6 +75,32 @@ function textAt(payload: unknown, path: readonly string[]): string | null {
 }
 
 export function memoryQueues(tables: MemoryTables): QueueStore {
+  /** Move the matching live rows to the dead letters; how many moved. */
+  function moveToDeadLetters(
+    table: QueueTable,
+    match: (row: LiveRow) => boolean,
+    error: string
+  ): number {
+    const moving = tables.select(table, match);
+    const deadAt = new Date();
+    for (const row of moving) {
+      tables.insert(DEAD_LETTERS[table], {
+        id: row.id,
+        source: row.source,
+        type: row.type,
+        payload: toJson(row.payload),
+        ordering_key: row.ordering_key,
+        attempts: row.attempts,
+        last_error: error,
+        created_at: row.created_at,
+        dead_at: deadAt,
+      });
+    }
+    const ids = new Set(moving.map((row) => row.id));
+    tables.delete(table, (r) => ids.has(r.id));
+    return moving.length;
+  }
+
   return {
     async enqueue(table, message) {
       const key = message.orderingKey ?? null;
@@ -91,6 +141,20 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
           match.every((entry) => textAt(r.payload, entry.path) === entry.value)
       ).length;
     },
+    async pruneSettled(table, before, limit) {
+      const settled = tables.select(
+        table,
+        (r) =>
+          (r.status === 'processed' || r.status === 'skipped') &&
+          r.created_at.getTime() < before.getTime()
+      );
+      const gone = new Set(
+        orderBy(settled, [(r) => r.created_at], [(r) => r.id])
+          .slice(0, limit)
+          .map((r) => r.id)
+      );
+      return tables.delete(table, (r) => gone.has(r.id)).length;
+    },
     async listPending(table) {
       const rows = tables.select(table, (r) => r.status === 'pending');
       return orderBy(rows, [(r) => r.created_at], [(r) => r.id]).map((row) => ({
@@ -116,6 +180,13 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
     // locks there is nobody here to take.
     async claim(table, options) {
       const now = Date.now();
+      if (options.maxAttempts !== undefined) {
+        moveToDeadLetters(
+          table,
+          (r) => isStaleLease(r, now, options) && spentBudget(r, options) && inSources(r, options),
+          LEASE_EXPIRED_ERROR
+        );
+      }
       const rows = tables.select(table);
       const due = rows.filter((r) => isDue(r, now, options) && inSources(r, options));
       if (due.length === 0) return null;
@@ -165,12 +236,25 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
 
     async complete(table, id, outcome, options = {}) {
       const key = id;
-      tables.update(table, (r) => r.id === key, {
-        status: outcome,
-        locked_at: null,
-        updated_at: new Date(),
-        ...(options.clearPayload ? { payload: {} } : {}),
-      });
+      return (
+        tables.update(table, (r) => r.id === key && heldAt(r, options), {
+          status: outcome,
+          locked_at: null,
+          updated_at: new Date(),
+          ...(options.clearPayload ? { payload: {} } : {}),
+        }).length > 0
+      );
+    },
+
+    async extendLease(table, id, attempts) {
+      const key = id;
+      const at = new Date();
+      return (
+        tables.update(table, (r) => r.id === key && heldAt(r, { attempts }), {
+          locked_at: at,
+          updated_at: at,
+        }).length > 0
+      );
     },
 
     async release(table, id, attempts) {
@@ -190,34 +274,23 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       wakeQueue(tables, table);
     },
 
-    async retry(table, id, error, delaySeconds) {
+    async retry(table, id, error, delaySeconds, guard) {
       const key = id;
       const at = new Date();
-      tables.update(table, (r) => r.id === key, {
-        status: 'pending',
-        locked_at: null,
-        last_error: error,
-        run_after: new Date(at.getTime() + delaySeconds * 1000),
-        updated_at: at,
-      });
+      return (
+        tables.update(table, (r) => r.id === key && heldAt(r, guard), {
+          status: 'pending',
+          locked_at: null,
+          last_error: error,
+          run_after: new Date(at.getTime() + delaySeconds * 1000),
+          updated_at: at,
+        }).length > 0
+      );
     },
 
-    async deadLetter(table, id, error) {
+    async deadLetter(table, id, error, guard) {
       const key = id;
-      for (const row of tables.select(table, (r) => r.id === key)) {
-        tables.insert(DEAD_LETTERS[table], {
-          id: row.id,
-          source: row.source,
-          type: row.type,
-          payload: toJson(row.payload),
-          ordering_key: row.ordering_key,
-          attempts: row.attempts,
-          last_error: error,
-          created_at: row.created_at,
-          dead_at: new Date(),
-        });
-      }
-      tables.delete(table, (r) => r.id === key);
+      return moveToDeadLetters(table, (r) => r.id === key && heldAt(r, guard), error) > 0;
     },
 
     async find(table, id) {
@@ -283,10 +356,56 @@ export function memoryQueues(tables: MemoryTables): QueueStore {
       return moved.length;
     },
 
+    async pruneDeadLetters(table, before, limit) {
+      const old = tables.select(DEAD_LETTERS[table], (r) => r.dead_at.getTime() < before.getTime());
+      const gone = new Set(
+        orderBy(old, [(r) => r.dead_at], [(r) => r.id])
+          .slice(0, limit)
+          .map((r) => r.id)
+      );
+      return tables.delete(DEAD_LETTERS[table], (r) => gone.has(r.id)).length;
+    },
     async purgeDeadLetters(table, ids) {
       if (ids.length === 0) return 0;
       const keys = new Set(ids.map((id) => id));
       return tables.delete(DEAD_LETTERS[table], (r) => keys.has(r.id)).length;
+    },
+    async listAgentJobs(agentId, limit) {
+      const source = `agents:${agentId}`;
+      const rows = tables.select(
+        'agent_jobs',
+        (r) => r.source === source && (r.status === 'pending' || r.status === 'processing')
+      );
+      return orderBy(rows, [(r) => r.created_at], [(r) => r.id])
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          type: row.type,
+          runId: textAt(row.payload, ['runId']),
+          batchId: textAt(row.payload, ['batchId']),
+          status: row.status,
+          attempts: row.attempts,
+          lockedAt: row.locked_at,
+          runAfter: row.run_after,
+          lastError: row.last_error,
+          createdAt: row.created_at,
+        }));
+    },
+    async listAgentDeadLetters(agentId, limit) {
+      const source = `agents:${agentId}`;
+      const rows = tables.select('agent_jobs_dead_letters', (r) => r.source === source);
+      return orderBy(rows, [(r) => r.dead_at, 'desc'], [(r) => r.id, 'desc'])
+        .slice(0, limit)
+        .map((row) => ({
+          id: row.id,
+          type: row.type,
+          runId: textAt(row.payload, ['runId']),
+          batchId: textAt(row.payload, ['batchId']),
+          attempts: row.attempts,
+          lastError: row.last_error,
+          createdAt: row.created_at,
+          deadAt: row.dead_at,
+        }));
     },
     async hasLiveAgentRunJob(runId) {
       return (

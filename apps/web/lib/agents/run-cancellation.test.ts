@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/consistent-type-assertions */
 /**
  * What must hold, independent of the caller (route or MCP tool): a run
- * that already finished refuses; the flag is a one-way claim, not a
- * repeatable write; and only a queued/waiting run gets woken — a running
- * one already has its own executor watching for the flag (engine.ts).
+ * that already finished refuses; a queued run is canceled outright, its
+ * queued job dropped; otherwise the flag is a one-way claim, not a
+ * repeatable write, and only a waiting run gets woken — a running one
+ * already has its own executor watching for the flag (engine.ts).
  */
 
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
@@ -95,20 +96,22 @@ describe('requestRunCancellation', () => {
     expect(storedRun()?.cancel_requested_at).toBeNull();
   });
 
-  it('claims a queued run and wakes a worker for it', async () => {
+  it('cancels a queued run outright — it has not started — and drops its queued job', async () => {
     await seedRun('queued');
+    await store.queues.enqueue('agent_jobs', {
+      source: `agents:${AGENT}`,
+      type: 'run',
+      payload: { runId: RUN },
+      orderingKey: `agent:${AGENT}`,
+    });
     const enqueue = jest.fn(async () => ({ ok: true }));
     const result = await requestRunCancellation({ enqueue } as unknown as QueueProducer, input);
-    expect(result).toEqual({ outcome: 'canceling' });
-    expect(storedRun()).toMatchObject({ cancel_requested_by: 'alice' });
-    expect(storedRun()?.cancel_requested_at).toBeInstanceOf(Date);
-    expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'run',
-        payload: { runId: RUN },
-        orderingKey: `agent:${AGENT}`,
-      })
-    );
+    expect(result).toEqual({ outcome: 'canceled' });
+    expect(storedRun()).toMatchObject({ status: 'canceled', cancel_requested_by: 'alice' });
+    expect(storedRun()?.finished_at).toBeInstanceOf(Date);
+    // Nothing waits behind the agent's queue for it any more: no wake, no job.
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(await store.queues.hasLiveAgentRunJob(RUN)).toBe(false);
   });
 
   it('claims a waiting run and wakes a worker for it too', async () => {

@@ -19,6 +19,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
 import { openBlocks, type ContentCipher } from './content-crypto';
@@ -40,6 +41,8 @@ export interface ResendInput {
   voice?: boolean;
   /** See StartTurnInput.timeZone. */
   timeZone?: string | null;
+  /** See StartTurnInput.origin. */
+  origin?: string | null;
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -122,10 +125,16 @@ export async function resendFromMessage(input: ResendInput): Promise<Result<Rese
         const deleted = await store.val.deleteObject(key);
         if (!deleted.ok && deleted.err.type !== 'NOT_FOUND') {
           // The retention sweep cannot see an orphan; say so where someone can.
-          logger.warn('chat artifact blob not deleted: {key} {reason}', {
-            key,
-            reason: deleted.err.type,
-          });
+          logger.warn(
+            '{actor} re-sent a prompt, but a file dropped from the thread was not deleted from storage ({reason}); it lingers as an orphan',
+            {
+              component: 'chat/resend',
+              ...(await whoIs(input.session.subject)),
+              chatId: access.chat.id,
+              key,
+              reason: deleted.err.type,
+            }
+          );
         }
       }
     }
@@ -139,6 +148,7 @@ export async function resendFromMessage(input: ResendInput): Promise<Result<Rese
     llmModelId: input.llmModelId ?? null,
     voice: input.voice === true,
     timeZone: input.timeZone ?? null,
+    origin: input.origin ?? null,
     defer: input.defer,
   });
   if (!started.ok) return started;

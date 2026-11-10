@@ -21,6 +21,7 @@ import { ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { notifyChangeOutcome } from '@/lib/admin-changes/notify';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { isShuttingDown, onShutdown } from '@/lib/shutdown';
 import { resolveJiraAdminAccess, type JiraAdminAccess } from '@/lib/mcp-tools/jira-admin/client';
 import { resolveJsmAccess } from '@/lib/mcp-tools/jira-admin/jsm-access';
@@ -103,23 +104,43 @@ function failure(label: string, detail: string): OperationResult[] {
   return [{ label, outcome: 'failed', detail }];
 }
 
-function finishedWith(
+/** The requester as {actor}, with the operator who approved it beside them. */
+async function aboutChange(change: ChangeRequest) {
+  const approver = change.approvedBy ? await whoIs(change.approvedBy) : null;
+  return {
+    component: COMPONENT,
+    ...(await whoIs(change.subject)),
+    ...(approver
+      ? {
+          approver: approver.actor,
+          approverSubject: approver.subject,
+          approverEmail: approver.email,
+        }
+      : {}),
+    approvedBy: approver ? `, approved by ${approver.actor},` : '',
+    changeId: change.id,
+    kind: change.kind,
+    title: change.title,
+  };
+}
+
+async function finishedWith(
   change: ChangeRequest,
   status: 'applied' | 'partial' | 'failed',
   results: OperationResult[]
-): void {
+): Promise<void> {
   if (status !== 'applied') {
     const failed = results.filter((result) => result.outcome === 'failed');
-    logger.warn('jira admin change {status}: {detail}', {
-      component: COMPONENT,
-      subject: change.subject,
-      approver: change.approvedBy,
-      changeId: change.id,
-      kind: change.kind,
-      status,
-      step: failed[0]?.label ?? null,
-      detail: failed.map((result) => `${result.label}: ${result.detail ?? ''}`).join('; '),
-    });
+    logger.warn(
+      'the Jira admin change "{title}" requested by {actor}{approvedBy} ended {status}{atStep}: {detail}',
+      {
+        ...(await aboutChange(change)),
+        status,
+        step: failed[0]?.label ?? null,
+        atStep: failed[0]?.label ? ` at "${failed[0].label}"` : '',
+        detail: failed.map((result) => `${result.label}: ${result.detail ?? ''}`).join('; '),
+      }
+    );
   }
   recordAuditEvent({
     actorSubject: change.approvedBy ?? change.subject,
@@ -157,7 +178,7 @@ async function end(
     results,
     appliedBy: change.approvedBy ?? change.subject,
   });
-  finishedWith(change, status, results);
+  await finishedWith(change, status, results);
 }
 
 /**
@@ -222,13 +243,14 @@ export async function runApplyJob(changeId: string): Promise<void> {
     await end(change, outcome.status, outcome.results);
   } catch (error) {
     if (heartbeat) clearInterval(heartbeat);
-    logger.error('jira admin change job threw: {message}', {
-      component: COMPONENT,
-      subject: change.subject,
-      changeId: change.id,
-      message: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'the Jira admin change "{title}" requested by {actor}{approvedBy} crashed while being applied; it is marked failed: {message}',
+      {
+        ...(await aboutChange(change)),
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     await end(
       change,
       'failed',
@@ -268,18 +290,25 @@ export function startApplyJobRecovery(intervalMs = APPLY_SWEEP_MS): () => void {
         inFlight.add(job.id);
         void runApplyJob(job.id)
           .catch((error: unknown) => {
-            logger.error('jira admin change job failed: {message}', {
-              component: COMPONENT,
-              message: error instanceof Error ? error.message : String(error),
-            });
+            logger.error(
+              'a queued Jira admin change job threw outside its own handler; the change is left for the next sweep: {message}',
+              {
+                component: COMPONENT,
+                changeId: job.id,
+                message: error instanceof Error ? error.message : String(error),
+              }
+            );
           })
           .finally(() => inFlight.delete(job.id));
       }
     } catch (error) {
-      logger.error('jira admin change sweep failed: {message}', {
-        component: COMPONENT,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the Jira admin change sweep failed; queued changes wait for the next pass: {message}',
+        {
+          component: COMPONENT,
+          message: error instanceof Error ? error.message : String(error),
+        }
+      );
     } finally {
       listing = false;
     }

@@ -22,6 +22,7 @@ import { webhookEventsQueue } from '@renkei/queue';
 import { BATCH_CHUNK_SIZE } from '@renkei/connector-microsoft';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import type { GraphAuth } from '../graph/graph-auth';
 import { logger } from '@/lib/logger';
 
@@ -259,16 +260,18 @@ export function registerBulkJobTools(
         return errText('The job could not be queued — try again.');
       }
 
-      logger.info('outlook_start_bulk_mail_job accepted {jobId}', {
-        component: 'mcp/tool',
-        jobId,
-        action,
-      });
       const count = hasIds
         ? messageIds.length
         : typeof selection.maxMessages === 'number'
           ? selection.maxMessages
           : DEFAULT_JOB_MESSAGES;
+      logger.info('{caller} queued bulk mail job {jobId} to {action} up to {count} message(s)', {
+        component: 'mcp/tool',
+        ...callerFields(context),
+        jobId,
+        action,
+        count,
+      });
       const eta = etaSecondsFor(count, action === 'archive' || action === 'categorize');
       return {
         ...textResult(

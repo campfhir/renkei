@@ -38,6 +38,23 @@ const SENTENCES: Record<string, Sentences> = {
     done: 'Pulled from the remote',
     failed: 'The pull failed',
   },
+  code_git_fetch: {
+    pending: 'Fetching from the remote',
+    done: 'Fetched from the remote',
+    failed: 'The fetch failed',
+  },
+  code_git_rebase: { pending: 'Rebasing', done: 'Rebased', failed: 'The rebase stopped' },
+  code_git_merge: { pending: 'Merging', done: 'Merged', failed: 'The merge stopped' },
+  code_preview_start: {
+    pending: 'Starting a preview',
+    done: 'Started a preview',
+    failed: 'The preview did not start',
+  },
+  code_preview_stop: {
+    pending: 'Stopping a preview',
+    done: 'Stopped a preview',
+    failed: 'The preview could not be stopped',
+  },
   bitbucket_create_pull_request: {
     pending: 'Opening a pull request',
     done: 'Opened a pull request',
@@ -345,11 +362,21 @@ function baseName(name: string): string {
  * acts on pull requests, commits and branches. Everything else — every
  * read, and the host's other acts — is null, and folds.
  */
+/** The code tools that change the branch, the remote, or what is running — the acts worth a line. */
+const CODE_ACTS = new Set([
+  'code_git_commit',
+  'code_git_push',
+  'code_git_pull',
+  'code_git_fetch',
+  'code_git_rebase',
+  'code_git_merge',
+  'code_preview_start',
+  'code_preview_stop',
+]);
+
 export function milestoneKindOf(name: string): MilestoneKind | null {
   const base = baseName(name);
-  if (base === 'code_git_commit' || base === 'code_git_push' || base === 'code_git_pull') {
-    return 'act';
-  }
+  if (CODE_ACTS.has(base)) return 'act';
   const prefix = HOST_TOOL_PREFIXES.find((candidate) => base.startsWith(candidate));
   if (!prefix) return null;
   return MILESTONE_ACTIONS.has(base.slice(prefix.length)) ? 'act' : null;

@@ -37,6 +37,34 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
     },
   },
   {
+    method: 'userPreferences.merge',
+    name: 'named fields replace whole, others stay; twice is once; a new or non-object key becomes the patch',
+    fixture: {
+      user_preferences: [
+        { subject: 'ann', key: 'notifications', value: { a: 1, b: { x: true }, c: 'keep' } },
+        { subject: 'ann', key: 'list', value: [1, 2] },
+        { subject: 'bob', key: 'notifications', value: { a: 9 } },
+      ],
+    },
+    run: async (store) => {
+      await store.userPreferences.merge('ann', 'notifications', { a: 2, b: { y: false } });
+      const once = await store.userPreferences.get('ann', 'notifications');
+      await store.userPreferences.merge('ann', 'notifications', { a: 2, b: { y: false } });
+      const twice = await store.userPreferences.get('ann', 'notifications');
+      await store.userPreferences.merge('ann', 'notifications', { d: [1, 'two'] });
+      await store.userPreferences.merge('ann', 'list', { z: 1 });
+      await store.userPreferences.merge('cat', 'notifications', { a: 3 });
+      return [
+        once,
+        twice,
+        await store.userPreferences.get('ann', 'notifications'),
+        await store.userPreferences.get('ann', 'list'),
+        await store.userPreferences.get('cat', 'notifications'),
+        await store.userPreferences.get('bob', 'notifications'),
+      ];
+    },
+  },
+  {
     method: 'userPreferences.delete',
     name: 'one key of one person; reads as never set after',
     fixture: {
@@ -55,6 +83,22 @@ export const userPreferenceScenarios: Scenario<DataStore>[] = [
         await store.userPreferences.get('bob', 'chatTools'),
       ];
     },
+  },
+  {
+    method: 'userPreferences.listBySubject',
+    name: "one person's keys with their values, by key; other people left out",
+    fixture: {
+      user_preferences: [
+        { subject: 'ann', key: 'theme', value: { mode: 'dark' } },
+        { subject: 'ann', key: 'chatArchive', value: { afterDays: 30 } },
+        { subject: 'ann', key: 'voice', value: ['x', 1] },
+        { subject: 'bob', key: 'aaa', value: { mode: 'light' } },
+      ],
+    },
+    run: async (store) => [
+      await store.userPreferences.listBySubject('ann'),
+      await store.userPreferences.listBySubject('nobody'),
+    ],
   },
   {
     method: 'userPreferences.listByKey',

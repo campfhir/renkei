@@ -21,130 +21,26 @@ import {
   formatTokens,
   periodCaption,
   tokensPerRun,
-  type UtilizationBucket,
 } from './window';
+import { activeSummary } from '../admin/usage/window';
 import { TokenSurfaceBreakdown } from '@/components/token-surface-breakdown';
 import { VoiceUsageCard } from '@/components/voice-usage-card';
 import { ImageUsageCard } from '@/components/image-usage-card';
 import { DocumentUsageCard } from '@/components/document-usage-card';
 import { Leaderboard } from '@/components/leaderboard';
-import type { EfficientAgentRow } from '@/lib/usage/org-usage';
+import type {
+  EfficientAgentRow,
+  ModelTokenRow,
+  OrgToolRow,
+  TopAgentRow,
+} from '@/lib/usage/org-usage';
+import { modelLabel } from '@/lib/agents/model-label';
+import { UsageChart, USAGE_SERIES, type UsageSeries } from '@/components/usage-chart';
+import { ActivityCalendar } from '@/components/activity-calendar';
 import type { AgentUtilizationRow } from '@/lib/usage/user-utilization';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { clientLogger } from '@/lib/client-logger';
-
-type Series = 'tokens' | 'runs' | 'tools';
-
-const SERIES: { key: Series; label: string }[] = [
-  { key: 'tokens', label: 'Tokens' },
-  { key: 'runs', label: 'Agent runs' },
-  { key: 'tools', label: 'Tool calls' },
-];
-
-/**
- * Which two numbers a bar stacks, per series: the base in blue and the
- * highlight on top — output tokens (purple) or failures (red).
- */
-function partsOf(bucket: UtilizationBucket, series: Series): { base: number; top: number } {
-  switch (series) {
-    case 'tokens':
-      return { base: bucket.inputTokens, top: bucket.outputTokens };
-    case 'runs':
-      return { base: Math.max(0, bucket.runs - bucket.failures), top: bucket.failures };
-    case 'tools':
-      return { base: Math.max(0, bucket.toolCalls - bucket.toolErrors), top: bucket.toolErrors };
-  }
-}
-
-function legendOf(series: Series): {
-  base: string;
-  top: string;
-  topClass: string;
-} {
-  switch (series) {
-    case 'tokens':
-      return { base: 'Tokens in', top: 'Tokens out', topClass: 'bg-purple-400' };
-    case 'runs':
-      return { base: 'Succeeded', top: 'Failed', topClass: 'bg-red-500' };
-    case 'tools':
-      return { base: 'OK', top: 'Failed', topClass: 'bg-red-500' };
-  }
-}
-
-function tooltipOf(bucket: UtilizationBucket, series: Series): string {
-  switch (series) {
-    case 'tokens':
-      return `${bucket.label}: ${formatTokens(bucket.inputTokens)} in, ${formatTokens(bucket.outputTokens)} out`;
-    case 'runs':
-      return `${bucket.label}: ${bucket.runs} runs, ${bucket.failures} failed`;
-    case 'tools':
-      return `${bucket.label}: ${bucket.toolCalls} calls, ${bucket.toolErrors} failed`;
-  }
-}
-
-/** Stacked bars — inline markup, one series at a time, no chart dependency. */
-function Chart({ points, series }: { points: UtilizationBucket[]; series: Series }) {
-  const legend = legendOf(series);
-  const totals = points.map((point) => {
-    const { base, top } = partsOf(point, series);
-    return base + top;
-  });
-  const peak = Math.max(1, ...totals);
-  if (points.length === 0 || totals.every((total) => total === 0)) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Nothing in this period.</p>;
-  }
-  return (
-    <div>
-      <div
-        className="flex h-40 items-end gap-px"
-        role="img"
-        aria-label={`${legend.base} and ${legend.top} over time`}
-      >
-        {points.map((point) => {
-          const { base, top } = partsOf(point, series);
-          const total = base + top;
-          const height = (total / peak) * 100;
-          const topShare = total > 0 ? (top / total) * height : 0;
-          return (
-            <div
-              key={point.bucket}
-              className="group relative flex-1"
-              style={{ height: '100%' }}
-              title={tooltipOf(point, series)}
-            >
-              <div
-                className="absolute inset-x-0 bottom-0 flex flex-col justify-end"
-                style={{ height: '100%' }}
-              >
-                <div
-                  className={`w-full rounded-t-sm ${legend.topClass}`}
-                  style={{ height: `${topShare}%` }}
-                />
-                <div
-                  className="w-full bg-blue-500 group-hover:bg-blue-400"
-                  style={{ height: `${height - topShare}%` }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-2 flex justify-between text-xs text-gray-500">
-        <span>{points[0]?.label}</span>
-        <span>{points[points.length - 1]?.label}</span>
-      </div>
-      <div className="mt-2 flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2 w-2 rounded-sm bg-blue-500" /> {legend.base}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className={`h-2 w-2 rounded-sm ${legend.topClass}`} /> {legend.top}
-        </span>
-      </div>
-    </div>
-  );
-}
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -238,7 +134,7 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
   const [report, setReport] = useState(initial);
   const periodAnchor = useCoachAnchor('utilization-period');
   const statsAnchor = useCoachAnchor('utilization-stats');
-  const [series, setSeries] = useState<Series>('tokens');
+  const [series, setSeries] = useState<UsageSeries>('tokens');
   const [showDisabled, setShowDisabled] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -264,6 +160,12 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
   const toolErrorRate = totals.toolCalls > 0 ? (totals.toolErrors / totals.toolCalls) * 100 : 0;
   const activePeriod = UTILIZATION_PERIODS.find((period) => period.key === report.periodKey);
   const caption = activePeriod ? periodCaption(activePeriod) : `Over the last ${report.days} days`;
+  const hourly = report.days <= 1;
+  const active = activeSummary(report.cells);
+  const modelTotal = report.byModel.reduce(
+    (sum, row) => sum + row.inputTokens + row.outputTokens,
+    0
+  );
   const enabledAgents = report.agents.filter((agent) => agent.enabled);
   const disabledAgents = report.agents.filter((agent) => !agent.enabled);
 
@@ -346,7 +248,34 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
         />
       </section>
 
-      <TokenSurfaceBreakdown tokens={report.surfaceTokens} documents={report.document} />
+      <figure className="rounded-lg border border-gray-200 p-4 dark:border-gray-800">
+        <figcaption className="mb-3 flex flex-wrap items-baseline gap-x-3 text-sm font-medium text-gray-700 dark:text-gray-300">
+          {hourly ? 'Active hours' : 'Active days'}
+          <span className="font-normal tabular-nums text-gray-500">
+            {active.active.toLocaleString('en-US')} / {active.total.toLocaleString('en-US')}
+          </span>
+        </figcaption>
+        <ActivityCalendar cells={report.cells} hourly={hourly} />
+      </figure>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TokenSurfaceBreakdown tokens={report.surfaceTokens} documents={report.document} />
+        <Leaderboard<ModelTokenRow>
+          heading="Tokens by model"
+          hint="Every model call made as you — chats, agents and optimizer passes alike."
+          rows={report.byModel}
+          empty="No model has been called in this period."
+          keyOf={(row) => `${row.provider ?? ''}:${row.model ?? ''}`}
+          labelOf={(row) => modelLabel(row.provider, row.model)}
+          valueOf={(row) => row.inputTokens + row.outputTokens}
+          formatValue={(row) => {
+            const total = row.inputTokens + row.outputTokens;
+            const share = modelTotal > 0 ? Math.round((total / modelTotal) * 100) : 0;
+            return `${formatTokens(total)} · ${share}% · ${row.calls.toLocaleString('en-US')} calls`;
+          }}
+          barClassName="bg-indigo-500"
+        />
+      </div>
 
       {report.voiceAvailable ||
       report.voice.speech.calls > 0 ||
@@ -375,7 +304,7 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
         <figcaption className="mb-3 flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{caption}</span>
           <span className="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
-            {SERIES.map((option) => (
+            {USAGE_SERIES.map((option) => (
               <button
                 key={option.key}
                 type="button"
@@ -392,28 +321,62 @@ export default function UtilizationViewer({ initial }: { initial: UtilizationRep
             ))}
           </span>
         </figcaption>
-        <Chart points={report.series} series={series} />
+        <UsageChart points={report.series} series={series} />
       </figure>
 
-      <Leaderboard<EfficientAgentRow>
-        heading="Most efficient agents"
-        hint="Your agents' tool calls per 1,000 tokens, among succeeded runs — real work per token, not just cheap runs."
-        rows={report.efficientAgents}
-        empty="None of your agents have 3 or more succeeded runs in this period yet."
-        keyOf={(row) => row.agentId}
-        labelOf={(row) => (
-          <Link
-            href={`/agents/${row.agentId}`}
-            className="text-blue-600 hover:underline dark:text-blue-400"
-          >
-            {row.name}
-          </Link>
-        )}
-        valueOf={(row) => row.efficiency}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Leaderboard<TopAgentRow>
+          heading="Top agents"
+          hint="Your agents by total tokens spent over the period."
+          rows={report.topAgents}
+          empty="None of your agents have run in this period."
+          keyOf={(row) => row.agentId}
+          labelOf={(row) => (
+            <Link
+              href={`/agents/${row.agentId}`}
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {row.name}
+            </Link>
+          )}
+          valueOf={(row) => row.inputTokens + row.outputTokens}
+          formatValue={(row) => formatTokens(row.inputTokens + row.outputTokens)}
+        />
+        <Leaderboard<EfficientAgentRow>
+          heading="Most efficient agents"
+          hint="Your agents' tool calls per 1,000 tokens, among succeeded runs — real work per token, not just cheap runs."
+          rows={report.efficientAgents}
+          empty="None of your agents have 3 or more succeeded runs in this period yet."
+          keyOf={(row) => row.agentId}
+          labelOf={(row) => (
+            <Link
+              href={`/agents/${row.agentId}`}
+              className="text-blue-600 hover:underline dark:text-blue-400"
+            >
+              {row.name}
+            </Link>
+          )}
+          valueOf={(row) => row.efficiency}
+          formatValue={(row) =>
+            `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`
+          }
+          barClassName="bg-emerald-500"
+        />
+      </div>
+
+      <Leaderboard<OrgToolRow>
+        heading="Top tools"
+        hint="Your most-called tools over the period — from a chat client and by your agents."
+        rows={report.topTools}
+        empty="No tool has been called in this period."
+        keyOf={(row) => row.tool}
+        labelOf={(row) => row.tool}
+        valueOf={(row) => row.calls}
         formatValue={(row) =>
-          `${row.efficiency.toFixed(1)} / 1k · ${formatTokens(row.tokensPerRun)}/run`
+          row.errors > 0
+            ? `${row.calls.toLocaleString('en-US')} (${row.errors.toLocaleString('en-US')} failed)`
+            : row.calls.toLocaleString('en-US')
         }
-        barClassName="bg-emerald-500"
       />
 
       {report.attention.length > 0 && (

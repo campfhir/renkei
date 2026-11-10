@@ -13,7 +13,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
@@ -132,11 +132,10 @@ export async function registerWorkTypeTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_work_types invoked', {
+      logger.debug('{caller} called jira_list_work_types', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_work_types',
       });
       try {
         const projectIdOrKey =

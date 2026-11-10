@@ -12,12 +12,10 @@ import { wrapAsync } from '@campfhir/safe-functions/helpers';
 import { getSessionFromRequest } from '@/lib/session';
 import { executeCreateIssue, readCreateIssueAction } from '@/lib/actionable-items';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 const PROJECT_KEY_SHAPE = /^[A-Z][A-Z0-9_]*$/;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function POST(
   request: NextRequest,
@@ -46,12 +44,16 @@ export async function POST(
     'DB_ERROR' as const
   );
   if (!found.ok) {
-    logger.error('Database error: {error}', {
-      component: 'api/actionable-items/decision',
-      subject: session.subject,
-      itemId,
-      error: found.err.message ?? found.err.type,
-    });
+    logger.error(
+      '{actor} tried to {decision} a card, but it could not be read from the database; nothing was decided: {error}',
+      {
+        component: 'api/actionable-items/decision',
+        ...who(session),
+        itemId,
+        decision: body.decision,
+        error: found.err.message ?? found.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const item = found.val;
@@ -124,12 +126,17 @@ export async function POST(
   );
 
   if (!outcome.ok) {
-    logger.warn('Could not create the approved issue: {error}', {
-      component: 'api/actionable-items/decision',
-      subject: session.subject,
-      itemId,
-      error: outcome.error,
-    });
+    logger.warn(
+      '{actor} approved the card "{title}", but the issue could not be created in project {projectKey}; the card is marked failed: {error}',
+      {
+        component: 'api/actionable-items/decision',
+        ...who(session),
+        itemId,
+        title: item.title,
+        projectKey,
+        error: outcome.error,
+      }
+    );
     return NextResponse.json({ status: 'failed', error: outcome.error }, { status: 502 });
   }
   return NextResponse.json({ status: 'executed', issueKey: outcome.issueKey, url: outcome.url });

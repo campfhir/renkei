@@ -15,6 +15,7 @@
     "@renkei/connector-sandbox": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/settings": "workspace:*",
     "mermaid": "12.2.0",
     "playwright-core": "1.64.1",

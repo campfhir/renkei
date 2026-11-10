@@ -23,7 +23,7 @@ import { ZOOM } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+import { callerAttrs, type MCPToolContext } from '../common';
 import { authFailure } from '../auth-support';
 
 /** Exported so index.ts's two ZoomClient-based tools can share it — see this file's header. */
@@ -110,12 +110,15 @@ export function oauthZoomAuth(context: MCPToolContext): ZoomAuth {
           },
         });
       } catch {
-        logger.warn('Zoom API unreachable', {
-          component: 'zoom/fetch',
-          subject: context.subject,
-          path,
-          method,
-        });
+        logger.warn(
+          "{caller}'s {method} {path} did not reach Zoom; the tool reported it as unreachable",
+          {
+            component: 'zoom/fetch',
+            ...(await callerAttrs(context)),
+            path,
+            method,
+          }
+        );
         return authFailure('Could not reach api.zoom.us');
       }
 
@@ -129,9 +132,9 @@ export function oauthZoomAuth(context: MCPToolContext): ZoomAuth {
           .clone()
           .text()
           .catch(() => '');
-        logger.warn('Zoom API non-OK response', {
+        logger.warn("Zoom answered {status} to {caller}'s {method} {path}", {
           component: 'zoom/fetch',
-          subject: context.subject,
+          ...(await callerAttrs(context)),
           path,
           method,
           status: response.status,

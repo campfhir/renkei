@@ -8,46 +8,25 @@
  * else's subscription to show here). Auto-fix posts a note into the
  * chat that pushed the PR rather than restarting the agent unattended
  * — apps/worker/src/handlers/chat-note.ts's header comment has the
- * why — so its label says exactly that, not more.
+ * why — so its label says exactly that, not more. What each box may
+ * do, what a change sends and what a refusal leaves on screen is
+ * pr-subscribe.model.ts.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer } from 'react';
 import ExternalLink from '@/components/external-link';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
-
-interface SubscriptionView {
-  watchPipelines: boolean;
-  autoFix: boolean;
-  autoMerge: boolean;
-}
-
-interface EventView {
-  conclusion: string;
-  actionTaken: string | null;
-  observedAt: string;
-}
-
-const NONE: SubscriptionView = { watchPipelines: false, autoFix: false, autoMerge: false };
-
-/** The plan's own copy for each (conclusion, action taken) pair it names. */
-function outcomeLine(event: EventView): string {
-  if (event.conclusion === 'success') {
-    if (event.actionTaken === 'merged') return 'Pipeline succeeded — merged automatically.';
-    if (event.actionTaken === 'merge_failed')
-      return 'Pipeline succeeded, but the automatic merge failed.';
-    return 'Pipeline succeeded.';
-  }
-  if (event.conclusion === 'failure') {
-    if (event.actionTaken === 'fix_started')
-      return 'Pipeline failed — a fix attempt was started in this chat.';
-    if (event.actionTaken === 'fix_failed')
-      return 'Pipeline failed, and the chat note could not be posted.';
-    return 'Pipeline failed.';
-  }
-  if (event.conclusion === 'running') return 'Pipeline is running.';
-  if (event.conclusion === 'pending') return 'Pipeline is pending.';
-  return 'Pipeline outcome unclear.';
-}
+import {
+  boxEnabled,
+  initialPrSubscribe,
+  prSubscribeReducer,
+  saveRequest,
+  shownOutcome,
+  toggledSubscription,
+  type Box,
+  type EventView,
+  type SubscriptionView,
+} from './pr-subscribe.model';
 
 export default function PrSubscribe({
   projectId,
@@ -65,10 +44,7 @@ export default function PrSubscribe({
   compact?: boolean;
 }) {
   const base = `/api/code/projects/${projectId}/pr-subscriptions`;
-  const [state, setState] = useState<SubscriptionView | null>(null);
-  const [lastEvent, setLastEvent] = useState<EventView | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [model, dispatch] = useReducer(prSubscribeReducer, initialPrSubscribe);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,8 +54,11 @@ export default function PrSubscribe({
         lastEvent: EventView | null;
       }>(`${base}?prNumber=${prNumber}`);
       if (!cancelled) {
-        setState(result.data?.subscription ?? NONE);
-        setLastEvent(result.data?.lastEvent ?? null);
+        dispatch({
+          type: 'loaded',
+          subscription: result.data?.subscription ?? null,
+          lastEvent: result.data?.lastEvent ?? null,
+        });
       }
     })();
     return () => {
@@ -87,48 +66,36 @@ export default function PrSubscribe({
     };
   }, [base, prNumber]);
 
-  const save = async (next: SubscriptionView) => {
-    setState(next);
-    setBusy(true);
-    setError(null);
-    const result = next.watchPipelines
-      ? await sendJsonFull<{ subscription: SubscriptionView }>(base, 'POST', {
-          prNumber,
-          watchPipelines: next.watchPipelines,
-          autoFix: next.autoFix,
-          autoMerge: next.autoMerge,
-        })
-      : await sendJsonFull(base, 'DELETE', { prNumber });
-    setBusy(false);
-    if (result.error) setError(result.error);
-    else if (!next.watchPipelines) setLastEvent(null);
-  };
-
+  const state = model.subscription;
+  const error = model.error;
   if (state === null) return null;
 
-  const toggleWatch = (checked: boolean) =>
-    void save({
-      ...state,
-      watchPipelines: checked,
-      ...(checked ? {} : { autoFix: false, autoMerge: false }),
-    });
-  const toggleAutoFix = (checked: boolean) => void save({ ...state, autoFix: checked });
-  const toggleAutoMerge = (checked: boolean) => void save({ ...state, autoMerge: checked });
+  const toggle = async (box: Box, checked: boolean) => {
+    const request = saveRequest(prNumber, toggledSubscription(state, box, checked));
+    dispatch({ type: 'toggled', box, checked });
+    const result = await sendJsonFull(base, request.method, request.body);
+    dispatch(result.error ? { type: 'failed', error: result.error } : { type: 'saved' });
+  };
+  const toggleWatch = (checked: boolean) => void toggle('watch', checked);
+  const toggleAutoFix = (checked: boolean) => void toggle('fix', checked);
+  const toggleAutoMerge = (checked: boolean) => void toggle('merge', checked);
+  const watchEnabled = boxEnabled(model, 'watch');
+  const dependentsEnabled = boxEnabled(model, 'fix');
 
-  const outcome =
-    state.watchPipelines && lastEvent ? (
-      <>
-        {outcomeLine(lastEvent)}
-        {prUrl ? (
-          <>
-            {' '}
-            <ExternalLink href={prUrl} className="text-blue-600 hover:underline dark:text-blue-400">
-              View
-            </ExternalLink>
-          </>
-        ) : null}
-      </>
-    ) : null;
+  const line = shownOutcome(model);
+  const outcome = line ? (
+    <>
+      {line}
+      {prUrl ? (
+        <>
+          {' '}
+          <ExternalLink href={prUrl} className="text-blue-600 hover:underline dark:text-blue-400">
+            View
+          </ExternalLink>
+        </>
+      ) : null}
+    </>
+  ) : null;
 
   if (compact) {
     return (
@@ -140,7 +107,7 @@ export default function PrSubscribe({
           <input
             type="checkbox"
             checked={state.watchPipelines}
-            disabled={busy}
+            disabled={!watchEnabled}
             onChange={(e) => toggleWatch(e.target.checked)}
           />
           Subscribe
@@ -152,7 +119,7 @@ export default function PrSubscribe({
           <input
             type="checkbox"
             checked={state.autoFix}
-            disabled={busy || !state.watchPipelines}
+            disabled={!dependentsEnabled}
             onChange={(e) => toggleAutoFix(e.target.checked)}
           />
           Fix
@@ -164,7 +131,7 @@ export default function PrSubscribe({
           <input
             type="checkbox"
             checked={state.autoMerge}
-            disabled={busy || !state.watchPipelines}
+            disabled={!dependentsEnabled}
             onChange={(e) => toggleAutoMerge(e.target.checked)}
           />
           Merge
@@ -187,7 +154,7 @@ export default function PrSubscribe({
         <input
           type="checkbox"
           checked={state.watchPipelines}
-          disabled={busy}
+          disabled={!watchEnabled}
           onChange={(e) => toggleWatch(e.target.checked)}
         />
         Subscribe to pipeline outcomes
@@ -198,7 +165,7 @@ export default function PrSubscribe({
         <input
           type="checkbox"
           checked={state.autoFix}
-          disabled={busy || !state.watchPipelines}
+          disabled={!dependentsEnabled}
           onChange={(e) => toggleAutoFix(e.target.checked)}
         />
         Note a failure in this chat
@@ -209,7 +176,7 @@ export default function PrSubscribe({
         <input
           type="checkbox"
           checked={state.autoMerge}
-          disabled={busy || !state.watchPipelines}
+          disabled={!dependentsEnabled}
           onChange={(e) => toggleAutoMerge(e.target.checked)}
         />
         Merge automatically on success

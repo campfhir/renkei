@@ -32,6 +32,7 @@ import { sanitizeBytes } from '@renkei/document-render';
 import { validateFilename } from '@renkei/connector-sandbox';
 import { getImagePrefs } from '@renkei/user-prefs';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import type { MCPToolContext } from '../common';
 import { errText, fileLine, str, targetOf, textResult } from './shared';
 import { sbReadFile, sbWriteFile, clientFailure } from '@/lib/sandbox/service-client';
@@ -63,10 +64,13 @@ export async function sandboxImageModels(): Promise<ImageModelChoice[]> {
   try {
     return await listImageModels();
   } catch (error) {
-    logger.warn('image models could not be listed; sandbox image tool withheld: {error}', {
-      component: 'mcp/sandbox',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "the org's image models could not be listed, so the sandbox image tool is withheld from this tool surface: {error}",
+      {
+        component: 'mcp/sandbox',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return [];
   }
 }
@@ -88,11 +92,14 @@ async function savedModelId(subject: string): Promise<string | null> {
   try {
     return (await getImagePrefs(subject)).modelId;
   } catch (error) {
-    logger.warn('saved image model could not be read: {error}', {
-      component: 'mcp/sandbox',
-      subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s saved image model preference could not be read; the org default is used instead: {error}",
+      {
+        component: 'mcp/sandbox',
+        ...(await whoIs(subject)),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }

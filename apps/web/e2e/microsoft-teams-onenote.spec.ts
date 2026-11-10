@@ -1,12 +1,18 @@
 /**
- * The Teams and OneNote panels on the Microsoft 365 card, as a person meets
- * them: before connecting, each panel offers its own capabilities (the
- * org's ceiling, all on by default for a first connection); after the real
- * connect flow (the in-memory app's fake OAuth, the callback storing the
- * grant as production does) each shows what was granted, says that nothing
- * of its is indexed, and a changed checkbox marks the panel as not yet
- * approved. The admin's Microsoft connector page shows the two new scope
- * groups. Then the same card at phone width.
+ * The Teams and OneNote panels on the Microsoft 365 card, in a browser:
+ * the admin's Microsoft connector page renders the two scope groups; the
+ * person's card renders just the panels they added; one press goes end to
+ * end — Connect through the real flow (the in-memory app's fake OAuth, the
+ * callback storing the grant as production does) and each panel drawing
+ * what was granted ("5 of 5 on", "4 of 4 on") and that nothing of its is
+ * indexed. Then the card at phone width.
+ *
+ * Where the rest went: the card's rules (which panels show, everything
+ * ticked for a first connection, the "N of M" summaries, a product the org
+ * withheld hidden, the consent URL, "Not approved yet" and "Approve
+ * changes" after a changed checkbox, the disconnect question) are
+ * connectors/microsoft-product-card.model.test.ts and
+ * connectors/microsoft-connect-body.model.test.ts.
  *
  * The org's app registration is left on: other specs connect through it
  * too. Pinned Chromium; "mobile" is a resized viewport, per AGENTS.md.
@@ -53,7 +59,7 @@ test('Teams and OneNote: two panels on the one Microsoft consent', async ({
     roles: ['renkei-user', 'renkei-operator'],
     displayName: 'Microsoft operator',
   });
-  const asOperator = await browser.newContext();
+  const asOperator = await browser.newContext({ reducedMotion: 'reduce' });
   try {
     await signIn(asOperator, operator);
     await registerConnector(
@@ -99,23 +105,6 @@ test('Teams and OneNote: two panels on the one Microsoft consent', async ({
   );
   await expect(card.getByRole('heading', { level: 3, name: 'SharePoint' })).toHaveCount(0);
 
-  // Before connecting, each panel offers its own capabilities, all on for a
-  // first connection.
-  await expect(teams.getByText('What Renkei may do here (5 of 5)')).toBeVisible();
-  await teams.locator('summary').click();
-  for (const option of [
-    'Read chats',
-    'Send chat messages',
-    'Read teams and channels',
-    'Post in channels',
-    'See availability',
-  ]) {
-    await expect(teams.getByRole('checkbox', { name: new RegExp(`^${option}`) })).toBeChecked();
-  }
-  await expect(onenote.getByText('What Renkei may do here (4 of 4)')).toBeVisible();
-  await onenote.locator('summary').click();
-  await expect(onenote.getByRole('checkbox', { name: /^Read my notebooks/ })).toBeChecked();
-  await expect(onenote.getByRole('checkbox', { name: /^Write in shared notebooks/ })).toBeChecked();
   await shot(page, testInfo, 'microsoft-teams-onenote-01-before-connect');
 
   // Connect for real: the fake consent answers at once and the callback
@@ -127,15 +116,6 @@ test('Teams and OneNote: two panels on the one Microsoft consent', async ({
   await expect(teams.getByText(/Nothing from Teams is indexed/)).toBeVisible();
   await expect(onenote.getByText(/Nothing from OneNote is indexed/)).toBeVisible();
   await shot(page, testInfo, 'microsoft-teams-onenote-02-connected');
-
-  // A changed checkbox is a draft until re-authorized, and the panel says so.
-  await teams.locator('summary').first().click();
-  const presence = teams.getByRole('checkbox', { name: /^See availability/ });
-  await presence.uncheck();
-  await expect(teams.getByText('Not approved yet')).toBeVisible();
-  await expect(card.getByRole('link', { name: /Approve changes/ })).toBeVisible();
-  await presence.check();
-  await expect(teams.getByText('Not approved yet')).toHaveCount(0);
 
   // Phone width: the card and both panels fit without sideways scrolling.
   await page.setViewportSize(MOBILE_VIEWPORT);

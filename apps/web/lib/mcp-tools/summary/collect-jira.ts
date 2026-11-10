@@ -22,6 +22,7 @@
 import { jiraFetch, type MCPToolContext } from '../common';
 import { MAX_ITEMS_PER_SECTION, type SummaryPeriod, type SummarySection } from './types';
 import { sprintProgress, sprintWindow } from '../jira/sprint-window';
+import { isRecord } from '@renkei/guards';
 
 /** Jira's own id for the Agile sprint field; the customfield number varies per site. */
 const SPRINT_FIELD_SCHEMA = 'com.pyxis.greenhopper.jira:gh-sprint';
@@ -42,10 +43,6 @@ interface SprintInfo {
   state: string;
   startDate?: string;
   endDate?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {

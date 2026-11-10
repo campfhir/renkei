@@ -68,6 +68,7 @@ describe('mcp/prepare redirects', () => {
     });
     if (!made.ok) throw new Error('server not created');
     const out = capture();
+    if (!key.ok) throw new Error('bad test key');
     await new McpPreparer(key.val, fetchImpl, publicOnly).prepare(
       { serverId: made.val.id, redirectUri: REDIRECT },
       out.response

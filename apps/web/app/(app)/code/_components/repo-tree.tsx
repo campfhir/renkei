@@ -55,6 +55,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useReducer,
   useRef,
   useState,
   type DragEvent,
@@ -67,21 +68,33 @@ import { useOptionalUploadQueue } from '@/components/uploads/upload-queue';
 import { DialogFooter } from '../../chat/_components/chat-nav';
 import OverflowMenu from '../../chat/_components/overflow-menu';
 import { checkoutSender } from './add-files-modal';
+import {
+  canDownload as canDownloadIn,
+  canMoveInto,
+  canWrite as canWriteIn,
+  deletePrompt,
+  downloadLink,
+  dropUpload,
+  folderOf,
+  ghostsFor,
+  initialTree,
+  markTitle,
+  moveRequest,
+  nameOf,
+  rowIgnored,
+  rowMenu,
+  sizeLabel,
+  submission,
+  toggleReads,
+  treeReducer,
+  type Entry,
+  type FileMark,
+  type MenuAction,
+  type Source,
+} from './repo-tree.model';
 
-interface Entry {
-  path: string;
-  kind: 'file' | 'dir' | 'link' | 'other';
-  sizeBytes: number | null;
-  ignored?: boolean;
-}
-
-type Listing =
-  { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready'; entries: Entry[] };
-
-type Source = 'checkout' | 'bitbucket' | 'github';
-
-/** How the working tree has a file: modified against HEAD, added (untracked), or gone. */
-export type FileMark = 'M' | 'A' | 'D';
+export type { FileMark } from './repo-tree.model';
+export { canMoveInto } from './repo-tree.model';
 
 export interface RepoTreeHandle {
   /** Opens the "New file" dialog for the root folder — the pane's own
@@ -89,28 +102,8 @@ export interface RepoTreeHandle {
   newFile: () => void;
 }
 
-type Dialog =
-  | { kind: 'new-file'; folder: string; name: string }
-  | { kind: 'rename'; path: string; name: string };
-
 /** The drag's own data type: a path inside this tree. */
 const TREE_PATH_TYPE = 'application/x-renkei-tree-path';
-
-function nameOf(path: string): string {
-  const index = path.lastIndexOf('/');
-  return index < 0 ? path : path.slice(index + 1);
-}
-
-function folderOf(path: string): string {
-  const index = path.lastIndexOf('/');
-  return index < 0 ? '' : path.slice(0, index);
-}
-
-function size(value: number): string {
-  if (value < 1024) return `${value} B`;
-  if (value < 1_048_576) return `${Math.round(value / 1024)} KB`;
-  return `${(value / 1_048_576).toFixed(1)} MB`;
-}
 
 /** The drag carries files from outside the page (the desktop, another app). */
 function carriesFiles(transfer: DataTransfer): boolean {
@@ -120,13 +113,6 @@ function carriesFiles(transfer: DataTransfer): boolean {
 /** The drag carries a row of this tree. */
 function carriesTreePath(transfer: DataTransfer): boolean {
   return Array.from(transfer.types).includes(TREE_PATH_TYPE);
-}
-
-/** `path` may move into `folder`: not into itself, under itself, or where it already is. */
-export function canMoveInto(path: string, folder: string): boolean {
-  if (folderOf(path) === folder) return false;
-  if (folder === path || folder.startsWith(`${path}/`)) return false;
-  return true;
 }
 
 const RepoTree = forwardRef<
@@ -180,36 +166,38 @@ const RepoTree = forwardRef<
   const filesBase = `${codeProjectUrl(projectId, chatId)}/files`;
   const archiveBase = `${codeProjectUrl(projectId, chatId)}/archive`;
   const queue = useOptionalUploadQueue();
-  const [listings, setListings] = useState<Record<string, Listing>>({});
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [source, setSource] = useState<Source | null>(null);
-  const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [dialogError, setDialogError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(treeReducer, initialTree);
+  const { listings, open, dialog, busy, dialogError, moveError } = state;
   /** The folder a drag is over ('' for the root), highlighted. */
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   /** The row being dragged inside the tree, while it is. */
   const [dragging, setDragging] = useState<{ path: string; kind: Entry['kind'] } | null>(null);
-  const [moveError, setMoveError] = useState<string | null>(null);
   const openRef = useRef(open);
   openRef.current = open;
 
   const load = useCallback(
     async (path: string, quiet = false) => {
-      if (!quiet) setListings((current) => ({ ...current, [path]: { state: 'loading' } }));
+      if (!quiet) dispatch({ type: 'loading', path });
       const result = await getJson<{
         path: string;
         entries: Entry[];
         source: Source;
         branch: string;
       }>(`${base}?path=${encodeURIComponent(path)}`);
-      if (result.data) setSource(result.data.source);
-      setListings((current) => ({
-        ...current,
-        [path]: result.data
-          ? { state: 'ready', entries: result.data.entries }
-          : { state: 'error', message: result.error ?? 'Could not list the folder.' },
-      }));
+      if (result.data) {
+        dispatch({
+          type: 'listed',
+          path,
+          entries: result.data.entries,
+          source: result.data.source,
+        });
+      } else {
+        dispatch({
+          type: 'listFailed',
+          path,
+          message: result.error ?? 'Could not list the folder.',
+        });
+      }
     },
     [base]
   );
@@ -233,106 +221,53 @@ const RepoTree = forwardRef<
   }, [refreshKey, load]);
 
   const toggle = (path: string) => {
-    const next = !open[path];
-    setOpen((current) => ({ ...current, [path]: next }));
-    if (next && !listings[path]) void load(path);
+    const reads = toggleReads(state, path);
+    dispatch({ type: 'toggled', path });
+    if (reads) void load(path);
   };
 
   /** Shows a folder's contents, reading them if they were never read. */
   const reveal = useCallback(
     (folder: string) => {
       if (!folder) return;
-      if (!openRef.current[folder]) setOpen((current) => ({ ...current, [folder]: true }));
+      dispatch({ type: 'revealed', folder });
       void load(folder, true);
     },
     [load]
   );
 
-  const canWrite = canEdit && source === 'checkout';
-  // A download is a read of the checkout: anyone who can see the tree may,
-  // once there is a checkout (the git host's own view has no zip to give).
-  const canDownload = source === 'checkout';
-  const downloadItem = (path: string, kind: 'file' | 'dir') => ({
-    label: kind === 'dir' ? 'Download as zip' : 'Download',
-    icon: ICONS.download,
-    href: `${archiveBase}?path=${encodeURIComponent(path)}`,
-    filename: kind === 'dir' ? `${nameOf(path)}.zip` : nameOf(path),
-  });
+  const canWrite = canWriteIn(state, canEdit);
+  const canDownload = canDownloadIn(state);
 
-  const ghostsFor = (path: string): string[] => {
-    if (!marks) return [];
-    const result: string[] = [];
-    for (const [entryPath, mark] of marks) {
-      if (mark === 'D' && folderOf(entryPath) === path) result.push(entryPath);
-    }
-    return result.sort((a, b) => a.localeCompare(b));
-  };
-
-  const openNewFileDialog = (folder: string) => {
-    setDialogError(null);
-    setDialog({ kind: 'new-file', folder, name: '' });
-  };
-  const openRenameDialog = (path: string) => {
-    setDialogError(null);
-    setDialog({ kind: 'rename', path, name: nameOf(path) });
-  };
-
-  useImperativeHandle(ref, () => ({ newFile: () => openNewFileDialog('') }));
+  useImperativeHandle(ref, () => ({ newFile: () => dispatch({ type: 'newFile', folder: '' }) }));
 
   const submitDialog = async () => {
     if (!dialog) return;
-    const trimmed = dialog.name.trim();
-    if (!trimmed) {
-      setDialogError(dialog.kind === 'new-file' ? 'Say what to call it.' : 'Say the new name.');
+    const plan = submission(dialog);
+    if (plan.kind === 'refused') {
+      dispatch({ type: 'refused', error: plan.error });
       return;
     }
-    // The server rejects ".." too (validateWorkspacePath) — this is just
-    // the immediate, no-round-trip version of the same rule.
-    if (trimmed.split('/').some((part) => part === '..')) {
-      setDialogError('A path cannot leave the workspace ("..").');
+    if (plan.kind === 'unchanged') {
+      dispatch({ type: 'dialogClosed' });
       return;
     }
-    setBusy(true);
-    setDialogError(null);
-    if (dialog.kind === 'new-file') {
-      const path = dialog.folder ? `${dialog.folder}/${trimmed}` : trimmed;
-      const result = await sendJsonFull<{ path: string }>(filesBase, 'POST', { path });
-      setBusy(false);
-      if (result.error) {
-        setDialogError(result.error);
-        return;
-      }
-      setDialog(null);
-      void load(dialog.folder, true);
-      if (dialog.folder && !open[dialog.folder]) {
-        setOpen((current) => ({ ...current, [dialog.folder]: true }));
-      }
-    } else {
-      const folder = folderOf(dialog.path);
-      const to = folder ? `${folder}/${trimmed}` : trimmed;
-      if (to === dialog.path) {
-        setBusy(false);
-        setDialog(null);
-        return;
-      }
-      const result = await sendJsonFull<{ from: string; to: string }>(filesBase, 'PATCH', {
-        from: dialog.path,
-        to,
-      });
-      setBusy(false);
-      if (result.error) {
-        setDialogError(result.error);
-        return;
-      }
-      setDialog(null);
-      void load(folder, true);
-      onRenamed?.(dialog.path, to);
+    dispatch({ type: 'sent' });
+    const result =
+      plan.kind === 'create'
+        ? await sendJsonFull<{ path: string }>(filesBase, 'POST', plan.body)
+        : await sendJsonFull<{ from: string; to: string }>(filesBase, 'PATCH', plan.body);
+    if (result.error) {
+      dispatch({ type: 'failed', error: result.error });
+      return;
     }
+    dispatch({ type: 'done', folder: plan.kind === 'create' ? plan.folder : '' });
+    void load(plan.folder, true);
+    if (plan.kind === 'rename') onRenamed?.(plan.body.from, plan.body.to);
   };
 
   const deleteEntry = async (path: string, kind: Entry['kind']) => {
-    const label = kind === 'dir' ? `“${nameOf(path)}” and everything in it` : `“${nameOf(path)}”`;
-    if (!window.confirm(`Delete ${label}? This can't be undone.`)) return;
+    if (!window.confirm(deletePrompt(path, kind))) return;
     const result = await sendJsonFull(`${filesBase}?path=${encodeURIComponent(path)}`, 'DELETE');
     if (result.error) {
       window.alert(result.error);
@@ -345,11 +280,15 @@ const RepoTree = forwardRef<
   /** Files from outside the page, dropped on `folder`: each lands at its name there. */
   const uploadInto = (folder: string, files: File[]) => {
     if (!queue || files.length === 0) return;
+    const plan = dropUpload(
+      folder,
+      files.map((file) => file.name)
+    );
     queue.enqueue({
-      title: `Add files to ${folder || 'the repository root'}`,
+      title: plan.title,
       destination: 'checkout',
-      items: files.map((file) => {
-        const path = folder ? `${folder}/${file.name}` : file.name;
+      items: files.map((file, index) => {
+        const path = plan.paths[index]!;
         return { file, label: path, send: checkoutSender(filesBase, path) };
       }),
       onItem: (job) => {
@@ -362,25 +301,49 @@ const RepoTree = forwardRef<
   };
 
   /** A row of the tree dropped on `folder`: moved there, under its own name. */
-  const moveInto = async (path: string, kind: Entry['kind'], folder: string) => {
-    if (!canMoveInto(path, folder)) return;
-    const to = folder ? `${folder}/${nameOf(path)}` : nameOf(path);
-    setMoveError(null);
-    const result = await sendJsonFull<{ from: string; to: string }>(filesBase, 'PATCH', {
-      from: path,
-      to,
-    });
+  const moveInto = async (path: string, folder: string) => {
+    const body = moveRequest(path, folder);
+    if (!body) return;
+    dispatch({ type: 'moveStarted' });
+    const result = await sendJsonFull<{ from: string; to: string }>(filesBase, 'PATCH', body);
     if (result.error) {
-      setMoveError(`${nameOf(path)}: ${result.error}`);
+      dispatch({ type: 'moveFailed', path, error: result.error });
       return;
     }
     void load(folderOf(path), true);
     if (folder) reveal(folder);
     else void load('', true);
-    onRenamed?.(path, to);
+    onRenamed?.(body.from, body.to);
     onChanged?.();
-    void kind;
   };
+
+  /** A row's "⋯" items, from what the model says it offers. */
+  const menuItems = (path: string, kind: 'file' | 'dir', actions: MenuAction[]) =>
+    actions.map((action) => {
+      switch (action) {
+        case 'new-file':
+          return {
+            label: 'New file',
+            icon: ICONS.folderPlus,
+            onSelect: () => dispatch({ type: 'newFile', folder: path }),
+          };
+        case 'rename':
+          return {
+            label: 'Rename',
+            icon: ICONS.pencil,
+            onSelect: () => dispatch({ type: 'rename', path }),
+          };
+        case 'download':
+          return { ...downloadLink(archiveBase, path, kind), icon: ICONS.download };
+        case 'delete':
+          return {
+            label: 'Delete',
+            icon: ICONS.trash,
+            danger: true,
+            onSelect: () => void deleteEntry(path, kind),
+          };
+      }
+    });
 
   /** The drop handlers for a target folder ('' is the root). */
   const dropProps = (folder: string) => {
@@ -416,9 +379,8 @@ const RepoTree = forwardRef<
           uploadInto(folder, files);
           return;
         }
-        const kind = dragging?.kind ?? 'file';
         setDragging(null);
-        void moveInto(path, kind, folder);
+        void moveInto(path, folder);
       },
     };
   };
@@ -494,45 +456,20 @@ const RepoTree = forwardRef<
     // guaranteed to have every descendant re-flagged by the host's git
     // query. Inheriting from the parent here is what makes the whole
     // subtree read as ghosted, regardless of that per-directory quirk.
-    const ignored = inheritedIgnored || entry.ignored === true;
+    const ignored = rowIgnored(inheritedIgnored, entry);
     const dimmed = ignored ? 'opacity-50' : '';
     const beingDragged = dragging?.path === entry.path ? 'opacity-40' : '';
 
     if (entry.kind === 'dir') {
       const expanded = open[entry.path] === true;
       const isTarget = dropTarget === entry.path;
-      const menu = canDownload ? (
+      const dirActions = rowMenu('dir', { write: canWrite, download: canDownload });
+      const menu = dirActions ? (
         <OverflowMenu
           label={`More for ${name}`}
           anchored={false}
           compact
-          items={[
-            ...(canWrite
-              ? [
-                  {
-                    label: 'New file',
-                    icon: ICONS.folderPlus,
-                    onSelect: () => openNewFileDialog(entry.path),
-                  },
-                  {
-                    label: 'Rename',
-                    icon: ICONS.pencil,
-                    onSelect: () => openRenameDialog(entry.path),
-                  },
-                ]
-              : []),
-            downloadItem(entry.path, 'dir'),
-            ...(canWrite
-              ? [
-                  {
-                    label: 'Delete',
-                    icon: ICONS.trash,
-                    danger: true,
-                    onSelect: () => void deleteEntry(entry.path, 'dir'),
-                  },
-                ]
-              : []),
-          ]}
+          items={menuItems(entry.path, 'dir', dirActions)}
         />
       ) : null;
       return (
@@ -583,51 +520,24 @@ const RepoTree = forwardRef<
                   ? 'text-red-600 dark:text-red-400'
                   : 'text-amber-600 dark:text-amber-400'
             }`}
-            title={
-              mark === 'A'
-                ? 'Added, not committed'
-                : mark === 'D'
-                  ? 'Deleted, not committed'
-                  : 'Changed, not committed'
-            }
+            title={markTitle(mark)}
           >
             {mark}
           </span>
         ) : entry.sizeBytes !== null ? (
-          <span className="shrink-0 text-[10px] text-gray-400">{size(entry.sizeBytes)}</span>
+          <span className="shrink-0 text-[10px] text-gray-400">{sizeLabel(entry.sizeBytes)}</span>
         ) : null}
       </>
     );
-    const menu =
-      canDownload && entry.kind === 'file' ? (
-        <OverflowMenu
-          label={`More for ${name}`}
-          anchored={false}
-          compact
-          items={[
-            ...(canWrite
-              ? [
-                  {
-                    label: 'Rename',
-                    icon: ICONS.pencil,
-                    onSelect: () => openRenameDialog(entry.path),
-                  },
-                ]
-              : []),
-            downloadItem(entry.path, 'file'),
-            ...(canWrite
-              ? [
-                  {
-                    label: 'Delete',
-                    icon: ICONS.trash,
-                    danger: true,
-                    onSelect: () => void deleteEntry(entry.path, 'file'),
-                  },
-                ]
-              : []),
-          ]}
-        />
-      ) : null;
+    const fileActions = rowMenu(entry.kind, { write: canWrite, download: canDownload });
+    const menu = fileActions ? (
+      <OverflowMenu
+        label={`More for ${name}`}
+        anchored={false}
+        compact
+        items={menuItems(entry.path, 'file', fileActions)}
+      />
+    ) : null;
     // A drop on a file goes to the folder the file is in.
     const fileDrop = dropProps(folderOf(entry.path));
 
@@ -679,7 +589,7 @@ const RepoTree = forwardRef<
 
   const renderDir = (path: string, depth: number, inheritedIgnored = false) => {
     const listing = listings[path];
-    const ghosts = ghostsFor(path);
+    const ghosts = ghostsFor(marks, path);
     if (!listing || listing.state === 'loading') {
       return (
         <li className="py-1 pl-2">
@@ -732,7 +642,7 @@ const RepoTree = forwardRef<
       {dialog ? (
         <Modal
           title={dialog.kind === 'new-file' ? 'New file' : 'Rename'}
-          onClose={() => setDialog(null)}
+          onClose={() => dispatch({ type: 'dialogClosed' })}
         >
           <form
             onSubmit={(event) => {
@@ -748,11 +658,7 @@ const RepoTree = forwardRef<
               autoFocus
               aria-label={dialog.kind === 'new-file' ? 'File name' : 'New name'}
               value={dialog.name}
-              onChange={(event) =>
-                setDialog((current) =>
-                  current ? { ...current, name: event.target.value } : current
-                )
-              }
+              onChange={(event) => dispatch({ type: 'nameChanged', name: event.target.value })}
               maxLength={255}
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 font-mono text-sm dark:border-gray-700 dark:bg-gray-900"
             />
@@ -766,7 +672,7 @@ const RepoTree = forwardRef<
               busy={busy}
               error={dialogError}
               label={dialog.kind === 'new-file' ? 'Create' : 'Rename'}
-              onCancel={() => setDialog(null)}
+              onCancel={() => dispatch({ type: 'dialogClosed' })}
             />
           </form>
         </Modal>

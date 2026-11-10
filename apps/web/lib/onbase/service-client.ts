@@ -29,6 +29,7 @@
  */
 
 import type { OnBaseIdpEndpoints } from '@renkei/connector-onbase';
+import { isRecord } from '@renkei/guards';
 
 export type OnBaseClientError =
   /** DELEGATE_WORKER_URL / _API_KEY are not set. */
@@ -60,10 +61,6 @@ export interface WireTestConnection {
 }
 
 const REQUEST_TIMEOUT_MS = 90_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -243,9 +240,7 @@ export async function obPutBytes(input: {
   filePart: number;
   bytes: Uint8Array;
 }): Promise<OnBaseClientResult<{ status: number }>> {
-  const query = `?uploadId=${encodeURIComponent(
-    input.uploadId
-  )}&filePart=${input.filePart}`;
+  const query = `?uploadId=${encodeURIComponent(input.uploadId)}&filePart=${input.filePart}`;
   const called = await callOp('put-bytes', undefined, {
     query,
     // A fresh ArrayBuffer-backed copy: fetch's BodyInit refuses the wider

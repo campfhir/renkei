@@ -2,18 +2,34 @@
 
 /**
  * The model roster CRUD — the rule-forms shape: client-side list + one
- * draft form that serves both create and edit. The API key field is
- * write-only: the list shows presence, the edit form ships blank and a
- * blank submit keeps the stored key (the embeddings-connector rule).
+ * draft form that serves both create and edit. What the screen decides
+ * (which fields show, what goes stale, what Save sends or refuses, the
+ * row badges) is model-forms.model.ts; this makes the calls, dispatches
+ * what the person did and what the server answered, and renders.
  */
 
 import RemoveButton from '@/components/remove-button';
 import Modal from '@/components/modal';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { LoadingRegion, SkeletonCards } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
-import { parseTokenCount } from '@/lib/format-tokens';
+import {
+  canList as canListOf,
+  canTest as canTestOf,
+  formView,
+  initialModelForms,
+  isLoading,
+  keyedSiblings as keyedSiblingsOf,
+  listRequest,
+  modelFormsReducer,
+  rowView,
+  saveRequest,
+  showsEmpty,
+  testRequest,
+  type AvailableModelRow,
+  type ModelRow,
+} from './model-forms.model';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900';
@@ -28,24 +44,6 @@ const PROVIDER_RETENTION_OPTIONS: { value: string; label: string }[] = [
   { value: 'stored', label: 'Stored — the provider keeps requests' },
 ];
 
-/**
- * The roster's warning: no BAA recorded, or the retention left unknown.
- * Mirrors dataHandlingWarning in @renkei/agent-llm, which the server-side
- * gate reads; the wording here is what an operator sees on the row.
- */
-function dataHandlingWarningOf(row: ModelRow): string | null {
-  if (row.settings?.baaCovered !== true) return 'Not BAA-covered';
-  const retention = row.settings?.providerRetention;
-  if (!retention || retention === 'unknown') return 'Retention unknown';
-  return null;
-}
-
-/** Common model ids per provider, offered as suggestions — any id is accepted. */
-const MODEL_SUGGESTIONS: Record<string, string[]> = {
-  anthropic: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5-20251001'],
-  openai: ['gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4o'],
-};
-
 const PROVIDER_HINTS: Record<string, { model: string; baseUrl: string }> = {
   anthropic: {
     model: "Anthropic's model identifier — or, on Azure AI Foundry, your Claude DEPLOYMENT name.",
@@ -59,311 +57,66 @@ const PROVIDER_HINTS: Record<string, { model: string; baseUrl: string }> = {
   },
 };
 
-interface ModelRow {
-  id: string;
-  label: string;
-  provider: string;
-  model: string;
-  baseUrl: string | null;
-  settings: {
-    maxOutputTokens?: number;
-    contextWindow?: number;
-    temperature?: number;
-    apiVersion?: string;
-    reasoningEffort?: string;
-    apiSurface?: string;
-    dataResidency?: string;
-    providerRetention?: string;
-    baaCovered?: boolean;
-    notes?: string;
-  } | null;
-  enabled: boolean;
-  isDefault: boolean;
-  hasApiKey: boolean;
-}
-
-interface ModelDraft {
-  label: string;
-  provider: string;
-  model: string;
-  baseUrl: string;
-  maxOutputTokens: string;
-  contextWindow: string;
-  temperature: string;
-  apiVersion: string;
-  reasoningEffort: string;
-  /**
-   * '' = chat-completions (the default); 'responses' = the Responses API;
-   * 'images' = the OpenAI Images API and 'flux' = Black Forest Labs FLUX on
-   * Azure AI Foundry — image generation models, not chat ones.
-   */
-  apiSurface: string;
-  /**
-   * Data handling — the operator's statement, stored on the row's settings
-   * and read by the roster badge and the PHI-connector gate (org setting
-   * "Require a BAA-covered model for PHI connectors").
-   */
-  dataResidency: string;
-  /** '' = unknown (the stored default); else one of PROVIDER_RETENTIONS. */
-  providerRetention: string;
-  baaCovered: boolean;
-  notes: string;
-  apiKey: string;
-  /** '' = type/keep a key; a config id = reuse that config's stored key. */
-  apiKeyFromId: string;
-  enabled: boolean;
-  isDefault: boolean;
-}
-
-const emptyDraft: ModelDraft = {
-  label: '',
-  provider: 'anthropic',
-  model: '',
-  baseUrl: '',
-  maxOutputTokens: '',
-  contextWindow: '',
-  temperature: '',
-  apiVersion: '',
-  reasoningEffort: '',
-  apiSurface: '',
-  dataResidency: '',
-  providerRetention: '',
-  baaCovered: false,
-  notes: '',
-  apiKey: '',
-  apiKeyFromId: '',
-  enabled: true,
-  isDefault: false,
-};
-
-/** One row of the provider's answer to "what models do you offer?". */
-interface AvailableModelRow {
-  id: string;
-  displayName: string | null;
-}
-
-function draftOf(row: ModelRow): ModelDraft {
-  return {
-    label: row.label,
-    provider: row.provider,
-    model: row.model,
-    baseUrl: row.baseUrl ?? '',
-    maxOutputTokens:
-      typeof row.settings?.maxOutputTokens === 'number' ? String(row.settings.maxOutputTokens) : '',
-    contextWindow:
-      typeof row.settings?.contextWindow === 'number' ? String(row.settings.contextWindow) : '',
-    temperature:
-      typeof row.settings?.temperature === 'number' ? String(row.settings.temperature) : '',
-    apiVersion: typeof row.settings?.apiVersion === 'string' ? row.settings.apiVersion : '',
-    reasoningEffort:
-      typeof row.settings?.reasoningEffort === 'string' ? row.settings.reasoningEffort : '',
-    apiSurface: typeof row.settings?.apiSurface === 'string' ? row.settings.apiSurface : '',
-    dataResidency:
-      typeof row.settings?.dataResidency === 'string' ? row.settings.dataResidency : '',
-    providerRetention:
-      typeof row.settings?.providerRetention === 'string' ? row.settings.providerRetention : '',
-    baaCovered: row.settings?.baaCovered === true,
-    notes: typeof row.settings?.notes === 'string' ? row.settings.notes : '',
-    apiKey: '',
-    apiKeyFromId: '',
-    enabled: row.enabled,
-    isDefault: row.isDefault,
-  };
-}
-
 export default function ModelForms() {
   const listAnchor = useCoachAnchor('admin-models-list');
   const addAnchor = useCoachAnchor('admin-models-add');
-  const [models, setModels] = useState<ModelRow[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<string | 'new' | null>(null);
-  const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
-  const [saving, setSaving] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  /*
-    The provider's live model list, fetched on demand with whichever key
-    the form can reach — a freshly typed one, a sibling config's, or the
-    stored key of the row being edited. Cleared whenever the credentials it
-    was fetched with change: a list from the old key is not a smaller
-    inconvenience than no list, it is wrong with confidence.
-  */
-  const [available, setAvailable] = useState<AvailableModelRow[] | null>(null);
-  const [listing, setListing] = useState(false);
-  const [listError, setListError] = useState<string | null>(null);
-
-  /*
-    The "Test connection" result: a real chat completion, so it goes stale
-    on anything that changes what would be sent — the same credential
-    fields that invalidate the model list, plus the model id and reasoning
-    effort (which the list doesn't depend on).
-  */
-  const [testing, setTesting] = useState(false);
-  const [testError, setTestError] = useState<string | null>(null);
-  const [testReply, setTestReply] = useState<string | null>(null);
-
-  const clearTest = () => {
-    setTestError(null);
-    setTestReply(null);
-  };
-
-  const clearAvailable = () => {
-    setAvailable(null);
-    setListError(null);
-    clearTest();
-  };
+  const [state, dispatch] = useReducer(modelFormsReducer, initialModelForms);
+  const { models, loadError, editingId, draft, saving, formError } = state;
+  const { available, listing, listError, testing, testError, testReply } = state;
 
   const reload = useCallback(async () => {
     const result = await getJson<{ models: ModelRow[] }>(`/api/admin/llm-models`);
-    if (result.error || !result.data) setLoadError(result.error ?? 'Could not load models');
-    else {
-      setModels(result.data.models);
-      setLoadError(null);
-    }
+    if (result.error || !result.data) dispatch({ type: 'loadFailed', error: result.error });
+    else dispatch({ type: 'loaded', models: result.data.models });
   }, []);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
-  const startCreate = () => {
-    setDraft({ ...emptyDraft, isDefault: (models ?? []).length === 0 });
-    setEditingId('new');
-    setFormError(null);
-    clearAvailable();
-  };
+  const closeForm = () => dispatch({ type: 'closeForm' });
 
-  const startEdit = (row: ModelRow) => {
-    setDraft(draftOf(row));
-    setEditingId(row.id);
-    setFormError(null);
-    clearAvailable();
-  };
-
-  const closeForm = () => {
-    setEditingId(null);
-    setDraft(emptyDraft);
-    setFormError(null);
-  };
-
-  /*
-    Which stored config the listing (and a keyless save) can borrow a key
-    from: the reuse choice when one is made, else the row being edited —
-    its stored key is what a blank field means on save, so it is what the
-    list should answer for too.
-  */
-  const editingRow =
-    editingId !== 'new' ? (models ?? []).find((row) => row.id === editingId) : undefined;
-  const borrowFromId = draft.apiKeyFromId || (editingRow?.hasApiKey ? editingRow.id : '');
-  const canList = Boolean(draft.apiKey || borrowFromId);
-  // "Test connection" sends a chat completion, which an image model rejects.
-  const isImage = draft.apiSurface === 'images' || draft.apiSurface === 'flux';
-  const canTest = canList && Boolean(draft.model.trim()) && !isImage;
-
-  /** Other configs whose stored key can be reused — the same connection
-   *  serving another model row. */
-  const keyedSiblings = (models ?? []).filter((row) => row.hasApiKey && row.id !== editingId);
+  const canList = canListOf(state);
+  const canTest = canTestOf(state);
+  const keyedSiblings = keyedSiblingsOf(state);
+  const view = formView(state);
+  const isImage = view.defaultBox.disabled;
 
   const listModels = async () => {
-    setListing(true);
-    setListError(null);
+    dispatch({ type: 'listSent' });
     const result = await sendJsonFull<{ models: AvailableModelRow[] }>(
       `/api/admin/llm-models/available`,
       'POST',
-      {
-        provider: draft.provider,
-        baseUrl: draft.baseUrl || null,
-        ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
-        // A typed key wins — it is what a save would store; otherwise the
-        // server lends the borrowed config's stored key without it ever
-        // reaching this page.
-        ...(draft.apiKey ? { apiKey: draft.apiKey } : { modelConfigId: borrowFromId }),
-      }
+      listRequest(state)
     );
-    setListing(false);
-    if (result.error || !result.data) {
-      setAvailable(null);
-      setListError(result.error ?? 'Could not list models');
-      return;
-    }
-    setAvailable(result.data.models);
+    if (result.error || !result.data) dispatch({ type: 'listFailed', error: result.error });
+    else dispatch({ type: 'listed', models: result.data.models });
   };
 
   const testConnection = async () => {
-    setTesting(true);
-    setTestError(null);
-    setTestReply(null);
+    dispatch({ type: 'testSent' });
     const result = await sendJsonFull<{ model: string; reply: string }>(
       `/api/admin/llm-models/test`,
       'POST',
-      {
-        provider: draft.provider,
-        model: draft.model,
-        baseUrl: draft.baseUrl || null,
-        ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
-        ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
-        ...(draft.apiSurface ? { apiSurface: draft.apiSurface } : {}),
-        // Same rule as listModels: a typed key wins, otherwise the server
-        // lends the borrowed config's stored key without it ever reaching
-        // this page.
-        ...(draft.apiKey ? { apiKey: draft.apiKey } : { modelConfigId: borrowFromId }),
-      }
+      testRequest(state)
     );
-    setTesting(false);
-    if (result.error || !result.data) {
-      setTestReply(null);
-      setTestError(result.error ?? 'Could not reach the provider');
-      return;
-    }
-    setTestReply(result.data.reply || '(no text in the reply)');
+    if (result.error || !result.data) dispatch({ type: 'testFailed', error: result.error });
+    else dispatch({ type: 'tested', reply: result.data.reply });
   };
 
   const submit = async () => {
-    const contextWindow = draft.contextWindow.trim() ? parseTokenCount(draft.contextWindow) : null;
-    if (draft.contextWindow.trim() && contextWindow === null) {
-      setFormError('Context window must be a token count, such as 200k or 1m.');
+    const request = saveRequest(state);
+    if (!request.ok) {
+      dispatch({ type: 'saveFailed', error: request.error });
       return;
     }
-    const maxOutputTokens = draft.maxOutputTokens.trim()
-      ? parseTokenCount(draft.maxOutputTokens)
-      : null;
-    if (draft.maxOutputTokens.trim() && maxOutputTokens === null) {
-      setFormError('Max output tokens must be a token count, such as 4k or 8000.');
-      return;
-    }
-    setSaving(true);
-    setFormError(null);
-    const payload = {
-      label: draft.label,
-      provider: draft.provider,
-      model: draft.model,
-      baseUrl: draft.baseUrl || null,
-      ...(maxOutputTokens !== null ? { maxOutputTokens } : {}),
-      ...(contextWindow !== null ? { contextWindow } : {}),
-      ...(draft.temperature ? { temperature: Number(draft.temperature) } : {}),
-      ...(draft.apiVersion.trim() ? { apiVersion: draft.apiVersion.trim() } : {}),
-      ...(draft.reasoningEffort ? { reasoningEffort: draft.reasoningEffort } : {}),
-      ...(draft.apiSurface ? { apiSurface: draft.apiSurface } : {}),
-      ...(draft.dataResidency.trim() ? { dataResidency: draft.dataResidency.trim() } : {}),
-      ...(draft.providerRetention ? { providerRetention: draft.providerRetention } : {}),
-      baaCovered: draft.baaCovered,
-      ...(draft.notes.trim() ? { notes: draft.notes.trim() } : {}),
-      ...(draft.apiKey ? { apiKey: draft.apiKey } : {}),
-      ...(draft.apiKeyFromId && !draft.apiKey ? { apiKeyFromId: draft.apiKeyFromId } : {}),
-      enabled: draft.enabled,
-      isDefault: draft.isDefault,
-    };
-    const result =
-      editingId === 'new'
-        ? await sendJsonFull(`/api/admin/llm-models`, 'POST', payload)
-        : await sendJsonFull(`/api/admin/llm-models/${editingId}`, 'PUT', payload);
-    setSaving(false);
+    dispatch({ type: 'saveSent' });
+    const result = await sendJsonFull(request.path, request.method, request.body);
     if (result.error) {
-      setFormError(result.error);
+      dispatch({ type: 'saveFailed', error: result.error });
       return;
     }
-    setEditingId(null);
-    setDraft(emptyDraft);
+    dispatch({ type: 'saved' });
     await reload();
   };
 
@@ -376,11 +129,11 @@ export default function ModelForms() {
       return;
     }
     const result = await sendJsonFull(`/api/admin/llm-models/${row.id}`, 'DELETE');
-    if (result.error) setLoadError(result.error);
+    if (result.error) dispatch({ type: 'removeFailed', error: result.error });
     else await reload();
   };
 
-  if (models === null && !loadError) {
+  if (isLoading(state)) {
     return (
       <LoadingRegion label="Loading models…">
         <SkeletonCards count={2} lines={1} chips={2} />
@@ -392,72 +145,75 @@ export default function ModelForms() {
     <div {...listAnchor} className="space-y-4">
       {loadError ? <p className="text-sm text-red-600 dark:text-red-400">{loadError}</p> : null}
 
-      {(models ?? []).length === 0 && editingId === null ? (
+      {showsEmpty(state) ? (
         <p className="rounded-md border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
           No models configured yet — agents cannot run until one is added.
         </p>
       ) : null}
 
-      {(models ?? []).map((row) => (
-        <div
-          key={row.id}
-          className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-                {row.label}
-                {row.isDefault ? (
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
-                    Default
-                  </span>
-                ) : null}
-                {row.settings?.apiSurface === 'images' || row.settings?.apiSurface === 'flux' ? (
-                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300">
-                    Image generation
-                  </span>
-                ) : null}
-                {!row.enabled ? (
-                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">
-                    Disabled
-                  </span>
-                ) : null}
-                {dataHandlingWarningOf(row) ? (
-                  <span
-                    className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-300"
-                    title="Data handling: the organization has not recorded a BAA and a retention term for this model. Fill them in under Edit → Data handling."
-                  >
-                    ⚠ {dataHandlingWarningOf(row)}
-                  </span>
-                ) : null}
-              </p>
-              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                {row.provider} · <span className="font-mono">{row.model}</span>
-                {row.baseUrl ? ` · ${row.baseUrl}` : ''} ·{' '}
-                {row.hasApiKey ? (
-                  'key stored'
-                ) : (
-                  <span className="text-red-600 dark:text-red-400">no key stored</span>
-                )}
-              </p>
-            </div>
-            <div className="flex shrink-0 gap-3 text-xs">
-              <button
-                type="button"
-                onClick={() => startEdit(row)}
-                className="font-medium text-blue-600 hover:underline dark:text-blue-400"
-              >
-                Edit
-              </button>
-              <RemoveButton
-                label="Remove"
-                accessibleLabel={`Remove ${row.label}`}
-                onClick={() => remove(row)}
-              />
+      {(models ?? []).map((row) => {
+        const badges = rowView(row);
+        return (
+          <div
+            key={row.id}
+            className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
+                  {row.label}
+                  {badges.isDefault ? (
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800 dark:bg-blue-950 dark:text-blue-300">
+                      Default
+                    </span>
+                  ) : null}
+                  {badges.imageGeneration ? (
+                    <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-800 dark:bg-violet-950 dark:text-violet-300">
+                      Image generation
+                    </span>
+                  ) : null}
+                  {badges.disabled ? (
+                    <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-400">
+                      Disabled
+                    </span>
+                  ) : null}
+                  {badges.warning ? (
+                    <span
+                      className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-300"
+                      title="Data handling: the organization has not recorded a BAA and a retention term for this model. Fill them in under Edit → Data handling."
+                    >
+                      ⚠ {badges.warning}
+                    </span>
+                  ) : null}
+                </p>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  {row.provider} · <span className="font-mono">{row.model}</span>
+                  {row.baseUrl ? ` · ${row.baseUrl}` : ''} ·{' '}
+                  {badges.keyStored ? (
+                    'key stored'
+                  ) : (
+                    <span className="text-red-600 dark:text-red-400">no key stored</span>
+                  )}
+                </p>
+              </div>
+              <div className="flex shrink-0 gap-3 text-xs">
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: 'startEdit', row })}
+                  className="font-medium text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Edit
+                </button>
+                <RemoveButton
+                  label="Remove"
+                  accessibleLabel={`Remove ${row.label}`}
+                  onClick={() => remove(row)}
+                />
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       {editingId !== null ? (
         <Modal
@@ -483,7 +239,9 @@ export default function ModelForms() {
                 required
                 maxLength={128}
                 placeholder="e.g. Claude Sonnet"
-                onChange={(event) => setDraft({ ...draft, label: event.target.value })}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'label', value: event.target.value })
+                }
               />
               <p className={hintClass}>What agent owners see in the model picker.</p>
             </div>
@@ -496,15 +254,9 @@ export default function ModelForms() {
                 id="model-provider"
                 className={inputClass}
                 value={draft.provider}
-                onChange={(event) => {
-                  setDraft({
-                    ...draft,
-                    provider: event.target.value,
-                    // The API surface is an OpenAI-dialect setting; switching away drops it.
-                    apiSurface: event.target.value === 'openai' ? draft.apiSurface : '',
-                  });
-                  clearAvailable();
-                }}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'provider', value: event.target.value })
+                }
               >
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="openai">OpenAI-compatible (OpenAI, Azure AI Foundry)</option>
@@ -531,10 +283,9 @@ export default function ModelForms() {
                     ? 'https://{resource}.openai.azure.com/openai/v1'
                     : 'https://api.anthropic.com'
                 }
-                onChange={(event) => {
-                  setDraft({ ...draft, baseUrl: event.target.value });
-                  clearAvailable();
-                }}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'baseUrl', value: event.target.value })
+                }
               />
               <p className={hintClass}>
                 {PROVIDER_HINTS[draft.provider]?.baseUrl ??
@@ -542,7 +293,7 @@ export default function ModelForms() {
               </p>
             </div>
 
-            {draft.provider === 'openai' ? (
+            {view.showsApiSurface ? (
               <div>
                 <label className={labelClass} htmlFor="model-api-surface">
                   API surface
@@ -551,30 +302,21 @@ export default function ModelForms() {
                   id="model-api-surface"
                   className={inputClass}
                   value={draft.apiSurface}
-                  onChange={(event) => {
-                    setDraft({
-                      ...draft,
-                      apiSurface: event.target.value,
-                      // An image model cannot answer chat, so it can never be the default.
-                      isDefault:
-                        event.target.value === 'images' || event.target.value === 'flux'
-                          ? false
-                          : draft.isDefault,
-                    });
-                    clearAvailable();
-                  }}
+                  onChange={(event) =>
+                    dispatch({ type: 'edited', field: 'apiSurface', value: event.target.value })
+                  }
                 >
                   <option value="">Chat completions (default)</option>
                   <option value="responses">Responses API</option>
                   <option value="images">Images API — gpt-image (image generation)</option>
                   <option value="flux">FLUX — Black Forest Labs (image generation)</option>
                 </select>
-                {isImage ? (
+                {view.imageSurface ? (
                   <p className={hintClass} data-testid="image-surface-hint">
                     For a model that draws pictures rather than chats. It is never offered as a chat
                     model or the default; instead, chats get a &quot;generate image&quot; tool that
                     sends the prompt to it.{' '}
-                    {draft.apiSurface === 'flux' ? (
+                    {view.imageSurface === 'flux' ? (
                       <>
                         FLUX through its native provider route (FLUX.2 pro / flex): set the base URL
                         to the model&apos;s own endpoint, e.g.{' '}
@@ -598,7 +340,7 @@ export default function ModelForms() {
                     )}
                   </p>
                 ) : null}
-                {isImage ? null : (
+                {view.showsResponsesHint ? (
                   <p className={hintClass}>
                     Some reasoning-model deployments (an Azure gpt-6-astra-1 case is where this
                     setting came from) cannot make tool calls on chat completions at ANY reasoning
@@ -608,7 +350,7 @@ export default function ModelForms() {
                     <span className="font-mono"> reasoning_effort</span> no matter what you set it
                     to.
                   </p>
-                )}
+                ) : null}
               </div>
             ) : null}
 
@@ -627,10 +369,9 @@ export default function ModelForms() {
                   aria-label="API key source"
                   className={`${inputClass} mb-2`}
                   value={draft.apiKeyFromId}
-                  onChange={(event) => {
-                    setDraft({ ...draft, apiKeyFromId: event.target.value, apiKey: '' });
-                    clearAvailable();
-                  }}
+                  onChange={(event) =>
+                    dispatch({ type: 'edited', field: 'apiKeyFromId', value: event.target.value })
+                  }
                 >
                   <option value="">
                     {editingId === 'new'
@@ -644,14 +385,14 @@ export default function ModelForms() {
                   ))}
                 </select>
               ) : null}
-              {draft.apiKeyFromId === '' ? (
+              {view.showsKeyInput ? (
                 <>
                   <input
                     id="model-key"
                     className={inputClass}
                     type="password"
                     value={draft.apiKey}
-                    required={editingId === 'new'}
+                    required={view.keyRequired}
                     placeholder={
                       editingId === 'new'
                         ? draft.provider === 'openai'
@@ -660,10 +401,9 @@ export default function ModelForms() {
                         : 'Leave blank to keep the stored key'
                     }
                     autoComplete="off"
-                    onChange={(event) => {
-                      setDraft({ ...draft, apiKey: event.target.value });
-                      clearAvailable();
-                    }}
+                    onChange={(event) =>
+                      dispatch({ type: 'edited', field: 'apiKey', value: event.target.value })
+                    }
                   />
                   <p className={hintClass}>Stored encrypted; never shown again after saving.</p>
                 </>
@@ -683,10 +423,9 @@ export default function ModelForms() {
                 className={inputClass}
                 value={draft.apiVersion}
                 placeholder="e.g. 2024-05-01-preview"
-                onChange={(event) => {
-                  setDraft({ ...draft, apiVersion: event.target.value });
-                  clearAvailable();
-                }}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'apiVersion', value: event.target.value })
+                }
               />
               <p className={hintClass}>
                 Appended as ?api-version=… — only when the Azure surface demands it (a &quot;Missing
@@ -710,18 +449,15 @@ export default function ModelForms() {
                     ? 'e.g. gpt-5 or your deployment name'
                     : 'e.g. claude-sonnet-5'
                 }
-                onChange={(event) => {
-                  setDraft({ ...draft, model: event.target.value });
-                  clearTest();
-                }}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'model', value: event.target.value })
+                }
               />
               <datalist id="model-suggestions">
                 {/* Live answers replace the hardcoded guesses once fetched. */}
-                {(available ?? MODEL_SUGGESTIONS[draft.provider]?.map((id) => ({ id })) ?? []).map(
-                  (suggestion) => (
-                    <option key={suggestion.id} value={suggestion.id} />
-                  )
-                )}
+                {view.modelSuggestions.map((suggestion) => (
+                  <option key={suggestion} value={suggestion} />
+                ))}
               </datalist>
               <p className={hintClass}>
                 {PROVIDER_HINTS[draft.provider]?.model ?? 'The provider’s model identifier.'}
@@ -742,7 +478,7 @@ export default function ModelForms() {
                 >
                   {listing ? 'Asking the provider…' : 'List available models'}
                 </button>
-                {!canList ? (
+                {view.listMissing ? (
                   <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
                     Enter an API key (or pick one to reuse) first.
                   </span>
@@ -762,7 +498,7 @@ export default function ModelForms() {
                     <li key={entry.id}>
                       <button
                         type="button"
-                        onClick={() => setDraft({ ...draft, model: entry.id })}
+                        onClick={() => dispatch({ type: 'picked', model: entry.id })}
                         aria-pressed={draft.model === entry.id}
                         className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${
                           draft.model === entry.id
@@ -800,7 +536,9 @@ export default function ModelForms() {
                 type="text"
                 value={draft.maxOutputTokens}
                 placeholder="4k"
-                onChange={(event) => setDraft({ ...draft, maxOutputTokens: event.target.value })}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'maxOutputTokens', value: event.target.value })
+                }
               />
               <input
                 id="model-temperature"
@@ -811,7 +549,9 @@ export default function ModelForms() {
                 max={1}
                 value={draft.temperature}
                 placeholder="provider default"
-                onChange={(event) => setDraft({ ...draft, temperature: event.target.value })}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'temperature', value: event.target.value })
+                }
               />
             </div>
 
@@ -826,7 +566,9 @@ export default function ModelForms() {
                 type="text"
                 value={draft.contextWindow}
                 placeholder="200k"
-                onChange={(event) => setDraft({ ...draft, contextWindow: event.target.value })}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'contextWindow', value: event.target.value })
+                }
               />
               <p className="mt-1 text-xs text-gray-500">
                 The most the model can read in one call — type 200k, 1m or 200000. Chats show how
@@ -844,25 +586,16 @@ export default function ModelForms() {
                 value={draft.reasoningEffort}
                 list="reasoning-effort-suggestions"
                 placeholder="Model default"
-                onChange={(event) => {
-                  setDraft({ ...draft, reasoningEffort: event.target.value });
-                  clearTest();
-                }}
+                onChange={(event) =>
+                  dispatch({ type: 'edited', field: 'reasoningEffort', value: event.target.value })
+                }
               />
               <datalist id="reasoning-effort-suggestions">
-                {draft.provider === 'anthropic' ? null : (
-                  <>
-                    <option value="none" />
-                    <option value="minimal" />
-                  </>
-                )}
-                <option value="low" />
-                <option value="medium" />
-                <option value="high" />
-                <option value="xhigh" />
-                <option value="max" />
+                {view.reasoningSuggestions.map((value) => (
+                  <option key={value} value={value} />
+                ))}
               </datalist>
-              {draft.provider === 'anthropic' ? (
+              {view.reasoningHint === 'anthropic' ? (
                 <p className={hintClass}>
                   Claude 4.6 and later think adaptively, and this is the one dial on how long they
                   deliberate and how many tool rounds they take (sent as output_config.effort: low,
@@ -902,7 +635,7 @@ export default function ModelForms() {
               >
                 {testing ? 'Sending a test message…' : 'Test connection'}
               </button>
-              {!canTest && !isImage ? (
+              {view.testMissing ? (
                 <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
                   Enter a model id and an API key (or pick one to reuse) first.
                 </span>
@@ -939,7 +672,13 @@ export default function ModelForms() {
                     className={inputClass}
                     value={draft.dataResidency}
                     placeholder="e.g. Azure East US, DataZone"
-                    onChange={(event) => setDraft({ ...draft, dataResidency: event.target.value })}
+                    onChange={(event) =>
+                      dispatch({
+                        type: 'edited',
+                        field: 'dataResidency',
+                        value: event.target.value,
+                      })
+                    }
                   />
                 </div>
                 <div>
@@ -951,7 +690,11 @@ export default function ModelForms() {
                     className={inputClass}
                     value={draft.providerRetention}
                     onChange={(event) =>
-                      setDraft({ ...draft, providerRetention: event.target.value })
+                      dispatch({
+                        type: 'edited',
+                        field: 'providerRetention',
+                        value: event.target.value,
+                      })
                     }
                   >
                     {PROVIDER_RETENTION_OPTIONS.map((option) => (
@@ -966,7 +709,9 @@ export default function ModelForms() {
                 <input
                   type="checkbox"
                   checked={draft.baaCovered}
-                  onChange={(event) => setDraft({ ...draft, baaCovered: event.target.checked })}
+                  onChange={(event) =>
+                    dispatch({ type: 'edited', field: 'baaCovered', value: event.target.checked })
+                  }
                 />
                 Covered by a Business Associate Agreement (BAA)
               </label>
@@ -980,7 +725,9 @@ export default function ModelForms() {
                   rows={2}
                   value={draft.notes}
                   placeholder="Contract reference, date confirmed, who to ask"
-                  onChange={(event) => setDraft({ ...draft, notes: event.target.value })}
+                  onChange={(event) =>
+                    dispatch({ type: 'edited', field: 'notes', value: event.target.value })
+                  }
                 />
               </div>
             </fieldset>
@@ -990,16 +737,20 @@ export default function ModelForms() {
                 <input
                   type="checkbox"
                   checked={draft.enabled}
-                  onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+                  onChange={(event) =>
+                    dispatch({ type: 'edited', field: 'enabled', value: event.target.checked })
+                  }
                 />
                 Enabled
               </label>
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  checked={draft.isDefault && !isImage}
-                  disabled={isImage}
-                  onChange={(event) => setDraft({ ...draft, isDefault: event.target.checked })}
+                  checked={view.defaultBox.checked}
+                  disabled={view.defaultBox.disabled}
+                  onChange={(event) =>
+                    dispatch({ type: 'edited', field: 'isDefault', value: event.target.checked })
+                  }
                 />
                 Organization default
               </label>
@@ -1032,7 +783,7 @@ export default function ModelForms() {
       <button
         {...addAnchor}
         type="button"
-        onClick={startCreate}
+        onClick={() => dispatch({ type: 'startCreate' })}
         className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
       >
         + Add a model

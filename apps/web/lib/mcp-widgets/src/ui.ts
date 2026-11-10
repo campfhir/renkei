@@ -8,6 +8,8 @@
  * `data-theme` stamped by the bridge, falling back to prefers-color-scheme.
  */
 
+import { chipLabel, chipsReducer, initialChips, offeredOptions, type ChipsAction } from './chips.model';
+
 const STYLE = `
 :root {
   --card-bg: #ffffff;
@@ -82,11 +84,42 @@ body {
 .field input:not([type="checkbox"]):focus, .field textarea:focus, .field select:focus {
   outline: 2px solid var(--card-accent); outline-offset: -1px;
 }
+/* 16px or larger: iOS Safari zooms the page in on focus of any smaller field. */
+.field input:not([type="checkbox"]), .field textarea, .field select,
+.chips-box input.chips-input { font-size: 16px; }
+/* Nothing may size itself past its card: a native date/time control brings its own
+   intrinsic width (iOS Safari draws it wider than the column), so cap every field
+   and drop the native appearance that sets that width. */
+.card, .field { min-width: 0; max-width: 100%; }
+.field input:not([type="checkbox"]), .field textarea, .field select {
+  min-width: 0; max-width: 100%;
+}
+.field input[type="date"], .field input[type="time"] {
+  -webkit-appearance: none; appearance: none; display: block;
+}
+/* Two fields on one row (a date and its time); each takes an equal share, and
+   neither can grow past its share on a narrow screen. */
+.field-row { display: flex; gap: 8px; }
+.field-row > .field { flex: 1 1 0; min-width: 0; }
 .checkbox-row {
   display: flex; align-items: center; gap: 8px;
   padding: 5px 0; font-size: 13px; cursor: pointer;
 }
 .checkbox-row input { flex: none; cursor: pointer; }
+.chips-box { display: flex; flex-direction: column; gap: 8px; }
+.chips-box input.chips-input { width: 100%; }
+.chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips-row:empty { display: none; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+  background: var(--card-field-bg); border: 1px solid var(--card-border);
+  border-radius: 999px; padding: 1px 4px 1px 10px; font-size: 13px;
+}
+.chip button {
+  all: unset; cursor: pointer; line-height: 1; padding: 2px 5px; border-radius: 999px;
+  color: var(--card-muted); font-size: 15px;
+}
+.chip button:hover, .chip button:focus-visible { color: var(--card-fg); background: var(--card-bg); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .status { margin-right: auto; font-size: 13px; }
 .status.error { color: var(--card-danger); }
@@ -314,6 +347,79 @@ export function checkboxGroupField(
     field.append(row);
   }
   return { field, getValues: () => boxes.filter((box) => box.checked).map((box) => box.value) };
+}
+
+let chipsCount = 0;
+
+/**
+ * Label + a combo box, with its picks collected below it as removable chips — for a
+ * multi-select with too many options for a checkbox per option (a desk's
+ * components can run to dozens). Type to narrow the list, pick (or press
+ * Enter on an exact label) to add a chip, press its × to take it off.
+ * Options already chosen leave the list. Returns a getter for the chosen
+ * values, like checkboxGroupField.
+ */
+export function chipsField(
+  label: string,
+  values: readonly string[],
+  options: readonly FieldOption[]
+): { field: HTMLElement; getValues: () => string[] } {
+  const field = el('div', 'field');
+  const box = el('div', 'chips-box');
+  const input = el('input', 'chips-input');
+  const row = el('div', 'chips-row');
+  const listId = `chips-list-${chipsCount++}`;
+  const list = document.createElement('datalist');
+  list.id = listId;
+  input.setAttribute('list', listId);
+  input.setAttribute('aria-label', label);
+  input.placeholder = 'Search to add…';
+  input.autocomplete = 'off';
+  let state = initialChips(options, values);
+  const dispatch = (action: ChipsAction) => {
+    const next = chipsReducer(state, action);
+    if (next === state) return false;
+    state = next;
+    refresh();
+    return true;
+  };
+
+  function refresh() {
+    row.textContent = '';
+    for (const value of state.chosen) {
+      const chip = el('span', 'chip', chipLabel(state, value));
+      const remove = el('button', undefined, '×');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove ${chipLabel(state, value)}`);
+      remove.addEventListener('click', () => {
+        dispatch({ type: 'remove', value });
+        input.focus();
+      });
+      chip.append(remove);
+      row.append(chip);
+    }
+    list.textContent = '';
+    for (const option of offeredOptions(state)) list.append(new Option(option.label, option.label));
+  }
+  const take = () => {
+    if (dispatch({ type: 'typed', text: input.value })) input.value = '';
+  };
+  // A pick from the list fires `input` with the full label; typing a
+  // prefix does not match, so a half-typed word never adds a chip.
+  input.addEventListener('input', take);
+  input.addEventListener('change', take);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      take();
+    } else if (event.key === 'Backspace' && !input.value) {
+      dispatch({ type: 'backspace' });
+    }
+  });
+  box.append(input, list, row);
+  refresh();
+  field.append(el('div', 'field-label', label), box);
+  return { field, getValues: () => [...state.chosen] };
 }
 
 /**

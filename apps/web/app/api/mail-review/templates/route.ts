@@ -18,10 +18,8 @@ import { getIdentityEmail } from '@/lib/identity';
 import { deriveTemplate, saveTemplateVersion } from '@renkei/email-sanitizer';
 import type { MarkedField } from '@renkei/email-sanitizer';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 function parseMarkedFields(value: unknown): MarkedField[] | null {
   if (!Array.isArray(value)) return null;
@@ -50,10 +48,7 @@ function parseMarkedFields(value: unknown): MarkedField[] | null {
   return fields;
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
-
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) {
     return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
@@ -92,11 +87,16 @@ export async function POST(
     derivedByUpn: userEmail,
   });
   if (!result.ok) {
-    logger.error('Could not save the template: {error}', {
-      component: 'api/mail-review/templates',
-      subject: session.subject,
-      error: result.err.message ?? result.err.type,
-    });
+    logger.error(
+      '{actor} taught an extraction template for the sender {senderKey} with {fields} marked fields, but it was not saved: {error}',
+      {
+        component: 'api/mail-review/templates',
+        ...who(session),
+        senderKey: body.senderKey.trim(),
+        fields: markedFields.length,
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save the template' }, { status: 500 });
   }
   return NextResponse.json({ template: result.val });

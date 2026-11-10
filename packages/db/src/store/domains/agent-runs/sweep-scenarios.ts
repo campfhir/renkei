@@ -17,6 +17,7 @@ function run(n: number, agent: number, status: string, extra: Record<string, unk
     trigger_kind: 'manual',
     status,
     waiting_until: null,
+    cancel_requested_at: null,
     created_at: at(n),
     updated_at: at(n),
     ...extra,
@@ -183,8 +184,35 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     ],
   },
   {
-    method: 'agentRuns.failAbandoned',
-    name: 'queued or running runs only, once',
+    method: 'agentRuns.listDead',
+    name: 'old queued or running, overdue waits, old waits with no deadline but not sign-in parks; resumes reset the clock',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(51, 1, 'queued', { created_at: at(5) }),
+        run(52, 2, 'running', { created_at: at(6) }),
+        run(53, 1, 'queued', { created_at: at(4), resumed_at: at(80) }),
+        run(54, 1, 'queued', { created_at: at(90) }),
+        run(55, 1, 'waiting', { created_at: at(2), waiting_until: at(20) }),
+        run(56, 2, 'waiting', { created_at: at(3), waiting_until: at(40) }),
+        run(57, 1, 'waiting', { created_at: at(7) }),
+        run(58, 1, 'waiting', { created_at: at(95) }),
+        run(59, 1, 'succeeded', { created_at: at(1) }),
+        run(60, 1, 'waiting', { created_at: at(8), error_kind: 'needs-sign-in' }),
+      ],
+    },
+    run: async (store) => {
+      const cutoffs = { clockBefore: at(60), waitDueBefore: at(30) };
+      return [
+        await store.agentRuns.listDead(cutoffs, 10),
+        (await store.agentRuns.listDead(cutoffs, 2)).map((r) => r.id),
+        await store.agentRuns.listDead({ clockBefore: at(0), waitDueBefore: at(0) }, 10),
+      ];
+    },
+  },
+  {
+    method: 'agentRuns.closeAbandoned',
+    name: 'queued or running runs only, once: failed with the error',
     fixture: {
       agents,
       agent_runs: [run(41, 1, 'running'), run(42, 1, 'queued'), run(43, 1, 'succeeded')],
@@ -192,13 +220,39 @@ export const agentRunSweepScenarios: Scenario<DataStore>[] = [
     run: async (store) => {
       const failure = { errorKind: 'timeout', error: 'abandoned' };
       const outcomes = [
-        await store.agentRuns.failAbandoned(id(41), failure),
-        await store.agentRuns.failAbandoned(id(41), failure),
-        await store.agentRuns.failAbandoned(id(42), failure),
-        await store.agentRuns.failAbandoned(id(43), failure),
+        await store.agentRuns.closeAbandoned(id(41), failure),
+        await store.agentRuns.closeAbandoned(id(41), failure),
+        await store.agentRuns.closeAbandoned(id(42), failure),
+        await store.agentRuns.closeAbandoned(id(43), failure),
       ];
       const detail = await store.agentRuns.findForResume(id(41), id(1), 'ann');
       return [outcomes, detail, await runStatus(store, 42, 1), await runStatus(store, 43, 1)];
+    },
+  },
+  {
+    method: 'agentRuns.closeAbandoned',
+    name: 'a run someone asked to cancel is canceled, with no error, not failed',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(44, 1, 'running', { cancel_requested_at: at(50), cancel_requested_by: 'ann' }),
+        run(45, 1, 'queued', { cancel_requested_at: at(51), cancel_requested_by: 'ann' }),
+        run(46, 1, 'queued'),
+      ],
+    },
+    run: async (store) => {
+      const failure = { errorKind: 'timeout', error: 'abandoned' };
+      const outcomes = [
+        await store.agentRuns.closeAbandoned(id(44), failure),
+        await store.agentRuns.closeAbandoned(id(45), failure),
+        await store.agentRuns.closeAbandoned(id(46), failure),
+        await store.agentRuns.closeAbandoned(id(44), failure),
+      ];
+      const detail = async (n: number) => {
+        const found = await store.agentRuns.findForResume(id(n), id(1), 'ann');
+        return found && { status: found.status, error: found.error, errorKind: found.errorKind };
+      };
+      return [outcomes, await detail(44), await detail(45), await detail(46)];
     },
   },
 ];

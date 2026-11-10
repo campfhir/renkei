@@ -22,6 +22,7 @@ import { claimedUploadSlotOf, hashUploadToken } from '@/lib/mcp-tools/upload-slo
 import { isUuid } from '@/lib/uuid';
 import { completeUploadSlot } from '@/lib/upload-executors';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export async function GET(
   _request: NextRequest,
@@ -32,12 +33,15 @@ export async function GET(
     ? await getDataStore()
         .uploadSlots.get(slotId)
         .catch((error: unknown) => {
-          logger.error('Could not read upload slot {slotId}: {error}', {
-            component: 'upload/route',
-            slotId,
-            error: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          });
+          logger.error(
+            'Someone opened an upload link, but its slot could not be read; the page told them the link was not found: {error}',
+            {
+              component: 'upload/route',
+              slotId,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            }
+          );
           return null;
         })
     : null;
@@ -146,13 +150,22 @@ export async function POST(
   const bytes = Buffer.concat(chunks);
 
   const outcome = await completeUploadSlot(claimed, bytes);
-  logger[outcome.ok ? 'info' : 'warn']('upload slot {slotId} {status}: {detail}', {
-    component: 'upload/route',
-    slotId: claimed.id,
-    kind: claimed.kind,
-    status: outcome.ok ? 'completed' : 'failed',
-    detail: outcome.detail,
-  });
+  logger[outcome.ok ? 'info' : 'warn'](
+    'The upload link {actor} requested for "{filename}" received {bytes} bytes and the file was {status}: {detail}',
+    {
+      component: 'upload/route',
+      ...(await whoIs(claimed.subject)),
+      accountId: claimed.account_id,
+      slotId: claimed.id,
+      kind: claimed.kind,
+      filename: claimed.filename,
+      bytes: total,
+      status: outcome.ok
+        ? 'delivered to its destination'
+        : 'not delivered; the slot is marked failed',
+      detail: outcome.detail,
+    }
+  );
   return NextResponse.json(
     { ok: outcome.ok, detail: outcome.detail },
     { status: outcome.ok ? 200 : 502 }

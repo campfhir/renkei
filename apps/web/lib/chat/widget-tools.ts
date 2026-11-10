@@ -39,6 +39,7 @@ import {
   type McpToolResult,
 } from '@renkei/mcp-client';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { listAvailableTools } from '@/lib/mcp-tools/tool-catalog';
 import { insertMessageWhenIdle, listMessages } from './messages';
 import { chatCipherById } from './chat-keys';
@@ -107,12 +108,15 @@ export async function confirmWidgetTool(input: {
     const result = await mcp.callTool(input.name, input.arguments);
     return { ok: true, result };
   } catch (error) {
-    logger.warn('chat card tool call failed: {tool} {error}', {
-      component: 'chat/widget',
-      subject: input.subject,
-      tool: input.name,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      '{actor} acted on a card that calls {tool}, but the call failed; the card shows an error: {error}',
+      {
+        component: 'chat/widget',
+        ...(await whoIs(input.subject)),
+        tool: input.name,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return { ok: false, reason: 'call-failed' };
   } finally {
     await revokeRunToken(token);
@@ -129,9 +133,10 @@ export type WidgetModelContextOutcome = { message: ChatMessageView; turn: Starte
 
 /**
  * Record the card's `ui/update-model-context` text and let the model take
- * its turn on it. The text lands as a user-role row of kind 'note' (the
- * thread shows it as a small line; segment.ts reads any 'note' row as
- * `kind: 'person'`) that is ALSO the user row of a new turn — the same
+ * its turn on it. The text lands as a user-role row of kind 'decision' (the
+ * thread draws nothing for it — the card's own receipt already shows what
+ * was done, and the line under it only repeated the receipt, link and all;
+ * segment.ts skips the row) that is ALSO the user row of a new turn — the same
  * path as Send (start-turn.ts), so the model answers the decision at once
  * ("Sent." / "Created OPS-99, anything else?") instead of only learning of
  * it whenever the person next writes. Without this the card's receipt was
@@ -186,7 +191,7 @@ export async function recordWidgetModelContext(input: {
     session: input.session,
     chatId: input.chatId,
     text,
-    kind: 'note',
+    kind: 'decision',
     ...(input.defer ? { defer: input.defer } : {}),
   });
   if (started.ok) {
@@ -275,8 +280,8 @@ async function turnWidgetStateKeys(chatId: string, stateKey: string): Promise<st
 }
 
 /**
- * Append the card's `ui/update-model-context` text as a note row on its
- * own, with no turn — `recordWidgetModelContext`'s fallback when a reply
+ * Append the card's `ui/update-model-context` text as a decision row on
+ * its own, with no turn — `recordWidgetModelContext`'s fallback when a reply
  * cannot start. Refused while a turn is running, same reason: the runner
  * is the only writer of a turn's own rows then.
  */
@@ -292,7 +297,7 @@ export async function appendWidgetModelContext(input: {
     chatId: input.chatId,
     turnId: null,
     role: 'user',
-    kind: 'note',
+    kind: 'decision',
     status: 'complete',
     blocks: [{ type: 'text', text }],
     cipher: await chatCipherById(input.chatId),
@@ -311,7 +316,7 @@ export async function appendWidgetModelContext(input: {
   };
 }
 
-/** The thread's view of a note row, as the page would read it back. */
+/** The thread's view of a decision row, as the page would read it back. */
 function noteView(row: {
   id: string;
   turnId: string | null;
@@ -324,7 +329,7 @@ function noteView(row: {
     turnId: row.turnId,
     seq: row.seq,
     role: 'user',
-    kind: 'note',
+    kind: 'decision',
     status: 'complete',
     blocks: [{ type: 'text', text: row.text }],
     llmModelId: null,

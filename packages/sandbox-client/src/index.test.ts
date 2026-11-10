@@ -30,6 +30,12 @@ import {
   sbCapabilities,
   resetSandboxCapabilitiesForTests,
   setRetryDelayForTests,
+  sbWorkspaceGitLog,
+  sbWorkspaceGitRebase,
+  sbWorkspaceGitStatus,
+  sbWorkspaceGitPush,
+  sbPreviewStart,
+  sbPreviewProxyTarget,
 } from './index';
 
 const { getOrgSettings } = jest.requireMock<{ getOrgSettings: jest.Mock }>('@renkei/settings');
@@ -1260,5 +1266,219 @@ describe('sbChartStage', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.err.kind).toBe('unreachable');
+  });
+});
+
+describe('the rest of git', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
+  });
+
+  it('reads the log as records and refuses a malformed entry', async () => {
+    const entry = {
+      sha: 'a'.repeat(40),
+      shortSha: 'aaaaaaa',
+      subject: 'Fix it',
+      author: 'Ada',
+      email: 'ada@x',
+      date: '2026-09-01T10:00:00+00:00',
+      refs: ['main'],
+      parents: ['b'.repeat(40)],
+    };
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ branch: 'main', commits: [entry], truncated: true }))
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ branch: 'main', commits: [{ subject: 'no sha' }] }))
+      );
+    const result = await sbWorkspaceGitLog(TARGET, { id: 'ws-1', ref: 'main..HEAD', max: 5 });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body))).toEqual({
+      ...TARGET,
+      id: 'ws-1',
+      ref: 'main..HEAD',
+      max: 5,
+    });
+    expect(result).toEqual({
+      ok: true,
+      val: { branch: 'main', commits: [entry], truncated: true },
+    });
+    expect((await sbWorkspaceGitLog(TARGET, { id: 'ws-1' })).ok).toBe(false);
+  });
+
+  it('reads a rebase that stopped on conflicts, and a status that names them', async () => {
+    fetchSpy = jest
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            branch: 'topic',
+            completed: false,
+            inProgress: 'rebase',
+            conflicts: ['shared.txt'],
+            output: 'CONFLICT (content)',
+          })
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            branch: 'topic',
+            status: 'UU shared.txt',
+            inProgress: 'rebase',
+            conflicts: ['shared.txt'],
+          })
+        )
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ branch: 'main', status: '' })));
+    const rebased = await sbWorkspaceGitRebase(TARGET, {
+      id: 'ws-1',
+      action: 'start',
+      onto: 'main',
+    });
+    expect(rebased).toEqual({
+      ok: true,
+      val: {
+        branch: 'topic',
+        completed: false,
+        inProgress: 'rebase',
+        conflicts: ['shared.txt'],
+        output: 'CONFLICT (content)',
+      },
+    });
+    const status = await sbWorkspaceGitStatus(TARGET, { id: 'ws-1' });
+    expect(status.ok && status.val.inProgress).toBe('rebase');
+    expect(status.ok && status.val.conflicts).toEqual(['shared.txt']);
+    // An older worker says nothing about operations: none in progress.
+    const older = await sbWorkspaceGitStatus(TARGET, { id: 'ws-1' });
+    expect(older.ok && older.val.inProgress).toBeNull();
+    expect(older.ok && older.val.conflicts).toEqual([]);
+  });
+
+  it('carries forceWithLease on a push and reads whether it was forced', async () => {
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          branch: 'topic',
+          remoteBranch: 'topic',
+          forced: true,
+          output: 'forced update',
+        })
+      )
+    );
+    const proxy = { base: 'http://delegate/git/t/', insteadOf: 'https://github.com/' };
+    const pushed = await sbWorkspaceGitPush(TARGET, {
+      id: 'ws-1',
+      gitProxy: proxy,
+      forceWithLease: true,
+    });
+    expect(JSON.parse(String(fetchSpy.mock.calls[0]?.[1]?.body)).forceWithLease).toBe(true);
+    expect(pushed).toEqual({
+      ok: true,
+      val: { branch: 'topic', remoteBranch: 'topic', forced: true, output: 'forced update' },
+    });
+  });
+
+  it('phrases the new refusals', () => {
+    expect(
+      clientFailure({ kind: 'op', type: 'git_in_progress', message: undefined, status: 409 }).status
+    ).toBe(409);
+    expect(
+      clientFailure({ kind: 'op', type: 'port_in_use', message: undefined, status: 409 }).status
+    ).toBe(409);
+    expect(
+      clientFailure({ kind: 'op', type: 'preview_unreachable', message: undefined, status: 502 })
+        .status
+    ).toBe(502);
+  });
+});
+
+describe('previews', () => {
+  let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+  afterEach(() => {
+    fetchSpy?.mockRestore();
+  });
+
+  it('starts one with its named ports and where each is served, and reads which listen', async () => {
+    const preview = {
+      id: 'p1',
+      name: 'web',
+      workspaceId: 'ws-1',
+      command: 'pnpm dev',
+      ports: [
+        {
+          name: 'app',
+          port: 10000,
+          token: null,
+          url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+        },
+        {
+          name: 'api',
+          port: 10001,
+          token: 't'.repeat(43),
+          url: `https://app.example/api/code/preview/${'t'.repeat(43)}/`,
+        },
+      ],
+      status: 'running',
+      exitCode: null,
+      signal: null,
+      startedAt: '2026-09-01T10:00:00.000Z',
+      lastUsedAt: '2026-09-01T10:00:00.000Z',
+      expiresAt: '2026-09-01T14:00:00.000Z',
+    };
+    fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ preview, listening: ['app'], logs: 'ready' }), {
+        status: 201,
+      })
+    );
+    const started = await sbPreviewStart(TARGET, {
+      id: 'ws-1',
+      name: 'web',
+      command: 'pnpm dev',
+      ports: [
+        { name: 'app', url: preview.ports[0]!.url },
+        { name: 'api', url: preview.ports[1]!.url, token: 't'.repeat(43) },
+      ],
+    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'http://sandbox.internal:8092/v1/previews/start',
+      expect.objectContaining({ method: 'POST' })
+    );
+    expect(started).toEqual({
+      ok: true,
+      val: {
+        preview: {
+          ...preview,
+          port: 10000,
+          token: null,
+          url: 'https://app.example/api/code/projects/p1/previews/web/app/',
+        },
+        listening: ['app'],
+        logs: 'ready',
+      },
+    });
+  });
+
+  it('names the worker proxy path for a member, a named port and a share token, and nothing when unconfigured', () => {
+    expect(sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web' }, '/a/b?x=1')).toEqual({
+      url: 'http://sandbox.internal:8092/v1/previews/proxy/web/a/b?x=1',
+      headers: { authorization: 'Bearer test-key', 'x-sandbox-subject': 'code-project:p1' },
+    });
+    expect(
+      sbPreviewProxyTarget({ subject: 'code-project:p1', name: 'web', port: 'api' }, 'x')
+    ).toEqual({
+      url: 'http://sandbox.internal:8092/v1/previews/port/web/api/x',
+      headers: { authorization: 'Bearer test-key', 'x-sandbox-subject': 'code-project:p1' },
+    });
+    expect(sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toEqual({
+      url: `http://sandbox.internal:8092/v1/previews/public/${'t'.repeat(43)}/`,
+      headers: { authorization: 'Bearer test-key' },
+    });
+    delete process.env.SANDBOX_WORKER_URL;
+    expect(sbPreviewProxyTarget({ token: 't'.repeat(43) }, '')).toBeNull();
   });
 });

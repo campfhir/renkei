@@ -1,9 +1,16 @@
 /**
- * The top-bar search reaches down to the setting, connector or organization
- * setting itself: a result opens its page scrolled to the element that holds
- * it, and that element is in view. An artifact is found by its digest: the
- * file is written by a chat turn whose (stand-in) model hands it over with
- * a summary and keywords (chat_write_file), as a chat's own model does.
+ * The top-bar search reaching down to the element, in a browser: a setting
+ * opens its page scrolled to the section that holds it; a connector opens
+ * the connectors page with the words, which scrolls to its card or
+ * searches the catalog for it; and an artifact is found by its digest
+ * through the library's real search — the file written by a chat turn
+ * whose (stand-in) model hands it over with a summary and keywords
+ * (chat_write_file), as a chat's own model does.
+ *
+ * Which result a query finds and where it points (OnBase by its own name,
+ * an organization setting only for an operator, the `?find=` a connector
+ * carries, the sections and their order) is omni-search.model.test.ts's,
+ * matched there by lib/app-index.ts's own matchPlaces.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -11,7 +18,7 @@ import { test, expect } from './fixtures';
 import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
 import { askAndWait, createChat } from './support/code-host';
 
-// Organization settings are found by an operator; the stub model is staged by one.
+// The stub model is staged by an operator.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 async function search(page: import('@playwright/test').Page, text: string) {
@@ -53,28 +60,6 @@ test('a connector is found by a product inside it and opens its card or the cata
       'sharepoint'
     );
   }
-});
-
-test('OnBase is found by its own name', async ({ page, person: _person }, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
-  await page.goto('/agents');
-  const results = await search(page, 'onbase');
-  await results.getByRole('option', { name: /OnBase/ }).click();
-  await expect(page).toHaveURL(/\/connectors\?find=onbase#connector-hyland$/);
-});
-
-test('an operator is sent straight to an organization setting', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  test.skip(testInfo.project.name !== 'desktop-light', 'A desktop check.');
-  await page.goto('/agents');
-  const results = await search(page, 'safety');
-  const option = results.getByRole('option', { name: /Safety/ });
-  await expect(option).toContainText('Organization settings');
-  await option.click();
-  await expect(page).toHaveURL(/\/admin\/settings#settings-safety$/);
-  await expect(page.locator('#settings-safety')).toBeInViewport();
 });
 
 test('an artifact is found by a keyword in its summary, and the row shows the summary', async ({

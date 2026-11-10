@@ -24,6 +24,7 @@ import { UploadQueueProvider } from '@/components/uploads/upload-queue';
 import { getVersionInfo } from '@/lib/version-info';
 import { countChangesAwaitingReview } from '@/lib/admin-changes/sources';
 import AppNav from './nav';
+import PreferencesSync from './preferences-sync';
 
 /**
  * Overrides the root layout's `<link rel="manifest">` (app/manifest.ts,
@@ -116,6 +117,10 @@ export default async function TenantLayout({ children }: { children: ReactNode }
     <CodeLineNumbersProvider value={theme.codeLineNumbers}>
       <ThemeScript />
       <ThemeSync mode={theme.mode} />
+      {/* A preference changed outside its own form (the chat's model, another
+          tab): this shell is rendered again, which is what carries the new
+          theme and gutter into the two above. */}
+      <PreferencesSync />
       <ClientErrorReporter />
       <NotificationCenter>
         {/* Uploads outlive the dialog they start from (upload-queue.tsx):

@@ -69,7 +69,7 @@ import type { LlmCallModel } from '@renkei/agents/runs';
 import { randomUUID } from 'node:crypto';
 import { secure } from '@/lib/logger';
 import type { McpClient, McpToolResult } from '@renkei/mcp-client';
-import type { LocalToolContext, LocalToolSet } from './local-tools';
+import { endsTurn, type LocalToolContext, type LocalToolSet } from './local-tools';
 import { parseDigest, type ArtifactDigest } from './artifact-digest-input';
 import { PROMPT_FILE_MAX_BYTES } from './attachments';
 import type { ChatStreamEvent } from './stream-events';
@@ -197,7 +197,9 @@ export interface TurnLimits {
   /**
    * How many read-only tool calls of one round run at once. A reply that
    * searches three ways at once waits for the slowest search, not the sum;
-   * calls that act never share a slot (see toolGroups).
+   * calls that act never share a slot, except several calls of a tool
+   * declared concurrent (sub-agents), which share one under the same
+   * width (see toolGroups).
    */
   toolConcurrency: number;
   /** Tool results longer than this are clipped before they reach the model. */
@@ -352,6 +354,13 @@ export interface TurnRunnerDeps {
    * is taken to act, and runs alone. Omitted means every call runs alone.
    */
   readOnlyTools?: ReadonlySet<string>;
+  /**
+   * Tool names that act but whose calls in one round do not depend on
+   * each other (a local tool's `concurrent`: code_delegate). Consecutive
+   * calls of these run beside each other, each asked for first as any
+   * acting call is. Omitted means none.
+   */
+  concurrentTools?: ReadonlySet<string>;
   /**
    * The MCP Apps widget each tool's result renders as, by tool name
    * (tool-surface.ts's `ChatToolSurface.widgetResourceUris`). A call whose
@@ -551,35 +560,43 @@ export function attachmentBlocksOfMeta(
 /**
  * The order a round's tool calls run in: each inner array runs at once,
  * the arrays one after another. Consecutive read-only calls share an
- * array, cut at `width`; every other call — anything that acts, or that
- * the caller could not vouch for — gets an array of its own, so its
- * effect is complete before the next call that might read it. The
+ * array, cut at `width`; so do consecutive calls the caller says are
+ * independent of each other though they act (`isConcurrent`: several
+ * sub-agents started in one reply), in an array of their own kind, never
+ * mixed with the reads around them. Every other call — anything that
+ * acts, or that the caller could not vouch for — gets an array of its
+ * own, so its effect is complete before the next call that might read
+ * it. The
  * model's order is kept within and across arrays, so results can be
  * assembled in the order the calls were made whatever order they finish.
  */
 export function toolGroups<T>(
   uses: readonly T[],
   isReadOnly: (use: T) => boolean,
-  width: number
+  width: number,
+  isConcurrent: (use: T) => boolean = () => false
 ): T[][] {
   const groups: T[][] = [];
   let run: T[] = [];
+  let runKind: 'read' | 'concurrent' | null = null;
+  const flush = () => {
+    if (run.length > 0) groups.push(run);
+    run = [];
+    runKind = null;
+  };
   for (const use of uses) {
-    if (width > 1 && isReadOnly(use)) {
-      if (run.length >= width) {
-        groups.push(run);
-        run = [];
-      }
-      run.push(use);
+    const kind =
+      width <= 1 ? null : isReadOnly(use) ? 'read' : isConcurrent(use) ? 'concurrent' : null;
+    if (kind === null) {
+      flush();
+      groups.push([use]);
       continue;
     }
-    if (run.length > 0) {
-      groups.push(run);
-      run = [];
-    }
-    groups.push([use]);
+    if (kind !== runKind || run.length >= width) flush();
+    run.push(use);
+    runKind = kind;
   }
-  if (run.length > 0) groups.push(run);
+  flush();
   return groups;
 }
 
@@ -702,6 +719,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     : now() + limits.wallClockMs;
   const { channel, store, llm } = deps;
   const readOnlyTools = deps.readOnlyTools ?? new Set<string>();
+  const concurrentTools = deps.concurrentTools ?? new Set<string>();
   const widgetResourceUris = deps.widgetResourceUris ?? new Map<string, string>();
   const alwaysAllowed = new Set(deps.permissions?.alwaysAllowed ?? []);
   const denied = deps.permissions?.denied ?? new Set<string>();
@@ -803,12 +821,17 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
     tick += 1;
     if (dirty) void flush();
     if (tick % 8 === 0) {
-      void store.heartbeat(iterations, stage).then((requested) => {
-        if (requested) {
-          cancelRequested = true;
-          channel.requestCancel();
-        }
-      });
+      // A failed heartbeat is skipped, not thrown: the next tick tries again,
+      // and an unhandled rejection here would take the server down.
+      void store
+        .heartbeat(iterations, stage)
+        .then((requested) => {
+          if (requested) {
+            cancelRequested = true;
+            channel.requestCancel();
+          }
+        })
+        .catch(() => {});
     }
   }, limits.flushMs);
   channel.onCancel(() => {
@@ -1506,6 +1529,9 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
         string,
         'deny' | 'timeout' | 'blocked' | 'truncated' | 'preview' | 'unavailable'
       >();
+      // A call that suspends the chat (chat_task_wait, tasks/wake.ts): the
+      // round's results are written, then the turn ends as a reply would.
+      let endTurnAfterRound = false;
       for (const use of toolUses) {
         if (denied.has(use.name)) refused.set(use.id, 'blocked');
         else if (unavailable.has(use.name)) refused.set(use.id, 'unavailable');
@@ -1653,13 +1679,15 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       const groups = toolGroups(
         toolUses,
         (use) => readOnlyTools.has(use.name),
-        limits.toolConcurrency
+        limits.toolConcurrency,
+        (use) => concurrentTools.has(use.name)
       );
       for (const group of groups) {
         if (cancelRequested || channel.cancelRequested) break;
-        // A call that acts is alone in its group (toolGroups), so at most
-        // one ask per group — asked before the group's calls are
-        // announced as running, since a refused one never runs.
+        // A call that acts is alone in its group (toolGroups) unless it is
+        // one of several concurrent ones (sub-agents), which are asked for
+        // one after another — all before the group's calls are announced
+        // as running, since a refused one never runs.
         let canceledWhileAsking = false;
         for (const use of group) {
           if (refused.has(use.id) || !needsPermission(use.name)) continue;
@@ -1713,6 +1741,7 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
           if (deps.autoContinue && use.name === deps.autoContinue.doneTool && !outcome.isError) {
             taskDone = true;
           }
+          if (!refused.has(use.id) && endsTurn(outcome)) endTurnAfterRound = true;
           const text = textOfResult(outcome);
           // A call whose tool declared a widget (tools/list's
           // _meta.ui.resourceUri, carried here as widgetResourceUris) gets
@@ -1754,6 +1783,14 @@ export async function runChatTurn(deps: TurnRunnerDeps, input: TurnInput): Promi
       // Every tool_use must be answered; a break above cannot leave one
       // unanswered because we returned.
       await appendResultsRow([...results, ...attachments], produced);
+      if (endTurnAfterRound) {
+        clearInterval(timer);
+        const outcome: TurnOutcome = { status: 'completed', error: null, iterations, ...totals };
+        await store.finishTurn(outcome);
+        emit({ type: 'turn_end', turnId: input.turnId, status: 'completed', error: null });
+        channel.close();
+        return outcome;
+      }
       await startNextAssistant();
     }
   } catch (error) {

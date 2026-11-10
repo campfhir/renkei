@@ -9,8 +9,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { getJson, sendJson } from '@/lib/fetch-json';
-import ShareConfigFields, { draftPayload, emptyDraft } from './share-config-fields';
-import type { ShareDraft } from './share-config-fields';
+import ShareConfigFields from './share-config-fields';
+import {
+  canCreate,
+  draftPayload,
+  editDraft,
+  emptyDraft,
+  type ShareDraft,
+} from './share-config-fields.model';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 
 interface ShareRow {
@@ -107,11 +113,14 @@ export default function ShareList() {
       {draft ? (
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
           <p className="mb-3 text-sm font-medium">New share</p>
-          <ShareConfigFields draft={draft} onChange={setDraft} />
+          <ShareConfigFields
+            draft={draft}
+            onChange={(patch) => setDraft(editDraft(draft, patch))}
+          />
           <div className="mt-3 flex gap-2">
             <button
               type="button"
-              disabled={busy || !draft.name.trim() || !draft.host.trim()}
+              disabled={!canCreate(draft, busy)}
               onClick={() => void create()}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >

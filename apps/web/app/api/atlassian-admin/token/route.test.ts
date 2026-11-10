@@ -16,7 +16,7 @@ jest.mock('@/lib/mcp-tools/jira-admin/automation-client', () => ({
 }));
 
 import { NextRequest } from 'next/server';
-import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
+import { createMemoryDataStore, registerDataStore, resetDataStore, actorFrom } from '@renkei/db';
 import { POST, DELETE } from './route';
 import { getSessionFromRequest } from '@/lib/session';
 import { recordAuditEvent } from '@/lib/audit-events';
@@ -63,6 +63,8 @@ beforeEach(() => {
     subject: 'owner',
     roles: [],
     expiresAt: new Date(Date.now() + 3_600_000),
+
+    actor: actorFrom('owner', null, null),
   });
   grants.describe.mockResolvedValue({
     ok: true,

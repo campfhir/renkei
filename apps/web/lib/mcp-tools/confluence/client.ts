@@ -26,7 +26,7 @@ import {
   type AuthedFetch,
 } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+import { callerAttrs, type CallerContext, type MCPToolContext } from '../common';
 import { grantRefusalText } from '@/lib/grant-refusals';
 import {
   REQUEST_TIMEOUT_MS,
@@ -92,9 +92,7 @@ function truncateForLog(text: string): string {
   return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
 }
 
-interface ConfluenceLogScope {
-  subject?: string;
-}
+type ConfluenceLogScope = CallerContext;
 
 async function confluenceRequest(
   scope: ConfluenceLogScope,
@@ -125,13 +123,17 @@ async function confluenceRequest(
     );
   } catch (error) {
     const timedOut = isTimeoutError(error);
-    logger.warn('Confluence API unreachable', {
-      component: 'confluence/fetch',
-      subject: scope.subject,
-      path: pathAndQuery,
-      method: init?.method ?? 'GET',
-      timedOut,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Confluence ({why}); the tool reported it as unreachable",
+      {
+        component: 'confluence/fetch',
+        ...(await callerAttrs(scope)),
+        path: pathAndQuery,
+        method: init?.method ?? 'GET',
+        timedOut,
+        why: timedOut ? 'timed out' : 'connection failed',
+      }
+    );
     return {
       ok: false,
       error: timedOut
@@ -143,19 +145,22 @@ async function confluenceRequest(
   // resolver's words rather than as a Confluence status.
   const refusal = delegateRefusal(response);
   if (refusal) {
-    logger.warn('Delegate refused the Confluence call', {
-      component: 'confluence/fetch',
-      subject: scope.subject,
-      path: pathAndQuery,
-      refusal,
-    });
+    logger.warn(
+      "the delegate refused {caller}'s Confluence call ({refusal}) before it reached Atlassian; {path} was not made",
+      {
+        component: 'confluence/fetch',
+        ...(await callerAttrs(scope)),
+        path: pathAndQuery,
+        refusal,
+      }
+    );
     return { ok: false, error: grantRefusalText(refusal, 'Confluence') };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
-    logger.warn('Confluence API non-OK response', {
+    logger.warn("Confluence answered {status} to {caller}'s {method} {path}", {
       component: 'confluence/fetch',
-      subject: scope.subject,
+      ...(await callerAttrs(scope)),
       path: pathAndQuery,
       method: init?.method ?? 'GET',
       status: response.status,

@@ -158,7 +158,46 @@ const QUERY_SYNTAX_HELP =
   "  key:!'value'   does NOT contain\n" +
   "  bare text      matches the message, same as message:'text'\n" +
   '  combine with a space or && (AND), || (OR — binds tighter than AND), and ( ) grouping\n' +
-  '  e.g. "status:>=\'500\' && component:\'jira/fetch\'" or "level:error || level:critical"';
+  "  there is no NOT/AND/OR keyword: negate a condition with key:!'value' or key:!='value'\n" +
+  "  level and message are the entry's own columns; component, tool, status, … are attributes\n" +
+  '  e.g. "status:>=\'500\' && component:\'jira/fetch\'", "level:error || level:critical", or\n' +
+  '  "component:!\'approval-sweep\'" to leave out one noisy component';
+
+/**
+ * Plain names a caller reaches for → the column keys the query engine reads.
+ * Without this, `level:error` looks for a `level` *attribute*, which no row
+ * carries, and matches nothing.
+ */
+const COLUMN_KEYS: Record<string, string> = {
+  level: '$level',
+  message: '$message',
+  msg: '$message',
+  timestamp: '$timestamp',
+};
+
+/** Rewrite plain column names to their `$` keys throughout a tree. */
+function withColumnKeys(node: FilterExpr): FilterExpr {
+  if (node.type !== 'filter') return { type: node.type, nodes: node.nodes.map(withColumnKeys) };
+  const column = COLUMN_KEYS[node.filter.key];
+  return column ? { type: 'filter', filter: { ...node.filter, key: column } } : node;
+}
+
+/**
+ * A bare NOT/AND/OR in a query string parses as message text to match, so
+ * "NOT approval-sweep" silently asks for messages containing "NOT". Found so
+ * the caller is told rather than handed an empty result.
+ */
+function strayKeyword(node: FilterExpr): string | null {
+  if (node.type === 'filter') {
+    const { key, value } = node.filter;
+    return key === '$message' && /^(NOT|AND|OR)$/.test(value) ? value : null;
+  }
+  for (const child of node.nodes) {
+    const found = strayKeyword(child);
+    if (found) return found;
+  }
+  return null;
+}
 
 function textResult(text: string) {
   return { content: [{ type: 'text' as const, text }] };
@@ -219,6 +258,10 @@ function toFilterExpr(node: FilterNode): FilterExpr {
   if ('and' in node) return { type: 'and', nodes: node.and.map(toFilterExpr) };
   if ('or' in node) return { type: 'or', nodes: node.or.map(toFilterExpr) };
   return { type: 'filter', filter: tokenForLeaf(node) };
+}
+
+function withColumnKeysOrNull(node: FilterExpr | null): FilterExpr | null {
+  return node ? withColumnKeys(node) : null;
 }
 
 /** AND every given tree together, dropping the ones that are absent. */
@@ -320,6 +363,14 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
             `Could not parse "query": ${parsedQuery.err.toString()}\n\n${QUERY_SYNTAX_HELP}`
           );
         }
+        const keyword = parsedQuery.val ? strayKeyword(parsedQuery.val) : null;
+        if (keyword) {
+          return errText(
+            `"${keyword}" is not an operator in "query" — it would be matched as message text. ` +
+              `Negate a condition with key:!'value' instead (e.g. component:!'approval-sweep').` +
+              `\n\n${QUERY_SYNTAX_HELP}`
+          );
+        }
         queryExpr = parsedQuery.val;
       }
 
@@ -341,7 +392,7 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
       let rows: LogRow[];
       try {
         rows = await getDataStore().activityLogs.search(
-          buildLogQueryOptions(combineExprs(filterExpr, queryExpr), owner, {
+          buildLogQueryOptions(withColumnKeysOrNull(combineExprs(filterExpr, queryExpr)), owner, {
             levels,
             start,
             end,
@@ -360,10 +411,24 @@ export function registerLogTools(server: McpServer, context: MCPToolContext): vo
         return textResult(`No log entries match (${scopeLabel}).`);
       }
 
+      const order = sort === 'asc' ? 'oldest first' : 'newest first';
       const lines = [
-        `${rows.length} log entr${rows.length === 1 ? 'y' : 'ies'} (${scopeLabel}), newest first:`,
+        `${rows.length} log entr${rows.length === 1 ? 'y' : 'ies'} (${scopeLabel}), ${order}:`,
       ];
       for (const row of rows) lines.push('', formatRow(row, isOperator));
+      if (rows.length === limit) {
+        const last = rows[rows.length - 1]?.timestamp;
+        const edge = last ? new Date(last).toISOString() : null;
+        lines.push(
+          '',
+          `Showing the first ${limit}; there may be more in this window.` +
+            (edge
+              ? ` For the next page, repeat the call with ${sort === 'asc' ? 'start' : 'end'} ` +
+                `set to ${edge}.`
+              : '') +
+            " To drop a noisy source, add e.g. component:!'<name>' to the query."
+        );
+      }
       return textResult(lines.join('\n'));
     }
   );

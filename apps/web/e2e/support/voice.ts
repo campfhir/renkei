@@ -2,7 +2,7 @@
  * What the voice specs share, staged the way the app writes it: the org's
  * speech service through the admin Voice form's route (PUT
  * /api/admin/connectors/voice), this person's own voice through
- * Preferences (PUT /api/preferences), and a chat with one reply to Listen
+ * Preferences (PATCH /api/preferences), and a chat with one reply to Listen
  * to, asked of the stand-in model, scripted in the prompt (./stub-model.ts). The vendor —
  * the voice catalog, synthesis, transcription — and the turn an utterance
  * becomes are answered at the browser edge (`mockVendor`), with the audio
@@ -142,7 +142,7 @@ export async function enableVoiceService(request: APIRequestContext): Promise<vo
  */
 export async function stageVoice(request: APIRequestContext, tag: string): Promise<VoiceChat> {
   await enableVoiceService(request);
-  const prefs = await request.put('/api/preferences', { data: { voice: VOICE_PREFS } });
+  const prefs = await request.patch('/api/preferences', { data: { voice: VOICE_PREFS } });
   expect(prefs.ok(), await prefs.text()).toBe(true);
   const modelId = await addStubModel(request, tag, { label: `Claude Sonnet 5 ${tag}` });
   const chatId = await createChat(request, { llmModelId: modelId, title: CHAT_TITLE });

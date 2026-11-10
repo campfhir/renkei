@@ -21,10 +21,11 @@
 
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
-import { withPresentationHint } from '../common';
+import { callerFields, withPresentationHint } from '../common';
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
 import { opsScopes, type JsmOpsAuth } from './ops-auth';
+import { isRecord } from '@renkei/guards';
 
 function textResult(value: string) {
   return { content: [{ type: 'text' as const, text: value }] };
@@ -32,10 +33,6 @@ function textResult(value: string) {
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function str(value: unknown): string {
@@ -237,9 +234,9 @@ export async function registerJsmOpsTools(
         { method: 'POST', body: JSON.stringify({}) }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('jsm_ops_acknowledge_alert', {
+      logger.info('{caller} acknowledged JSM Operations alert {alertId}', {
         component: 'mcp/tool',
-        accountId: context.accountId,
+        ...callerFields(context),
         alertId: str(args.alertId),
       });
       return textResult('Acknowledged.');
@@ -266,9 +263,9 @@ export async function registerJsmOpsTools(
         { method: 'POST', body: JSON.stringify({}) }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('jsm_ops_close_alert', {
+      logger.info('{caller} closed JSM Operations alert {alertId}', {
         component: 'mcp/tool',
-        accountId: context.accountId,
+        ...callerFields(context),
         alertId: str(args.alertId),
       });
       return textResult('Closed.');
@@ -540,10 +537,11 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       const created: unknown = await response.json().catch(() => null);
       const alias = isRecord(created) ? str(created.alias) : '';
-      logger.info('jsm_ops_create_override', {
+      logger.info('{caller} created an on-call override on JSM Operations schedule {scheduleId}', {
         component: 'mcp/tool',
-        accountId: context.accountId,
+        ...callerFields(context),
         scheduleId,
+        alias: alias || undefined,
       });
       return textResult(`Override created${alias ? ` (alias ${alias})` : ''}.`);
     }
@@ -603,12 +601,15 @@ export async function registerJsmOpsTools(
         method: 'DELETE',
       });
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('jsm_ops_delete_override', {
-        component: 'mcp/tool',
-        accountId: context.accountId,
-        scheduleId: str(args.scheduleId),
-        alias: str(args.alias),
-      });
+      logger.info(
+        '{caller} removed on-call override {alias} from JSM Operations schedule {scheduleId}; coverage falls back to the rotation',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          scheduleId: str(args.scheduleId),
+          alias: str(args.alias),
+        }
+      );
       return textResult(`Override removed (${summary}).`);
     }
   );
@@ -706,9 +707,9 @@ export async function registerJsmOpsTools(
         { method: 'PATCH', body: JSON.stringify(patch) }
       );
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('jsm_ops_update_rotation', {
+      logger.info('{caller} updated JSM Operations rotation {rotationId} ({fields})', {
         component: 'mcp/tool',
-        accountId: context.accountId,
+        ...callerFields(context),
         rotationId: str(args.rotationId),
         fields: Object.keys(patch),
       });
@@ -1027,14 +1028,18 @@ export async function registerJsmOpsTools(
       if (!response.ok) return errText(await describeOpsFailure(response));
       const created: unknown = await response.json().catch(() => null);
       const maintenance = isRecord(created) ? created : {};
-      logger.info('jsm_ops_create_maintenance', {
-        component: 'mcp/tool',
-        accountId: context.accountId,
-        maintenanceId: str(maintenance.id),
-        teamId: teamId || undefined,
-        integrations: integrationIds.length,
-        policies: policyIds.length,
-      });
+      logger.info(
+        '{caller} created JSM Operations maintenance window {maintenanceId}{forTeam}, silencing {integrations} integration(s) and {policies} policy/policies',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          maintenanceId: str(maintenance.id),
+          forTeam: teamId ? ` for team ${teamId}` : ' (global)',
+          teamId: teamId || undefined,
+          integrations: integrationIds.length,
+          policies: policyIds.length,
+        }
+      );
       return textResult(
         `Maintenance window created — ${str(maintenance.status) || 'planned'}` +
           `${str(maintenance.id) ? ` — id: ${str(maintenance.id)}` : ''}. ` +
@@ -1094,12 +1099,15 @@ export async function registerJsmOpsTools(
         body: JSON.stringify({}),
       });
       if (!response.ok) return errText(await describeOpsFailure(response));
-      logger.info('jsm_ops_cancel_maintenance', {
-        component: 'mcp/tool',
-        accountId: context.accountId,
-        maintenanceId: str(args.maintenanceId),
-        teamId: teamId || undefined,
-      });
+      logger.info(
+        '{caller} cancelled JSM Operations maintenance window {maintenanceId}; its sources raise alerts again',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          maintenanceId: str(args.maintenanceId),
+          teamId: teamId || undefined,
+        }
+      );
       return textResult(`Maintenance window cancelled (${summary}).`);
     }
   );

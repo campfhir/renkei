@@ -26,6 +26,7 @@
 
 import { WidgetBridge, resultText, type ToolResult } from './bridge';
 import { el, injectStyle, str } from './ui';
+import { asRecord } from '@renkei/guards';
 
 interface Link {
   label: string;
@@ -33,11 +34,6 @@ interface Link {
 }
 
 const CHIP_TONES = new Set(['todo', 'progress', 'done', 'neutral', 'urgent', 'warn']);
-
-function asRecord(value: unknown): Record<string, unknown> {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
-}
 
 function linksOf(value: unknown): Link[] {
   return Array.isArray(value)

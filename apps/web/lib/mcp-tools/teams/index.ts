@@ -29,9 +29,10 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { htmlToDocumentText } from '@renkei/document-text';
 import type { MCPToolContext } from '../common';
-import { withPresentationHint } from '../common';
+import { callerFields, withPresentationHint } from '../common';
 import { withScopeGate } from '../capability-gate';
 import type { GraphAuth } from '../graph/graph-auth';
+import { registerTeamsPreviewLookups } from './preview-lookups';
 import type { GraphCallContext } from '../graph/client';
 import { graphGet, graphPost, values, str, num, rec, textResult, errText } from '../graph/client';
 import { markdownToHtml } from '../outlook/markdown';
@@ -234,6 +235,7 @@ export async function registerTeamsTools(
   auth: GraphAuth
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.graphScopes, (name) => teamsScopeFor(name));
+  registerTeamsPreviewLookups(context, auth);
 
   // ——— chats ———
 
@@ -446,11 +448,12 @@ export async function registerTeamsTools(
         }
       );
       if (!sent.ok) return errText(sent.error);
-      logger.info('teams_send_chat_message sent', {
+      logger.info('{caller} sent a Teams chat message{where}', {
         component: 'mcp/tool',
-        subject: context.subject,
+        ...callerFields(context),
         chatId: target,
         started,
+        where: started ? ' in a new 1:1 chat' : toEmail ? ' in a 1:1 chat' : ' in an existing chat',
       });
       return textResult(
         `Sent (message id ${str(sent.body.id) || 'unknown'}, chat ${target}` +
@@ -651,12 +654,13 @@ export async function registerTeamsTools(
         body: { contentType: 'html', content: markdownToHtml(markdown) },
       });
       if (!sent.ok) return errText(sent.error);
-      logger.info('teams_send_channel_message posted', {
+      logger.info('{caller} {did} in a Teams channel', {
         component: 'mcp/tool',
-        subject: context.subject,
+        ...callerFields(context),
         teamId,
         channelId,
         reply: Boolean(replyToId),
+        did: replyToId ? 'replied under a post' : 'posted',
       });
       const url = str(sent.body.webUrl);
       return textResult(

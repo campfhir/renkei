@@ -7,9 +7,11 @@ import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 import { isUuid } from '@/lib/uuid';
 import { timeZoneOf } from '@/lib/chat/time-zone';
+import { getOrigin } from '@/lib/get-origin';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { startChatTurn, USER_MESSAGE_MAX_CHARS } from '@/lib/chat/start-turn';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -20,6 +22,8 @@ export async function POST(
   if (!ready.ok) return ready.response;
   const { session } = ready.context;
   const body = await readJsonBody(request);
+  // Where the person reached the app, for links a tool hands back (platform-tools/).
+  const origin = await getOrigin(request);
 
   const text = typeof body.text === 'string' ? body.text : '';
   if (text.length > USER_MESSAGE_MAX_CHARS) {
@@ -43,6 +47,7 @@ export async function POST(
     llmModelId,
     voice: body.voice === true,
     timeZone: timeZoneOf(body.timeZone),
+    origin: origin.ok ? origin.val : null,
   });
   if (!started.ok) {
     switch (started.err.type) {
@@ -71,20 +76,30 @@ export async function POST(
       case 'MODEL_ERROR':
         return jsonError(409, 'model-error', started.err.message ?? 'The model is not usable.');
       case 'CONTENT_KEY':
-        logger.error('The content encryption key is not configured: {error}', {
-          component: 'api/chat/chats/turns',
-          subject: session.subject,
-          chatId,
-          error: started.err.message ?? started.err.type,
-        });
+        logger.error(
+          '{actor} sent a message of {chars} characters{withFiles}, but the content encryption key is not configured; nothing was saved: {error}',
+          {
+            component: 'api/chat/chats/turns',
+            ...who(session),
+            chatId,
+            chars: text.length,
+            withFiles: attachmentIds.length ? ` with ${attachmentIds.length} attachments` : '',
+            error: started.err.message ?? started.err.type,
+          }
+        );
         return jsonError(500, 'content-key', 'The content encryption key is not configured.');
       default:
-        logger.error('The message could not be saved: {error}', {
-          component: 'api/chat/chats/turns',
-          subject: session.subject,
-          chatId,
-          error: started.err.message ?? started.err.type,
-        });
+        logger.error(
+          '{actor} sent a message of {chars} characters{withFiles}, but it was not saved and no reply was started: {error}',
+          {
+            component: 'api/chat/chats/turns',
+            ...who(session),
+            chatId,
+            chars: text.length,
+            withFiles: attachmentIds.length ? ` with ${attachmentIds.length} attachments` : '',
+            error: started.err.message ?? started.err.type,
+          }
+        );
         return jsonError(500, 'database', 'The message could not be saved.');
     }
   }

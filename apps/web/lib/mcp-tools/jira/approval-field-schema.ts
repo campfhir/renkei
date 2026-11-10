@@ -19,6 +19,7 @@
 import { ATLASSIAN, readAtlassianMetadata } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import type { MCPToolContext } from '../common';
 import { oauthJiraAuth } from './jira-auth';
 import {
@@ -54,11 +55,14 @@ export async function loadApprovalFieldSchema(
     const schema = await loadFieldSchema(context, auth);
     return await enrichFieldsWithAllowedValues(context, auth, schema, source);
   } catch (error) {
-    logger.warn('approval card field schema could not be loaded: {error}', {
-      component: 'jira/approval-fields',
-      subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "the Jira field schema could not be loaded on {actor}'s grant for an approval card; the card is drawn without field options: {error}",
+      {
+        component: 'jira/approval-fields',
+        ...(await whoIs(subject)),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }

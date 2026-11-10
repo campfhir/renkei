@@ -7,6 +7,7 @@ import { getAtlassianJsmApp } from '@/lib/atlassian-app';
 import { ATLASSIAN_REQUIRED_SCOPES } from '@/lib/atlassian-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /**
  * Authorize against the second Atlassian app ("Renkei JSM": JSM + Ops
@@ -17,9 +18,10 @@ import { logger } from '@/lib/logger';
  * provider + scopes for the shared callback.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  let session: Awaited<ReturnType<typeof getSessionFromRequest>> = null;
   try {
     // The resulting grant is bound to whoever completes this flow.
-    const session = await getSessionFromRequest(request);
+    session = await getSessionFromRequest(request);
     if (!session) {
       return NextResponse.json(
         { error: 'Not signed in', error_description: 'Sign in before connecting' },
@@ -29,11 +31,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth',
-        subject: session.subject,
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        '{actor} asked to connect Jira Service Management, but the app origin could not be resolved; no sign-in was started: {error}',
+        {
+          component: 'auth/oauth',
+          ...who(session),
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const app = await getAtlassianJsmApp(originResult.val);
@@ -84,18 +89,24 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authUrl.searchParams.append('state', state);
     authUrl.searchParams.append('prompt', 'consent');
 
-    logger.debug('Atlassian JSM authorize redirect', {
+    logger.debug('{actor} is being sent to Jira Service Management to consent to scopes {scopes}', {
       component: 'auth/oauth',
+      ...who(session),
       clientId: app.clientId,
+      scopes: effectiveScopes,
       urlLength: authUrl.toString().length,
     });
     // Bound to this browser: the callback requires the cookie this sets.
     return await redirectToConsent(authUrl, state);
   } catch (error) {
-    logger.error('Atlassian JSM authorize error: {error}', {
-      component: 'auth/oauth',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{actor} asked to connect Jira Service Management, but the sign-in could not be started; the person saw an error: {error}',
+      {
+        component: 'auth/oauth',
+        ...(session ? who(session) : { actor: '(someone not yet signed in)' }),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'Failed to initiate authorization' }, { status: 500 });
   }
 }

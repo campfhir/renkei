@@ -123,7 +123,17 @@ Administrator exports** where a tool hands one to the server:
 and the generated write tools take the same documents. JSON is what the
 tools read, because it is easier to unwrap than to parse XML without a
 dependency; XML is what they write, because it is Mirth's canonical form
-and round-trips without the JSON dialect's quirks.
+and round-trips without the JSON dialect's quirks. The one place a tool
+cuts XML is `mirth_test_connector` (`connection-test.ts`): Mirth's
+connector services (`POST /connectors/<type>/_testConnection`,
+`_testRead`, `_testWrite`) take the connector's properties as the
+XStream document the channel already holds, so the tool reads the
+channel as XML, lifts the one `<properties class="…">` element out with
+a balanced-tag cut and re-roots it under its class name — every nested
+setting intact, where a JSON round trip would have to rebuild the
+dialect. Those routes are not in the operation table on purpose: a model
+should not compose connector properties by hand when the channel has
+them.
 
 ## Names, not just ids
 

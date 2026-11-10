@@ -19,6 +19,7 @@ import {
   latestOptimization,
 } from '@/lib/agents/optimization-store';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -45,12 +46,19 @@ export async function POST(
   // at even if the setting changes afterwards.
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Settings unavailable: {error}', {
-      component: 'api/agents-optimize',
-      subject: session.subject,
-      agentId,
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} asked for an analysis of agent "{agent}", but the org settings could not be read; nothing was started: {error}',
+      {
+        component: 'api/agents-optimize',
+        ...who(session),
+        ...(await whichAgentOf({
+          agentId,
+          agentName: access.agent.name,
+          ownerSubject: access.ownerSubject,
+        })),
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
   }
   const optimizationId = await createOptimization({
@@ -66,11 +74,20 @@ export async function POST(
     orderingKey: `optimize:${session.subject}`,
   });
   if (!enqueued.ok) {
-    logger.error('could not enqueue optimization {optimizationId}: {error}', {
-      component: 'api/agents-optimize',
-      optimizationId,
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      '{actor} asked for an analysis of agent "{agent}", but the job was not queued; the request was discarded: {error}',
+      {
+        component: 'api/agents-optimize',
+        ...who(session),
+        ...(await whichAgentOf({
+          agentId,
+          agentName: access.agent.name,
+          ownerSubject: access.ownerSubject,
+        })),
+        optimizationId,
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     await deleteOptimization(optimizationId);
     return NextResponse.json(
       { error: 'Could not start the analysis. Try again in a moment.' },

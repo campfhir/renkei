@@ -19,6 +19,7 @@ jest.mock('@renkei/provider-grants', () => ({
 }));
 // No reachable database: every data-store method rejects.
 jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
   getDataStore: () =>
     new Proxy(
       {},

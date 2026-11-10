@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
@@ -30,11 +30,10 @@ export async function registerIssueLinkTools(
       inputSchema: z.object({}),
     },
     async (_args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_link_types invoked', {
+      logger.debug('{caller} called jira_list_link_types', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_link_types',
       });
       try {
         const response = await auth.fetch(
@@ -81,11 +80,10 @@ export async function registerIssueLinkTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_issue_link invoked', {
+      logger.debug('{caller} called jira_create_issue_link', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_issue_link',
       });
       try {
         const { linkType, fromIssueKey, toIssueKey } = args;
@@ -207,11 +205,10 @@ export async function registerIssueLinkTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_remote_link invoked', {
+      logger.debug('{caller} called jira_create_remote_link', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_remote_link',
       });
       try {
         const issueKey = typeof args.issueKey === 'string' ? args.issueKey : '';
@@ -278,11 +275,10 @@ export async function registerIssueLinkTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_delete_issue_link invoked', {
+      logger.debug('{caller} called jira_delete_issue_link', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_delete_issue_link',
       });
       try {
         const { linkId } = args;

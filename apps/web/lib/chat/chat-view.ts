@@ -33,7 +33,7 @@ import type {
  * unchanged tool_result as live Confirm/Cancel buttons for something
  * already decided.
  */
-function withResolvedWidgets(
+export function withResolvedWidgets(
   blocks: ChatBlock[],
   decisions: Map<string, WidgetDecisionState>
 ): ChatBlock[] {
@@ -61,6 +61,7 @@ export async function loadChatView(
     summary,
     overhead,
     draft,
+    taskWait,
   ] = await Promise.all([
     listMessages(chat.id, access.cipher),
     getActiveTurn(chat.id),
@@ -76,6 +77,7 @@ export async function loadChatView(
     getRequestOverhead(chat.id),
     // Like the queue, only the owner has a box to put it back in.
     chat.ownerSubject === viewerSubject ? loadDraft(chat.id, access.cipher) : Promise.resolve(''),
+    getDataStore().chatTasks.getWait(chat.id),
   ]);
   const branches =
     project?.kind === 'code' && chat.workspaceId
@@ -121,6 +123,7 @@ export async function loadChatView(
       createdAt: chat.createdAt.toISOString(),
       updatedAt: chat.updatedAt.toISOString(),
       activeTurn: active ? toTurnView(active) : null,
+      taskWait: taskWait !== null,
       artifacts,
       contextTokens: rows.some((row) => row.usage)
         ? Math.round(

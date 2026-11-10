@@ -1,7 +1,7 @@
 import { createLogger, ConsoleAdapter } from '@campfhir/bored-logs';
 export { secure, redact } from '@campfhir/bored-logs';
 import { HttpAdapter, type E2ESigningKeysJwk } from '@campfhir/bored-logs/adapters/http';
-import { checkDataStore, createLogAdapter } from '@renkei/db';
+import { checkDataStore, createLogAdapter, migrateLogTables } from '@renkei/db';
 import { requireLogCipher, type LogCipher } from './log-encryption';
 import packageJson from '../package.json';
 
@@ -44,10 +44,13 @@ export async function attachPersistentLogging(): Promise<void> {
 
   const ready = checkDataStore();
   if (!ready.ok) {
-    logger.error('Could not attach Postgres log adapter; logging to console only', {
-      component: 'worker-agents/logging',
-      error: String(ready.err),
-    });
+    logger.error(
+      'the data store is not ready, so the Postgres log adapter was not attached; logging to console only: {error}',
+      {
+        component: 'worker-agents/logging',
+        error: String(ready.err),
+      }
+    );
     return;
   }
   // Encryption is mandatory on the direct-Postgres path: a missing or malformed
@@ -68,17 +71,20 @@ export async function attachPersistentLogging(): Promise<void> {
     decrypt: cipher.decrypt,
   });
   if (!built.ok) {
-    logger.error('Could not attach Postgres log adapter; logging to console only', {
-      component: 'worker-agents/logging',
-      error: String(built.err),
-    });
+    logger.error(
+      'the Postgres log adapter could not be built, so it was not attached; logging to console only: {error}',
+      {
+        component: 'worker-agents/logging',
+        error: String(built.err),
+      }
+    );
     return;
   }
   const adapter = built.val;
   try {
-    await adapter.migrate();
+    await migrateLogTables(adapter);
   } catch (error) {
-    logger.error('Log table migration failed; logging to console only', {
+    logger.error('the log tables could not be migrated; logging to console only: {error}', {
       component: 'worker-agents/logging',
       error: error instanceof Error ? error.message : String(error),
     });
@@ -115,7 +121,7 @@ function attachHttpShipping(endpoint: string): void {
   });
   adapter.start();
   logger.addAdapter(adapter);
-  logger.info('shipping logs to {endpoint} (e2e encrypted)', {
+  logger.info('shipping logs to {endpoint}, end-to-end encrypted under a {identity} identity', {
     component: 'worker-agents/logging',
     endpoint,
     identity: signingKeys ? 'persistent' : 'per-boot',

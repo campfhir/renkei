@@ -21,6 +21,7 @@ import { resolveTenantBlobStore } from '@renkei/blob-store';
 import { randomUUID } from 'node:crypto';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import {
   grantResourceAccess,
   listGrantedResources,
@@ -740,12 +741,16 @@ export async function replaceArtifactBytes(input: {
   await getDataStore().artifacts.adoptContent(row.id, temp.val.id);
   const dropped = await store.val.deleteObject(row.blobKey);
   if (!dropped.ok) {
-    logger.warn('replaced artifact bytes not deleted: {key}', {
-      component: 'chat/artifact-library',
-      subject: row.ownerSubject,
-      artifactId: row.id,
-      key: row.blobKey,
-    });
+    logger.warn(
+      '"{filename}" of {actor} was replaced, but its old bytes were not deleted from storage; they linger as an orphan',
+      {
+        component: 'chat/artifact-library',
+        ...(await whoIs(row.ownerSubject)),
+        artifactId: row.id,
+        filename: row.filename,
+        key: row.blobKey,
+      }
+    );
   }
   const updated = await getAttachment(row.id);
   return updated ? ok(updated) : err('NOT_FOUND' as const);

@@ -1,26 +1,31 @@
 /**
  * Preview cards for OneNote: a section, a page, an addition to a page, and
- * a deletion. The notebook, section and page are named by id here — the
- * builder sees only the arguments — so each card says which and lets the
- * person reread what is about to be written.
+ * a deletion. The notebook, section and page arrive as ids; the lookup
+ * (onenote/preview-lookups.ts) names them, and where it could not the card
+ * says "the page", never the id.
  */
 
-import type { PreviewBuilder } from './card';
-import { text } from './card';
+import type { Names, PreviewBuilder } from './card';
+import { named, text } from './card';
+import { siteLabel } from './graph-names';
 
 const ONENOTE = 'OneNote';
 
 /** "your notebooks", or the site or group a call points at. */
-function whose(args: Record<string, unknown>): string[] {
-  const site = text(args.site);
-  const groupId = text(args.groupId);
-  if (site) return [`Site ${site}`];
-  if (groupId) return [`Group ${groupId}`];
+function whose(args: Record<string, unknown>, names: Names): string[] {
+  if (text(args.site)) {
+    const site = siteLabel(names, args.site);
+    return [site ? `Site ${site}` : 'A SharePoint site'];
+  }
+  if (text(args.groupId)) {
+    const group = named(names, 'group', args.groupId);
+    return [group ? `Group ${group}` : 'A Microsoft 365 group'];
+  }
   return ['Your notebooks'];
 }
 
 export const ONENOTE_PREVIEWS: Record<string, PreviewBuilder> = {
-  onenote_create_section: (args) => ({
+  onenote_create_section: (args, names) => ({
     verb: 'Create',
     icon: 'folder',
     title: `Create the section “${text(args.name)}”`,
@@ -33,11 +38,16 @@ export const ONENOTE_PREVIEWS: Record<string, PreviewBuilder> = {
       type: 'section',
       titleKey: 'name',
       title: text(args.name),
-      location: [...whose(args), `Notebook ${text(args.notebookId)}`],
+      location: [
+        ...whose(args, names),
+        named(names, 'notebook', args.notebookId)
+          ? `Notebook ${named(names, 'notebook', args.notebookId)}`
+          : 'The notebook',
+      ],
     },
   }),
 
-  onenote_create_page: (args) => ({
+  onenote_create_page: (args, names) => ({
     verb: 'Create',
     icon: 'doc',
     title: `Create the page “${text(args.title)}”`,
@@ -53,17 +63,27 @@ export const ONENOTE_PREVIEWS: Record<string, PreviewBuilder> = {
       type: 'page',
       titleKey: 'title',
       title: text(args.title),
-      location: [...whose(args), `Section ${text(args.sectionId)}`],
+      location: [
+        ...whose(args, names),
+        ...(named(names, 'sectionNotebook', args.sectionId)
+          ? [`Notebook ${named(names, 'sectionNotebook', args.sectionId)}`]
+          : []),
+        named(names, 'section', args.sectionId)
+          ? `Section ${named(names, 'section', args.sectionId)}`
+          : 'The section',
+      ],
       bodyKey: 'markdown',
       body: text(args.markdown),
       bodyLabel: 'Page (Markdown)',
     },
   }),
 
-  onenote_append_to_page: (args) => ({
+  onenote_append_to_page: (args, names) => ({
     verb: 'Add',
     icon: 'doc',
-    title: text(args.position) === 'top' ? 'Add to the top of a page' : 'Add to the end of a page',
+    title: `Add to the ${text(args.position) === 'top' ? 'top' : 'end'} of ${
+      named(names, 'page', args.pageId) ? `“${named(names, 'page', args.pageId)}”` : 'a page'
+    }`,
     subtitle: ONENOTE,
     confirmLabel: 'Add to page',
     editable: [{ key: 'markdown', label: 'Addition', multiline: true }],
@@ -71,8 +91,8 @@ export const ONENOTE_PREVIEWS: Record<string, PreviewBuilder> = {
       kind: 'document',
       mode: 'append',
       type: 'page',
-      title: `Page ${text(args.pageId)}`,
-      location: whose(args),
+      title: named(names, 'page', args.pageId) || 'The page',
+      location: whose(args, names),
       bodyKey: 'markdown',
       body: text(args.markdown),
       bodyLabel: 'Added (Markdown)',
@@ -80,19 +100,21 @@ export const ONENOTE_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  onenote_delete_page: (args) => ({
+  onenote_delete_page: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
-    title: `Delete page ${text(args.pageId)}`,
+    title: named(names, 'page', args.pageId)
+      ? `Delete the page “${named(names, 'page', args.pageId)}”`
+      : 'Delete the page',
     subtitle: ONENOTE,
     confirmLabel: 'Delete page',
     body: {
       kind: 'document',
       mode: 'delete',
       type: 'page',
-      title: `Page ${text(args.pageId)}`,
-      location: whose(args),
+      title: named(names, 'page', args.pageId) || 'The page',
+      location: whose(args, names),
       versionNote:
         'OneNote keeps deleted pages in the notebook’s recycle bin for a while; Renkei cannot restore them.',
     },

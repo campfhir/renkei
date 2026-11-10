@@ -21,21 +21,25 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { parseServerPayload, serverSummary } from '@/lib/mcp-servers/parse';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 type Params = { params: Promise<{ serverId: string }> };
 
 export async function GET(_request: NextRequest, { params }: Params): Promise<NextResponse> {
   const { serverId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const server = await getServer(serverId);
   if (!server.ok) {
-    logger.error('Could not read the server: {error}', {
-      component: 'api/admin/mcp-servers',
-      serverId,
-      error: server.err.message ?? server.err.type,
-    });
+    logger.error(
+      '{actor} opened an MCP server, but it could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        serverId,
+        error: server.err.message ?? server.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the server' }, { status: 500 });
   }
   if (!server.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -54,12 +58,16 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
 
   const current = await getServer(serverId);
   if (!current.ok) {
-    logger.error('Could not read the server: {error}', {
-      component: 'api/admin/mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: current.err.message ?? current.err.type,
-    });
+    logger.error(
+      '{actor} saved the MCP server "{name}", but its current registration could not be read; nothing was saved: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        serverId,
+        name: input.name,
+        error: current.err.message ?? current.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the server' }, { status: 500 });
   }
   if (!current.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -101,12 +109,16 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
   if (input.clientSecret) {
     const key = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!key.ok) {
-      logger.error('Could not load the token encryption key: {error}', {
-        component: 'api/admin/mcp-servers',
-        subject: session.subject,
-        serverId,
-        error: key.err.message ?? key.err.type,
-      });
+      logger.error(
+        '{actor} saved the MCP server "{name}" with a new client secret, but the token encryption key could not be loaded; nothing was saved: {error}',
+        {
+          component: 'api/admin/mcp-servers',
+          ...who(session),
+          serverId,
+          name: input.name,
+          error: key.err.message ?? key.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     patch.encryptedClientSecret = encrypt(input.clientSecret, key.val);
@@ -116,12 +128,16 @@ export async function PATCH(request: NextRequest, { params }: Params): Promise<N
 
   const updated = await updateServer(serverId, patch);
   if (!updated.ok) {
-    logger.error('Could not save the server: {error}', {
-      component: 'api/admin/mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: updated.err.message ?? updated.err.type,
-    });
+    logger.error(
+      '{actor} saved the MCP server "{name}", but it was not updated; everyone\'s connections to it stand as they were: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        serverId,
+        name: input.name,
+        error: updated.err.message ?? updated.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save the server' }, { status: 500 });
   }
 
@@ -147,12 +163,15 @@ export async function DELETE(_request: NextRequest, { params }: Params): Promise
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const current = await getServer(serverId);
   if (!current.ok) {
-    logger.error('Could not read the server: {error}', {
-      component: 'api/admin/mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: current.err.message ?? current.err.type,
-    });
+    logger.error(
+      '{actor} deleted an MCP server, but it could not be read; nothing was deleted: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        serverId,
+        error: current.err.message ?? current.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read the server' }, { status: 500 });
   }
   if (!current.val) return NextResponse.json({ error: 'Not found' }, { status: 404 });
@@ -162,12 +181,16 @@ export async function DELETE(_request: NextRequest, { params }: Params): Promise
   await getDataStore().providerGrants.deleteForProvider(mcpProvider(serverId));
   const deleted = await deleteServer(serverId);
   if (!deleted.ok) {
-    logger.error('Could not delete the server: {error}', {
-      component: 'api/admin/mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: deleted.err.message ?? deleted.err.type,
-    });
+    logger.error(
+      '{actor} deleted the MCP server "{name}", but the registration was not deleted; everyone\'s grants to it were already removed: {error}',
+      {
+        component: 'api/admin/mcp-servers',
+        ...who(session),
+        serverId,
+        name: current.val.name,
+        error: deleted.err.message ?? deleted.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not delete the server' }, { status: 500 });
   }
   recordAuditEvent({

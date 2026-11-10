@@ -16,9 +16,9 @@ import {
   DelegateTransport,
   delegateConfigFromEnv,
   isConnectionFailure,
-  isRecord,
   type FetchLike,
 } from './transport';
+import { isRecord } from '@renkei/guards';
 
 /** Whose grant a request rides on. One of subject, accountId or pending is required. */
 
@@ -222,6 +222,8 @@ export class DelegateGrants {
       if (name.toLowerCase() !== 'authorization') forward[name] = value;
     });
     const method = staged.method.toUpperCase();
+    // A caller's own `redirect: 'manual'` wins over the fetcher's default.
+    const redirect = init.redirect === 'manual' ? 'manual' : (options.redirect ?? 'follow');
     const body =
       method === 'GET' || method === 'HEAD' ? undefined : Buffer.from(await staged.arrayBuffer());
     const headers: Record<string, string> = {
@@ -231,8 +233,7 @@ export class DelegateGrants {
       'x-delegate-url': url,
       'x-delegate-method': method,
       'x-delegate-headers': JSON.stringify(forward),
-      // A caller's own `redirect: 'manual'` wins over the fetcher's default.
-      'x-delegate-redirect': init.redirect === 'manual' ? 'manual' : (options.redirect ?? 'follow'),
+      'x-delegate-redirect': redirect,
     };
     if (options.timeoutMs) headers['x-delegate-timeout-ms'] = String(options.timeoutMs);
     // A read of the provider (GET, HEAD) is sent again, once, after a
@@ -245,6 +246,12 @@ export class DelegateGrants {
           method: 'POST',
           headers,
           body,
+          // The delegate hands a 3xx back when asked to (or when it points
+          // off the provider's hosts); a manual caller must see it as is, so
+          // this hop to the delegate must not follow it either. Without this,
+          // fetch follows Graph's /content 302 here and the caller gets the
+          // file's bytes as a 200 instead of the download link.
+          redirect,
           signal: init.signal ?? undefined,
         });
       } catch (error) {

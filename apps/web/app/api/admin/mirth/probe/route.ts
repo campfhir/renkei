@@ -10,14 +10,9 @@ import { parseBaseUrl } from '@renkei/connector-mirth';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { mirthClientFailure, mirthProbe } from '@/lib/mirth/service-client';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

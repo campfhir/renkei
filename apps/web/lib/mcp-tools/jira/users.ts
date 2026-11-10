@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 
@@ -33,11 +33,10 @@ export async function registerUserTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_users invoked', {
+      logger.debug('{caller} called jira_list_users', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_users',
       });
       try {
         const { query, maxResults = 10 } = args;
@@ -98,11 +97,10 @@ export async function registerUserTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_get_user invoked', {
+      logger.debug('{caller} called jira_get_user', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_get_user',
       });
       try {
         const { accountId } = args;
@@ -166,11 +164,10 @@ export async function registerUserTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_groups invoked', {
+      logger.debug('{caller} called jira_list_groups', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_groups',
       });
       try {
         const { query, maxResults = 10 } = args;
@@ -230,11 +227,10 @@ export async function registerUserTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_group_members invoked', {
+      logger.debug('{caller} called jira_list_group_members', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_group_members',
       });
       try {
         const { groupName, maxResults = 10 } = args;
@@ -297,11 +293,10 @@ export async function registerUserTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_get_user_groups invoked', {
+      logger.debug('{caller} called jira_get_user_groups', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_get_user_groups',
       });
       try {
         const { accountId } = args;

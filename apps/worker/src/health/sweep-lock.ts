@@ -38,15 +38,18 @@ export function withSweepLock(name: string, fn: () => Promise<void>): () => Prom
       });
     } catch (error) {
       if (sweepFailed) throw error;
-      logger.error('database unavailable; skipping {sweep}', {
-        component: 'worker/sweep-lock',
-        sweep: name,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the {sweep} sweep lock could not be taken (database unavailable); this pass was skipped: {error}',
+        {
+          component: 'worker/sweep-lock',
+          sweep: name,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return;
     }
     if (!ran) {
-      logger.debug('another worker holds the {sweep} lock; skipping this pass', {
+      logger.debug('another worker holds the {sweep} sweep lock; this pass was skipped', {
         component: 'worker/sweep-lock',
         sweep: name,
       });

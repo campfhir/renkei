@@ -1,13 +1,31 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useReducer, useState } from 'react';
 import {
   SALESFORCE_ADMIN_KIND,
   SALESFORCE_CRM_KIND,
   type SalesforceKind,
 } from '@/lib/salesforce-kinds';
 import ScopePicker from '@/components/scope-picker';
-import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import {
+  addButtonLabel,
+  capabilityLabels,
+  changeRequestsLine,
+  editorReducer,
+  editorSections,
+  editorTitle,
+  emptyListHint,
+  initEditor,
+  isAdminKind as isAdmin,
+  keptAway,
+  removeUrl,
+  saveBody,
+  secretField,
+  type FlagField,
+  type SalesforceConfig,
+  type SalesforceConnectorRow,
+  type TextField,
+} from './salesforce-form.model';
 import {
   useConnectorConfig,
   putJson,
@@ -21,35 +39,6 @@ import {
 } from './shared';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 import { reportFetchFailure } from '@/lib/fetch-json';
-
-/* ----------------------------------------------------------------------- */
-
-interface SalesforceConnectorRow {
-  key: string;
-  name: string;
-  myDomain: string;
-  sandbox: boolean;
-  enabled: boolean;
-  clientId: string;
-  scopes: string;
-  excludedObjects: string[];
-  excludedFields: string[];
-  hideRestricted: boolean;
-  productionChanges: boolean;
-  hasClientSecret: boolean;
-}
-
-interface SalesforceConfig {
-  configured: boolean;
-  enabled: boolean;
-  connectors: SalesforceConnectorRow[];
-}
-
-function defaultChecked(kind: SalesforceKind): Set<string> {
-  return new Set(kind.scopeOptions.filter((option) => option.defaultChecked).map((o) => o.id));
-}
-
-const isAdmin = (kind: SalesforceKind) => kind.key === SALESFORCE_ADMIN_KIND.key;
 
 /**
  * The Salesforce connectors — one per Salesforce org the organization works
@@ -124,10 +113,7 @@ function SalesforceConnectorsForm({
         </p>
         {connectors.length === 0 && (
           <p className="mt-3 text-sm text-gray-600 dark:text-gray-400">
-            No {kind.label} connectors yet.{' '}
-            {isAdmin(kind)
-              ? 'Start with a sandbox to build in.'
-              : 'Start with your production org.'}
+            No {kind.label} connectors yet. {emptyListHint(kind)}
           </p>
         )}
       </Card>
@@ -171,11 +157,7 @@ function SalesforceConnectorsForm({
           onClick={() => setEditing('__new__')}
           className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
         >
-          {connectors.length === 0
-            ? isAdmin(kind)
-              ? 'Add your first org'
-              : 'Add your production org'
-            : 'Add a Salesforce org'}
+          {addButtonLabel(kind, connectors.length)}
         </button>
       )}
     </div>
@@ -191,9 +173,7 @@ function ConnectorSummary({
   connector: SalesforceConnectorRow;
   onEdit: () => void;
 }) {
-  const capabilities = kind.scopeOptions
-    .filter((option) => optionWithin(option, new Set(connector.scopes.split(/\s+/))))
-    .map((option) => option.label);
+  const capabilities = capabilityLabels(kind, connector.scopes);
   return (
     <Card
       title={`${kind.label} · ${connector.name}`}
@@ -211,13 +191,7 @@ function ConnectorSummary({
         {isAdmin(kind) ? (
           <>
             <dt className="text-gray-500 dark:text-gray-400">Change requests</dt>
-            <dd>
-              {connector.sandbox
-                ? 'Applied here when the person approves them'
-                : connector.productionChanges
-                  ? 'Allowed in this production org'
-                  : 'Not in this production org — read only'}
-            </dd>
+            <dd>{changeRequestsLine(connector)}</dd>
           </>
         ) : (
           <>
@@ -238,16 +212,6 @@ function ConnectorSummary({
   );
 }
 
-/** The connector's hidden objects and fields, in one line. */
-function keptAway(connector: SalesforceConnectorRow): string {
-  const parts = [
-    ...connector.excludedObjects.map((name) => `${name} (object)`),
-    ...connector.excludedFields,
-    ...(connector.hideRestricted ? ['fields classified Restricted or Mission Critical'] : []),
-  ];
-  return parts.join(', ') || 'nothing';
-}
-
 function ConnectorEditor({
   kind,
   existing,
@@ -261,85 +225,38 @@ function ConnectorEditor({
   onDone: () => void;
   onCancel: () => void;
 }) {
-  // A CRM usually starts with production; building usually starts in a sandbox.
-  const firstIsProduction = isFirst && !isAdmin(kind);
-  const [name, setName] = useState(existing?.name ?? (firstIsProduction ? 'Production' : ''));
-  const [myDomain, setMyDomain] = useState(existing?.myDomain ?? '');
-  const [sandbox, setSandbox] = useState(existing?.sandbox ?? !firstIsProduction);
-  const [clientId, setClientId] = useState(existing?.clientId ?? '');
-  const [clientSecret, setClientSecret] = useState('');
-  const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [excludedObjects, setExcludedObjects] = useState(
-    (existing?.excludedObjects ?? []).join('\n')
-  );
-  const [excludedFields, setExcludedFields] = useState((existing?.excludedFields ?? []).join('\n'));
-  const [hideRestricted, setHideRestricted] = useState(existing?.hideRestricted ?? false);
-  const [productionChanges, setProductionChanges] = useState(existing?.productionChanges ?? false);
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => defaultChecked(kind));
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [confirmingRemove, setConfirmingRemove] = useState(false);
-
-  useEffect(() => {
-    if (!existing?.scopes) return;
-    const stored = new Set(existing.scopes.split(/\s+/));
-    const matching = kind.scopeOptions.filter((option) => optionWithin(option, stored));
-    if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
-  }, [existing?.scopes, kind]);
-
-  function toggleOption(optionId: string, on: boolean) {
-    setCheckedIds((current) => {
-      const next = new Set(current);
-      if (on) next.add(optionId);
-      else next.delete(optionId);
-      return next;
-    });
-  }
+  const [state, dispatch] = useReducer(editorReducer, { kind, existing, isFirst }, initEditor);
+  const setText = (field: TextField) => (value: string) => dispatch({ type: 'text', field, value });
+  const setFlag = (field: FlagField) => (value: boolean) =>
+    dispatch({ type: 'flag', field, value });
+  const sections = editorSections(kind, state);
+  const secret = secretField(existing);
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setNotice(null);
-    setError(null);
-    const failure = await putJson(kind.adminApi, {
-      ...(existing ? { key: existing.key } : {}),
-      name: name.trim(),
-      myDomain: myDomain.trim(),
-      sandbox,
-      clientId: clientId.trim(),
-      // Blank means keep the stored secret — omit it from the payload.
-      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
-      enabled,
-      scopes: scopesOfOptions(kind.scopeOptions, checkedIds).join(' '),
-      ...(isAdmin(kind)
-        ? { productionChanges: !sandbox && productionChanges }
-        : { excludedObjects, excludedFields, hideRestricted }),
-    });
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const failure = await putJson(kind.adminApi, saveBody(kind, existing, state));
     if (failure) {
-      setError(failure);
+      dispatch({ type: 'failed', error: failure });
       return;
     }
-    setClientSecret('');
-    setNotice('Saved');
+    dispatch({ type: 'saved' });
     onDone();
   }
 
   async function remove() {
     if (!existing) return;
-    setBusy(true);
-    const response = await fetch(`${kind.adminApi}?key=${encodeURIComponent(existing.key)}`, {
+    dispatch({ type: 'sent' });
+    const response = await fetch(removeUrl(kind, existing.key), {
       method: 'DELETE',
     }).catch((error: unknown) => {
       reportFetchFailure('DELETE', kind.adminApi, 0, 'Could not reach the server', error);
       return null;
     });
-    setBusy(false);
     if (!response?.ok) {
       if (response)
         reportFetchFailure('DELETE', kind.adminApi, response.status, 'Could not remove it');
-      setError('Could not remove it');
+      dispatch({ type: 'failed', error: 'Could not remove it' });
       return;
     }
     onDone();
@@ -348,7 +265,7 @@ function ConnectorEditor({
   const idBase = `${kind.key}-${existing?.key ?? 'new'}`;
   return (
     <Card
-      title={existing ? `${kind.label} · ${existing.name}` : `New ${kind.label} connector`}
+      title={editorTitle(kind, existing)}
       status={
         existing ? (
           <StatusPill configured={existing.hasClientSecret} enabled={existing.enabled} />
@@ -363,8 +280,8 @@ function ConnectorEditor({
           <input
             id={`${idBase}-name`}
             required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            value={state.name}
+            onChange={(e) => setText('name')(e.target.value)}
             placeholder="Production, UAT, Full Copy…"
             className={inputClass}
           />
@@ -377,8 +294,8 @@ function ConnectorEditor({
           <input
             id={`${idBase}-domain`}
             required
-            value={myDomain}
-            onChange={(e) => setMyDomain(e.target.value)}
+            value={state.myDomain}
+            onChange={(e) => setText('myDomain')(e.target.value)}
             placeholder="acme.my.salesforce.com"
             className={`${inputClass} font-mono`}
           />
@@ -391,7 +308,11 @@ function ConnectorEditor({
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={sandbox} onChange={(e) => setSandbox(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={state.sandbox}
+            onChange={(e) => setFlag('sandbox')(e.target.checked)}
+          />
           This is a sandbox
         </label>
         <div>
@@ -401,8 +322,8 @@ function ConnectorEditor({
           <input
             id={`${idBase}-client-id`}
             required
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
+            value={state.clientId}
+            onChange={(e) => setText('clientId')(e.target.value)}
             className={`${inputClass} font-mono`}
           />
         </div>
@@ -413,10 +334,10 @@ function ConnectorEditor({
           <input
             id={`${idBase}-client-secret`}
             type="password"
-            required={!existing?.hasClientSecret}
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={existing?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
+            required={secret.required}
+            value={state.clientSecret}
+            onChange={(e) => setText('clientSecret')(e.target.value)}
+            placeholder={secret.placeholder}
             className={`${inputClass} font-mono`}
           />
         </div>
@@ -425,8 +346,8 @@ function ConnectorEditor({
           <ScopePicker
             groups={kind.scopeGroups}
             options={kind.scopeOptions}
-            checked={checkedIds}
-            onToggle={toggleOption}
+            checked={state.checkedIds}
+            onToggle={(optionId, on) => dispatch({ type: 'toggleOption', optionId, on })}
           />
           <p className={hintClass}>
             This is the ceiling: people can narrow it when they connect, never widen it. Salesforce
@@ -439,13 +360,13 @@ function ConnectorEditor({
           </p>
         </fieldset>
         {isAdmin(kind) ? (
-          !sandbox && (
+          sections.productionChanges && (
             <label className="flex items-start gap-2 text-sm">
               <input
                 type="checkbox"
                 className="mt-1"
-                checked={productionChanges}
-                onChange={(e) => setProductionChanges(e.target.checked)}
+                checked={state.productionChanges}
+                onChange={(e) => setFlag('productionChanges')(e.target.checked)}
               />
               <span>
                 Allow change requests in this production org. Off, it is read only here: people
@@ -470,8 +391,8 @@ function ConnectorEditor({
               <textarea
                 id={`${idBase}-excluded-objects`}
                 rows={2}
-                value={excludedObjects}
-                onChange={(e) => setExcludedObjects(e.target.value)}
+                value={state.excludedObjects}
+                onChange={(e) => setText('excludedObjects')(e.target.value)}
                 placeholder="Case_Note__c"
                 className={`${inputClass} font-mono`}
               />
@@ -484,8 +405,8 @@ function ConnectorEditor({
               <textarea
                 id={`${idBase}-excluded-fields`}
                 rows={2}
-                value={excludedFields}
-                onChange={(e) => setExcludedFields(e.target.value)}
+                value={state.excludedFields}
+                onChange={(e) => setText('excludedFields')(e.target.value)}
                 placeholder="Contact.Diagnosis__c"
                 className={`${inputClass} font-mono`}
               />
@@ -495,8 +416,8 @@ function ConnectorEditor({
               <input
                 type="checkbox"
                 className="mt-1"
-                checked={hideRestricted}
-                onChange={(e) => setHideRestricted(e.target.checked)}
+                checked={state.hideRestricted}
+                onChange={(e) => setFlag('hideRestricted')(e.target.checked)}
               />
               <span>
                 Hide every field this org&apos;s data classification marks Restricted or Mission
@@ -507,16 +428,20 @@ function ConnectorEditor({
           </fieldset>
         )}
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={state.enabled}
+            onChange={(e) => setFlag('enabled')(e.target.checked)}
+          />
           Enabled
         </label>
-        <SaveRow busy={busy} notice={notice} error={error} />
+        <SaveRow busy={state.busy} notice={state.notice} error={state.error} />
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" onClick={onCancel} className="text-sm underline">
             Cancel
           </button>
           {existing &&
-            (confirmingRemove ? (
+            (state.confirmingRemove ? (
               <span className="flex flex-wrap items-center gap-2 text-sm">
                 Remove {existing.name}? Everyone&apos;s connection to this org stops working.
                 <button
@@ -528,7 +453,7 @@ function ConnectorEditor({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setConfirmingRemove(false)}
+                  onClick={() => dispatch({ type: 'disarmRemove' })}
                   className="underline"
                 >
                   Keep it
@@ -537,7 +462,7 @@ function ConnectorEditor({
             ) : (
               <button
                 type="button"
-                onClick={() => setConfirmingRemove(true)}
+                onClick={() => dispatch({ type: 'armRemove' })}
                 className="text-sm text-red-700 underline dark:text-red-300"
               >
                 Remove this connector

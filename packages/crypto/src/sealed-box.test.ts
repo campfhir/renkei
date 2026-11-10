@@ -9,6 +9,7 @@ import {
   generateX25519KeyPair,
   openSealedBox,
   sealToPublicKey,
+  x25519KeyPairFromSecret,
   x25519PublicKeyOf,
   isSealedBox,
 } from './sealed-box';
@@ -44,6 +45,22 @@ describe('sealed boxes (node)', () => {
       ).ok
     ).toBe(false);
     expect(openSealedBox(alice, 'v1.not.a.box').ok).toBe(false);
+  });
+
+  it('derives the same keypair from the same secret and info, and a different one otherwise', () => {
+    const a = x25519KeyPairFromSecret('a long configured secret', 'delegate-instance');
+    const again = x25519KeyPairFromSecret('a long configured secret', 'delegate-instance');
+    expect(again.privateKey.equals(a.privateKey)).toBe(true);
+    expect(again.publicKey.equals(a.publicKey)).toBe(true);
+    expect(a.publicKey.equals(x25519PublicKeyOf(a.privateKey))).toBe(true);
+    const otherInfo = x25519KeyPairFromSecret('a long configured secret', 'something-else');
+    const otherSecret = x25519KeyPairFromSecret('another secret', 'delegate-instance');
+    expect(otherInfo.publicKey.equals(a.publicKey)).toBe(false);
+    expect(otherSecret.publicKey.equals(a.publicKey)).toBe(false);
+    // What is sealed to the derived public key opens with the derived pair.
+    const plaintext = randomBytes(32);
+    const opened = openSealedBox(again, sealToPublicKey(a.publicKey, plaintext));
+    expect(opened.ok && opened.val.equals(plaintext)).toBe(true);
   });
 
   it('recovers a public key from its private half', () => {

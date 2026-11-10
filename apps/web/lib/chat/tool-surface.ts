@@ -31,6 +31,7 @@ import { HttpMcpClient, mintRunToken, revokeRunToken, type McpClient } from '@re
 import type { McpToolInfo } from '@renkei/mcp-client';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { previewTwinOf } from '@/lib/mcp-tools/act-preview';
 import { internalMcpEndpoint } from './internal-origin';
 import { CHAT_ALWAYS_TOOLS, CHAT_CORE_CONNECTORS, type ChatToolConfig } from './tool-config';
@@ -112,6 +113,12 @@ export function previewRouting(
 export interface DiscoverableTool {
   connector: string;
   def: LlmToolDef;
+  /**
+   * What find_tools calls the group this tool belongs to, when the
+   * connector key is not the name for it: the platform's own deferred
+   * tools (platform-tools/), which belong to no connector.
+   */
+  label?: string;
   /**
    * For a remote MCP server's tool: the server's name and the context its
    * admin wrote for it. Searched by find_tools beside the tool's own words,
@@ -398,11 +405,14 @@ export async function resolveChatToolSurface(input: {
   } catch (error) {
     // The endpoint being unreachable is a deployment fault, not the
     // person's: the turn proceeds without tools and says so in the log.
-    logger.warn('chat tool surface unavailable: {error}', {
-      component: 'chat/tools',
-      subject: input.subject,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s chat turn could not reach the tool endpoint; the turn proceeds with no tools: {error}",
+      {
+        component: 'chat/tools',
+        ...(await whoIs(input.subject)),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     await release();
     return {
       tools: [],

@@ -13,20 +13,31 @@
  *   - Rename: the name, for everyone who sees it.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { LoadingRegion, SkeletonList } from '@/components/skeleton';
 import { chatClient } from '@/lib/chat/client';
-import type { ArtifactImpact, LibraryItem } from '@/lib/chat/artifact-library';
+import type { LibraryItem } from '@/lib/chat/artifact-library';
 import { DialogFooter } from './chat-nav';
 import { TypeBadge } from './artifact-bits';
-
-interface Person {
-  subject: string;
-  email: string;
-  displayName: string | null;
-}
+import { personName, personSuggestions, type Person } from './share-modal.model';
+import {
+  aloneLine,
+  copyReducer,
+  copyRequest,
+  deleteFooter,
+  deleteReducer,
+  deleteRequest,
+  impactProjectLine,
+  initialCopy,
+  initialDelete,
+  initialRename,
+  othersUse,
+  renameReducer,
+  renameRequest,
+  sharedWithLine,
+} from './artifact-dialogs.model';
 
 function PersonPicker({
   value,
@@ -46,22 +57,11 @@ function PersonPicker({
       if (result.data) setPeople(result.data.people);
     });
   }, []);
-  const suggestions = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return [];
-    return people
-      .filter((person) => !exclude.includes(person.subject))
-      .filter(
-        (person) =>
-          person.email.toLowerCase().includes(needle) ||
-          (person.displayName ?? '').toLowerCase().includes(needle)
-      )
-      .slice(0, 6);
-  }, [people, query, exclude]);
+  const suggestions = personSuggestions(people, query, exclude);
   if (value) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-gray-300 px-2 py-1.5 dark:border-gray-700">
-        <span className="flex-1 truncate">{value.displayName ?? value.email}</span>
+        <span className="flex-1 truncate">{personName(value)}</span>
         <button
           type="button"
           onClick={() => onChange(null)}
@@ -115,35 +115,30 @@ export function DeleteArtifactModal({
   onDone: () => void;
   onClose: () => void;
 }) {
-  const [impact, setImpact] = useState<ArtifactImpact | null>(null);
-  const [choice, setChoice] = useState<'transfer' | 'delete'>('delete');
-  const [newOwner, setNewOwner] = useState<Person | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(deleteReducer, initialDelete);
+  const { impact, choice, newOwner, error } = state;
 
   useEffect(() => {
     void chatClient.artifactImpact(item.id).then((result) => {
-      if (result.error) setError(result.error);
-      const loaded = result.data?.impact ?? { projects: [], sharedWith: [], chat: null };
-      setImpact(loaded);
-      if (loaded.projects.length > 0 || loaded.sharedWith.length > 0) setChoice('transfer');
+      dispatch({ type: 'impactLoaded', impact: result.data?.impact ?? null, error: result.error });
     });
   }, [item.id]);
 
-  const othersUseIt = impact ? impact.projects.length > 0 || impact.sharedWith.length > 0 : false;
+  const othersUseIt = othersUse(impact);
+  const footer = deleteFooter(state);
 
   const confirm = async () => {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'sent' });
+    const request = deleteRequest(state);
     const result =
-      choice === 'transfer' && newOwner
-        ? await chatClient.transferArtifact(item.id, newOwner.subject)
+      request.kind === 'transfer'
+        ? await chatClient.transferArtifact(item.id, request.newOwnerSubject)
         : await chatClient.deleteArtifact(item.id);
-    setBusy(false);
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
+    dispatch({ type: 'done' });
     onDone();
     onClose();
   };
@@ -162,22 +157,13 @@ export function DeleteArtifactModal({
               {impact.projects.map((project) => (
                 <li key={project.id} className="flex gap-2">
                   <Icon path={ICONS.pages} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="flex-1">
-                    {project.name} · {project.members}{' '}
-                    {project.members === 1 ? 'member' : 'members'}
-                    {project.mode === 'always' ? ' · kept in context' : ''}
-                  </span>
+                  <span className="flex-1">{impactProjectLine(project)}</span>
                 </li>
               ))}
               {impact.sharedWith.length > 0 ? (
                 <li className="flex gap-2">
                   <Icon path={ICONS.share} className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  <span className="flex-1">
-                    Shared with{' '}
-                    {impact.sharedWith
-                      .map((person) => person.name ?? person.email ?? '…')
-                      .join(', ')}
-                  </span>
+                  <span className="flex-1">{sharedWithLine(impact)}</span>
                 </li>
               ) : null}
               {impact.chat ? (
@@ -191,10 +177,7 @@ export function DeleteArtifactModal({
             </ul>
           </div>
         ) : (
-          <p className="text-gray-600 dark:text-gray-400">
-            Nobody else uses this file{impact.chat ? ' beyond the chat it came from' : ''}. It is
-            removed for good.
-          </p>
+          <p className="text-gray-600 dark:text-gray-400">{aloneLine(impact)}</p>
         )}
 
         {othersUseIt ? (
@@ -206,7 +189,7 @@ export function DeleteArtifactModal({
                 type="radio"
                 name="delete-choice"
                 checked={choice === 'transfer'}
-                onChange={() => setChoice('transfer')}
+                onChange={() => dispatch({ type: 'choiceChanged', choice: 'transfer' })}
                 className="mt-0.5"
               />
               <span className="min-w-0 flex-1">
@@ -219,7 +202,7 @@ export function DeleteArtifactModal({
                   <span className="mt-2 block">
                     <PersonPicker
                       value={newOwner}
-                      onChange={setNewOwner}
+                      onChange={(person) => dispatch({ type: 'ownerChosen', person })}
                       exclude={[item.ownerSubject]}
                       label="New owner"
                     />
@@ -234,7 +217,7 @@ export function DeleteArtifactModal({
                 type="radio"
                 name="delete-choice"
                 checked={choice === 'delete'}
-                onChange={() => setChoice('delete')}
+                onChange={() => dispatch({ type: 'choiceChanged', choice: 'delete' })}
                 className="mt-0.5"
               />
               <span className="min-w-0 flex-1">
@@ -248,14 +231,10 @@ export function DeleteArtifactModal({
         ) : null}
 
         <DialogFooter
-          busy={busy || impact === null || (choice === 'transfer' && !newOwner)}
+          busy={footer.disabled}
           error={error}
-          label={
-            choice === 'transfer' && othersUseIt
-              ? `Hand over${newOwner ? ` to ${newOwner.displayName ?? newOwner.email}` : ''}`
-              : 'Delete'
-          }
-          danger={choice === 'delete' || !othersUseIt}
+          label={footer.label}
+          danger={footer.danger}
           onCancel={onClose}
           onConfirm={() => void confirm()}
         />
@@ -275,28 +254,17 @@ export function CopyArtifactModal({
   onDone: (artifactId: string) => void;
   onClose: () => void;
 }) {
-  const dot = item.filename.lastIndexOf('.');
-  const [filename, setFilename] = useState(
-    dot > 0
-      ? `${item.filename.slice(0, dot)} (copy)${item.filename.slice(dot)}`
-      : `${item.filename} (copy)`
-  );
-  const [attachProjectId, setAttachProjectId] = useState<string>('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(copyReducer, item.filename, initialCopy);
+  const { filename, attachProjectId, busy, error } = state;
 
   const copy = async () => {
-    setBusy(true);
-    setError(null);
-    const result = await chatClient.copyArtifact(item.id, {
-      filename: filename.trim() || undefined,
-      attachProjectId: attachProjectId || null,
-    });
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const result = await chatClient.copyArtifact(item.id, copyRequest(state));
     if (result.error || !result.data) {
-      setError(result.error ?? 'The copy could not be made.');
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
+    dispatch({ type: 'done' });
     onDone(result.data.artifactId);
     onClose();
   };
@@ -318,7 +286,7 @@ export function CopyArtifactModal({
           <span className="mb-1 block text-xs font-medium text-gray-500">Name of your copy</span>
           <input
             value={filename}
-            onChange={(event) => setFilename(event.target.value)}
+            onChange={(event) => dispatch({ type: 'named', filename: event.target.value })}
             maxLength={255}
             required
             className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
@@ -329,7 +297,9 @@ export function CopyArtifactModal({
             <span className="mb-1 block text-xs font-medium text-gray-500">Attach the copy to</span>
             <select
               value={attachProjectId}
-              onChange={(event) => setAttachProjectId(event.target.value)}
+              onChange={(event) =>
+                dispatch({ type: 'projectChosen', projectId: event.target.value })
+              }
               className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
             >
               <option value="">Nowhere yet</option>
@@ -360,17 +330,16 @@ export function RenameArtifactModal({
   onDone: () => void;
   onClose: () => void;
 }) {
-  const [filename, setFilename] = useState(item.filename);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(renameReducer, item.filename, initialRename);
+  const { filename, busy, error } = state;
   const rename = async () => {
-    setBusy(true);
-    const result = await chatClient.renameArtifact(item.id, filename.trim());
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const result = await chatClient.renameArtifact(item.id, renameRequest(state));
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
+    dispatch({ type: 'done' });
     onDone();
     onClose();
   };
@@ -388,7 +357,7 @@ export function RenameArtifactModal({
           <input
             autoFocus
             value={filename}
-            onChange={(event) => setFilename(event.target.value)}
+            onChange={(event) => dispatch({ type: 'named', filename: event.target.value })}
             maxLength={255}
             required
             aria-label="File name"

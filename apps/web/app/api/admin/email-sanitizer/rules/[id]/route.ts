@@ -8,10 +8,8 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
 import { upsertClassifierRule, deleteClassifierRule } from '@renkei/email-sanitizer';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 export async function PUT(
   request: NextRequest,
@@ -68,11 +66,18 @@ export async function PUT(
     enabled,
   });
   if (!result.ok) {
-    logger.error('Could not save the rule: {error}', {
-      component: 'api/admin/email-sanitizer/rules',
-      subject: access.subject,
-      error: result.err.message ?? result.err.type,
-    });
+    logger.error(
+      '{actor} saved the classifier rule "{matchType}: {matchValue}" ({category}), but it was not saved: {error}',
+      {
+        component: 'api/admin/email-sanitizer/rules',
+        ...who(access),
+        ruleId: id,
+        category,
+        matchType,
+        matchValue,
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save the rule' }, { status: 500 });
   }
   return NextResponse.json({ id: result.val });
@@ -90,9 +95,10 @@ export async function DELETE(
 
   const result = await deleteClassifierRule(id);
   if (!result.ok) {
-    logger.error('Could not delete the rule: {error}', {
+    logger.error('{actor} deleted a classifier rule, but it was not deleted: {error}', {
       component: 'api/admin/email-sanitizer/rules',
-      subject: access.subject,
+      ...who(access),
+      ruleId: id,
       error: result.err.message ?? result.err.type,
     });
     return NextResponse.json({ error: 'Could not delete the rule' }, { status: 500 });

@@ -38,6 +38,8 @@ export const ICONS = {
   /** The same dots laid flat — the horizontal "more" trigger. */
   moreHorizontal: 'M5.2 12h.01M12 12h.01M18.8 12h.01',
   arrowRight: 'M4 12h14M13 6l6 6-6 6',
+  sparkles:
+    'M10 3l1.6 4.4L16 9l-4.4 1.6L10 15l-1.6-4.4L4 9l4.4-1.6zM18 13l.9 2.1L21 16l-2.1.9L18 19l-.9-2.1L15 16l2.1-.9z',
   search: 'M10.5 17.5a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM15.5 15.5 21 21',
   /** Arrow leaving a box — opens in the connector / a new tab. */
   externalLink: 'M14 4h6v6M20 4l-9 9M20 14v6H4V4h6',

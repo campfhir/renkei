@@ -24,7 +24,11 @@ test.beforeEach(({}, testInfo) => {
 });
 
 for (const crawl of CRAWL_PAGES) {
-  test(`${crawl.path} renders from the data store alone`, async ({ page, request, person }) => {
+  test(`${crawl.path} renders from the data store alone @smoke`, async ({
+    page,
+    request,
+    person,
+  }) => {
     const undo: (() => Promise<void>)[] = [];
     try {
       const staged = crawl.stage

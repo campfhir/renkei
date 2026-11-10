@@ -46,10 +46,14 @@ export function createDraftSweep() {
     if (rescued > 0) {
       // At warn: a draft dying mid-flight means a process died mid-flight,
       // which is worth someone's attention even though the user is told.
-      logger.warn('failed {count} draft(s) stuck mid-flight', {
-        component: 'worker-agents/draft-sweep',
-        count: rescued,
-      });
+      logger.warn(
+        'marked {count} agent draft(s) failed that had been drafting for over {minutes} minutes; their authors are told to try again',
+        {
+          component: 'worker-agents/draft-sweep',
+          count: rescued,
+          minutes: STUCK_MINUTES,
+        }
+      );
     }
 
     const pruned = await store.pruneBefore(
@@ -57,9 +61,10 @@ export function createDraftSweep() {
       RETENTION_BATCH
     );
     if (pruned > 0) {
-      logger.info('retention pruned {count} draft(s)', {
+      logger.info('retention deleted {count} agent draft(s) older than {days} days', {
         component: 'worker-agents/draft-sweep',
         count: pruned,
+        days: RETENTION_DAYS,
       });
     }
   };

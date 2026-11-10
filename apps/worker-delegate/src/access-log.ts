@@ -36,6 +36,23 @@ export const PERSISTED_OPS: ReadonlySet<string> = new Set([
   'grant/git-ticket',
 ]);
 
+/**
+ * How a delegate line names a person: by the hash of their subject, under
+ * the same `actor` key the rest of the fleet puts a display name and email
+ * under (docs/logging.md), so the sentences keep their shape while this
+ * process — the one holding everyone's keys — writes no name or email into
+ * its log. The web app's Activity view hashes a known subject the same way
+ * to find their lines.
+ */
+export function pseudonym(subject: string | null | undefined): {
+  subjectHash: string | null;
+  actor: string;
+} {
+  if (!subject) return { subjectHash: null, actor: 'nobody in particular' };
+  const hashed = subjectHash(subject);
+  return { subjectHash: hashed, actor: `the person ${hashed}` };
+}
+
 /** A short, stable stand-in for a subject: the first sixteen hex characters of its SHA-256. */
 export function subjectHash(subject: string): string {
   return subject ? createHash('sha256').update(subject).digest('hex').slice(0, 16) : '-';
@@ -51,15 +68,24 @@ export class AccessLog {
 
   async record(event: AccessEvent): Promise<void> {
     const hashed = subjectHash(event.subject);
-    this.logger.info('delegate {op} by {caller} for {subjectHash}: {outcome} {status}', {
+    // The person as the delegate names them: a hash, never a name (header).
+    // An op with no subject (a forward whose body names them) says so.
+    const who = pseudonym(event.subject);
+    const about = {
       component: 'worker-delegate/access',
+      ...who,
       caller: event.caller,
       op: event.op,
       subjectHash: hashed,
+      forWhom: `for ${who.actor}`,
       target: event.target ?? '-',
       outcome: event.outcome,
       status: event.status,
-    });
+    };
+    this.logger.info(
+      'the {caller} caller ran the delegate op {op} {forWhom}: {outcome} ({status})',
+      about
+    );
     if (!event.persist) return;
     try {
       await getDataStore().delegateAccessEvents.record({
@@ -71,11 +97,13 @@ export class AccessLog {
         status: event.status,
       });
     } catch (error) {
-      this.logger.warn('delegate access event not recorded for {op}: {error}', {
-        component: 'worker-delegate/access',
-        op: event.op,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        'the audit row for the delegate op {op} the {caller} caller ran {forWhom} was not written; only this line records it: {error}',
+        {
+          ...about,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 }

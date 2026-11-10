@@ -13,6 +13,11 @@ jest.mock('@renkei/sandbox-client', () => ({
   clientFailure: jest.fn(() => ({ status: 400, message: 'failed' })),
 }));
 jest.mock('./projects', () => ({ startProjectClone: jest.fn(), startChatWorktree: jest.fn() }));
+jest.mock('@/lib/chat/tasks/wake', () => ({ openNoteTurn: jest.fn() }));
+jest.mock('./checkout', () => ({
+  ...jest.requireActual('./checkout'),
+  registerCheckoutWake: jest.fn(),
+}));
 jest.mock('@/lib/chat/store', () => ({ getChatRow: jest.fn() }));
 jest.mock('@/lib/chat/projects', () => ({ getProjectRow: jest.fn() }));
 jest.mock('./tools', () => ({
@@ -58,6 +63,7 @@ import { startChatWorktree, startProjectClone } from './projects';
 import { getChatRow } from '@/lib/chat/store';
 import { codeTools, type CodeToolBinding } from './tools';
 import { CLONE_STEP_NAME, codeProjectContext } from './turn';
+import { registerCheckoutWake } from './checkout';
 
 const get = sbWorkspaceGet as jest.MockedFunction<typeof sbWorkspaceGet>;
 const clone = startProjectClone as jest.MockedFunction<typeof startProjectClone>;
@@ -273,6 +279,26 @@ describe('codeProjectContext', () => {
       message: 'Could not reach the sandbox service; it may be restarting. Try again in a moment.',
     });
   });
+
+  it('hands a slow clone to the background: the model is told to end its turn, and a wake is left', async () => {
+    get.mockResolvedValue({ ok: true, val: workspace('cloning') });
+    const context = await codeProjectContext(
+      project('ws-1'),
+      { ...actor(), roles: ['renkei-user'], origin: 'https://r.example' },
+      { quickWaitMs: 1 }
+    );
+    const result = await context!.prelude!.run();
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]!.text).toContain('still being cloned');
+    expect(result.content[0]!.text).toContain('end your turn');
+    expect(result.content[0]!.text).toContain('woken automatically');
+    expect(registerCheckoutWake).toHaveBeenCalledWith({
+      chatId: 'c1234567-0000',
+      session: { subject: 'alice', roles: ['renkei-user'] },
+      origin: 'https://r.example',
+    });
+    expect(worktree).not.toHaveBeenCalled();
+  }, 10_000);
 
   it('resumes waiting on a clone an earlier turn started', async () => {
     get.mockResolvedValueOnce({ ok: true, val: workspace('cloning') });

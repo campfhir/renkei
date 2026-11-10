@@ -46,6 +46,17 @@ export interface CreateAgentRunInput {
   lineage?: string[];
 }
 
+/**
+ * Where a started run is noted: each process passes its own logger's debug
+ * (a shared package has no logger of its own). `subject` is the owner's, so
+ * the line shows on the owner's Activity page as well as an operator's.
+ */
+export type RunQueuedLogger = (message: string, meta: Record<string, unknown>) => void;
+
+export interface CreateAgentRunOptions {
+  log?: RunQueuedLogger;
+}
+
 export type CreateAgentRunError =
   'AGENT_CYCLE' | 'CHAIN_TOO_DEEP' | 'DAILY_RUN_CAP' | 'DB_ERROR' | 'QUEUE_ERROR';
 
@@ -69,7 +80,8 @@ export function triggerDailyRunCap(orgCap: number): number {
 
 export async function createAgentRun(
   producer: QueueProducer,
-  input: CreateAgentRunInput
+  input: CreateAgentRunInput,
+  options: CreateAgentRunOptions = {}
 ): Promise<Result<{ runId: string }, CreateAgentRunError>> {
   const lineage = input.lineage ?? [];
 
@@ -163,6 +175,15 @@ export async function createAgentRun(
     await wrapAsync(() => runs.deleteRun(runId), 'DB_ERROR' as const);
     return err('QUEUE_ERROR' as const);
   }
+  options.log?.('run {runId} queued for agent {agentId} ({triggerKind})', {
+    component: 'agents/runs',
+    runId,
+    agentId: input.agentId,
+    triggerKind: input.triggerKind,
+    triggerId: input.triggerId,
+    parentRunId: input.parentRunId ?? null,
+    subject: input.ownerSubject,
+  });
 
   // The durable run log (migration 083): one timestamped row per run, the
   // ledger the usage page counts in the viewer's own day. Same best-effort
@@ -374,8 +395,19 @@ export interface RecordLlmCallInput {
    * `context_window`: a call made beside a chat's turn rather than as one —
    * the automatic title (chat-title-tools.ts). Counted in the totals, never
    * in a chat's own turns or the auto-compaction budget.
+   * `instructions_refine`: a project's instructions rewritten on an
+   * editor's ask (apps/web/lib/chat/refine-instructions.ts).
+   * `prompt_refine`: a library prompt rewritten or drafted on an editor's
+   * ask (apps/web/lib/chat/refine-prompt.ts), one row per model call.
    */
-  purpose: 'run' | 'optimize' | 'chat' | 'context_window' | 'artifact_digest';
+  purpose:
+    | 'run'
+    | 'optimize'
+    | 'chat'
+    | 'context_window'
+    | 'artifact_digest'
+    | 'instructions_refine'
+    | 'prompt_refine';
   /** Every prompt token the model read, cache-served or not. */
   inputTokens: number;
   outputTokens: number;

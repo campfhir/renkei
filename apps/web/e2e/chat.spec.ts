@@ -81,7 +81,7 @@ function shot(page: Page, testInfo: TestInfo, name: string): Promise<Buffer> {
   });
 }
 
-test('chat thread: sidebar, blocks, folds, no overflow', async ({
+test('chat thread: sidebar, blocks, folds, no overflow @smoke', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -275,11 +275,17 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     const copy = tsBlock.getByRole('button', { name: 'Copy' });
     await expect(copy).toBeVisible();
-    await copy.click();
-    await expect(tsBlock.getByRole('button', { name: 'Copied' })).toBeVisible();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
-      "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
-    );
+    // What Copy does is fill the clipboard; its "Copied" label lasts 1.5s,
+    // too short to watch for on a starved CPU. The button is drawn by the
+    // server, so a press before hydration does nothing: copying is harmless
+    // to repeat, so press until the clipboard holds the block.
+    await page.evaluate(() => navigator.clipboard.writeText(''));
+    await expect(async () => {
+      await copy.click({ timeout: 2_000 });
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+        "const carried = issues.filter((issue) => issue.status !== 'Done');\n"
+      );
+    }).toPass({ timeout: 15_000 });
     await shot(page, testInfo, 'chat-code-blocks.png');
 
     // At phone width a table row is a card; a cell mixing text and inline
@@ -326,7 +332,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({
     // default, as just shown) — on, every block gets a gutter, a pure
     // CSS counter rather than a character the markup carries, so Copy
     // above and here both still return bare code, numbers or not.
-    const numbers = await page.request.put('/api/preferences', {
+    const numbers = await page.request.patch('/api/preferences', {
       data: { theme: { mode: 'auto', codeLineNumbers: true } },
     });
     expect(numbers.ok()).toBe(true);
@@ -352,7 +358,7 @@ test('chat thread: sidebar, blocks, folds, no overflow', async ({
           'project = OPS AND sprint in closedSprints() AND status != Done ORDER BY updated DESC\n'
         );
     } finally {
-      await page.request.put('/api/preferences', {
+      await page.request.patch('/api/preferences', {
         data: { theme: { mode: 'auto', codeLineNumbers: false } },
       });
       await page.reload();

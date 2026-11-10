@@ -19,6 +19,14 @@ export interface AgentRunStaleRecord {
   startedAt: Date | null;
 }
 
+/** A live run the dead-run sweep halts. */
+export interface AgentRunDeadRecord {
+  id: string;
+  agentId: string;
+  ownerSubject: string;
+  status: string;
+}
+
 export interface AgentRunSweepStore {
   /** Waiting runs whose wait ran out at or before `now`, soonest first (ties by id). */
   listDueWaiting(now: Date, limit: number): Promise<AgentRunRefRecord[]>;
@@ -50,8 +58,25 @@ export interface AgentRunSweepStore {
   /** Queued or running runs created before `createdBefore`, oldest first (ties by id). */
   listStaleInProgress(createdBefore: Date, limit: number): Promise<AgentRunStaleRecord[]>;
   /**
-   * Close a still queued or running run as failed with this error, finished
-   * now. False when it had already left those states.
+   * Live runs that are dead, oldest first (created, then id): queued or
+   * running whose clock (the latest resume, else creation) started before
+   * `clockBefore`; waiting whose wait ran out before `waitDueBefore`; and
+   * waiting with no deadline whose clock started before `clockBefore` —
+   * except a run parked for its owner's sign-in (error_kind
+   * `needs-sign-in`), which waits without a deadline on purpose.
    */
-  failAbandoned(runId: string, failure: { errorKind: string; error: string }): Promise<boolean>;
+  listDead(
+    cutoffs: { clockBefore: Date; waitDueBefore: Date },
+    limit: number
+  ): Promise<AgentRunDeadRecord[]>;
+  /**
+   * Close a still queued or running run whose job is gone, finished now, in
+   * one write: canceled when someone had asked to cancel it (no error, as a
+   * cancel the engine carried out reads), otherwise failed with this error.
+   * Which it became, or null when it had already left those states.
+   */
+  closeAbandoned(
+    runId: string,
+    failure: { errorKind: string; error: string }
+  ): Promise<'failed' | 'canceled' | null>;
 }

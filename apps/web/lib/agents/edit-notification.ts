@@ -27,6 +27,7 @@ import { resolveWebexUserAccess } from '@/lib/webex-user-access';
 import { sendWebexNote } from '@/lib/webex-note';
 import { getIdentityDisplay } from '@/lib/identity';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgentOf } from '@/lib/log-actor';
 
 export function notifyAgentEdited(input: {
   /** Whose agent it is — the notification's reader. */
@@ -36,12 +37,23 @@ export function notifyAgentEdited(input: {
   agentId: string;
   agentName: string;
 }): void {
+  // The editor as {actor}, the agent with its {owner}: who the line is about.
+  const about = async () => ({
+    component: 'agents/edit-notification',
+    ...(await whoIs(input.actorSubject)),
+    ...(await whichAgentOf({
+      agentId: input.agentId,
+      agentName: input.agentName,
+      ownerSubject: input.ownerSubject,
+    })),
+  });
   void (async () => {
     // fresh: the preferences page saves through a different module graph,
     // and "I just turned this off" must hold for the very next edit.
     const prefs = await getNotificationPrefs(input.ownerSubject, { fresh: true });
     const wanted = effectiveDelivery(prefs, input.agentId, 'agentEditedByOthers');
     if (!wanted.app && !wanted.email && !wanted.webex) return;
+    const fields = await about();
 
     const who = await getIdentityDisplay(input.actorSubject);
     const editorName = who?.displayName || who?.email || 'Someone you shared it with';
@@ -72,7 +84,7 @@ export function notifyAgentEdited(input: {
           input.ownerSubject,
           keyResult.val,
           { title: headline, body: input.agentName, tag: id, refUrl: null, notificationId: id },
-          { log: (message, meta) => logger.warn(message, meta) }
+          { log: (message, meta) => logger.warn(message, { ...fields, ...meta }) }
         );
       }
     }
@@ -84,11 +96,10 @@ export function notifyAgentEdited(input: {
           subject: input.ownerSubject,
         });
         if (typeof access === 'string') {
-          logger.warn('agent-edited mail not sent: {reason}', {
-            component: 'agents/edit-notification',
-            agentId: input.agentId,
-            reason: access,
-          });
+          logger.warn(
+            '{actor} edited agent "{agent}", but its owner {owner} was not emailed about it ({reason}); the mail was not sent',
+            { ...fields, reason: access }
+          );
         } else {
           const context = { subject: input.ownerSubject };
           const sent = await graphPost(context, access.auth, '/me/sendMail', {
@@ -100,11 +111,10 @@ export function notifyAgentEdited(input: {
             saveToSentItems: false,
           });
           if (!sent.ok) {
-            logger.warn('agent-edited mail not sent: {reason}', {
-              component: 'agents/edit-notification',
-              agentId: input.agentId,
-              reason: sent.error,
-            });
+            logger.warn(
+              '{actor} edited agent "{agent}", but the mail telling its owner {owner} was not sent: {reason}',
+              { ...fields, reason: sent.error }
+            );
           }
         }
       }
@@ -115,18 +125,20 @@ export function notifyAgentEdited(input: {
       if (access) {
         const sent = await sendWebexNote(access, `**${headline}**`);
         if (!sent.ok) {
-          logger.warn('agent-edited WebEx note not sent for agent {agentId}', {
-            component: 'agents/edit-notification',
-            agentId: input.agentId,
-          });
+          logger.warn(
+            '{actor} edited agent "{agent}", but the WebEx note telling its owner {owner} was not sent',
+            fields
+          );
         }
       }
     }
-  })().catch((error: unknown) => {
-    logger.warn('agent-edited notification not recorded', {
-      component: 'agents/edit-notification',
-      agentId: input.agentId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  })().catch(async (error: unknown) => {
+    logger.warn(
+      '{actor} edited agent "{agent}", but its owner {owner} was not notified of it: {error}',
+      {
+        ...(await about()),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   });
 }

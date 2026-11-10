@@ -419,6 +419,7 @@ describe('buildSystemPrompt', () => {
     };
     const withDelegate = buildSystemPrompt({ ...base, hasDelegate: true });
     expect(withDelegate).toContain('goes to a sub-agent with chat_delegate');
+    expect(withDelegate).toContain('the sub-agents then run side by side');
     expect(withDelegate).toContain('creates, changes or sends something, which only you do');
     expect(buildSystemPrompt(base)).not.toContain('chat_delegate');
     // A voice turn with a sub-agent to hand work to is told to keep its own
@@ -558,6 +559,18 @@ describe('buildSystemPrompt with search_knowledge', () => {
 
     const without = buildSystemPrompt({ ...base, hasKnowledge: false });
     expect(without).not.toMatch(/search_knowledge/);
+  });
+
+  it('names what the chat can do in Renkei itself, and what of it waits behind find_tools, only when those tools are offered', () => {
+    const withPlatform = buildSystemPrompt({
+      ...base,
+      hasKnowledge: false,
+      hasPlatformTools: true,
+    });
+    expect(withPlatform).toMatch(/renkei_link/);
+    expect(withPlatform).toMatch(/never write a Renkei address from memory/);
+    expect(withPlatform).toMatch(/behind find_tools/);
+    expect(buildSystemPrompt({ ...base, hasKnowledge: false })).not.toMatch(/renkei_/);
   });
 
   it('says it runs behind live systems and is not the automatic first move, more insistently once other connectors are reachable', () => {
@@ -931,5 +944,14 @@ describe('buildSystemPrompt’s code brief', () => {
     expect(prompt).toContain('So delegate');
     expect(prompt).toContain('code_delegate');
     expect(prompt).toContain('trimmed from your context');
+    // Work only in the worktree is lost when the sandbox restarts mid-run.
+    expect(prompt).toContain('Commit and push as the work goes');
+    expect(prompt).toContain('commits its work as it goes and pushes');
+    expect(prompt).toContain('works in a git worktree of its own');
+    expect(prompt).toContain('code_git_merge');
+    // A wait holds the reply: the background road keeps the orchestrator and the person free.
+    expect(prompt).toContain('with `background` true');
+    expect(prompt).toContain('the chat is free for the person to write in');
+    expect(prompt).toContain('the sub-agents run side by side');
   });
 });

@@ -7,48 +7,49 @@
  * while clearing the box (a send, a cancel) saves at once so a sent
  * message never comes back as a draft. One save is in flight at a time and
  * the newest text always goes last, so a slow earlier request cannot
- * overwrite a later one. Leaving the page flushes what is pending.
+ * overwrite a later one. Leaving the page flushes what is pending. Those
+ * rules are draft-sync.model.ts, tested beside it; this hook holds the
+ * timer and makes the requests.
  */
 
 import { useCallback, useEffect, useRef } from 'react';
 import { chatClient } from '@/lib/chat/client';
-
-export const SAVE_DELAY_MS = 800;
+import {
+  SAVE_DELAY_MS,
+  initialDraftSync,
+  saveAnswered,
+  saveRequested,
+  saveTiming,
+  type DraftStep,
+} from './draft-sync.model';
 
 export function useDraftSync(chatId: string, text: string, enabled: boolean, initial: string) {
   const latest = useRef(text);
-  const saved = useRef(initial);
-  const inflight = useRef(false);
-  const again = useRef(false);
+  const sync = useRef(initialDraftSync(initial));
   latest.current = text;
 
   const push = useCallback(
     async (keepalive = false) => {
-      if (inflight.current) {
-        again.current = true;
-        return;
-      }
-      inflight.current = true;
-      try {
-        do {
-          again.current = false;
-          const value = latest.current;
-          if (value === saved.current) break;
-          const result = await chatClient.saveDraft(chatId, value, keepalive);
-          // On failure `saved` stays behind, so the next change tries again.
-          if (result.error) break;
-          saved.current = value;
-        } while (again.current);
-      } finally {
-        inflight.current = false;
+      let step: DraftStep = saveRequested(sync.current, latest.current);
+      sync.current = step.state;
+      while (step.save !== null) {
+        let ok = false;
+        try {
+          ok = !(await chatClient.saveDraft(chatId, step.save, keepalive)).error;
+        } catch {
+          // Saved stays behind: the next change tries again.
+        }
+        step = saveAnswered(sync.current, ok, latest.current);
+        sync.current = step.state;
       }
     },
     [chatId]
   );
 
   useEffect(() => {
-    if (!enabled || text === saved.current) return;
-    if (text.length === 0) {
+    const timing = saveTiming(text, sync.current.saved, enabled);
+    if (timing === 'none') return;
+    if (timing === 'now') {
       void push();
       return;
     }

@@ -94,14 +94,17 @@ export async function runWorker(options: RunWorkerOptions): Promise<void> {
     namedApiKeys,
   });
   server.listen(port, '0.0.0.0', () => {
-    logger.info('started {application} {version} on port {port}', {
+    logger.info('started {application} {version}, listening on port {port}', {
       component: `${name}/server`,
       port,
     });
   });
 
   const shutdown = (signal: string): void => {
-    logger.info('{signal} received, closing', { component: `${name}/server`, signal });
+    logger.info('received {signal}; closing the server, then stopping', {
+      component: `${name}/server`,
+      signal,
+    });
     server.close(() => {
       void (async () => {
         await logger.flush();

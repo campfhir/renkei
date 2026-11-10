@@ -29,11 +29,27 @@ const STATUS_LABELS: Record<string, string> = {
   retired: 'Set aside',
 };
 
+/**
+ * Canceled runs whose error kind IS the story: halted while stuck
+ * (force-halt.ts), by the owner side or by an operator alike. Their pill
+ * names that itself — "Halted", not "Canceled" with a note under it — so a
+ * list of runs tells a halted run from one somebody stopped at a glance.
+ */
+const CANCELED_AS: Record<string, string> = {
+  force_halted: 'Halted',
+};
+
+function canceledAs(status: string, errorKind?: string | null): string | null {
+  return status === 'canceled' && errorKind ? (CANCELED_AS[errorKind] ?? null) : null;
+}
+
 /** Title-case label for a run or attempt status; unknown values capitalize. */
 export function statusLabel(status: string, errorKind?: string | null): string {
   // A run parked for its owner's sign-in waits on nothing the owner can
   // click: say what it waits for instead of "Waiting for you".
   if (status === 'waiting' && errorKind === 'needs-sign-in') return 'Paused: sign in';
+  const named = canceledAs(status, errorKind);
+  if (named) return named;
   return (
     STATUS_LABELS[status] ?? (status ? status.charAt(0).toUpperCase() + status.slice(1) : status)
   );
@@ -48,6 +64,23 @@ export function statusLabel(status: string, errorKind?: string | null): string {
  * whether to keep listening for more updates).
  */
 const UNSETTLED_RUN_STATUSES = new Set(['queued', 'running', 'waiting']);
+
+/**
+ * Which colour a status pill takes: its status, or 'halted' for a run
+ * halted while stuck (its pill reads Halted).
+ */
+export function statusTone(status: string, errorKind?: string | null): string {
+  return canceledAs(status, errorKind) ? 'halted' : status;
+}
+
+/**
+ * The line a runs list shows under a run's pill: why it failed, or null
+ * when there is nothing to add — no error, or a pill that already says it.
+ */
+export function statusNote(status: string, errorKind?: string | null): string | null {
+  if (!errorKind || canceledAs(status, errorKind)) return null;
+  return errorSummary(errorKind);
+}
 
 /** True once a run can never change again — nothing left for a live view to catch. */
 export function isRunSettled(status: string): boolean {
@@ -87,6 +120,10 @@ export function errorSummary(errorKind: string): string {
     // (docs/delegate-key-design.md); their next sign-in re-queues the run.
     case 'needs-sign-in':
       return 'Paused until you sign in';
+    // Closed out from under a stuck run (force-halt.ts): by its owner or a
+    // grantee from the run pages, or by an operator from admin oversight.
+    case 'force_halted':
+      return 'Halted while stuck';
     default:
       return errorKind;
   }

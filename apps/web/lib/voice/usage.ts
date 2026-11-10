@@ -11,6 +11,7 @@
 
 import { getDataStore } from '@renkei/db';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export type VoiceUsageKind = 'speech' | 'transcription';
 
@@ -54,11 +55,14 @@ export async function recordVoiceUsage(input: RecordVoiceUsageInput): Promise<vo
       locale: input.locale ? input.locale.slice(0, 16) : null,
     });
   } catch (error) {
-    logger.warn('voice usage not recorded', {
-      component: 'web/voice-usage',
-      subject: input.subject,
-      kind: input.kind,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{actor}'s voice {kind} was not recorded as usage; the usage report undercounts it: {error}",
+      {
+        component: 'web/voice-usage',
+        ...(await whoIs(input.subject)),
+        kind: input.kind,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }

@@ -1,10 +1,18 @@
 /**
  * The language and voice pickers (chat/_components/voice-picker.tsx) as a
- * person meets them: closed, open with their groups, mid-search, and with
- * a voice being tried out — in the composer's speaker menu and on the
- * Preferences page, at desktop and phone sizes. The vendor is answered at
- * the browser edge (e2e/support/voice.ts), so the catalog is the
- * fixture's eleven voices in seven languages and a sample is a silent WAV.
+ * person sees them: closed, open, mid-search, and with a voice being
+ * tried out — in the composer's speaker menu and on the Preferences page,
+ * a screenshot at each step. The vendor is answered at the browser edge
+ * (e2e/support/voice.ts), so the catalog is the fixture's eleven voices in
+ * seven languages and a sample is a silent WAV.
+ *
+ * The rules moved to chat/_components/voice-picker.model.test.ts: the
+ * order of the groups, what a search finds ("warm", "japan", "deutsch"),
+ * what the closed picker shows, the keyboard's walk of the rows, and that
+ * a voice of another language brings its language along. What stays here
+ * is only a browser's: the lists drawn on the real page, a sample really
+ * playing (its row's Stop), and Escape closing the picker but not the
+ * speaker menu it sits in.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -40,44 +48,31 @@ test('preferences: the language and voice pickers', async ({ page }, testInfo) =
   await section.scrollIntoViewIfNeeded();
   await shot(page, testInfo, 'pickers-01-preferences-closed', false);
 
-  // The voice list: the chosen language's voices first, then the rest of
-  // English, then every other language, each with the vendor's word on it.
   await section.getByRole('combobox', { name: 'Voice' }).click();
   const voices = page.getByRole('listbox', { name: 'Voice' });
-  await expect(voices).toBeVisible();
-  await expect(voices.getByRole('group', { name: /English · United Kingdom/ })).toBeVisible();
   await expect(voices.getByText('Calm, pleasant · narration, news')).toBeVisible();
   await shot(page, testInfo, 'pickers-02-preferences-voices-open', false);
 
-  // Searching by a word of a description, across every language.
   await page.getByRole('searchbox', { name: 'Search voice' }).fill('warm');
-  await expect(voices.getByRole('option')).toHaveCount(3);
-  await expect(voices.getByText('Nanami (七海)')).toBeVisible();
-  await expect(voices.getByText('Xiaoxiao (晓晓)')).toBeVisible();
+  await expect(voices.getByText('Sonia')).toHaveCount(0);
   await shot(page, testInfo, 'pickers-03-preferences-voices-search-warm', false);
 
-  // Trying a Chinese voice: the sample is Chinese, and the row shows Stop
-  // while it plays.
+  // Trying a voice: the row shows Stop while its sample plays.
   await voices.getByRole('button', { name: 'Hear Xiaoxiao (晓晓)' }).click();
   await expect(voices.getByRole('button', { name: 'Stop Xiaoxiao (晓晓)' })).toBeVisible();
   await shot(page, testInfo, 'pickers-04-preferences-voice-playing', false);
 
-  // Choosing it brings Chinese along as the language.
+  // Choosing it: the picker closes on the choice (and the language
+  // follows it, which the model test holds).
   await voices.getByText('Xiaoxiao (晓晓)').click();
   await expect(section.getByRole('combobox', { name: 'Voice' })).toContainText('Xiaoxiao');
-  await expect(section.getByRole('combobox', { name: 'Language' })).toContainText('zh-CN');
   await shot(page, testInfo, 'pickers-05-preferences-chinese-chosen', false);
 
-  // The language list: regions under their language, Chinese now first;
-  // searching by a language's own name.
   await section.getByRole('combobox', { name: 'Language' }).click();
   const languages = page.getByRole('listbox', { name: 'Language' });
-  await expect(languages).toBeVisible();
-  await expect(languages.getByRole('group').first()).toHaveAccessibleName('Chinese');
   await expect(languages.getByRole('group', { name: 'English' })).toBeVisible();
   await shot(page, testInfo, 'pickers-06-preferences-languages-open', false);
   await page.getByRole('searchbox', { name: 'Search language' }).fill('deutsch');
-  await expect(languages.getByRole('option')).toHaveCount(1);
   await expect(languages.getByText('Germany')).toBeVisible();
   await shot(page, testInfo, 'pickers-07-preferences-languages-search-deutsch', false);
   await page.keyboard.press('Escape');
@@ -101,9 +96,9 @@ test('chat: the pickers in the speaker menu', async ({ page }, testInfo) => {
   await expect(voices).toBeVisible();
   await shot(page, testInfo, 'pickers-09-chat-voices-open', false);
 
-  // A country finds its voices; Escape closes the picker, not the menu.
+  // Escape closes the picker, not the menu around it.
   await page.getByRole('searchbox', { name: 'Search voice' }).fill('japan');
-  await expect(voices.getByRole('option')).toHaveCount(1);
+  await expect(voices.getByText('Nanami (七海)')).toBeVisible();
   await shot(page, testInfo, 'pickers-10-chat-voices-search-japan', false);
   await page.keyboard.press('Escape');
   await expect(voices).toHaveCount(0);

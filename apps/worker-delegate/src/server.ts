@@ -66,7 +66,6 @@ import {
 } from '@renkei/user-keys';
 import {
   createJsonRpcServer,
-  isRecord,
   sendJson,
   str,
   type CallContext,
@@ -83,6 +82,7 @@ import { Forwarder } from './forward';
 import { GitTickets, type GitDialer } from './git';
 import { scopedLogger, withLogSubject } from './log-scope';
 import type { InstanceSigner } from './signing';
+import { isRecord } from '@renkei/guards';
 
 export interface DelegateServerDeps {
   /** TOKEN_ENCRYPTION_KEY: opens the org-wide connector configs a refresh needs. */
@@ -582,7 +582,7 @@ export function createDelegateServer(deps: DelegateServerDeps): Server {
     },
     sendError,
     onUnhandledError: (error) => {
-      logger.error('delegate op failed: {error}', {
+      logger.error('a delegate op threw before it answered; the caller got a 500: {error}', {
         component: 'worker-delegate/server',
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

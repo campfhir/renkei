@@ -7,59 +7,33 @@
  * the live server. The reachability test here is unauthenticated.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
-import InstanceConfigFields, { draftPayload, emptyDraft } from '../instance-config-fields';
-import type { InstanceDraft } from '../instance-config-fields';
-import { probeText } from '../instance-list';
+import InstanceConfigFields from '../instance-config-fields';
+import { draftPayload, probeBody, type ProbeResponse } from '../instance-list.model';
 import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
-import { INSECURE_MODE_LABELS, insecureTransportModes } from '@/lib/insecure-transport-modes';
+import {
+  DELETE_CONFIRMATION,
+  initialInstanceForm,
+  instanceFormReducer,
+  type StoredInstance,
+} from './instance-config-form.model';
 
-interface InstanceResponse {
-  instance: {
-    id: string;
-    name: string;
-    environment: string;
-    baseUrl: string;
-    tlsVerify: boolean;
-    hasCustomCa: boolean;
-    allowInsecureHttp: boolean;
-    resetPasswordTemplateName: string | null;
-    enabled: boolean;
-  };
-}
-
-export default function InstanceConfigForm({ instanceId }: {
-  instanceId: string;
-}) {
+export default function InstanceConfigForm({ instanceId }: { instanceId: string }) {
   const router = useRouter();
-  const [draft, setDraft] = useState<InstanceDraft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
-  /** The transport protections the STORED instance has switched off — the banner's source, not the draft's. */
-  const [insecure, setInsecure] = useState<string[]>([]);
+  const [state, dispatch] = useReducer(instanceFormReducer, initialInstanceForm);
+  const { draft, busy, status, insecure } = state;
 
   const load = useCallback(async () => {
-    const { data, error } = await getJson<InstanceResponse>(
+    const { data, error } = await getJson<{ instance: StoredInstance }>(
       `/api/admin/admanager/${instanceId}`
     );
     if (error || !data) {
-      setStatus({ kind: 'error', text: error ?? 'Could not load the instance' });
+      dispatch({ type: 'load-failed', error: error ?? 'Could not load the instance' });
       return;
     }
-    setDraft({
-      ...emptyDraft(),
-      name: data.instance.name,
-      environment: data.instance.environment,
-      baseUrl: data.instance.baseUrl,
-      tlsVerify: data.instance.tlsVerify,
-      hasCustomCa: data.instance.hasCustomCa,
-      allowInsecureHttp: data.instance.allowInsecureHttp,
-      resetPasswordTemplateName: data.instance.resetPasswordTemplateName ?? '',
-      enabled: data.instance.enabled,
-    });
-    setInsecure(insecureTransportModes(data.instance).map((mode) => INSECURE_MODE_LABELS[mode]));
+    dispatch({ type: 'loaded', instance: data.instance });
   }, [instanceId]);
 
   useEffect(() => {
@@ -75,52 +49,41 @@ export default function InstanceConfigForm({ instanceId }: {
   }
 
   const save = async () => {
-    setBusy(true);
-    setStatus(null);
+    dispatch({ type: 'sent' });
     const error = await sendJson(
       `/api/admin/admanager/${instanceId}`,
       'PATCH',
       draftPayload(draft)
     );
-    setBusy(false);
     if (error) {
-      setStatus({ kind: 'error', text: error });
+      dispatch({ type: 'failed', error });
       return;
     }
-    setStatus({ kind: 'ok', text: 'Saved.' });
+    dispatch({ type: 'saved' });
     router.refresh();
     await load();
   };
 
   const test = async () => {
-    setBusy(true);
-    setStatus(null);
-    const { data, error } = await sendJsonFull<{
-      ok: boolean;
-      status?: number;
-      error?: string;
-    }>(`/api/admin/admanager/probe`, 'POST', {
-      baseUrl: draft.baseUrl,
-      tlsVerify: draft.tlsVerify,
-      caPem: draft.caPem || undefined,
-      allowInsecureHttp: draft.allowInsecureHttp,
-    });
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const { data, error } = await sendJsonFull<ProbeResponse>(
+      `/api/admin/admanager/probe`,
+      'POST',
+      probeBody(draft)
+    );
     if (error || !data) {
-      setStatus({ kind: 'error', text: error ?? 'The test did not answer.' });
+      dispatch({ type: 'failed', error: error ?? 'The test did not answer.' });
       return;
     }
-    setStatus({ kind: data.ok ? 'ok' : 'error', text: probeText(data) });
+    dispatch({ type: 'tested', probe: data });
   };
 
   const remove = async () => {
-    if (!window.confirm("Delete this instance? Everyone's stored connections to it go with it."))
-      return;
-    setBusy(true);
+    if (!window.confirm(DELETE_CONFIRMATION)) return;
+    dispatch({ type: 'sent' });
     const error = await sendJson(`/api/admin/admanager/${instanceId}`, 'DELETE');
-    setBusy(false);
     if (error) {
-      setStatus({ kind: 'error', text: error });
+      dispatch({ type: 'failed', error });
       return;
     }
     router.push(`/admin/admanager`);
@@ -140,12 +103,12 @@ export default function InstanceConfigForm({ instanceId }: {
           protection back on as soon as the server supports it.
         </p>
       ) : null}
-      <InstanceConfigFields draft={draft} onChange={setDraft} />
+      <InstanceConfigFields draft={draft} onChange={(patch) => dispatch({ type: 'edit', patch })} />
       <label className="mt-3 flex items-center gap-2 text-sm font-medium">
         <input
           type="checkbox"
           checked={draft.enabled}
-          onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })}
+          onChange={(event) => dispatch({ type: 'edit', patch: { enabled: event.target.checked } })}
         />
         Enabled — disabling hides the instance from everyone immediately
       </label>

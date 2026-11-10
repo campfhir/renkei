@@ -5,24 +5,29 @@
  * for more: a gigabyte figure and a reason go to an admin, who approves
  * or denies it from Admin → Settings. An approval raises this project's
  * limit only. While a request waits the form is replaced by its state —
- * one open ask per project.
+ * one open ask per project. What it decides is size-request.model.ts.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import { sendJsonFull } from '@/lib/fetch-json';
 import Modal from '@/components/modal';
 import type { CodeProjectView } from '@/lib/code/project-view';
+import {
+  MAX_GB,
+  canSend,
+  dialogShown,
+  gbText,
+  initSizeRequest,
+  minWantedGb,
+  requestBody,
+  requestLine,
+  sendLabel,
+  sizeRequestReducer,
+} from './size-request.model';
 
-const GB = 1_073_741_824;
-const MAX_GB = 64;
 const inputClass =
   'rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900';
-
-function gb(value: number): string {
-  const n = value / GB;
-  return `${Number.isInteger(n) ? n : n.toFixed(1)} GB`;
-}
 
 export default function SizeRequest({
   projectId,
@@ -34,62 +39,48 @@ export default function SizeRequest({
   request: CodeProjectView['code']['sizeRequest'];
 }) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
-  const [wanted, setWanted] = useState(Math.min(MAX_GB, Math.round(limitBytes / GB) * 2));
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(sizeRequestReducer, limitBytes, initSizeRequest);
 
   async function submit() {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull(
       `/api/code/projects/${projectId}/size-request`,
       'POST',
-      { requestedBytes: wanted * GB, reason }
+      requestBody(state)
     );
-    setBusy(false);
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
-    setOpen(false);
-    setReason('');
+    dispatch({ type: 'accepted' });
     router.refresh();
   }
 
-  const pending = request?.status === 'pending' ? request : null;
-  const last = request && request.status !== 'pending' ? request : null;
+  const line = requestLine(request);
 
   return (
     <div className="mt-1 text-xs text-gray-500" data-testid="size-request">
-      <span data-testid="size-limit">Checkout limit {gb(limitBytes)}.</span>{' '}
-      {pending ? (
-        <span data-testid="size-request-pending">
-          Your request for {gb(pending.requestedBytes)} is waiting for an admin.
-        </span>
+      <span data-testid="size-limit">Checkout limit {gbText(limitBytes)}.</span>{' '}
+      {line.kind === 'pending' ? (
+        <span data-testid="size-request-pending">{line.text}</span>
       ) : (
         <>
-          {last ? (
-            <span data-testid="size-request-last">
-              {last.status === 'approved'
-                ? `Your request for ${gb(last.requestedBytes)} was approved.`
-                : `Your last request was denied${last.decisionNote ? `: ${last.decisionNote}` : '.'}`}{' '}
-            </span>
+          {line.kind === 'decided' ? (
+            <span data-testid="size-request-last">{line.text} </span>
           ) : null}
           <button
             type="button"
-            onClick={() => setOpen(true)}
+            onClick={() => dispatch({ type: 'opened' })}
             className="font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
             Ask for more space
           </button>
         </>
       )}
-      {open && !pending && (
-        <Modal title="Ask for more space" onClose={() => setOpen(false)}>
+      {dialogShown(state, request) && (
+        <Modal title="Ask for more space" onClose={() => dispatch({ type: 'closed' })}>
           <p className="mb-3 text-xs text-gray-500">
-            This project’s checkout may grow to {gb(limitBytes)}. Ask for more and an admin will
+            This project’s checkout may grow to {gbText(limitBytes)}. Ask for more and an admin will
             approve or deny it; an approval raises this project only.
           </p>
           <div className="space-y-3 text-sm">
@@ -98,10 +89,12 @@ export default function SizeRequest({
               <input
                 type="number"
                 aria-label="Size wanted (GB)"
-                min={Math.floor(limitBytes / GB) + 1}
+                min={minWantedGb(limitBytes)}
                 max={MAX_GB}
-                value={wanted}
-                onChange={(event) => setWanted(Number(event.target.value))}
+                value={state.wanted}
+                onChange={(event) =>
+                  dispatch({ type: 'wantedChanged', gb: Number(event.target.value) })
+                }
                 className={`${inputClass} w-28`}
               />
             </label>
@@ -111,27 +104,29 @@ export default function SizeRequest({
                 aria-label="Why you need it"
                 rows={3}
                 maxLength={1000}
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
+                value={state.reason}
+                onChange={(event) =>
+                  dispatch({ type: 'reasonChanged', reason: event.target.value })
+                }
                 className={`${inputClass} w-full`}
               />
             </label>
-            {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+            {state.error && <p className="text-xs text-red-600 dark:text-red-400">{state.error}</p>}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setOpen(false)}
+                onClick={() => dispatch({ type: 'closed' })}
                 className="px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled={busy || reason.trim().length === 0}
+                disabled={!canSend(state)}
                 onClick={() => void submit()}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
               >
-                {busy ? 'Sending…' : 'Send request'}
+                {sendLabel(state)}
               </button>
             </div>
           </div>

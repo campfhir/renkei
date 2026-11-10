@@ -24,6 +24,7 @@ import { resolveMicrosoftAccess } from './microsoft-access';
 import { resolveWebexUserAccessBySubject } from './webex-linked-user';
 import { webexBotClient } from './webex-bot';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
 
 export interface OwnerChannelMessage {
   ownerSubject: string;
@@ -41,6 +42,9 @@ export interface OwnerChannelMessage {
 export async function deliverToOwnerChannels(message: OwnerChannelMessage): Promise<void> {
   if (!message.email && !message.webex) return;
   const { ownerSubject } = message;
+  // The person every line here is about, resolved once; the caller's own
+  // context (the batch, the run) rides along in `message.log`.
+  const about = { ...message.log, ...(await whoIs(ownerSubject)), heading: message.heading };
 
   // Channel 1: email from the owner's own Outlook grant, to themselves.
   if (message.email) {
@@ -65,15 +69,23 @@ export async function deliverToOwnerChannels(message: OwnerChannelMessage): Prom
               saveToSentItems: false,
             }),
           });
-          if (!sent.ok) logger.warn('owner email not sent', message.log);
+          if (!sent.ok) {
+            logger.warn(
+              '{actor} was not emailed "{heading}": their Outlook refused the send; the page still shows it',
+              about
+            );
+          }
         }
       }
       // No recorded email = nowhere to deliver; the page still shows it.
     } catch (error) {
-      logger.warn('owner email errored: {error}', {
-        ...message.log,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        '{actor} was not emailed "{heading}"; the send errored and the page still shows it: {error}',
+        {
+          ...about,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 
@@ -88,13 +100,21 @@ export async function deliverToOwnerChannels(message: OwnerChannelMessage): Prom
           personEmail: access.personEmail,
           markdown: `**${message.heading}**\n\n${message.body}`,
         });
-        if (!sent.ok) logger.warn('owner WebEx note not sent', message.log);
+        if (!sent.ok) {
+          logger.warn(
+            '{actor} was not sent the WebEx note "{heading}": WebEx refused the send; the page still shows it',
+            about
+          );
+        }
       }
     } catch (error) {
-      logger.warn('owner WebEx note errored: {error}', {
-        ...message.log,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        '{actor} was not sent the WebEx note "{heading}"; the send errored and the page still shows it: {error}',
+        {
+          ...about,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 }

@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName, issueUrl, withPresentationHint } from '../common';
+import { issueUrl, withPresentationHint, callerFields } from '../common';
 import { adfToMarkdown } from './adf';
 import { previewToolMeta, RESULTS_LIST_URI } from '../widgets';
 import { logger } from '@/lib/logger';
@@ -81,11 +81,10 @@ export async function registerCommentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_comments invoked', {
+      logger.debug('{caller} called jira_list_comments', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_comments',
       });
       try {
         const { issueKey } = args;
@@ -241,11 +240,10 @@ export async function registerCommentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_bulk_get_comments invoked', {
+      logger.debug('{caller} called jira_bulk_get_comments', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_bulk_get_comments',
       });
       try {
         const { commentIds } = args;

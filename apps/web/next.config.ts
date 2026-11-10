@@ -43,6 +43,7 @@ const nextConfig: NextConfig = {
     '@renkei/tool-outcomes',
     '@renkei/user-prefs',
     '@renkei/gates',
+    '@renkei/guards',
     '@renkei/document-text',
     '@renkei/knowledge',
     '@renkei/connector-fileshares',

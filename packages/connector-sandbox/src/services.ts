@@ -25,6 +25,7 @@
  */
 
 import { ENV_NAME_PATTERN, GREP_PATTERN_MAX_CHARS, validateEnvName } from './workspaces';
+import { isRecord } from '@renkei/guards';
 
 // ─── Bounds ─────────────────────────────────────────────────────────────────
 
@@ -351,10 +352,6 @@ export function imageRuleHost(pattern: string): string | null {
 }
 
 // ─── What a service is called and handed ────────────────────────────────────
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export function validateServiceName(
   input: unknown

@@ -57,13 +57,15 @@ export function parseToolPermission(raw: unknown): ToolPermissionRecord | null {
 /**
  * What a process resuming a turn cannot read back off the rows (migration
  * 129's `runner`): the roles of the session that sent it — the tool
- * surface's token carries them — whether it came from voice mode, and the
- * person's browser zone.
+ * surface's token carries them — whether it came from voice mode, the
+ * person's browser zone, and the address they reached the app at.
  */
 export interface TurnRunnerContext {
   roles: string[];
   voice: boolean;
   timeZone?: string | null;
+  /** Where the person reached the app when they sent it (lib/get-origin.ts), for links a tool hands back. */
+  origin?: string | null;
 }
 
 export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
@@ -74,6 +76,7 @@ export function parseTurnRunnerContext(raw: unknown): TurnRunnerContext | null {
     roles: record.roles.filter((role): role is string => typeof role === 'string'),
     voice: record.voice === true,
     timeZone: typeof record.timeZone === 'string' ? record.timeZone : null,
+    origin: typeof record.origin === 'string' ? record.origin : null,
   };
 }
 
@@ -228,11 +231,15 @@ export async function createTurn(input: {
     if (isUniqueViolation(error)) {
       return err('ALREADY_RUNNING' as const, { message: 'A reply is already in progress.' });
     }
-    logger.error('chat turn could not be created: {error}', {
-      component: 'chat/turns',
-      chatId: input.chatId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'a {kind} turn could not be created for a chat; the message was not sent and the person saw an error: {error}',
+      {
+        component: 'chat/turns',
+        chatId: input.chatId,
+        kind: input.kind ?? 'reply',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return err('DB_ERROR' as const, {
       message: error instanceof Error ? error.message : String(error),
     });
@@ -291,7 +298,15 @@ export async function heartbeatTurn(
   iterations: number,
   stage: string | null
 ): Promise<boolean> {
-  return getDataStore().chatThreads.heartbeatTurn(turnId, iterations, stage);
+  return getDataStore().chatThreads.heartbeatTurn(turnId, iterations, clampStage(stage));
+}
+
+/** `chat_turns.stage` is varchar(64); a parallel tool group's joined names can exceed it. */
+export const STAGE_MAX_LENGTH = 64;
+
+export function clampStage(stage: string | null): string | null {
+  if (stage === null || stage.length <= STAGE_MAX_LENGTH) return stage;
+  return `${stage.slice(0, STAGE_MAX_LENGTH - 1)}…`;
 }
 
 export async function finishTurn(

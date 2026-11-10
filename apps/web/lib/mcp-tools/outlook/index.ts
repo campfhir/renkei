@@ -42,7 +42,7 @@ import { actMeta } from '@renkei/tool-outcomes';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
 import { withScopeGate } from '../capability-gate';
-import { withPresentationHint, type MCPToolContext } from '../common';
+import { callerFields, withPresentationHint, type MCPToolContext } from '../common';
 import {
   APP_ONLY_META,
   EMAIL_COMPOSE_URI,
@@ -62,6 +62,7 @@ import {
 } from '../graph/directory';
 import { REQUEST_TIMEOUT_MS, isTimeoutError } from '../fetch-guard';
 import { registerBulkJobTools } from './bulk-jobs';
+import { registerOutlookPreviewLookups } from './preview-lookups';
 import { createUploadSlot } from '../upload-slots';
 import { extractText } from '@renkei/document-text';
 
@@ -161,21 +162,32 @@ async function graphGet(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable: {error}', {
-      component: 'outlook/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      error: error instanceof Error ? error.message : String(error),
-      timedOut: isTimeoutError(error),
-      mailboxBusy: error instanceof GateTimeoutError,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Microsoft Graph ({why}); the tool reported it as unreachable: {error}",
+      {
+        component: 'outlook/fetch',
+        ...callerFields(context),
+        method: 'GET',
+        path: pathAndQuery,
+        error: error instanceof Error ? error.message : String(error),
+        timedOut: isTimeoutError(error),
+        mailboxBusy: error instanceof GateTimeoutError,
+        why:
+          error instanceof GateTimeoutError
+            ? 'the mailbox lane was busy'
+            : isTimeoutError(error)
+              ? 'timed out'
+              : 'connection failed',
+      }
+    );
     return { ok: false, error: describeFetchFailure(error) };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'outlook/fetch',
-      subject: context.subject,
+      ...callerFields(context),
+      method: 'GET',
       path: pathAndQuery,
       status: response.status,
       responseHeaders: headersForLog(response.headers),
@@ -219,21 +231,31 @@ async function graphPost(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable: {error}', {
-      component: 'outlook/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      error: error instanceof Error ? error.message : String(error),
-      timedOut: isTimeoutError(error),
-      mailboxBusy: error instanceof GateTimeoutError,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Microsoft Graph ({why}); the tool reported it as unreachable: {error}",
+      {
+        component: 'outlook/fetch',
+        ...callerFields(context),
+        method: 'POST',
+        path: pathAndQuery,
+        error: error instanceof Error ? error.message : String(error),
+        timedOut: isTimeoutError(error),
+        mailboxBusy: error instanceof GateTimeoutError,
+        why:
+          error instanceof GateTimeoutError
+            ? 'the mailbox lane was busy'
+            : isTimeoutError(error)
+              ? 'timed out'
+              : 'connection failed',
+      }
+    );
     return { ok: false, error: describeFetchFailure(error) };
   }
   const responseBody = await response.text().catch(() => '');
   if (!response.ok) {
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'outlook/fetch',
-      subject: context.subject,
+      ...callerFields(context),
       path: pathAndQuery,
       method: 'POST',
       status: response.status,
@@ -279,21 +301,31 @@ async function graphPatch(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable: {error}', {
-      component: 'outlook/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      error: error instanceof Error ? error.message : String(error),
-      timedOut: isTimeoutError(error),
-      mailboxBusy: error instanceof GateTimeoutError,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Microsoft Graph ({why}); the tool reported it as unreachable: {error}",
+      {
+        component: 'outlook/fetch',
+        ...callerFields(context),
+        method: 'PATCH',
+        path: pathAndQuery,
+        error: error instanceof Error ? error.message : String(error),
+        timedOut: isTimeoutError(error),
+        mailboxBusy: error instanceof GateTimeoutError,
+        why:
+          error instanceof GateTimeoutError
+            ? 'the mailbox lane was busy'
+            : isTimeoutError(error)
+              ? 'timed out'
+              : 'connection failed',
+      }
+    );
     return { ok: false, error: describeFetchFailure(error) };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'outlook/fetch',
-      subject: context.subject,
+      ...callerFields(context),
       path: pathAndQuery,
       method: 'PATCH',
       status: response.status,
@@ -322,22 +354,28 @@ async function graphDelete(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
     if (!response.ok) {
-      logger.warn('Could not clean up an orphaned draft', {
-        component: 'outlook/fetch',
-        subject: context.subject,
-        path: pathAndQuery,
-        status: response.status,
-        responseHeaders: headersForLog(response.headers),
-      });
+      logger.warn(
+        "Microsoft Graph answered {status} when {caller}'s orphaned draft was deleted; it stays in the mailbox's Drafts folder",
+        {
+          component: 'outlook/fetch',
+          ...callerFields(context),
+          path: pathAndQuery,
+          status: response.status,
+          responseHeaders: headersForLog(response.headers),
+        }
+      );
     }
   } catch (error) {
     // Best-effort only — the draft is left in the mailbox's Drafts folder.
-    logger.warn('Could not clean up an orphaned draft: {error}', {
-      component: 'outlook/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      "{caller}'s orphaned draft could not be deleted; it stays in the mailbox's Drafts folder: {error}",
+      {
+        component: 'outlook/fetch',
+        ...callerFields(context),
+        path: pathAndQuery,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }
 
@@ -360,21 +398,31 @@ async function graphDeleteChecked(
       timeoutMs: REQUEST_TIMEOUT_MS,
     });
   } catch (error) {
-    logger.warn('Graph API unreachable: {error}', {
-      component: 'outlook/fetch',
-      subject: context.subject,
-      path: pathAndQuery,
-      error: error instanceof Error ? error.message : String(error),
-      timedOut: isTimeoutError(error),
-      mailboxBusy: error instanceof GateTimeoutError,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach Microsoft Graph ({why}); the tool reported it as unreachable: {error}",
+      {
+        component: 'outlook/fetch',
+        ...callerFields(context),
+        method: 'DELETE',
+        path: pathAndQuery,
+        error: error instanceof Error ? error.message : String(error),
+        timedOut: isTimeoutError(error),
+        mailboxBusy: error instanceof GateTimeoutError,
+        why:
+          error instanceof GateTimeoutError
+            ? 'the mailbox lane was busy'
+            : isTimeoutError(error)
+              ? 'timed out'
+              : 'connection failed',
+      }
+    );
     return { ok: false, error: describeFetchFailure(error) };
   }
   if (!response.ok) {
     const responseBody = await response.text().catch(() => '');
-    logger.warn('Graph API non-OK response', {
+    logger.warn("Microsoft Graph answered {status} to {caller}'s {method} {path}", {
       component: 'outlook/fetch',
-      subject: context.subject,
+      ...callerFields(context),
       path: pathAndQuery,
       method: 'DELETE',
       status: response.status,
@@ -696,13 +744,74 @@ async function createDraftAction(
   };
 }
 
+/**
+ * Graph's PidTagDeferredSendTime: a message carrying it sits in the Outbox
+ * and Exchange delivers it at that instant. It is the only scheduled send
+ * the API offers, set as an extended property on the message itself.
+ */
+const DEFERRED_SEND_PROPERTY_ID = 'SystemTime 0x3FEF';
+const MIN_SCHEDULE_LEAD_MS = 60_000;
+const SEND_AT_HINT =
+  'Schedule delivery for a later moment: an ISO 8601 timestamp WITH a UTC offset or "Z", ' +
+  'e.g. 2026-11-02T14:00:00-05:00 — resolve "9am Monday" with resolve_date first. Omit to ' +
+  "send now. It must be at least a minute ahead. The message waits in Outlook's Outbox " +
+  'and Exchange sends it then; deleting it from the Outbox cancels it.';
+/** Preview tools only pre-set the card's "Send later" time; the user confirms it on the card. */
+const PREVIEW_SEND_AT_HINT =
+  'Pre-set the preview card\'s "Send later" time to this moment (same format as sendAt on ' +
+  'outlook_send_mail: ISO 8601 with a UTC offset or "Z", resolved with resolve_date first). ' +
+  'The user sees it filled in and can change or clear it before confirming. Omit to leave ' +
+  'the card on Send.';
+
+/** `sendAt` as the UTC instant Graph wants, or null when none was given. */
+function parseSendAt(
+  value: unknown
+): { ok: true; at: string | null } | { ok: false; error: string } {
+  const raw = str(value).trim();
+  if (!raw) return { ok: true, at: null };
+  if (!/(?:Z|[+-]\d{2}:?\d{2})$/i.test(raw)) {
+    return {
+      ok: false,
+      error: 'sendAt needs a UTC offset or "Z" (e.g. 2026-11-02T14:00:00-05:00).',
+    };
+  }
+  const time = Date.parse(raw);
+  if (Number.isNaN(time)) return { ok: false, error: `sendAt "${raw}" is not a valid timestamp.` };
+  if (time < Date.now() + MIN_SCHEDULE_LEAD_MS) {
+    return { ok: false, error: 'sendAt must be at least a minute in the future.' };
+  }
+  return { ok: true, at: new Date(time).toISOString() };
+}
+
+const scheduledText = (at: string) =>
+  `Scheduled for ${at} (UTC). It waits in Outlook's Outbox until then.`;
+
+const deferredSendProperties = (at: string) => ({
+  singleValueExtendedProperties: [{ id: DEFERRED_SEND_PROPERTY_ID, value: at }],
+});
+
 /** Send an existing draft. `keepOnFailure` leaves it in Drafts for a retry. */
 async function sendDraft(
   context: MCPToolContext,
   auth: AuthedFetch,
   draftId: string,
-  keepOnFailure = false
+  keepOnFailure = false,
+  sendAt: string | null = null
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (sendAt) {
+    const deferred = await graphPatch(
+      context,
+      auth,
+      `/me/messages/${encodeURIComponent(draftId)}`,
+      deferredSendProperties(sendAt)
+    );
+    if (!deferred.ok) {
+      if (!keepOnFailure) {
+        await graphDelete(context, auth, `/me/messages/${encodeURIComponent(draftId)}`);
+      }
+      return deferred;
+    }
+  }
   const sent = await graphPost(
     context,
     auth,
@@ -725,11 +834,12 @@ async function sendDraftAction(
     additionalTo: readonly string[];
     cc: readonly string[];
     bcc: readonly string[];
-  }
+  },
+  sendAt: string | null = null
 ): Promise<{ ok: true; webLink: string; subject: string } | { ok: false; error: string }> {
   const created = await createDraftAction(context, auth, messageId, action, options);
   if (!created.ok) return created;
-  const sent = await sendDraft(context, auth, created.draftId);
+  const sent = await sendDraft(context, auth, created.draftId, false, sendAt);
   if (!sent.ok) return sent;
   return { ok: true, webLink: created.webLink, subject: created.subject };
 }
@@ -884,6 +994,7 @@ export async function registerOutlookTools(
   // all — the org may have narrowed the checkboxes, or the user narrowed
   // their own connect.
   const server = withScopeGate(rawServer, context.graphScopes, (name) => outlookScopeFor(name));
+  registerOutlookPreviewLookups(context, auth);
 
   // The async bulk mail job pair (replacing the synchronous outlook_bulk_*
   // act tools) lives in its own module — this file is long enough.
@@ -2015,14 +2126,15 @@ export async function registerOutlookTools(
       title: 'Outlook · Act — Send an email',
       description:
         'Send an email as the connected user — e.g. a summary assembled with the other tools. ' +
-        'Markdown body, rendered to HTML. This speaks AS the user, so only send what they ' +
-        'asked to send.',
+        'Pass sendAt to schedule it for later. Markdown body, rendered to HTML. This speaks AS ' +
+        'the user, so only send what they asked to send.',
       annotations: { readOnlyHint: false },
       inputSchema: z.object({
         to: z.array(z.string().min(1)).min(1).describe('Recipient email addresses'),
         cc: z.array(z.string().min(1)).describe('CC email addresses').optional(),
         subject: z.string().min(1).describe('Subject line'),
         body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2032,6 +2144,8 @@ export async function registerOutlookTools(
       if (to.length === 0) return errText('to is required');
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const recipient = (address: string) => ({ emailAddress: { address } });
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const result = await graphPost(context, access.auth, '/me/sendMail', {
         message: {
@@ -2039,12 +2153,16 @@ export async function registerOutlookTools(
           body: { contentType: 'HTML', content: markdownToHtml(str(args.body)) },
           toRecipients: to.map(recipient),
           ...(cc.length > 0 ? { ccRecipients: cc.map(recipient) } : {}),
+          ...(schedule.at ? deferredSendProperties(schedule.at) : {}),
         },
         saveToSentItems: true,
       });
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_send_mail sent', {
+      logger.info('{caller} {did} a mail to {recipients} recipient(s)', {
         component: 'mcp/tool',
+        ...callerFields(context),
+        did: schedule.at ? 'scheduled' : 'sent',
+        sendAt: schedule.at ?? undefined,
         recipients: to.length + cc.length,
       });
       /*
@@ -2072,7 +2190,12 @@ export async function registerOutlookTools(
         happened even without somewhere to click.
       */
       return {
-        ...textResult(`Sent to ${[...to, ...cc].join(', ')}.`),
+        ...textResult(
+          schedule.at
+            ? `Scheduled for ${schedule.at} (UTC) to ${[...to, ...cc].join(', ')}. It sits in ` +
+                `Outlook's Outbox until then.`
+            : `Sent to ${[...to, ...cc].join(', ')}.`
+        ),
         _meta: sentMailMeta({ webLink: '', subject: str(args.subject) }),
       };
     }
@@ -2099,6 +2222,7 @@ export async function registerOutlookTools(
           .optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2106,6 +2230,8 @@ export async function registerOutlookTools(
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
       const comment = str(args.comment);
       if (!comment) return errText('comment is required');
       const additionalTo = Array.isArray(args.additionalTo)
@@ -2114,20 +2240,30 @@ export async function registerOutlookTools(
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
 
-      const result = await sendDraftAction(context, access.auth, messageId, 'createReply', {
-        comment,
-        additionalTo,
-        cc,
-        bcc,
-      });
+      const result = await sendDraftAction(
+        context,
+        access.auth,
+        messageId,
+        'createReply',
+        {
+          comment,
+          additionalTo,
+          cc,
+          bcc,
+        },
+        schedule.at
+      );
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_reply_message sent', {
+      logger.info('{caller} {did} a reply to a mail', {
         component: 'mcp/tool',
+        ...callerFields(context),
+        did: schedule.at ? 'scheduled' : 'sent',
+        sendAt: schedule.at ?? undefined,
         messageId,
       });
       return {
         ...textResult(
-          'Reply sent.' +
+          (schedule.at ? `Reply scheduled for ${schedule.at} (UTC).` : 'Reply sent.') +
             (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
             (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
             (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
@@ -2159,6 +2295,7 @@ export async function registerOutlookTools(
           .optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2166,6 +2303,8 @@ export async function registerOutlookTools(
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
       const comment = str(args.comment);
       if (!comment) return errText('comment is required');
       const additionalTo = Array.isArray(args.additionalTo)
@@ -2174,20 +2313,30 @@ export async function registerOutlookTools(
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
 
-      const result = await sendDraftAction(context, access.auth, messageId, 'createReplyAll', {
-        comment,
-        additionalTo,
-        cc,
-        bcc,
-      });
+      const result = await sendDraftAction(
+        context,
+        access.auth,
+        messageId,
+        'createReplyAll',
+        {
+          comment,
+          additionalTo,
+          cc,
+          bcc,
+        },
+        schedule.at
+      );
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_reply_all_message sent', {
+      logger.info('{caller} {did} a reply-all to a mail', {
         component: 'mcp/tool',
+        ...callerFields(context),
+        did: schedule.at ? 'scheduled' : 'sent',
+        sendAt: schedule.at ?? undefined,
         messageId,
       });
       return {
         ...textResult(
-          'Reply-all sent.' +
+          (schedule.at ? `Reply-all scheduled for ${schedule.at} (UTC).` : 'Reply-all sent.') +
             (additionalTo.length > 0 ? ` Also to: ${additionalTo.join(', ')}.` : '') +
             (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
             (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
@@ -2215,6 +2364,7 @@ export async function registerOutlookTools(
         comment: z.string().describe(FORWARD_NOTE_HINT).optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2222,25 +2372,40 @@ export async function registerOutlookTools(
       if (typeof access === 'string') return errText(access);
       const messageId = str(args.messageId);
       if (!messageId) return errText('messageId is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
       const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
       if (to.length === 0) return errText('to is required');
       const cc = Array.isArray(args.cc) ? args.cc.map(String).filter(Boolean) : [];
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
 
-      const result = await sendDraftAction(context, access.auth, messageId, 'createForward', {
-        comment: str(args.comment) || undefined,
-        additionalTo: to,
-        cc,
-        bcc,
-      });
+      const result = await sendDraftAction(
+        context,
+        access.auth,
+        messageId,
+        'createForward',
+        {
+          comment: str(args.comment) || undefined,
+          additionalTo: to,
+          cc,
+          bcc,
+        },
+        schedule.at
+      );
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_forward_message sent', {
+      logger.info('{caller} {did} a forward of a mail to {recipients} recipient(s)', {
         component: 'mcp/tool',
+        ...callerFields(context),
+        did: schedule.at ? 'scheduled' : 'sent',
+        sendAt: schedule.at ?? undefined,
+        recipients: to.length + cc.length + bcc.length,
         messageId,
       });
       return {
         ...textResult(
-          `Forwarded to ${to.join(', ')}.` +
+          (schedule.at
+            ? `Forward scheduled for ${schedule.at} (UTC) to ${to.join(', ')}.`
+            : `Forwarded to ${to.join(', ')}.`) +
             (cc.length > 0 ? ` Cc: ${cc.join(', ')}.` : '') +
             (bcc.length > 0 ? ` Bcc: ${bcc.join(', ')}.` : '')
         ),
@@ -2256,9 +2421,12 @@ export async function registerOutlookTools(
   // below. On a host without MCP Apps support the draft still exists — the
   // text result says so, and the user can send it from Outlook's Drafts.
 
-  const previewResultText = (draft: DraftInfo, what: string) =>
+  const previewResultText = (draft: DraftInfo, what: string, scheduledAt: string | null = null) =>
     `${what} is drafted and awaiting the user's decision on the preview card — ` +
     `to: ${draft.to.join(', ') || '(auto-populated)'}; subject: ${draft.subject || '(none)'}. ` +
+    (scheduledAt
+      ? `The card's Send later is pre-set to ${scheduledAt} (UTC); the user confirms or changes it there. `
+      : '') +
     `Do not send it another way and do not repeat the draft contents in your reply; the user ` +
     `sends or discards from the card. If no card appeared in this client, tell the user the ` +
     `draft is in their Outlook Drafts folder.`;
@@ -2266,10 +2434,16 @@ export async function registerOutlookTools(
   // `messageId` (reply-family only) is what lets the card edit the reply's
   // own text: the confirm tool rebuilds the draft from that message rather
   // than editing a body the quoted thread is part of.
-  const draftStructured = (kind: string, draft: DraftInfo, messageId?: string) => ({
+  const draftStructured = (
+    kind: string,
+    draft: DraftInfo,
+    messageId?: string,
+    sendAt: string | null = null
+  ) => ({
     kind,
     draftId: draft.draftId,
     ...(messageId ? { messageId } : {}),
+    ...(sendAt ? { sendAt } : {}),
     to: draft.to,
     cc: draft.cc,
     bcc: draft.bcc,
@@ -2283,10 +2457,10 @@ export async function registerOutlookTools(
     {
       title: 'Outlook · Act — Preview an email before sending',
       description:
-        'Draft an email and show the user an interactive preview card to send or discard. ' +
-        'Prefer this over outlook_send_mail whenever the user should review before it goes ' +
-        'out — the card does the sending. Markdown body, rendered to HTML. This speaks AS ' +
-        'the user.',
+        'Draft an email and show the user an interactive preview card to send, send later ' +
+        '(scheduled) or discard. Prefer this over outlook_send_mail whenever the user should ' +
+        'review before it goes out — the card does the sending. Markdown body, rendered to ' +
+        'HTML. This speaks AS the user.',
       annotations: { readOnlyHint: false },
       _meta: previewToolMeta(EMAIL_COMPOSE_URI),
       inputSchema: z.object({
@@ -2295,6 +2469,7 @@ export async function registerOutlookTools(
         bcc: z.array(z.string().min(1)).describe('BCC email addresses').optional(),
         subject: z.string().min(1).describe('Subject line'),
         body: z.string().min(1).describe(BODY_MARKDOWN_HINT),
+        sendAt: z.string().describe(PREVIEW_SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2306,6 +2481,8 @@ export async function registerOutlookTools(
       const bcc = Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [];
       const subject = str(args.subject);
       const body = str(args.body);
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const created = await graphPost(context, access.auth, '/me/messages', {
         subject,
@@ -2318,10 +2495,15 @@ export async function registerOutlookTools(
       const draftId = str((created.body ?? {}).id);
       if (!draftId) return errText('Graph did not return a draft id');
 
-      logger.info('outlook_send_mail_preview drafted', {
-        component: 'mcp/tool',
-        recipients: to.length + cc.length + bcc.length,
-      });
+      logger.info(
+        '{caller} drafted a mail to {recipients} recipient(s) for the preview card; nothing is sent until it is confirmed',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          draftId,
+          recipients: to.length + cc.length + bcc.length,
+        }
+      );
       const draft: DraftInfo = {
         ok: true,
         draftId,
@@ -2333,8 +2515,8 @@ export async function registerOutlookTools(
         webLink: str((created.body ?? {}).webLink),
       };
       return {
-        ...textResult(previewResultText(draft, 'The email')),
-        structuredContent: draftStructured('compose', draft),
+        ...textResult(previewResultText(draft, 'The email', schedule.at)),
+        structuredContent: draftStructured('compose', draft, undefined, schedule.at),
       };
     }
   );
@@ -2385,6 +2567,7 @@ export async function registerOutlookTools(
             .optional(),
           cc: z.array(z.string().min(1)).describe('CC addresses to add').optional(),
           bcc: z.array(z.string().min(1)).describe('BCC addresses to add').optional(),
+          sendAt: z.string().describe(PREVIEW_SEND_AT_HINT).optional(),
         }),
       },
       async (args: Record<string, any>) => {
@@ -2394,6 +2577,8 @@ export async function registerOutlookTools(
         if (!messageId) return errText('messageId is required');
         const comment = str(args.comment);
         if (!comment) return errText('comment is required');
+        const schedule = parseSendAt(args.sendAt);
+        if (!schedule.ok) return errText(schedule.error);
 
         const created = await createDraftAction(context, access.auth, messageId, preview.action, {
           comment,
@@ -2404,13 +2589,20 @@ export async function registerOutlookTools(
           bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
         });
         if (!created.ok) return errText(created.error);
-        logger.info(`${preview.name} drafted`, {
-          component: 'mcp/tool',
-          messageId,
-        });
+        logger.info(
+          '{caller} drafted {what} for the preview card; nothing is sent until it is confirmed',
+          {
+            component: 'mcp/tool',
+            ...callerFields(context),
+            tool: preview.name,
+            what: preview.what.toLowerCase(),
+            draftId: created.draftId,
+            messageId,
+          }
+        );
         return {
-          ...textResult(previewResultText(created, preview.what)),
-          structuredContent: draftStructured(preview.kind, created, messageId),
+          ...textResult(previewResultText(created, preview.what, schedule.at)),
+          structuredContent: draftStructured(preview.kind, created, messageId, schedule.at),
         };
       }
     );
@@ -2435,6 +2627,7 @@ export async function registerOutlookTools(
         comment: z.string().describe(FORWARD_NOTE_HINT).optional(),
         cc: z.array(z.string().min(1)).describe('CC addresses').optional(),
         bcc: z.array(z.string().min(1)).describe('BCC addresses').optional(),
+        sendAt: z.string().describe(PREVIEW_SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2444,6 +2637,8 @@ export async function registerOutlookTools(
       if (!messageId) return errText('messageId is required');
       const to = Array.isArray(args.to) ? args.to.map(String).filter(Boolean) : [];
       if (to.length === 0) return errText('to is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const created = await createDraftAction(context, access.auth, messageId, 'createForward', {
         comment: str(args.comment) || undefined,
@@ -2452,13 +2647,19 @@ export async function registerOutlookTools(
         bcc: Array.isArray(args.bcc) ? args.bcc.map(String).filter(Boolean) : [],
       });
       if (!created.ok) return errText(created.error);
-      logger.info('outlook_forward_preview drafted', {
-        component: 'mcp/tool',
-        messageId,
-      });
+      logger.info(
+        '{caller} drafted a forward to {recipients} recipient(s) for the preview card; nothing is sent until it is confirmed',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          draftId: created.draftId,
+          recipients: to.length,
+          messageId,
+        }
+      );
       return {
-        ...textResult(previewResultText(created, 'The forward')),
-        structuredContent: draftStructured('forward', created, messageId),
+        ...textResult(previewResultText(created, 'The forward', schedule.at)),
+        structuredContent: draftStructured('forward', created, messageId, schedule.at),
       };
     }
   );
@@ -2477,7 +2678,8 @@ export async function registerOutlookTools(
     draftId: string,
     comment: string,
     replyTo: Record<string, unknown>,
-    edits: { to: string[] | null; cc: string[] | null; subject: string }
+    edits: { to: string[] | null; cc: string[] | null; subject: string },
+    sendAt: string | null
   ) => {
     const messageId = str(replyTo.messageId);
     const action = REPLY_ACTIONS.get(str(replyTo.kind));
@@ -2518,14 +2720,21 @@ export async function registerOutlookTools(
       await graphDelete(context, authed, `/me/messages/${encodeURIComponent(rebuilt.draftId)}`);
       return errText(exact.error);
     }
-    const sent = await sendDraft(context, authed, rebuilt.draftId);
+    const sent = await sendDraft(context, authed, rebuilt.draftId, false, sendAt);
     if (!sent.ok) return errText(sent.error);
     await graphDelete(context, authed, `/me/messages/${encodeURIComponent(draftId)}`);
-    logger.info('outlook_send_draft_confirm sent an edited reply', {
-      component: 'mcp/tool',
-      draftId,
-    });
-    return textResult('Sent.');
+    logger.info(
+      '{caller} confirmed the preview card and {did} the edited reply to {recipients} recipient(s)',
+      {
+        component: 'mcp/tool',
+        ...callerFields(context),
+        did: sendAt ? 'scheduled' : 'sent',
+        sendAt: sendAt ?? undefined,
+        recipients: to.length + cc.length,
+        draftId,
+      }
+    );
+    return textResult(sendAt ? scheduledText(sendAt) : 'Sent.');
   };
 
   server.registerTool(
@@ -2559,6 +2768,7 @@ export async function registerOutlookTools(
           })
           .describe('The message a reply/forward draft answers — needed to edit its comment')
           .optional(),
+        sendAt: z.string().describe(SEND_AT_HINT).optional(),
       }),
     },
     async (args: Record<string, any>) => {
@@ -2566,17 +2776,26 @@ export async function registerOutlookTools(
       if (typeof access === 'string') return errText(access);
       const draftId = str(args.draftId);
       if (!draftId) return errText('draftId is required');
+      const schedule = parseSendAt(args.sendAt);
+      if (!schedule.ok) return errText(schedule.error);
 
       const overrides = rec(args.overrides);
       const to = Array.isArray(overrides.to) ? overrides.to.map(String).filter(Boolean) : null;
       const cc = Array.isArray(overrides.cc) ? overrides.cc.map(String).filter(Boolean) : null;
       if (to !== null && to.length === 0) return errText('No recipient to send to');
       if (typeof overrides.comment === 'string') {
-        return sendRebuiltReply(access.auth, draftId, overrides.comment, rec(args.replyTo), {
-          to,
-          cc,
-          subject: str(overrides.subject),
-        });
+        return sendRebuiltReply(
+          access.auth,
+          draftId,
+          overrides.comment,
+          rec(args.replyTo),
+          {
+            to,
+            cc,
+            subject: str(overrides.subject),
+          },
+          schedule.at
+        );
       }
       const patch: Record<string, unknown> = {
         ...(to !== null ? { toRecipients: to.map(recipientOf) } : {}),
@@ -2597,13 +2816,16 @@ export async function registerOutlookTools(
         if (!patched.ok) return errText(patched.error);
       }
 
-      const sent = await sendDraft(context, access.auth, draftId, true);
+      const sent = await sendDraft(context, access.auth, draftId, true, schedule.at);
       if (!sent.ok) return errText(sent.error);
-      logger.info('outlook_send_draft_confirm sent', {
+      logger.info('{caller} confirmed the preview card and {did} the draft', {
         component: 'mcp/tool',
+        ...callerFields(context),
+        did: schedule.at ? 'scheduled' : 'sent',
+        sendAt: schedule.at ?? undefined,
         draftId,
       });
-      return textResult('Sent.');
+      return textResult(schedule.at ? scheduledText(schedule.at) : 'Sent.');
     }
   );
 
@@ -2631,8 +2853,9 @@ export async function registerOutlookTools(
         `/me/messages/${encodeURIComponent(draftId)}`
       );
       if (!deleted.ok) return errText(deleted.error);
-      logger.info('outlook_discard_draft_confirm discarded', {
+      logger.info("{caller} discarded the preview card's draft; nothing was sent", {
         component: 'mcp/tool',
+        ...callerFields(context),
         draftId,
       });
       return textResult('Draft discarded; nothing was sent.');
@@ -2988,10 +3211,13 @@ export async function registerOutlookTools(
       });
       if (!result.ok) return errText(result.error);
       const event = result.body ?? {};
-      logger.info('outlook_create_event created', {
+      logger.info('{caller} created {aRecurring}calendar event with {attendees} attendee(s)', {
         component: 'mcp/tool',
+        ...callerFields(context),
         eventId: str(event.id),
         recurring: recurrence.val !== null,
+        aRecurring: recurrence.val !== null ? 'a recurring ' : 'a ',
+        attendees: attendees.length,
       });
       const title = str(event.subject) || str(args.subject);
       return {
@@ -3202,10 +3428,12 @@ export async function registerOutlookTools(
         patch
       );
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_update_event updated', {
+      logger.info('{caller} updated {what} ({fields})', {
         component: 'mcp/tool',
+        ...callerFields(context),
         eventId: target.id,
         series: target.series,
+        what: target.series ? 'a whole recurring calendar series' : 'a calendar event',
         fields: Object.keys(patch),
       });
       const subject = str(base.subject) || str(args.subject) || '(no subject)';
@@ -3443,8 +3671,9 @@ export async function registerOutlookTools(
         }
       );
       if (!result.ok) return errText(result.error);
-      logger.info('outlook_respond_event responded', {
+      logger.info('{caller} answered a calendar invitation with "{response}"', {
         component: 'mcp/tool',
+        ...callerFields(context),
         eventId,
         response,
       });
@@ -3637,11 +3866,13 @@ export async function registerOutlookTools(
           comment ? { comment } : {}
         );
         if (!result.ok) return errText(result.error);
-        logger.info('outlook_cancel_event_confirm cancelled event', {
+        logger.info('{caller} cancelled {named} as its organizer; attendees were notified', {
           component: 'mcp/tool',
+          ...callerFields(context),
           eventId: target.id,
           series: target.series,
           role: 'organizer',
+          named,
         });
         return textResult(`Cancelled ${named} — attendees were notified.`);
       }
@@ -3652,11 +3883,13 @@ export async function registerOutlookTools(
         `/me/events/${encodeURIComponent(target.id)}`
       );
       if (!removal.ok) return errText(removal.error);
-      logger.info('outlook_cancel_event_confirm removed event', {
+      logger.info('{caller} removed {named} from their own calendar as an attendee', {
         component: 'mcp/tool',
+        ...callerFields(context),
         eventId: target.id,
         series: target.series,
         role: 'attendee',
+        named,
       });
       return textResult(`Removed ${named} from your calendar.`);
     }

@@ -12,6 +12,21 @@
  * The mockup documents are real — served by the real route, compiled by
  * the real esbuild, styled by the real Tailwind runtime — nothing here is
  * mocked: no vendor is involved.
+ *
+ * What the viewer and the card decide lives in their models and is tested
+ * there, in node: zoom buttons, keys, wheel, the zoom ladder and its ends,
+ * Fit, the width buttons and which is pressed, the hand tool, what the
+ * frame's forwarded messages do, the card's scale, crop and height
+ * (app/(app)/chat/_components/mockup-viewer.model.test.ts,
+ * mockup-card.model.test.ts). The mockup route's headers (the CSP ending in
+ * `sandbox allow-scripts`, `connect-src 'none'`), its doctype and its 404
+ * for a call that is not in the chat are its route test
+ * (app/api/chat/chats/[chatId]/mockups/[toolUseId]/route.test.ts) and
+ * lib/mockups/document.test.ts. What is left here is what only a browser
+ * shows: each format really draws in its frame and a refused call draws
+ * none, the sandbox really holds inside the frame, a key pressed inside
+ * the mockup reaches the viewer, focus comes back to the opener, and the
+ * cards and viewer fit a phone.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -186,18 +201,13 @@ test('a reply’s mockups are drawn inline, each in its format, and a refused ca
     'html · 390px'
   );
 
-  // A card fits its frame to the document: the 320×80 logo is far
-  // shorter than the 400px a frame starts at.
+  // The document's height report reaches the card (the sizing rule itself
+  // is mockup-card.model.test.ts): the 320×80 logo is far shorter than the
+  // 400px a frame starts at.
   const logoHeight = await page
     .locator('figure iframe[title="Mockup: Logo"]:visible')
     .evaluate((frame) => Number.parseInt(getComputedStyle(frame).height));
   expect(logoHeight).toBeLessThan(200);
-
-  // The inline frame is for looking: pointer events go to the card.
-  await expect(page.locator('figure iframe[title="Mockup: Settings page"]:visible')).toHaveCSS(
-    'pointer-events',
-    'none'
-  );
   await shot(page, testInfo, 'mockups-inline.png');
 });
 
@@ -214,7 +224,7 @@ async function openerSettled(page: Page, opener: Locator): Promise<void> {
   await pointerReaches(page, opener);
 }
 
-test('clicking a card opens it full screen, live, with zoom, widths, pan and a way back', async ({
+test('clicking a card opens it full screen, live, and Escape gives focus back to the card', async ({
   page,
 }, testInfo) => {
   await page.goto(`/chat/${ids.chatId}`);
@@ -225,87 +235,12 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
 
   const dialog = page.getByRole('dialog', { name: 'Mockup: Settings page' });
   await expect(dialog).toBeVisible();
-  const frame = dialog.frameLocator('iframe');
-
-  // Live: the tabs really work — a click in the frame runs the component's own state.
-  await expect(frame.getByTestId('panel')).toContainText('Profile preferences', COLD);
-  await pointerReaches(page, frame.getByRole('tab', { name: 'Billing' }));
-  await frame.getByRole('tab', { name: 'Billing' }).click();
-  await expect(frame.getByTestId('panel')).toContainText('Billing preferences');
-  await expect(frame.getByRole('tab', { name: 'Billing' })).toHaveAttribute(
-    'aria-selected',
-    'true'
+  await expect(dialog.frameLocator('iframe').getByTestId('panel')).toContainText(
+    'Profile preferences',
+    COLD
   );
+  expect(await zoomPercent(page)).toBe(100);
   await shot(page, testInfo, 'mockups-viewer.png');
-
-  // Zoom: buttons, keys, and ctrl + wheel — over the stage and over the mockup itself.
-  expect(await zoomPercent(page)).toBe(100);
-  await dialog.getByRole('button', { name: 'Zoom in' }).click();
-  expect(await zoomPercent(page)).toBe(125);
-  await dialog.getByRole('button', { name: 'Zoom out' }).click();
-  await dialog.getByRole('button', { name: 'Zoom out' }).click();
-  expect(await zoomPercent(page)).toBe(90);
-  await page.keyboard.press('0');
-  expect(await zoomPercent(page)).toBe(100);
-  await page.keyboard.press('+');
-  expect(await zoomPercent(page)).toBe(125);
-  await dialog.getByRole('button', { name: 'Reset zoom to 100%' }).click();
-  expect(await zoomPercent(page)).toBe(100);
-
-  const box = await dialog.locator('iframe').boundingBox();
-  if (!box) throw new Error('The viewer’s frame has no box.');
-  await page.mouse.move(box.x + box.width / 2, box.y + 100);
-  await page.keyboard.down('Control');
-  await page.mouse.wheel(0, -300);
-  await page.keyboard.up('Control');
-  await expect.poll(() => zoomPercent(page)).toBeGreaterThan(100);
-  await dialog.getByRole('button', { name: 'Reset zoom to 100%' }).click();
-
-  // A real zoom: the frame is drawn at twice the size at 200%.
-  const before = (await dialog.locator('iframe').boundingBox())?.width ?? 0;
-  await dialog.getByRole('button', { name: 'Zoom in' }).click();
-  await dialog.getByRole('button', { name: 'Zoom in' }).click();
-  await dialog.getByRole('button', { name: 'Zoom in' }).click();
-  expect(await zoomPercent(page)).toBe(200);
-  const after = (await dialog.locator('iframe').boundingBox())?.width ?? 0;
-  expect(after / before).toBeCloseTo(2, 1);
-
-  // Pan: with the hand tool on, a drag scrolls the stage.
-  await dialog.getByRole('button', { name: 'Drag to pan' }).click();
-  const pan = dialog.getByTestId('mockup-pan');
-  await expect(pan).toBeVisible();
-  const stage = pan.locator('xpath=ancestor::div[contains(@class,"overflow-auto")][1]');
-  const start = await stage.evaluate((el) => el.scrollLeft);
-  // Dragged across the hand tool's own layer, wherever it is on screen: a
-  // fixed point can miss it while the document is still reporting its height.
-  const layer = await pan.boundingBox();
-  if (!layer) throw new Error('The pan layer is not on screen.');
-  const view = page.viewportSize() ?? { width: 1440, height: 900 };
-  const y = (Math.max(layer.y, 0) + Math.min(layer.y + layer.height, view.height)) / 2;
-  const x = (Math.max(layer.x, 0) + Math.min(layer.x + layer.width, view.width)) / 2 - 150;
-  // The layer has just been drawn over the frame, which had the pointer
-  // last: until the browser routes the pointer to the layer, a drag goes to
-  // the frame and scrolls nothing.
-  await pointerReaches(page, pan, { x, y });
-  await page.mouse.move(x, y);
-  await page.mouse.down();
-  await page.mouse.move(x + 300, y, { steps: 6 });
-  await page.mouse.up();
-  expect(await stage.evaluate((el) => el.scrollLeft)).toBeLessThan(start - 100);
-  await dialog.getByRole('button', { name: 'Drag to pan' }).click();
-  await expect(pan).toHaveCount(0);
-
-  // Widths: the frame is re-laid-out at a phone's.
-  await dialog.getByRole('button', { name: 'Reset zoom to 100%' }).click();
-  await dialog.getByRole('button', { name: /^Phone, 390px wide$/ }).click();
-  await expect(dialog.getByRole('button', { name: /^Phone, 390px wide$/ })).toHaveAttribute(
-    'aria-pressed',
-    'true'
-  );
-  await expect
-    .poll(async () => (await dialog.locator('iframe').boundingBox())?.width ?? 0)
-    .toBeCloseTo(390, -1);
-  await shot(page, testInfo, 'mockups-viewer-phone-width.png');
 
   // Escape closes it and focus goes back to what opened it.
   await page.keyboard.press('Escape');
@@ -313,7 +248,7 @@ test('clicking a card opens it full screen, live, with zoom, widths, pan and a w
   await expect(opener).toBeFocused();
 });
 
-test('Escape and zoom keys still work while the mockup itself has focus', async ({ page }) => {
+test('a zoom key and Escape pressed inside the live mockup reach the viewer', async ({ page }) => {
   await page.goto(`/chat/${ids.chatId}`);
   const opener = page.getByRole('button', { name: 'Open Settings page full screen' });
   await expect(opener).toBeVisible(COLD);
@@ -323,19 +258,22 @@ test('Escape and zoom keys still work while the mockup itself has focus', async 
   const frame = dialog.frameLocator('iframe');
   const team = frame.getByRole('tab', { name: 'Team' });
   await expect(team).toBeVisible(COLD);
-  // The frame has just opened: until the browser routes the pointer into
-  // it, the click lands on the page, and focus never goes into the frame.
+  // Live: a click in the frame runs the component's own state. The frame
+  // has just opened: until the browser routes the pointer into it, the
+  // click lands on the page, and focus never goes into the frame.
   await pointerReaches(page, team);
   await team.click();
   await expect(team).toHaveAttribute('aria-selected', 'true');
   // Focus is now inside the frame; the frame's own key handler forwards these.
   await page.keyboard.press('Control+=');
   await expect.poll(() => zoomPercent(page)).toBe(125);
-  // Down, then up once the dialog has gone: the key-up of a single press
-  // can be sent to the frame the key-down just removed, and wait on it.
-  await page.keyboard.down('Escape');
+  // Escape raised where focus is, inside the frame, and forwarded from
+  // there like the key above. Not a native key press: closing the dialog
+  // removes the (out-of-process) frame the key went to, and Chrome's answer
+  // to that key can then never come, hanging the press until the test's
+  // timeout. The key above already showed real keys reach the frame.
+  await team.dispatchEvent('keydown', { key: 'Escape' });
   await expect(dialog).toHaveCount(0);
-  await page.keyboard.up('Escape');
 });
 
 test('a mockup’s document can neither reach the network nor read cookies, and links go nowhere', async ({
@@ -368,18 +306,6 @@ test('a mockup’s document can neither reach the network nor read cookies, and 
   const hero = inlineFrame(page, 'Mobile hero');
   await hero.getByRole('link', { name: 'Get started' }).dispatchEvent('click');
   await expect(hero.getByRole('heading', { name: 'Ship it Friday' })).toBeVisible();
-
-  // The route says the same in its headers, so the URL opened on its own is just as locked.
-  const url = mockupFrame.url();
-  const response = await page.request.get(url);
-  expect(response.status()).toBe(200);
-  expect(response.headers()['content-security-policy']).toMatch(/sandbox allow-scripts$/);
-  expect(response.headers()['content-security-policy']).toContain("connect-src 'none'");
-  expect(await response.text()).toMatch(/^<!doctype html>/i);
-
-  // And it only answers for a mockup call that exists in this chat.
-  const missing = await page.request.get(url.replace(/mockups\/[^/?]+/, 'mockups/toolu_nothing'));
-  expect(missing.status()).toBe(404);
 });
 
 test('at a phone’s width the cards fit the screen and the viewer stays reachable', async ({
@@ -432,14 +358,6 @@ test('at a phone’s width the cards fit the screen and the viewer stays reachab
     dialog.frameLocator('iframe').getByRole('heading', { name: 'Notification settings' })
   ).toBeVisible(COLD);
   await expect(dialog.frameLocator('iframe').getByTestId('panel')).toBeVisible();
-  // Its height followed the design (520px on 1024, measured on screen so the
-  // scale cancels) — not the 80px floor, and not the 600px it starts at.
-  await expect
-    .poll(async () => {
-      const frame = await dialog.locator('iframe').boundingBox();
-      return frame ? Math.round((frame.height / frame.width) * 100) : 0;
-    })
-    .toBe(51);
   await shot(page, testInfo, 'mockups-viewer-mobile.png');
   await dialog.getByRole('button', { name: 'Close' }).click();
   await expect(dialog).toHaveCount(0);

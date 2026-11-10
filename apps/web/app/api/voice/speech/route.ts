@@ -25,6 +25,8 @@ import { voiceForLocale } from '@/lib/voice/catalog';
 import { listVoicesCached, resolveVoiceProvider } from '@/lib/voice/config';
 import { encodedDurationMs, recordVoiceUsage } from '@/lib/voice/usage';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 /** A vendor ceiling is far higher; this keeps one request to one breath of audio. */
 export const SPEECH_MAX_CHARS = 3_000;
@@ -33,10 +35,6 @@ const LIMITS = {
   perClient: { limit: 120, windowMs: 60_000 },
   global: { limit: 2_000, windowMs: 60_000 },
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function POST(request: NextRequest): Promise<Response> {
   const session = await getSessionFromRequest(request);
@@ -89,13 +87,19 @@ export async function POST(request: NextRequest): Promise<Response> {
     signal: request.signal,
   });
   if (!result.ok) {
-    logger.warn('Speech synthesis failed ({kind}): {error}', {
-      component: 'api/voice/speech',
-      subject: session.subject,
-      provider: resolved.provider.kind,
-      kind: result.error.kind,
-      error: result.error.message,
-    });
+    logger.warn(
+      '{actor} asked for {chars} characters to be read aloud in {locale}, but {provider} did not synthesize them ({kind}); that piece of the reply was not spoken: {error}',
+      {
+        component: 'api/voice/speech',
+        ...who(session),
+        provider: resolved.provider.kind,
+        voice: voice ?? resolved.config.defaultVoice,
+        locale,
+        chars: text.length,
+        kind: result.error.kind,
+        error: result.error.message,
+      }
+    );
     const status =
       result.error.kind === 'rate_limit' ? 429 : result.error.kind === 'timeout' ? 504 : 502;
     return NextResponse.json({ error: result.error.message, kind: result.error.kind }, { status });

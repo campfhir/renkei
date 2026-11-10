@@ -24,6 +24,7 @@ import { registerVersionTools } from './versions';
 import { registerComponentTools } from './components';
 import { registerFilterTools } from './filters';
 import { registerCommentTools } from './comments';
+import { registerJiraPreviewLookups } from './preview-lookups';
 import { registerWatchTools } from './watches';
 import { registerHistoryTools } from './history';
 import { registerRequestAdminChangeTool } from './request-admin-change';
@@ -34,6 +35,7 @@ export async function registerJiraTools(
   auth: JiraAuth
 ): Promise<void> {
   // Read-Only Tools
+  registerJiraPreviewLookups(context, auth);
   await registerReadTools(server, context, auth);
   await registerProjectTools(server, context, auth);
   await registerSprintTools(server, context, auth);

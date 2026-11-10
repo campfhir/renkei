@@ -1,18 +1,30 @@
 /**
- * The ADManager Plus connector, end to end in a browser: the admin's
- * instance registry (empty state, create, a reachability test, manage/
- * edit, delete, the transport-security guard) and the user's connect
- * flow on the connectors page (the fail-closed message when the service
- * isn't wired up).
+ * The ADManager Plus connector in a browser: the admin's instance registry
+ * (its empty state, one instance created through the form and drawn in
+ * the list, its page read back, the delete confirmation and the way back
+ * to the list), the transport-security banner on a lab instance's page,
+ * and the user's connect flow on the connectors page (the fail-closed
+ * message when the service isn't wired up).
  *
- * The memory server runs no apps/worker-admanager and sets neither
- * ADMANAGER_WORKER_URL nor ADMANAGER_WORKER_API_KEY — so
- * `admanagerWorkerConfigured()` is really false here, the same as a
- * deployment that hasn't stood the worker up yet. The "test
- * reachability" and "connect with an authtoken" flows are exercised
- * against that REAL, unmocked "service not configured" answer (see
- * docs/admanager-connector-design.md: "a missing pair means every
- * operation answers 'unconfigured' — never open").
+ * Where the registry's rules went: the draft (what Create and Save send,
+ * the template blank-as-null, the CA kept, replaced or removed, the URL
+ * preview, when Create and Test can be pressed, how a reachability answer
+ * reads) is app/(app)/admin/admanager/instance-list.model.test.ts; the
+ * edit page (the banner from what is stored, a late load not clobbering an
+ * edit — the reason this spec once retried its edits for a minute) is
+ * app/(app)/admin/admanager/[instanceId]/instance-config-form.model.test.ts;
+ * what the routes store and refuse (the template set and cleared,
+ * plaintext refused for production and for a public host, allowed for a
+ * private lab host, refused again on a relabel to production; the
+ * reachability test failing closed with no worker) is
+ * app/api/admin/admanager/route.test.ts.
+ *
+ * The memory server runs no apps/worker-admanager and sets no delegate
+ * worker — so `admanagerWorkerConfigured()` is really false here, the same
+ * as a deployment that hasn't stood the worker up yet. The "connect with
+ * an authtoken" flow is exercised against that REAL, unmocked "service not
+ * configured" answer (see docs/admanager-connector-design.md: "a missing
+ * pair means every operation answers 'unconfigured' — never open").
  *
  * An already-connected card (the permission grid and Disconnect) is not
  * reachable here: the only route that writes a connection validates the
@@ -84,7 +96,7 @@ function instanceRow(page: Page, name: string) {
   return page.getByRole('listitem').filter({ hasText: name });
 }
 
-test('admin: ADManager Plus instance registry — create, reachability, edit, delete', async ({
+test('admin: ADManager Plus instance registry — create, read back, delete', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -92,88 +104,33 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await openEmptyRegistry(page);
   await shot(page, testInfo, 'admanager-admin-01-empty');
 
+  // The one press through: the form's values reach the real create route
+  // and the new row is drawn.
   await page.getByRole('button', { name: '+ New instance' }).click();
   await page.getByLabel('Name').fill(name);
-  await page.getByLabel('Environment').fill('prod');
   await page.getByLabel('Server URL').fill('https://admp.example.com:8080');
-  // The reset-password template is an instance setting (the REST API
-  // cannot set "must change password at next logon" itself, so the tools
-  // apply this template after a reset — see the design doc).
   await page
     .getByLabel('Reset-password template (optional)')
     .fill('Reset Password – must change at next logon');
   await shot(page, testInfo, 'admanager-admin-02-draft-filled');
-
-  // No worker is configured here (see the file header) — the real,
-  // unmocked answer is "not configured", the fail-closed behavior.
-  await page.getByRole('button', { name: 'Test reachability' }).click();
-  await expect(page.getByText(UNCONFIGURED_MESSAGE)).toBeVisible();
-  await shot(page, testInfo, 'admanager-admin-03-unconfigured');
-
-  // The instance registry CRUD itself calls no worker — the real create route.
   await page.getByRole('button', { name: 'Create instance' }).click();
   await expect(instanceRow(page, name)).toBeVisible();
   await shot(page, testInfo, 'admanager-admin-04-created');
 
+  // Its own page reads it back from the store.
   await instanceRow(page, name).getByRole('link', { name: 'Manage', exact: true }).click();
   await expect(page.getByRole('heading', { name })).toBeVisible();
   await expect(page.getByLabel('Server URL')).toHaveValue('https://admp.example.com:8080');
-  // The template survived create → stored settings JSON → GET.
   await expect(page.getByLabel('Reset-password template (optional)')).toHaveValue(
     'Reset Password – must change at next logon'
   );
-
-  // Edit and save through the real PATCH route — the template changes too.
-  // The dev server mounts the form's load effect twice, and the second load
-  // can land after a fill and put the stored values back; so the edit is
-  // made again until the instance's own route reads it back saved.
-  const instanceId = new URL(page.url()).pathname.split('/').pop() ?? '';
-  const stored = async (): Promise<{
-    environment: string;
-    resetPasswordTemplateName?: string | null;
-  }> => {
-    const read: {
-      instance: { environment: string; resetPasswordTemplateName?: string | null };
-    } = await (await page.request.get(`/api/admin/admanager/${instanceId}`)).json();
-    return read.instance;
-  };
-  await expect(async () => {
-    await page.getByLabel('Environment').fill('staging');
-    await page.getByLabel('Reset-password template (optional)').fill('Helpdesk Reset Template');
-    await baseExpect(page.getByLabel('Environment')).toHaveValue('staging');
-    await page.getByRole('button', { name: 'Save' }).click();
-    await baseExpect(page.getByText('Saved.')).toBeVisible();
-    baseExpect((await stored()).environment).toBe('staging');
-  }).toPass({ timeout: 60_000 });
-  await shot(page, testInfo, 'admanager-admin-05-edited');
-
-  // A reload re-reads it from the store: the new template merged in.
-  await page.reload();
-  await expect(page.getByLabel('Environment')).toHaveValue('staging', { timeout: 30_000 });
-  await expect(page.getByLabel('Reset-password template (optional)')).toHaveValue(
-    'Helpdesk Reset Template'
-  );
-
-  // Clearing the field clears the stored template (blank → null → key removed).
-  // (Again until it reads back saved: the reload mounted the form anew.)
-  await expect(async () => {
-    await page.getByLabel('Reset-password template (optional)').fill('');
-    await baseExpect(page.getByLabel('Reset-password template (optional)')).toHaveValue('');
-    await page.getByRole('button', { name: 'Save' }).click();
-    await baseExpect(page.getByText('Saved.')).toBeVisible();
-    baseExpect((await stored()).resetPasswordTemplateName ?? null).toBeNull();
-  }).toPass({ timeout: 60_000 });
-  await page.reload();
-  await expect(page.getByLabel('Reset-password template (optional)')).toHaveValue('', {
-    timeout: 30_000,
-  });
 
   // Mobile: a resized Chromium viewport, not a device descriptor.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await expect(page.getByRole('button', { name: 'Delete instance' })).toBeVisible();
   await shot(page, testInfo, 'admanager-admin-06-mobile-detail');
 
-  // Delete, through the real DELETE route, back to the list without it.
+  // Delete asks first (a native confirm), then goes back to the list without it.
   page.once('dialog', (dialog) => void dialog.accept());
   await page.getByRole('button', { name: 'Delete instance' }).click();
   await expect(page).toHaveURL(new RegExp(`/admin/admanager$`));
@@ -181,57 +138,36 @@ test('admin: ADManager Plus instance registry — create, reachability, edit, de
   await expect(instanceRow(page, name)).toHaveCount(0);
 });
 
-test('admin: transport security off is refused for production or a public host, allowed for a private lab host, and shown as a banner', async ({
+test('admin: a lab instance with transport security off carries the warning banner', async ({
   page,
   person: _person,
 }, testInfo) => {
   const name = `ADManager Plus lab ${tag}`;
-  await openEmptyRegistry(page);
-  await page.getByRole('button', { name: '+ New instance' }).click();
-  await page.getByLabel('Name').fill(name);
-  await page.getByLabel('Server URL').fill('http://127.0.0.1:8080');
-  await page.getByLabel(/Allow insecure HTTP/).check();
+  // A lab label on a loopback host is what the exception is for (the
+  // refusals are the route test's).
+  const created = await page.request.post('/api/admin/admanager', {
+    data: {
+      name,
+      environment: 'lab',
+      baseUrl: 'http://127.0.0.1:8080',
+      tlsVerify: true,
+      allowInsecureHttp: true,
+      resetPasswordTemplateName: null,
+      enabled: true,
+    },
+  });
+  expect(created.ok(), await created.text()).toBe(true);
+  const { id } = await created.json();
 
-  // The default label is "prod": a production instance never gets plaintext.
-  await page.getByRole('button', { name: 'Create instance' }).click();
-  await expect(page.getByText(/production instance must use https/)).toBeVisible();
-  await shot(page, testInfo, 'admanager-insecure-01-production-refused');
-
-  // A lab label, but a public host: refused too — the real route resolves
-  // the name, so a public IP literal is the deterministic stand-in here.
-  await page.getByLabel('Environment').fill('lab');
-  await page.getByLabel('Server URL').fill('http://203.0.113.9:8080');
-  await page.getByRole('button', { name: 'Create instance' }).click();
-  await expect(page.getByText(/only allowed for a host on a private network/)).toBeVisible();
-
-  // A lab label on a loopback host is what the exception is for.
-  await page.getByLabel('Server URL').fill('http://127.0.0.1:8080');
-  await page.getByRole('button', { name: 'Create instance' }).click();
-  await expect(instanceRow(page, name)).toBeVisible();
-
-  // The instance page carries the warning for as long as the setting is on.
-  await instanceRow(page, name).getByRole('link', { name: 'Manage', exact: true }).click();
+  await page.goto(`/admin/admanager/${id}`);
   await expect(page.getByRole('heading', { name })).toBeVisible();
   const banner = page.getByTestId('insecure-transport-banner');
   await expect(banner).toContainText('Transport security is off');
   await expect(banner).toContainText('plaintext HTTP allowed');
   await shot(page, testInfo, 'admanager-insecure-02-banner');
-  await page.waitForLoadState('networkidle');
-
-  // Relabelling it production while insecure is refused by the real PATCH route.
-  await page.getByLabel('Environment').fill('prod');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText(/production instance must use https/)).toBeVisible();
-
-  // Turning the protection back on clears the banner.
-  await page.getByLabel('Environment').fill('lab');
-  await page.getByLabel('Server URL').fill('https://127.0.0.1:8443');
-  await page.getByLabel(/Allow insecure HTTP/).uncheck();
-  await page.getByRole('button', { name: 'Save' }).click();
-  await expect(page.getByText('Saved.')).toBeVisible();
-  await expect(banner).toHaveCount(0);
 
   await page.setViewportSize(MOBILE_VIEWPORT);
+  await expect(banner).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
   await shot(page, testInfo, 'admanager-insecure-03-mobile');
 });

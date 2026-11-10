@@ -39,17 +39,17 @@ test('a row menu opens above its row when there is no room below', async ({
   const target = titles[0];
   const modelId = await addStubModel(page.request, tag);
   try {
+    let newest = '';
     for (const title of titles) {
-      const chatId = await createChat(page.request, { llmModelId: modelId, title });
-      await send(page.request, chatId, 'Hello.', modelId);
+      newest = await createChat(page.request, { llmModelId: modelId, title });
+      await send(page.request, newest, 'Hello.', modelId);
     }
 
     await page.setViewportSize({ width: 1280, height: 480 });
-    await page.goto('/chat');
-    // /chat streams its loading shell and then redirects to the newest chat
-    // in the browser, after goto has returned: touching the page before that
-    // lands has it destroyed under the call.
-    await expect(page).toHaveURL(/\/chat\/[0-9a-f-]{36}$/);
+    // The newest chat itself, not /chat: that streams its loading shell and
+    // then redirects in the browser after goto has returned, and a call
+    // made before the second document lands is destroyed under it.
+    await page.goto(`/chat/${newest}`);
     const list = page.getByRole('navigation', { name: 'Chats' });
     const row = list.getByRole('link', { name: new RegExp(`^${target}`) });
     await expect(row).toBeAttached();

@@ -26,6 +26,7 @@ import JSZip from 'jszip';
 import { dataPath, parseDeployResult, type DeployOutcome } from '@renkei/connector-salesforce';
 import { refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '@/lib/mcp-tools/fetch-guard';
 import {
   describeErrors,
@@ -131,13 +132,17 @@ export async function startDeploy(
     // The status decides.
   }
   if (!response.ok) {
-    logger.warn('Salesforce deployRequest refused', {
-      component: 'salesforce-admin/deploy',
-      subject: context.subject,
-      status: response.status,
-      checkOnly: options.checkOnly,
-      responseBody: text ? secure(text.slice(0, 2000)) : undefined,
-    });
+    logger.warn(
+      "Salesforce answered {actor}'s deploy request{checkOnlyNote} with HTTP {status}; nothing was deployed",
+      {
+        component: 'salesforce-admin/deploy',
+        ...(await whoIs(context.subject)),
+        status: response.status,
+        checkOnly: options.checkOnly,
+        checkOnlyNote: options.checkOnly ? ' (a validation only)' : '',
+        responseBody: text ? secure(text.slice(0, 2000)) : undefined,
+      }
+    );
     const errors = errorsOf(parsed);
     return {
       ok: false,

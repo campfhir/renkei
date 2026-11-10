@@ -6,6 +6,7 @@
  */
 
 import { redirectUriProblem } from './oauth-redirect-uri';
+import { isRecord, isString } from '@renkei/guards';
 
 export const MAX_REDIRECT_URIS = 10;
 export const MAX_CLIENT_NAME_CHARS = 200;
@@ -81,14 +82,6 @@ export function readRegistration(body: unknown): Registration | RegistrationProb
     grant_types: grantTypes,
     token_endpoint_auth_method: fields.token_endpoint_auth_method,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
 }
 
 /** `fallback` when absent; null when present but not a list of strings. */

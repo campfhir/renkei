@@ -1,15 +1,18 @@
 /**
- * A reply's Copy: the prose alone, and — behind the chevron beside it — the
- * same copy with each call's input and result between the prose (only on a
- * reply that called tools), or with the prompt as well
- * (lib/chat/copy-text.ts). The turn really runs: the scripted stand-in
- * model calls chat_rename, then answers.
+ * A reply's Copy reaching the real clipboard: the chevron's menu opens on a
+ * reply that really called a tool (the scripted stand-in model calls
+ * chat_rename, then answers), one pick puts the call and the prose on the
+ * clipboard, and at phone width the menu still opens and Escape shuts it.
+ *
+ * What each copy holds is lib/chat/copy-text.test.ts's; which choices a
+ * reply offers (no tool calls without calls, no context without a
+ * prompt), "Copy text only" first, and the menu shutting on a pick are
+ * message-list.model.test.ts's.
  */
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { test, expect } from './fixtures';
-import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, toolStep, removeModel, scripted } from './support/stub-model';
 import { createChat, send } from './support/chat';
 
@@ -18,7 +21,7 @@ test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
 const PROMPT = 'Rename this chat, then tell me.';
 
-test('chat copy: text by default, tool calls and context from the split menu', async ({
+test('chat copy: the split menu copies a reply with its tool calls to the clipboard', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -30,33 +33,22 @@ test('chat copy: text by default, tool calls and context from the split menu', a
     const chatId = await createChat(page.request, { llmModelId: modelId });
     const steps = [toolStep('chat_rename', { title }), { text: done }];
     await send(page.request, chatId, scripted(PROMPT, steps), modelId, { allow: true });
-    // A second turn past the script: a plain reply, no calls.
-    await send(page.request, chatId, 'And now just say hi.', modelId);
 
     await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
     await page.goto(`/chat/${chatId}`);
     const main = page.getByRole('main');
     await expect(main.getByText(done)).toBeVisible();
-    await expect(main.getByText(LLM_STUB_REPLY)).toBeVisible();
     const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
 
-    // Every reply with a prompt offers the chevron; the first is the one
-    // that called a tool.
-    const mores = main.getByRole('button', { name: 'More copy options' });
-    await expect(mores).toHaveCount(2);
-    const more = mores.first();
-
-    // Plain Copy on that reply: the prose, no call.
-    await main.getByText(done).hover();
-    const copies = main.getByRole('button', { name: 'Copy', exact: true });
-    await expect(copies).toHaveCount(2);
-    await copies.first().click();
-    await expect.poll(clipboard).toBe(done);
-
-    // The menu: the call's name, input and result, then the prose.
+    // The menu, then one real copy: the call as the server ran it, then the prose.
+    const more = main.getByRole('button', { name: 'More copy options' });
     await more.click();
     const menu = main.getByRole('menu');
-    await expect(menu.getByRole('menuitem', { name: 'Copy text only' })).toBeVisible();
+    await expect(menu.getByRole('menuitem')).toHaveText([
+      'Copy text only',
+      'Copy with tool calls',
+      'Copy with context',
+    ]);
     await page.screenshot({
       path: path.join(
         import.meta.dirname,
@@ -68,43 +60,16 @@ test('chat copy: text by default, tool calls and context from the split menu', a
       ),
     });
     await menu.getByRole('menuitem', { name: 'Copy with tool calls' }).click();
-    await expect(menu).toBeHidden();
     await expect.poll(clipboard).toContain('Tool call: chat_rename');
     const full = await clipboard();
     expect(full).toContain(`"title": "${title}"`);
     expect(full).toMatch(/Result:\n```\n.*Renamed the chat to/);
     expect(full.endsWith(done)).toBe(true);
 
-    // Text only from the menu is the plain copy again.
-    await more.click();
-    await menu.getByRole('menuitem', { name: 'Copy text only' }).click();
-    await expect.poll(clipboard).toBe(done);
-
-    // With context: the prompt, then the reply with its call.
-    await more.click();
-    await menu.getByRole('menuitem', { name: 'Copy with context' }).click();
-    await expect.poll(clipboard).toMatch(/^Prompt:\nRename this chat, then tell me\./);
-    const context = await clipboard();
-    expect(context).toContain('\n\nReply:\nTool call: chat_rename');
-    expect(context.endsWith(done)).toBe(true);
-
-    // The plain reply's Copy is just its text; its menu offers no tool
-    // calls, only the context.
-    await copies.last().click();
-    await expect.poll(clipboard).toBe(LLM_STUB_REPLY);
-    await mores.last().click();
-    await expect(menu.getByRole('menuitem')).toHaveText(['Copy text only', 'Copy with context']);
-    await menu.getByRole('menuitem', { name: 'Copy with context' }).click();
-    await expect.poll(clipboard).toBe(`Prompt:\nAnd now just say hi.\n\nReply:\n${LLM_STUB_REPLY}`);
-
-    // Phone width: the row is always shown, the menu still opens.
+    // Phone width: the row is always shown, the menu still opens, Escape shuts it.
     await page.setViewportSize({ width: 390, height: 844 });
     await more.click();
-    await expect(menu.getByRole('menuitem')).toHaveText([
-      'Copy text only',
-      'Copy with tool calls',
-      'Copy with context',
-    ]);
+    await expect(menu).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(menu).toBeHidden();
   } finally {

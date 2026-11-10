@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /**
  * Whether the signed-in caller has connected Jira, for the setup page at
@@ -51,14 +52,19 @@ export const GET = async (request: NextRequest): Promise<NextResponse> => {
       siteUrl: typeof metadata.siteUrl === 'string' ? metadata.siteUrl : null,
     });
   } catch (error) {
+    // The text of the failure stays in the log; the client gets a fixed
+    // string and an id to quote.
     const correlationId = randomUUID();
-    logger.error('Jira status check failed: {error}', {
-      component: 'api/mcp/status',
-      correlationId,
-      subject: session.subject,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} opened the MCP setup page, but whether they have connected Jira could not be read; the page showed an error: {error}',
+      {
+        correlationId,
+        component: 'api/mcp/status',
+        ...who(session),
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return NextResponse.json(
       {
         connected: false,

@@ -9,19 +9,25 @@
  * and no tenant-wide key exists to publish under.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
 import LocalTime from '@/components/local-time';
 import { chatClient } from '@/lib/chat/client';
-import type { GrantRole, GrantView, ResourceKind } from '@/lib/chat/access';
+import type { ResourceKind } from '@/lib/chat/access';
 import { LoadingRegion, SkeletonList } from '@/components/skeleton';
-
-interface Person {
-  subject: string;
-  email: string;
-  displayName: string | null;
-}
+import {
+  canShare,
+  grantAbility,
+  granteeName,
+  grantRequest,
+  hasRoles,
+  initialShare,
+  personName,
+  personSuggestions,
+  shareIntro,
+  shareReducer,
+} from './share-modal.model';
 
 export default function ShareModal({
   kind,
@@ -35,65 +41,41 @@ export default function ShareModal({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [grants, setGrants] = useState<GrantView[] | null>(null);
-  const [people, setPeople] = useState<Person[]>([]);
-  const [query, setQuery] = useState('');
-  const [chosen, setChosen] = useState<Person | null>(null);
-  const [role, setRole] = useState<GrantRole>('viewer');
-  const [expiresAt, setExpiresAt] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(shareReducer, initialShare);
+  const { grants, chosen, busy, error } = state;
 
   const load = useCallback(async () => {
     const result = await chatClient.grants(kind, resourceId);
-    if (result.error) setError(result.error);
-    else setGrants(result.data?.grants ?? []);
+    if (result.error) dispatch({ type: 'loadFailed', error: result.error });
+    else dispatch({ type: 'grantsLoaded', grants: result.data?.grants ?? [] });
   }, [kind, resourceId]);
   useEffect(() => {
     void load();
     void chatClient.people().then((result) => {
-      if (result.data) setPeople(result.data.people);
+      if (result.data) dispatch({ type: 'peopleLoaded', people: result.data.people });
     });
   }, [load]);
 
-  const suggestions = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return [];
-    return people
-      .filter(
-        (person) =>
-          person.email.toLowerCase().includes(needle) ||
-          (person.displayName ?? '').toLowerCase().includes(needle)
-      )
-      .slice(0, 6);
-  }, [people, query]);
+  const suggestions = personSuggestions(state.people, state.query);
 
   const add = async () => {
-    if (!chosen) return;
-    setBusy(true);
-    setError(null);
-    const result = await chatClient.grant(kind, resourceId, {
-      granteeSubject: chosen.subject,
-      role: kind === 'chat' || kind === 'artifact' ? 'viewer' : role,
-      expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-    });
-    setBusy(false);
+    const body = grantRequest(kind, state);
+    if (!body) return;
+    dispatch({ type: 'sent', clearsError: true });
+    const result = await chatClient.grant(kind, resourceId, body);
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
-    setChosen(null);
-    setQuery('');
-    setExpiresAt('');
+    dispatch({ type: 'shared' });
     await load();
     router.refresh();
   };
 
   const revoke = async (grantId: string) => {
-    setBusy(true);
+    dispatch({ type: 'sent', clearsError: false });
     const result = await chatClient.revoke(kind, resourceId, grantId);
-    setBusy(false);
-    if (result.error) setError(result.error);
+    dispatch({ type: 'revoked', error: result.error });
     await load();
     router.refresh();
   };
@@ -101,22 +83,16 @@ export default function ShareModal({
   return (
     <Modal title={title} onClose={onClose}>
       <div className="space-y-4 text-sm">
-        <p className="text-gray-600 dark:text-gray-400">
-          {kind === 'chat'
-            ? 'People you share with can read this chat and watch it live. Only you can continue it.'
-            : kind === 'artifact'
-              ? 'Artifacts aren’t secret: anyone in a project or chat this file is used in can already read it. Sharing lets a person use it in projects of their own — attach it, read it, copy it — never change it.'
-              : 'Only the people you add here can open this; its content is keyed to them.'}
-        </p>
+        <p className="text-gray-600 dark:text-gray-400">{shareIntro(kind)}</p>
 
         <div className="space-y-2">
           <label className="block text-xs font-medium text-gray-500">Add a person</label>
           {chosen ? (
             <div className="flex items-center gap-2 rounded-md border border-gray-300 px-2 py-1.5 dark:border-gray-700">
-              <span className="flex-1 truncate">{chosen.displayName ?? chosen.email}</span>
+              <span className="flex-1 truncate">{personName(chosen)}</span>
               <button
                 type="button"
-                onClick={() => setChosen(null)}
+                onClick={() => dispatch({ type: 'unchosen' })}
                 className="text-xs text-gray-500 hover:underline"
               >
                 change
@@ -125,8 +101,8 @@ export default function ShareModal({
           ) : (
             <div className="relative">
               <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                value={state.query}
+                onChange={(event) => dispatch({ type: 'typed', query: event.target.value })}
                 placeholder="Name or email"
                 className="w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900"
               />
@@ -136,10 +112,7 @@ export default function ShareModal({
                     <li key={person.subject}>
                       <button
                         type="button"
-                        onClick={() => {
-                          setChosen(person);
-                          setQuery('');
-                        }}
+                        onClick={() => dispatch({ type: 'chosen', person })}
                         className="block w-full px-2 py-1.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
                       >
                         {person.displayName ?? person.email}
@@ -154,10 +127,15 @@ export default function ShareModal({
             </div>
           )}
           <div className="flex flex-wrap items-center gap-2">
-            {kind !== 'chat' && kind !== 'artifact' ? (
+            {hasRoles(kind) ? (
               <select
-                value={role}
-                onChange={(event) => setRole(event.target.value === 'editor' ? 'editor' : 'viewer')}
+                value={state.role}
+                onChange={(event) =>
+                  dispatch({
+                    type: 'roleChanged',
+                    role: event.target.value === 'editor' ? 'editor' : 'viewer',
+                  })
+                }
                 className="rounded-md border border-gray-300 bg-white px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900"
               >
                 <option value="viewer">Can view</option>
@@ -166,14 +144,16 @@ export default function ShareModal({
             ) : null}
             <input
               type="datetime-local"
-              value={expiresAt}
-              onChange={(event) => setExpiresAt(event.target.value)}
+              value={state.expiresAt}
+              onChange={(event) =>
+                dispatch({ type: 'expiryChanged', expiresAt: event.target.value })
+              }
               aria-label="Expires"
               className="rounded-md border border-gray-300 bg-white px-2 py-1.5 dark:border-gray-700 dark:bg-gray-900"
             />
             <button
               type="button"
-              disabled={!chosen || busy}
+              disabled={!canShare(state)}
               onClick={() => void add()}
               className="rounded-md bg-blue-600 px-3 py-1.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
@@ -195,9 +175,9 @@ export default function ShareModal({
               {grants.map((grant) => (
                 <li key={grant.id} className="flex items-center gap-2 py-1.5">
                   <span className="min-w-0 flex-1 truncate">
-                    {grant.granteeName ?? grant.granteeEmail ?? grant.granteeSubject}
+                    {granteeName(grant)}
                     <span className="ml-1 text-xs text-gray-500">
-                      {grant.role === 'editor' ? 'edit' : kind === 'artifact' ? 'use' : 'view'}
+                      {grantAbility(kind, grant)}
                       {grant.expiresAt ? (
                         <>
                           {' · '}

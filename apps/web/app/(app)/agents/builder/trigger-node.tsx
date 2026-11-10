@@ -13,19 +13,15 @@ import {
   triggerEventById,
   type TriggerDraft,
 } from '@renkei/agents';
-import type { TriggerPayload } from '@/lib/agents/store';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import type { BuilderTrigger } from './agent-builder.model';
 
 export interface AgentChoice {
   id: string;
   name: string;
 }
 
-/** The payload shape plus the read-only decorations a stored row carries. */
-export type BuilderTrigger = TriggerPayload & {
-  keyHint?: string | null;
-  lastError?: string | null;
-};
+export type { BuilderTrigger };
 
 export function providesOf(draft: TriggerDraft): string[] {
   switch (draft.kind) {

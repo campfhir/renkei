@@ -41,7 +41,8 @@ const MATCH_LINE = /^- ([^\s:]+):/gm;
 function connectorSummaryOf(discoverable: DiscoverableTool[]): string {
   const counts = new Map<string, number>();
   for (const entry of discoverable) {
-    const label = entry.server ? `${entry.server.name} (MCP server)` : entry.connector;
+    const label =
+      entry.label ?? (entry.server ? `${entry.server.name} (MCP server)` : entry.connector);
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   return [...counts.entries()]
@@ -150,7 +151,7 @@ export function findToolsTool(
     def: {
       name: FIND_TOOLS_NAME,
       description: summary
-        ? 'Search for tools from connectors enabled on this chat but not offered up front — ' +
+        ? 'Search for tools that exist for this chat but are not offered up front — ' +
           `${summary}. Call with a short query describing what you need to do (e.g. "create a ` +
           'jira issue", "search sharepoint files", or just a connector name), and matching tools ' +
           'become callable for the rest of this chat.'
@@ -176,8 +177,10 @@ export function findToolsTool(
           score: scoreOf(
             // A remote MCP server is found by its name and by what its admin
             // said it is for, as well as by its tools' own words.
-            `${entry.connector} ${entry.def.name} ${entry.def.description} ` +
-              `${entry.server?.name ?? ''} ${entry.server?.context ?? ''}`.toLowerCase(),
+            (
+              `${entry.connector} ${entry.label ?? ''} ${entry.def.name} ${entry.def.description} ` +
+              `${entry.server?.name ?? ''} ${entry.server?.context ?? ''}`
+            ).toLowerCase(),
             terms
           ),
         }))

@@ -91,6 +91,8 @@ import { probeLanguageServers } from './lsp-sessions';
 import { createSandboxServer, orgMaxFileBytes } from './server';
 import { DockerClient, parseDockerHost } from './docker';
 import { ServiceManager } from './services';
+import { PreviewManager } from './previews';
+import { parsePreviewPortRange } from '@renkei/connector-sandbox';
 import { BrowserSessions } from './browser';
 import { assertPublicHttpsUrl } from '@renkei/connector-sandbox';
 import { CRAWL_STALE_MS, Crawler } from './crawler';
@@ -179,13 +181,13 @@ async function main(): Promise<void> {
   // on. A genuinely uncaught exception still exits (the process may be in
   // no state to continue), but says so first, so a restart is explained.
   process.on('unhandledRejection', (reason) => {
-    logger.error('unhandled rejection: {error}', {
+    logger.error('a promise rejected with nothing awaiting it; the worker goes on: {error}', {
       component: 'worker-sandbox/process',
       error: reason instanceof Error ? (reason.stack ?? reason.message) : String(reason),
     });
   });
   process.on('uncaughtException', (error) => {
-    logger.error('uncaught exception, exiting: {error}', {
+    logger.error('an exception escaped every handler; the worker exits: {error}', {
       component: 'worker-sandbox/process',
       error: error.stack ?? error.message,
     });
@@ -234,7 +236,7 @@ async function main(): Promise<void> {
         'The sandbox image (docker/Dockerfile, target sandbox) supplies setpriv from util-linux, and the container needs CAP_SETUID, CAP_SETGID and CAP_SETPCAP (Docker grants them by default).';
       problems.workspaces = why;
       problems.scripts = why;
-      logger.error('workspaces and scripts are unavailable: {problem}', {
+      logger.error('workspaces and scripts are unavailable on this deployment: {problem}', {
         component: 'worker-sandbox/workspaces',
         problem: why,
       });
@@ -254,7 +256,7 @@ async function main(): Promise<void> {
   // machine has whichever are on the PATH. Said once, so an operator
   // can see what a "no server for this language" in the pane means.
   const servers = await probeLanguageServers();
-  logger.info('language servers for the code pane: {servers}', {
+  logger.info('the code pane can use these language servers here: {servers}', {
     component: 'worker-sandbox/lsp',
     servers: servers.length ? servers.join(', ') : 'none',
   });
@@ -306,7 +308,7 @@ async function main(): Promise<void> {
       problems.services =
         `the Docker engine could not be prepared: ${error instanceof Error ? error.message : String(error)}. ` +
         'Mount the engine socket into this container through a socket proxy (docker-compose.yaml, worker-sandbox) or point SANDBOX_DOCKER_HOST at one.';
-      logger.info('services unavailable: {problem}', {
+      logger.info('services are unavailable on this deployment: {problem}', {
         component: 'worker-sandbox/services',
         problem: problems.services,
       });
@@ -334,7 +336,7 @@ async function main(): Promise<void> {
       problems.scripts = python
         ? `${python} does not run; point SANDBOX_PYTHON at a working interpreter`
         : 'no Python interpreter was found: the sandbox image (docker/Dockerfile, target sandbox) installs one at /opt/sandbox-python, or point SANDBOX_PYTHON at one';
-      logger.info('scripts unavailable: {problem}', {
+      logger.info('scripts are unavailable on this deployment: {problem}', {
         component: 'worker-sandbox/scripts',
         problem: problems.scripts,
       });
@@ -361,7 +363,7 @@ async function main(): Promise<void> {
         // organization that has allowed scripts on this container's
         // network, and every result and the tool's description say so.
         problems.scripts = `no run can be started without a network (${isolation.problems.join('; ')}): served only to an organization that allows scripts on this container's network — give the container CAP_SYS_ADMIN or allow unprivileged user namespaces (docker-compose.yaml, worker-sandbox) to isolate them instead`;
-        logger.warn('scripts have no network isolation: {problem}', {
+        logger.warn('scripts run with no network isolation here: {problem}', {
           component: 'worker-sandbox/scripts',
           problem: problems.scripts,
         });
@@ -372,11 +374,14 @@ async function main(): Promise<void> {
         // answers those scripts with a traceback. Said here, once, so the
         // operator knows the image is stale or SANDBOX_PYTHON points at the
         // wrong interpreter.
-        logger.warn('scripts: {python} lacks {missing} — a script importing one of them fails', {
-          component: 'worker-sandbox/scripts',
-          python,
-          missing: probed.missing.join(', '),
-        });
+        logger.warn(
+          '{python} lacks {missing}; a script importing one of them fails with a traceback',
+          {
+            component: 'worker-sandbox/scripts',
+            python,
+            missing: probed.missing.join(', '),
+          }
+        );
       }
       logger.info(
         'scripts available: {python} {version} with {libraries}; network {network}; memory {memory} bytes per run{removed}',
@@ -459,7 +464,7 @@ async function main(): Promise<void> {
     };
     const sweepSafely = () =>
       sweepCrawls().catch((error: unknown) => {
-        logger.warn('crawl sweep failed: {error}', {
+        logger.warn('the crawl sweep failed; expired crawls wait for the next pass: {error}', {
           component: 'worker-sandbox/crawler',
           error: error instanceof Error ? error.message : String(error),
         });
@@ -480,15 +485,29 @@ async function main(): Promise<void> {
     charts = null;
     problems.charts =
       'the Mermaid bundle was not found: install this package’s dependencies (mermaid) or point SANDBOX_MERMAID_BUNDLE at mermaid.min.js';
-    logger.info('charts unavailable: {problem}', {
+    logger.info('charts are unavailable on this deployment: {problem}', {
       component: 'worker-sandbox/charts',
       problem: problems.charts,
     });
   }
 
+  // Previews: a checkout's own server kept running (previews.ts). Made
+  // here so the shutdown below can end every one of them before exiting.
+  // Their ports come from the system's pool — SANDBOX_PREVIEW_PORTS, as
+  // `low-high`, 10000-10050 unless set — never from the preview's choice.
+  const portRange = parsePreviewPortRange(process.env.SANDBOX_PREVIEW_PORTS);
+  if (!portRange.ok) fatal(portRange.message);
+  const previews = new PreviewManager({ portRange: portRange.range });
+  logger.info('previews listen on ports {min}-{max}, so {count} can run at once', {
+    component: 'worker-sandbox/previews',
+    min: portRange.range.min,
+    max: portRange.range.max,
+    count: portRange.range.max - portRange.range.min + 1,
+  });
   const server = createSandboxServer({
     apiKeys,
     browser,
+    previews,
     crawler,
     crawlStore,
     vault,
@@ -533,7 +552,10 @@ async function main(): Promise<void> {
   const shutdown = (signal: string): void => {
     if (stopping) return;
     stopping = true;
-    logger.info('{signal} received, draining', { component: 'worker-sandbox/server', signal });
+    logger.info('{signal} received; draining requests and stopping what is running', {
+      component: 'worker-sandbox/server',
+      signal,
+    });
     const deadline = setTimeout(() => {
       console.error(
         `[worker-sandbox] shutdown did not finish in ${SHUTDOWN_DEADLINE_MS}ms; exiting`
@@ -543,10 +565,22 @@ async function main(): Promise<void> {
     deadline.unref();
     void (async () => {
       await server.drain();
+      const stoppedPreviews = await previews.stopAll();
+      if (stoppedPreviews) {
+        logger.info('shutdown stopped {count} running preview(s)', {
+          component: 'worker-sandbox/previews',
+          count: stoppedPreviews,
+        });
+      }
       await browser?.shutdown();
       await charts?.shutdown();
       vault.close();
-      logger.info('stopped', { component: 'worker-sandbox/server' });
+      logger.info(
+        'stopped: the server drained and the browser, chart renderer and previews were closed',
+        {
+          component: 'worker-sandbox/server',
+        }
+      );
       await logger.flush();
       await closeDataStore();
       process.exit(0);

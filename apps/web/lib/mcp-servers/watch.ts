@@ -21,6 +21,7 @@ import {
   type McpServer,
 } from '@renkei/connector-mcp';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { mcpFetchFor, refreshToolList } from './remote';
 
 /** Let go of a watch nothing has asked for in this long. */
@@ -80,15 +81,18 @@ async function run(server: McpServer, subject: string, watch: Watch) {
           timeoutMs: 20_000,
           signal: watch.abort.signal,
           onChange: () => {
-            void refreshToolList(current, subject).then((listed) => {
+            void refreshToolList(current, subject).then(async (listed) => {
               if (!listed.ok) {
-                logger.warn('MCP tool list refresh after a change notice failed: {reason}', {
-                  component: 'mcp-servers',
-                  subject,
-                  server: current.slug,
-                  reason: listed.reason,
-                  message: listed.message,
-                });
+                logger.warn(
+                  'MCP server {server} announced a tool change, but its list could not be refreshed for {actor} ({reason}); the list they had stays: {message}',
+                  {
+                    component: 'mcp-servers',
+                    ...(await whoIs(subject)),
+                    server: current.slug,
+                    reason: listed.reason,
+                    message: listed.message,
+                  }
+                );
               }
             });
           },
@@ -101,11 +105,16 @@ async function run(server: McpServer, subject: string, watch: Watch) {
         backoff = MIN_BACKOFF_MS;
       } catch (error) {
         if (error instanceof McpAuthRequired) return;
-        logger.debug('MCP change stream dropped: {error}', {
-          component: 'mcp-servers',
-          server: server.slug,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.debug(
+          'the change stream from MCP server {server} dropped for {actor}; reconnecting after {backoff}ms: {error}',
+          {
+            component: 'mcp-servers',
+            ...(await whoIs(subject)),
+            server: server.slug,
+            backoff,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         await sleep(backoff, watch.abort.signal);
         backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
       }

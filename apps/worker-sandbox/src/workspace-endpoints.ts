@@ -55,6 +55,7 @@ import {
   validateEnvValue,
   validateGitRef,
   validateGlob,
+  validateSparsePaths,
   validateGrepPattern,
   validateRepoFullName,
   validateWorkspacePath,
@@ -106,8 +107,12 @@ import {
   spawnArchive,
 } from './workspaces';
 import { LspSessions, probeLanguageServers } from './lsp-sessions';
+import { createGitVerbs, operationState } from './git-verbs';
+import type { PreviewManager } from './previews';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 import { logErrorResponse } from './request-log';
+import { isRecord } from '@renkei/guards';
 
 export interface WorkspaceHandlerDeps {
   /** Whether this worker can run commands for a caller at all (features.ts); off answers every verb 503. */
@@ -124,6 +129,8 @@ export interface WorkspaceHandlerDeps {
   serviceEnv?: (target: store.WorkspaceTarget) => Promise<Record<string, string>>;
   /** The language server sessions; the handlers make their own when not given (tests share one). */
   lsp?: LspSessions;
+  /** The previews (previews.ts): a checkout that goes takes its previews with it. */
+  previews?: PreviewManager;
 }
 
 const SSE_PING_MS = 15_000;
@@ -133,10 +140,6 @@ type Body = Record<string, unknown>;
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
@@ -278,14 +281,18 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       const why = callerOnDisk
         ? `this worker has the project’s other files but not this checkout, so the checkout alone was removed (${where})`
         : `this worker has no files for this project at all, so it is not the worker that cloned it — one started without the workspaces volume mounted, or a second worker instance behind the same address (${where})`;
-      logger.warn('workspace {id} is ready but its checkout is missing from disk: {why}', {
-        component: 'worker-sandbox/workspaces',
-        id: workspace.id,
-        subject: workspace.subject,
-        why,
-        callerOnDisk,
-        worker: workerInstance(),
-      });
+      logger.warn(
+        "the checkout of {repo} of {actor} is missing from this worker's disk although the workspace reads ready ({why}); it is marked failed and will be cloned again",
+        {
+          component: 'worker-sandbox/workspaces',
+          ...(await actorAttrs(workspace.subject)),
+          id: workspace.id,
+          repo: workspace.repoFullName,
+          why,
+          callerOnDisk,
+          worker: workerInstance(),
+        }
+      );
       await store.setWorkspaceStatus(workspace.id, 'failed', {
         error: `The checkout is no longer on the worker’s disk: ${why}.`,
       });
@@ -358,6 +365,14 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       typeof body.depth === 'number' && Number.isFinite(body.depth)
         ? Math.max(0, Math.floor(body.depth))
         : CLONE_DEFAULT_DEPTH;
+    // A sparse clone keeps only the named directories in the working tree —
+    // a monorepo's one app — and every worktree made of it inherits that.
+    let sparsePaths: string[] = [];
+    if (body.sparsePaths !== undefined) {
+      const sparse = validateSparsePaths(body.sparsePaths);
+      if (!sparse.ok) return sendError(response, 400, 'bad_request', sparse.message);
+      sparsePaths = sparse.paths;
+    }
 
     if ((await store.countWorkspaces(target)) >= WORKSPACE_MAX_PER_SUBJECT) {
       return sendError(
@@ -381,6 +396,7 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     // ready or failed — a crash mid-clone leaves `cloning`, which the
     // sweep retires once the row's lifetime lapses.
     void (async () => {
+      const who = await actorAttrs(target.subject);
       const outcome = await cloneRepository({
         storageKey,
         identity: identityFor(target),
@@ -388,12 +404,13 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         gitProxy,
         branch,
         depth,
+        sparsePaths,
       });
       if (!outcome.ok) {
-        logger.warn('workspace clone failed for {repo}: {error}', {
+        logger.warn("{actor}'s clone of {repo} failed; the workspace is marked failed: {error}", {
           component: 'worker-sandbox/workspaces',
+          ...who,
           id: row.id,
-          subject: target.subject,
           repo: repo.fullName,
           error: outcome.message,
         });
@@ -406,26 +423,32 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       // keeping files, and the row should say that rather than `ready`.
       if (!(await checkoutExists(storageKey))) {
         const error = `The checkout vanished right after cloning on worker ${workerInstance()} (up ${workerUptime()}): this worker’s workspaces disk is not keeping files.`;
-        logger.error('workspace {id} vanished right after cloning', {
-          component: 'worker-sandbox/workspaces',
-          id: row.id,
-          subject: target.subject,
-          worker: workerInstance(),
-        });
+        logger.error(
+          "{actor}'s checkout of {repo} vanished right after cloning: this worker's workspaces disk is not keeping files; the workspace is marked failed",
+          {
+            component: 'worker-sandbox/workspaces',
+            ...who,
+            id: row.id,
+            repo: repo.fullName,
+            worker: workerInstance(),
+          }
+        );
         await store.setWorkspaceStatus(row.id, 'failed', { error });
         return;
       }
       await store.setWorkspaceStatus(row.id, 'ready', { sizeBytes, branch: outcome.branch });
-      logger.info('workspace cloned {repo} ({bytes} bytes)', {
+      logger.info('{actor} cloned {repo} ({bytes} bytes); the workspace is ready', {
         component: 'worker-sandbox/workspaces',
+        ...who,
+        id: row.id,
         repo: repo.fullName,
         bytes: sizeBytes,
       });
-    })().catch((error: unknown) => {
-      logger.error('workspace clone crashed: {error}', {
+    })().catch(async (error: unknown) => {
+      logger.error("{actor}'s clone of {repo} crashed; the workspace is marked failed: {error}", {
         component: 'worker-sandbox/workspaces',
+        ...(await actorAttrs(target.subject)),
         id: row.id,
-        subject: target.subject,
         repo: repo.fullName,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
@@ -443,7 +466,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
    * verbs address by id like any checkout, on a new branch, ready when this
    * answers — adding a worktree is a local git operation, not a clone.
    * The same chat asking again gets the worktree it has, when the caller
-   * names one (`branch`) already present.
+   * names one (`branch`) already present. `startLocal` starts the new
+   * branch at a local branch's last commit rather than the remote's: a
+   * sub-agent's worktree, off the chat's own branch.
    */
   async function worktree(
     target: store.WorkspaceTarget,
@@ -480,6 +505,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       if (!start.ok) return sendError(response, 400, 'bad_request', start.message);
       startBranch = start.ref;
     }
+    let startLocal = '';
+    if (str(body.startLocal)) {
+      const start = validateGitRef(body.startLocal);
+      if (!start.ok) return sendError(response, 400, 'bad_request', start.message);
+      startLocal = start.ref;
+    }
     const storageKey = newWorkspaceStorageKey(target.subject);
     const gitProxy = parseGitProxy(body.gitProxy);
     const outcome = await addWorktree({
@@ -488,16 +519,21 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       identity: identityFor(target),
       branch: ref.ref,
       startBranch,
+      ...(startLocal ? { startLocal } : {}),
       ...(gitProxy ? { gitProxy } : {}),
     });
     if (!outcome.ok) {
-      logger.warn('worktree {branch} of workspace {baseId} failed: {error}', {
-        component: 'worker-sandbox/workspaces',
-        baseId: base.id,
-        branch: ref.ref,
-        subject: target.subject,
-        error: outcome.message,
-      });
+      logger.warn(
+        "{actor}'s worktree {branch} on {repo} could not be added; nothing was created: {error}",
+        {
+          component: 'worker-sandbox/workspaces',
+          ...(await actorAttrs(target.subject)),
+          baseId: base.id,
+          repo: base.repoFullName,
+          branch: ref.ref,
+          error: outcome.message,
+        }
+      );
       return sendError(response, 409, 'worktree_failed', outcome.message);
     }
     const row = await store.insertWorkspace({
@@ -539,12 +575,14 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     const id = str(body.id);
     const deleted = id ? await store.deleteWorkspace(target, id) : undefined;
     if (!deleted) return sendError(response, 404, 'not_found');
+    await deps.previews?.stopForWorkspace(deleted.id);
     if (deleted.parentId) {
       const base = await store.getWorkspace(target, deleted.parentId);
       await removeWorktree(base?.storageKey ?? null, deleted.storageKey, identityFor(target));
     } else {
       // A base clone takes its worktrees with it: they cannot work without it.
       for (const child of await store.listWorktrees(target, deleted.id)) {
+        await deps.previews?.stopForWorkspace(child.id);
         await store.deleteWorkspaceById(child.id);
         await removeWorktree(null, child.storageKey, identityFor(target));
       }
@@ -789,7 +827,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
           if (code === 0) response.end();
           else response.destroy();
         } else if (code === 12) {
-          sendError(response, 404, 'not_found', `${path.path || 'The checkout'} has no files to download.`);
+          sendError(
+            response,
+            404,
+            'not_found',
+            `${path.path || 'The checkout'} has no files to download.`
+          );
         } else {
           sendError(
             response,
@@ -1035,6 +1078,9 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     // The running services' addresses and exports, over the `.env`. Not
     // secrets — the address is the point — so they are not scrubbed.
     const serviceEnv = deps.serviceEnv ? await deps.serviceEnv(workspace) : {};
+    // The previews that are up, likewise: PREVIEW_<NAME>_PORT and _URL, so
+    // a command can curl the server a chat started.
+    const previewEnv = deps.previews?.environmentFor(workspace) ?? {};
     // A caller that goes away before the answer — the chat turn behind
     // the call was stopped — takes the command with it: its process tree
     // is killed rather than left to run to its timeout unseen.
@@ -1043,7 +1089,10 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       if (!response.writableFinished) gone.abort();
     });
     const result = await runShell(
-      runInputFor(workspace, env, timeoutMs, { extraEnv: serviceEnv, signal: gone.signal }),
+      runInputFor(workspace, env, timeoutMs, {
+        extraEnv: { ...serviceEnv, ...previewEnv },
+        signal: gone.signal,
+      }),
       command.command
     );
     await markEnvUsed(env);
@@ -1097,6 +1146,11 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       ]);
       parts.log = scrubEnv(gitText(log), env);
     }
+    // A rebase or merge left half-done, and the files still in conflict:
+    // the first thing a reader of the status needs to know.
+    const operation = await operationState(input);
+    parts.inProgress = operation.inProgress;
+    parts.conflicts = operation.conflicts.map((path) => scrubEnv(path, env));
     await store.touchWorkspace(workspace.id, { branch });
     sendJson(response, 200, parts);
   }
@@ -1377,16 +1431,26 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
       remoteBranch = ref.ref;
     }
     const input = runInputFor(workspace, env, 5 * 60_000, { gitProxy });
+    // After a rebase the remote branch has to be replaced; `--force-with-lease`
+    // does that only while the remote is still where this checkout last saw
+    // it, so nobody else's pushes are overwritten. A plain `--force` never.
+    const forceWithLease = body.forceWithLease === true;
     const pushed = await runGit(input, [
       'push',
       '--set-upstream',
+      ...(forceWithLease ? ['--force-with-lease'] : []),
       'origin',
       `HEAD:refs/heads/${remoteBranch}`,
     ]);
     if (pushed.exitCode !== 0)
       return sendError(response, 409, 'git_failed', scrubEnv(gitText(pushed), env));
     await store.touchWorkspace(workspace.id, { branch });
-    sendJson(response, 200, { branch, remoteBranch, output: scrubEnv(gitText(pushed), env) });
+    sendJson(response, 200, {
+      branch,
+      remoteBranch,
+      forced: forceWithLease,
+      output: scrubEnv(gitText(pushed), env),
+    });
   }
 
   async function gitPull(
@@ -1577,6 +1641,12 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
     'git-push': gitPush,
     'git-pull': gitPull,
     'git-discard': gitDiscard,
+    ...createGitVerbs({
+      runInputFor,
+      currentBranch,
+      refreshSize,
+      touch: (id, patch) => store.touchWorkspace(id, patch),
+    }),
   };
 
   /**
@@ -1805,16 +1875,25 @@ export function createWorkspaceHandlers(deps: WorkspaceHandlerDeps) {
         }
         await store.deleteWorkspaceById(workspace.id);
       } catch (error) {
-        logger.warn('sweep could not remove workspace {id}: {error}', {
-          component: 'worker-sandbox/workspaces',
-          id: workspace.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          'the expired workspace of {repo} of {actor} could not be removed; it is tried again next pass: {error}',
+          {
+            component: 'worker-sandbox/workspaces',
+            ...(await actorAttrs(workspace.subject)),
+            id: workspace.id,
+            repo: workspace.repoFullName,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       }
     }
   }
 
-  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp };
+  /** The caller's environment secrets opened for one request — what previews start with and scrub by. */
+  const openEnv = (target: store.WorkspaceTarget): Promise<OpenedEnv> =>
+    envSecretsEnabled() ? openCallerEnv(target) : Promise.resolve(EMPTY_ENV);
+
+  return { handleWorkspaces, handleUpload, handleEnv, sweep, lsp, loadReady, openEnv };
 }
 
 /** Exposed for tests: the contained-path check the file verbs rely on. */

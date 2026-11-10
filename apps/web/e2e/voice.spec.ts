@@ -4,6 +4,21 @@
  * read aloud, and the immersive voice conversation through its states —
  * listening, the person's utterance transcribed, thinking, speaking.
  *
+ * The rules are model tests now: the voice session's phases and labels,
+ * what an utterance becomes (dropped, an answer to an ask, a message that
+ * cuts the reply or not), when a language correction applies, the
+ * activity line and the ask's narration, the microphone's release and
+ * mute — chat/_components/voice-mode.model.test.ts; the admin form's
+ * fields, save body and test answer — admin/connectors/forms/
+ * voice-form.model.test.ts; the Preferences section's Save —
+ * preferences/voice-form.model.test.ts. (The conversation that worked,
+ * then asked before it acted, went with them: its lines are the model's,
+ * and the decision's round trip is chat-permission.spec.ts's.) What stays
+ * is what needs a browser and a microphone: the pages rendering on the
+ * real server, a reply really read aloud, a real utterance heard, sent
+ * and answered, and one language correction reaching the resend route.
+ * The composer's dictation steps belong to composer.tsx.
+ *
  * The org's configuration is saved through the admin Voice form's route,
  * so the server-side availability check is real, and the chat's reply is
  * the scripted stand-in model's (e2e/support/voice.ts). Everything that
@@ -216,35 +231,4 @@ test('chat: an utterance heard in another language is resent in its words', asyn
   await dialog.getByRole('button', { name: 'Type instead' }).click();
   await expect(page.getByText(HEARD.text)).toBeVisible();
   await expect(page.getByText(UTTERANCE)).toHaveCount(0);
-});
-
-test('chat: a voice conversation says what it is doing, and asks before it acts', async ({
-  page,
-}, testInfo) => {
-  await mockVendor(page, { asks: true });
-  await page.goto(`/chat/${voice.chatId}`);
-  await expect(page.getByRole('heading', { level: 1, name: CHAT_TITLE })).toBeVisible();
-  await page.getByRole('button', { name: 'Voice', exact: true }).click();
-  await page.getByRole('menuitem', { name: /Start a voice conversation/ }).click();
-  const dialog = page.getByRole('dialog', { name: 'Voice conversation' });
-  await expect(dialog.getByText('Listening', { exact: true })).toBeVisible({ timeout: 15_000 });
-
-  // The utterance is sent; the first thing the turn does is search, and
-  // the line under the wave says so while it runs.
-  await expect(dialog.getByText(UTTERANCE)).toBeVisible({ timeout: 30_000 });
-  await expect(dialog.getByText('Searching Jira issues…')).toBeVisible({ timeout: 15_000 });
-  await shot(page, testInfo, 'voice-11-mode-working', false);
-
-  // Then it wants to act, and the ask is shown and spoken: the label
-  // tells the person what to say, the panel has the three buttons.
-  await expect(
-    dialog.getByText('Permission needed — say allow, always allow, or deny')
-  ).toBeVisible({ timeout: 20_000 });
-  await expect(dialog.getByText('The assistant wants to create Jira issue.')).toBeVisible();
-  await shot(page, testInfo, 'voice-12-mode-permission', false);
-
-  // Allowed from the panel: the turn carries on and the reply is read.
-  await dialog.getByRole('button', { name: 'Allow once' }).click();
-  await expect(dialog.getByText('Speaking — talk to interrupt')).toBeVisible({ timeout: 30_000 });
-  await shot(page, testInfo, 'voice-13-mode-after-allow', false);
 });

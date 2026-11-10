@@ -20,6 +20,7 @@
 
 import { getDataStore } from '@renkei/db';
 import { logger } from '../logger';
+import { whoHas } from '../log-actor';
 
 const COMPONENT = 'grants/expiry-sweep';
 
@@ -44,7 +45,7 @@ export async function sweepExpiredGrants(): Promise<void> {
   try {
     stale = await store.providerGrants.listStaleExpired(GRANT_STALE_DAYS, MAX_DELETES_PER_PASS);
   } catch (error) {
-    logger.error('could not list stale grants: {error}', {
+    logger.error('stale provider grants could not be listed; this pass deleted nothing: {error}', {
       component: COMPONENT,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -53,6 +54,8 @@ export async function sweepExpiredGrants(): Promise<void> {
   if (stale.length === 0) return;
 
   for (const grant of stale) {
+    // Who the grant belonged to, read BEFORE the delete takes the row away.
+    const owner = await whoHas(grant.accountId);
     try {
       // Re-checked in the delete itself: a refresh that landed between the
       // listing and now has moved expires_at forward, and that grant is
@@ -60,18 +63,27 @@ export async function sweepExpiredGrants(): Promise<void> {
       await store.providerGrants.deleteIfStale(grant.provider, grant.accountId, GRANT_STALE_DAYS);
       // One line per deletion, with everything needed to answer "where did
       // my connection go" from the logs alone.
-      logger.info('deleted expired {provider} grant for account {accountId}', {
-        component: COMPONENT,
-        provider: grant.provider,
-        accountId: grant.accountId,
-        staleDays: GRANT_STALE_DAYS,
-      });
+      logger.info(
+        "{actor}'s {provider} grant was deleted: it expired more than {staleDays} days ago and nothing had refreshed it since",
+        {
+          component: COMPONENT,
+          ...owner,
+          provider: grant.provider,
+          accountId: grant.accountId,
+          staleDays: GRANT_STALE_DAYS,
+        }
+      );
     } catch (error) {
-      logger.warn('could not delete stale grant: {error}', {
-        component: COMPONENT,
-        provider: grant.provider,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "{actor}'s stale {provider} grant could not be deleted; it is tried again next pass: {error}",
+        {
+          component: COMPONENT,
+          ...owner,
+          provider: grant.provider,
+          accountId: grant.accountId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 }

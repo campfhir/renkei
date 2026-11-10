@@ -20,6 +20,7 @@ import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const MAX_VALUES = 50;
 const MAX_VALUE_CHARS = 255;
@@ -33,18 +34,22 @@ export async function GET(
   { params }: { params: Promise<{ capabilityKey: string }> }
 ): Promise<NextResponse> {
   const { capabilityKey } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   if (!knownKey(capabilityKey)) {
     return NextResponse.json({ error: 'Unknown connector' }, { status: 404 });
   }
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/admin/connector-audience',
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} opened the audience of the {capabilityKey} connector, but the org settings could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/connector-audience',
+        ...who(session),
+        capabilityKey,
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({ claimValues: settings.val.connectorAudiences[capabilityKey] ?? [] });
@@ -86,11 +91,16 @@ export async function PUT(
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/admin/connector-audience',
-      subject: session.subject,
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} set the audience of the {capabilityKey} connector, but the org settings could not be read; nothing was saved: {error}',
+      {
+        component: 'api/admin/connector-audience',
+        ...who(session),
+        capabilityKey,
+        groups: claimValues.length,
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   // Rewrite the whole map: an emptied rule is dropped rather than kept as
@@ -101,11 +111,16 @@ export async function PUT(
 
   const saved = await setOrgSettings({ connectorAudiences });
   if (!saved.ok) {
-    logger.error('Could not save org settings: {error}', {
-      component: 'api/admin/connector-audience',
-      subject: session.subject,
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} set the audience of the {capabilityKey} connector to {groups} group(s), but the org settings were not saved: {error}',
+      {
+        component: 'api/admin/connector-audience',
+        ...who(session),
+        capabilityKey,
+        groups: claimValues.length,
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
   // Org-wide: every cached catalog in the tenant may now be wrong about

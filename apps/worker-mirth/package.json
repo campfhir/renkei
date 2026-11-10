@@ -15,6 +15,7 @@
     "@renkei/connector-mirth": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/worker-kit": "workspace:*",
     "tsx": "^4.23.15"

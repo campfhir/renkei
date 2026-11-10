@@ -75,8 +75,11 @@ export async function startMemoryDelegate(): Promise<void> {
   if (!configuredKey) process.env.DELEGATE_WORKER_API_KEY = apiKey;
   if (process.env.DELEGATE_WORKER_CALLER) delete process.env.DELEGATE_WORKER_CALLER;
   globalMarks.__renkeiMemoryDelegateUrl = delegate.url;
-  logger.warn('In-process delegate for the in-memory store listening on {url}', {
-    component,
-    url: delegate.url,
-  });
+  logger.warn(
+    'the in-process delegate for the in-memory store is listening on {url}; key operations stay in this process',
+    {
+      component,
+      url: delegate.url,
+    }
+  );
 }

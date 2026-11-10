@@ -19,7 +19,7 @@
  * controls whether and what it says.
  */
 
-import { getDataStore } from '@renkei/db';
+import { agentAttrs, getDataStore } from '@renkei/db';
 import type { QueueProducer } from '@renkei/queue';
 import { agentDefinitionOf } from '@renkei/agents';
 import { createAgentRun } from '@renkei/agents/runs';
@@ -36,11 +36,17 @@ export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer:
     // outside the run asked it to stop, so they already know — engine.ts
     // always pairs it with quiet: true, but the status check stays here
     // as a second, explicit guard against ever chaining from one.
+    const agent = await agentAttrs(run.agentId);
     if (run.quiet || run.status === 'stopped' || run.status === 'canceled') {
-      logger.info('run {runId} stopped quietly', {
-        component: 'worker-agents/finalize',
-        runId: run.runId,
-      });
+      logger.info(
+        'run {runId} of agent "{agent}" of {owner} ended quietly ({status}); nobody is notified and no chained agent starts',
+        {
+          component: 'worker-agents/finalize',
+          ...agent,
+          runId: run.runId,
+          status: run.status,
+        }
+      );
       return;
     }
 
@@ -56,10 +62,15 @@ export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer:
         },
       });
       if (!enqueued.ok) {
-        logger.warn('could not enqueue run.failed for {runId}', {
-          component: 'worker-agents/finalize',
-          runId: run.runId,
-        });
+        logger.warn(
+          'run {runId} of agent "{agent}" of {owner} failed, but the failure notice was not queued; the owner is not told',
+          {
+            component: 'worker-agents/finalize',
+            ...agent,
+            runId: run.runId,
+            errorKind: run.errorKind ?? undefined,
+          }
+        );
       }
       return;
     }
@@ -76,23 +87,29 @@ export function createFinalizeHook(agentProducer: QueueProducer, eventsProducer:
     const chained = await store.agents.listChainTargets(run.agentId);
 
     for (const trigger of chained) {
+      // The chained agent and its owner, for the lines createAgentRun writes.
+      const chainedAgent = await agentAttrs(trigger.agentId);
       const produced = [
         ...(run.vars.summary ? [`Its summary: ${run.vars.summary}`] : []),
         ...(run.vars.result ? [`Its result:\n${run.vars.result}`] : []),
       ].join('\n');
-      const result = await createAgentRun(agentProducer, {
-        agentId: trigger.agentId,
-        ownerSubject: trigger.ownerSubject,
-        definition: agentDefinitionOf(trigger),
-        llmModelId: trigger.llmModelId,
-        triggerId: trigger.triggerId,
-        triggerKind: 'agent',
-        parentRunId: run.runId,
-        lineage: [...parentLineage, run.agentId],
-        initialState: {
-          parentSummary: `The agent “${finishedAgent?.name ?? run.agentId}” finished successfully.${produced ? `\n${produced}` : ''}`,
+      const result = await createAgentRun(
+        agentProducer,
+        {
+          agentId: trigger.agentId,
+          ownerSubject: trigger.ownerSubject,
+          definition: agentDefinitionOf(trigger),
+          llmModelId: trigger.llmModelId,
+          triggerId: trigger.triggerId,
+          triggerKind: 'agent',
+          parentRunId: run.runId,
+          lineage: [...parentLineage, run.agentId],
+          initialState: {
+            parentSummary: `The agent “${finishedAgent?.name ?? run.agentId}” finished successfully.${produced ? `\n${produced}` : ''}`,
+          },
         },
-      });
+        { log: (message, meta) => logger.debug(message, { ...chainedAgent, ...meta }) }
+      );
       if (result.ok) {
         await store.agents.markTriggerFired(trigger.triggerId);
       } else {

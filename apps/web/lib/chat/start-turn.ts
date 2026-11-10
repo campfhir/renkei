@@ -40,6 +40,7 @@ import { chatDelegateTool } from './chat-delegate';
 import { listChatModels } from './models';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
+import { who, whoIs } from '@/lib/log-actor';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
@@ -78,9 +79,11 @@ import {
 } from './tool-config';
 import { getDefaultChatTools } from './tool-prefs';
 import { getChatToolPermissionPrefs } from './permission-prefs';
-import { resolveChatToolSurface } from './tool-surface';
+import { resolveChatToolSurface, type DiscoverableTool } from './tool-surface';
 import { createLocalToolSet, type LocalTool } from './local-tools';
 import { findToolsTool, recallDiscoveredTools } from './tool-discovery';
+import { PLATFORM_CONNECTOR, PLATFORM_LABEL } from './platform-tools';
+import { LINK_TOOL } from './platform-tools/navigation';
 import { openTurnChannel, type TurnChannel } from './turn-events';
 import { createTurnStore } from './turn-store';
 import { runChatTurn, DEFAULT_TURN_LIMITS, type TurnResumeSeed } from './turn-runner';
@@ -100,6 +103,8 @@ import { notifyChatReplyDesktop } from './reply-notification';
 import { createSubagentRecorder } from './subagent-runs';
 import type { WidgetDecisionState } from './views';
 import { temporaryUnavailableTools, withoutMemoryConnectors } from './temporary';
+import { taskTools } from './tasks/tools';
+import { wakeSoon } from './tasks/wake';
 
 /**
  * The hard ceiling on one Send: past this, even chunking is refused (an
@@ -207,13 +212,22 @@ export interface StartTurnInput {
   /** The person's IANA zone, from their browser (time-zone.ts); null when it did not say. */
   timeZone?: string | null;
   /**
-   * How the user row is stored and shown: a 'prompt' is what the person
-   * typed, their bubble; a 'note' is what they did outside the composer —
-   * today, a decision on a preview card (widget-tools.ts) — shown as a
-   * small line in the margin, never as a bubble, but the model's cue to
-   * reply all the same.
+   * Where the person reached the app, from the request that sent the
+   * message (lib/get-origin.ts): the app stands behind a proxy, so a link
+   * a tool hands back is built on this, never on this process's host.
+   * Absent for a turn no request started (a woken chat); the deployment's
+   * declared address stands in.
    */
-  kind?: 'prompt' | 'note';
+  origin?: string | null;
+  /**
+   * How the user row is stored and shown: a 'prompt' is what the person
+   * typed, their bubble; a 'note' is what they did outside the composer,
+   * shown as a small line in the margin, never as a bubble; a 'decision'
+   * is what they decided on a preview card (widget-tools.ts), which the
+   * card's own receipt shows, so the thread draws nothing for it. Either
+   * way the row is the model's cue to reply.
+   */
+  kind?: 'prompt' | 'note' | 'decision';
   defer?: (task: () => Promise<void>) => void;
 }
 
@@ -328,14 +342,18 @@ export async function startChatTurn(
   const llmResult = await resolveAgentLlm(requestedModel);
   if (!llmResult.ok) {
     if (llmResult.err.type !== 'NO_MODEL') {
-      logger.warn('chat model could not be resolved: {kind} {error}', {
-        component: 'chat/turn',
-        subject: input.session.subject,
-        chatId: chat.id,
-        llmModelId: requestedModel,
-        kind: llmResult.err.type,
-        error: llmResult.err.message ?? '',
-      });
+      logger.warn(
+        '{actor} sent a message in the chat "{chat}", but its model could not be resolved ({kind}); the turn did not start: {error}',
+        {
+          component: 'chat/turn',
+          ...(await whoIs(input.session.subject)),
+          chatId: chat.id,
+          chat: chat.title || 'New chat',
+          llmModelId: requestedModel,
+          kind: llmResult.err.type,
+          error: llmResult.err.message ?? '',
+        }
+      );
     }
     return err(
       llmResult.err.type === 'NO_MODEL' ? ('NO_MODEL' as const) : ('MODEL_ERROR' as const),
@@ -369,6 +387,7 @@ export async function startChatTurn(
           roles: input.session.roles,
           voice: input.voice === true,
           timeZone: input.timeZone ?? null,
+          origin: input.origin ?? null,
         },
       }),
       prompts: chunkedUserBlocks(redacted.text, extraBlocks).map((blocks) => ({
@@ -425,16 +444,21 @@ export async function startChatTurn(
         settings,
         voice: input.voice === true,
         timeZone: input.timeZone ?? null,
+        origin: input.origin ?? null,
       })
     );
   } catch (error) {
-    logger.error('chat turn could not start: {error}', {
-      component: 'chat/turn',
-      subject: input.session.subject,
-      chatId: chat.id,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      '{actor} sent a message in the chat "{chat}", but the turn did not start; they saw an error: {error}',
+      {
+        component: 'chat/turn',
+        ...(await whoIs(input.session.subject)),
+        chatId: chat.id,
+        chat: chat.title || 'New chat',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return err('DB_ERROR' as const);
   }
   return ok(started);
@@ -455,6 +479,8 @@ export interface ExecuteTurnInput {
   voice?: boolean;
   /** See StartTurnInput.timeZone. */
   timeZone?: string | null;
+  /** See StartTurnInput.origin. */
+  origin?: string | null;
   /**
    * This is a turn another process left running (turn-recovery.ts): the
    * rows are already reconciled, `assistantMessage` is the fresh row to
@@ -502,14 +528,18 @@ export async function executeChatTurn(input: ExecuteTurnInput): Promise<void> {
       .then((canceled) => {
         if (canceled) channel.requestCancel();
       })
-      .catch((error: unknown) => {
-        logger.warn('chat turn heartbeat failed while preparing: {error}', {
-          component: 'chat/turn',
-          subject: input.session.subject,
-          chatId: input.chat.id,
-          turnId: input.turnId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      .catch(async (error: unknown) => {
+        logger.warn(
+          'the turn in {actor}\'s chat "{chat}" could not heartbeat while preparing; left unanswered long enough, the recovery sweep will take it for dead: {error}',
+          {
+            component: 'chat/turn',
+            ...(await whoIs(input.session.subject)),
+            chatId: input.chat.id,
+            chat: input.chat.title || 'New chat',
+            turnId: input.turnId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       });
   }, PREPARING_HEARTBEAT_MS);
   try {
@@ -518,6 +548,9 @@ export async function executeChatTurn(input: ExecuteTurnInput): Promise<void> {
     clearInterval(preparing);
     unsubscribeShutdown();
     settle();
+    // A wait that came due while this turn ran (a background sub-agent
+    // finished, the person completed a task) was left for now: look again.
+    if (!suspend.signal.aborted) wakeSoon(input.chat.id);
   }
 }
 
@@ -527,12 +560,17 @@ async function executeTurnBody(
   suspendSignal: AbortSignal,
   prepared: () => void
 ): Promise<void> {
+  // Work the turn started in the background (a background sub-agent,
+  // subagent-tasks.ts) holds the tool surface open past the turn's end;
+  // the last of them to finish releases it.
+  let holds = 0;
   const store = createTurnStore({
     chatId: input.chat.id,
     turnId: input.turnId,
     subject: input.session.subject,
     chatTitle: input.chat.title,
     cipher: input.cipher,
+    hasBackgroundWork: () => holds > 0,
     model: {
       provider: input.llm.providerName,
       model: input.llm.model,
@@ -556,6 +594,26 @@ async function executeTurnBody(
   // The turn is over (or never got going): a tool surface still resolving
   // then releases itself rather than handing a release to nobody.
   let released = false;
+  let turnOver = false;
+  const releaseUnlessHeld = async () => {
+    if (!turnOver || holds > 0 || released) return;
+    released = true;
+    await release();
+  };
+  const holdTurn = () => {
+    holds += 1;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      holds -= 1;
+      void releaseUnlessHeld().catch((error: unknown) =>
+        log('chat tool surface release failed: {message}', {
+          message: error instanceof Error ? error.message : String(error),
+        })
+      );
+    };
+  };
   // Everything before the model's first token is time the person waits
   // in silence (a voice turn most of all), so the reads below run side by
   // side wherever one does not feed another, and the whole is logged.
@@ -637,6 +695,7 @@ async function executeTurnBody(
       project?.kind === 'code'
         ? codeProjectContext(project, {
             subject: input.session.subject,
+            roles: input.session.roles,
             chat: { id: input.chat.id, workspaceId: input.chat.workspaceId },
             // Auto mode's sub-agents run long (delegate.ts).
             auto: input.chat.autoMode && !readOnly,
@@ -727,12 +786,18 @@ async function executeTurnBody(
     const chatSummary = await latestChatSummary(input.chat.id, input.cipher);
     const localContext = {
       subject: input.session.subject,
+      actor: who(input.session),
+      roles: input.session.roles,
+      holdTurn,
       chatId: input.chat.id,
       cipher: input.cipher,
       ...(projectCipher ? { projectCipher } : {}),
       projectId: input.chat.projectId,
       temporary: input.chat.temporary,
       sandboxScope,
+      // Links a tool hands back start here (platform-tools/shared.ts).
+      ...(input.origin ? { origin: input.origin } : {}),
+      timeZone: input.timeZone ?? null,
       userEmail: person?.email ?? null,
       readOnly,
       llm: input.llm,
@@ -752,6 +817,10 @@ async function executeTurnBody(
       // later load reads (chat-view.ts).
       emitWidgetDecision: (decision: { stateKey: string; state: WidgetDecisionState }) =>
         channel.emit({ type: 'widget_decided', turnId: input.turnId, ...decision }),
+      // Preferences the model changed (renkei_set_preferences): the open
+      // page re-renders what they decide as the tool returns.
+      emitPreferencesChanged: (change: { documents: string[] }) =>
+        channel.emit({ type: 'preferences_changed', turnId: input.turnId, ...change }),
       // A chat's sub-agents — code_delegate in a code project, chat_delegate
       // anywhere else — keep their runs (subagent-runs.ts) and report
       // progress on the turn's stream; nothing of theirs enters this
@@ -801,9 +870,22 @@ async function executeTurnBody(
         ...(auto ? [taskCompleteTool()] : []),
       ]
     ).filter((tool) => !denied.has(tool.def.name));
+    // The task list (tasks/tools.ts) is built in: every chat has it, and
+    // no preference blocks it — it acts only on the chat's own plan.
+    if (!input.localTools) baseLocalTools.push(...taskTools());
     // Offered even with nothing to find: a new chat starts with core
     // connectors only, and its model should still find the tool when asked.
-    const discoveryTool = findToolsTool(surface.discoverable, {
+    // What find_tools searches: the enabled connectors' tools beyond the
+    // core set, and the local tools not offered up front (platform-tools/).
+    // Either way a find makes the tool callable, and a later turn offers
+    // it again (recallDiscoveredTools).
+    const discoverable: DiscoverableTool[] = [
+      ...surface.discoverable,
+      ...baseLocalTools
+        .filter((tool) => tool.deferred === true)
+        .map((tool) => ({ connector: PLATFORM_CONNECTOR, label: PLATFORM_LABEL, def: tool.def })),
+    ];
+    const discoveryTool = findToolsTool(discoverable, {
       alwaysOffer: true,
       unavailable: surface.unavailable === true,
     });
@@ -829,7 +911,7 @@ async function executeTurnBody(
     // What earlier turns found through find_tools stays offered: the model
     // calls a tool it remembers whether or not its schema is in the request,
     // and only with the schema does it call it right.
-    const recalled = recallDiscoveredTools(history, surface.discoverable);
+    const recalled = recallDiscoveredTools(history, discoverable);
     const chartsAllowed = filesAllowed && (await sandboxChartsEnabled());
     // The document road through sandbox_run_python: the same condition
     // chat-local-tools.ts offers chat_write_file's pointer under.
@@ -847,10 +929,15 @@ async function executeTurnBody(
         chatSummary: summary,
         chatFiles: context.chatFiles,
         hasTools: surface.tools.length > 0 || localTools.defs().length > 0,
+        // The connectors' brief; what the platform keeps behind find_tools
+        // is named by its own (hasPlatformTools).
         hasDiscoverableTools: surface.discoverable.length > 0,
+        hasPlatformTools: localTools.has(LINK_TOOL),
         hasKnowledge: surface.tools.some((tool) => tool.name === 'search_knowledge'),
         voice: input.voice === true,
         hasDelegate: delegate !== null,
+        // A caller with its own local tools offers only those.
+        hasTasks: !input.localTools,
         // outlook_search_users is a `microsoft` tool, not a core connector, so
         // it is almost always in `discoverable` rather than offered up front —
         // the brief has to work whichever bucket it is in.
@@ -931,8 +1018,9 @@ async function executeTurnBody(
         localTools,
         localContext,
         readOnlyTools: new Set([...surface.readOnlyTools, ...localTools.readOnlyNames()]),
+        concurrentTools: new Set(localTools.concurrentNames()),
         widgetResourceUris: surface.widgetResourceUris,
-        discoverableTools: surface.discoverable.map((entry) => entry.def),
+        discoverableTools: discoverable.map((entry) => entry.def),
         // Every call that acts asks first, unless this person has said
         // "always" for that tool (permission-prefs.ts) — or the chat is in
         // auto mode, where nothing asks and only a blocked tool refuses.
@@ -1044,8 +1132,8 @@ async function executeTurnBody(
     });
     channel.close();
   } finally {
-    released = true;
-    await release();
+    turnOver = true;
+    await releaseUnlessHeld();
   }
 }
 

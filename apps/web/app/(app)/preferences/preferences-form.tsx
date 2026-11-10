@@ -1,17 +1,14 @@
 'use client';
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useReducer, type ReactNode } from 'react';
 // The PURE half of the package, not its index: the index reaches the
 // database, and a client component that pulls it in drags `pg` — and then
 // `dns` — into the browser bundle. That split is what prefs.ts is for.
 import {
   deliveryForCategory,
   type NotificationPrefs,
-  type AgentNotificationOverride,
   type BatchEvent,
-  type OverridableEvent,
   type DeliveryPrefs,
-  type PauseDeliveryPrefs,
   type ToastCorner,
 } from '@renkei/user-prefs/prefs';
 import ConnectorIcon from '@/components/connector-icon';
@@ -27,6 +24,25 @@ import {
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
 import { clientLogger } from '@/lib/client-logger';
+import {
+  categoryLabel,
+  channelBox,
+  connectorSummary,
+  desktopView,
+  initPreferences,
+  overrideRow,
+  preferencesReducer,
+  canSaveGroup,
+  groupSaveRequest,
+  groupSaveView,
+  type NotificationGroup,
+  type PreferencesState,
+  type ChannelAvailability,
+  type ConnectorRow,
+  type DeliveryEvent,
+  type PauseEvent,
+  type RunEvent,
+} from './preferences-form.model';
 
 /**
  * What to be told about, and where.
@@ -86,17 +102,6 @@ import { clientLogger } from '@/lib/client-logger';
 /** Both corners, typed without an assertion. */
 const TOAST_CORNERS: readonly ToastCorner[] = ['bottom-left', 'bottom-right'];
 
-interface ConnectorRow {
-  key: string;
-  label: string;
-  categories: string[];
-}
-
-interface ChannelAvailability {
-  outlook: boolean;
-  webex: boolean;
-}
-
 interface AgentOption {
   id: string;
   name: string;
@@ -112,11 +117,7 @@ const RUN_EVENTS = [
     'Someone edits a shared agent of yours',
     'People you granted access to; edits land in the audit trail either way.',
   ],
-] as const satisfies readonly [
-  key: keyof NotificationPrefs & OverridableEvent,
-  label: string,
-  hint: string | null,
-][];
+] as const satisfies readonly [key: RunEvent, label: string, hint: string | null][];
 
 /**
  * The three batch-job events, `{app, email, webex}` like a run event, but
@@ -160,19 +161,6 @@ const PAUSE_EVENTS = [
   ],
 ] as const;
 
-const CATEGORY_LABEL: Record<string, string> = {
-  created: 'Creates something',
-  sent: 'Sends something',
-  updated: 'Updates something',
-  deleted: 'Deletes something',
-  scheduled: 'Schedules something',
-  other: 'Anything else',
-};
-
-const CATEGORY_HINT: Record<string, string> = {
-  other: 'No specific wording yet — off to start with, like today.',
-};
-
 /** A locked "this is always on" pill, for the App column of a pause row. */
 function AlwaysPill(): ReactNode {
   return (
@@ -196,9 +184,7 @@ function AlwaysPill(): ReactNode {
 }
 
 /** The line under a table explaining why Outlook/WebEx are greyed out. */
-function ChannelHints({ channels }: {
-  channels: ChannelAvailability;
-}): ReactNode {
+function ChannelHints({ channels }: { channels: ChannelAvailability }): ReactNode {
   const missing: { label: string; anchor: string }[] = [];
   if (!channels.outlook) missing.push({ label: 'Outlook', anchor: 'microsoft' });
   if (!channels.webex) missing.push({ label: 'WebEx', anchor: 'webex' });
@@ -220,15 +206,64 @@ function ChannelHints({ channels }: {
   );
 }
 
-export default function PreferencesForm({ connectors, channels, initial, agents }: {
+/**
+ * A card's own Save, at its foot: there only once the card has changes
+ * (or a save to report).
+ */
+function GroupSave({
+  group,
+  state,
+  onSave,
+  inset = false,
+}: {
+  group: NotificationGroup;
+  state: PreferencesState;
+  onSave: (group: NotificationGroup) => Promise<void>;
+  /** The card keeps its padding inside its parts, so the row brings its own. */
+  inset?: boolean;
+}): ReactNode {
+  const view = groupSaveView(state, group);
+  if (!view.show) return null;
+  return (
+    <div className={`flex flex-wrap items-center gap-3 ${inset ? 'px-4 pb-4 pt-3' : 'mt-4'}`}>
+      <button
+        type="button"
+        onClick={() => void onSave(group)}
+        disabled={!canSaveGroup(state, group)}
+        className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        {view.label}
+      </button>
+      {view.message === 'saved' ? (
+        <span role="status" className="text-sm text-green-700 dark:text-green-400">
+          Saved.
+        </span>
+      ) : null}
+      {view.message === 'failed' ? (
+        <span role="alert" className="text-sm text-red-600 dark:text-red-400">
+          Could not save.
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+export default function PreferencesForm({
+  connectors,
+  channels,
+  initial,
+  agents,
+}: {
   connectors: ConnectorRow[];
   channels: ChannelAvailability;
   initial: NotificationPrefs;
   agents: AgentOption[];
 }) {
-  const [prefs, setPrefs] = useState<NotificationPrefs>(initial);
-  const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
-  const [overrideAgentId, setOverrideAgentId] = useState<string>(agents[0]?.id ?? '');
+  // Everything the form decides lives in preferences-form.model.ts.
+  const [state, dispatch] = useReducer(preferencesReducer, { initial, agents }, initPreferences);
+  const { prefs, overrideAgentId } = state;
+  const { enabled: desktopEnabled, permission, subscribeError } = state.desktop;
+  const desktop = desktopView(state);
 
   /*
     The browser's side of the desktop-notification deal, and the person's —
@@ -249,43 +284,29 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
     iOS Safari outside an installed web app being the one people will
     actually meet.
   */
-  const [desktopEnabled, setDesktopEnabled] = useState(false);
-  const [permission, setPermission] = useState<NotificationPermission | 'unsupported' | null>(null);
-  // A distinct third failure mode from 'denied': the browser said yes but
-  // telling the server about the subscription didn't work — a network
-  // blip, or push not configured server-side. Worth its own sentence,
-  // since "allow notifications" is not the fix for it.
-  const [subscribeError, setSubscribeError] = useState(false);
   useEffect(() => {
-    setDesktopEnabled(getDesktopNotificationsEnabled());
-    setPermission('Notification' in window ? Notification.permission : 'unsupported');
+    dispatch({
+      type: 'desktopRead',
+      enabled: getDesktopNotificationsEnabled(),
+      permission: 'Notification' in window ? Notification.permission : 'unsupported',
+    });
   }, []);
 
   /*
     Flipping the switch ON is the moment permission is normally asked for,
-    and — the part `Notification.requestPermission()` alone doesn't cover —
-    the moment this device actually subscribes and tells the server. If the
-    person declines the browser's prompt, or the subscribe call fails, the
-    switch stays off: storing "on" for something that can never fire would
-    look exactly like a bug.
+    and the moment this device actually subscribes and tells the server.
+    The reducer keeps the switch off unless both worked.
   */
   async function toggleDesktop(on: boolean) {
     if (!on) {
-      setDesktopEnabled(false);
-      setSubscribeError(false);
+      dispatch({ type: 'desktopOff' });
       setDesktopNotificationsEnabled(false);
       void disableDesktopNotifications();
       return;
     }
-
     const outcome = await enableDesktopNotifications();
-    setPermission(
-      outcome === 'unsupported' ? 'unsupported' : outcome === 'denied' ? 'denied' : 'granted'
-    );
-    setSubscribeError(outcome === 'subscribe-failed');
-    const enabled = outcome === 'granted';
-    setDesktopEnabled(enabled);
-    setDesktopNotificationsEnabled(enabled);
+    dispatch({ type: 'desktopEnableAnswered', outcome });
+    setDesktopNotificationsEnabled(outcome === 'granted');
   }
 
   /**
@@ -304,175 +325,74 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
         clientLogger.warn('preferences', 'notification permission request failed', error);
         current = 'denied';
       }
-      setPermission(current);
+      dispatch({ type: 'permissionAnswered', permission: current });
       if (current !== 'granted') return;
     }
-    setSubscribeError(!(await ensurePushSubscription()));
+    dispatch({ type: 'subscriptionChecked', ok: await ensurePushSubscription() });
   }
 
-  function update(next: NotificationPrefs) {
-    setPrefs(next);
-    setStatus('idle');
-  }
-
-  /** One category's delivery, all three channels, changed at once. */
-  function setCategory(connector: string, category: string, next: DeliveryPrefs) {
-    const forConnector = { ...(prefs.acts[connector] ?? {}), [category]: next };
-    update({ ...prefs, acts: { ...prefs.acts, [connector]: forConnector } });
-  }
-
-  /** One channel within one category, the other two left exactly as they are. */
-  function setCategoryChannel(
+  const setCategoryChannel = (
     connector: string,
     category: string,
     channel: keyof DeliveryPrefs,
     on: boolean
-  ) {
-    const current = deliveryForCategory(prefs, connector, category);
-    setCategory(connector, category, { ...current, [channel]: on });
-  }
-
-  function setWholeConnector(row: ConnectorRow, channel: keyof DeliveryPrefs, on: boolean) {
-    const forConnector = { ...(prefs.acts[row.key] ?? {}) };
-    for (const category of row.categories) {
-      const current = deliveryForCategory(prefs, row.key, category);
-      forConnector[category] = { ...current, [channel]: on };
-    }
-    update({ ...prefs, acts: { ...prefs.acts, [row.key]: forConnector } });
-  }
-
-  function setPauseChannel(
-    event: 'approvalNeeded' | 'questionAsked',
-    channel: 'email' | 'webex',
-    on: boolean
-  ) {
-    update({ ...prefs, [event]: { ...prefs[event], [channel]: on } });
-  }
-
-  function setDeliveryChannel(
-    key:
-      | 'runStarted'
-      | 'runFinished'
-      | 'runFailed'
-      | 'agentEditedByOthers'
-      | BatchEvent
-      | 'chatShared'
-      | 'agentShared',
+  ) => dispatch({ type: 'categoryChannel', connector, category, channel, on });
+  const setWholeConnector = (row: ConnectorRow, channel: keyof DeliveryPrefs, on: boolean) =>
+    dispatch({ type: 'wholeConnector', row, channel, on });
+  const setPauseChannel = (event: PauseEvent, channel: 'email' | 'webex', on: boolean) =>
+    dispatch({ type: 'pauseChannel', event, channel, on });
+  const setDeliveryChannel = (event: DeliveryEvent, channel: keyof DeliveryPrefs, on: boolean) =>
+    dispatch({ type: 'deliveryChannel', event, channel, on });
+  const deliveryOverrideOf = (agentId: string, event: RunEvent) => {
+    const row = overrideRow(prefs, agentId, event);
+    return row.overridden ? row.effective : undefined;
+  };
+  const pauseOverrideOf = (agentId: string, event: PauseEvent) => {
+    const row = overrideRow(prefs, agentId, event);
+    return row.overridden ? row.effective : undefined;
+  };
+  const toggleDeliveryOverride = (agentId: string, event: RunEvent, on: boolean) =>
+    dispatch({ type: 'overrideToggled', agentId, event, on });
+  const togglePauseOverride = (agentId: string, event: PauseEvent, on: boolean) =>
+    dispatch({ type: 'overrideToggled', agentId, event, on });
+  const setOverrideChannel = (
+    agentId: string,
+    event: RunEvent,
     channel: keyof DeliveryPrefs,
     on: boolean
-  ) {
-    update({ ...prefs, [key]: { ...prefs[key], [channel]: on } });
-  }
-
-  /** This agent's override for one run/edit event, or undefined when it has none. */
-  function deliveryOverrideOf(
+  ) => dispatch({ type: 'overrideChannel', agentId, event, channel, on });
+  const setOverridePauseChannel = (
     agentId: string,
-    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers'
-  ): DeliveryPrefs | undefined {
-    return prefs.agentOverrides[agentId]?.[key];
-  }
-
-  /** Same idea, for the two pause events. */
-  function pauseOverrideOf(
-    agentId: string,
-    key: 'approvalNeeded' | 'questionAsked'
-  ): PauseDeliveryPrefs | undefined {
-    return prefs.agentOverrides[agentId]?.[key];
-  }
-
-  function setAgentOverride(
-    agentId: string,
-    key: OverridableEvent,
-    next: AgentNotificationOverride[typeof key]
-  ) {
-    const forAgent: AgentNotificationOverride = { ...prefs.agentOverrides[agentId], [key]: next };
-    update({
-      ...prefs,
-      agentOverrides: { ...prefs.agentOverrides, [agentId]: forAgent },
-    });
-  }
-
-  /** Turning the override off for one event reverts this agent to the general preference. */
-  function clearAgentOverride(agentId: string, key: OverridableEvent) {
-    const forAgent = { ...prefs.agentOverrides[agentId] };
-    delete forAgent[key];
-    const agentOverrides = { ...prefs.agentOverrides };
-    if (Object.keys(forAgent).length > 0) {
-      agentOverrides[agentId] = forAgent;
-    } else {
-      delete agentOverrides[agentId];
-    }
-    update({ ...prefs, agentOverrides });
-  }
-
-  function toggleDeliveryOverride(
-    agentId: string,
-    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers',
-    on: boolean
-  ) {
-    if (on) setAgentOverride(agentId, key, { ...prefs[key] });
-    else clearAgentOverride(agentId, key);
-  }
-
-  function setOverrideChannel(
-    agentId: string,
-    key: 'runStarted' | 'runFinished' | 'runFailed' | 'agentEditedByOthers',
-    channel: keyof DeliveryPrefs,
-    on: boolean
-  ) {
-    const current = deliveryOverrideOf(agentId, key);
-    if (!current) return;
-    setAgentOverride(agentId, key, { ...current, [channel]: on });
-  }
-
-  function togglePauseOverride(
-    agentId: string,
-    key: 'approvalNeeded' | 'questionAsked',
-    on: boolean
-  ) {
-    if (on) setAgentOverride(agentId, key, { ...prefs[key] });
-    else clearAgentOverride(agentId, key);
-  }
-
-  function setOverridePauseChannel(
-    agentId: string,
-    key: 'approvalNeeded' | 'questionAsked',
+    event: PauseEvent,
     channel: 'email' | 'webex',
     on: boolean
-  ) {
-    const current = pauseOverrideOf(agentId, key);
-    if (!current) return;
-    setAgentOverride(agentId, key, { ...current, [channel]: on });
-  }
+  ) => dispatch({ type: 'overridePauseChannel', agentId, event, channel, on });
 
-  /** Curated rows only, App channel — the summary a collapsed connector shows. */
-  const appOnCount = (row: ConnectorRow) =>
-    row.categories.filter((category) => deliveryForCategory(prefs, row.key, category).app).length;
-  const anyExtraChannel = (row: ConnectorRow) =>
-    row.categories.some((category) => {
-      const d = deliveryForCategory(prefs, row.key, category);
-      return d.email || d.webex;
-    });
-
-  async function save() {
-    setStatus('saving');
+  /** One card's Save: a patch of only its own fields, merged in by the server. */
+  async function saveGroup(group: NotificationGroup) {
+    const body = groupSaveRequest(state, group);
+    dispatch({ type: 'saveSent', group });
     try {
       const response = await fetch(`/api/preferences`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notifications: prefs }),
+        body: JSON.stringify(body),
       });
       if (!response.ok)
         reportFetchFailure(
-          'PUT',
+          'PATCH',
           '/api/preferences',
           response.status,
           `Request failed (${response.status})`
         );
-      setStatus(response.ok ? 'saved' : 'failed');
+      dispatch(
+        response.ok
+          ? { type: 'saved', group, sent: body.notifications }
+          : { type: 'saveFailed', group }
+      );
     } catch (error) {
-      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
-      setStatus('failed');
+      reportFetchFailure('PATCH', '/api/preferences', 0, 'Could not reach the server', error);
+      dispatch({ type: 'saveFailed', group });
     }
   }
 
@@ -491,7 +411,8 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
           </h2>
           <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
             What Renkei tells you about, and how it reaches you. Everything below feeds the
-            notifications page.
+            notifications page. Each card saves on its own, and applies from then on: switching
+            something on does not fill in what already happened.
           </p>
         </div>
 
@@ -539,8 +460,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — Outlook`}
-                        checked={channels.outlook && prefs[key].email}
-                        disabled={!channels.outlook}
+                        {...channelBox(prefs[key].email, channels.outlook)}
                         onChange={(event) => setDeliveryChannel(key, 'email', event.target.checked)}
                       />
                     </td>
@@ -548,8 +468,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — WebEx`}
-                        checked={channels.webex && prefs[key].webex}
-                        disabled={!channels.webex}
+                        {...channelBox(prefs[key].webex, channels.webex)}
                         onChange={(event) => setDeliveryChannel(key, 'webex', event.target.checked)}
                       />
                     </td>
@@ -559,6 +478,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="runs" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
@@ -606,8 +526,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — Outlook`}
-                        checked={channels.outlook && prefs[key].email}
-                        disabled={!channels.outlook}
+                        {...channelBox(prefs[key].email, channels.outlook)}
                         onChange={(event) => setDeliveryChannel(key, 'email', event.target.checked)}
                       />
                     </td>
@@ -615,8 +534,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — WebEx`}
-                        checked={channels.webex && prefs[key].webex}
-                        disabled={!channels.webex}
+                        {...channelBox(prefs[key].webex, channels.webex)}
                         onChange={(event) => setDeliveryChannel(key, 'webex', event.target.checked)}
                       />
                     </td>
@@ -626,6 +544,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="batch" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
@@ -671,8 +590,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — Outlook`}
-                        checked={channels.outlook && prefs[key].email}
-                        disabled={!channels.outlook}
+                        {...channelBox(prefs[key].email, channels.outlook)}
                         onChange={(event) => setDeliveryChannel(key, 'email', event.target.checked)}
                       />
                     </td>
@@ -680,8 +598,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — WebEx`}
-                        checked={channels.webex && prefs[key].webex}
-                        disabled={!channels.webex}
+                        {...channelBox(prefs[key].webex, channels.webex)}
                         onChange={(event) => setDeliveryChannel(key, 'webex', event.target.checked)}
                       />
                     </td>
@@ -691,6 +608,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="sharing" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
@@ -728,8 +646,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — Outlook`}
-                        checked={channels.outlook && prefs[event].email}
-                        disabled={!channels.outlook}
+                        {...channelBox(prefs[event].email, channels.outlook)}
                         onChange={(ev) => setPauseChannel(event, 'email', ev.target.checked)}
                       />
                     </td>
@@ -737,8 +654,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                       <input
                         type="checkbox"
                         aria-label={`${label} — WebEx`}
-                        checked={channels.webex && prefs[event].webex}
-                        disabled={!channels.webex}
+                        {...channelBox(prefs[event].webex, channels.webex)}
                         onChange={(ev) => setPauseChannel(event, 'webex', ev.target.checked)}
                       />
                     </td>
@@ -748,6 +664,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
             </table>
           </div>
           <ChannelHints channels={channels} />
+          <GroupSave group="pauses" state={state} onSave={saveGroup} inset />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -769,7 +686,9 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                   <span className="shrink-0 text-gray-500 dark:text-gray-400">Agent:</span>
                   <select
                     value={overrideAgentId}
-                    onChange={(event) => setOverrideAgentId(event.target.value)}
+                    onChange={(event) =>
+                      dispatch({ type: 'overrideAgentPicked', agentId: event.target.value })
+                    }
                     className="min-w-0 max-w-xs flex-1 rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900"
                   >
                     {agents.map((agent) => (
@@ -929,6 +848,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
               <ChannelHints channels={channels} />
             </>
           )}
+          <GroupSave group="overrides" state={state} onSave={saveGroup} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -940,7 +860,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
 
           <div className="mt-3 space-y-1.5">
             {connectors.map((row) => {
-              const on = appOnCount(row);
+              const summary = connectorSummary(prefs, row);
               return (
                 <details
                   key={row.key}
@@ -950,8 +870,8 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                     <ConnectorIcon capabilityKey={row.key} label={row.label} size={16} />
                     <span className="min-w-0 flex-1 truncate font-medium">{row.label}</span>
                     <span className="shrink-0 text-xs text-gray-500 dark:text-gray-400">
-                      {on} of {row.categories.length} in-app
-                      {anyExtraChannel(row) ? ', plus Outlook/WebEx' : ''}
+                      {summary.appOn} of {summary.total} in-app
+                      {summary.anyExtraChannel ? ', plus Outlook/WebEx' : ''}
                     </span>
                     <span aria-hidden="true" className="shrink-0 text-gray-400">
                       ▾
@@ -998,17 +918,17 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                                 className="border-t border-gray-100 dark:border-gray-900"
                               >
                                 <td className="px-3 py-2 align-top">
-                                  <span>{CATEGORY_LABEL[category] ?? category}</span>
-                                  {CATEGORY_HINT[category] ? (
+                                  <span>{categoryLabel(category).label}</span>
+                                  {categoryLabel(category).hint ? (
                                     <span className="block text-xs text-gray-500 dark:text-gray-400">
-                                      {CATEGORY_HINT[category]}
+                                      {categoryLabel(category).hint}
                                     </span>
                                   ) : null}
                                 </td>
                                 <td className="px-2 py-2 text-center align-top">
                                   <input
                                     type="checkbox"
-                                    aria-label={`${row.label} ${CATEGORY_LABEL[category] ?? category} — App`}
+                                    aria-label={`${row.label} ${categoryLabel(category).label} — App`}
                                     checked={delivery.app}
                                     onChange={(ev) =>
                                       setCategoryChannel(
@@ -1023,9 +943,8 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                                 <td className="px-2 py-2 text-center align-top">
                                   <input
                                     type="checkbox"
-                                    aria-label={`${row.label} ${CATEGORY_LABEL[category] ?? category} — Outlook`}
-                                    checked={channels.outlook && delivery.email}
-                                    disabled={!channels.outlook}
+                                    aria-label={`${row.label} ${categoryLabel(category).label} — Outlook`}
+                                    {...channelBox(delivery.email, channels.outlook)}
                                     onChange={(ev) =>
                                       setCategoryChannel(
                                         row.key,
@@ -1039,9 +958,8 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                                 <td className="px-2 py-2 text-center align-top">
                                   <input
                                     type="checkbox"
-                                    aria-label={`${row.label} ${CATEGORY_LABEL[category] ?? category} — WebEx`}
-                                    checked={channels.webex && delivery.webex}
-                                    disabled={!channels.webex}
+                                    aria-label={`${row.label} ${categoryLabel(category).label} — WebEx`}
+                                    {...channelBox(delivery.webex, channels.webex)}
                                     onChange={(ev) =>
                                       setCategoryChannel(
                                         row.key,
@@ -1065,6 +983,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
           </div>
 
           <ChannelHints channels={channels} />
+          <GroupSave group="acts" state={state} onSave={saveGroup} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -1084,7 +1003,9 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                   type="checkbox"
                   className="shrink-0"
                   checked={prefs.toastsEnabled}
-                  onChange={(event) => update({ ...prefs, toastsEnabled: event.target.checked })}
+                  onChange={(event) =>
+                    dispatch({ type: 'toastsEnabled', on: event.target.checked })
+                  }
                 />
                 Show pop-ups
               </label>
@@ -1098,7 +1019,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                         name="toastCorner"
                         className="shrink-0"
                         checked={prefs.toastCorner === corner}
-                        onChange={() => update({ ...prefs, toastCorner: corner })}
+                        onChange={() => dispatch({ type: 'toastCorner', corner })}
                       />
                       {corner === 'bottom-left' ? 'Bottom left' : 'Bottom right'}
                     </label>
@@ -1107,6 +1028,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
               </fieldset>
             </div>
           </div>
+          <GroupSave group="popups" state={state} onSave={saveGroup} />
         </section>
 
         <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950">
@@ -1123,7 +1045,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                 type="checkbox"
                 className="mt-0.5 shrink-0"
                 checked={desktopEnabled}
-                disabled={permission === 'unsupported'}
+                disabled={desktop.switchDisabled}
                 onChange={(event) => void toggleDesktop(event.target.checked)}
               />
               <span className="min-w-0">
@@ -1140,7 +1062,7 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
               (it would just turn the preference off), so this is a
               separate control that re-asks without touching it.
             */}
-            {desktopEnabled && permission === 'default' ? (
+            {desktop.showAllow ? (
               <button
                 type="button"
                 onClick={() => void retryPermission()}
@@ -1181,8 +1103,10 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                 type="checkbox"
                 className="mt-0.5 shrink-0"
                 checked={prefs.chatReplyDesktop}
-                disabled={!desktopEnabled}
-                onChange={(event) => update({ ...prefs, chatReplyDesktop: event.target.checked })}
+                disabled={desktop.chatReplyDisabled}
+                onChange={(event) =>
+                  dispatch({ type: 'chatReplyDesktop', on: event.target.checked })
+                }
               />
               <span className="min-w-0">
                 Also notify me when an agent replies in a chat while I&rsquo;m away
@@ -1205,7 +1129,9 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
                 type="checkbox"
                 className="mt-0.5 shrink-0"
                 checked={prefs.openInSourceApp}
-                onChange={(event) => update({ ...prefs, openInSourceApp: event.target.checked })}
+                onChange={(event) =>
+                  dispatch({ type: 'openInSourceApp', on: event.target.checked })
+                }
               />
               <span className="min-w-0">
                 Open the notification&rsquo;s own application when I click a system notification
@@ -1218,26 +1144,9 @@ export default function PreferencesForm({ connectors, channels, initial, agents 
               </span>
             </label>
           </div>
+          <GroupSave group="browser" state={state} onSave={saveGroup} />
         </section>
       </section>
-
-      <div className="flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void save()}
-          disabled={status === 'saving'}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-        >
-          {status === 'saving' ? 'Saving…' : 'Save'}
-        </button>
-        {status === 'saved' ? <span className="text-sm text-green-700">Saved.</span> : null}
-        {status === 'failed' ? (
-          <span className="text-sm text-red-600 dark:text-red-400">Could not save.</span>
-        ) : null}
-        <p className="text-xs text-gray-500 dark:text-gray-400">
-          These apply from now on. Switching something on does not fill in what already happened.
-        </p>
-      </div>
     </div>
   );
 }

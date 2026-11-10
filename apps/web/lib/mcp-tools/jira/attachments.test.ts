@@ -15,6 +15,23 @@ jest.mock('@/lib/logger', () => ({
 // ../common — but merely importing ../common transitively pulls in @renkei/db,
 // whose kysely import is ESM-only and untransformed here.
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   getCachedDisplayName: () => 'Tester',
 }));
 // graph/client and upload-slots both sit on @renkei/db too; str/rec are pure

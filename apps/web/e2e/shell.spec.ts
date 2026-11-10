@@ -3,7 +3,7 @@
  * person's name from the identity spine, the unread badge from the
  * notification poll — a colleague shared an agent with them, through the
  * agent's own access route), moving between pages from the menu, the
- * theme a saved preference picks (PUT /api/preferences, as the
+ * theme a saved preference picks (PATCH /api/preferences, as the
  * preferences form saves it), a signed-out visitor turned away, and the
  * same at phone width. No database anywhere — see
  * playwright.config.ts.
@@ -29,7 +29,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('the shell carries the person and moves between pages from the menu', async ({
+test('the shell carries the person and moves between pages from the menu @smoke', async ({
   page,
   request,
   person,
@@ -63,13 +63,15 @@ test('the shell carries the person and moves between pages from the menu', async
 });
 
 test('a saved theme preference sets the page theme', async ({ page, person: _person }) => {
-  const saved = await page.request.put('/api/preferences', { data: { theme: { mode: 'dark' } } });
+  const saved = await page.request.patch('/api/preferences', { data: { theme: { mode: 'dark' } } });
   expect(saved.ok()).toBe(true);
   await page.goto('/about');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
-test('a visitor without a session is sent to sign in, and back here after', async ({ request }) => {
+test('a visitor without a session is sent to sign in, and back here after @smoke', async ({
+  request,
+}) => {
   const response = await request.get('/notifications', { maxRedirects: 0 });
   expect(response.status()).toBe(307);
   const location = new URL(response.headers().location ?? '', 'http://127.0.0.1');

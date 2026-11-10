@@ -24,8 +24,10 @@ import type { McpServer, StandardSchemaWithJSON } from '@modelcontextprotocol/se
 import { McpAuthRequired, namespacedToolName, type McpListedTool } from '@renkei/connector-mcp';
 import { getServer } from '@renkei/connector-mcp';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import { callRemoteTool, refreshInBackground } from '@/lib/mcp-servers/remote';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 /** What registration needs to know about a connected server. */
 export interface McpServerRegistration {
@@ -41,10 +43,6 @@ export interface McpServerRegistration {
 const MAX_TEXT_CHARS = 100_000;
 
 type Args = Record<string, unknown>;
-
-function isRecord(value: unknown): value is Args {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** Accepts any object; the remote server validates. Advertises the server's own schema. */
 export function passthroughSchema(
@@ -145,13 +143,16 @@ export function registerMcpServerTools(
           // fails outright; refresh so the next turn sees the real list.
           const read = await getServer(entry.id);
           if (read.ok && read.val) refreshInBackground(read.val, subject);
-          logger.warn('MCP tool call failed: {error}', {
-            component: 'mcp-servers',
-            subject,
-            server: entry.slug,
-            tool: tool.name,
-            error: error instanceof Error ? error.message : String(error),
-          });
+          logger.warn(
+            '{caller} called {tool} on the MCP server "{server}", but the call failed; the tool list is being refreshed and the error was returned: {error}',
+            {
+              component: 'mcp-servers',
+              ...callerFields(context),
+              server: entry.slug,
+              tool: tool.name,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
           return {
             content: [
               {

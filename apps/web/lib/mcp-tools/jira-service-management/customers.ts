@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { resolveAccountId } from '../user-resolver';
 import { logger } from '@/lib/logger';
 import { customerScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
@@ -92,11 +92,10 @@ export async function registerJsmCustomerTools(
     async (args: Record<string, any>) => {
       // Named distinctly: this handler also destructures a `displayName` from
       // args, which is the *customer's* name, not the caller's.
-      const invokerDisplayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_create_customer invoked', {
+      logger.debug('{caller} called jsm_create_customer', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName: invokerDisplayName,
+        ...callerFields(context),
+        tool: 'jsm_create_customer',
       });
       try {
         const { email, displayName } = args;
@@ -156,11 +155,10 @@ export async function registerJsmCustomerTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_add_customer_to_servicedesk invoked', {
+      logger.debug('{caller} called jsm_add_customer_to_servicedesk', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_add_customer_to_servicedesk',
       });
       try {
         const { serviceDeskId, user } = args;
@@ -222,11 +220,10 @@ export async function registerJsmCustomerTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_remove_customer_from_servicedesk invoked', {
+      logger.debug('{caller} called jsm_remove_customer_from_servicedesk', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_remove_customer_from_servicedesk',
       });
       try {
         const { serviceDeskId, user } = args;
@@ -284,11 +281,10 @@ export async function registerJsmCustomerTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_invite_customers_to_servicedesk invoked', {
+      logger.debug('{caller} called jsm_invite_customers_to_servicedesk', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_invite_customers_to_servicedesk',
       });
       try {
         const { serviceDeskId, emails } = args;

@@ -18,6 +18,7 @@ import { withPresentationHint } from '../common';
 import { withScopeGate } from '../capability-gate';
 import { registerDocumentTools } from '../graph/documents';
 import type { GraphAuth } from '../graph/graph-auth';
+import { registerDocumentPreviewLookups } from '../graph/preview-lookups';
 import { graphGet, values, str, num, rec, textResult, errText, byteSize } from '../graph/client';
 import { onedriveScopeFor } from './scopes';
 
@@ -52,6 +53,8 @@ export async function registerOneDriveTools(
   auth: GraphAuth
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.graphScopes, (name) => onedriveScopeFor(name));
+
+  registerDocumentPreviewLookups(context, auth, 'onedrive');
 
   server.registerTool(
     'onedrive_list_recent',

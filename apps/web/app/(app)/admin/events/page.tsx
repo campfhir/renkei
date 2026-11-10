@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 import { getDataStore } from '@renkei/db';
 import EventsList, { type EventRow, type EventStatus } from './events-list';
 import CoachTarget from '@/components/coach-marks/anchor';
+import { isRecord } from '@renkei/guards';
 
 /**
  * The event monitor: every webhook delivery and internal event, its source,
@@ -17,10 +18,6 @@ import CoachTarget from '@/components/coach-marks/anchor';
  * without doing work, distinct from processed so silence is never mistaken
  * for success.
  */
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** The payload fields that name an owner, read without disclosing content. */
 function actorHintOf(payload: unknown): { accountId?: string; subject?: string; email?: string } {

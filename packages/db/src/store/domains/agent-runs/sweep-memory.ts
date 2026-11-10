@@ -117,6 +117,22 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
       deleteRunRows(tables, [...doomed]);
       return deleted;
     },
+    async listDead({ clockBefore, waitDueBefore }, limit) {
+      const rows = tables.select('agent_runs', (r) => {
+        const clock = (r.resumed_at ?? r.created_at).getTime();
+        if (IN_PROGRESS.includes(r.status)) return clock < clockBefore.getTime();
+        if (r.status !== 'waiting') return false;
+        if (r.waiting_until !== null) return r.waiting_until.getTime() < waitDueBefore.getTime();
+        // Parked for its owner's sign-in: no deadline by design.
+        return r.error_kind !== 'needs-sign-in' && clock < clockBefore.getTime();
+      });
+      return page(orderBy(rows, [(r) => r.created_at], [(r) => r.id]), limit).map((r) => ({
+        id: r.id,
+        agentId: r.agent_id,
+        ownerSubject: r.owner_subject,
+        status: r.status,
+      }));
+    },
     async listStaleInProgress(createdBefore, limit) {
       const rows = tables.select(
         'agent_runs',
@@ -129,18 +145,25 @@ export function memoryAgentRunSweeps(tables: MemoryTables): AgentRunSweepStore {
         startedAt: r.started_at,
       }));
     },
-    async failAbandoned(runId, { errorKind, error }) {
+    async closeAbandoned(runId, { errorKind, error }) {
       const id = runId;
       const now = new Date();
-      return (
-        tables.update('agent_runs', (r) => r.id === id && IN_PROGRESS.includes(r.status), {
-          status: 'failed',
-          error_kind: errorKind,
-          error,
-          finished_at: now,
-          updated_at: now,
-        }).length > 0
+      const [closed] = tables.update(
+        'agent_runs',
+        (r) => r.id === id && IN_PROGRESS.includes(r.status),
+        (r) =>
+          r.cancel_requested_at !== null
+            ? {
+                status: 'canceled',
+                error_kind: null,
+                error: null,
+                finished_at: now,
+                updated_at: now,
+              }
+            : { status: 'failed', error_kind: errorKind, error, finished_at: now, updated_at: now }
       );
+      if (!closed) return null;
+      return closed.status === 'canceled' ? 'canceled' : 'failed';
     },
   };
 }

@@ -30,6 +30,7 @@ import type { AttachmentView } from '@/lib/chat/views';
 import FileCaption from './file-caption';
 import Markdown from './markdown';
 import { clientLogger } from '@/lib/client-logger';
+import { isRecord } from '@renkei/guards';
 
 /** A US Letter page at 96 dpi, the size docx-preview lays a page out at. */
 const PAGE = { width: 816, height: 1056 };
@@ -51,10 +52,6 @@ interface PreviewSheet {
   rows: PreviewCell[][];
   widths: number[];
   sheetCount: number;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isCell(value: unknown): value is PreviewCell {
@@ -547,11 +544,7 @@ function TextPage({
   );
 }
 
-export default function ArtifactInline({
-  artifact,
-}: {
-  artifact: AttachmentView;
-}) {
+export default function ArtifactInline({ artifact }: { artifact: AttachmentView }) {
   const kind = previewKind(artifact);
   const [ref, near] = useNearScreen<HTMLElement>();
   const url = chatClient.attachmentUrl(artifact.id);

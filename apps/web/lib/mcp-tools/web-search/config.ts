@@ -24,6 +24,7 @@
 
 import { loadKeyring } from '@renkei/crypto';
 import { readConnectorConfigCached } from '@renkei/connector-config';
+import { isRecord } from '@renkei/guards';
 
 /** The connector key the web-search capability registers under. */
 export const WEB_SEARCH_CONNECTOR = 'web-search';
@@ -52,10 +53,6 @@ export interface WebSearchConfig {
   userLocation: WebSearchLocation | null;
   allowedDomains: string[];
   blockedDomains: string[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function trimmedString(value: unknown): string | null {
@@ -135,10 +132,7 @@ export async function resolveWebSearchConfig(): Promise<WebSearchConfig | null> 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) return null;
 
-  const configResult = await readConnectorConfigCached(
-    WEB_SEARCH_CONNECTOR,
-    keyResult.val
-  );
+  const configResult = await readConnectorConfigCached(WEB_SEARCH_CONNECTOR, keyResult.val);
   if (!configResult.ok) return null;
   const config = configResult.val;
   if (!config || !config.enabled) return null;

@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { cacheUserDisplayName, getCachedDisplayName, withPresentationHint } from '../common';
+import { cacheUserDisplayName, callerFields, withPresentationHint } from '../common';
 import { STANDARD_ISSUE_FIELDS, normalizeFieldId, renderFieldValue } from './fields';
 import { previewToolMeta, RESULTS_LIST_URI } from '../widgets';
 import { logger } from '@/lib/logger';
@@ -14,22 +14,14 @@ import { issueLinkTargets, issueLinksMarkdown } from './issue-urls';
 import { checkJql, describeJqlProblem, JQL_PARAMETER_DESCRIPTION } from './jql';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { sprintProgress, sprintWindow } from './sprint-window';
+import { isRecord, isString } from '@renkei/guards';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
 }
 
-// Type guard functions
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function isArray(value: unknown): value is unknown[] {
   return Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
 }
 
 function isNumber(value: unknown): value is number {
@@ -109,32 +101,42 @@ export async function registerReadTools(
       annotations: { readOnlyHint: true },
     },
     async (_args: Record<string, unknown>) => {
-      const cachedDisplayName = getCachedDisplayName(context.accountId);
-      logger.debug('whoami invoked', {
+      const who = callerFields(context);
+      logger.debug('{caller} called whoami on {siteUrl}', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName: cachedDisplayName,
+        ...who,
+        tool: 'whoami',
         siteUrl: context.siteUrl,
       });
       try {
-        logger.debug('whoami fetching user info', {
+        logger.debug('{caller} is asking Jira who the connected account is ({url})', {
           component: 'mcp/tool',
+          ...who,
           url: `${context.apiBaseUrl}/rest/api/3/myself`,
         });
         const response = await auth.fetch(granularJiraScopes('whoami', true), '/rest/api/3/myself');
-        logger.debug('whoami fetch status', {
+        logger.debug("Jira answered {status} to {caller}'s whoami", {
           component: 'mcp/tool',
+          ...who,
           status: response.status,
           statusText: response.statusText,
         });
         if (!response.ok) return errText(await describeJiraAuthFailure(response));
         const me = await response.json();
-        logger.debug('whoami response', { component: 'mcp/tool', data: me });
+        logger.debug("Jira's answer to {caller}'s whoami", {
+          component: 'mcp/tool',
+          ...who,
+          data: me,
+        });
         if (!isRecord(me)) {
-          logger.error('whoami invalid response format', {
-            component: 'mcp/tool',
-            received: typeof me,
-          });
+          logger.error(
+            "Jira answered {caller}'s whoami with something that is not a user record ({received}); the tool reported an invalid response",
+            {
+              component: 'mcp/tool',
+              ...who,
+              received: typeof me,
+            }
+          );
           return {
             content: [{ type: 'text' as const, text: 'Invalid response from API' }],
             isError: true,
@@ -154,11 +156,17 @@ export async function registerReadTools(
           `Account ID: ${accountId}`,
           `Site: ${context.siteUrl}`,
         ];
-        logger.debug('whoami success', { component: 'mcp/tool', displayName, accountId });
+        logger.debug('{caller} is {jiraDisplayName} in Jira (account {jiraAccountId})', {
+          component: 'mcp/tool',
+          ...who,
+          jiraDisplayName: displayName,
+          jiraAccountId: accountId,
+        });
         return { content: [{ type: 'text' as const, text: lines.join('\n') }] };
       } catch (error) {
-        logger.error('whoami error', {
+        logger.error("{caller}'s whoami failed, so the tool answered with the error: {error}", {
           component: 'mcp/tool',
+          ...who,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         });
@@ -196,11 +204,10 @@ export async function registerReadTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_search_issues invoked', {
+      logger.debug('{caller} called jira_search_issues', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_search_issues',
       });
       try {
         const { jql } = args;
@@ -543,11 +550,10 @@ export async function registerReadTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_count_issues invoked', {
+      logger.debug('{caller} called jira_count_issues', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_count_issues',
       });
       try {
         const { jql } = args;
@@ -622,11 +628,10 @@ export async function registerReadTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_get_issue invoked', {
+      logger.debug('{caller} called jira_get_issue', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_get_issue',
       });
       try {
         const { issueKey } = args;
@@ -751,11 +756,10 @@ export async function registerReadTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_boards invoked', {
+      logger.debug('{caller} called jira_list_boards', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_boards',
       });
       try {
         const maxResults = Math.min((isNumber(args.maxResults) ? args.maxResults : 25) || 25, 100);
@@ -836,11 +840,10 @@ export async function registerReadTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_list_sprints invoked', {
+      logger.debug('{caller} called jira_list_sprints', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_list_sprints',
       });
       try {
         const { boardId } = args;

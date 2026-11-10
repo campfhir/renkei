@@ -23,6 +23,7 @@ import { jiraFetch } from '@/lib/mcp-tools/common';
 import { githubAuthOf } from '@/lib/code/github-browse';
 import { ghJson, rec, str } from '@/lib/mcp-tools/github/client';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 interface JiraCard {
   key: string;
@@ -56,12 +57,15 @@ async function lookupJira(subject: string, key: string): Promise<JiraCard | null
       url: `https://${access.cloudId}.atlassian.net/browse/${key}`,
     };
   } catch (error) {
-    logger.warn('Could not look up Jira issue {key}: {error}', {
-      component: 'api/code/projects/chats/issues',
-      subject,
-      key,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      '{actor} opened a code chat whose pull request names Jira issue {key}, but Jira could not be asked about it; no issue card is shown: {error}',
+      {
+        component: 'api/code/projects/chats/issues',
+        ...(await whoIs(subject)),
+        key,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return null;
   }
 }

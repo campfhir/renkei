@@ -26,6 +26,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ReactNode,
@@ -39,6 +40,13 @@ import { commitsInTranscript, type ChatCommit } from '@/lib/code/chat-commits';
 import LocalTime from '@/components/local-time';
 import DiffView, { Counts } from './diff-view';
 import { LoadingLine, Spinner } from '@/components/skeleton';
+import {
+  codeChatPreviewsReducer,
+  initialCodeChatPreviews,
+  previewEntriesOf,
+  previewMenuItems,
+  type PreviewMenuItem,
+} from './code-chat-previews.model';
 
 interface DiffFileStat {
   path: string;
@@ -92,6 +100,8 @@ export interface CodeChatToolsHandle {
   commits: ChatCommit[];
   /** The branch the checkout is on, as of the last look at it; null before the first. */
   branch: string | null;
+  /** The project's previews that are up — "Open preview" items for the menu (code-chat-previews.model.ts). */
+  previews: PreviewMenuItem[];
   openEnvironment: () => void;
   openFiles: () => void;
   /** Open the panel — on one commit's diff when a hash is given. */
@@ -148,6 +158,10 @@ export function useCodeChatTools({
   const [envOpen, setEnvOpen] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [branch, setBranch] = useState<string | null>(null);
+  const [previewState, dispatchPreviews] = useReducer(
+    codeChatPreviewsReducer,
+    initialCodeChatPreviews
+  );
   const commits = useMemo(
     () => (projectId ? commitsInTranscript(messages) : []),
     [projectId, messages]
@@ -173,9 +187,23 @@ export function useCodeChatTools({
     );
   }, [base, projectId]);
 
+  // The previews, read when the counts are: a turn that ends may have
+  // started or stopped one.
+  const refreshPreviews = useCallback(async () => {
+    if (!projectId) {
+      dispatchPreviews({ type: 'cleared' });
+      return;
+    }
+    const result = await getJson<unknown>(`${base}/previews`);
+    dispatchPreviews({ type: 'loaded', previews: previewEntriesOf(result.data) });
+  }, [base, projectId]);
+
   useEffect(() => {
-    if (!running) void refreshStat();
-  }, [running, refreshStat]);
+    if (!running) {
+      void refreshStat();
+      void refreshPreviews();
+    }
+  }, [running, refreshStat, refreshPreviews]);
 
   const modals = projectId ? (
     <>
@@ -227,6 +255,7 @@ export function useCodeChatTools({
 
   return {
     stat,
+    previews: previewMenuItems(previewState),
     commits,
     branch,
     openEnvironment: () => setEnvOpen(true),

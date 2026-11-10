@@ -1,19 +1,47 @@
 'use client';
 
 /**
- * One library: its prompts as cards, an inline editor for editors, and
- * the share dialog for the owner. Deleting a library is the owner's.
+ * One library: its prompts as cards, an editor for editors (with Refine,
+ * which rewrites a prompt or drafts one — prompt-editor.model.ts), and the
+ * share dialog for the owner. Deleting a library is the owner's.
  */
 
-import { useState } from 'react';
+import { useCallback, useEffect, useReducer, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Modal from '@/components/modal';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import { sendJsonFull } from '@/lib/fetch-json';
+import { chatClient } from '@/lib/chat/client';
 import { DialogFooter } from './chat-nav';
 import ShareModal from './share-modal';
+import { ScopeSelect } from './libraries-index';
+import PromptRefineModal from './prompt-refine-modal';
+import {
+  bodyLocked,
+  canRefine,
+  canSave,
+  editorOpen,
+  initialEditor,
+  promptEditorReducer,
+  promptQuestions,
+  questionsSummary,
+  refineBody,
+  refineButtonLabel,
+  refinedNote,
+  saveBody,
+  shouldAskNow,
+  type PromptProposal,
+} from './prompt-editor.model';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
+import {
+  canSaveSettings,
+  initialLibrarySettings,
+  librarySettingsReducer,
+  settingsBody,
+  LIBRARY_DESCRIPTION_LIMIT,
+  LIBRARY_NAME_LIMIT,
+} from './library-settings.model';
 
 interface PromptItem {
   id: string;
@@ -25,11 +53,15 @@ interface PromptItem {
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-export default function LibraryView({ library, prompts }: {
+export default function LibraryView({
+  library,
+  prompts,
+}: {
   library: {
     id: string;
     name: string;
     description: string | null;
+    scope: 'any' | 'code';
     role: 'owner' | 'editor' | 'viewer';
   };
   prompts: PromptItem[];
@@ -37,44 +69,90 @@ export default function LibraryView({ library, prompts }: {
   const router = useRouter();
   const canEdit = library.role !== 'viewer';
   const base = `/api/chat/prompt-libraries/${library.id}`;
-  const [editing, setEditing] = useState<PromptItem | 'new' | null>(null);
-  const [title, setTitle] = useState('');
+  const [editor, dispatch] = useReducer(promptEditorReducer, initialEditor);
   const shareAnchor = useCoachAnchor('library-share');
   const newPromptAnchor = useCoachAnchor('library-new-prompt');
-  const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [share, setShare] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [scope, setScope] = useState(library.scope);
+  const [scopeError, setScopeError] = useState<string | null>(null);
+  const [settings, dispatchSettings] = useReducer(librarySettingsReducer, initialLibrarySettings);
 
-  const open = (prompt: PromptItem | 'new') => {
-    setEditing(prompt);
-    setTitle(prompt === 'new' ? '' : prompt.title);
-    setBody(prompt === 'new' ? '' : prompt.body);
-    setError(null);
-  };
-
-  const save = async () => {
-    setBusy(true);
-    setError(null);
-    const result =
-      editing === 'new'
-        ? await sendJsonFull(`${base}/prompts`, 'POST', { title: title.trim(), body: body.trim() })
-        : editing
-          ? await sendJsonFull(`${base}/prompts/${editing.id}`, 'PATCH', {
-              title: title.trim(),
-              body: body.trim(),
-            })
-          : { error: null };
-    setBusy(false);
+  const saveSettings = async () => {
+    if (!canSaveSettings(settings)) return;
+    dispatchSettings({ type: 'saveStarted' });
+    const result = await sendJsonFull(base, 'PATCH', settingsBody(settings));
     if (result.error) {
-      setError(result.error);
+      dispatchSettings({ type: 'saveFailed', error: result.error });
       return;
     }
-    setEditing(null);
+    dispatchSettings({ type: 'saved' });
     router.refresh();
   };
+
+  const changeScope = async (next: 'any' | 'code') => {
+    const before = scope;
+    setScope(next);
+    setScopeError(null);
+    const result = await sendJsonFull(base, 'PATCH', { scope: next });
+    if (result.error) {
+      setScope(before);
+      setScopeError(result.error);
+    }
+  };
+
+  const open = (prompt: PromptItem | 'new') =>
+    dispatch({
+      type: 'opened',
+      prompt: prompt === 'new' ? 'new' : { id: prompt.id, title: prompt.title, body: prompt.body },
+    });
+
+  const save = async () => {
+    if (!canSave(editor) || editor.target === null) return;
+    dispatch({ type: 'saveStarted' });
+    const result =
+      editor.target === 'new'
+        ? await sendJsonFull(`${base}/prompts`, 'POST', saveBody(editor))
+        : await sendJsonFull(`${base}/prompts/${editor.target.id}`, 'PATCH', saveBody(editor));
+    if (result.error) {
+      dispatch({ type: 'saveFailed', error: result.error });
+      return;
+    }
+    dispatch({ type: 'saved' });
+    router.refresh();
+  };
+
+  // Refine: with a draft the dialog asks as soon as it opens (the roster
+  // loads the first time); with none it waits to be told what to write.
+  const openRefine = async () => {
+    dispatch({ type: 'refineOpened' });
+    if (editor.refine.models) return;
+    const result = await chatClient.models();
+    dispatch({ type: 'modelsLoaded', models: result.data?.models ?? [] });
+  };
+  const refine = useCallback(async () => {
+    if (!canRefine(editor)) return;
+    dispatch({ type: 'refineStarted' });
+    const result = await sendJsonFull<PromptProposal>(
+      `${base}/prompts/refine`,
+      'POST',
+      refineBody(editor)
+    );
+    if (result.error || !result.data) {
+      dispatch({
+        type: 'refineFailed',
+        error: result.error ?? 'The model could not refine the prompt. Try again.',
+      });
+      return;
+    }
+    dispatch({ type: 'refineAnswered', proposal: result.data });
+  }, [editor, base]);
+  const askNow = shouldAskNow(editor);
+  useEffect(() => {
+    if (askNow) void refine();
+  }, [askNow, refine]);
 
   const removePrompt = async (id: string) => {
     setBusy(true);
@@ -112,6 +190,22 @@ export default function LibraryView({ library, prompts }: {
                 : `Shared · you can ${canEdit ? 'edit' : 'view'}`)}
           </p>
         </div>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() =>
+              dispatchSettings({
+                type: 'opened',
+                library: { name: library.name, description: library.description },
+              })
+            }
+            aria-label="Edit name and description"
+            title="Edit name and description"
+            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-900"
+          >
+            <Icon path={ICONS.pencil} className="h-5 w-5" />
+          </button>
+        ) : null}
         {library.role === 'owner' ? (
           <button
             type="button"
@@ -137,6 +231,14 @@ export default function LibraryView({ library, prompts }: {
       </header>
 
       <div className="mx-auto max-w-3xl space-y-3 p-4">
+        {canEdit ? (
+          <div className="max-w-xs">
+            <ScopeSelect value={scope} onChange={(next) => void changeScope(next)} />
+            {scopeError ? <p className="mt-1 text-xs text-red-600">{scopeError}</p> : null}
+          </div>
+        ) : scope === 'code' ? (
+          <p className="text-xs text-gray-500">Offered in code projects only.</p>
+        ) : null}
         {prompts.length === 0 ? (
           <p className="text-sm text-gray-500">
             {canEdit ? 'No prompts yet — add the first one.' : 'This library is empty.'}
@@ -200,10 +302,10 @@ export default function LibraryView({ library, prompts }: {
         ) : null}
       </div>
 
-      {editing ? (
+      {editorOpen(editor) ? (
         <Modal
-          title={editing === 'new' ? 'New prompt' : 'Edit prompt'}
-          onClose={() => setEditing(null)}
+          title={editor.target === 'new' ? 'New prompt' : 'Edit prompt'}
+          onClose={() => dispatch({ type: 'closed' })}
         >
           <form
             onSubmit={(event) => {
@@ -214,27 +316,95 @@ export default function LibraryView({ library, prompts }: {
           >
             <input
               autoFocus
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
+              value={editor.title}
+              onChange={(event) => dispatch({ type: 'titleTyped', text: event.target.value })}
               placeholder="Title"
               maxLength={200}
               required
               className={inputClass}
             />
             <textarea
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              placeholder="The prompt text"
+              value={editor.body}
+              readOnly={bodyLocked(editor)}
+              onChange={(event) => dispatch({ type: 'bodyTyped', text: event.target.value })}
+              placeholder="The prompt text. Use {{name}} or {{name:type}} for what changes each time."
               rows={8}
               maxLength={20_000}
               required
               className={inputClass}
             />
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="min-w-0 flex-1 space-y-1 text-xs text-gray-500">
+                {questionsSummary(editor.body) ? <p>{questionsSummary(editor.body)}</p> : null}
+                {refinedNote(editor) ? (
+                  <p className="text-violet-700 dark:text-violet-300">{refinedNote(editor)}</p>
+                ) : null}
+                {promptQuestions(editor.body).problems.length > 0 ? (
+                  <ul className="list-disc pl-4 text-amber-700 dark:text-amber-300">
+                    {promptQuestions(editor.body).problems.map((problem) => (
+                      <li key={problem}>{problem}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+              <button
+                type="button"
+                onClick={() => void openRefine()}
+                disabled={editor.busy}
+                className="flex shrink-0 items-center gap-1 rounded-md border border-violet-300 px-2.5 py-1 text-xs font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-50 dark:border-violet-800 dark:text-violet-300 dark:hover:bg-violet-950"
+              >
+                <Icon path={ICONS.sparkles} className="h-3.5 w-3.5" />
+                {refineButtonLabel(editor)}
+              </button>
+            </div>
             <DialogFooter
-              busy={busy}
-              error={error}
+              busy={editor.busy || editor.refine.asking}
+              error={editor.error}
               label="Save"
-              onCancel={() => setEditing(null)}
+              onCancel={() => dispatch({ type: 'closed' })}
+            />
+          </form>
+        </Modal>
+      ) : null}
+      {editor.refine.open ? (
+        <PromptRefineModal state={editor} dispatch={dispatch} onAsk={() => void refine()} />
+      ) : null}
+      {settings.open ? (
+        <Modal title="Edit library" onClose={() => dispatchSettings({ type: 'closed' })}>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveSettings();
+            }}
+            className="space-y-3"
+          >
+            <input
+              autoFocus
+              value={settings.name}
+              onChange={(event) =>
+                dispatchSettings({ type: 'nameTyped', text: event.target.value })
+              }
+              placeholder="Name"
+              aria-label="Name"
+              maxLength={LIBRARY_NAME_LIMIT}
+              required
+              className={inputClass}
+            />
+            <input
+              value={settings.description}
+              onChange={(event) =>
+                dispatchSettings({ type: 'descriptionTyped', text: event.target.value })
+              }
+              placeholder="Description (optional)"
+              aria-label="Description"
+              maxLength={LIBRARY_DESCRIPTION_LIMIT}
+              className={inputClass}
+            />
+            <DialogFooter
+              busy={settings.busy}
+              error={settings.error}
+              label="Save"
+              onCancel={() => dispatchSettings({ type: 'closed' })}
             />
           </form>
         </Modal>

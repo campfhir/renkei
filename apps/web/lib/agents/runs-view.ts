@@ -31,6 +31,7 @@ import {
 } from '@renkei/agents';
 import { delegateClient } from '@renkei/delegate-client';
 import { isUuid } from '@/lib/uuid';
+import type { RunViewFilter } from './run-views';
 import { unavailableMarker } from '@/lib/chat/content-crypto';
 import { unavailableReasonOf } from '@/lib/chat/chat-keys';
 
@@ -161,6 +162,8 @@ export function isRunStatus(value: string | undefined): value is RunStatus {
 
 interface RunListOptions {
   status?: RunStatus;
+  /** A quick filter's conditions (run-views.ts runViewFilter); combines with `status`. */
+  filter?: RunViewFilter;
   /**
    * Free-text search. The owner sees everything about their own runs, so
    * the search may read content: the error text, the trigger kind, and
@@ -172,6 +175,8 @@ interface RunListOptions {
    */
   q?: string;
   limit?: number;
+  /** Rows of the same order to skip first, for paging. */
+  offset?: number;
 }
 
 async function listRuns(
@@ -186,12 +191,50 @@ async function listRuns(
     agentId,
     ownerSubject,
     audience,
+    ...(options.filter ?? {}),
     ...(options.status ? { status: options.status } : {}),
     ...(q ? { q } : {}),
     ...(q && isUuid(q) ? { matchId: q } : {}),
     limit: options.limit ?? 50,
+    ...(options.offset ? { offset: options.offset } : {}),
   });
   return rows.map(summaryOf);
+}
+
+/** How many of an agent's runs are in one live status, and when the oldest was created. */
+export interface LiveRunCount {
+  agentId: string;
+  status: 'queued' | 'running' | 'waiting';
+  count: number;
+  oldestCreatedAt: string;
+}
+
+function isLiveStatus(status: string): status is LiveRunCount['status'] {
+  return status === 'queued' || status === 'running' || status === 'waiting';
+}
+
+/**
+ * The live runs of these agents, per agent and status — the agents page's
+ * overview of what is in flight. Content-free (counts and times), so it is
+ * the same for every audience; the CALLER passes only agents it has already
+ * resolved access to (the viewer's own, and those shared with them).
+ */
+export async function listLiveRunCounts(agentIds: readonly string[]): Promise<LiveRunCount[]> {
+  const ids = agentIds.filter(isUuid);
+  if (ids.length === 0) return [];
+  const rows = await getDataStore().agentRuns.summarizeLive(ids);
+  return rows.flatMap((row) =>
+    isLiveStatus(row.status)
+      ? [
+          {
+            agentId: row.agentId,
+            status: row.status,
+            count: row.count,
+            oldestCreatedAt: row.oldestCreatedAt.toISOString(),
+          },
+        ]
+      : []
+  );
 }
 
 export async function listRunsForOwner(
@@ -397,4 +440,67 @@ export async function listAgentsForAdmin(): Promise<AdminAgentRow[]> {
 /** One person's own agents — the per-person view on Organization usage. */
 export async function listAgentsForOwner(ownerSubject: string): Promise<AdminAgentRow[]> {
   return listAgentRows(ownerSubject);
+}
+
+/** How many of an agent's live jobs the runs page reads for its Queue panel. */
+export const QUEUE_PANEL_LIMIT = 50;
+
+/**
+ * Where an agent's work is in the queue: its live jobs (oldest first) and
+ * the jobs the queue gave up on (most recent first), as the runs page's
+ * Queue panel reads them. Content-free — ids, states, delivery counts and
+ * the last error — so any viewer the caller resolved access for may see it.
+ */
+export async function listAgentQueue(agentId: string): Promise<{
+  jobs: {
+    id: string;
+    type: string;
+    runId: string | null;
+    batchId: string | null;
+    status: string;
+    attempts: number;
+    lockedAt: string | null;
+    runAfter: string;
+    lastError: string | null;
+    createdAt: string;
+  }[];
+  dead: {
+    id: string;
+    type: string;
+    runId: string | null;
+    batchId: string | null;
+    attempts: number;
+    lastError: string | null;
+    deadAt: string;
+  }[];
+}> {
+  if (!isUuid(agentId)) return { jobs: [], dead: [] };
+  const queues = getDataStore().queues;
+  const [jobs, dead] = await Promise.all([
+    queues.listAgentJobs(agentId, QUEUE_PANEL_LIMIT),
+    queues.listAgentDeadLetters(agentId, 10),
+  ]);
+  return {
+    jobs: jobs.map((job) => ({
+      id: job.id,
+      type: job.type,
+      runId: job.runId,
+      batchId: job.batchId,
+      status: job.status,
+      attempts: job.attempts,
+      lockedAt: iso(job.lockedAt),
+      runAfter: job.runAfter.toISOString(),
+      lastError: job.lastError,
+      createdAt: job.createdAt.toISOString(),
+    })),
+    dead: dead.map((job) => ({
+      id: job.id,
+      type: job.type,
+      runId: job.runId,
+      batchId: job.batchId,
+      attempts: job.attempts,
+      lastError: job.lastError,
+      deadAt: job.deadAt.toISOString(),
+    })),
+  };
 }

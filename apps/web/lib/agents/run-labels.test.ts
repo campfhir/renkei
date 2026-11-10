@@ -4,7 +4,7 @@
  * pass through instead of vanishing.
  */
 
-import { statusLabel, errorSummary, outcomeCodeLabel } from './run-labels';
+import { statusLabel, errorSummary, outcomeCodeLabel, statusNote, statusTone } from './run-labels';
 
 describe('statusLabel', () => {
   it.each([
@@ -60,5 +60,28 @@ describe('outcomeCodeLabel', () => {
 
   it('passes unknown codes through', () => {
     expect(outcomeCodeLabel('mystery-code')).toBe('mystery-code');
+  });
+});
+
+describe('a run halted while stuck', () => {
+  it('reads Halted on its pill instead of Canceled', () => {
+    expect(statusLabel('canceled', 'force_halted')).toBe('Halted');
+    expect(statusLabel('canceled', null)).toBe('Canceled');
+  });
+
+  it('takes a pill colour of its own, apart from a plain cancel', () => {
+    expect(statusTone('canceled', 'force_halted')).toBe('halted');
+    expect(statusTone('canceled', null)).toBe('canceled');
+    expect(statusTone('failed', 'timeout')).toBe('failed');
+  });
+
+  it('needs no line under its pill: the pill already says it', () => {
+    expect(statusNote('canceled', 'force_halted')).toBeNull();
+    expect(errorSummary('force_halted')).toBe('Halted while stuck');
+  });
+
+  it('a failure still gets its reason under the pill, and a clean run nothing', () => {
+    expect(statusNote('failed', 'timeout')).toBe('Used its active time');
+    expect(statusNote('succeeded', null)).toBeNull();
   });
 });

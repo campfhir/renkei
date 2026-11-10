@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getDataStore } from '@renkei/db';
 import { getOrgSettings } from '@renkei/settings';
@@ -23,6 +24,7 @@ import { loadVoiceAvailability } from '@/lib/voice/availability';
 import { listImageModels } from '@/lib/chat/models';
 import { keyStatusView } from '@/lib/keys/status';
 import PreferencesForm from './preferences-form';
+import { notificationConnectorRows } from './preferences-form.model';
 import DefaultToolsForm from './default-tools-form';
 import ToolPermissionsForm from './tool-permissions-form';
 import ThemeForm from './theme-form';
@@ -111,19 +113,11 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
     A connector with no curated acts at all is dropped rather than shown
     empty — there is nothing here to decide yet.
   */
-  const actsByKey = new Map(actsByConnector().map((group) => [group.connector, group.acts]));
-  const seen = new Set<string>();
-  const connectors = CONNECTOR_CATALOG.filter((entry) => {
-    if (seen.has(entry.capabilityKey)) return false;
-    seen.add(entry.capabilityKey);
-    return actsByKey.has(entry.capabilityKey);
-  }).map((entry) => {
-    const present = new Set(actsByKey.get(entry.capabilityKey)?.map((act) => act.category) ?? []);
-    const categories = ACT_CATEGORIES.filter(
-      (category) => category === 'other' || present.has(category)
-    );
-    return { key: entry.capabilityKey, label: entry.label, categories };
-  });
+  const connectors = notificationConnectorRows(
+    CONNECTOR_CATALOG,
+    actsByConnector(),
+    ACT_CATEGORIES
+  );
 
   return (
     /*
@@ -195,6 +189,26 @@ export default async function PreferencesPage(): Promise<React.ReactNode> {
         initial={notifications}
         agents={myAgents}
       />
+      {/* Done once in a while, not a setting: its own page, at the foot of this one. */}
+      <section
+        aria-labelledby="your-data-heading"
+        className="mt-6 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+      >
+        <h3 id="your-data-heading" className="font-semibold">
+          Your data
+        </h3>
+        <p className="mt-0.5 text-sm text-gray-600 dark:text-gray-400">
+          Download everything you have here, or bring chats and memories in from ChatGPT, Claude or
+          Gemini.
+        </p>
+        <Link
+          href="/preferences/data"
+          className="mt-2 inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+        >
+          Export or import your data
+          <span aria-hidden="true">→</span>
+        </Link>
+      </section>
     </div>
   );
 }

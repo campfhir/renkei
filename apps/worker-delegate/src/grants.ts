@@ -41,7 +41,8 @@ import {
   type GrantLogger,
   type ProviderGrant,
 } from '@renkei/provider-grants';
-import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { pseudonym } from './access-log';
+import { readBody, sendJson, str } from '@renkei/worker-kit';
 import { onbaseWorkerCall, refreshedOf } from './onbase-worker';
 import { isExpiredSession, salesforceSoapRequest } from './salesforce-soap';
 import {
@@ -55,6 +56,7 @@ import {
   tokenEndpointFor,
   type ProviderSpec,
 } from './providers';
+import { isRecord } from '@renkei/guards';
 
 /** Refresh ahead of expiry by this much, as every resolver did before. */
 const COMPONENT = 'worker-delegate/grants';
@@ -114,6 +116,25 @@ function isRedirect(status: number): boolean {
 
 /** What this module reports through; the worker's logger in production, silence in tests. */
 export type DelegateLogger = GrantLogger;
+
+/**
+ * The person a grant belongs to, as log attributes (docs/logging.md): by
+ * subject when the request names one, else through the provider account
+ * the grant row carries. Cached and total; never a token.
+ */
+/**
+ * The person a grant line is about, as the delegate names people: by
+ * subject hash (access-log.ts), or as "the account holder" when only the
+ * provider's account id is in hand — it is in the bag beside this.
+ */
+function grantOwner(by: { subject?: string | null; accountId?: string | null }): {
+  subjectHash: string | null;
+  actor: string;
+} {
+  return by.subject
+    ? pseudonym(by.subject)
+    : { subjectHash: null, actor: `the holder of account ${by.accountId ?? '(unknown)'}` };
+}
 
 export const silentDelegateLogger: DelegateLogger = silentLogger;
 
@@ -228,20 +249,28 @@ export class Grants {
       if (/NEEDS_DELEGATION|NEEDS_SESSION|NOT_ENROLLED/.test(reason)) {
         return { ok: false, error: 'NEEDS_DELEGATION' };
       }
-      this.logger.error('{provider} grant {accountId} could not be read: {error}', {
-        component: COMPONENT,
-        provider,
-        accountId: row.accountId,
-        error: reason || read.err.type,
-      });
+      this.logger.error(
+        'the {provider} grant of {actor} could not be read; the request was refused and nothing of theirs opens until it can be: {error}',
+        {
+          component: COMPONENT,
+          ...grantOwner({ subject: by.subject, accountId: row.accountId }),
+          provider,
+          accountId: row.accountId,
+          error: reason || read.err.type,
+        }
+      );
       return { ok: false, error: 'GRANT_UNREADABLE' };
     }
     if (!read.val) {
-      this.logger.warn('{provider} grant {accountId} vanished while being read', {
-        component: COMPONENT,
-        provider,
-        accountId: row.accountId,
-      });
+      this.logger.warn(
+        'the {provider} grant of {actor} vanished while it was being read; the request was refused',
+        {
+          component: COMPONENT,
+          ...grantOwner({ subject: by.subject, accountId: row.accountId }),
+          provider,
+          accountId: row.accountId,
+        }
+      );
       return { ok: false, error: 'GRANT_UNREADABLE' };
     }
     let grant = read.val;
@@ -255,9 +284,10 @@ export class Grants {
           : spec.adapter(config, grant);
       if (!adapter) {
         this.logger.warn(
-          '{provider} grant {accountId} is due a refresh but the provider is not configured',
+          'the {provider} grant of {actor} is due a token refresh, but the provider is not configured in this organization; the request was refused',
           {
             component: COMPONENT,
+            ...grantOwner({ subject: grant.subject, accountId: grant.accountId }),
             provider,
             accountId: grant.accountId,
           }
@@ -488,12 +518,18 @@ export class Grants {
         current = next;
       }
     } catch (error) {
-      this.logger.warn('{provider} request to {host} failed: {error}', {
-        component: COMPONENT,
-        provider,
-        host: url.hostname,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        'a {provider} request for {actor} to {host} did not get through; the caller gets {outcome}: {error}',
+        {
+          component: COMPONENT,
+          ...grantOwner({ subject, accountId }),
+          provider,
+          host: url.hostname,
+          method,
+          outcome: isTimeout(error) ? 'a timeout' : 'unreachable',
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return fail(
         isTimeout(error) ? 'timeout' : 'unreachable',
         error instanceof Error ? error.message : undefined
@@ -520,12 +556,16 @@ export class Grants {
       }
       response.end();
     } catch (error) {
-      this.logger.warn('{provider} answer from {host} broke off mid-stream: {error}', {
-        component: COMPONENT,
-        provider,
-        host: url.hostname,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        'the {provider} answer for {actor} from {host} broke off mid-stream; the caller got a truncated response: {error}',
+        {
+          component: COMPONENT,
+          ...grantOwner({ subject, accountId }),
+          provider,
+          host: url.hostname,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       response.destroy();
     }
   }
@@ -536,12 +576,15 @@ export class Grants {
     const provider = str(body.provider);
     const fail = (type: GrantError, message?: string): void => {
       if (statusForGrantError(type) >= 500) {
-        this.logger.warn('{provider} code exchange failed ({type}): {error}', {
-          component: COMPONENT,
-          provider,
-          type,
-          error: message ?? type,
-        });
+        this.logger.warn(
+          'a {provider} sign-in could not exchange its code for tokens ({type}); the person saw a sign-in error and no grant was stored: {error}',
+          {
+            component: COMPONENT,
+            provider,
+            type,
+            error: message ?? type,
+          }
+        );
       }
       sendJson(response, statusForGrantError(type), { error: { type, message } });
     };
@@ -715,12 +758,16 @@ export class Grants {
       subject,
     });
     if (!saved.ok) {
-      this.logger.error('{provider} grant {accountId} could not be stored: {error}', {
-        component: COMPONENT,
-        provider,
-        accountId,
-        error: saved.err.message ?? saved.err.type,
-      });
+      this.logger.error(
+        '{actor} signed in to {provider}, but the grant was not stored; they saw a sign-in error: {error}',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          provider,
+          accountId,
+          error: saved.err.message ?? saved.err.type,
+        }
+      );
       return fail('GRANT_UNREADABLE', 'the grant could not be stored');
     }
     sendJson(response, 200, { ok: true, accountId });
@@ -763,12 +810,16 @@ export class Grants {
       subject,
     });
     if (!saved.ok) {
-      this.logger.error('{provider} credential {accountId} could not be stored: {error}', {
-        component: COMPONENT,
-        provider,
-        accountId,
-        error: saved.err.message ?? saved.err.type,
-      });
+      this.logger.error(
+        '{actor} entered a {provider} credential, but it was not stored; they saw an error and nothing was saved: {error}',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          provider,
+          accountId,
+          error: saved.err.message ?? saved.err.type,
+        }
+      );
       return fail('GRANT_UNREADABLE', 'the credential could not be stored');
     }
     sendJson(response, 200, { ok: true, accountId });
@@ -787,12 +838,16 @@ export class Grants {
     if (!row) return sendJson(response, 404, { error: { type: 'NO_GRANT' } });
     const read = await getGrant(provider, row.accountId);
     if (!read.ok || !read.val) {
-      this.logger.warn('{provider} grant {accountId} could not be read for describe: {error}', {
-        component: COMPONENT,
-        provider,
-        accountId: row.accountId,
-        error: read.ok ? 'not found' : (read.err.message ?? read.err.type),
-      });
+      this.logger.warn(
+        'the {provider} grant of {actor} could not be read to describe it; the caller got 502: {error}',
+        {
+          component: COMPONENT,
+          ...grantOwner({ subject, accountId: row.accountId }),
+          provider,
+          accountId: row.accountId,
+          error: read.ok ? 'not found' : (read.err.message ?? read.err.type),
+        }
+      );
       return sendJson(response, 502, { error: { type: 'GRANT_UNREADABLE' } });
     }
     sendJson(response, 200, describe(read.val));
@@ -880,21 +935,31 @@ export class Grants {
           revokedAtProvider = answer.ok && answer.val.revoked === true;
         }
       } catch (error) {
-        this.logger.warn('provider revocation failed; deleting the grant regardless', {
-          component: COMPONENT,
-          provider,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        this.logger.warn(
+          'the {provider} grant of {actor} could not be revoked at the provider; it is deleted here regardless, so the token may stay valid there until it expires: {error}',
+          {
+            component: COMPONENT,
+            ...grantOwner({ subject: grant.subject, accountId }),
+            provider,
+            accountId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       }
     }
     const deleted = await deleteGrant(provider, accountId);
     if (!deleted.ok) {
-      this.logger.error('{provider} grant {accountId} could not be deleted: {error}', {
-        component: COMPONENT,
-        provider,
-        accountId,
-        error: deleted.err.message ?? deleted.err.type,
-      });
+      this.logger.error(
+        'the {provider} grant of {actor} was revoked but could not be deleted here; it remains stored: {error}',
+        {
+          component: COMPONENT,
+          ...grantOwner({ accountId }),
+          provider,
+          accountId,
+          revokedAtProvider,
+          error: deleted.err.message ?? deleted.err.type,
+        }
+      );
       return sendJson(response, 500, { error: { type: 'internal' } });
     }
     sendJson(response, 200, { ok: true, revokedAtProvider });
@@ -906,12 +971,16 @@ export class Grants {
     if (!provider || !accountId) return sendJson(response, 400, { error: { type: 'bad_request' } });
     const deleted = await deleteGrant(provider, accountId);
     if (!deleted.ok) {
-      this.logger.error('{provider} grant {accountId} could not be deleted: {error}', {
-        component: COMPONENT,
-        provider,
-        accountId,
-        error: deleted.err.message ?? deleted.err.type,
-      });
+      this.logger.error(
+        'the {provider} grant of {actor} could not be deleted; it remains stored: {error}',
+        {
+          component: COMPONENT,
+          ...grantOwner({ accountId }),
+          provider,
+          accountId,
+          error: deleted.err.message ?? deleted.err.type,
+        }
+      );
       return sendJson(response, 500, { error: { type: 'internal' } });
     }
     sendJson(response, 200, { ok: true });

@@ -5,19 +5,21 @@
  * picker: tokens the next request will carry (the server's estimate, which
  * drops after a compaction) against the selected model's context window.
  * Without a recorded window there is nothing to measure against, so nothing
- * shows. The exact counts are in the tooltip.
+ * shows. The exact counts are in the tooltip. What it shows is
+ * context-meter.model.ts, tested in node.
  */
 
 import type { ModelOption } from '@/lib/chat/views';
+import { meterView, type MeterTone } from './context-meter.model';
 
 const RADIUS = 7;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 
-function compact(tokens: number): string {
-  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, '')}k`;
-  return String(tokens);
-}
+const TONE: Record<MeterTone, string> = {
+  normal: 'text-blue-500',
+  warning: 'text-amber-500',
+  full: 'text-red-500',
+};
 
 export default function ContextMeter({
   tokens,
@@ -26,13 +28,9 @@ export default function ContextMeter({
   tokens: number | null;
   model: ModelOption | null;
 }) {
-  const limit = model?.contextWindow ?? null;
-  if (tokens === null || limit === null) return null;
-  const fraction = Math.min(tokens / limit, 1);
-  const percent = Math.round(fraction * 100);
-  const tone =
-    fraction >= 0.9 ? 'text-red-500' : fraction >= 0.75 ? 'text-amber-500' : 'text-blue-500';
-  const title = `Context: ${compact(tokens)} of ${compact(limit)} tokens (${percent}%)`;
+  const view = meterView(tokens, model?.contextWindow ?? null);
+  if (!view) return null;
+  const { fraction, percent, title } = view;
 
   return (
     <div
@@ -65,7 +63,7 @@ export default function ContextMeter({
           stroke="currentColor"
           strokeDasharray={CIRCUMFERENCE}
           strokeDashoffset={CIRCUMFERENCE * (1 - fraction)}
-          className={tone}
+          className={TONE[view.tone]}
         />
       </svg>
     </div>

@@ -1,16 +1,31 @@
 /**
- * Artifacts, end to end in a browser (docs/artifacts-design.md): the
- * library page with its filters and details panel; rename, share and
- * delete-with-impact on one file; the list paged and scrolling in its own
- * box, the search finding a file by its name or by the digest (summary
- * and keywords) the model wrote for it, a link opening to the page its
- * file is on; a project page's Artifacts card with the Always / On demand
- * switch and attaching from the library; the composer's "where should it
- * go?" chooser in a project chat; ticking several files in the library to
- * delete them (the impact warned first) or add them to a project; a second
- * press on a project's remove button after the server has answered, which
- * must not reach it again; OCR on scans; and, at phone width, the cards
- * that open a file's details over the list, a back button to return.
+ * Artifacts, in a browser (docs/artifacts-design.md), for what only a
+ * browser shows: the library page drawn on the real server from what
+ * each person holds; the list scrolling in its own box with the filters
+ * and the pager in view; one real upload end to end (the bytes back from
+ * the download, sealed at rest, the digest drawn); a project page's
+ * Artifacts card with the library picker attaching for real; OCR on a
+ * scan, a photo described from its pixels, and the read's text reaching
+ * the iOS share sheet; and, at phone width, the cards that open a file's
+ * details over the list, the dialogs, the picker and the composer's
+ * "where should it go?" chooser (whose upload keeps the file in the
+ * project).
+ *
+ * The rules moved out of this spec into model tests beside the
+ * components (app/(app)/chat/_components/): the filters, the details,
+ * who may do what, select mode, the pager and the empty states
+ * (artifacts-index.model.test.ts); delete with its impact, copy and
+ * rename (artifact-dialogs.model.test.ts); the bulk add and delete,
+ * including never removing a file twice (artifact-bulk-dialogs.model.test.ts);
+ * the project card's pages, counts and its second remove press sending
+ * nothing (artifacts-card.model.test.ts); OCR's offer, progress and
+ * estimate (artifact-ocr-panel.model.test.ts); sharing to use, never to
+ * edit (share-modal.model.test.ts); and the composer's chooser
+ * (composer.model.test.ts). What the server answers is tested on the
+ * memory store: a filter, a search by name or digest, pages of 25 and a
+ * link opening to its page (lib/chat/artifact-library-query.test.ts),
+ * and the delete impact and taking a shared file off one's list
+ * (app/api/chat/artifacts/[artifactId]/impact/route.test.ts).
  *
  * Everything is staged the way people make it: uploads through the
  * attachments route (into the blob store's local backend), a file the
@@ -335,7 +350,7 @@ async function storedBytes(artifactId: string): Promise<Buffer> {
   return readFile(path.join(BLOBS, found));
 }
 
-test('the library: filters, details, rename, share, delete with its impact', async ({
+test('the library: the real page lists what each person holds, and a file opens to its details', async ({
   page,
   request,
   person,
@@ -345,97 +360,29 @@ test('the library: filters, details, rename, share, delete with its impact', asy
   await page.goto('/chat/artifacts');
   await expect(page.getByRole('heading', { name: 'Artifacts' })).toBeVisible(COLD);
   const list = page.getByRole('region', { name: 'Artifacts' });
-  await expect(list.getByText('schema-guide.md')).toBeVisible();
-  await expect(list.getByText('rounding-analysis.md')).toBeVisible();
-  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
+  // Each kind of file, joined on the server to where it came from and whose it is.
   await expect(list.getByText(/generated in “Fix invoice rounding”/)).toBeVisible();
   await expect(list.getByText(/shared by Priya Friend/)).toBeVisible();
-  // A file dropped into a plain chat is here too, named by that chat.
   await expect(list.getByText(/uploaded in “Reconcile March invoices”/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-01-library');
 
-  // The filters narrow to what each kind of file is.
-  await page.getByRole('button', { name: 'Uploaded', exact: true }).click();
-  await expect(list.getByText('march-invoices.csv')).toBeVisible();
-  await expect(list.getByText('rounding-analysis.md')).toBeHidden();
-  await page.getByRole('button', { name: 'Generated', exact: true }).click();
-  await expect(list.getByText('rounding-analysis.md')).toBeVisible();
-  await expect(list.getByText('schema-guide.md')).toBeHidden();
-  await page.getByRole('button', { name: 'Shared with me', exact: true }).click();
-  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
-  await expect(list.getByText('rounding-analysis.md')).toBeHidden();
-  await page.getByRole('button', { name: 'All', exact: true }).click();
-
-  // The details panel: where it is used, and the owner's acts.
   await list.getByRole('button', { name: /schema-guide\.md/ }).click();
   const details = page.getByRole('complementary', { name: 'Selected artifact' });
-  await expect(details).toBeVisible();
   await expect(details.getByRole('link', { name: f.projectName })).toBeVisible();
-  await expect(details.getByText('owned by you')).toBeVisible();
-  // What the model wrote about it, and a keyword as a search of its own:
-  // the guide is found by its digest, the analysis by its name.
+  // What the model wrote about it, drawn from the stored digest.
   const about = details.getByRole('region', { name: 'About this file' });
   await expect(about.getByText(/A Postgres schema guide/)).toBeVisible();
+  await expect(about.getByRole('list', { name: 'Keywords' })).toBeVisible();
   await shot(page, testInfo, 'artifacts-02-details');
-  await about
-    .getByRole('list', { name: 'Keywords' })
-    .getByRole('button', { name: 'rounding' })
-    .click();
-  await expect(page.getByLabel('Search artifacts').filter({ visible: true })).toHaveValue(
-    'rounding'
-  );
-  await expect(list.getByText('rounding-analysis.md')).toBeVisible();
-  await expect(list.getByText('schema-guide.md')).toBeVisible();
-  await expect(list.getByText('march-invoices.csv')).toBeHidden();
-  await expect(page).toHaveURL(/q=rounding/);
-  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('');
-  await expect(list.getByText('march-invoices.csv')).toBeVisible();
-
-  await details.getByRole('button', { name: 'Rename' }).click();
-  await page.getByLabel('File name').fill('postgres-schema-guide.md');
-  await page.getByRole('button', { name: 'Rename' }).last().click();
-  await expect(list.getByText('postgres-schema-guide.md')).toBeVisible();
-
-  // Share with a colleague: they get "use", never "edit".
-  await details.getByRole('button', { name: 'Share…' }).click();
-  const share = page.getByRole('dialog');
-  await expect(share.getByText(/Sharing lets a person use it/)).toBeVisible();
-  await share.getByPlaceholder('Name or email').fill(f.friendEmail);
-  await share.getByRole('button', { name: f.friendEmail }).click();
-  await share.getByRole('button', { name: 'Share', exact: true }).click();
-  await expect(share.getByText('Priya Friend')).toBeVisible();
-  await expect(share.getByText('use', { exact: true })).toBeVisible();
-  await shot(page, testInfo, 'artifacts-03-share');
-  await share.getByRole('button', { name: 'Close' }).click();
-
-  // Delete: the impact first, hand-over as the default, deletion on purpose.
-  await details.getByRole('button', { name: 'Delete' }).click();
-  const confirm = page.getByRole('dialog');
-  await expect(confirm.getByText('Deleting removes the file for everyone')).toBeVisible();
-  await expect(confirm.getByText(f.projectName)).toBeVisible();
-  await expect(confirm.getByText(/Shared with Priya Friend/)).toBeVisible();
-  await expect(confirm.getByLabel(/Hand it over instead/)).toBeChecked();
-  await shot(page, testInfo, 'artifacts-04-delete-impact');
-  await confirm.getByLabel(/Delete it for everyone/).check();
-  await confirm.getByRole('button', { name: 'Delete' }).click();
-  await expect(list.getByText('postgres-schema-guide.md')).toBeHidden();
-  await expect(list.getByText('rounding-analysis.md')).toBeVisible();
-
-  // A colleague's file: a copy of one's own, or off the list — never edit.
-  await list.getByRole('button', { name: /vendor-sdk-manual\.txt/ }).click();
-  await expect(details.getByRole('button', { name: 'Make a copy I own' })).toBeVisible();
-  await expect(details.getByRole('button', { name: 'Rename' })).toHaveCount(0);
-  await details.getByRole('button', { name: 'Remove from my artifacts' }).click();
-  await expect(list.getByText('vendor-sdk-manual.txt')).toBeHidden();
 });
 
-test('the library: pages of 25, the list scrolling in its own box, a link opening to its page', async ({
+test('the library: the list scrolls in its own box, the filters and the pager staying put', async ({
   page,
   request,
   person,
 }, testInfo) => {
   test.slow();
-  const f = await stage(page, request, person, testInfo, { backlog: true });
+  await stage(page, request, person, testInfo, { backlog: true });
   // Short enough that a page of rows is taller than the box it scrolls in.
   await page.setViewportSize({ width: 1280, height: 640 });
 
@@ -443,13 +390,7 @@ test('the library: pages of 25, the list scrolling in its own box, a link openin
   const list = page.getByRole('region', { name: 'Artifacts' });
   const pager = list.getByRole('navigation', { name: 'Pages' });
   await expect(pager.getByText('1–25 of 34')).toBeVisible(COLD);
-  await expect(pager.getByText('Page 1 of 2')).toBeVisible();
-  await expect(pager.getByRole('button', { name: 'Previous page' })).toBeDisabled();
-  await expect(list.getByText('backlog-22.txt')).toBeAttached();
-  await expect(list.getByText('backlog-23.txt')).toHaveCount(0);
-  await expect(list.getByText('vendor-sdk-manual.txt')).toHaveCount(0);
 
-  // The rows scroll inside the list; the filters and the pager stay where they are.
   const rows = list.getByRole('list');
   const box = await rows.evaluate((element) => ({
     scrolls: element.scrollHeight > element.clientHeight,
@@ -464,73 +405,14 @@ test('the library: pages of 25, the list scrolling in its own box, a link openin
   );
   expect(pageScroll).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'artifacts-17-paged');
-
-  // The second page: the oldest eight and the shared one, and no further;
-  // the URL says which page, so it is a link.
-  await pager.getByRole('button', { name: 'Next page' }).click();
-  await expect(pager.getByText('26–34 of 34')).toBeVisible();
-  await expect(page).toHaveURL(/page=2/);
-  await expect(list.getByText('backlog-23.txt')).toBeVisible();
-  await expect(list.getByText('backlog-30.txt')).toBeVisible();
-  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
-  await expect(list.getByText('backlog-22.txt')).toHaveCount(0);
-  await expect(pager.getByRole('button', { name: 'Next page' })).toBeDisabled();
-  await shot(page, testInfo, 'artifacts-18-paged-second');
-
-  // A search starts over on the first page of what it finds: a word in a
-  // name (a substring), or in the summary and keywords the model wrote.
-  const search = page.getByLabel('Search artifacts').filter({ visible: true });
-  await search.fill('backlog-2');
-  await expect(pager.getByText('1–10 of 10')).toBeVisible();
-  await expect(pager.getByRole('button', { name: 'Next page' })).toHaveCount(0);
-  await search.fill('monetary rounding');
-  await expect(list.getByText('schema-guide.md')).toBeVisible();
-  await expect(pager.getByText('1–1 of 1')).toBeVisible();
-  await search.fill('jitter');
-  await expect(list.getByText('vendor-sdk-manual.txt')).toBeVisible();
-  await expect(pager.getByText('1–1 of 1')).toBeVisible();
-  await search.fill('zzzz-nothing');
-  await expect(list.getByText(/^Nothing matches\./)).toBeVisible();
-  await shot(page, testInfo, 'artifacts-20-search-empty');
-  await search.fill('');
-  await expect(pager.getByText('Page 1 of 2')).toBeVisible();
-
-  // The link a notification carries opens to the page its file is on.
-  await page.goto(`/chat/artifacts?artifact=${f.backlog[30]}`);
-  await expect(pager.getByText('Page 2 of 2')).toBeVisible();
-  const details = page.getByRole('complementary', { name: 'Selected artifact' });
-  await expect(details.getByRole('link', { name: 'backlog-30.txt' })).toBeVisible();
-  await expect(list.getByRole('button', { name: /backlog-30\.txt/ })).toHaveAttribute(
-    'aria-current',
-    'true'
-  );
 });
 
-test('the library: a real upload lands, reads back, and is attached from the card', async ({
+test('the library: a real upload lands, reads back, is sealed at rest, and gets its digest', async ({
   page,
   request,
   person,
 }, testInfo) => {
-  const f = await stage(page, request, person, testInfo);
-
-  // Digests are off by default — a file's text goes to a model only when
-  // the organization says so. The switch, as an operator sees it: staging
-  // turned it on, and the page reads the settings afresh in the suite
-  // (RENKEI_CONFIG_CACHE_TTL_MS=0); were it off, it is turned on here, as
-  // an operator would.
-  await page.goto('/admin/settings');
-  const digestSwitch = page.getByRole('switch', {
-    name: 'Summarize artifacts with the default model',
-  });
-  await expect(digestSwitch).toBeVisible(COLD);
-  if ((await digestSwitch.getAttribute('aria-checked')) !== 'true') {
-    await digestSwitch.click();
-    await page.getByRole('button', { name: 'Save settings' }).click();
-    await expect(page.getByText('Saved.')).toBeVisible();
-    await digestsReady(request);
-  }
-  await expect(digestSwitch).toHaveAttribute('aria-checked', 'true');
-  await shot(page, testInfo, 'artifacts-21-digest-switch');
+  await stage(page, request, person, testInfo);
 
   // The bytes go to the blob store's local backend, the text is extracted,
   // the row appears, and the download serves the same bytes back.
@@ -558,7 +440,7 @@ test('the library: a real upload lands, reads back, and is attached from the car
   expect(await served.text()).toContain('Money fields are snake_case');
 
   // The digest: asked of the org's default model after the upload's
-  // response, stored in the clear, shown, and searched.
+  // response, stored in the clear, and shown.
   await expect
     .poll(async () => (await digestStatusOf(page, 'api-style-guide.md'))?.status, COLD)
     .toBe('done');
@@ -576,37 +458,13 @@ test('the library: a real upload lands, reads back, and is attached from the car
   await expect(
     about.getByRole('list', { name: 'Keywords' }).getByRole('button', { name: 'money' })
   ).toBeVisible();
-  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('money fields');
-  await expect(list.getByText('api-style-guide.md')).toBeVisible();
-  await expect(list.getByText('schema-guide.md')).toBeHidden();
-  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('');
-  await expect(list.getByText('schema-guide.md')).toBeVisible();
 
   // Hover: the controls explain themselves, in an element a screenshot keeps.
   await details.getByRole('button', { name: 'Rename' }).hover();
   await shot(page, testInfo, 'artifacts-10-hover-details');
-
-  // Attach it from the project's card, as Always: its text is short.
-  await page.goto(`/chat/projects/${f.projectId}`);
-  const card = page.getByRole('region', { name: 'Artifacts' });
-  await card.getByRole('button', { name: 'Attach from library…' }).click();
-  const picker = page.getByRole('dialog');
-  await picker.getByLabel('Attach api-style-guide.md').check();
-  await picker
-    .getByRole('radiogroup', { name: /How .* uses api-style-guide\.md/ })
-    .getByRole('radio', { name: 'Always' })
-    .click();
-  await picker.getByRole('button', { name: /^Attach 1$/ }).click();
-  await expect(card.getByText('api-style-guide.md')).toBeVisible();
-  await expect(card.getByText(/1 file · \d+ tokens of 24k tokens per turn/)).toBeVisible();
-  await card
-    .getByRole('radiogroup', { name: "How this project's chats use api-style-guide.md" })
-    .getByRole('radio', { name: 'On demand' })
-    .hover();
-  await shot(page, testInfo, 'artifacts-11-hover-mode');
 });
 
-test('a project page: the Artifacts card, Always against the budget, attach from the library', async ({
+test('a project page: the Artifacts card, and attaching from the library', async ({
   page,
   request,
   person,
@@ -617,18 +475,10 @@ test('a project page: the Artifacts card, Always against the budget, attach from
   const card = page.getByRole('region', { name: 'Artifacts' });
   await expect(card.getByText('schema-guide.md')).toBeVisible(COLD);
   await expect(card.getByText('1 attached')).toBeVisible();
-  await expect(card.getByText('1 searched on demand')).toBeVisible();
-
-  // Always: the whole text travels with every turn, counted against the budget.
-  await card
-    .getByRole('radiogroup', { name: "How this project's chats use schema-guide.md" })
-    .getByRole('radio', { name: 'Always' })
-    .click();
-  await expect(card.getByText('0 searched on demand')).toBeVisible();
-  await expect(card.getByText(/1 file · \d+ tokens of 24k tokens per turn/)).toBeVisible();
   await shot(page, testInfo, 'artifacts-05-project-card');
 
-  // Attach the chat's generated file from the library.
+  // The library picker (attach-artifacts-modal.tsx, whose rules have not
+  // moved into a model yet): the chat's generated file, attached for real.
   await card.getByRole('button', { name: 'Attach from library…' }).click();
   const picker = page.getByRole('dialog');
   await picker.getByRole('button', { name: 'Generated in chats' }).click();
@@ -637,16 +487,6 @@ test('a project page: the Artifacts card, Always against the budget, attach from
   await expect(card.getByText('rounding-analysis.md')).toBeVisible();
   await expect(card.getByText('2 attached')).toBeVisible();
   await expect(card.getByText(/generated in/)).toBeVisible();
-
-  // Detach: the file stays in the library, the project lets go of it.
-  await card
-    .getByRole('button', { name: `Remove rounding-analysis.md from ${f.projectName}` })
-    .click();
-  await expect(card.getByText('rounding-analysis.md')).toBeHidden();
-  await page.goto('/chat/artifacts');
-  await expect(
-    page.getByRole('region', { name: 'Artifacts' }).getByText('rounding-analysis.md')
-  ).toBeVisible();
 });
 
 /**
@@ -662,106 +502,6 @@ async function attach(
   await page.getByRole('button', { name: 'Attach a file' }).filter({ visible: true }).click();
   await (await chooser).setFiles(file);
 }
-
-/** The composer's uploads, as the browser sends them (the query says where each goes). */
-function watchUploads(page: Page): string[] {
-  const uploads: string[] = [];
-  page.on('request', (sent) => {
-    const url = new URL(sent.url());
-    if (sent.method() === 'PUT' && url.pathname === '/api/chat/attachments') {
-      uploads.push(url.search);
-    }
-  });
-  return uploads;
-}
-
-test('a project chat: a dropped file asks where it goes', async ({
-  page,
-  request,
-  person,
-}, testInfo) => {
-  const f = await stage(page, request, person, testInfo);
-  const uploads = watchUploads(page);
-
-  await page.goto(`/chat/${f.chatId}`);
-  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible(COLD);
-  await attach(page, {
-    name: 'stripe-webhooks.md',
-    mimeType: 'text/markdown',
-    buffer: Buffer.from('# Stripe webhooks\n\nVerify every signature.\n'),
-  });
-  const chooser = page
-    .getByRole('group', { name: 'Where should the files go?' })
-    .filter({ visible: true });
-  await expect(chooser.getByText('Where should stripe-webhooks.md go?')).toBeVisible();
-  await expect(chooser.getByLabel(/Artifacts, attached to Billing API/)).toBeChecked();
-  await shot(page, testInfo, 'artifacts-06-drop-chooser');
-  await chooser.getByLabel(/This message only/).check();
-  await chooser.getByRole('button', { name: 'Add' }).click();
-  await expect(page.getByText('stripe-webhooks.md')).toBeVisible();
-  await expect.poll(() => uploads.length).toBe(1);
-  expect(uploads[0]).not.toContain('keep=1');
-  // Remembered: the next file goes the same way without asking.
-  await attach(page, {
-    name: 'second.md',
-    mimeType: 'text/markdown',
-    buffer: Buffer.from('second'),
-  });
-  await expect(chooser).toBeHidden();
-  await expect.poll(() => uploads.length).toBe(2);
-});
-
-test('a project chat: Send answers the chooser, and the remembered choice can be changed', async ({
-  page,
-  request,
-  person,
-}, testInfo) => {
-  const f = await stage(page, request, person, testInfo);
-  const uploads = watchUploads(page);
-
-  await page.goto(`/chat/${f.chatId}`);
-  await expect(page.getByLabel('Message').filter({ visible: true })).toBeVisible(COLD);
-  await attach(page, {
-    name: 'retry-policy.md',
-    mimeType: 'text/markdown',
-    buffer: Buffer.from('# Retries\n\nExponential, with jitter.'),
-  });
-  const chooser = page
-    .getByRole('group', { name: 'Where should the files go?' })
-    .filter({ visible: true });
-  await expect(chooser).toBeVisible();
-  // No Add: the message is sent with the choice as it stands (the project).
-  await page
-    .getByRole('textbox', { name: 'Message' })
-    .filter({ visible: true })
-    .fill('Follow the retry policy.');
-  await page.getByRole('button', { name: 'Send', exact: true }).filter({ visible: true }).click();
-  await expect(chooser).toBeHidden();
-  await expect.poll(() => uploads.length).toBe(1);
-  expect(uploads[0]).toContain('keep=1');
-  expect(uploads[0]).toContain(`projectId=${f.projectId}`);
-  // The file is attached to the message that went out with it.
-  await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible(COLD);
-
-  // The remembered choice shows beside the paperclip; clicking it asks again next time.
-  const remembered = page
-    .getByRole('button', { name: /Dropped files go to .* artifacts/ })
-    .filter({ visible: true });
-  await expect(remembered).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Attach a file' }).filter({ visible: true })
-  ).toBeVisible();
-  await remembered.hover();
-  await shot(page, testInfo, 'artifacts-09-remembered-control');
-  await remembered.click();
-  await expect(remembered).toBeHidden();
-  await attach(page, {
-    name: 'again.md',
-    mimeType: 'text/markdown',
-    buffer: Buffer.from('again'),
-  });
-  await expect(chooser).toBeVisible();
-});
 
 test('phone: the library and the project card fit the viewport', async ({
   page,
@@ -825,6 +565,10 @@ test('phone: the library and the project card fit the viewport', async ({
     page.getByRole('textbox', { name: 'Message' }).filter({ visible: true })
   ).toBeVisible(COLD);
   await page.addStyleTag({ content: 'nextjs-portal { display: none !important; }' });
+  // Add takes the chooser's first answer, the project: the upload says so.
+  const kept = page.waitForRequest(
+    (sent) => sent.method() === 'PUT' && new URL(sent.url()).pathname === '/api/chat/attachments'
+  );
   await attach(page, {
     name: 'retry-policy.md',
     mimeType: 'text/markdown',
@@ -836,6 +580,9 @@ test('phone: the library and the project card fit the viewport', async ({
   await expect(chooser).toBeVisible();
   await shot(page, testInfo, 'artifacts-15-phone-chooser');
   await chooser.getByRole('button', { name: 'Add' }).click();
+  const query = new URL((await kept).url()).searchParams;
+  expect(query.get('keep')).toBe('1');
+  expect(query.get('projectId')).toBe(f.projectId);
   await expect(page.getByRole('link', { name: 'retry-policy.md' })).toBeVisible(COLD);
   const remembered = page
     .getByRole('button', { name: /Dropped files go to .* artifacts/ })
@@ -846,81 +593,6 @@ test('phone: the library and the project card fit the viewport', async ({
   );
   expect(row).toBeLessThanOrEqual(0);
   await shot(page, testInfo, 'artifacts-16-phone-remembered');
-});
-
-test('the library: several files are ticked, deleted with the impact warned, or added to a project', async ({
-  page,
-  request,
-  person,
-}, testInfo) => {
-  const f = await stage(page, request, person, testInfo);
-
-  await page.goto('/chat/artifacts');
-  const list = page.getByRole('region', { name: 'Artifacts' });
-  await expect(list.getByText('schema-guide.md')).toBeVisible(COLD);
-  // No checkmarks until select mode is on; in it, a click on the row ticks
-  // it and leaves the details alone.
-  await expect(page.getByRole('checkbox', { name: 'Select schema-guide.md' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Select', exact: true }).click();
-  await list.getByText('schema-guide.md').click();
-  await expect(page).not.toHaveURL(/artifact=/);
-  await page.getByRole('checkbox', { name: 'Select schema-guide.md' }).check();
-  await page.getByRole('checkbox', { name: 'Select rounding-analysis.md' }).check();
-  const toolbar = page.getByRole('toolbar', { name: 'Selected artifacts' });
-  await expect(toolbar.getByText('2 selected')).toBeVisible();
-
-  // Delete: the warning names the project that loses schema-guide.md.
-  await toolbar.getByRole('button', { name: 'Delete…' }).click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText('Delete 2 files?')).toBeVisible();
-  await expect(dialog.getByText('Working out who uses them…')).toHaveCount(0, COLD);
-  await expect(dialog.getByText(`schema-guide.md: ${f.projectName}`)).toBeVisible();
-  await shot(page, testInfo, 'artifacts-bulk-06-delete-warning');
-  await dialog.getByRole('button', { name: 'Cancel' }).click();
-  await expect(dialog).toBeHidden();
-
-  // Add to project: only the file the project does not hold yet is added.
-  await toolbar.getByRole('button', { name: 'Add to project…' }).click();
-  await expect(dialog.getByText('1 will be added.')).toBeVisible();
-  await dialog.getByRole('button', { name: 'Add 1' }).click();
-  await expect(dialog).toBeHidden();
-  await page.reload();
-  // Through the region: a reload streams the list, and until React swaps it
-  // in a hidden copy (div#S:1) holds the same rows.
-  const row = list.locator('[data-artifact]', { hasText: 'rounding-analysis.md' });
-  await expect(row.getByText(f.projectName)).toBeVisible();
-});
-
-test('a project page: pressing remove again after the server has answered takes one request and shows no error', async ({
-  page,
-  request,
-  person,
-}, testInfo) => {
-  const f = await stage(page, request, person, testInfo);
-
-  await page.goto(`/chat/projects/${f.projectId}`);
-  const card = page.getByRole('region', { name: 'Artifacts' });
-  await expect(card.getByText('schema-guide.md')).toBeVisible(COLD);
-  const detaches: string[] = [];
-  page.on('request', (sent) => {
-    if (sent.method() !== 'GET' && sent.url().includes('/artifacts/')) {
-      detaches.push(sent.method());
-    }
-  });
-  const remove = card.getByRole('button', {
-    name: `Remove schema-guide.md from ${f.projectName}`,
-  });
-  const answered = page.waitForResponse(
-    (response) => response.request().method() !== 'GET' && response.url().includes('/artifacts/')
-  );
-  await remove.click();
-  await answered;
-  // The second press: the row may still be on screen while the page refreshes.
-  if (await remove.isVisible()) await remove.click({ force: true });
-  await expect(card.getByText('schema-guide.md')).toBeHidden();
-  await expect(card.getByRole('alert')).toHaveCount(0);
-  await page.waitForLoadState('networkidle');
-  expect(detaches).toHaveLength(1);
 });
 
 /** A scan the library holds as needs_ocr. Its text says SLOW, so the stub holds the read for a few seconds. */
@@ -936,7 +608,7 @@ async function uploadScan(page: Page, name: string): Promise<void> {
   await expect(page.getByRole('region', { name: 'Artifacts' }).getByText(name)).toBeVisible(COLD);
 }
 
-test('the library: OCR is asked for on a scan, its progress and estimate show while it runs, and the summary makes it searchable', async ({
+test('the library: OCR is asked for on a scan, its progress shows while it runs, and its text and summary land', async ({
   page,
   request,
   person: _person,
@@ -948,38 +620,19 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   const list = page.getByRole('region', { name: 'Artifacts' });
   const details = page.getByRole('complementary', { name: 'Selected artifact' });
 
-  // Three scans read in a bulk run give the estimate its finished reads.
-  for (const name of ['scan-a.png', 'scan-b.png', 'scan-c.png']) {
-    await uploadScan(page, name);
-  }
-  await page.getByRole('button', { name: 'Select', exact: true }).click();
-  for (const name of ['scan-a.png', 'scan-b.png', 'scan-c.png']) {
-    await page.getByRole('checkbox', { name: `Select ${name}` }).check();
-  }
-  const toolbar = page.getByRole('toolbar', { name: 'Selected artifacts' });
-  await shot(page, testInfo, 'ocr-bulk-06-toolbar-below-list');
-  await toolbar.getByRole('button', { name: 'Run OCR' }).click();
-  await expect(list.getByText('OCR running').first()).toBeVisible(COLD);
-  await expect(list.getByText('OCR running')).toHaveCount(0, { timeout: 60_000 });
-  await page.getByRole('button', { name: 'Done selecting' }).click();
-
-  // A fourth, read from its details: while it runs, the page shows how long
-  // it has been, and how long the three finished reads say it has left.
+  // Read from its details: while it runs, the page reads itself again and
+  // the progress shows (what the estimate says is artifact-ocr-panel.model.ts).
   await uploadScan(page, 'scan-d.png');
-  await uploadScan(page, 'scan-e.png');
-  await list.getByText('scan-e.png').click();
+  await list.getByText('scan-d.png').click();
   await expect(details.getByRole('button', { name: 'Run OCR' })).toBeVisible();
   await shot(page, testInfo, 'ocr-00-offered-in-details');
-  await list.getByText('scan-d.png').click();
   await details.getByRole('button', { name: 'Run OCR' }).click();
   await expect(details.getByText(/Reading the scan · \d+ s so far/)).toBeVisible(COLD);
-  await expect(details.getByText(/About \d+ s left, from \d+ similar files\./)).toBeVisible(COLD);
   await expect(details.getByRole('progressbar', { name: 'OCR progress' })).toBeVisible();
-  await shot(page, testInfo, 'ocr-01-running-with-estimate');
+  await shot(page, testInfo, 'ocr-01-running');
 
-  // Done: the pages it read, the summary the model wrote, and search finds it.
+  // Done: the pages it read, the summary the model wrote, the text to download.
   await expect(details.getByText('Read 2 pages by OCR.')).toBeVisible({ timeout: 60_000 });
-  // A read is kept, and it can be read again from the file as it is now.
   await expect(details.getByRole('button', { name: 'Read again with OCR' })).toBeVisible();
   // The read downloads as text: the OCR markdown, not the scan's bytes.
   const textHref =
@@ -990,33 +643,15 @@ test('the library: OCR is asked for on a scan, its progress and estimate show wh
   await expect(details.getByText(/Stub summary/)).toBeVisible(COLD);
   await shot(page, testInfo, 'ocr-02-done-with-summary');
 
-  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('invoice');
-  await expect(list.locator('[data-artifact]', { hasText: 'scan-d.png' })).toBeVisible();
-  // scan-e was never read, so nothing about it is in the index.
-  await expect(list.locator('[data-artifact]', { hasText: 'scan-e.png' })).toHaveCount(0);
-  await shot(page, testInfo, 'ocr-03-search-finds-the-scan');
-
-  // Usage: four scans read (two pages each) and summarized from their text.
-  await page.goto('/utilization');
-  await expect(page.getByTestId('document-usage-pages').filter({ visible: true })).toHaveText('8', {
-    timeout: 30_000,
-  });
-  // Five scans were each described from their pixels at upload, and four were then summarized from their text.
-  await expect(page.getByText(/8 pages/).filter({ visible: true })).toBeVisible();
-  await expect(
-    page.getByText(/4 summaries · 5 pictures described/).filter({ visible: true })
-  ).toBeVisible();
-
-  // Phone width: the offer opens over the list, and the page does not scroll sideways.
+  // Phone width: the panel opens over the list, and the page does not scroll sideways.
   await page.setViewportSize(MOBILE_VIEWPORT);
   await page.goto('/chat/artifacts');
-  await page.getByLabel('Search artifacts').filter({ visible: true }).fill('');
   await page
-    .locator('[data-artifact]', { hasText: 'scan-e.png' })
+    .locator('[data-artifact]', { hasText: 'scan-d.png' })
     .getByRole('button')
     .first()
     .click();
-  await expect(page.getByRole('button', { name: 'Run OCR' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Read again with OCR' })).toBeVisible();
   const overflows = await page.evaluate(
     () => document.documentElement.scrollWidth > document.documentElement.clientWidth
   );
@@ -1049,11 +684,12 @@ test('the library: a photo with no text is described from the picture, OCR finds
   // Described from the picture itself: no text, and not waiting for OCR.
   // The digest is written in the background after the upload; the page
   // shows it once reloaded after that.
-  await expect(async () => {
-    await page.reload();
-    await list.getByText('car-street.png').click();
-    await expect(details.getByText(LLM_STUB_PICTURE)).toBeVisible({ timeout: 5_000 });
-  }).toPass({ timeout: 30_000, intervals: [500] });
+  await expect
+    .poll(async () => (await digestStatusOf(page, 'car-street.png'))?.status, COLD)
+    .toBe('done');
+  await page.reload();
+  await list.getByText('car-street.png').click();
+  await expect(details.getByText(LLM_STUB_PICTURE)).toBeVisible();
   await expect(details.getByText('Waiting for OCR')).toHaveCount(0);
   await shot(page, testInfo, 'documents-01-photo-described');
 

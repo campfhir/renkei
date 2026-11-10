@@ -1,13 +1,18 @@
 /**
  * Concurrent chats in a code project (lib/code/turn.ts, migration 158):
  * every chat works in a git worktree of its own, so any number run at
- * once. Two seeded chats both have composers and no "history" anywhere;
- * the project page lists both; New chat is not refused while another
- * chat is mid-reply; a file made in one chat's worktree shows in that
- * chat's tree and not the other's; deleting a chat takes its worktree
- * with it. Then the same page at phone width. The sandbox worker is the
- * stub (sandbox-stub.mjs), which answers `worktree` the way the real
- * worker does.
+ * once. Two seeded chats both open with composers and no "history"
+ * anywhere; the project page lists both; New chat is not refused while
+ * another chat is mid-reply, and opens on auto mode.
+ *
+ * Which worktree each chat's tree is read from (its own, not the base clone
+ * or the other chat's), that a chat outside the project is not reachable
+ * through it, and that deleting a chat deletes its worktree and only its
+ * own are route tests now
+ * (app/api/code/projects/[projectId]/chats/[chatId]/tree/route.test.ts).
+ * Real git is not needed for any of it: the isolation itself is the
+ * sandbox worker's, which the browser suite only imitates with its stub
+ * (sandbox-stub.mjs).
  *
  * The project and its chats are the test's own person's, made through the
  * Code routes after connecting Bitbucket (e2e/support/code-host.ts); a
@@ -19,17 +24,11 @@
 import { randomUUID } from 'node:crypto';
 import type { APIRequestContext, Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { SANDBOX_STUB_URL } from './constants';
 import { toolStep, removeModel, scripted } from './support/stub-model';
 import { setUpCode, stageCodeProject } from './support/code-host';
 
 // The stand-in model is staged by an operator.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
-
-const WORKER_HEADERS = {
-  authorization: `Bearer ${process.env.SANDBOX_WORKER_API_KEY ?? 'e2e-sandbox-key'}`,
-  'content-type': 'application/json',
-};
 
 interface Ids {
   projectId: string;
@@ -91,34 +90,6 @@ async function startRunningTurn(page: Page, chatId: string, llmModelId: string):
       { timeout: 30_000 }
     )
     .toBe(true);
-}
-
-/** The branch of a chat's worktree: lib/code/turn.ts names it after the chat. */
-function branchOf(chatId: string): string {
-  return `renkei/${chatId.slice(-12)}`;
-}
-
-/** The branches of the project's workspaces on the sandbox worker (the stub). */
-async function workspaceBranches(projectId: string): Promise<string[]> {
-  const listed = await fetch(`${SANDBOX_STUB_URL}/v1/workspaces/list`, {
-    method: 'POST',
-    headers: WORKER_HEADERS,
-    body: JSON.stringify({ subject: `code-project:${projectId}` }),
-  });
-  const { workspaces }: { workspaces: { branch?: string }[] } = await listed.json();
-  return workspaces.map((workspace) => workspace.branch ?? '');
-}
-
-/** The entry paths of a tree listing's JSON. */
-function entryPaths(body: unknown): string[] {
-  if (typeof body !== 'object' || body === null || !('entries' in body)) return [];
-  const { entries } = body;
-  if (!Array.isArray(entries)) return [];
-  return entries.flatMap((entry: unknown) =>
-    typeof entry === 'object' && entry !== null && 'path' in entry && typeof entry.path === 'string'
-      ? [entry.path]
-      : []
-  );
 }
 
 /** The page never scrolls sideways. */
@@ -199,49 +170,5 @@ test.describe('code project concurrent chats', () => {
       timeout: 30_000,
     });
     await expect(page.getByTestId('chat-history-notice')).toHaveCount(0);
-  });
-
-  test('a file made in one chat’s worktree is in that chat’s tree and not the other’s', async ({
-    page,
-  }, testInfo) => {
-    const file = `only-in-first-${testInfo.project.name}.txt`;
-    const tree = (chatId: string) =>
-      page.request.get(`/api/code/projects/${ids.projectId}/chats/${chatId}/tree?path=`);
-    const names = async (chatId: string): Promise<string[]> => {
-      const response = await tree(chatId);
-      expect(response.ok()).toBe(true);
-      return entryPaths(await response.json());
-    };
-
-    const created = await page.request.post(
-      `/api/code/projects/${ids.projectId}/chats/${ids.firstChatId}/files`,
-      { data: { path: file, content: 'refunds are posted to 2410\n' } }
-    );
-    expect(created.ok()).toBe(true);
-
-    expect(await names(ids.firstChatId)).toContain(file);
-    expect(await names(ids.secondChatId)).not.toContain(file);
-    // Nor in the project's base clone, which no chat edits.
-    const base = await page.request.get(`/api/code/projects/${ids.projectId}/tree?path=`);
-    expect(entryPaths(await base.json())).not.toContain(file);
-
-    // A chat that is not this project's is not reachable through it.
-    const stranger = await page.request.get(
-      `/api/code/projects/${ids.projectId}/chats/00000000-0000-4000-8000-000000000000/tree?path=`
-    );
-    expect(stranger.status()).toBe(404);
-  });
-
-  test('deleting a chat takes its worktree with it, and only its own', async ({ page }) => {
-    const first = branchOf(ids.firstChatId);
-    const second = branchOf(ids.secondChatId);
-    expect(first).not.toBe(second);
-    expect(await workspaceBranches(ids.projectId)).toEqual(expect.arrayContaining([first, second]));
-
-    const deleted = await page.request.delete(`/api/chat/chats/${ids.firstChatId}`);
-    expect(deleted.ok()).toBe(true);
-    const left = await workspaceBranches(ids.projectId);
-    expect(left).not.toContain(first);
-    expect(left).toContain(second);
   });
 });

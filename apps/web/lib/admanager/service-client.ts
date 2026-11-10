@@ -19,6 +19,7 @@
  */
 
 import type { HttpMethod, AdManagerCredentials } from '@renkei/connector-admanager';
+import { isRecord } from '@renkei/guards';
 
 export type AdManagerClientError =
   /** DELEGATE_WORKER_URL / _API_KEY are not set. */
@@ -57,10 +58,6 @@ export interface AdManagerApiRequest {
 }
 
 const REQUEST_TIMEOUT_MS = 45_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

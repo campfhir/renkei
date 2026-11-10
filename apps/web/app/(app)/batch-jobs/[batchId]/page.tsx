@@ -10,15 +10,12 @@ import LocalTime from '@/components/local-time';
 import AutoRefresh from '@/components/auto-refresh';
 
 import { afterProcessingValueOf, skipProcessedOf } from '@/lib/batch-jobs/pipeline-form-value';
+import { isRecord } from '@renkei/guards';
 
 const ITEM_STATUS_TABS = ['pending', 'processing', 'succeeded', 'failed', 'skipped'] as const;
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** "moved to /processed on this share" — what the batch was told to do afterwards. */

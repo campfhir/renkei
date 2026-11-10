@@ -33,11 +33,10 @@ import { createWebexUserAccessVerifier, WebexClient } from '@renkei/connector-we
 import type { EventHandler } from '../handlers';
 import { resolveLinkedWebexUserAccess } from './webex-linked-user';
 import { logger } from '../logger';
+import { whoHas } from '../log-actor';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'knowledge/ingest';
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -172,10 +171,14 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
       // The provider was configured when this event was enqueued and is gone
       // now — the org turned knowledge off. Never an error (embeddings.ts
       // contract); the index just stops growing.
-      logger.info('knowledge layer off; ingest of {refId} dropped', {
-        component: COMPONENT,
-        refId,
-      });
+      logger.info(
+        'the knowledge layer is off for this org; the queued ingest of {provider} object {refId} was dropped',
+        {
+          component: COMPONENT,
+          provider,
+          refId,
+        }
+      );
       return;
     }
 
@@ -193,8 +196,9 @@ export function createKnowledgeIngestObjectHandler(): EventHandler {
     if (!ingested.ok) {
       throw new Error(`could not ingest ${provider}/${refId}: ${ingestFailure(ingested.err)}`);
     }
-    logger.debug('ingested {refId} in {chunks} chunk(s)', {
+    logger.debug('indexed {provider} object {refId} in {chunks} chunk(s)', {
       component: COMPONENT,
+      provider,
       refId,
       chunks: ingested.val.chunks,
     });
@@ -215,10 +219,14 @@ export function createKnowledgeIngestEmailHandler(): EventHandler {
 
     const embedder = await resolveEmbeddingProvider();
     if (!embedder) {
-      logger.info('knowledge layer off; ingest of {refId} dropped', {
-        component: COMPONENT,
-        refId,
-      });
+      logger.info(
+        'the knowledge layer is off for this org; the queued ingest of the mail message {refId} was dropped',
+        {
+          component: COMPONENT,
+          refId,
+          ownerUpn,
+        }
+      );
       return;
     }
 
@@ -323,6 +331,7 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
     const embedder = await resolveEmbeddingProvider();
     if (!embedder) return; // knowledge layer off for this org
 
+    const name = str(payload.name);
     const access = await resolveMicrosoftAccess(accountId);
     const downloaded = await graphDownload(access.auth, driveId, itemId);
     if (!downloaded.ok) {
@@ -333,19 +342,23 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
         return;
       }
       if (status === 403 || downloaded.err.type === 'CONTENT_TOO_LARGE') {
-        logger.warn('skipping {refId}: {reason}', {
-          component: COMPONENT,
-          refId,
-          accountId,
-          reason: status === 403 ? 'no longer readable by the indexing account' : 'too large',
-        });
+        logger.warn(
+          '"{fileName}", read with {actor}\'s Microsoft 365 grant, was not indexed ({reason}); it is skipped until it changes',
+          {
+            component: COMPONENT,
+            ...(await whoHas(accountId)),
+            refId,
+            accountId,
+            fileName: name,
+            reason: status === 403 ? 'no longer readable by the indexing account' : 'too large',
+          }
+        );
         return;
       }
       // Network, 5xx, throttling — retryable.
       throw new Error(`could not download ${refId}: ${downloaded.err.message ?? 'unknown'}`);
     }
 
-    const name = str(payload.name);
     const extracted = await extractText(downloaded.val.bytes, {
       fileName: name,
       contentType: downloaded.val.contentType ?? str(payload.mimeType),
@@ -362,12 +375,17 @@ export function createKnowledgeIngestDocumentHandler(): EventHandler {
       }
       // Every one of the rest is deterministic: retrying cannot change a
       // file's format, its password, or its corruption.
-      logger.warn('could not extract text from {refId} ({reason})', {
-        component: COMPONENT,
-        refId,
-        accountId,
-        reason: extracted.err.type,
-      });
+      logger.warn(
+        'no text could be extracted from "{fileName}", read with {actor}\'s Microsoft 365 grant ({reason}); it is skipped until it changes',
+        {
+          component: COMPONENT,
+          ...(await whoHas(accountId)),
+          refId,
+          accountId,
+          fileName: name,
+          reason: extracted.err.type,
+        }
+      );
       return;
     }
     if (!extracted.val.text) return; // a scan; nothing to embed
@@ -438,11 +456,15 @@ export function createKnowledgeReconcileDriveHandler(): EventHandler {
     );
     if (!removed.ok) throw new Error(`could not reconcile drive ${driveId}`);
     if (removed.val > 0) {
-      logger.info('reconciled {driveId}: removed {removed} stale chunk(s)', {
-        component: COMPONENT,
-        driveId,
-        removed: removed.val,
-      });
+      logger.info(
+        'reconciled drive {driveId} after a full enumeration: removed {removed} stale chunk(s) of documents no longer in it',
+        {
+          component: COMPONENT,
+          provider,
+          driveId,
+          removed: removed.val,
+        }
+      );
     }
   };
 }
@@ -513,9 +535,10 @@ export function createKnowledgeEnrichItemHandler(): EventHandler {
       searched.val.elided
     );
 
-    logger.debug('enriched item {itemId} with {count} related hit(s)', {
+    logger.debug('recorded {count} related item(s) on the actionable item of {userEmail}', {
       component: COMPONENT,
       itemId,
+      userEmail: accessSubject,
       count: updated === 0 ? 0 : related.length,
     });
   };

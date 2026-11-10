@@ -12,6 +12,7 @@ import { useCoachAnchor, type CoachAnchorProps } from '@/components/coach-marks/
 import { useCoachMarks } from '@/components/coach-marks/context';
 import type { ChatSidebarData } from '@/lib/chat/sidebar';
 import { ChatList } from './chat/_components/chat-nav';
+import { shouldRefreshOnReturn, type ReturnEvent } from './chat/_components/chat-nav.model';
 import { OmniSearch, type OmniPage } from './omni-search';
 import { GlobalShortcuts } from './global-shortcuts';
 import { scrollToHash } from '@/lib/hash-scroll';
@@ -167,18 +168,18 @@ export default function AppNav({
   // back-forward cache) re-reads the list here, once for both copies of it.
   useEffect(() => {
     if (chats === null) return;
-    const refresh = () => {
-      if (document.visibilityState !== 'visible') return;
-      if (navigator.onLine === false) return;
-      router.refresh();
+    // When a return re-reads is chat-nav.model.ts's shouldRefreshOnReturn.
+    const onReturn = (event: ReturnEvent) => {
+      const page = { visible: document.visibilityState === 'visible', online: navigator.onLine };
+      if (shouldRefreshOnReturn(event, page)) router.refresh();
     };
-    const onPageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) refresh();
-    };
-    document.addEventListener('visibilitychange', refresh);
+    const onVisibility = () => onReturn({ type: 'visibilitychange' });
+    const onPageShow = (event: PageTransitionEvent) =>
+      onReturn({ type: 'pageshow', persisted: event.persisted });
+    document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('pageshow', onPageShow);
     return () => {
-      document.removeEventListener('visibilitychange', refresh);
+      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('pageshow', onPageShow);
     };
   }, [chats, router]);

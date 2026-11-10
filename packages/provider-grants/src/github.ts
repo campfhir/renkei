@@ -21,6 +21,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
 import { causeOf, oauthErrorSuffix } from './oauth-error';
+import { asRecord } from '@renkei/guards';
 
 export const GITHUB = 'github';
 
@@ -119,9 +120,4 @@ export function readGitHubMetadata(metadata: Record<string, unknown>): {
   return {
     login: typeof metadata.login === 'string' ? metadata.login : '',
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  return { ...value };
 }

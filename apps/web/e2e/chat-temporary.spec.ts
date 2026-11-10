@@ -3,14 +3,16 @@
  * empty chat's composer makes it one (kept across a reload, with the empty
  * state saying what it means, a ghost in the title bar whose tooltip says
  * it again and whose dialog says when the chat will be deleted), the
- * menu's row leads with the same ghost, and a
- * reply in it cannot keep a memory — the stub model calls
- * chat_memory_remember, which a temporary chat is not offered, so the call
- * is refused without a permission ask, the turn carries on, and the
- * person's memory stays empty.
- * After the first message the switch is gone, and the route refuses to
- * change it; a temporary chat cannot be started in, or moved into, a
- * project.
+ * menu's row leads with the same ghost, and a reply in it cannot keep a
+ * memory — the stub model calls chat_memory_remember, which a temporary
+ * chat is not offered, so the call is refused without a permission ask,
+ * the turn carries on, and the person's memory stays empty. After the
+ * first message the switch is gone.
+ *
+ * The routes' rules — the switch refused once the chat has a message, and
+ * a temporary chat never started in, moved into or switched on in a
+ * project — are route tests now (app/api/chat/chats/[chatId]/route.test.ts).
+ * The tools a temporary chat is offered are lib/chat/temporary.test.ts's.
  *
  * The deletion after a quiet day is the worker's retention sweep
  * (apps/worker-agents/src/chat-sweep.ts, unit-tested there); the suite
@@ -41,7 +43,7 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
-test('a temporary chat keeps no memory and says so, and stays out of projects', async ({
+test('a temporary chat keeps no memory and says so', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -120,25 +122,6 @@ test('a temporary chat keeps no memory and says so, and stays out of projects', 
     await dialog.getByRole('button', { name: 'Close' }).click();
     await expect(dialog).toHaveCount(0);
     await shot(page, testInfo, 'chat-temporary-02-replied');
-
-    // And the route will not change it now, nor put it in a project.
-    const late = await page.request.patch(`/api/chat/chats/${chatId}`, {
-      data: { temporary: false },
-    });
-    expect(late.status()).toBe(409);
-    const project = await page.request.post('/api/chat/projects', {
-      data: { name: `Temporary spec ${tag}` },
-    });
-    expect(project.status(), await project.text()).toBe(201);
-    const { projectId }: { projectId: string } = await project.json();
-    const moved = await page.request.post(`/api/chat/chats/${chatId}/move`, {
-      data: { projectId },
-    });
-    expect(moved.status()).toBe(400);
-    const inProject = await page.request.post('/api/chat/chats', {
-      data: { projectId, temporary: true },
-    });
-    expect(inProject.status()).toBe(400);
 
     // "New temporary chat" from the menu starts the next one as temporary.
     await main.getByRole('button', { name: 'More', exact: true }).click();

@@ -3,41 +3,12 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { getSessionFromCookies } from '@/lib/session';
 import { signInUrl } from '@/lib/sign-in-url';
-import { CHANGELOG, buildLabel, type ChangelogEntry } from '@/lib/changelog';
+import { CHANGELOG, buildLabel, releaseDate, type ChangelogEntry } from '@/lib/changelog';
 import RenkeiMark from '@/components/renkei-mark';
 import packageJson from '../../../package.json';
 import CoachTarget from '@/components/coach-marks/anchor';
 
 export const metadata: Metadata = { title: 'About' };
-
-const MONTHS = [
-  'January',
-  'February',
-  'March',
-  'April',
-  'May',
-  'June',
-  'July',
-  'August',
-  'September',
-  'October',
-  'November',
-  'December',
-];
-
-/**
- * `2026-08-25` → `25 August 2026`, with no timezone in sight.
- *
- * Deliberately not LocalTime: a release date is a CALENDAR date, not an
- * instant. Parsing it as midnight UTC and rendering it in the viewer's zone
- * shows the day before for anyone west of Greenwich, which is both wrong and
- * the kind of wrong nobody reports.
- */
-function releaseDate(iso: string): string {
-  const [year, month, day] = iso.split('-').map(Number);
-  const name = MONTHS[month - 1];
-  return name ? `${day} ${name} ${year}` : iso;
-}
 
 /** Kind → the pill it renders as. Colour carries the same meaning throughout. */
 const KIND_STYLE: Record<ChangelogEntry['kind'], { label: string; className: string }> = {

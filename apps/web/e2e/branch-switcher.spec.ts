@@ -14,6 +14,11 @@
  * a first turn in each chat clones the repository and gives the chat its
  * worktree, as it does for a person. The branch routes themselves are
  * mocked at the browser edge, as before.
+ *
+ * What the dialog does with each answer — a refusal shown with its
+ * reason, a dirty checkout offering "Discard changes and switch to …",
+ * the discard retrying the same switch, the branch already on not
+ * pickable — is app/(app)/code/_components/branch-switcher.model.test.ts.
  */
 
 import path from 'node:path';
@@ -87,63 +92,6 @@ async function mockBranchRoute(page: Page, projectId: string): Promise<void> {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({ branch }),
-    });
-  });
-}
-
-/**
- * The branch route, mocked so the first switch attempt is refused for a
- * dirty tree (branch/route.ts's real 409 'dirty') and …/discard clears
- * it — the same shapes those routes actually return, exercised here
- * against the branch-switcher.tsx UI they drive (the modal, and
- * "Discard changes and switch to <branch>"), same as `mockBranchRoute`
- * mocks the ordinary switch it's built on.
- */
-async function mockDirtyThenCleanBranchRoute(page: Page, projectId: string): Promise<void> {
-  let attempted = 0;
-  await page.route(`**/api/code/projects/${projectId}/chats/*/branch`, async (route) => {
-    if (route.request().method() === 'GET') {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          branches: [
-            { name: 'main', headSha: 'aaaaaaaaaaaa' },
-            { name: 'feature/x', headSha: 'bbbbbbbbbbbb' },
-          ],
-        }),
-      });
-      return;
-    }
-    attempted += 1;
-    if (attempted === 1) {
-      await route.fulfill({
-        status: 409,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          error:
-            'There are uncommitted changes on the checkout. Commit or discard them before switching branches.',
-          code: 'dirty',
-        }),
-      });
-      return;
-    }
-    const body: unknown = route.request().postDataJSON();
-    const branch =
-      body && typeof body === 'object' && 'branch' in body && typeof body.branch === 'string'
-        ? body.branch
-        : 'feature/x';
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ branch }),
-    });
-  });
-  await page.route(`**/api/code/projects/${projectId}/chats/*/discard`, async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ branch: 'main' }),
     });
   });
 }
@@ -224,45 +172,5 @@ test.describe('branch switcher', () => {
     await main.getByRole('button', { name: 'More', exact: true }).click();
     await expect(page.getByRole('menuitem', { name: 'Switch branch' })).toBeVisible();
     await shot(page, testInfo, 'branch-switcher-other-chat.png');
-  });
-
-  test('a dirty checkout is refused with a clear reason, and discarding lets the switch through', async ({
-    page,
-  }, testInfo) => {
-    // The phone width the old `mobile` project gave, as a resized viewport on one project.
-    const mobile = testInfo.project.name === 'desktop-dark';
-    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
-    await mockDirtyThenCleanBranchRoute(page, ids.projectId);
-    const main = page.getByRole('main');
-
-    // ── Picking a branch on a dirty checkout: a modal names the problem,
-    //    not an overlapping inline error, with a way through ──
-    await page.goto(`/chat/${ids.activeChatId}`);
-    await expect(page.getByRole('heading', { name: ids.activeChatTitle })).toBeVisible();
-    const chatBranch = main.locator('[data-testid="chat-branch"]');
-    await expect(chatBranch).toContainText('renkei/');
-    await main.getByRole('button', { name: 'More', exact: true }).click();
-    await page.getByRole('menuitem', { name: 'Switch branch' }).click();
-    const branchModal = page.getByRole('dialog', { name: 'Switch branch' });
-    await branchModal.getByRole('option', { name: 'feature/x' }).click();
-    const blocked = branchModal.getByRole('alert');
-    await expect(blocked).toBeVisible();
-    await expect(
-      blocked.getByText(
-        'There are uncommitted changes on the checkout. Commit or discard them before switching branches.'
-      )
-    ).toBeVisible();
-    await expect(blocked.getByText(/anything not committed is lost/)).toBeVisible();
-    const discard = blocked.getByRole('button', {
-      name: 'Discard changes and switch to feature/x',
-    });
-    await expect(discard).toBeVisible();
-    await shot(page, testInfo, 'branch-switcher-dirty-modal.png');
-
-    // ── Discarding retries the same switch, which now goes through ──
-    await discard.click();
-    await expect(branchModal).toHaveCount(0);
-    await expect(chatBranch).toContainText('feature/x');
-    await shot(page, testInfo, 'branch-switcher-dirty-discarded.png');
   });
 });

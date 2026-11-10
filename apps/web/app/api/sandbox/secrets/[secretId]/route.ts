@@ -17,12 +17,9 @@ import {
   sbSecretUnlock,
 } from '@/lib/sandbox/service-client';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 const HOUR_MS = 60 * 60_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export async function POST(
   request: NextRequest,
@@ -31,7 +28,8 @@ export async function POST(
   const { secretId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {
@@ -49,14 +47,20 @@ export async function POST(
     if (!unlocked.ok) {
       const failure = clientFailure(unlocked.err);
       if (failure.status !== 400 && failure.status !== 404) {
-        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-          component: 'api/sandbox/secrets',
-          subject: session.subject,
-          secretId,
-          operation: 'unlocked',
-          status: failure.status,
-          error: 'message' in unlocked.err && unlocked.err.message ? unlocked.err.message : failure.message,
-        });
+        logger[failure.status >= 500 ? 'error' : 'warn'](
+          'Sandbox request failed ({status}): {error}',
+          {
+            component: 'api/sandbox/secrets',
+            subject: session.subject,
+            secretId,
+            operation: 'unlocked',
+            status: failure.status,
+            error:
+              'message' in unlocked.err && unlocked.err.message
+                ? unlocked.err.message
+                : failure.message,
+          }
+        );
       }
       return NextResponse.json({ error: failure.message }, { status: failure.status });
     }
@@ -75,14 +79,18 @@ export async function POST(
     if (!locked.ok) {
       const failure = clientFailure(locked.err);
       if (failure.status !== 400 && failure.status !== 404) {
-        logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-          component: 'api/sandbox/secrets',
-          subject: session.subject,
-          secretId,
-          operation: 'locked',
-          status: failure.status,
-          error: 'message' in locked.err && locked.err.message ? locked.err.message : failure.message,
-        });
+        logger[failure.status >= 500 ? 'error' : 'warn'](
+          'Sandbox request failed ({status}): {error}',
+          {
+            component: 'api/sandbox/secrets',
+            subject: session.subject,
+            secretId,
+            operation: 'locked',
+            status: failure.status,
+            error:
+              'message' in locked.err && locked.err.message ? locked.err.message : failure.message,
+          }
+        );
       }
       return NextResponse.json({ error: failure.message }, { status: failure.status });
     }
@@ -105,20 +113,25 @@ export async function DELETE(
   const { secretId } = await params;
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const revoked = await sbSecretRevoke({ subject: session.subject }, secretId);
   if (!revoked.ok) {
     const failure = clientFailure(revoked.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-        component: 'api/sandbox/secrets',
-        subject: session.subject,
-        secretId,
-        operation: 'revoked',
-        status: failure.status,
-        error: 'message' in revoked.err && revoked.err.message ? revoked.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'Sandbox request failed ({status}): {error}',
+        {
+          component: 'api/sandbox/secrets',
+          subject: session.subject,
+          secretId,
+          operation: 'revoked',
+          status: failure.status,
+          error:
+            'message' in revoked.err && revoked.err.message ? revoked.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }

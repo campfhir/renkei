@@ -5,50 +5,57 @@
  * the signed-in person's own grant on whichever host the repository is
  * on (repo-host.ts) — a scrollable list, "Load more" widening the page
  * rather than a true cursor (the adapter has no next-page token today;
- * raising `max` is the simple version of "keep going"). Its summary
- * card on the project page is commits-summary.tsx.
+ * raising `max` is the simple version of "keep going"; commits-page.model.ts).
+ * Its summary card on the project page is commits-summary.tsx.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
 import { getJson } from '@/lib/fetch-json';
 import type { HostCommit } from '@/lib/code/repo-host';
+import {
+  commitsReducer,
+  commitsUrl,
+  commitsView,
+  initialCommits,
+  loadMoreButton,
+  shortSha,
+} from './commits-page.model';
 
-const PAGE = 30;
-
-export default function CommitsPage({ projectId, projectName, repoFullName }: {
+export default function CommitsPage({
+  projectId,
+  projectName,
+  repoFullName,
+}: {
   projectId: string;
   projectName: string;
   repoFullName: string;
 }) {
-  const base = `/api/code/projects/${projectId}/commits`;
-  const [commits, setCommits] = useState<HostCommit[] | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [max, setMax] = useState(PAGE);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [state, dispatch] = useReducer(commitsReducer, initialCommits);
+  const { commits, max, loadError, busy } = state;
 
   const reload = useCallback(
     async (nextMax: number) => {
-      setBusy(true);
+      dispatch({ type: 'reading' });
       const result = await getJson<{ commits: HostCommit[]; hasMore: boolean }>(
-        `${base}?max=${nextMax}`
+        commitsUrl(projectId, nextMax)
       );
-      setBusy(false);
       if (result.data) {
-        setCommits(result.data.commits);
-        setHasMore(result.data.hasMore);
-        setLoadError(null);
-      } else setLoadError(result.error ?? 'The commits could not be read.');
+        dispatch({ type: 'loaded', commits: result.data.commits, hasMore: result.data.hasMore });
+      } else
+        dispatch({ type: 'loadFailed', error: result.error ?? 'The commits could not be read.' });
     },
-    [base]
+    [projectId]
   );
 
   useEffect(() => {
     void reload(max);
   }, [reload, max]);
+
+  const view = commitsView(state);
+  const more = loadMoreButton(state);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -71,13 +78,13 @@ export default function CommitsPage({ projectId, projectName, repoFullName }: {
       </header>
 
       <div className="mx-auto max-w-3xl space-y-4 p-4">
-        {loadError ? (
+        {view === 'error' ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {loadError}
           </p>
-        ) : commits === null ? (
+        ) : view === 'reading' || commits === null ? (
           <p className="text-sm text-gray-500">Reading…</p>
-        ) : commits.length === 0 ? (
+        ) : view === 'empty' ? (
           <p className="text-sm text-gray-500">No commits yet.</p>
         ) : (
           <>
@@ -89,7 +96,7 @@ export default function CommitsPage({ projectId, projectName, repoFullName }: {
                       href={commit.url}
                       className="font-mono text-xs font-medium hover:underline"
                     >
-                      {commit.sha.slice(0, 12)}
+                      {shortSha(commit.sha)}
                     </ExternalLink>
                     <span className="min-w-0 truncate">{commit.message}</span>
                   </div>
@@ -99,14 +106,14 @@ export default function CommitsPage({ projectId, projectName, repoFullName }: {
                 </li>
               ))}
             </ul>
-            {hasMore ? (
+            {more ? (
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => setMax((was) => was + PAGE)}
+                disabled={more.disabled}
+                onClick={() => dispatch({ type: 'loadMore' })}
                 className="w-full rounded-md border border-gray-300 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
               >
-                {busy ? 'Loading…' : 'Load more'}
+                {more.label}
               </button>
             ) : null}
           </>

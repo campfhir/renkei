@@ -84,10 +84,44 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
 
   return {
     ...postgresAgentRunSweeps(db),
-    async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
+    async list({
+      agentId,
+      ownerSubject,
+      audience,
+      status,
+      statuses,
+      errorKinds,
+      excludeErrorKinds,
+      clockStartedBefore,
+      q,
+      matchId,
+      limit,
+      offset,
+    }) {
       let query = db().selectFrom('agent_runs').select(RUN_COLUMNS).where('agent_id', '=', agentId);
       if (ownerSubject !== null) query = query.where('owner_subject', '=', ownerSubject);
       if (status) query = query.where('status', '=', status);
+      if (statuses) {
+        query =
+          statuses.length > 0
+            ? query.where('status', 'in', [...statuses])
+            : query.where(sql<boolean>`false`);
+      }
+      if (errorKinds) {
+        query =
+          errorKinds.length > 0
+            ? query.where('error_kind', 'in', [...errorKinds])
+            : query.where(sql<boolean>`false`);
+      }
+      if (excludeErrorKinds && excludeErrorKinds.length > 0) {
+        const excluded = [...excludeErrorKinds];
+        query = query.where((eb) =>
+          eb.or([eb('error_kind', 'is', null), eb('error_kind', 'not in', excluded)])
+        );
+      }
+      if (clockStartedBefore) {
+        query = query.where(sql<Date>`coalesce(resumed_at, created_at)`, '<', clockStartedBefore);
+      }
       if (q) {
         const pattern = likePattern(q);
         query = query.where((eb) =>
@@ -105,8 +139,90 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
           ])
         );
       }
-      const rows = await query.orderBy('created_at', 'desc').orderBy('id').limit(limit).execute();
+      const rows = await query
+        .orderBy('created_at', 'desc')
+        .orderBy('id')
+        .limit(limit)
+        .offset(offset ?? 0)
+        .execute();
       return rows.map(summaryFromRow);
+    },
+    async summarizeLive(agentIds) {
+      if (agentIds.length === 0) return [];
+      const rows = await db()
+        .selectFrom('agent_runs')
+        .select((eb) => [
+          'agent_id',
+          'status',
+          eb.fn.countAll<string>().as('count'),
+          eb.fn.min('created_at').as('oldest'),
+        ])
+        .where('agent_id', 'in', [...agentIds])
+        .where('status', 'in', [...LIVE_STATUSES])
+        .groupBy(['agent_id', 'status'])
+        .orderBy('agent_id')
+        .orderBy('status')
+        .execute();
+      return rows.map((row) => ({
+        agentId: row.agent_id,
+        status: row.status,
+        count: Number(row.count),
+        oldestCreatedAt: new Date(row.oldest),
+      }));
+    },
+    async listLiveForOrg({ statuses, limit, offset }) {
+      const wanted = (statuses ?? LIVE_STATUSES).filter((status) =>
+        LIVE_STATUSES.some((live) => live === status)
+      );
+      if (wanted.length === 0) return [];
+      const rows = await db()
+        .selectFrom('agent_runs as r')
+        .innerJoin('agents as a', 'a.id', 'r.agent_id')
+        .leftJoin('identities as i', (join) => join.onRef('i.subject', '=', 'r.owner_subject'))
+        .select([
+          'r.id',
+          'r.agent_id',
+          'a.name',
+          'r.owner_subject',
+          'i.email',
+          'r.status',
+          'r.error_kind',
+          'r.trigger_kind',
+          'r.created_at',
+          'r.started_at',
+          'r.resumed_at',
+          'r.cancel_requested_at',
+        ])
+        .where('r.status', 'in', wanted)
+        .orderBy('r.created_at')
+        .orderBy('r.id')
+        .limit(limit)
+        .offset(offset ?? 0)
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        agentId: row.agent_id,
+        agentName: row.name,
+        ownerSubject: row.owner_subject,
+        ownerEmail: row.email,
+        status: row.status,
+        errorKind: row.error_kind ?? null,
+        triggerKind: row.trigger_kind,
+        createdAt: new Date(row.created_at),
+        startedAt: row.started_at ? new Date(row.started_at) : null,
+        resumedAt: row.resumed_at ? new Date(row.resumed_at) : null,
+        cancelRequestedAt: row.cancel_requested_at ? new Date(row.cancel_requested_at) : null,
+      }));
+    },
+    async countLiveForOrg() {
+      const rows = await db()
+        .selectFrom('agent_runs')
+        .select((eb) => ['status', eb.fn.countAll<string>().as('count')])
+        .where('status', 'in', [...LIVE_STATUSES])
+        .groupBy('status')
+        .orderBy('status')
+        .execute();
+      return rows.map((row) => ({ status: row.status, count: Number(row.count) }));
     },
     async findDetail({ agentId, runId, ownerSubject, audience }) {
       let query = db()
@@ -203,6 +319,21 @@ export function postgresAgentRuns(db: () => Kysely<DB>): AgentRunStore {
             initialState: row.initial_state,
           }
         : null;
+    },
+    async cancelQueued(runId, bySubject) {
+      const result = await db()
+        .updateTable('agent_runs')
+        .set({
+          status: 'canceled',
+          finished_at: sql`NOW()`,
+          updated_at: sql`NOW()`,
+          cancel_requested_at: sql`COALESCE(cancel_requested_at, NOW())`,
+          cancel_requested_by: sql`COALESCE(cancel_requested_by, ${bySubject})`,
+        })
+        .where('id', '=', runId)
+        .where('status', '=', 'queued')
+        .executeTakeFirst();
+      return Number(result.numUpdatedRows ?? 0) > 0;
     },
     async forceCancel(runId, { bySubject, errorKind, error }) {
       return db()

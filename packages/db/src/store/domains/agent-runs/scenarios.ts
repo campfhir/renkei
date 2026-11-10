@@ -529,6 +529,126 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
   },
   {
     method: 'agentRuns.list',
+    name: 'paging: an offset skips that many rows of the same order',
+    fixture,
+    run: async (store) => {
+      const pageOf = async (offset: number | undefined) =>
+        (
+          await store.agentRuns.list({
+            ...listing,
+            ownerSubject: null,
+            audience: 'admin',
+            limit: 2,
+            ...(offset === undefined ? {} : { offset }),
+          })
+        ).map((r) => r.id);
+      return [await pageOf(undefined), await pageOf(0), await pageOf(2), await pageOf(4)];
+    },
+  },
+  {
+    method: 'agentRuns.list',
+    name: 'filters: any of several statuses, error kinds in or out, and the run clock',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(71, 1, 'ann', 1, { status: 'canceled', error_kind: 'agent_failed' }),
+        run(72, 1, 'ann', 2, { status: 'canceled', error_kind: 'force_halted' }),
+        run(73, 1, 'ann', 3, { status: 'canceled', error_kind: null }),
+        run(74, 1, 'ann', 4, { status: 'queued', error_kind: null }),
+        // Created early, but resumed late: its clock is the resume.
+        run(75, 1, 'ann', 5, { status: 'running', error_kind: null, resumed_at: at(40) }),
+        run(76, 1, 'ann', 30, { status: 'running', error_kind: null }),
+        run(77, 1, 'ann', 6, { status: 'waiting', error_kind: 'needs-sign-in' }),
+      ],
+    },
+    run: async (store) => {
+      const ids = async (filter: Record<string, unknown>) =>
+        (
+          await store.agentRuns.list({
+            agentId: id(1),
+            ownerSubject: 'ann',
+            audience: 'owner',
+            limit: 50,
+            ...filter,
+          })
+        ).map((r) => r.id);
+      return {
+        halted: await ids({ status: 'canceled', errorKinds: ['force_halted'] }),
+        plainCanceled: await ids({
+          status: 'canceled',
+          excludeErrorKinds: ['force_halted'],
+        }),
+        stuck: await ids({ statuses: ['queued', 'running'], clockStartedBefore: at(20) }),
+        paused: await ids({ status: 'waiting', errorKinds: ['needs-sign-in'] }),
+        noStatuses: await ids({ statuses: [] }),
+        noKinds: await ids({ errorKinds: [] }),
+      };
+    },
+  },
+  {
+    method: 'agentRuns.summarizeLive',
+    name: 'per agent and live status: count and oldest; finished runs and other agents left out',
+    fixture: {
+      agents: [...agents, { id: id(3), owner_subject: 'cy', name: 'Cy agent' }],
+      agent_runs: [
+        run(61, 1, 'ann', 9, { status: 'queued', trigger_kind: 'schedule' }),
+        run(62, 1, 'ann', 4, { status: 'queued', trigger_kind: 'schedule' }),
+        run(63, 1, 'ann', 7, { status: 'queued', trigger_kind: 'schedule' }),
+        run(64, 1, 'ann', 2, { status: 'running' }),
+        run(65, 1, 'ann', 1, { status: 'succeeded' }),
+        run(66, 2, 'bob', 6, { status: 'waiting', waiting_until: at(50) }),
+        run(67, 2, 'bob', 3, { status: 'failed' }),
+        run(68, 3, 'cy', 5, { status: 'queued' }),
+      ],
+    },
+    run: async (store) => [
+      await store.agentRuns.summarizeLive([id(2), id(1)]),
+      await store.agentRuns.summarizeLive([id(9)]),
+      await store.agentRuns.summarizeLive([]),
+    ],
+  },
+  {
+    method: 'agentRuns.listLiveForOrg',
+    name: 'live runs of every agent, oldest first, with agent name and owner email; paged and filtered',
+    fixture: {
+      identities: [{ subject: 'ann', email: 'ann@example.test', display_name: 'Ann' }],
+      agents: [...agents, { id: id(3), owner_subject: 'cy', name: 'Cy agent' }],
+      agent_runs: [
+        run(71, 1, 'ann', 9, { status: 'queued', trigger_kind: 'schedule' }),
+        run(72, 2, 'bob', 4, { status: 'running', started_at: at(5) }),
+        run(73, 3, 'cy', 4, {
+          status: 'queued',
+          cancel_requested_at: at(6),
+          cancel_requested_by: 'cy',
+        }),
+        run(74, 1, 'ann', 2, { status: 'waiting', waiting_until: at(50), resumed_at: at(3) }),
+        run(75, 1, 'ann', 1, { status: 'succeeded' }),
+        run(76, 2, 'bob', 3, { status: 'canceled' }),
+      ],
+    },
+    run: async (store) => [
+      await store.agentRuns.listLiveForOrg({ limit: 10 }),
+      (await store.agentRuns.listLiveForOrg({ limit: 2, offset: 1 })).map((r) => r.id),
+      (await store.agentRuns.listLiveForOrg({ statuses: ['queued'], limit: 10 })).map((r) => r.id),
+      await store.agentRuns.listLiveForOrg({ statuses: ['succeeded'], limit: 10 }),
+    ],
+  },
+  {
+    method: 'agentRuns.countLiveForOrg',
+    name: 'live runs of the whole organization by status; finished runs left out',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(81, 1, 'ann', 1, { status: 'queued' }),
+        run(82, 2, 'bob', 2, { status: 'queued' }),
+        run(83, 2, 'bob', 3, { status: 'running' }),
+        run(84, 1, 'ann', 4, { status: 'failed' }),
+      ],
+    },
+    run: async (store) => [await store.agentRuns.countLiveForOrg()],
+  },
+  {
+    method: 'agentRuns.list',
     name: 'search: error, trigger kind, input (admin: failed only), escaped wildcards, id',
     fixture,
     run: async (store) => {
@@ -769,6 +889,42 @@ export const agentRunScenarios: Scenario<DataStore>[] = [
         ownerSubject: 'ann',
       }),
     ],
+  },
+  {
+    method: 'agentRuns.cancelQueued',
+    name: 'only a queued run, once; the cancel request recorded, an earlier one kept',
+    fixture: {
+      agents,
+      agent_runs: [
+        run(11, 1, 'ann', 1, { status: 'queued' }),
+        run(12, 1, 'ann', 2, {
+          status: 'queued',
+          cancel_requested_at: at(3),
+          cancel_requested_by: 'bob',
+        }),
+        run(13, 1, 'ann', 3, { status: 'running' }),
+        run(14, 1, 'ann', 4, { status: 'waiting' }),
+      ],
+    },
+    run: async (store) => {
+      const outcomes = [
+        await store.agentRuns.cancelQueued(id(11), 'ann'),
+        await store.agentRuns.cancelQueued(id(11), 'ann'),
+        await store.agentRuns.cancelQueued(id(12), 'ann'),
+        await store.agentRuns.cancelQueued(id(13), 'ann'),
+        await store.agentRuns.cancelQueued(id(14), 'ann'),
+      ];
+      const state = async (n: number) => {
+        const found = await store.agentRuns.findCancelState(id(n));
+        return found && [found.status, found.cancelRequestedAt !== null];
+      };
+      return {
+        outcomes,
+        states: await Promise.all([11, 12, 13, 14].map(state)),
+        // The first request is kept, not overwritten by the cancel that carried it out.
+        earlier: (await store.agentRuns.findCancelState(id(12)))?.cancelRequestedAt,
+      };
+    },
   },
   {
     method: 'agentRuns.forceCancel',

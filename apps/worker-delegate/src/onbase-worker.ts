@@ -11,6 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { OnBaseRefresh, RefreshedTokens, RefreshError } from '@renkei/provider-grants';
+import { isRecord } from '@renkei/guards';
 
 const TIMEOUT_MS = 30_000;
 
@@ -18,10 +19,6 @@ function config(): { url: string; apiKey: string } | null {
   const url = process.env.ONBASE_WORKER_URL?.trim().replace(/\/+$/, '');
   const apiKey = process.env.ONBASE_WORKER_API_KEY?.trim();
   return url && apiKey ? { url, apiKey } : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export async function onbaseWorkerCall(
@@ -83,4 +80,3 @@ export function onbaseWorkerRefresh(connector: string): OnBaseRefresh {
     return refreshed ? ok(refreshed) : err<RefreshError>('REFRESH_FAILED');
   };
 }
-

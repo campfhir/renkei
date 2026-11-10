@@ -28,6 +28,7 @@ import {
 import { parseLogQueryExpr } from '@campfhir/bored-logs';
 import { buildKnowledgeVerifiers, sourceFiltersFor } from '@/lib/mcp-tools/knowledge';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const MIN_K = 1;
 const MAX_K = 30;
@@ -160,11 +161,14 @@ export async function searchMyKnowledge(
       ...(metadataFilter ? { metadata: metadataFilter } : {}),
     });
     if (!recent.ok) {
-      logger.error('The knowledge store could not be read: {error}', {
-        component: 'actions/knowledge',
-        subject: session.subject,
-        error: recent.err.message ?? recent.err.type,
-      });
+      logger.error(
+        '{actor} browsed the knowledge page, but the knowledge store could not be read; they saw an error: {error}',
+        {
+          component: 'actions/knowledge',
+          ...who(session),
+          error: recent.err.message ?? recent.err.type,
+        }
+      );
       return { hits: [], elided: 0, error: 'The knowledge store could not be read.' };
     }
     return {
@@ -202,10 +206,10 @@ export async function searchMyKnowledge(
   });
   if (!searched.ok) {
     logger[searched.err.type === 'EMBEDDING_FAILED' ? 'warn' : 'error'](
-      'Knowledge search failed ({kind}): {error}',
+      '{actor} searched the knowledge store, but the search failed ({kind}); they saw an error: {error}',
       {
         component: 'actions/knowledge',
-        subject: session.subject,
+        ...who(session),
         kind: searched.err.type,
         error: searched.err.message ?? searched.err.type,
       }

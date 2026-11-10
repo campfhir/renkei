@@ -4,7 +4,10 @@
  * from an office address. The browser is put in Los Angeles; the send is
  * caught with page.route — no model runs — and answered with a refusal the
  * thread shows, so the test sees both what went out and that the page
- * handled the reply.
+ * handled the reply. It is the composer's one press-through to the turns
+ * route; the rest of what a Send asks for (the files by id, the chat's
+ * model, a spoken message flagged, an edited resend's body) is
+ * chat-thread.model.test.ts's.
  */
 
 import { randomUUID } from 'node:crypto';

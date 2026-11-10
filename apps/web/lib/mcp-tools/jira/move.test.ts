@@ -8,6 +8,23 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   getCachedDisplayName: () => 'Tester',
   withPresentationHint: (body: string, suggestion: string) =>
     `${body}\n\n(Presentation hint: ${suggestion})`,
@@ -24,6 +41,7 @@ import { registerMoveTools } from './move';
 import { clearFieldSchemaCache } from './field-schema';
 import { clearProjectTypeCache } from './issue-urls';
 import type { JiraAuth } from './jira-auth';
+import { isRecord } from '@renkei/guards';
 
 type ToolResult = {
   content: { type: string; text?: string }[];
@@ -53,10 +71,6 @@ class FakeJiraApiError extends Error {
 
 let calls: Call[] = [];
 let responder: (call: Call) => unknown;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
@@ -764,7 +778,7 @@ describe('jira_move_issues_preview', () => {
           value: 'IT Help Desk (HELP) · [System] Service request',
           oldValue: 'ENG · Task',
         },
-        { label: 'Request type', value: 'Get IT help (25)' },
+        { label: 'Request type', value: 'Get IT help' },
       ])
     );
     expect(rows.find((row) => row.label === 'Warnings')?.value).toContain('Components (ENG-1)');

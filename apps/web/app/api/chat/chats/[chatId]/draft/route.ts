@@ -9,6 +9,7 @@ import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-su
 import { resolveChatAccess } from '@/lib/chat/access';
 import { MAX_DRAFT_CHARS, saveDraft } from '@/lib/chat/drafts';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function PUT(
   request: NextRequest,
@@ -27,18 +28,23 @@ export async function PUT(
   try {
     const saved = await saveDraft(access.chat.id, body.text, access.cipher);
     if (!saved) {
-      logger.warn('The draft could not be encrypted: the chat key is unavailable', {
-        component: 'api/chat/chats/draft',
-        subject: session.subject,
-        chatId,
-      });
+      logger.warn(
+        '{actor} typed a draft in the chat "{chatTitle}", but the chat key is unavailable so it could not be encrypted; the draft was not saved',
+        {
+          component: 'api/chat/chats/draft',
+          ...who(session),
+          chatId,
+          chatTitle: access.chat.title ?? '(untitled)',
+        }
+      );
       return jsonError(409, 'key-unavailable', 'The draft could not be encrypted.');
     }
   } catch (error) {
-    logger.error('The draft could not be saved: {error}', {
+    logger.error('{actor} typed a draft in the chat "{chatTitle}", but it was not saved: {error}', {
       component: 'api/chat/chats/draft',
-      subject: session.subject,
+      ...who(session),
       chatId,
+      chatTitle: access.chat.title ?? '(untitled)',
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
     });

@@ -24,7 +24,7 @@ import {
   type AuthedFetch,
 } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+import { callerAttrs, type CallerContext, type MCPToolContext } from '../common';
 import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
@@ -156,9 +156,7 @@ function truncateForLog(text: string): string {
   return text.length > 1300 ? `${text.slice(0, 1300)}… (${text.length} chars total)` : text;
 }
 
-interface JiraAdminLogScope {
-  subject?: string;
-}
+type JiraAdminLogScope = CallerContext;
 
 export type JiraAdminResult =
   | { ok: true; body: unknown }
@@ -259,13 +257,17 @@ async function jiraAdminRequest(
     );
   } catch (error) {
     const timedOut = isTimeoutError(error);
-    logger.warn('Jira admin API unreachable', {
-      component: 'jira-admin/fetch',
-      subject: scope.subject,
-      method,
-      path: pathAndQuery,
-      timedOut,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach the Jira Administration API ({why}); the tool reported it as unreachable",
+      {
+        component: 'jira-admin/fetch',
+        ...(await callerAttrs(scope)),
+        method,
+        path: pathAndQuery,
+        timedOut,
+        why: timedOut ? 'timed out' : 'connection failed',
+      }
+    );
     const reason = timedOut
       ? `api.atlassian.com timed out after ${REQUEST_TIMEOUT_MS}ms`
       : 'Could not reach api.atlassian.com';
@@ -283,13 +285,16 @@ async function jiraAdminRequest(
   if (refusal) {
     // The delegate's own refusal never reached Jira — the resolver's words,
     // not a Jira status.
-    logger.warn('Delegate refused the Jira admin call', {
-      component: 'jira-admin/fetch',
-      subject: scope.subject,
-      method,
-      path: pathAndQuery,
-      refusal,
-    });
+    logger.warn(
+      "the delegate refused {caller}'s Jira Administration call ({refusal}) before it reached Atlassian; {method} {path} was not made",
+      {
+        component: 'jira-admin/fetch',
+        ...(await callerAttrs(scope)),
+        method,
+        path: pathAndQuery,
+        refusal,
+      }
+    );
     return { ok: false, error: grantRefusalText(refusal, label) };
   }
   const text = await response.text().catch(() => '');
@@ -300,9 +305,9 @@ async function jiraAdminRequest(
     // Not JSON — the status decides what the caller hears.
   }
   if (!response.ok) {
-    logger.warn('Jira admin API non-OK response', {
+    logger.warn("the Jira Administration API answered {status} to {caller}'s {method} {path}", {
       component: 'jira-admin/fetch',
-      subject: scope.subject,
+      ...(await callerAttrs(scope)),
       method,
       path: pathAndQuery,
       status: response.status,

@@ -77,41 +77,27 @@ export interface AtlassianApp {
  * can start. `origin` supplies the default redirect URI so authorize and
  * token-exchange always derive the same value.
  */
-export async function getAtlassianApp(
-  origin: string
-): Promise<AtlassianApp | null> {
+export async function getAtlassianApp(origin: string): Promise<AtlassianApp | null> {
   return readApp(origin, ATLASSIAN_CONNECTOR, usableAtlassianCeiling);
 }
 
 /** The tenant's second Atlassian app (JSM + Ops), same contract. */
-export async function getAtlassianJsmApp(
-  origin: string
-): Promise<AtlassianApp | null> {
+export async function getAtlassianJsmApp(origin: string): Promise<AtlassianApp | null> {
   return readApp(origin, ATLASSIAN_JSM_CONNECTOR, usableAtlassianJsmCeiling);
 }
 
 /** The tenant's third Atlassian app (Confluence), same contract. */
-export async function getAtlassianConfluenceApp(
-  origin: string
-): Promise<AtlassianApp | null> {
-  return readApp(
-    origin,
-    ATLASSIAN_CONFLUENCE_CONNECTOR,
-    usableAtlassianConfluenceCeiling
-  );
+export async function getAtlassianConfluenceApp(origin: string): Promise<AtlassianApp | null> {
+  return readApp(origin, ATLASSIAN_CONFLUENCE_CONNECTOR, usableAtlassianConfluenceCeiling);
 }
 
 /** The tenant's fourth Atlassian app (Bitbucket Cloud), same contract. */
-export async function getAtlassianBitbucketApp(
-  origin: string
-): Promise<AtlassianApp | null> {
+export async function getAtlassianBitbucketApp(origin: string): Promise<AtlassianApp | null> {
   return readApp(origin, ATLASSIAN_BITBUCKET_CONNECTOR, usableAtlassianBitbucketCeiling);
 }
 
 /** The tenant's fifth Atlassian app (Jira administration), same contract. */
-export async function getAtlassianAdminApp(
-  origin: string
-): Promise<AtlassianApp | null> {
+export async function getAtlassianAdminApp(origin: string): Promise<AtlassianApp | null> {
   return readApp(origin, ATLASSIAN_ADMIN_CONNECTOR, usableAtlassianAdminCeiling);
 }
 
@@ -122,17 +108,22 @@ async function readApp(
 ): Promise<AtlassianApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/atlassian',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the {connector} registration cannot be read; no {connector} flow can start',
+      { component: 'connectors/atlassian', connector }
+    );
     return null;
   }
 
   const configResult = await readConnectorConfigCached(connector, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read atlassian connector config', {
-      component: 'connectors/atlassian',
-    });
+    logger.error(
+      'the {connector} connector config could not be read; no {connector} flow can start',
+      {
+        component: 'connectors/atlassian',
+        connector,
+      }
+    );
     return null;
   }
   const config = configResult.val;
@@ -141,9 +132,10 @@ async function readApp(
   const clientId = config.settings.clientId;
   const clientSecret = config.secrets.clientSecret;
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
-    logger.warn('atlassian connector config missing clientId or clientSecret', {
-      component: 'connectors/atlassian',
-    });
+    logger.warn(
+      'the {connector} connector is switched on but its config lacks a client id or client secret; no {connector} flow can start',
+      { component: 'connectors/atlassian', connector }
+    );
     return null;
   }
 

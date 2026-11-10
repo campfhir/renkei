@@ -34,6 +34,7 @@ jest.mock('@renkei/delegate-client', () => {
 });
 jest.mock('@renkei/crypto', () => ({ parseEncryptionKey: () => ({ ok: true, val: 'key' }) }));
 jest.mock('@renkei/db', () => ({
+  ...jest.requireActual('@renkei/db'),
   // The upload-slot write a *_request_*_upload tool makes.
   getDataStore: () => ({ uploadSlots: { create: async () => undefined } }),
 }));

@@ -41,6 +41,7 @@ import {
   type VoiceOutcome,
   type VoiceProvider,
 } from './provider';
+import { isRecord } from '@renkei/guards';
 
 /** MP3 at 24 kHz: every browser plays it, and a sentence is a few KB. */
 
@@ -74,10 +75,6 @@ export const AZURE_FAST_TRANSCRIPTION_API_VERSION = '2024-11-15';
 const VOICES_TIMEOUT_MS = 15_000;
 const SPEECH_TIMEOUT_MS = 30_000;
 const TRANSCRIBE_TIMEOUT_MS = 30_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** The five characters SSML cannot carry raw. */
 export function escapeXml(text: string): string {

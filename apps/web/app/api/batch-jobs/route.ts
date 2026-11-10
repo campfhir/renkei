@@ -20,10 +20,8 @@ import {
   parseSkipProcessed,
 } from '@/lib/batch-jobs/pipeline-options';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -64,11 +62,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // deleting on it must be within what they allowed on the Connectors page.
   const shares = await listConnectedShares(session.subject);
   if (!shares.ok) {
-    logger.error('Could not read your file shares: {error}', {
-      component: 'api/batch-jobs',
-      subject: session.subject,
-      error: shares.err.message ?? shares.err.type,
-    });
+    logger.error(
+      '{actor} started the batch "{name}", but their file shares could not be read; no batch was started: {error}',
+      {
+        component: 'api/batch-jobs',
+        ...who(session),
+        name,
+        shareId,
+        error: shares.err.message ?? shares.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   }
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);

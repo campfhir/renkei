@@ -23,7 +23,26 @@ export interface PreviewSpec extends ActCardSpec {
   confirmWith?: Args;
 }
 
-export type PreviewBuilder = (args: Args) => PreviewSpec;
+/**
+ * Display names for the ids a call carries, looked up before the builder
+ * runs (lookup.ts). Keyed `kind:id`; a missing entry means the lookup failed
+ * or found nothing, and the builder then names the thing generically ("the
+ * sprint") — an id is a handle for the confirm call, never wording for a
+ * person.
+ */
+export type Names = Readonly<Record<string, string>>;
+
+export const nameKey = (kind: string, id: string): string => `${kind}:${id}`;
+
+/** The looked-up name of `id`, or '' when there is none. */
+export const named = (names: Names, kind: string, id: unknown): string =>
+  names[nameKey(kind, text(id))] ?? '';
+
+/** The looked-up name of `id`, or `generic` ("the sprint") when there is none. */
+export const nameOr = (names: Names, kind: string, id: unknown, generic: string): string =>
+  named(names, kind, id) || generic;
+
+export type PreviewBuilder = (args: Args, names: Names) => PreviewSpec;
 
 export const text = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : typeof value === 'number' ? String(value) : '';

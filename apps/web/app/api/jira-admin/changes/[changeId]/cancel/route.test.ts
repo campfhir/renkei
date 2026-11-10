@@ -1,3 +1,4 @@
+import { actorFrom } from '@renkei/db';
 /**
  * Withdrawing or declining a Jira admin change request: the person who
  * asked may withdraw theirs, an operator may decline anyone's (and the
@@ -39,6 +40,8 @@ beforeEach(() => {
     subject: 'owner',
     roles: [],
     expiresAt: new Date(Date.now() + 3_600_000),
+
+    actor: actorFrom('owner', null, null),
   });
   const now = new Date();
   jest.mocked(getChangeRequestById).mockResolvedValue({
@@ -79,6 +82,8 @@ it('reads someone else’s request as not found to an ordinary user', async () =
     subject: 'stranger',
     roles: ['renkei-user'],
     expiresAt: new Date(Date.now() + 3_600_000),
+
+    actor: actorFrom('stranger', null, null),
   });
   expect((await cancel()).status).toBe(404);
   expect(cancelChangeRequest).not.toHaveBeenCalled();
@@ -108,6 +113,8 @@ it('lets an operator decline anyone’s request with a note, and tells the reque
     subject: 'operator',
     roles: ['renkei-user', 'renkei-operator'],
     expiresAt: new Date(Date.now() + 3_600_000),
+
+    actor: actorFrom('operator', null, null),
   });
   const response = await cancel({ note: 'Use the existing Source field' });
   expect(response.status).toBe(200);

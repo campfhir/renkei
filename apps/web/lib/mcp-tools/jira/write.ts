@@ -7,7 +7,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { actMeta } from '@renkei/tool-outcomes';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { markdownToAdf } from './markdown';
 import { adfToMarkdown } from './adf';
 import {
@@ -17,6 +17,7 @@ import {
   loadFieldSchema,
 } from './field-schema';
 import { jiraIssueFieldRows, renderFieldValue } from './fields';
+import { previewUserLabel } from './user-label';
 import {
   unwrittenFieldsComment,
   writeWithFieldFallback,
@@ -34,6 +35,7 @@ import {
 } from '../widgets';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { resolveUserId } from './resolve-user';
+import { isRecord, isString } from '@renkei/guards';
 
 function errText(value: string) {
   return { content: [{ type: 'text' as const, text: value }], isError: true };
@@ -52,14 +54,6 @@ async function resolveAssigneeId(
   value: string
 ): Promise<{ ok: true; id: string } | { ok: false; reason: string }> {
   return resolveUserId(auth, value);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === 'string';
 }
 
 function isArray(value: unknown): value is unknown[] {
@@ -238,12 +232,15 @@ export async function recordUnwritten(
     }
     return true;
   } catch (error) {
-    logger.warn('could not record unwritten fields', {
-      component: 'mcp/tool',
-      subject: context.subject,
-      issueKey,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      '{caller} wrote issue {issueKey}, but the comment noting its unwritten fields could not be added; the issue stands without that note: {error}',
+      {
+        component: 'mcp/tool',
+        ...callerFields(context),
+        issueKey,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return false;
   }
 }
@@ -308,11 +305,10 @@ export async function registerWriteTools(
     ...extraFieldSchema,
   });
   const createIssueHandler = async (args: Record<string, unknown>) => {
-    const displayName = getCachedDisplayName(context.accountId);
-    logger.debug('jira_create_issue invoked', {
+    logger.debug('{caller} called jira_create_issue', {
       component: 'mcp/tool',
-      accountId: context.accountId,
-      displayName,
+      ...callerFields(context),
+      tool: 'jira_create_issue',
     });
     try {
       const { projectKey, issueType, summary, description, priority, assignee, labels } = args;
@@ -456,11 +452,10 @@ export async function registerWriteTools(
     ...extraFieldSchema,
   });
   const updateIssueHandler = async (args: Record<string, unknown>) => {
-    const displayName = getCachedDisplayName(context.accountId);
-    logger.debug('jira_update_issue invoked', {
+    logger.debug('{caller} called jira_update_issue', {
       component: 'mcp/tool',
-      accountId: context.accountId,
-      displayName,
+      ...callerFields(context),
+      tool: 'jira_update_issue',
     });
     try {
       const { issueKey, summary, description, priority, assignee, labels } = args;
@@ -607,6 +602,27 @@ export async function registerWriteTools(
   // card holds the request; its confirm button runs the SAME handler the
   // direct tools run, via the app-only *_confirm twins above each pair.
 
+  /** The card's field rows, with an assignee given as an accountId shown by name. */
+  const previewRows = async (args: Record<string, unknown>) => {
+    const rows = jiraIssueFieldRows(args);
+    return Promise.all(
+      rows.map(async (row) =>
+        row.label === 'Assignee'
+          ? {
+              ...row,
+              value: await previewUserLabel(async (accountId) => {
+                const response = await auth.fetch(
+                  granularJiraScopes('jira_get_user', true),
+                  `/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`
+                );
+                return response.ok ? response.json() : null;
+              }, row.value),
+            }
+          : row
+      )
+    );
+  };
+
   const previewGuidance = (what: string) =>
     `${what} is awaiting the user's decision on the preview card. Do not write it another ` +
     `way and do not repeat its contents in your reply; the user confirms or cancels from ` +
@@ -645,7 +661,7 @@ export async function registerWriteTools(
           confirmLabel: 'Create',
           confirmArgs: args,
           editable: { summaryKey: 'summary', descriptionKey: 'description' },
-          fields: jiraIssueFieldRows(args),
+          fields: await previewRows(args),
         },
       };
     }
@@ -718,7 +734,7 @@ export async function registerWriteTools(
             .join(', ')
         : '';
 
-      const fields = jiraIssueFieldRows(args).map((row) => {
+      const fields = (await previewRows(args)).map((row) => {
         if (row.label === 'Priority' && isString(priorityOld)) {
           return { ...row, oldValue: priorityOld };
         }
@@ -783,11 +799,10 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_add_comment invoked', {
+      logger.debug('{caller} called jira_add_comment', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_add_comment',
       });
       try {
         const { issueKey, comment } = args;
@@ -856,11 +871,10 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_update_comment invoked', {
+      logger.debug('{caller} called jira_update_comment', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_update_comment',
       });
       try {
         const { issueKey, commentId, comment } = args;
@@ -949,11 +963,10 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_transition_issue invoked', {
+      logger.debug('{caller} called jira_transition_issue', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_transition_issue',
       });
       try {
         const { issueKey, transitionName, comment } = args;
@@ -1071,11 +1084,10 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_log_work invoked', {
+      logger.debug('{caller} called jira_log_work', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_log_work',
       });
       try {
         const { issueKey, timeSpent, comment } = args;
@@ -1131,11 +1143,10 @@ export async function registerWriteTools(
       .optional(),
   });
   const deleteIssueHandler = async (args: Record<string, unknown>) => {
-    const displayName = getCachedDisplayName(context.accountId);
-    logger.debug('jira_delete_issue invoked', {
+    logger.debug('{caller} called jira_delete_issue', {
       component: 'mcp/tool',
-      accountId: context.accountId,
-      displayName,
+      ...callerFields(context),
+      tool: 'jira_delete_issue',
     });
     try {
       const { issueKey, deleteSubtasks } = args;
@@ -1279,11 +1290,10 @@ export async function registerWriteTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_delete_comment invoked', {
+      logger.debug('{caller} called jira_delete_comment', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_delete_comment',
       });
       try {
         const { issueKey, commentId } = args;

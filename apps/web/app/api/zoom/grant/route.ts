@@ -18,6 +18,7 @@ import { ZOOM } from '@renkei/provider-grants';
 import { delegateGrants } from '@renkei/delegate-client';
 import { deleteObjectChunks } from '@renkei/knowledge';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function DELETE(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -45,25 +46,40 @@ export async function DELETE(request: NextRequest): Promise<NextResponse> {
   if (email) {
     const purged = await deleteObjectChunks(ZOOM, `${email}/`, { prefixOnly: true });
     if (!purged.ok) {
-      logger.warn('Could not purge knowledge chunks on disconnect', {
-        component: 'connectors/zoom',
-      });
+      logger.warn(
+        '{actor} is disconnecting Zoom, but the knowledge indexed from their meetings could not be purged; it stays until a retention sweep removes it',
+        {
+          component: 'connectors/zoom',
+          ...who(session),
+          accountId,
+        }
+      );
     }
   }
 
   // Revoke at Zoom while the delegate still holds the token, then delete.
   const revoked = await delegateGrants().revoke({ provider: ZOOM, accountId });
   if (!revoked.ok) {
-    logger.error('Zoom grant could not be deleted: {reason}', {
-      component: 'connectors/zoom',
-      reason: revoked.err.type,
-    });
+    logger.error(
+      '{actor} asked to disconnect Zoom, but the delegate did not revoke the grant ({reason}); it is still connected',
+      {
+        component: 'connectors/zoom',
+        ...who(session),
+        accountId,
+        reason: revoked.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   if (!revoked.val.revokedAtProvider) {
-    logger.warn('Zoom token revocation failed; the grant was deleted regardless', {
-      component: 'connectors/zoom',
-    });
+    logger.warn(
+      '{actor} disconnected Zoom; the grant was deleted here, but the token could not be revoked at Zoom and will expire on its own',
+      {
+        component: 'connectors/zoom',
+        ...who(session),
+        accountId,
+      }
+    );
   }
   recordAuditEvent({
     actorSubject: session.subject,

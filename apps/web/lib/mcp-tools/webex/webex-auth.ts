@@ -29,7 +29,7 @@ import { WEBEX_USER } from '@renkei/provider-grants';
 import { delegateGrants, grantFetch, type AuthedFetch } from '@renkei/delegate-client';
 import { grantRefusalText, refusalTextOf } from '@/lib/grant-refusals';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+import { callerAttrs, type MCPToolContext } from '../common';
 import { authFailure } from '../auth-support';
 
 const API = 'https://webexapis.com/v1';
@@ -134,12 +134,15 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
           },
         });
       } catch {
-        logger.warn('WebEx API unreachable', {
-          component: 'webex/fetch',
-          subject: context.subject,
-          path,
-          method,
-        });
+        logger.warn(
+          "{caller}'s {method} {path} did not reach WebEx; the tool reported it as unreachable",
+          {
+            component: 'webex/fetch',
+            ...(await callerAttrs(context)),
+            path,
+            method,
+          }
+        );
         return authFailure('Could not reach webexapis.com');
       }
 
@@ -158,7 +161,7 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
         .catch(() => '');
       const logFields = {
         component: 'webex/fetch',
-        subject: context.subject,
+        ...(await callerAttrs(context)),
         path,
         method,
         status: response.status,
@@ -166,9 +169,9 @@ export function oauthWebexAuth(context: MCPToolContext): WebexAuth {
         responseBody: loggedBody ? secure(truncateForLog(loggedBody)) : undefined,
       };
       if (response.ok) {
-        logger.debug('WebEx API OK response', logFields);
+        logger.debug("WebEx accepted {caller}'s {method} {path} with {status}", logFields);
       } else {
-        logger.warn('WebEx API non-OK response', logFields);
+        logger.warn("WebEx answered {status} to {caller}'s {method} {path}", logFields);
       }
       return response;
     },

@@ -12,18 +12,20 @@ import { NextResponse } from 'next/server';
 import { chatRequestContext, jsonError } from '@/lib/chat/route-support';
 import { keyStatusView } from '@/lib/keys/status';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function GET(
-  request: NextRequest
-): Promise<Response> {
+export async function GET(request: NextRequest): Promise<Response> {
   const ready = await chatRequestContext(request);
   if (!ready.ok) return ready.response;
   const view = await keyStatusView(ready.context.session);
   if (!view) {
-    logger.error('Could not read the key status', {
-      component: 'api/keys',
-      subject: ready.context.session.subject,
-    });
+    logger.error(
+      '{actor} opened a page, but their encryption key status could not be read; the key guard showed a database error',
+      {
+        component: 'api/keys',
+        ...who(ready.context.session),
+      }
+    );
     return jsonError(500, 'database', 'Database unavailable');
   }
   return NextResponse.json(view, { headers: { 'cache-control': 'no-store' } });

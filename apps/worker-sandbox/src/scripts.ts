@@ -76,6 +76,7 @@ import {
   type NetworkIsolation,
   type RunResult,
 } from './workspaces';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 
 /** Where the image keeps the interpreter with the data libraries (docker/Dockerfile, target sandbox). */
@@ -339,12 +340,16 @@ export class ScriptRunner {
     } finally {
       this.busy.delete(key);
       this.inFlight -= 1;
-      await removeRunDir(runDir).catch((error: unknown) => {
-        logger.warn('could not remove run directory {dir}: {error}', {
-          component: 'worker-sandbox/scripts',
-          dir: runDir,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      await removeRunDir(runDir).catch(async (error: unknown) => {
+        logger.warn(
+          'the run directory of a script of {actor} could not be removed; it is left on disk at {dir}: {error}',
+          {
+            component: 'worker-sandbox/scripts',
+            ...(await actorAttrs(target.subject)),
+            dir: runDir,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       });
     }
   }

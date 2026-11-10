@@ -17,6 +17,7 @@
     "@campfhir/bored-logs": "^0.7.1",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/settings": "workspace:*"
   },
   "devDependencies": {

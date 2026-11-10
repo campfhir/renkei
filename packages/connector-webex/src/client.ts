@@ -20,6 +20,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { LaneLimiter, type RequestLane } from '@renkei/rate-limit';
+import { isRecord } from '@renkei/guards';
 
 const API_BASE = 'https://webexapis.com/v1';
 /** The largest page WebEx serves for /rooms. */
@@ -93,10 +94,6 @@ export interface WebexRoom {
   title: string | null;
   type: string | null;
   lastActivity: string | null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function optionalString(value: unknown): string | null {

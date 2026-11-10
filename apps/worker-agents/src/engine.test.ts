@@ -38,6 +38,7 @@ import { MessageReleased } from '@renkei/worker-loop';
 import { createAgentRunHandler, TURN_STEP_ID, type FinalizedRun } from './engine';
 import { createActionsHandler } from './actions';
 import type { McpClient, McpToolResult } from './mcp-client';
+import { isRecord } from '@renkei/guards';
 
 let ownerDelegated = true;
 const FAKE_SEAL = 'uenc1:test:';
@@ -137,10 +138,6 @@ const text = (body: string, isError = false): McpToolResult => ({
   isError,
   meta: {},
 });
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function unsealed(detail: unknown): Record<string, unknown> {
   const envelope = sealedDetailOf(detail);
@@ -1006,5 +1003,24 @@ maybe('agent run engine', () => {
     const run = await runOf(runId);
     expect(run.status).toBe('waiting');
     expect(run.errorKind).toBe('needs-sign-in');
+  });
+
+  it('tells the owner once when a run parks for their sign-in, with a way to the run', async () => {
+    const { runId, agentId } = await seedRun();
+    ownerDelegated = false;
+    try {
+      const h = harness(stubLlm(() => finish('done')));
+      await h.handler({ payload: { runId } });
+      // A sweep re-drives the parked run and it parks the same way: no second row.
+      await h.handler({ payload: { runId } });
+    } finally {
+      ownerDelegated = true;
+    }
+    const feed = await getDataStore().notifications.list(subject, { limit: 10 });
+    const paused = feed.filter((row) => row.kind === 'run_paused');
+    expect(paused).toHaveLength(1);
+    expect(paused[0].headline).toMatch(/is paused until you sign in$/);
+    expect(paused[0].refUrl).toBe(`/agents/${agentId}/runs/${runId}`);
+    expect(paused[0].runId).toBe(runId);
   });
 });

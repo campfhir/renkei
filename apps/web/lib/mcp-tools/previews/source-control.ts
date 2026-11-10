@@ -7,8 +7,8 @@
  */
 
 import type { FileChange } from '@/lib/mcp-widgets/src/act-card';
-import type { PreviewBuilder, PreviewSpec } from './card';
-import { clip, records, ref, strings, text, yes } from './card';
+import type { Names, PreviewBuilder, PreviewSpec } from './card';
+import { clip, named, nameOr, records, ref, strings, text, yes } from './card';
 
 type Args = Record<string, unknown>;
 
@@ -26,23 +26,45 @@ function hostOf(args: Args): Host {
   return { name: github ? 'GitHub' : 'Bitbucket', repo, pr: text(args.number ?? args.id) };
 }
 
-const prRef = (host: Host) => ref(`#${host.pr}`, 'Pull request', host.repo);
+/** "#12", or "#12 Fix the login" when the title was looked up. */
+const prName = (host: Host, names: Names) =>
+  [`#${host.pr}`, named(names, 'pr', host.pr)].filter(Boolean).join(' ');
 
-function addComment(args: Args): PreviewSpec {
+const prRef = (host: Host, names: Names) =>
+  ref(`#${host.pr}`, named(names, 'pr', host.pr) || 'Pull request', host.repo);
+
+/** Bitbucket's person ids (uuid, Atlassian id) are handles; a username or login reads as it is. */
+const isHandle = (value: string) =>
+  /^\{?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}?$/i.test(value) ||
+  /^\d+:[0-9a-f-]{8,}$/i.test(value) ||
+  /^[0-9a-f]{24}$/i.test(value);
+
+/** Who a grant or revoke is about: the looked-up name, the typed login, or a generic phrase. */
+function whoOf(args: Args, names: Names): string {
+  const userId = text(args.userId);
+  if (userId) {
+    return named(names, 'user', userId) || (isHandle(userId) ? 'a workspace member' : userId);
+  }
+  return text(args.username) || text(args.group) || 'someone';
+}
+
+function addComment(args: Args, names: Names): PreviewSpec {
   const host = hostOf(args);
   const reply = args.parentId !== undefined;
   const file = text(args.path);
   return {
     verb: reply ? 'Reply' : 'Comment',
     icon: 'comment',
-    title: file ? `Comment on ${file} in #${host.pr}` : `Comment on pull request #${host.pr}`,
+    title: file
+      ? `Comment on ${file} in ${prName(host, names)}`
+      : `Comment on pull request ${prName(host, names)}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: 'Post comment',
     editable: [{ key: 'comment', label: 'Comment', multiline: true }],
     body: {
       kind: 'comment',
       mode: 'add',
-      on: prRef(host),
+      on: prRef(host, names),
       bodyKey: 'comment',
       body: text(args.comment),
       badges: [file ? 'Inline' : 'General', ...(reply ? ['Reply'] : [])],
@@ -53,36 +75,36 @@ function addComment(args: Args): PreviewSpec {
   };
 }
 
-function resolveComment(args: Args): PreviewSpec {
+function resolveComment(args: Args, names: Names): PreviewSpec {
   const host = hostOf(args);
   const reopen = yes(args.reopen);
   return {
     verb: reopen ? 'Reopen' : 'Resolve',
     icon: 'check',
-    title: `${reopen ? 'Reopen' : 'Resolve'} a comment thread on #${host.pr}`,
+    title: `${reopen ? 'Reopen' : 'Resolve'} a comment thread on ${prName(host, names)}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: reopen ? 'Reopen thread' : 'Resolve thread',
     body: {
       kind: 'comment',
       mode: reopen ? 'reopen' : 'resolve',
-      on: prRef(host),
-      commentId: text(args.commentId),
+      on: prRef(host, names),
+      commentLabel: named(names, 'comment', args.commentId),
     },
   };
 }
 
-function update(args: Args): PreviewSpec {
+function update(args: Args, names: Names): PreviewSpec {
   const host = hostOf(args);
   const reviewers = strings(args.reviewers);
   return {
     verb: 'Update',
     icon: 'merge',
-    title: `Update pull request #${host.pr}`,
+    title: `Update pull request ${prName(host, names)}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: 'Update pull request',
     body: {
       kind: 'change',
-      subject: prRef(host),
+      subject: prRef(host, names),
       rows: [
         ...(text(args.title) ? [{ label: 'Title', value: text(args.title) }] : []),
         ...(text(args.description)
@@ -199,10 +221,10 @@ function deleteBranch(args: Args): PreviewSpec {
   };
 }
 
-function grant(args: Args): PreviewSpec {
+function grant(args: Args, names: Names): PreviewSpec {
   const host = hostOf(args);
   const group = text(args.group);
-  const who = text(args.userId) || text(args.username) || group;
+  const who = whoOf(args, names);
   return {
     verb: 'Grant',
     tone: 'caution',
@@ -220,10 +242,10 @@ function grant(args: Args): PreviewSpec {
   };
 }
 
-function revoke(args: Args): PreviewSpec {
+function revoke(args: Args, names: Names): PreviewSpec {
   const host = hostOf(args);
   const group = text(args.group);
-  const who = text(args.userId) || text(args.username) || group;
+  const who = whoOf(args, names);
   return {
     verb: 'Revoke',
     tone: 'danger',
@@ -240,14 +262,16 @@ function revoke(args: Args): PreviewSpec {
   };
 }
 
-const approve = (args: Args): PreviewSpec => {
+const approve = (args: Args, names: Names): PreviewSpec => {
   const host = hostOf(args);
   const withdraw = yes(args.revoke);
   return {
     verb: withdraw ? 'Withdraw' : 'Approve',
     tone: withdraw ? 'caution' : 'positive',
     icon: 'check',
-    title: withdraw ? `Withdraw your approval of #${host.pr}` : `Approve pull request #${host.pr}`,
+    title: withdraw
+      ? `Withdraw your approval of ${prName(host, names)}`
+      : `Approve pull request ${prName(host, names)}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: withdraw ? 'Withdraw approval' : 'Approve',
     editable:
@@ -255,14 +279,14 @@ const approve = (args: Args): PreviewSpec => {
     body: {
       kind: 'verdict',
       verdict: withdraw ? 'unapprove' : 'approve',
-      pullRequest: prRef(host),
+      pullRequest: prRef(host, names),
       bodyKey: 'comment',
       body: text(args.comment),
     },
   };
 };
 
-const requestChanges = (args: Args): PreviewSpec => {
+const requestChanges = (args: Args, names: Names): PreviewSpec => {
   const host = hostOf(args);
   const withdraw = yes(args.revoke);
   return {
@@ -270,8 +294,8 @@ const requestChanges = (args: Args): PreviewSpec => {
     tone: 'caution',
     icon: 'flag',
     title: withdraw
-      ? `Withdraw your change request on #${host.pr}`
-      : `Request changes on pull request #${host.pr}`,
+      ? `Withdraw your change request on ${prName(host, names)}`
+      : `Request changes on pull request ${prName(host, names)}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: withdraw ? 'Withdraw request' : 'Request changes',
     editable:
@@ -281,7 +305,7 @@ const requestChanges = (args: Args): PreviewSpec => {
     body: {
       kind: 'verdict',
       verdict: withdraw ? 'unchange' : 'changes',
-      pullRequest: prRef(host),
+      pullRequest: prRef(host, names),
       bodyKey: 'comment',
       body: text(args.comment),
     },
@@ -290,22 +314,23 @@ const requestChanges = (args: Args): PreviewSpec => {
 
 const decline =
   (verdict: 'decline' | 'close') =>
-  (args: Args): PreviewSpec => {
+  (args: Args, names: Names): PreviewSpec => {
     const host = hostOf(args);
     return {
       verb: verdict === 'decline' ? 'Decline' : 'Close',
       tone: 'danger',
       icon: 'cross',
-      title: `${verdict === 'decline' ? 'Decline' : 'Close'} pull request #${host.pr}`,
+      title: `${verdict === 'decline' ? 'Decline' : 'Close'} pull request ${prName(host, names)}`,
       subtitle: `${host.name} · ${host.repo}`,
       confirmLabel: verdict === 'decline' ? 'Decline pull request' : 'Close pull request',
-      body: { kind: 'verdict', verdict, pullRequest: prRef(host) },
+      body: { kind: 'verdict', verdict, pullRequest: prRef(host, names) },
     };
   };
 
 function project(mode: 'create' | 'update' | 'delete') {
-  return (args: Args): PreviewSpec => {
+  return (args: Args, names: Names): PreviewSpec => {
     const key = text(args.key) || text(args.projectKey);
+    const current = named(names, 'project', key) || key;
     const rows = [
       ...(mode === 'update' && text(args.name) ? [{ label: 'Name', value: text(args.name) }] : []),
       ...(mode === 'create' && text(args.name) ? [{ label: 'Name', value: text(args.name) }] : []),
@@ -330,8 +355,8 @@ function project(mode: 'create' | 'update' | 'delete') {
         mode === 'create'
           ? `Create the project ${text(args.name)}`
           : mode === 'update'
-            ? `Update the project ${key}`
-            : `Delete the project ${key}`,
+            ? `Update the project ${current}`
+            : `Delete the project ${current}`,
       subtitle: `Bitbucket · ${text(args.workspace)}`,
       confirmLabel:
         mode === 'create'
@@ -341,7 +366,7 @@ function project(mode: 'create' | 'update' | 'delete') {
             : 'Delete project',
       body: {
         kind: 'change',
-        subject: ref(key, 'Project', text(args.workspace)),
+        subject: ref(mode === 'create' ? key : current, 'Project', text(args.workspace)),
         rows,
         notes:
           mode === 'delete' ? ['A project can only be deleted once it has no repositories.'] : [],
@@ -350,40 +375,46 @@ function project(mode: 'create' | 'update' | 'delete') {
   };
 }
 
-const stop = (args: Args): PreviewSpec => {
+const stop = (args: Args, names: Names): PreviewSpec => {
   const host = hostOf(args);
   const github = host.name === 'GitHub';
+  const run = github
+    ? nameOr(names, 'run', args.runId, 'a workflow run')
+    : nameOr(names, 'pipeline', args.pipelineUuid, 'a pipeline');
+  const known = github
+    ? named(names, 'run', args.runId)
+    : named(names, 'pipeline', args.pipelineUuid);
   return {
     verb: github ? 'Cancel run' : 'Stop',
     tone: 'caution',
     icon: 'stop',
-    title: github
-      ? `Cancel workflow run ${text(args.runId)}`
-      : `Stop pipeline ${text(args.pipelineUuid)}`,
+    title: known
+      ? `${github ? 'Cancel the run' : 'Stop'} ${github ? `“${known}”` : known}`
+      : `${github ? 'Cancel' : 'Stop'} ${run}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: github ? 'Cancel run' : 'Stop pipeline',
     body: {
       kind: 'pipeline',
       mode: github ? 'cancel' : 'stop',
       repo: host.repo,
-      run: github ? `Run ${text(args.runId)}` : text(args.pipelineUuid),
+      run,
     },
   };
 };
 
-const task = (args: Args): PreviewSpec => {
+const task = (args: Args, names: Names): PreviewSpec => {
   const host = hostOf(args);
   return {
     verb: 'Add task',
     icon: 'check',
-    title: `Add a task to pull request #${host.pr}`,
+    title: `Add a task to pull request ${prName(host, names)}`,
     subtitle: `${host.name} · ${host.repo}`,
     confirmLabel: 'Add task',
     editable: [{ key: 'task', label: 'Task', multiline: true }],
     body: {
       kind: 'comment',
       mode: 'task',
-      on: prRef(host),
+      on: prRef(host, names),
       bodyKey: 'task',
       body: text(args.task),
     },

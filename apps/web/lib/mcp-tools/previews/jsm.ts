@@ -4,13 +4,30 @@
  * hand-written card in jira-service-management/jsm.ts).
  */
 
-import type { PreviewBuilder } from './card';
-import { clip, people, ref, strings, text } from './card';
+import type { Names, PreviewBuilder } from './card';
+import { clip, count, named, nameOr, people, ref, strings, text } from './card';
 
 const JSM = 'Jira Service Management';
 const OPS = 'JSM Ops';
 
 const request = (key: string) => ref(key, 'Request');
+
+/** A person as the card says it: an email is already readable; an account id becomes a name. */
+const who = (names: Names, value: unknown, generic = 'This person'): string =>
+  text(value).includes('@') ? text(value) : nameOr(names, 'user', value, generic);
+
+const desk = (names: Names, id: unknown) =>
+  ref(nameOr(names, 'desk', id, 'The service desk'), 'Service desk');
+
+/** `the alert “CPU high”`, or `the alert` when it could not be read. */
+const alertName = (names: Names, id: unknown): string =>
+  named(names, 'alert', id) ? `the alert “${named(names, 'alert', id)}”` : 'the alert';
+
+/** Names for a list of ids, or a count when any is unknown ("2 integrations"). */
+function nameList(names: Names, kind: string, ids: string[], noun: string, plural: string): string {
+  const found = ids.map((id) => named(names, kind, id));
+  return found.every(Boolean) ? found.join(', ') : count(ids.length, noun, plural);
+}
 
 export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
   jsm_add_request_comment: (args) => {
@@ -52,7 +69,7 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jsm_add_request_participant: (args) => ({
+  jsm_add_request_participant: (args, names) => ({
     verb: 'Add',
     icon: 'user',
     title: `Add a participant to ${text(args.issueKey)}`,
@@ -61,14 +78,20 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     body: {
       kind: 'access',
       mode: 'add',
-      who: [{ name: text(args.accountId), detail: 'Atlassian account', kind: 'user' }],
+      who: [
+        {
+          name: nameOr(names, 'user', args.accountId, 'This person'),
+          detail: 'Atlassian account',
+          kind: 'user',
+        },
+      ],
       level: 'Participant',
       on: request(text(args.issueKey)),
       details: [{ label: 'They can', value: 'see the request and comment on it in the portal' }],
     },
   }),
 
-  jsm_remove_request_participant: (args) => ({
+  jsm_remove_request_participant: (args, names) => ({
     verb: 'Remove',
     tone: 'danger',
     icon: 'user',
@@ -78,50 +101,56 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     body: {
       kind: 'access',
       mode: 'remove',
-      who: [{ name: text(args.accountId), detail: 'Atlassian account', kind: 'user' }],
+      who: [
+        {
+          name: nameOr(names, 'user', args.accountId, 'This person'),
+          detail: 'Atlassian account',
+          kind: 'user',
+        },
+      ],
       level: 'Participant',
       on: request(text(args.issueKey)),
     },
   }),
 
-  jsm_add_customer_to_servicedesk: (args) => ({
+  jsm_add_customer_to_servicedesk: (args, names) => ({
     verb: 'Add',
     icon: 'user',
-    title: `Add ${text(args.user)} as a customer`,
+    title: `Add ${who(names, args.user)} as a customer`,
     subtitle: JSM,
     confirmLabel: 'Add customer',
     body: {
       kind: 'access',
       mode: 'add',
-      who: [{ name: text(args.user), kind: 'user' }],
+      who: [{ name: who(names, args.user), kind: 'user' }],
       level: 'Customer',
-      on: ref(text(args.serviceDeskId), 'Service desk'),
+      on: desk(names, args.serviceDeskId),
       details: [{ label: 'They can', value: 'raise requests in this service desk’s portal' }],
     },
   }),
 
-  jsm_remove_customer_from_servicedesk: (args) => ({
+  jsm_remove_customer_from_servicedesk: (args, names) => ({
     verb: 'Remove',
     tone: 'danger',
     icon: 'user',
-    title: `Remove ${text(args.user)} as a customer`,
+    title: `Remove ${who(names, args.user)} as a customer`,
     subtitle: JSM,
     confirmLabel: 'Remove customer',
     body: {
       kind: 'access',
       mode: 'remove',
-      who: [{ name: text(args.user), kind: 'user' }],
+      who: [{ name: who(names, args.user), kind: 'user' }],
       level: 'Customer',
-      on: ref(text(args.serviceDeskId), 'Service desk'),
+      on: desk(names, args.serviceDeskId),
     },
   }),
 
-  jsm_invite_customers_to_servicedesk: (args) => {
+  jsm_invite_customers_to_servicedesk: (args, names) => {
     const emails = strings(args.emails);
     return {
       verb: 'Invite',
       icon: 'mail',
-      title: `Invite ${emails.length} ${emails.length === 1 ? 'person' : 'people'} to a service desk`,
+      title: `Invite ${emails.length} ${emails.length === 1 ? 'person' : 'people'} to ${named(names, 'desk', args.serviceDeskId) || 'a service desk'}`,
       subtitle: JSM,
       confirmLabel: 'Send invitations',
       body: {
@@ -129,7 +158,7 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
         mode: 'invite',
         who: people(emails, 'email'),
         level: 'Customer',
-        on: ref(text(args.serviceDeskId), 'Service desk'),
+        on: desk(names, args.serviceDeskId),
         details: [{ label: 'Each gets', value: 'an email invitation to the portal' }],
       },
     };
@@ -156,36 +185,36 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     },
   }),
 
-  jsm_ops_acknowledge_alert: (args) => ({
+  jsm_ops_acknowledge_alert: (args, names) => ({
     verb: 'Acknowledge',
     icon: 'bell',
-    title: `Acknowledge alert ${text(args.alertId)}`,
+    title: `Acknowledge ${alertName(names, args.alertId)}`,
     subtitle: OPS,
     confirmLabel: 'Acknowledge',
     body: {
       kind: 'transition',
-      subject: ref(text(args.alertId), 'Alert'),
+      subject: ref(nameOr(names, 'alert', args.alertId, 'The alert'), 'Alert'),
       field: 'Alert',
       to: 'Acknowledged',
     },
   }),
 
-  jsm_ops_close_alert: (args) => ({
+  jsm_ops_close_alert: (args, names) => ({
     verb: 'Close',
     tone: 'caution',
     icon: 'bell',
-    title: `Close alert ${text(args.alertId)}`,
+    title: `Close ${alertName(names, args.alertId)}`,
     subtitle: OPS,
     confirmLabel: 'Close alert',
     body: {
       kind: 'transition',
-      subject: ref(text(args.alertId), 'Alert'),
+      subject: ref(nameOr(names, 'alert', args.alertId, 'The alert'), 'Alert'),
       field: 'Alert',
       to: 'Closed',
     },
   }),
 
-  jsm_ops_create_override: (args) => ({
+  jsm_ops_create_override: (args, names) => ({
     verb: 'Override',
     icon: 'calendar',
     title: 'Add an on-call override',
@@ -194,20 +223,37 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     confirmWith: { confirm: true },
     body: {
       kind: 'change',
-      subject: ref(text(args.scheduleId), 'On-call schedule'),
+      subject: ref(
+        nameOr(names, 'schedule', args.scheduleId, 'The on-call schedule'),
+        'On-call schedule'
+      ),
       rows: [
-        { label: 'On call', value: text(args.responderAccountId) || 'You' },
+        {
+          label: 'On call',
+          value: text(args.responderAccountId) ? who(names, args.responderAccountId) : 'You',
+        },
         { label: 'From', value: text(args.startDate) },
         { label: 'Until', value: text(args.endDate) },
         ...(strings(args.rotationIds).length > 0
-          ? [{ label: 'Rotations', value: strings(args.rotationIds).join(', ') }]
+          ? [
+              {
+                label: 'Rotations',
+                value: nameList(
+                  names,
+                  'rotation',
+                  strings(args.rotationIds),
+                  'rotation',
+                  'rotations'
+                ),
+              },
+            ]
           : [{ label: 'Rotations', value: 'All of them' }]),
       ],
       notes: ['Whoever was on call in that window is replaced for its duration.'],
     },
   }),
 
-  jsm_ops_delete_override: (args) => ({
+  jsm_ops_delete_override: (args, names) => ({
     verb: 'Delete',
     tone: 'danger',
     icon: 'trash',
@@ -217,13 +263,21 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     confirmWith: { confirm: true },
     body: {
       kind: 'change',
-      subject: ref(text(args.scheduleId), 'On-call schedule'),
-      rows: [{ label: 'Override', value: text(args.alias) }],
+      subject: ref(
+        nameOr(names, 'schedule', args.scheduleId, 'The on-call schedule'),
+        'On-call schedule'
+      ),
+      rows: [
+        {
+          label: 'Override',
+          value: nameOr(names, 'override', args.alias, 'The selected override'),
+        },
+      ],
       notes: ['The schedule goes back to its rotations for that window.'],
     },
   }),
 
-  jsm_ops_update_rotation: (args) => ({
+  jsm_ops_update_rotation: (args, names) => ({
     verb: 'Change',
     tone: 'caution',
     icon: 'calendar',
@@ -233,7 +287,11 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     confirmWith: { confirm: true },
     body: {
       kind: 'change',
-      subject: ref(text(args.rotationId), 'Rotation', text(args.scheduleId)),
+      subject: ref(
+        nameOr(names, 'rotation', args.rotationId, 'The rotation'),
+        'Rotation',
+        named(names, 'schedule', args.scheduleId)
+      ),
       rows: [
         ...(text(args.name) ? [{ label: 'Name', value: text(args.name) }] : []),
         ...(text(args.type)
@@ -247,14 +305,21 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
         ...(text(args.startDate) ? [{ label: 'Starts', value: text(args.startDate) }] : []),
         ...(text(args.endDate) ? [{ label: 'Ends', value: text(args.endDate) }] : []),
         ...(strings(args.participantAccountIds).length > 0
-          ? [{ label: 'Participants', value: strings(args.participantAccountIds).join(', ') }]
+          ? [
+              {
+                label: 'Participants',
+                value: strings(args.participantAccountIds)
+                  .map((accountId) => who(names, accountId, 'Someone'))
+                  .join(', '),
+              },
+            ]
           : []),
       ],
       notes: ['Only the fields shown change; the rest of the rotation is left as it is.'],
     },
   }),
 
-  jsm_ops_create_maintenance: (args) => ({
+  jsm_ops_create_maintenance: (args, names) => ({
     verb: 'Schedule',
     tone: 'caution',
     icon: 'gear',
@@ -269,17 +334,33 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
         { label: 'From', value: text(args.startDate) },
         { label: 'Until', value: text(args.endDate) },
         ...(strings(args.integrationIds).length > 0
-          ? [{ label: 'Integrations', value: strings(args.integrationIds).join(', ') }]
+          ? [
+              {
+                label: 'Integrations',
+                value: nameList(
+                  names,
+                  'integration',
+                  strings(args.integrationIds),
+                  'integration',
+                  'integrations'
+                ),
+              },
+            ]
           : []),
         ...(strings(args.policyIds).length > 0
-          ? [{ label: 'Policies', value: strings(args.policyIds).join(', ') }]
+          ? [
+              {
+                label: 'Policies',
+                value: count(strings(args.policyIds).length, 'alert policy', 'alert policies'),
+              },
+            ]
           : []),
       ],
       notes: ['Alerts from what it covers are not raised while the window is open.'],
     },
   }),
 
-  jsm_ops_cancel_maintenance: (args) => ({
+  jsm_ops_cancel_maintenance: (args, names) => ({
     verb: 'Cancel',
     tone: 'danger',
     icon: 'cross',
@@ -289,7 +370,10 @@ export const JSM_PREVIEWS: Record<string, PreviewBuilder> = {
     confirmWith: { confirm: true },
     body: {
       kind: 'change',
-      subject: ref(text(args.maintenanceId), 'Maintenance'),
+      subject: ref(
+        nameOr(names, 'maintenance', args.maintenanceId, 'The maintenance window'),
+        'Maintenance'
+      ),
       rows: [],
       notes: ['Alerts from what it covered start being raised again.'],
     },

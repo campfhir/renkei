@@ -5,19 +5,7 @@ import { Icon, ICONS } from '@/components/icons';
 import DownloadLink from '@/components/download-link';
 import { chatClient } from '@/lib/chat/client';
 import type { AttachmentView } from '@/lib/chat/views';
-
-function sizeOf(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function statusOf(status: string): string | null {
-  if (status === 'done') return null;
-  if (status === 'needs_ocr') return 'Waiting for OCR';
-  if (status === 'ocr_failed') return 'OCR failed';
-  return 'No text';
-}
+import { extractStatusLabel, sizeOf } from './composer.model';
 
 /** Every file attached to the message being written, when there are too many for chips. */
 export default function AttachmentListModal({
@@ -62,7 +50,7 @@ export default function AttachmentListModal({
         </div>
         <ul className="mt-3 min-h-0 flex-1 divide-y divide-gray-100 overflow-y-auto text-sm dark:divide-gray-900">
           {attachments.map((attachment) => {
-            const status = statusOf(attachment.extractStatus);
+            const status = extractStatusLabel(attachment.extractStatus);
             return (
               <li key={attachment.id} className="flex items-center gap-2 py-2">
                 <Icon path={ICONS.paperclip} className="h-4 w-4 shrink-0 text-gray-400" />

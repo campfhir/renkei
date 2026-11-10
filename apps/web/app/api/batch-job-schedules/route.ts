@@ -30,10 +30,8 @@ import {
 import { documentPipelineConfig } from '@/lib/batch-jobs/start-document-ocr-pipeline';
 import { nextRunAtFor } from '@/lib/batch-jobs/schedule-next-run';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -101,11 +99,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   // allowed on the Connectors page — same check the one-off start route makes.
   const shares = await listConnectedShares(session.subject);
   if (!shares.ok) {
-    logger.error('Could not read your file shares: {error}', {
-      component: 'api/batch-job-schedules',
-      subject: session.subject,
-      error: shares.err.message ?? shares.err.type,
-    });
+    logger.error(
+      '{actor} created the schedule "{name}", but their file shares could not be read; the schedule was not saved: {error}',
+      {
+        component: 'api/batch-job-schedules',
+        ...who(session),
+        name,
+        shareId,
+        error: shares.err.message ?? shares.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read your file shares' }, { status: 500 });
   }
   const refusal = afterProcessingRefusal(shares.val, shareId, afterProcessing);

@@ -28,6 +28,23 @@ jest.mock('@/lib/logger', () => ({
 // ESM-only and untransformed here. Mocked whole for that reason, not to
 // swap any behavior.
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   withPresentationHint: (text: string) => text,
 }));
 

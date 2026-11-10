@@ -36,7 +36,20 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
 
   return {
     ...memoryAgentRunSweeps(tables),
-    async list({ agentId, ownerSubject, audience, status, q, matchId, limit }) {
+    async list({
+      agentId,
+      ownerSubject,
+      audience,
+      status,
+      statuses,
+      errorKinds,
+      excludeErrorKinds,
+      clockStartedBefore,
+      q,
+      matchId,
+      limit,
+      offset,
+    }) {
       const agent = agentId;
       const id = matchId ? matchId : undefined;
       const pattern = q ? likePattern(q) : null;
@@ -44,6 +57,14 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
         if (r.agent_id !== agent) return false;
         if (ownerSubject !== null && r.owner_subject !== ownerSubject) return false;
         if (status && r.status !== status) return false;
+        if (statuses && !statuses.includes(r.status)) return false;
+        const kind: string | null = r.error_kind ?? null;
+        if (errorKinds && (kind === null || !errorKinds.includes(kind))) return false;
+        if (excludeErrorKinds && kind !== null && excludeErrorKinds.includes(kind)) return false;
+        if (clockStartedBefore) {
+          const clock: Date = r.resumed_at ?? r.created_at;
+          if (clock.getTime() >= clockStartedBefore.getTime()) return false;
+        }
         if (pattern === null) return true;
         const input =
           r.initial_state === null || (audience === 'admin' && r.status !== 'failed')
@@ -56,8 +77,65 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
           (id !== undefined && r.id === id)
         );
       });
-      return page(orderBy(rows, [(r) => r.created_at, 'desc'], [(r) => r.id]), limit).map(
-        summaryFromRow
+      return page(
+        orderBy(rows, [(r) => r.created_at, 'desc'], [(r) => r.id]),
+        limit,
+        offset ?? 0
+      ).map(summaryFromRow);
+    },
+    async summarizeLive(agentIds) {
+      const wanted = new Set(agentIds);
+      const live = tables.select(
+        'agent_runs',
+        (r) => wanted.has(r.agent_id) && LIVE.includes(r.status)
+      );
+      const groups = [...groupBy(live, (r) => `${r.agent_id} ${r.status}`).values()].map(
+        (group) => ({
+          agentId: group[0].agent_id,
+          status: group[0].status,
+          count: group.length,
+          oldestCreatedAt: new Date(Math.min(...group.map((r) => r.created_at.getTime()))),
+        })
+      );
+      return orderBy(groups, [(g) => g.agentId], [(g) => g.status]);
+    },
+    async listLiveForOrg({ statuses, limit, offset }) {
+      const wanted = (statuses ?? LIVE).filter((status) => LIVE.includes(status));
+      const rows = orderBy(
+        tables.select('agent_runs', (r) => wanted.includes(r.status)),
+        [(r) => r.created_at],
+        [(r) => r.id]
+      ).flatMap((r) => {
+        const agent = tables.first('agents', (a) => a.id === r.agent_id);
+        if (!agent) return [];
+        const owner = tables.first('identities', (i) => i.subject === r.owner_subject);
+        return [
+          {
+            id: r.id,
+            agentId: r.agent_id,
+            agentName: agent.name,
+            ownerSubject: r.owner_subject,
+            ownerEmail: owner?.email ?? null,
+            status: r.status,
+            errorKind: r.error_kind ?? null,
+            triggerKind: r.trigger_kind,
+            createdAt: r.created_at,
+            startedAt: r.started_at ?? null,
+            resumedAt: r.resumed_at ?? null,
+            cancelRequestedAt: r.cancel_requested_at ?? null,
+          },
+        ];
+      });
+      return page(rows, limit, offset ?? 0);
+    },
+    async countLiveForOrg() {
+      const live = tables.select('agent_runs', (r) => LIVE.includes(r.status));
+      return orderBy(
+        [...groupBy(live, (r) => r.status).values()].map((group) => ({
+          status: group[0].status,
+          count: group.length,
+        })),
+        [(g) => g.status]
       );
     },
     async findDetail({ agentId, runId: wanted, ownerSubject, audience }) {
@@ -146,6 +224,23 @@ export function memoryAgentRuns(tables: MemoryTables): AgentRunStore {
             initialState: row.initial_state,
           }
         : null;
+    },
+    async cancelQueued(wanted, bySubject) {
+      const id = wanted;
+      const now = new Date();
+      return (
+        tables.update(
+          'agent_runs',
+          (r) => r.id === id && r.status === 'queued',
+          (row) => ({
+            status: 'canceled',
+            finished_at: now,
+            updated_at: now,
+            cancel_requested_at: row.cancel_requested_at ?? now,
+            cancel_requested_by: row.cancel_requested_by ?? bySubject,
+          })
+        ).length > 0
+      );
     },
     async forceCancel(wanted, { bySubject, errorKind, error }) {
       const id = wanted;

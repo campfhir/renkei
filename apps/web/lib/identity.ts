@@ -20,7 +20,7 @@
  * gate discloses nothing it cannot verify, and verification needs the email.
  */
 
-import { getDataStore } from '@renkei/db';
+import { getDataStore, forgetActor } from '@renkei/db';
 import { ok, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 
@@ -136,6 +136,8 @@ export async function upsertIdentity(
     'DB_ERROR' as const
   );
   if (!result.ok) return result;
+  // The next log line about this person names them as they are now.
+  forgetActor(subject);
   return ok();
 }
 

@@ -7,47 +7,33 @@
  * creates.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import Link from 'next/link';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
-import InstanceConfigFields, { draftPayload, emptyDraft } from './instance-config-fields';
-import type { InstanceDraft } from './instance-config-fields';
+import InstanceConfigFields from './instance-config-fields';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
-
-interface InstanceRow {
-  id: string;
-  name: string;
-  environment: string;
-  baseUrl: string;
-  tlsVerify: boolean;
-  enabled: boolean;
-}
-
-interface ProbeResponse {
-  ok: boolean;
-  status?: number;
-  error?: string;
-}
-
-export function probeText(probe: ProbeResponse): string {
-  if (!probe.ok) return probe.error ?? 'The server could not be reached.';
-  if (probe.status === 401) return 'Reachable — an ADManager Plus REST API is listening (it asked for a token, as expected).';
-  return `Reachable — the server answered ${probe.status}.`;
-}
+import {
+  canCreate,
+  canTest,
+  draftPayload,
+  initialInstanceList,
+  instanceListReducer,
+  probeBody,
+  showsEmpty,
+  type InstanceRow,
+  type ProbeResponse,
+} from './instance-list.model';
 
 export default function InstanceList() {
-  const [instances, setInstances] = useState<InstanceRow[]>([]);
-  const [draft, setDraft] = useState<InstanceDraft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [probe, setProbe] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(instanceListReducer, initialInstanceList);
+  const { instances, draft, busy, error, probe } = state;
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ instances: InstanceRow[] }>(
       `/api/admin/admanager`
     );
-    if (loadError) setError(loadError);
-    else setInstances(data?.instances ?? []);
+    if (loadError) dispatch({ type: 'load-failed', error: loadError });
+    else dispatch({ type: 'loaded', instances: data?.instances ?? [] });
   }, []);
 
   useEffect(() => {
@@ -56,39 +42,28 @@ export default function InstanceList() {
 
   const test = async () => {
     if (!draft) return;
-    setBusy(true);
-    setProbe(null);
-    setError(null);
+    dispatch({ type: 'testing' });
     const { data, error: probeError } = await sendJsonFull<ProbeResponse>(
       `/api/admin/admanager/probe`,
       'POST',
-      {
-        baseUrl: draft.baseUrl,
-        tlsVerify: draft.tlsVerify,
-        caPem: draft.caPem || undefined,
-        allowInsecureHttp: draft.allowInsecureHttp,
-      }
+      probeBody(draft)
     );
-    setBusy(false);
     if (probeError || !data) {
-      setError(probeError ?? 'The test did not answer.');
+      dispatch({ type: 'test-failed', error: probeError ?? 'The test did not answer.' });
       return;
     }
-    setProbe(probeText(data));
+    dispatch({ type: 'tested', probe: data });
   };
 
   const create = async () => {
     if (!draft) return;
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'creating' });
     const saveError = await sendJson(`/api/admin/admanager`, 'POST', draftPayload(draft));
-    setBusy(false);
     if (saveError) {
-      setError(saveError);
+      dispatch({ type: 'create-failed', error: saveError });
       return;
     }
-    setDraft(null);
-    setProbe(null);
+    dispatch({ type: 'created' });
     await load();
   };
 
@@ -99,7 +74,7 @@ export default function InstanceList() {
     <div className="space-y-4">
       {/* The tour's anchor covers the note too, so the step has a target while the list is empty. */}
       <div {...listAnchor} className="space-y-4">
-        {instances.length === 0 && !draft ? (
+        {showsEmpty(state) ? (
           <p className="text-sm text-gray-600 dark:text-gray-400">No instances registered yet.</p>
         ) : null}
 
@@ -146,11 +121,14 @@ export default function InstanceList() {
       {draft ? (
         <div className="rounded-md border border-gray-200 p-3 dark:border-gray-800">
           <p className="mb-3 text-sm font-medium">New instance</p>
-          <InstanceConfigFields draft={draft} onChange={setDraft} />
+          <InstanceConfigFields
+            draft={draft}
+            onChange={(patch) => dispatch({ type: 'edit', patch })}
+          />
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              disabled={busy || !draft.name.trim() || !draft.baseUrl.trim()}
+              disabled={!canCreate(state)}
               onClick={() => void create()}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
@@ -158,7 +136,7 @@ export default function InstanceList() {
             </button>
             <button
               type="button"
-              disabled={busy || !draft.baseUrl.trim()}
+              disabled={!canTest(state)}
               onClick={() => void test()}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
@@ -166,10 +144,7 @@ export default function InstanceList() {
             </button>
             <button
               type="button"
-              onClick={() => {
-                setDraft(null);
-                setProbe(null);
-              }}
+              onClick={() => dispatch({ type: 'cancel' })}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Cancel
@@ -181,7 +156,7 @@ export default function InstanceList() {
         <button
           {...newAnchor}
           type="button"
-          onClick={() => setDraft(emptyDraft())}
+          onClick={() => dispatch({ type: 'new' })}
           className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
           + New instance

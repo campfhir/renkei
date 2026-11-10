@@ -36,7 +36,7 @@ import {
   LEXICAL_CONFIG,
   normalizeKeywords,
 } from '@renkei/knowledge';
-import { keywordsFieldSchema, type MCPToolContext } from '../common';
+import { keywordsFieldSchema, type MCPToolContext, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 
 /** Generous for notes, far below anything that would strain the embedder. */
@@ -73,11 +73,14 @@ async function findNoteChunk(
     );
     return first ? { metadata: first.metadata, keywords: first.keywords } : null;
   } catch (error) {
-    logger.error('note chunk could not be read: {error}', {
-      component: 'mcp/knowledge',
-      refId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'the stored note {refId} could not be read from the knowledge store, so the tool answered with a database error: {error}',
+      {
+        component: 'mcp/knowledge',
+        refId,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return 'DB_ERROR';
   }
 }
@@ -165,9 +168,11 @@ export function registerKnowledgeNoteTools(server: McpServer, context: MCPToolCo
         );
       }
 
-      logger.info('knowledge_create_note saved', {
+      logger.info('{caller} saved the note "{title}"', {
         component: 'mcp/tool',
+        ...callerFields(context),
         noteId,
+        title,
         authoredBy: context.agent ? 'agent' : 'user',
       });
       return textResult(`Note saved. noteId: ${noteId}`);

@@ -13,6 +13,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import { graphRequest } from './client';
+import { isRecord } from '@renkei/guards';
 
 /** Uniform subscription lifetime: ~2.9 days, safely under every resource's ceiling. */
 export const GRAPH_SUBSCRIPTION_MINUTES = 4200;
@@ -43,10 +44,6 @@ export interface GraphSubscription {
    * another environment's. The notificationUrl is what says whose it is.
    */
   notificationUrl?: string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function expirationFromNow(minutes: number): string {

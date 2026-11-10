@@ -80,6 +80,8 @@ import {
 import { registerBatchJobKind, type DiscoverOutcome, type RunItemOutcome } from './kinds';
 import type { BatchJobItemRow, BatchJobRow } from './store';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
+import { isRecord } from '@renkei/guards';
 
 export { DOCUMENT_OCR_PIPELINE_KIND };
 
@@ -103,10 +105,6 @@ interface PipelineConfig {
   grouping: Grouping;
   skipProcessed: boolean;
   afterProcessing: AfterProcessing;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function str(value: unknown): string {
@@ -494,11 +492,12 @@ async function runItem(batch: BatchJobRow, item: BatchJobItemRow): Promise<RunIt
       );
     } catch (error) {
       logger.warn(
-        'batch {batchJobId}: could not record processed files for "{documentKey}": {error}',
+        'the files of document "{documentKey}" in {actor}\'s batch "{name}" were processed, but could not be recorded in the processed-files ledger; a rerun will process them again: {error}',
         {
           component: COMPONENT,
+          ...(await whoIs(batch.subject)),
           batchJobId: batch.id,
-          subject: batch.subject,
+          name: batch.name,
           documentKey,
           error: error instanceof Error ? error.message : String(error),
         }

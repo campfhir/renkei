@@ -9,7 +9,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { createMcpHandler } from 'mcp-handler';
-import { getDataStore } from '@renkei/db';
+import { getDataStore, describeActor, describeAgent, actorFields, agentFields } from '@renkei/db';
 import { attemptFromHeaders, withAttempt } from '@/lib/mcp-tools/attempt-context';
 import { runIdFromHeaders, withRun } from '@/lib/mcp-tools/run-context';
 import { getOrgSettings } from '@renkei/settings';
@@ -21,6 +21,7 @@ import {
   unauthorizedResponse,
 } from '@/lib/mcp-token';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import { cacheUserDisplayName } from '@/lib/mcp-tools';
 import { resolveConnectorAvailability, registerRenkeiTools } from '@/lib/mcp-tools/registry';
 import { withUsageTracking } from '@/lib/mcp-tools/usage-tracking';
@@ -74,17 +75,22 @@ interface JiraGrantContext {
 }
 
 async function resolveJiraGrant(
+  subject: string,
   accountId: string
 ): Promise<JiraGrantContext | 'revoked' | 'failed'> {
   const ref = { provider: ATLASSIAN, accountId };
   const described = await delegateGrants().describe(ref);
   if (!described.ok) {
     if (described.err.type === 'NO_GRANT') return 'revoked';
-    logger.error('Failed to retrieve Jira grant for {accountId}: {error}', {
-      component: 'mcp/transport',
-      accountId,
-      error: described.err.message ?? described.err.type,
-    });
+    logger.error(
+      "{actor}'s Jira grant could not be read from the delegate, so the MCP request was answered 500 and no tools were served: {error}",
+      {
+        component: 'mcp/transport',
+        ...(await whoIs(subject)),
+        accountId,
+        error: described.err.message ?? described.err.type,
+      }
+    );
     return 'failed';
   }
   const site = readAtlassianMetadata(described.val.metadata);
@@ -119,10 +125,10 @@ async function resolveJsmGrant(
   });
   if (!row) return null;
 
-  const failed = (reason: string): null => {
+  const failed = async (reason: string): Promise<null> => {
     logger.warn(
-      'JSM grant exists but could not be resolved ({reason}); jsm_* tools are absent this request',
-      { component: 'mcp/transport', subject, reason }
+      '{actor} has a JSM grant, but it could not be resolved ({reason}); the jsm_* tools are absent from this request',
+      { component: 'mcp/transport', ...(await whoIs(subject)), accountId: row.accountId, reason }
     );
     return null;
   };
@@ -146,10 +152,13 @@ const handler = async (request: NextRequest): Promise<Response> => {
   // link built from it is unreachable for the user. getOrigin resolves the public one.
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'mcp/transport',
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      'the MCP endpoint could not resolve its public origin, so the request was answered 500 before the caller was identified: {error}',
+      {
+        component: 'mcp/transport',
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const origin = originResult.val;
@@ -160,7 +169,10 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // first — attributing every comment, transition and worklog to that account.
     const bearer = getBearerToken(request);
     if (!bearer) {
-      logger.warn('Request without bearer token', { component: 'mcp/transport' });
+      logger.warn(
+        'an MCP request arrived without a bearer token and was answered 401; nothing was served',
+        { component: 'mcp/transport' }
+      );
       return unauthorizedResponse(origin, 'Authorization required');
     }
 
@@ -177,9 +189,10 @@ const handler = async (request: NextRequest): Promise<Response> => {
       (await resolveAccessToken(bearer, 'agent')) ??
       (await resolveAccessToken(bearer, 'widget'));
     if (!tokenRecord) {
-      logger.warn('Request with unknown or expired bearer token', {
-        component: 'mcp/transport',
-      });
+      logger.warn(
+        'an MCP request carried a bearer token that is unknown or expired and was answered 401; nothing was served',
+        { component: 'mcp/transport' }
+      );
       return unauthorizedResponse(origin, 'Invalid or expired access token');
     }
 
@@ -188,6 +201,18 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // about the call is the OWNER's (subject, email, grants, gates) — this
     // only lets tools stamp agent provenance on what they write.
     const agentId = tokenRecord.application === 'agent' ? tokenRecord.agentId : null;
+    // The caller in words, for every log line about this request and for the
+    // tools' own lines (docs/logging.md): the person, and the agent with its
+    // owner when an agent is calling. Both cached, both total.
+    const actor = await describeActor(subject);
+    const agentActor = agentId ? await describeAgent(agentId) : undefined;
+    const who = {
+      ...actorFields(actor),
+      ...(agentActor ? agentFields(agentActor) : {}),
+      caller: agentActor
+        ? `agent "${agentActor.agentName}" of ${agentActor.owner.label}`
+        : actor.label,
+    };
     // App-only tools (a preview card's *_confirm buttons) register for this
     // class alone — see withAppOnlyGate. Every other caller gets a surface
     // without them, whatever its allow-list names.
@@ -318,7 +343,7 @@ const handler = async (request: NextRequest): Promise<Response> => {
 
     let grant: JiraGrantContext | null = null;
     if (grants.length > 0) {
-      const resolved = await resolveJiraGrant(grants[0].accountId);
+      const resolved = await resolveJiraGrant(subject, grants[0].accountId);
       if (resolved === 'failed') {
         return new Response(JSON.stringify({ error: 'Failed to retrieve Jira grant' }), {
           status: 500,
@@ -344,10 +369,15 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // Org policy (read-only mode, limits) comes from the database per tenant.
     const settingsResult = await getOrgSettings();
     if (!settingsResult.ok) {
-      logger.error('Could not read org settings: {error}', {
-        component: 'mcp/transport',
-        error: settingsResult.err.message ?? settingsResult.err.type,
-      });
+      logger.error(
+        "the org settings could not be read for {caller}'s MCP request, so it was answered 500 and no tools were served: {error}",
+        {
+          component: 'mcp/transport',
+          ...who,
+          accountId,
+          error: settingsResult.err.message ?? settingsResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Settings error' }, { status: 500 });
     }
     const settings = settingsResult.val;
@@ -408,16 +438,25 @@ const handler = async (request: NextRequest): Promise<Response> => {
     let cachedHandler = getHandler(cacheKey);
 
     if (!cachedHandler) {
-      logger.debug('Creating new handler (cache miss)', {
-        component: 'mcp/transport',
-        accountId,
-      });
+      logger.debug(
+        'building a new MCP tool surface for {caller} (no cached handler for this key)',
+        {
+          component: 'mcp/transport',
+          ...who,
+          accountId,
+          surfaceVersion,
+        }
+      );
 
       // Create MCP handler with tool registration
       cachedHandler = createMcpHandler(
         async (rawServer: McpServer) => {
           try {
-            logger.verbose('Server created', { component: 'mcp/transport', accountId });
+            logger.verbose('created the MCP server for {caller}; registering tools', {
+              component: 'mcp/transport',
+              ...who,
+              accountId,
+            });
 
             // Outermost of all: an app-only tool that somehow registers for a
             // caller other than a widget-confirm token answers a refusal
@@ -470,6 +509,8 @@ const handler = async (request: NextRequest): Promise<Response> => {
               salesforceAdminScopes: salesforceAdminAvailable ? salesforceAdminScopes : undefined,
               jsmGrant: jsmGrant ?? undefined,
               agent: agentId ? { agentId } : undefined,
+              actor,
+              agentActor,
               sandboxScope: sandboxScope || undefined,
               roles,
             };
@@ -530,20 +571,25 @@ const handler = async (request: NextRequest): Promise<Response> => {
             // happens where it always has, on the tools.
             registerWidgetResources(rawServer);
 
-            logger.verbose('All tools registered', {
+            logger.verbose('registered every tool {caller} may use; the handler is cached', {
               component: 'mcp/transport',
+              ...who,
               accountId,
             });
           } catch (err) {
-            logger.error('Tool registration failed', {
-              component: 'mcp/transport',
-              accountId,
-              error: err instanceof Error ? err.message : String(err),
-              cause:
-                err instanceof AggregateError
-                  ? err.errors.map((e) => (e instanceof Error ? e.message : String(e)))
-                  : undefined,
-            });
+            logger.error(
+              'tool registration for {caller} failed, so the MCP request was answered with an error and no handler was cached: {error}',
+              {
+                component: 'mcp/transport',
+                ...who,
+                accountId,
+                error: err instanceof Error ? err.message : String(err),
+                cause:
+                  err instanceof AggregateError
+                    ? err.errors.map((e) => (e instanceof Error ? e.message : String(e)))
+                    : undefined,
+              }
+            );
             throw err;
           }
         },
@@ -613,7 +659,11 @@ const handler = async (request: NextRequest): Promise<Response> => {
       // Store in cache
       setHandler(cacheKey, cachedHandler);
     } else {
-      logger.debug('Using cached handler', { component: 'mcp/transport', accountId });
+      logger.debug('serving {caller} from the cached MCP tool surface', {
+        component: 'mcp/transport',
+        ...who,
+        accountId,
+      });
     }
 
     // Handle the request with cached handler.
@@ -630,12 +680,15 @@ const handler = async (request: NextRequest): Promise<Response> => {
     // The text of the failure stays in the log; the client gets a fixed
     // string and an id to quote.
     const correlationId = randomUUID();
-    logger.error('{error}', {
-      component: 'mcp/transport',
-      correlationId,
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
+    logger.error(
+      'an MCP request failed before or while its handler ran, and was answered with a JSON-RPC internal error: {error}',
+      {
+        correlationId,
+        component: 'mcp/transport',
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      }
+    );
     return new Response(
       JSON.stringify({
         jsonrpc: '2.0',

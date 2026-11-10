@@ -9,16 +9,20 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { parseStorageInput, readStorage, saveStorage } from '@/lib/storage-admin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const view = await readStorage();
   if (view === 'ERROR') {
-    logger.error('Could not read the storage configuration', {
-      component: 'api/admin/storage',
-      subject: access.subject,
-    });
+    logger.error(
+      '{actor} opened the file storage settings, but they could not be read; the page got a 500',
+      {
+        component: 'api/admin/storage',
+        ...who(access),
+      }
+    );
     return NextResponse.json(
       { error: 'Could not read the storage configuration' },
       { status: 500 }
@@ -35,9 +39,9 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   const saved = await saveStorage(input);
   if (typeof saved === 'string') {
     if (!saved.startsWith('The ')) {
-      logger.error('Could not save the storage configuration: {error}', {
+      logger.error('{actor} saved the file storage settings, but they were not saved: {error}', {
         component: 'api/admin/storage',
-        subject: access.subject,
+        ...who(access),
         error: saved,
       });
     }

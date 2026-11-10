@@ -22,6 +22,7 @@ import type { Result } from '@campfhir/safe-functions/types';
 import { normalizePermissions, type AdManagerPermission } from './permissions';
 import { readInstanceSettings } from './types';
 import type { InstanceConnection, AdManagerInstanceSummary } from './types';
+import { isRecord } from '@renkei/guards';
 
 export type StoreError = 'DB_ERROR' | 'MALFORMED_ROW';
 
@@ -32,10 +33,6 @@ export interface InstanceRow {
   settings: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function summaryFromRecord(row: AdManagerInstanceRecord): AdManagerInstanceSummary {

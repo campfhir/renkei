@@ -23,98 +23,40 @@
  *  - Any Delete           → modal confirmation before the API call.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import ConnectorIcon from '@/components/connector-icon';
 import LocalTime from '@/components/local-time';
 import { Icon, ICONS } from '@/components/icons';
 import { useNotifications } from '@/components/notification-center';
-import {
-  batchNotificationHref,
-  batchNotificationProgress,
-  isBatchNotificationKind,
-  notificationSourceLabel,
-  parseBatchNotificationMeta,
-} from '@/lib/notifications/batch-meta';
+import { isBatchNotificationKind, notificationSourceLabel } from '@/lib/notifications/batch-meta';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  MARK_ALL_REQUEST,
+  allRows,
+  allSelected as allSelectedOf,
+  confirmWording,
+  deleteRequest,
+  feedReducer,
+  groupByDay,
+  initFeed,
+  isUnread as isUnreadIn,
+  markAllBanner,
+  moreQuery,
+  parseMorePage,
+  readRequest,
+  refLinkAttrs,
+  rowClick,
+  rowLinks,
+  selectionMode as selectionModeOf,
+  showMoreVisible,
+  visibleRows,
+  type NotificationCard,
+} from './notifications-list.model';
 
-export interface NotificationCard {
-  id: string;
-  /**
-   * 'run_started' | 'run_finished' | 'run_failed' | 'act' | 'agent_edited' |
-   * 'agent_disabled' | 'batch_started' | 'batch_finished' | 'batch_failed' |
-   * 'approval' | 'question' | 'chat_shared' | 'agent_shared' | 'chat_reply' |
-   * 'chat_permission' | 'artifact_shared' | 'artifact_copied' | 'artifact_transferred'.
-   */
-  kind: string;
-  connector: string | null;
-  /** Singular noun for the linked thing — 'issue', 'note', 'meeting', 'batch'. */
-  entity: string | null;
-  headline: string;
-  refUrl: string | null;
-  agentId: string | null;
-  agentName: string | null;
-  runId: string | null;
-  /** Batch-job rows carry their counts here — see lib/notifications/batch-meta.ts. */
-  meta: unknown;
-  unread: boolean;
-  /** ISO timestamp — serialized by the server page. */
-  createdAt: string;
-}
-
-/** One row as the polling/paging API (route.ts) shapes it, camelCased. */
-interface NotificationApiRow {
-  id: string;
-  kind: string;
-  connector: string | null;
-  entity: string | null;
-  headline: string;
-  refUrl: string | null;
-  agentId: string | null;
-  agentName: string | null;
-  runId: string | null;
-  meta: unknown;
-  readAt: string | null;
-  createdAt: string;
-}
-
-function toCard(row: NotificationApiRow): NotificationCard {
-  return {
-    id: row.id,
-    kind: row.kind,
-    connector: row.connector,
-    entity: row.entity,
-    headline: row.headline,
-    refUrl: row.refUrl,
-    agentId: row.agentId,
-    agentName: row.agentName,
-    runId: row.runId,
-    meta: row.meta ?? null,
-    unread: row.readAt === null,
-    createdAt: row.createdAt,
-  };
-}
-
-/**
- * A `refUrl` on this origin (a chat, a permission ask) opens in this tab,
- * like every other in-app link; the provider's own link opens in a new one.
- */
-function refLinkAttrs(refUrl: string): { target?: string; rel?: string } {
-  return refUrl.startsWith('/') && !refUrl.startsWith('//')
-    ? {}
-    : { target: '_blank', rel: 'noopener noreferrer' };
-}
-
-/** A day heading a person recognises without doing arithmetic. */
-function dayLabel(when: Date, today: Date): string {
-  const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const diff = Math.round((day(today).getTime() - day(when).getTime()) / 86_400_000);
-  if (diff <= 0) return 'Today';
-  if (diff === 1) return 'Yesterday';
-  return when.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
-}
+export type { NotificationCard } from './notifications-list.model';
 
 export default function NotificationsList({
   rows,
@@ -134,46 +76,22 @@ export default function NotificationsList({
 }) {
   const router = useRouter();
   const { refresh } = useNotifications();
-
-  // Rows deleted this visit — hidden immediately, gone for real once the
-  // API call lands and the server page re-renders.
-  const [removed, setRemoved] = useState<ReadonlySet<string>>(new Set());
-  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [markingAll, setMarkingAll] = useState(false);
+  // Everything the feed decides lives in notifications-list.model.ts.
+  const [state, dispatch] = useReducer(feedReducer, initialHasMore, initFeed);
+  const { selected, menuFor, confirming } = state;
+  const busy = state.deleting;
   const markAllAnchor = useCoachAnchor('notifications-mark-all');
-  // Optimistic: sits between the real unreadCount prop and "0 unread now",
-  // so a still-loading server refresh doesn't flash the button back.
-  const [allMarkedRead, setAllMarkedRead] = useState(false);
 
-  // "Show more" pages: older rows fetched past what the server page sent,
-  // appended after it. `rows` itself is re-queried (freshest PAGE_SIZE) on
-  // every AutoRefresh, so these are kept separate and only ever grow —
-  // losing them on a background refresh would undo the person's own click.
-  const [extraRows, setExtraRows] = useState<NotificationCard[]>([]);
-  const [hasMore, setHasMore] = useState(initialHasMore);
-  const [loadingMore, setLoadingMore] = useState(false);
-  // The button itself only shows once the person has actually scrolled to
-  // the end of what's loaded — see the sentinel effect below.
+  // The "Show more" pill only shows once the person has actually scrolled
+  // to the end of what's loaded — see the sentinel effect below.
   const [nearBottom, setNearBottom] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-
-  // Deduped by id: a refresh can shift `rows`' window enough to overlap the
-  // oldest `extraRows` page at the edges, and `rows` — always the current
-  // truth — wins.
-  const allRows = useMemo(() => {
-    const seen = new Set(rows.map((row) => row.id));
-    const older = extraRows.filter((row) => !seen.has(row.id));
-    return [...rows, ...older];
-  }, [rows, extraRows]);
-
   const menuRef = useRef<HTMLDivElement | null>(null);
 
-  const selectionMode = selected.size > 0;
-  const visible = allRows.filter((row) => !removed.has(row.id));
-  const allSelected = selectionMode && selected.size === visible.length;
+  const selectionMode = selectionModeOf(state);
+  const visible = visibleRows(state, rows);
+  const allSelected = allSelectedOf(state, rows);
+  const isUnread = (row: NotificationCard) => isUnreadIn(state, row);
 
   // One open menu at a time; outside click or Escape closes it — the same
   // choreography as the nav's avatar menu.
@@ -185,11 +103,11 @@ export default function NotificationsList({
         event.target instanceof Node &&
         !menuRef.current.contains(event.target)
       ) {
-        setMenuFor(null);
+        dispatch({ type: 'menuClosed' });
       }
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMenuFor(null);
+      if (event.key === 'Escape') dispatch({ type: 'menuClosed' });
     };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
@@ -199,15 +117,15 @@ export default function NotificationsList({
     };
   }, [menuFor]);
 
-  // Escape closes the confirm dialog (while it is not mid-delete).
+  // Escape closes the confirm dialog (the reducer ignores it mid-delete).
   useEffect(() => {
     if (!confirming) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !busy) setConfirming(null);
+      if (event.key === 'Escape') dispatch({ type: 'deleteCancelled' });
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [confirming, busy]);
+  }, [confirming]);
 
   // The "Show more" pill floats over the viewport, so it must not appear
   // until there's blank space under the list for it to float over — the
@@ -217,6 +135,7 @@ export default function NotificationsList({
   // keeps tracking the same element's position as the page grows (a
   // "Show more" click adds rows above it), so this only needs to
   // reattach when the sentinel itself is mounted or unmounted.
+  const hasMore = state.hasMore;
   useEffect(() => {
     const element = sentinelRef.current;
     if (!element || !hasMore || typeof IntersectionObserver === 'undefined') {
@@ -228,35 +147,15 @@ export default function NotificationsList({
     return () => observer.disconnect();
   }, [hasMore]);
 
-  const toggle = (id: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
+  const toggle = (id: string) => dispatch({ type: 'toggle', id });
 
-  // Read state changed this visit — id → is now read. Applied optimistically
-  // so a tap dims the card at once; the server row catches up on refresh.
-  const [readOverride, setReadOverride] = useState<ReadonlyMap<string, boolean>>(new Map());
-  const isUnread = (row: NotificationCard) => {
-    const override = readOverride.get(row.id);
-    return override === undefined ? row.unread : !override;
-  };
-
-  async function setRead(ids: string[], read: boolean) {
-    if (ids.length === 0) return;
-    setReadOverride((current) => {
-      const next = new Map(current);
-      for (const id of ids) next.set(id, read);
-      return next;
-    });
+  /** POST /api/notifications; answers whether the server took it. */
+  async function post(body: unknown): Promise<boolean> {
     try {
       const response = await fetch(`/api/notifications`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids, ...(read ? {} : { unread: true }) }),
+        body: JSON.stringify(body),
       });
       if (!response.ok)
         reportFetchFailure(
@@ -265,12 +164,21 @@ export default function NotificationsList({
           response.status,
           `Request failed (${response.status})`
         );
-      refresh();
-      router.refresh();
+      return response.ok;
     } catch (error) {
       reportFetchFailure('POST', '/api/notifications', 0, 'Could not reach the server', error);
-      // The next poll or refresh reconciles; the optimistic state stands.
+      return false;
     }
+  }
+
+  /** Optimistic: the row dims (or brightens) at once; the server catches up on refresh. */
+  async function setRead(ids: string[], read: boolean) {
+    if (ids.length === 0) return;
+    dispatch({ type: 'readChanged', ids, read });
+    // A refusal leaves the optimistic state; the next poll or refresh reconciles.
+    await post(readRequest(ids, read));
+    refresh();
+    router.refresh();
   }
 
   /** Tapping a card is reading it — every open path funnels through here. */
@@ -282,57 +190,28 @@ export default function NotificationsList({
    * Reaches every unread notification, including the ones past PAGE_SIZE
    * that never made it into `rows` — the one action in this file that is
    * NOT scoped to what's loaded, because it exists specifically for the
-   * rows that can't be. The API call is a single `{ all: true }` update,
-   * not one id per row.
+   * rows that can't be.
    */
   async function markAllRead() {
-    setMarkingAll(true);
-    try {
-      const response = await fetch(`/api/notifications`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true }),
-      });
-      if (!response.ok)
-        reportFetchFailure(
-          'POST',
-          '/api/notifications',
-          response.status,
-          `Request failed (${response.status})`
-        );
-      setReadOverride((current) => {
-        const next = new Map(current);
-        for (const row of allRows) next.set(row.id, true);
-        return next;
-      });
-      setAllMarkedRead(true);
+    dispatch({ type: 'markAllSent' });
+    if (await post(MARK_ALL_REQUEST)) {
+      dispatch({ type: 'markedAll', ids: allRows(state, rows).map((row) => row.id) });
       refresh();
       router.refresh();
-    } catch (error) {
-      reportFetchFailure('POST', '/api/notifications', 0, 'Could not reach the server', error);
-      // The next poll or refresh reconciles; the optimistic state stands.
-    } finally {
-      setMarkingAll(false);
+    } else {
+      dispatch({ type: 'markAllFailed' });
     }
   }
 
-  /**
-   * "Show more": one page further back than whatever's currently loaded,
-   * cursored on the oldest row's own timestamp so it can't skip or repeat
-   * rows regardless of how many pages are already in.
-   */
+  /** "Show more": one page further back than whatever's currently loaded. */
   async function loadMore() {
-    if (loadingMore || !hasMore) return;
-    const oldest = allRows[allRows.length - 1];
-    if (!oldest) {
-      setHasMore(false);
-      return;
-    }
-    setLoadingMore(true);
+    const query = moreQuery(state, rows);
+    if (!query) return;
+    dispatch({ type: 'moreSent' });
     try {
       const url = new URL(`/api/notifications`, window.location.origin);
-      url.searchParams.set('before', oldest.createdAt);
-      url.searchParams.set('limit', '100');
+      url.searchParams.set('before', query.before);
+      url.searchParams.set('limit', query.limit);
       const response = await fetch(url.toString());
       if (!response.ok) {
         reportFetchFailure(
@@ -341,54 +220,46 @@ export default function NotificationsList({
           response.status,
           `Request failed (${response.status})`
         );
+        dispatch({ type: 'moreFailed' });
         return;
       }
-      const body: unknown = await response.json();
-      const parsed: { notifications?: NotificationApiRow[] } =
-        typeof body === 'object' && body !== null ? body : {};
-      const fresh = Array.isArray(parsed.notifications) ? parsed.notifications : [];
-      const mapped = fresh.map(toCard);
-      setExtraRows((current) => [...current, ...mapped]);
-      // Fewer than asked for means the table ran out, not the limit.
-      if (mapped.length < 100) setHasMore(false);
+      dispatch({ type: 'moreLoaded', rows: parseMorePage(await response.json()) });
     } catch (error) {
       reportFetchFailure('GET', '/api/notifications', 0, 'Could not reach the server', error);
-      // Leave hasMore as it was — the button stays up so the person can
-      // just try again, same as any other network hiccup on this page.
-    } finally {
-      setLoadingMore(false);
+      dispatch({ type: 'moreFailed' });
     }
   }
 
   async function deleteIds(ids: string[]) {
-    setBusy(true);
+    dispatch({ type: 'deleteSent' });
     try {
       const response = await fetch(`/api/notifications`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify(deleteRequest(ids)),
       });
-      if (!response.ok)
+      if (!response.ok) {
         reportFetchFailure(
           'DELETE',
           '/api/notifications',
           response.status,
           `Request failed (${response.status})`
         );
-      setRemoved((current) => new Set([...current, ...ids]));
-      setSelected(new Set());
-      setConfirming(null);
+        // Nothing was deleted; the dialog stays up so the person can retry.
+        dispatch({ type: 'deleteFailed' });
+        return;
+      }
+      dispatch({ type: 'deleted', ids });
       refresh();
       router.refresh();
     } catch (error) {
       reportFetchFailure('DELETE', '/api/notifications', 0, 'Could not reach the server', error);
-      // Nothing was deleted; the dialog stays up so the person can retry.
-    } finally {
-      setBusy(false);
+      dispatch({ type: 'deleteFailed' });
     }
   }
 
   const confirmCount = confirming?.length ?? 0;
+  const wording = confirmWording(confirmCount);
 
   if (visible.length === 0) {
     return (
@@ -398,34 +269,23 @@ export default function NotificationsList({
     );
   }
 
-  // Grouped in one pass, order preserved — the rows arrive sorted.
-  const now = new Date();
-  const days: { label: string; rows: NotificationCard[] }[] = [];
-  for (const row of visible) {
-    const label = dayLabel(new Date(row.createdAt), now);
-    const last = days[days.length - 1];
-    if (last && last.label === label) last.rows.push(row);
-    else days.push({ label, rows: [row] });
-  }
-
-  const showMarkAllRead = !allMarkedRead && unreadCount > 0 && !selectionMode;
+  const days = groupByDay(visible, new Date());
+  const banner = markAllBanner(state, rows, unreadCount);
 
   return (
     <div className="space-y-6">
-      {showMarkAllRead ? (
+      {banner ? (
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-gray-500 dark:text-gray-400">
-            {unreadCount} unread{unreadCount > visible.length ? ' (some not shown below)' : ''}
-          </span>
+          <span className="text-xs text-gray-500 dark:text-gray-400">{banner}</span>
           <button
             type="button"
-            disabled={markingAll}
+            disabled={state.markingAll}
             onClick={() => void markAllRead()}
             {...markAllAnchor}
             className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
           >
             <Icon path={ICONS.check} className="h-4 w-4" />
-            {markingAll ? 'Marking…' : 'Mark all as read'}
+            {state.markingAll ? 'Marking…' : 'Mark all as read'}
           </button>
         </div>
       ) : null}
@@ -438,45 +298,21 @@ export default function NotificationsList({
             {day.rows.map((row) => {
               const isSelected = selected.has(row.id);
               const unread = isUnread(row);
-              const openLabel =
-                row.kind === 'chat_reply' || row.kind === 'chat_permission'
-                  ? 'Open chat'
-                  : `Open ${row.entity ?? 'link'}`;
-              const runHref =
-                row.runId && row.agentId ? `/agents/${row.agentId}/runs/${row.runId}` : null;
-              // A batch row points at the batch's own page — in-app, like
-              // the agent links below, and rendered through the same
-              // `agentHref` slot so the card's link/menu logic stays one path.
-              const batch = isBatchNotificationKind(row.kind)
-                ? parseBatchNotificationMeta(row.meta)
-                : null;
-              const batchProgress = batch ? batchNotificationProgress(batch) : '';
-              // "Someone edited your agent", "your agent was turned off —
-              // update it" and "someone shared an agent with you" all
-              // point at the agent itself — in-app, so no new tab.
-              const agentHref = batch
-                ? batchNotificationHref(batch)
-                : (row.kind === 'agent_edited' ||
-                      row.kind === 'agent_disabled' ||
-                      row.kind === 'agent_shared') &&
-                    row.agentId
-                  ? `/agents/${row.agentId}`
-                  : null;
-              const inAppLabel = batch ? 'Open batch' : 'Open agent';
-              // Every row without a link of its own — a saved note, a
-              // created card, a run failure — still belongs to a run, and
-              // that run is never nothing to show. Without this fallback
-              // the card was unopenable: no refUrl (nothing outside
-              // Renkei to point at) and no agentHref (only agent_edited /
-              // agent_disabled / batch rows get one), so tapping it did
-              // nothing at all.
-              const usesRunHrefAsPrimary = !row.refUrl && !agentHref && runHref !== null;
-              const primaryInAppHref = agentHref ?? (usesRunHrefAsPrimary ? runHref : null);
+              const {
+                openLabel,
+                runHref,
+                agentHref,
+                inAppLabel,
+                primaryInAppHref,
+                runIsPrimary,
+                batch,
+                batchProgress,
+              } = rowLinks(row);
               return (
                 <li key={row.id} className="relative">
                   <div
                     onClick={(event) => {
-                      if (selectionMode || event.shiftKey || event.metaKey || event.ctrlKey) {
+                      if (rowClick(state, event) === 'select') {
                         event.preventDefault();
                         toggle(row.id);
                         return;
@@ -611,14 +447,7 @@ export default function NotificationsList({
                             href={row.refUrl}
                             {...refLinkAttrs(row.refUrl)}
                             onClick={(event) => {
-                              if (
-                                selectionMode ||
-                                event.shiftKey ||
-                                event.metaKey ||
-                                event.ctrlKey
-                              ) {
-                                event.preventDefault();
-                              }
+                              if (rowClick(state, event) === 'select') event.preventDefault();
                             }}
                             className="hover:underline after:absolute after:inset-0 after:rounded-lg"
                           >
@@ -628,14 +457,7 @@ export default function NotificationsList({
                           <Link
                             href={primaryInAppHref}
                             onClick={(event) => {
-                              if (
-                                selectionMode ||
-                                event.shiftKey ||
-                                event.metaKey ||
-                                event.ctrlKey
-                              ) {
-                                event.preventDefault();
-                              }
+                              if (rowClick(state, event) === 'select') event.preventDefault();
                             }}
                             className="hover:underline after:absolute after:inset-0 after:rounded-lg"
                           >
@@ -662,7 +484,7 @@ export default function NotificationsList({
                         aria-label={`Actions for "${row.headline}"`}
                         onClick={(event) => {
                           event.stopPropagation();
-                          setMenuFor((current) => (current === row.id ? null : row.id));
+                          dispatch({ type: 'menuToggled', id: row.id });
                         }}
                         className="rounded-md border border-gray-300 bg-white p-1.5 text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:border-gray-500 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600 dark:hover:text-white"
                       >
@@ -680,7 +502,7 @@ export default function NotificationsList({
                               role="menuitem"
                               href={row.refUrl}
                               {...refLinkAttrs(row.refUrl)}
-                              onClick={() => setMenuFor(null)}
+                              onClick={() => dispatch({ type: 'menuClosed' })}
                               className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
                             >
                               <Icon path={ICONS.externalLink} className="h-4 w-4" />
@@ -692,7 +514,7 @@ export default function NotificationsList({
                               role="menuitem"
                               href={agentHref}
                               onClick={() => {
-                                setMenuFor(null);
+                                dispatch({ type: 'menuClosed' });
                                 markReadOnOpen(row);
                               }}
                               className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
@@ -701,11 +523,11 @@ export default function NotificationsList({
                               {inAppLabel}
                             </Link>
                           ) : null}
-                          {runHref && !usesRunHrefAsPrimary ? (
+                          {runHref && !runIsPrimary ? (
                             <Link
                               role="menuitem"
                               href={runHref}
-                              onClick={() => setMenuFor(null)}
+                              onClick={() => dispatch({ type: 'menuClosed' })}
                               className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-800"
                             >
                               <Icon path={ICONS.play} className="h-4 w-4" />
@@ -716,7 +538,7 @@ export default function NotificationsList({
                             role="menuitem"
                             type="button"
                             onClick={() => {
-                              setMenuFor(null);
+                              dispatch({ type: 'menuClosed' });
                               void setRead([row.id], unread);
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
@@ -731,7 +553,7 @@ export default function NotificationsList({
                             role="menuitem"
                             type="button"
                             onClick={() => {
-                              setMenuFor(null);
+                              dispatch({ type: 'menuClosed' });
                               toggle(row.id);
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 dark:hover:bg-gray-800"
@@ -743,8 +565,7 @@ export default function NotificationsList({
                             role="menuitem"
                             type="button"
                             onClick={() => {
-                              setMenuFor(null);
-                              setConfirming([row.id]);
+                              dispatch({ type: 'deleteAsked', ids: [row.id] });
                             }}
                             className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
                           >
@@ -776,15 +597,15 @@ export default function NotificationsList({
           footer. Hidden in selection mode so it never competes with the
           fixed multi-select footer below, and hidden until the sentinel
           above says the person has actually scrolled down to it. */}
-      {hasMore && nearBottom && !selectionMode ? (
+      {showMoreVisible(state, nearBottom) ? (
         <div className="fixed inset-x-0 bottom-4 z-20 flex justify-center">
           <button
             type="button"
-            disabled={loadingMore}
+            disabled={state.loadingMore}
             onClick={() => void loadMore()}
             className="rounded-full border border-gray-300 bg-white px-4 py-1.5 text-xs font-medium shadow-lg hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800"
           >
-            {loadingMore ? 'Loading…' : 'Show more'}
+            {state.loadingMore ? 'Loading…' : 'Show more'}
           </button>
         </div>
       ) : null}
@@ -804,7 +625,7 @@ export default function NotificationsList({
               {allSelected ? (
                 <button
                   type="button"
-                  onClick={() => setSelected(new Set())}
+                  onClick={() => dispatch({ type: 'selectNone' })}
                   className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
                 >
                   <Icon path={ICONS.checkbox} className="h-4 w-4" />
@@ -813,7 +634,7 @@ export default function NotificationsList({
               ) : (
                 <button
                   type="button"
-                  onClick={() => setSelected(new Set(visible.map((row) => row.id)))}
+                  onClick={() => dispatch({ type: 'selectAll', ids: visible.map((row) => row.id) })}
                   className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-900"
                 >
                   <Icon path={ICONS.checkboxChecked} className="h-4 w-4" />
@@ -826,7 +647,7 @@ export default function NotificationsList({
                 type="button"
                 onClick={() => {
                   void setRead([...selected], true);
-                  setSelected(new Set());
+                  dispatch({ type: 'selectNone' });
                 }}
                 className="flex items-center justify-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
               >
@@ -837,7 +658,7 @@ export default function NotificationsList({
                 type="button"
                 onClick={() => {
                   void setRead([...selected], false);
-                  setSelected(new Set());
+                  dispatch({ type: 'selectNone' });
                 }}
                 className="flex items-center justify-center gap-1.5 rounded-md border border-blue-300 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/70"
               >
@@ -846,14 +667,14 @@ export default function NotificationsList({
               </button>
               <button
                 type="button"
-                onClick={() => setSelected(new Set())}
+                onClick={() => dispatch({ type: 'selectNone' })}
                 className="rounded-md px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => setConfirming([...selected])}
+                onClick={() => dispatch({ type: 'deleteAsked', ids: [...selected] })}
                 className="flex items-center justify-center gap-1.5 rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
               >
                 <Icon path={ICONS.trash} className="h-4 w-4" />
@@ -872,25 +693,22 @@ export default function NotificationsList({
           aria-modal="true"
           aria-label="Confirm delete"
           onClick={() => {
-            if (!busy) setConfirming(null);
+            dispatch({ type: 'deleteCancelled' });
           }}
         >
           <div
             onClick={(event) => event.stopPropagation()}
             className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-xl dark:border-gray-800 dark:bg-gray-950"
           >
-            <h2 className="text-base font-semibold">
-              Delete {confirmCount === 1 ? 'this notification' : `${confirmCount} notifications`}?
-            </h2>
+            <h2 className="text-base font-semibold">{wording.title}</h2>
             <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-              {confirmCount === 1 ? 'It disappears' : 'They disappear'} from your feed for good.
-              This doesn’t undo anything the agent did.
+              {wording.body} from your feed for good. This doesn’t undo anything the agent did.
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => setConfirming(null)}
+                onClick={() => dispatch({ type: 'deleteCancelled' })}
                 className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
               >
                 Cancel

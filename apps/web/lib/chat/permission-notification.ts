@@ -20,6 +20,7 @@ import { loadKeyring } from '@renkei/crypto';
 import { sendPush } from '@renkei/notifications';
 import { friendlyToolName } from '@renkei/agents';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export const CHAT_PERMISSION_NOTIFICATION_KIND = 'chat_permission';
 
@@ -31,6 +32,13 @@ export function notifyChatToolPermission(input: {
   toolUseId: string;
   toolName: string;
 }): void {
+  const about = async () => ({
+    component: 'chat/permission-notification',
+    ...(await whoIs(input.ownerSubject)),
+    chatId: input.chatId,
+    chat: input.chatTitle || 'New chat',
+    tool: input.toolName,
+  });
   void (async () => {
     const title = input.chatTitle || 'New chat';
     const headline = `“${title}” is waiting for your permission to ${friendlyToolName(
@@ -59,6 +67,7 @@ export function notifyChatToolPermission(input: {
     // Fire-and-forget: a push service's latency never adds to the wait.
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
+      const fields = await about();
       void sendPush(
         input.ownerSubject,
         keyResult.val,
@@ -73,15 +82,17 @@ export function notifyChatToolPermission(input: {
           // that exact chat is the page on screen.
           quiet: true,
         },
-        { log: (message, meta) => logger.warn(message, meta) }
+        { log: (message, meta) => logger.warn(message, { ...fields, ...meta }) }
       );
     }
-  })().catch((error: unknown) => {
-    logger.warn('chat permission notification not recorded', {
-      component: 'chat/permission-notification',
-      chatId: input.chatId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  })().catch(async (error: unknown) => {
+    logger.warn(
+      '{actor}\'s chat "{chat}" is waiting for permission to run {tool}, but the notification was not recorded; the ask still shows in the chat: {error}',
+      {
+        ...(await about()),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   });
 }
 
@@ -101,9 +112,14 @@ export async function markChatToolPermissionRead(
       toolUseId
     );
   } catch (error) {
-    logger.warn('chat permission notification not marked read', {
-      component: 'chat/permission-notification',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.warn(
+      '{actor} answered a permission ask, but its notification was not marked read; it stays in their badge count: {error}',
+      {
+        component: 'chat/permission-notification',
+        ...(await whoIs(subject)),
+        toolUseId,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   }
 }

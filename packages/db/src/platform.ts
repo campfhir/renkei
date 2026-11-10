@@ -33,6 +33,33 @@ export async function createLogAdapter(
   return ok(new Adapter({ ...options, db: db.val }));
 }
 
+/** The two calls of the log adapter that bringing its tables current needs. */
+export type LogTableMigrator = Pick<PostgresAdapter, 'migrate' | 'migrationStatus'>;
+
+/**
+ * Bring the log tables up to the adapter's schema, at boot, without
+ * stalling behind the processes already writing to them.
+ *
+ * `adapter.migrate()` is "idempotent" (CREATE ... IF NOT EXISTS), but
+ * Postgres takes a SHARE lock on the table before it learns an index
+ * already exists, and SHARE waits for every open INSERT into `logs` and
+ * `log_attr` (every other process's log flush, a purge's long DELETE) and
+ * then holds up the inserts queued behind it. With a whole stack
+ * restarting at once that took minutes, and the web server serves nothing
+ * until its boot finishes. So: read the catalogs first (no table locks)
+ * and run the DDL only when something is actually missing, which after
+ * the first boot of a bored-logs upgrade is never. The tables themselves
+ * are created by the schema migrations (006-bored-logs-schema).
+ *
+ * Answers whether it ran the DDL.
+ */
+export async function migrateLogTables(adapter: LogTableMigrator): Promise<boolean> {
+  const status = await adapter.migrationStatus();
+  if (status.every((migration) => migration.applied)) return false;
+  await adapter.migrate();
+  return true;
+}
+
 /**
  * Whether this process has a data store to reach, without touching it: the
  * memory store always; Postgres when a connection is configured. The boot

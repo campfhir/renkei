@@ -386,6 +386,47 @@ export function parseNotificationPrefs(stored: unknown): NotificationPrefs {
   };
 }
 
+/** A patch of one preferences document, or why it was refused. */
+export type PrefsPatch<T> = { ok: true; patch: Partial<T> } | { ok: false; error: string };
+
+/**
+ * A change to some fields of one preferences document (PATCH
+ * /api/preferences): the fields sent, each normalised exactly as a whole
+ * document would be (`parse` falls an unrecognised value back to its
+ * default), and nothing else. A field the document does not have is
+ * refused rather than dropped, and so is an empty patch: either is a
+ * caller's mistake, and silently saving nothing would look like success.
+ */
+function parsePrefsPatch<T extends object>(
+  raw: unknown,
+  defaults: T,
+  parse: (stored: unknown) => T,
+  noun: string
+): PrefsPatch<T> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: `Expected an object of ${noun}s.` };
+  }
+  const keys = Object.keys(raw);
+  if (keys.length === 0) return { ok: false, error: 'Nothing to change.' };
+  const known = (key: string) => Object.prototype.hasOwnProperty.call(defaults, key);
+  const unknown = keys.filter((key) => !known(key));
+  if (unknown.length > 0) return { ok: false, error: `Not a ${noun}: ${unknown.join(', ')}.` };
+  const parsed = parse(raw);
+  const patch: Partial<T> = {};
+  for (const key of keys) Object.assign(patch, { [key]: Reflect.get(parsed, key) });
+  return { ok: true, patch };
+}
+
+/** Some notification preferences (see parsePrefsPatch). */
+export function parseNotificationPatch(raw: unknown): PrefsPatch<NotificationPrefs> {
+  return parsePrefsPatch(
+    raw,
+    DEFAULT_NOTIFICATION_PREFS,
+    parseNotificationPrefs,
+    'notification preference'
+  );
+}
+
 /**
  * The connectors a person has added to their own connectors page.
  *
@@ -683,4 +724,49 @@ export function effectiveArchiveDays(
 ): number | null {
   if (prefs.afterDays === null) return null;
   return orgRetentionDays > 0 ? Math.min(prefs.afterDays, orgRetentionDays) : prefs.afterDays;
+}
+
+/** Some theme preferences (see parsePrefsPatch). */
+export function parseThemePatch(raw: unknown): PrefsPatch<ThemePrefs> {
+  return parsePrefsPatch(raw, DEFAULT_THEME_PREFS, parseThemePrefs, 'theme preference');
+}
+
+/** Some voice preferences (see parsePrefsPatch). */
+export function parseVoicePatch(raw: unknown): PrefsPatch<VoicePrefs> {
+  return parsePrefsPatch(raw, DEFAULT_VOICE_PREFS, parseVoicePrefs, 'voice preference');
+}
+
+/** Some image preferences (see parsePrefsPatch). */
+export function parseImagePatch(raw: unknown): PrefsPatch<ImagePrefs> {
+  return parsePrefsPatch(raw, DEFAULT_IMAGE_PREFS, parseImagePrefs, 'image preference');
+}
+
+/** Some tour preferences (see parsePrefsPatch). */
+export function parseCoachMarkPatch(raw: unknown): PrefsPatch<CoachMarkPrefs> {
+  return parsePrefsPatch(raw, DEFAULT_COACH_MARK_PREFS, parseCoachMarkPrefs, 'tour preference');
+}
+
+/**
+ * Some chat archive preferences (see parsePrefsPatch). Unlike the others a
+ * window that is not a whole number of days is refused rather than parsed
+ * down to never: the person can see the number is wrong, and silently
+ * saving something else would leave them thinking it took.
+ */
+export function parseChatArchivePatch(raw: unknown): PrefsPatch<ChatArchivePrefs> {
+  const parsed = parsePrefsPatch(
+    raw,
+    DEFAULT_CHAT_ARCHIVE_PREFS,
+    parseChatArchivePrefs,
+    'chat archive preference'
+  );
+  if (!parsed.ok) return parsed;
+  const days: unknown =
+    typeof raw === 'object' && raw !== null ? Reflect.get(raw, 'afterDays') : null;
+  if ('afterDays' in parsed.patch && days !== null && !isChatArchiveDays(days)) {
+    return {
+      ok: false,
+      error: 'chatArchive.afterDays must be a whole number of days, or null for never',
+    };
+  }
+  return parsed;
 }

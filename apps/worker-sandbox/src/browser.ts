@@ -74,6 +74,7 @@ import { callInPage } from './crawl-page-script';
 import type { CrawlContext, CrawlPage } from './crawler';
 import type { BrowserSnapshotNode } from '@renkei/connector-sandbox';
 import { startEgressProxy, type EgressProxy } from './browser-proxy';
+import { actorAttrs } from '@renkei/db';
 import { launchChromium } from './browser-launch';
 import { logger } from './logger';
 import type { BrowserStateStore, SavedBrowserState } from './browser-state';
@@ -346,18 +347,24 @@ export class BrowserSessions {
           }
           this.sessions.clear();
           if (!expected) {
-            logger.warn('browser process disconnected — every session lost', {
-              component: 'worker-sandbox/browser',
-            });
+            logger.warn(
+              'the sandbox browser process disconnected on its own; every open session was lost and the next call relaunches it',
+              {
+                component: 'worker-sandbox/browser',
+              }
+            );
           }
         });
         this.browser = browser;
         return browser;
       } catch (error) {
-        logger.error('browser launch failed: {error}', {
-          component: 'worker-sandbox/browser',
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.error(
+          'the sandbox browser could not be launched; every browser call fails until it can be: {error}',
+          {
+            component: 'worker-sandbox/browser',
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         throw new BrowserOpError(
           'browser_unavailable',
           'The sandbox browser could not be started on this deployment.'
@@ -375,10 +382,14 @@ export class BrowserSessions {
     try {
       return await this.stateStore.load(target);
     } catch (error) {
-      logger.warn('could not read a saved browser session: {error}', {
-        component: 'worker-sandbox/browser',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'the saved browser session of {actor} could not be read; they start from a blank session: {error}',
+        {
+          component: 'worker-sandbox/browser',
+          ...(await actorAttrs(target.subject)),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return null;
     }
   }
@@ -400,10 +411,14 @@ export class BrowserSessions {
         heldBy: this.replica,
       });
     } catch (error) {
-      logger.warn('could not save a browser session: {error}', {
-        component: 'worker-sandbox/browser',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'the browser session of {actor} could not be saved; a call that lands on another replica, or after a restart, starts over: {error}',
+        {
+          component: 'worker-sandbox/browser',
+          ...(await actorAttrs(session.target.subject)),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 
@@ -459,7 +474,13 @@ export class BrowserSessions {
     const watchCrash = (watched: Page) =>
       watched.on('crash', () => {
         session.crashed = true;
-        logger.warn('a page crashed in a browser session', { component: 'worker-sandbox/browser' });
+        // The handler has no async context; the name lookup is cached and never throws.
+        void actorAttrs(target.subject).then((who) => {
+          logger.warn(
+            'a page in the browser session of {actor} crashed; their next call reopens the session',
+            { component: 'worker-sandbox/browser', ...who }
+          );
+        });
       });
     watchCrash(page);
     // A popup becomes the active page: that is where the flow went.
@@ -479,10 +500,15 @@ export class BrowserSessions {
     try {
       await session.context.close();
     } catch (error) {
-      logger.warn('browser context close failed: {error}', {
-        component: 'worker-sandbox/browser',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        'the browser session of {actor} could not be closed cleanly ({reason}); the browser keeps its context until it exits: {error}',
+        {
+          component: 'worker-sandbox/browser',
+          ...(await actorAttrs(session.target.subject)),
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 

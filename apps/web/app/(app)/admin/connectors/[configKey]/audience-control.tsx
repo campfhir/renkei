@@ -15,12 +15,27 @@
  * The control says so, because "restrict" here means restrict.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import ChipListInput, { type ChipOption } from '@/components/chip-list-input';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  audienceReducer,
+  claimHint,
+  failedSave,
+  initialAudience,
+  savedNotice,
+  savesOnChoose,
+  type AudienceMode,
+} from './audience-control.model';
 
-export default function AudienceControl({ capabilityKey, label, initialValues, groupsClaim, observedGroups }: {
+export default function AudienceControl({
+  capabilityKey,
+  label,
+  initialValues,
+  groupsClaim,
+  observedGroups,
+}: {
   capabilityKey: string;
   label: string;
   initialValues: string[];
@@ -29,18 +44,12 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
   /** How many distinct values sign-ins have recorded so far. */
   observedGroups: number;
 }) {
-  const [mode, setMode] = useState<'everyone' | 'groups'>(
-    initialValues.length > 0 ? 'groups' : 'everyone'
-  );
-  const [values, setValues] = useState<string[]>(initialValues);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(audienceReducer, initialValues, initialAudience);
+  const { mode, values, busy, notice, error } = state;
+  const hint = claimHint(groupsClaim, observedGroups);
 
   async function save(next: string[]) {
-    setBusy(true);
-    setNotice(null);
-    setError(null);
+    dispatch({ type: 'saving' });
     try {
       const response = await fetch(`/api/admin/connector-audience/${capabilityKey}`, {
         method: 'PUT',
@@ -49,24 +58,17 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
       });
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) {
-        const message =
-          typeof body === 'object' && body !== null && 'error' in body
-            ? String(body.error)
-            : 'Could not save';
+        const message = failedSave(body);
         reportFetchFailure(
           'PUT',
           `/api/admin/connector-audience/${capabilityKey}`,
           response.status,
           message
         );
-        setError(message);
+        dispatch({ type: 'save-failed', error: message });
         return;
       }
-      setNotice(
-        next.length === 0
-          ? 'Saved. Offered to everyone again.'
-          : `Saved. Only people in ${next.length} group${next.length === 1 ? '' : 's'} are offered ${label}; tool lists refresh within a minute.`
-      );
+      dispatch({ type: 'saved', notice: savedNotice(next, label) });
     } catch (error) {
       reportFetchFailure(
         'PUT',
@@ -75,10 +77,14 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
         'Could not reach the server',
         error
       );
-      setError('Could not reach the server.');
-    } finally {
-      setBusy(false);
+      dispatch({ type: 'save-failed', error: 'Could not reach the server.' });
     }
+  }
+
+  function choose(next: AudienceMode) {
+    const saves = savesOnChoose(state, next);
+    dispatch({ type: 'choose', mode: next });
+    if (saves) void save(saves);
   }
 
   async function loadOptions(query: string): Promise<ChipOption[]> {
@@ -97,15 +103,15 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
     >
       <h2 className="font-semibold">Who {label} is for</h2>
       <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
-        {groupsClaim === null ? (
+        {hint.kind === 'no-claim' ? (
           <>
             No groups claim is configured (Settings → Identity), so nobody is in any group: a
             restricted audience closes the connector to everyone until one is named.{' '}
           </>
         ) : (
           <>
-            Groups come from the <code className="text-xs">{groupsClaim}</code> claim at sign-in;{' '}
-            {observedGroups} distinct value{observedGroups === 1 ? '' : 's'} seen so far.{' '}
+            Groups come from the <code className="text-xs">{hint.claim}</code> claim at sign-in;{' '}
+            {hint.seen}{' '}
           </>
         )}
         Outside the audience, the connector is not offered and its tools do not register — for
@@ -120,13 +126,7 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
             name={`audience-${capabilityKey}`}
             checked={mode === 'everyone'}
             disabled={busy}
-            onChange={() => {
-              setMode('everyone');
-              if (values.length > 0) {
-                setValues([]);
-                void save([]);
-              }
-            }}
+            onChange={() => choose('everyone')}
           />
           Everyone in the organization
         </label>
@@ -136,7 +136,7 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
             name={`audience-${capabilityKey}`}
             checked={mode === 'groups'}
             disabled={busy}
-            onChange={() => setMode('groups')}
+            onChange={() => choose('groups')}
           />
           Only people in these IdP groups
         </label>
@@ -146,7 +146,7 @@ export default function AudienceControl({ capabilityKey, label, initialValues, g
           <ChipListInput
             values={values}
             onChange={(next) => {
-              setValues(next);
+              dispatch({ type: 'values', values: next });
               void save(next);
             }}
             label="Groups"

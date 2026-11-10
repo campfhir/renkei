@@ -26,12 +26,28 @@ jest.mock('@renkei/sandbox-client', () => ({
   sbWorkspaceGitPull: jest.fn(),
   sbWorkspaceGitPush: jest.fn(),
   sbWorkspaceGitStatus: jest.fn(),
+  sbWorkspaceGet: jest.fn(),
+  sbWorkspaceWorktree: jest.fn(),
+  sbWorkspaceDelete: jest.fn(),
   sbWorkspaceGrep: jest.fn(),
   sbWorkspaceLs: jest.fn(),
   sbWorkspaceMove: jest.fn(),
   sbWorkspaceRead: jest.fn(),
   sbWorkspaceRemove: jest.fn(),
   sbWorkspaceWrite: jest.fn(),
+  sbWorkspaceGitLog: jest.fn(),
+  sbWorkspaceGitFetch: jest.fn(),
+  sbWorkspaceGitBranch: jest.fn(),
+  sbWorkspaceGitRebase: jest.fn(),
+  sbWorkspaceGitMerge: jest.fn(),
+  sbWorkspaceGitReset: jest.fn(),
+  sbWorkspaceGitStash: jest.fn(),
+  sbWorkspaceGitClean: jest.fn(),
+  sbWorkspaceGitSparseCheckout: jest.fn(),
+  sbPreviewList: jest.fn(),
+  sbPreviewLogs: jest.fn(),
+  sbPreviewStart: jest.fn(),
+  sbPreviewStop: jest.fn(),
 }));
 
 jest.mock('@/lib/sandbox/workspace-git', () => ({
@@ -52,6 +68,7 @@ import {
   type CheckoutRecovery,
 } from './tools';
 import { EXEC_MAX_TIMEOUT_MS } from '@renkei/connector-sandbox';
+import { WITHHELD_FROM_SUBAGENTS } from './delegate';
 import type { LocalToolContext } from '@/lib/chat/local-tools';
 import { resourceCipher } from '@/lib/chat/content-crypto';
 
@@ -117,18 +134,34 @@ describe('the set', () => {
       'code_edit_file',
       'code_env_names',
       'code_find',
+      'code_git_branch',
+      'code_git_clean',
       'code_git_commit',
+      'code_git_fetch',
+      'code_git_log',
+      'code_git_merge',
       'code_git_pull',
       'code_git_push',
+      'code_git_rebase',
+      'code_git_reset',
+      'code_git_sparse_checkout',
+      'code_git_stash',
       'code_git_status',
       'code_grep',
       'code_ls',
       'code_move_file',
+      'code_preview_logs',
+      'code_preview_start',
+      'code_preview_stop',
+      'code_previews',
       'code_read_file',
       'code_run',
       'code_write_file',
     ]);
     expect(set.get('code_grep')!.readOnly).toBe(true);
+    expect(set.get('code_git_log')!.readOnly).toBe(true);
+    expect(set.get('code_previews')!.readOnly).toBe(true);
+    expect(set.get('code_git_rebase')!.readOnly).toBeUndefined();
     expect(set.get('code_env_names')!.readOnly).toBe(true);
     expect(set.get('code_run')!.readOnly).toBeUndefined();
     expect(set.get('code_edit_file')!.readOnly).toBeUndefined();
@@ -602,170 +635,489 @@ describe('git', () => {
     expect(result.isError).toBe(true);
     expect(client.sbWorkspaceGitPush).not.toHaveBeenCalled();
   });
-});
 
-describe('services beside the checkout', () => {
-  const running = {
-    id: 's1',
-    name: 'db',
-    image: 'docker.io/library/postgres:16',
-    status: 'running',
-    error: null,
-    host: '172.20.0.3',
-    ports: [5432],
-    exportNames: ['DATABASE_URL'],
-    createdAt: '',
-    lastUsedAt: '',
-    expiresAt: '',
-  };
-
-  it('the code_service_* tools exist only where the deployment offers them', () => {
-    expect(tools().has('code_service_start')).toBe(false);
-    const offered = codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    }).map((tool) => tool.def.name);
-    expect(offered).toEqual(
-      expect.arrayContaining([
-        'code_services',
-        'code_service_start',
-        'code_service_stop',
-        'code_service_logs',
-      ])
+  it('pushes with the lease only when asked, and says the branch was replaced', async () => {
+    const gitProxy = {
+      base: 'http://delegate:8096/git/ticket-r/bitbucket.org/',
+      insteadOf: 'https://bitbucket.org/',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+    };
+    git.resolveWorkspaceGitAccess.mockResolvedValue({ gitProxy, username: 'alice' });
+    client.sbWorkspaceGitPush.mockResolvedValue({
+      ok: true,
+      val: { branch: 'fix', remoteBranch: 'fix', forced: true, output: '' },
+    });
+    const result = await tools().get('code_git_push')!.execute({ forceWithLease: true }, context);
+    expect(client.sbWorkspaceGitPush).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      gitProxy,
+      forceWithLease: true,
+    });
+    expect(result.content[0].type === 'text' && result.content[0].text).toContain(
+      'replaced, with lease'
     );
   });
 
-  it('start hands the worker the name, image, env and exports, and answers the address', async () => {
-    client.sbServiceStart.mockResolvedValue({ ok: true, val: running });
-    const list = codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    });
-    const byName = new Map(list.map((tool) => [tool.def.name, tool]));
-    const result = await byName.get('code_service_start')!.execute(
-      {
-        name: 'db',
-        image: 'postgres:16',
-        env: { POSTGRES_PASSWORD: 'pw' },
-        exports: { DATABASE_URL: 'postgres://postgres:pw@{host}:{port}/app' },
-      },
-      context
-    );
-    expect(client.sbServiceStart).toHaveBeenCalledWith(TARGET, {
-      name: 'db',
-      image: 'postgres:16',
-      env: { POSTGRES_PASSWORD: 'pw' },
-      exports: { DATABASE_URL: 'postgres://postgres:pw@{host}:{port}/app' },
-    });
-    expect(result.isError).toBeFalsy();
-    expect(result.content[0]?.text).toContain('172.20.0.3:5432');
-    expect(result.content[0]?.text).toContain('SERVICE_DB_HOST');
-    expect(result.content[0]?.text).toContain('DATABASE_URL');
-    expect(byName.get('code_services')?.readOnly).toBe(true);
-    expect(byName.get('code_service_logs')?.readOnly).toBe(true);
-    expect(byName.get('code_service_start')?.readOnly).toBeUndefined();
-  });
-
-  it('a refusal from the worker (an image outside the rules) is a clean error', async () => {
-    client.sbServiceStart.mockResolvedValue({
-      ok: false,
-      err: {
-        kind: 'op',
-        type: 'not_allowed',
-        status: 403,
-        message: 'redis is not allowed. Allowed: docker.io/library/postgres.',
+  it('names an in-progress rebase and its conflicts in the status', async () => {
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'topic',
+        status: 'UU shared.txt',
+        diffStat: '',
+        inProgress: 'rebase',
+        conflicts: ['shared.txt'],
       },
     });
-    const list = codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    });
-    const start = list.find((tool) => tool.def.name === 'code_service_start')!;
-    const result = await start.execute({ name: 'cache', image: 'redis' }, context);
-    expect(result.isError).toBe(true);
-    expect(result.content[0]?.text).toContain('Allowed: docker.io/library/postgres');
-    expect(result.meta).toEqual({});
+    const result = await tools().get('code_git_status')!.execute({}, context);
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('rebase is IN PROGRESS');
+    expect(text).toContain('conflicts in: shared.txt');
+    expect(text).toContain('code_git_rebase');
   });
 });
 
-describe('service logs, narrowed', () => {
-  const list = () =>
-    codeTools({
-      target: TARGET,
-      workspaceId: WS_ID,
-      repoFullName: 'acme/demo',
-      repoProvider: 'atlassian-bitbucket',
-      origin: 'https://r.example',
-      servicesEnabled: true,
-    }).find((tool) => tool.def.name === 'code_service_logs')!;
-
-  it('one service: match and since go to the worker, the stamps come back for reuse', async () => {
-    client.sbServiceLogs.mockResolvedValue({
-      ok: true,
-      val: {
-        service: {
-          id: 's1',
-          name: 'db',
-          image: 'docker.io/library/postgres:16',
-          status: 'running',
-          error: null,
-          host: '172.20.0.3',
-          ports: [5432],
-          exportNames: [],
-          createdAt: '',
-          lastUsedAt: '',
-          expiresAt: '',
-        },
-        logs: '2026-09-23T10:00:04.000000000Z ERROR: relation "users" does not exist',
-        truncated: false,
-        count: 1,
-        lastAt: '2026-09-23T10:00:04.000000000Z',
+describe('the rest of git', () => {
+  beforeEach(() => {
+    git.resolveWorkspaceGitAccess.mockResolvedValue({
+      gitProxy: {
+        base: 'http://delegate:8096/git/ticket-r/bitbucket.org/',
+        insteadOf: 'https://bitbucket.org/',
+        expiresAt: '2030-01-01T00:00:00.000Z',
       },
+      username: 'alice',
     });
-    const result = await list().execute({ name: 'db', match: 'error', since: '5m' }, context);
-    expect(client.sbServiceLogs).toHaveBeenCalledWith(TARGET, {
-      name: 'db',
-      match: 'error',
-      since: '5m',
-    });
-    expect(result.content[0]?.text).toContain(
-      '1 line (pass since: "2026-09-23T10:00:04.000000000Z"'
-    );
-    expect(result.content[0]?.text).toContain('ERROR: relation "users" does not exist');
   });
 
-  it('no name: every service interleaved, each line named', async () => {
-    client.sbServicesTail.mockResolvedValue({
+  it('renders the log as one line a commit, with refs and paging', async () => {
+    client.sbWorkspaceGitLog.mockResolvedValue({
       ok: true,
       val: {
-        entries: [
-          { service: 'db', at: '2026-09-23T10:00:01.000000000Z', line: 'ready' },
+        branch: 'main',
+        commits: [
           {
-            service: 'cache',
-            at: '2026-09-23T10:00:02.000000000Z',
-            line: 'Ready to accept connections',
+            sha: 'a'.repeat(40),
+            shortSha: 'aaaaaaa',
+            subject: 'Merge topic',
+            author: 'Ada',
+            email: 'ada@x',
+            date: '2026-09-01T10:00:00+00:00',
+            refs: ['main', 'origin/main'],
+            parents: ['b'.repeat(40), 'c'.repeat(40)],
           },
         ],
-        truncated: false,
-        unreadable: [],
+        truncated: true,
       },
     });
-    const result = await list().execute({ match: 'ready' }, context);
-    expect(client.sbServicesTail).toHaveBeenCalledWith(TARGET, { match: 'ready' });
-    expect(result.content[0]?.text).toContain('2 lines across every service');
-    expect(result.content[0]?.text).toContain('2026-09-23T10:00:01.000000000Z db ready');
-    expect(result.content[0]?.text).toContain('cache Ready to accept connections');
+    const result = await tools()
+      .get('code_git_log')!
+      .execute({ ref: 'origin/main..HEAD', paths: ['src'], max: 1 }, context);
+    expect(client.sbWorkspaceGitLog).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      ref: 'origin/main..HEAD',
+      paths: ['src'],
+      max: 1,
+    });
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('aaaaaaa 2026-09-01 Ada: Merge topic [main, origin/main] (merge)');
+    expect(text).toContain('more');
+  });
+
+  it('rebases as the person and tells the model how to finish a conflicted one', async () => {
+    client.sbWorkspaceGitRebase.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'topic',
+        completed: false,
+        inProgress: 'rebase',
+        conflicts: ['shared.txt'],
+        output: 'CONFLICT (content): Merge conflict in shared.txt',
+      },
+    });
+    const result = await tools()
+      .get('code_git_rebase')!
+      .execute({ action: 'start', onto: 'origin/main' }, context);
+    expect(client.sbWorkspaceGitRebase).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      action: 'start',
+      onto: 'origin/main',
+      author: { name: 'alice', email: 'alice@example.com' },
+    });
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('stopped on conflicts in: shared.txt');
+    expect(text).toContain('action "continue"');
+
+    client.sbWorkspaceGitRebase.mockResolvedValue({
+      ok: true,
+      val: { branch: 'topic', completed: true, inProgress: null, conflicts: [], output: '' },
+    });
+    const done = await tools().get('code_git_rebase')!.execute({ action: 'continue' }, context);
+    expect(done.content[0].type === 'text' && done.content[0].text).toContain(
+      'Rebase completed; now on topic.'
+    );
+  });
+
+  it('fetches through the person’s read ticket and refuses when there is none', async () => {
+    client.sbWorkspaceGitFetch.mockResolvedValue({
+      ok: true,
+      val: { branch: 'main', output: 'From origin\n   abc..def  main -> origin/main' },
+    });
+    const fetched = await tools().get('code_git_fetch')!.execute({ prune: true }, context);
+    expect(client.sbWorkspaceGitFetch).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      gitProxy: expect.objectContaining({ insteadOf: 'https://bitbucket.org/' }),
+      prune: true,
+    });
+    expect(fetched.content[0].type === 'text' && fetched.content[0].text).toContain(
+      'Fetched origin'
+    );
+    git.resolveWorkspaceGitAccess.mockResolvedValue('Bitbucket is not connected.');
+    const refused = await tools().get('code_git_fetch')!.execute({}, context);
+    expect(refused.isError).toBe(true);
+  });
+
+  it('cleans dry unless told otherwise, and refuses a real clean in read-only mode', async () => {
+    client.sbWorkspaceGitClean.mockResolvedValue({
+      ok: true,
+      val: { branch: 'main', dryRun: true, paths: ['build', 'tmp.log'] },
+    });
+    const dry = await tools().get('code_git_clean')!.execute({}, context);
+    expect(client.sbWorkspaceGitClean).toHaveBeenCalledWith(TARGET, { id: WS_ID, dryRun: true });
+    expect(dry.content[0].type === 'text' && dry.content[0].text).toContain('Would remove');
+    const refused = await tools()
+      .get('code_git_clean')!
+      .execute({ dryRun: false }, { ...context, readOnly: true });
+    expect(refused.isError).toBe(true);
+    expect(client.sbWorkspaceGitClean).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists branches with the current one marked and switches by name', async () => {
+    client.sbWorkspaceGitBranch.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'main',
+        output: '',
+        local: [
+          { name: 'main', current: true, upstream: 'origin/main', sha: 'abc', subject: 'x' },
+          { name: 'topic', current: false, upstream: null, sha: 'def', subject: 'y' },
+        ],
+        remote: [{ name: 'origin/main', sha: 'abc', subject: 'x' }],
+      },
+    });
+    const listed = await tools().get('code_git_branch')!.execute({}, context);
+    const text = listed.content[0].type === 'text' ? listed.content[0].text : '';
+    expect(text).toContain('* main → origin/main abc x');
+    expect(text).toContain('  topic def y');
+    expect(text).toContain('origin/main');
+    client.sbWorkspaceGitBranch.mockResolvedValue({
+      ok: true,
+      val: { branch: 'topic', output: "Switched to branch 'topic'", local: [], remote: [] },
+    });
+    const switched = await tools()
+      .get('code_git_branch')!
+      .execute({ action: 'switch', name: 'topic' }, context);
+    expect(client.sbWorkspaceGitBranch).toHaveBeenLastCalledWith(TARGET, {
+      id: WS_ID,
+      action: 'switch',
+      name: 'topic',
+    });
+    expect(switched.content[0].type === 'text' && switched.content[0].text).toContain(
+      'Now on topic.'
+    );
+  });
+
+  it('keeps throwing work away and previews from a sub-agent, and offers it the rest of git, committing and pushing included', () => {
+    for (const withheld of [
+      'code_git_reset',
+      'code_git_clean',
+      'code_preview_start',
+      'code_preview_stop',
+    ]) {
+      expect(WITHHELD_FROM_SUBAGENTS.has(withheld)).toBe(true);
+    }
+    for (const offered of [
+      'code_git_commit',
+      'code_git_push',
+      'code_git_log',
+      'code_git_fetch',
+      'code_git_branch',
+      'code_git_stash',
+      'code_git_rebase',
+      'code_git_merge',
+      'code_git_sparse_checkout',
+      'code_previews',
+      'code_preview_logs',
+    ]) {
+      expect(WITHHELD_FROM_SUBAGENTS.has(offered)).toBe(false);
+    }
+  });
+});
+
+describe('previews', () => {
+  const PORT = {
+    name: 'app',
+    port: 10000,
+    token: null,
+    url: 'https://r.example/api/code/projects/p1/chats/chat-1/previews/web/app/',
+  };
+  const PREVIEW = {
+    id: 'pv1',
+    name: 'web',
+    workspaceId: WS_ID,
+    command: 'pnpm dev',
+    ports: [PORT],
+    port: 10000,
+    token: null,
+    url: PORT.url,
+    status: 'running',
+    exitCode: null,
+    signal: null,
+    startedAt: '2026-09-01T10:00:00.000Z',
+    lastUsedAt: '2026-09-01T10:00:00.000Z',
+    expiresAt: '2026-09-01T14:00:00.000Z',
+  };
+
+  it('starts the server in the chat’s worktree, tells it its address, and answers the link', async () => {
+    client.sbPreviewStart.mockResolvedValue({
+      ok: true,
+      val: { preview: PREVIEW, listening: ['app'], logs: 'ready on 10000' },
+    });
+    const result = await tools()
+      .get('code_preview_start')!
+      .execute({ name: 'web', command: 'pnpm dev', waitSeconds: 90 }, context);
+    expect(client.sbPreviewStart).toHaveBeenCalledWith(TARGET, {
+      id: WS_ID,
+      name: 'web',
+      command: 'pnpm dev',
+      ports: [{ name: 'app', url: PORT.url }],
+      waitMs: 90_000,
+    });
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('Started and listening.');
+    expect(text).toContain(`app (port 10000, PORT): open ${PORT.url}`);
+    expect(text).not.toContain('share link');
+    expect(text).toContain('ready on 10000');
+  });
+
+  it('declares several named ports, mints a share token per port when public, and shows each address', async () => {
+    client.sbPreviewStart.mockImplementation(
+      async (
+        _target: unknown,
+        input: { ports: Array<{ name: string; token?: string; url: string }> }
+      ) => ({
+        ok: true,
+        val: {
+          preview: {
+            ...PREVIEW,
+            ports: input.ports.map((port, index) => ({
+              name: port.name,
+              port: 10000 + index,
+              token: port.token ?? null,
+              url: port.url,
+            })),
+          },
+          listening: ['web'],
+          logs: '',
+        },
+      })
+    );
+    const result = await tools()
+      .get('code_preview_start')!
+      .execute({ name: 'full', command: 'pnpm dev', ports: ['web', 'api'], public: true }, context);
+    const sent = client.sbPreviewStart.mock.calls[0][1];
+    expect(sent.ports.map((port: { name: string }) => port.name)).toEqual(['web', 'api']);
+    for (const port of sent.ports) {
+      expect(port.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(port.url).toBe(`https://r.example/api/code/preview/${port.token}/`);
+    }
+    expect(sent.ports[0].token).not.toBe(sent.ports[1].token);
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('Started and listening on web (not yet on api');
+    expect(text).toContain(
+      'web (port 10000, PORT): open https://r.example/api/code/projects/p1/chats/chat-1/previews/full/app/'
+    );
+    expect(text).toContain(
+      'api (port 10001): open https://r.example/api/code/projects/p1/chats/chat-1/previews/full/ports/api/'
+    );
+    expect(text).toContain(
+      `share link (no sign-in): https://r.example/api/code/preview/${sent.ports[1].token}/`
+    );
+    const refused = await tools()
+      .get('code_preview_start')!
+      .execute({ name: 'full', command: 'pnpm dev', ports: ['web', 'web'] }, context);
+    expect(refused.isError).toBe(true);
+  });
+
+  it('reports a server that exited before listening as an error, with its output', async () => {
+    client.sbPreviewStart.mockResolvedValue({
+      ok: true,
+      val: {
+        preview: { ...PREVIEW, status: 'exited', exitCode: 1 },
+        listening: [],
+        logs: 'Error: Cannot find module',
+      },
+    });
+    const result = await tools()
+      .get('code_preview_start')!
+      .execute({ name: 'web', command: 'pnpm dev' }, context);
+    expect(result.isError).toBe(true);
+    const text = result.content[0].type === 'text' ? result.content[0].text : '';
+    expect(text).toContain('exited before listening (code 1)');
+    expect(text).toContain('Cannot find module');
+  });
+
+  it('lists, reads logs and stops by name', async () => {
+    client.sbPreviewList.mockResolvedValue({ ok: true, val: [PREVIEW] });
+    const listed = await tools().get('code_previews')!.execute({}, context);
+    expect(listed.content[0].type === 'text' && listed.content[0].text).toContain(
+      'web: running, `pnpm dev`'
+    );
+    client.sbPreviewLogs.mockResolvedValue({
+      ok: true,
+      val: { preview: PREVIEW, logs: 'GET / 200', truncated: false, count: 1 },
+    });
+    const logs = await tools()
+      .get('code_preview_logs')!
+      .execute({ name: 'web', lines: 10 }, context);
+    expect(client.sbPreviewLogs).toHaveBeenCalledWith(TARGET, { name: 'web', lines: 10 });
+    expect(logs.content[0].type === 'text' && logs.content[0].text).toContain('GET / 200');
+    client.sbPreviewStop.mockResolvedValue({ ok: true, val: PREVIEW });
+    const stopped = await tools().get('code_preview_stop')!.execute({ name: 'web' }, context);
+    expect(client.sbPreviewStop).toHaveBeenCalledWith(TARGET, 'web');
+    expect(stopped.content[0].type === 'text' && stopped.content[0].text).toContain(
+      'Stopped web (port 10000 back in the pool)'
+    );
+    const refused = await tools()
+      .get('code_preview_stop')!
+      .execute({ name: 'web' }, { ...context, readOnly: true });
+    expect(refused.isError).toBe(true);
+  });
+});
+
+describe('a sub-agent’s own worktree', () => {
+  const SUB_ID = '33333333-3333-4333-8333-333333333333';
+  const reply = (content: unknown[], stopReason: string) => ({
+    ok: true,
+    val: { content, stopReason, usage: { inputTokens: 1, outputTokens: 1 } },
+  });
+  /** A model that writes one file, then reports. */
+  function writingModel() {
+    const replies = [
+      reply(
+        [
+          {
+            type: 'tool_use',
+            id: 'u1',
+            name: 'code_write_file',
+            input: { path: 'notes.md', content: 'hello' },
+          },
+        ],
+        'tool_use'
+      ),
+      reply([{ type: 'text', text: 'Wrote notes.md.' }], 'end_turn'),
+    ];
+    let index = 0;
+    return {
+      provider: { complete: jest.fn(async () => replies[Math.min(index++, replies.length - 1)]) },
+      modelConfigId: 'model-1',
+      providerName: 'anthropic',
+      model: 'claude-x',
+      maxOutputTokens: 4096,
+    };
+  }
+  const delegating = (): LocalToolContext =>
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- a fake model for the loop
+    ({ ...context, toolUseId: 'toolu_01AbCdEfGh', llm: writingModel() }) as LocalToolContext;
+
+  beforeEach(() => {
+    git.resolveWorkspaceGitAccess.mockResolvedValue({ username: 'alice', gitProxy: {} });
+    client.sbWorkspaceGet.mockResolvedValue({
+      ok: true,
+      val: { id: WS_ID, branch: 'renkei/abc123', parentId: 'base-1', status: 'ready' },
+    });
+    client.sbWorkspaceWorktree.mockResolvedValue({
+      ok: true,
+      val: { id: SUB_ID, branch: 'renkei/abc123-sub-abcdefgh', parentId: 'base-1' },
+    });
+    client.sbWorkspaceWrite.mockResolvedValue({ ok: true, val: { path: 'notes.md', bytes: 5 } });
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: { branch: 'renkei/abc123-sub-abcdefgh', status: '', inProgress: null, conflicts: [] },
+    });
+    client.sbWorkspaceGitCommit.mockResolvedValue({
+      ok: true,
+      val: { branch: 'renkei/abc123-sub-abcdefgh', commit: 'abc1234 wip' },
+    });
+    client.sbWorkspaceDelete.mockResolvedValue({ ok: true, val: { id: SUB_ID } });
+  });
+
+  it('starts at the chat’s branch, takes the sub-agent’s writes, and is removed with the branch named', async () => {
+    const result = await tools()
+      .get('code_delegate')!
+      .execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceWorktree).toHaveBeenCalledWith(TARGET, {
+      baseId: 'base-1',
+      branch: 'renkei/abc123-sub-abcdefgh',
+      startLocal: 'renkei/abc123',
+    });
+    // The write landed in the sub-agent's worktree, not the chat's.
+    expect(client.sbWorkspaceWrite.mock.calls[0][1]).toMatchObject({ id: SUB_ID });
+    expect(client.sbWorkspaceGitCommit).not.toHaveBeenCalled();
+    expect(client.sbWorkspaceDelete).toHaveBeenCalledWith(TARGET, SUB_ID);
+    const text = result.content.map((block) => block.text).join('\n');
+    expect(text).toContain('Wrote notes.md.');
+    expect(text).toContain('code_git_merge (action "start", ref "renkei/abc123-sub-abcdefgh")');
+  });
+
+  it('commits what the sub-agent left uncommitted before the worktree goes', async () => {
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: {
+        branch: 'renkei/abc123-sub-abcdefgh',
+        status: '?? notes.md',
+        inProgress: null,
+        conflicts: [],
+      },
+    });
+    const result = await tools()
+      .get('code_delegate')!
+      .execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceGitCommit).toHaveBeenCalledWith(
+      TARGET,
+      expect.objectContaining({ id: SUB_ID, author: { name: 'alice', email: 'alice@example.com' } })
+    );
+    expect(client.sbWorkspaceDelete).toHaveBeenCalledWith(TARGET, SUB_ID);
+    expect(result.content.map((block) => block.text).join('\n')).toContain(
+      'committed on renkei/abc123-sub-abcdefgh as work in progress'
+    );
+  });
+
+  it('keeps the worktree when the leftovers cannot be committed', async () => {
+    client.sbWorkspaceGitStatus.mockResolvedValue({
+      ok: true,
+      val: { branch: 'x', status: '?? notes.md', inProgress: null, conflicts: [] },
+    });
+    client.sbWorkspaceGitCommit.mockResolvedValue({
+      ok: false,
+      err: { kind: 'op', type: 'git_failed', message: 'nope', status: 409 },
+    });
+    await tools().get('code_delegate')!.execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceDelete).not.toHaveBeenCalled();
+  });
+
+  it('works in the chat’s checkout when the chat is not on a branch', async () => {
+    client.sbWorkspaceGet.mockResolvedValue({
+      ok: true,
+      val: { id: WS_ID, branch: 'HEAD', parentId: 'base-1', status: 'ready' },
+    });
+    const result = await tools()
+      .get('code_delegate')!
+      .execute({ task: 'write notes.md' }, delegating());
+    expect(client.sbWorkspaceWorktree).not.toHaveBeenCalled();
+    expect(client.sbWorkspaceWrite.mock.calls[0][1]).toMatchObject({ id: WS_ID });
+    expect(result.content.map((block) => block.text).join('\n')).toContain(
+      'not on a branch right now'
+    );
   });
 });

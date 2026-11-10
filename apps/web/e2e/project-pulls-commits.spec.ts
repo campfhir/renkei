@@ -15,7 +15,17 @@
  * real connect flow (e2e/support/code-host.ts: the in-memory app's fake
  * OAuth answers the consent, the exchange and the identity read). The no-access case is
  * the same kind of project shared with a second person who never
- * connected GitHub.
+ * connected GitHub: the host's real reason reaching each card on the real
+ * server. The phone pass runs in desktop-light only (the spec is in
+ * DARK_SPECS for that reason).
+ *
+ * Where its rules went: the count pill, the state pills, which rows offer
+ * a subscription, the badge's tone, how far Load more asks and when it
+ * goes, what a failed read leaves on screen —
+ * app/(app)/code/_components/{pulls-summary,pulls-page,chat-pr-badge,
+ * commits-page}.model.test.ts; what the pulls and commits routes ask the
+ * host for and how they pass its reason on —
+ * app/api/code/projects/[projectId]/{pulls,commits}/route.test.ts.
  */
 
 import path from 'node:path';
@@ -235,7 +245,13 @@ test.describe('project pulls, commits and actions', () => {
     await expect(page.getByText('Fix the timeout')).toBeVisible();
     const loadMore = page.getByRole('button', { name: 'Load more' });
     await expect(loadMore).toBeVisible();
+    // The one press through: Load more asks for a page more, and the
+    // answer's hasMore takes the button away.
+    const wider = page.waitForRequest((request) =>
+      request.url().includes(`/api/code/projects/${ids.projectId}/commits?max=60`)
+    );
     await loadMore.click();
+    await wider;
     await expect(loadMore).toHaveCount(0);
     await shot(page, testInfo, 'project-commits-page.png');
 
@@ -263,7 +279,7 @@ test.describe('project pulls, commits and actions', () => {
       data: { granteeSubject: viewer.subject, role: 'viewer' },
     });
     expect(shared.ok(), await shared.text()).toBe(true);
-    const context = await browser.newContext();
+    const context = await browser.newContext({ reducedMotion: 'reduce' });
     await signIn(context, viewer);
     const viewerPage = await context.newPage();
     try {

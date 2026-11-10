@@ -33,10 +33,7 @@ import {
   withTimeout,
 } from './limits';
 import type { RawEntry, ShareSummary } from './types';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
+import { isRecord } from '@renkei/guards';
 
 function fieldNumber(value: unknown, key: string): number | null {
   if (!isRecord(value)) return null;

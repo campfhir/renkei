@@ -11,11 +11,17 @@
  * browser edge, since for real it would reach Jira; the note and the
  * model's reply after it are real.
  *
- * Proves:
- *  - a comment card shows the comment where it will land, lets the person
- *    rewrite the words, and the confirm button sends THEIR words to the
- *    tool's `_confirm` twin with the rest of the arguments unchanged;
- *  - Cancel runs nothing;
+ * The card's rules — which words are a box and which read-only, what the
+ * twin is sent (the person's words over the model's, an emptied box
+ * keeping the model's), the receipt after confirm or cancel, a refused
+ * confirm, and the line the model is told — are act-preview.model.ts's,
+ * tested in lib/mcp-widgets/src/act-preview.model.test.ts. This spec keeps
+ * what only a browser shows:
+ *  - one press through: the comment card renders in its iframe, a rewrite
+ *    and Post comment reach the route as the `_confirm` twin's call, the
+ *    receipt is drawn and the decision opens a turn the model answers,
+ *    with what the confirm tool answered in the model's hands and off the
+ *    page (model-context.model.ts has the rule);
  *  - every kind of card draws (a gallery of one card per layout, screenshot
  *    for review) and none overflows a phone-width viewport.
  */
@@ -28,7 +34,6 @@ import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel, scripted } from './support/stub-model';
 import { createChat } from './support/tool-cards';
 import { previewChat } from './support/preview-cards';
-import { pointerReaches } from './support/settle';
 import {
   addConnectors,
   connectJira,
@@ -36,7 +41,7 @@ import {
   registerConnector,
 } from './support/connectors';
 import { connectCodeHost, prepareCodeHost } from './support/code-host';
-import { send } from './support/chat';
+import { readChat, send } from './support/chat';
 import { steady } from './support/settle';
 
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
@@ -111,7 +116,7 @@ const GALLERY: GalleryCard[] = [
     tool: 'confluence_update_page_preview',
     input: { pageId: '98765', markdown: '# Handbook\n\nThe 2026 edition.', title: 'Handbook 2026' },
     verb: 'Edit',
-    title: 'Edit page 98765 — “Handbook 2026”',
+    title: 'Edit the page — new title “Handbook 2026”',
   },
   {
     tool: 'onedrive_move_document_preview',
@@ -151,7 +156,7 @@ const GALLERY: GalleryCard[] = [
     tool: 'jira_complete_sprint_preview',
     input: { boardId: '3', sprintId: '41' },
     verb: 'Complete',
-    title: 'Complete sprint 41',
+    title: 'Complete the sprint',
   },
   {
     tool: 'bitbucket_update_pull_request_preview',
@@ -163,7 +168,7 @@ const GALLERY: GalleryCard[] = [
     tool: 'outlook_move_message_preview',
     input: { messageId: 'AAMk', destinationFolder: 'archive' },
     verb: 'Move',
-    title: 'Move a message to archive',
+    title: 'Move a message to Archive',
   },
   {
     tool: 'bitbucket_delete_branch_preview',
@@ -326,6 +331,9 @@ async function waitForCardHeightBelow(page: Page, maxHeight: number): Promise<vo
   await expect.poll(() => cardHeight(page), COLD).toBeLessThan(maxHeight);
 }
 
+/** In the confirm tool's answer, past the line the receipt shows. */
+const COMMENT_ID_LINE = 'Comment id 10042 on PROJ-12.';
+
 test('a comment card shows the comment, takes the person’s rewrite, and confirms THEIR words', async ({
   page,
   person: _person,
@@ -339,7 +347,12 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
       await route.fulfill({
         json: {
           result: {
-            content: [{ type: 'text', text: 'Commented on PROJ-12.' }],
+            // What Jira answered: the line the receipt shows, and an id
+            // only the model has a use for.
+            content: [
+              { type: 'text', text: 'Commented on PROJ-12.' },
+              { type: 'text', text: COMMENT_ID_LINE },
+            ],
             isError: false,
             meta: {},
           },
@@ -373,39 +386,21 @@ test('a comment card shows the comment, takes the person’s rewrite, and confir
       comment: 'Approved — please ship it today.',
     });
 
-    await expect(
-      noteLine(page, 'The user confirmed "Comment on PROJ-12" on the preview card')
-    ).toBeVisible(COLD);
     // The decision opened a turn of its own, and the model answered it.
     await expect(page.getByText(LLM_STUB_REPLY).first()).toBeVisible(COLD);
-  } finally {
-    if (modelId) await removeModel(page.request, modelId);
-  }
-});
-
-test('cancelling a card runs nothing', async ({ page, person: _person }, testInfo) => {
-  test.setTimeout(150_000);
-  let modelId: string | null = null;
-  try {
-    let confirmed = false;
-    await page.route('**/chat/chats/*/widget/tool-call', async (route) => {
-      confirmed = true;
-      await route.abort();
-    });
-    ({ modelId } = await openCommentChat(page, testInfo));
-    const frame = page.getByRole('main').frameLocator('iframe[title="Preview card"]');
-    await expect(frame.locator('.card-title')).toHaveText('Comment on PROJ-12', COLD);
-    // The card has only just been drawn inside its frame: Chrome routes a
-    // press by what it last drew, so the pointer has to reach the button
-    // first or the click can be lost (AGENTS.md, "Pitfalls").
-    const cancel = frame.getByRole('button', { name: 'Cancel' });
-    await pointerReaches(page, cancel);
-    await cancel.click();
-    await expect(frame.locator('.done-headline')).toHaveText('Cancelled', COLD);
+    // The decision row draws no line of its own: the card's receipt shows it.
     await expect(
-      noteLine(page, 'The user cancelled "Comment on PROJ-12" from the preview card')
-    ).toBeVisible(COLD);
-    expect(confirmed).toBe(false);
+      noteLine(page, 'The user confirmed "Comment on PROJ-12" on the preview card')
+    ).toHaveCount(0);
+
+    // What the confirm tool answered reached the model with the decision —
+    // the id the next step would need — and none of it is on the page.
+    const chatId = new URL(page.url()).pathname.split('/').pop() ?? '';
+    await expect
+      .poll(async () => JSON.stringify((await readChat(page.request, chatId)).messages), COLD)
+      .toContain(COMMENT_ID_LINE);
+    await expect(page.getByText(COMMENT_ID_LINE)).toHaveCount(0);
+    await expect(frame.getByText(COMMENT_ID_LINE)).toHaveCount(0);
   } finally {
     if (modelId) await removeModel(page.request, modelId);
   }

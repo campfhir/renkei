@@ -66,7 +66,8 @@ export function registerConnectorHandlers(): void {
   // one process regardless of who published.
   registerHandler('domain', 'job.started', dispatch);
   registerHandler('domain', 'job.completed', dispatch);
-  logger.info('webex, microsoft, zoom and dispatch handlers registered', {
-    component: 'worker/loop',
-  });
+  logger.info(
+    'registered the WebEx, Microsoft, Zoom, code-host, mail-job, agent-notification and domain-dispatch handlers',
+    { component: 'worker/loop' }
+  );
 }

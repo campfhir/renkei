@@ -13,6 +13,8 @@
  */
 
 import type { DoneState } from './ui';
+import { asRecord } from '@renkei/guards';
+import { answerText, modelContextBlocks, type AnsweredCall } from './model-context.model';
 
 type Json = Record<string, unknown>;
 
@@ -45,6 +47,8 @@ export class WidgetBridge {
   private onToolResult: Array<(result: ToolResult) => void> = [];
   private onToolInput: Array<(args: Json) => void> = [];
   hostContext: HostContext = {};
+  /** The last tool call of this card that answered without an error, until it is reported. */
+  private answered: AnsweredCall | null = null;
 
   constructor(private appName: string) {
     window.addEventListener('message', (event: MessageEvent) => this.receive(event));
@@ -79,11 +83,15 @@ export class WidgetBridge {
    * tool a second time.
    */
   async callTool(name: string, args: Json, stateKey?: string): Promise<ToolResult> {
-    return this.request('tools/call', {
+    const result: ToolResult = await this.request('tools/call', {
       name,
       arguments: args,
       ...(stateKey ? { stateKey } : {}),
     });
+    // Kept for the update that follows the decision (updateModelContext):
+    // the answer carries the ids and links of what was just made.
+    if (!result.isError) this.answered = { tool: name, text: answerText(result.content) };
+    return result;
   }
 
   /**
@@ -118,10 +126,17 @@ export class WidgetBridge {
    * off replying until every card from the same reply is decided, so one
    * reply presenting several cards gets one answer, informed by all of
    * them, instead of one answer per card.
+   *
+   * When the decision ran a tool, its answer rides along as a second
+   * block (model-context.model.ts): the card shows the person a receipt,
+   * and the model gets the ids and links the next step stands on, without
+   * each card having to repeat them in its own sentence.
    */
   updateModelContext(text: string, stateKey?: string): void {
+    const content = modelContextBlocks(text, this.answered);
+    this.answered = null;
     this.request('ui/update-model-context', {
-      content: [{ type: 'text', text }],
+      content,
       ...(stateKey ? { stateKey } : {}),
     }).catch(() => undefined);
   }
@@ -210,11 +225,6 @@ export class WidgetBridge {
     new ResizeObserver(report).observe(document.body);
     report();
   }
-}
-
-function asRecord(value: unknown): Json {
-  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-  return typeof value === 'object' && value !== null ? (value as Json) : {};
 }
 
 /** Host theme + style variables onto the document, re-applied on change. */

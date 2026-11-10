@@ -7,9 +7,11 @@ import { NextResponse } from 'next/server';
 import { getOrgSettings } from '@renkei/settings';
 import { chatRequestContext, jsonError, readJsonBody } from '@/lib/chat/route-support';
 import { resolveProjectAccess } from '@/lib/chat/access';
+import { getProjectRow } from '@/lib/chat/projects';
 import { appendProjectMemory, forgetProjectMemory, readProjectMemory } from '@/lib/chat/memory';
 import { createOutboundRedactor } from '@/lib/chat/outbound-redaction';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   request: NextRequest,
@@ -60,11 +62,17 @@ export async function POST(
     cipher: access.cipher,
   });
   if (!id) {
-    logger.error('The note could not be saved', {
-      component: 'api/chat/projects/memory',
-      subject: session.subject,
-      projectId,
-    });
+    const project = await getProjectRow(projectId).catch(() => null);
+    logger.error(
+      '{actor} added a memory note of {chars} characters to the project "{project}", but it was not saved: the content encryption key is not available',
+      {
+        component: 'api/chat/projects/memory',
+        ...who(session),
+        projectId,
+        project: project?.name ?? '(unknown project)',
+        chars: content.length,
+      }
+    );
     return jsonError(500, 'content-key', 'The note could not be saved.');
   }
   return NextResponse.json({ id }, { status: 201 });

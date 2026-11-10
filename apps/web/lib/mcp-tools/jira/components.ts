@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
-import { getCachedDisplayName } from '../common';
+import { callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import { granularJiraScopes, describeJiraAuthFailure, type JiraAuth } from './jira-auth';
 import { resolveUserId } from './resolve-user';
@@ -35,11 +35,10 @@ export async function registerComponentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_get_component invoked', {
+      logger.debug('{caller} called jira_get_component', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_get_component',
       });
       try {
         const { componentId } = args;
@@ -96,11 +95,10 @@ export async function registerComponentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_create_component invoked', {
+      logger.debug('{caller} called jira_create_component', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_create_component',
       });
       try {
         const { projectKey, name, description, lead } = args;
@@ -182,11 +180,10 @@ export async function registerComponentTools(
       }),
     },
     async (args: Record<string, unknown>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jira_delete_component invoked', {
+      logger.debug('{caller} called jira_delete_component', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jira_delete_component',
       });
       try {
         const { componentId, moveIssuesTo } = args;

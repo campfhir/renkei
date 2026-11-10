@@ -40,6 +40,15 @@ TOKEN_ENCRYPTION_KEY=<32-byte-base64-key>
 #   pnpm --filter @renkei/user-keys rekey-chats --all
 # with this variable (and TOKEN_ENCRYPTION_KEY) in the environment.
 # USER_KEY_ENCRYPTION_KEY=<32-byte-base64-key>
+# The secret the delegate's instance keypair is derived from
+# (docs/delegate-key-design.md, "The delegate"). With it, a restart — every
+# deploy — and every replica are the same instance, so the delegations
+# people's browsers sealed stay open and their agents keep running while
+# they are away. Without it the keypair lives in memory only, and every
+# restart pauses the agents of everyone who does not open the app again.
+# Rotating it is a restart of the old kind: every delegation lapses once.
+# Delegate service only; the compose default is refused in production.
+DELEGATE_INSTANCE_KEY=<32-byte-base64-key>
 # Every process but the delegate reaches it at DELEGATE_WORKER_URL
 # (docker-compose.yaml wires the service name on each one), for keys,
 # provider tokens and the connector workers — each caller with ITS OWN
@@ -215,7 +224,7 @@ What this does and does not give you:
 - The runtime role cannot disable or drop a trigger, `UPDATE`, `DELETE` or
   `TRUNCATE` a trail, create tables, or touch the migration ledger. A
   compromised service container cannot rewrite the PHI access trail or the
-  audit log. The trigger on `audit_events` (migration 171) is the second
+  audit log. The trigger on `audit_events` (migration 175) is the second
   line and also covers a deployment that keeps the single role.
 - **The owner can still do all of it**, and `POSTGRES_PASSWORD` stays in
   `.env`, in the `postgres` container and in the `migrate` container.
@@ -612,6 +621,19 @@ DESC` says which server to add next.
   starts it as the unprivileged `worker` account instead, for a deployment
   where no organization will ever have either (commands then run
   unisolated by uid, and the worker's log says so).
+
+**Code project previews** (`docs/sandbox-workspaces-design.md`,
+"Previews"): with workspaces on, a project's chat can run the project's
+own server in its checkout and the web app relays it to a browser — a
+signed-in member's address under the project's routes, or a share link
+by token. The server listens on ports from the sandbox worker's own
+pool, `SANDBOX_PREVIEW_PORTS` as `low-high` (`10000-10050` unless set,
+in `.env`; a malformed value stops the worker's boot). The pool is a
+system limit: a preview declares the ports it needs by name and is told
+their numbers (`PORT`, `PORT_<NAME>`), and the pool's width is how many
+preview ports the worker runs at once. Nothing is published on the
+container; the web app reaches the ports through the worker's bearer-
+keyed proxy.
 
 **Code project services** (`docs/sandbox-workspaces-design.md`,
 "Services"): with workspaces on, the organization's **Code project
@@ -1051,6 +1073,45 @@ an email shared by two subjects resolves to nobody.
 The organization's name, shown on the consent page, is the `organizationName`
 org setting (default "Renkei").
 
+### Replacing the identity provider's client secret when nobody can sign in
+
+Every change to the identity provider in the app needs an operator session,
+and a session needs a sign-in. So once the provider's client secret has
+expired (or the client was re-registered) before an operator replaced it in
+Settings → Identity, nobody can sign in to fix it: sign-in ends at "Failed
+to exchange code for token", and the server log has "the IdP refused to
+exchange the sign-in code".
+
+The identity provider CLI (`tools/idp`) changes the record straight in the
+database. It is not in any image: run it from a checkout of the repository,
+on a machine that can reach the database, with the web app's `DATABASE_URL`
+and `TOKEN_ENCRYPTION_KEY` (or `TOKEN_ENCRYPTION_KEYS`) in the environment.
+Holding those two is the authority; the tool asks for nothing else.
+
+```bash
+pnpm install
+export DATABASE_URL=postgres://…            # the web app's
+export TOKEN_ENCRYPTION_KEY=…               # the web app's
+
+pnpm --filter @renkei/idp-cli idp show                  # what is stored (never the secret)
+pnpm --filter @renkei/idp-cli idp set --client-secret   # asks for the new secret, not echoed
+```
+
+The secret is never taken from the command line. `--client-secret` reads it
+from a prompt, from standard input when piped
+(`vault read … | pnpm --filter @renkei/idp-cli idp set --client-secret`), or
+from `IDP_CLIENT_SECRET`. It is sealed with the encryption key the same way
+the app seals it, and the app reads it on the next sign-in: no restart.
+
+`set` changes only the fields it is given, so the same tool repairs a
+re-registered client or a wrong claim mapping: `--client-id`, `--issuer`
+(the `issuer` of the provider's discovery document, https), `--role-claim`,
+`--operator-value`, `--user-value`, `--groups-claim` (an empty value clears
+one of the last four). It does not create the first record; that is first-run
+setup above. `show` also says when the key in the environment does not open
+the stored secret, which is the other way sign-in breaks for everyone (the
+wrong `TOKEN_ENCRYPTION_KEY` on the web app).
+
 ### Upgrading a deployment that was multi-tenant
 
 Migration `153-single-organization` removes the tenant model: it refuses to
@@ -1157,7 +1218,7 @@ up. Retention is a deliberate act of the owner (or a superuser), never the
 application's: `ALTER TABLE phi_access_events DISABLE TRIGGER
 phi_access_events_no_update_delete;`, prune, then `ENABLE` it again — and
 prefer archiving the pruned rows first. The platform audit log
-(`audit_events`, trigger from migration 171) and the delegate's access log
+(`audit_events`, trigger from migration 175) and the delegate's access log
 follow the same rules. A failed insert is logged at `warn`
 (`component=phi-access`); the read it describes still returns.
 

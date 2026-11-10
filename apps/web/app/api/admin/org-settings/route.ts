@@ -25,6 +25,7 @@ import {
 import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /** key → [min, max]; the UI states the same ranges. */
 const NUMERIC_BOUNDS = {
@@ -193,16 +194,19 @@ function editable(settings: OrgSettings): Record<EditableKey, EditableValue> {
 }
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/admin/org-settings',
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} opened the organization settings, but they could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/org-settings',
+        ...who(session),
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({ settings: editable(settings.val) });
@@ -222,11 +226,14 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
   const current = await getOrgSettings();
   if (!current.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/admin/org-settings',
-      subject: access.subject,
-      error: current.err.message ?? current.err.type,
-    });
+    logger.error(
+      '{actor} saved the organization settings, but the current values could not be read; nothing was saved: {error}',
+      {
+        component: 'api/admin/org-settings',
+        ...who(access),
+        error: current.err.message ?? current.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   const before = editable(current.val);
@@ -319,11 +326,16 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
   if (Object.keys(updates).length > 0) {
     const saved = await setOrgSettings(updates);
     if (!saved.ok) {
-      logger.error('Could not save settings: {error}', {
-        component: 'api/admin/org-settings',
-        subject: access.subject,
-        error: saved.err.message ?? saved.err.type,
-      });
+      logger.error(
+        '{actor} changed the organization settings {keys}, but they were not saved: {error}',
+        {
+          component: 'api/admin/org-settings',
+          ...who(access),
+          keys: Object.keys(changed).join(', '),
+          changed,
+          error: saved.err.message ?? saved.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Could not save settings' }, { status: 500 });
     }
     recordAuditEvent({

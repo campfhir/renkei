@@ -5,6 +5,8 @@
  * line, not a place to store documents.
  */
 
+import { isRecord } from '@renkei/guards';
+
 export type ClientLogLevel = 'error' | 'warn' | 'info';
 
 export interface ClientLogBody {
@@ -24,11 +26,15 @@ const MAX_STACK = 8_000;
 const MAX_ATTRS = 30;
 const MAX_ATTR_VALUE = 2_000;
 /** Names the server stamps itself, never taken from the browser. */
-const RESERVED = new Set(['component', 'subject', 'accountId', 'userId', 'displayName', 'page', 'stack']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+const RESERVED = new Set([
+  'component',
+  'subject',
+  'accountId',
+  'userId',
+  'displayName',
+  'page',
+  'stack',
+]);
 
 function bounded(value: unknown, max: number): string | undefined {
   return typeof value === 'string' && value ? value.slice(0, max) : undefined;
@@ -36,7 +42,8 @@ function bounded(value: unknown, max: number): string | undefined {
 
 export function parseClientLogBody(raw: unknown): ClientLogBody | null {
   if (!isRecord(raw)) return null;
-  const level = raw.level === 'error' || raw.level === 'warn' || raw.level === 'info' ? raw.level : null;
+  const level =
+    raw.level === 'error' || raw.level === 'warn' || raw.level === 'info' ? raw.level : null;
   // The message is logged as the template, so its braces are escaped out of it.
   const message = bounded(raw.message, MAX_MESSAGE)?.replace(/[{}]/g, '');
   const component = bounded(raw.component, 80);

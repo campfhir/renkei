@@ -23,44 +23,43 @@ import {
   sbSecretsList,
 } from '@/lib/sandbox/service-client';
 import { logger } from '@/lib/logger';
+import { isRecord } from '@renkei/guards';
 
 const HOUR_MS = 60 * 60_000;
 const DAY_MS = 24 * HOUR_MS;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function GET(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const listed = await sbSecretsList({ subject: session.subject });
   if (!listed.ok) {
     const failure = clientFailure(listed.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-        component: 'api/sandbox/secrets',
-        subject: session.subject,
-        operation: 'listed',
-        status: failure.status,
-        error: 'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'Sandbox request failed ({status}): {error}',
+        {
+          component: 'api/sandbox/secrets',
+          subject: session.subject,
+          operation: 'listed',
+          status: failure.status,
+          error:
+            'message' in listed.err && listed.err.message ? listed.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }
   return NextResponse.json({ secrets: listed.val });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
   if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 });
-  if (!(await sandboxBrowserEnabled())) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!(await sandboxBrowserEnabled()))
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body: unknown = await request.json().catch(() => null);
   if (!isRecord(body)) {
@@ -97,13 +96,17 @@ export async function POST(
   if (!created.ok) {
     const failure = clientFailure(created.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('Sandbox request failed ({status}): {error}', {
-        component: 'api/sandbox/secrets',
-        subject: session.subject,
-        operation: 'created',
-        status: failure.status,
-        error: 'message' in created.err && created.err.message ? created.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'Sandbox request failed ({status}): {error}',
+        {
+          component: 'api/sandbox/secrets',
+          subject: session.subject,
+          operation: 'created',
+          status: failure.status,
+          error:
+            'message' in created.err && created.err.message ? created.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }

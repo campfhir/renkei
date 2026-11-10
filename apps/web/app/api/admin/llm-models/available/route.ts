@@ -28,6 +28,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
 import { checkServiceEndpoint } from '@/lib/service-endpoint';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /** The taxonomy, translated for the person watching the button spinner. */
 function messageFor(kind: ListModelsError): { message: string; status: number } {
@@ -54,9 +55,8 @@ function messageFor(kind: ListModelsError): { message: string; status: number } 
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== 'object' || body === null) {
@@ -91,10 +91,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!keyResult.ok) {
-      logger.error('Could not load the token encryption key: {error}', {
-        component: 'api/admin/llm-models/available',
-        error: keyResult.err.message ?? keyResult.err.type,
-      });
+      logger.error(
+        '{actor} asked which models the LLM connection "{label}" can reach, but the token encryption key could not be loaded; no listing was made: {error}',
+        {
+          component: 'api/admin/llm-models/available',
+          ...who(session),
+          modelConfigId: payload.modelConfigId,
+          label: row.label,
+          error: keyResult.err.message ?? keyResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     const secretsResult = row.encryptedSecrets
@@ -102,10 +108,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : null;
     if (secretsResult && !secretsResult.ok) {
       logger.warn(
-        'Could not decrypt the stored API key for model config {modelConfigId}: {error}',
+        '{actor} asked which models the LLM connection "{label}" can reach, but its stored API key could not be decrypted; the person was asked to type a key instead: {error}',
         {
           component: 'api/admin/llm-models/available',
+          ...who(session),
           modelConfigId: payload.modelConfigId,
+          label: row.label,
           error: secretsResult.err.message ?? secretsResult.err.type,
         }
       );
@@ -116,11 +124,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (typeof secrets.apiKey === 'string') apiKey = secrets.apiKey;
       } catch (error) {
         // Malformed secrets fall through to the no-key answer below.
-        logger.warn('Stored secrets for model config {modelConfigId} are malformed: {error}', {
-          component: 'api/admin/llm-models/available',
-          modelConfigId: payload.modelConfigId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          '{actor} asked which models the LLM connection "{label}" can reach, but its stored secrets are malformed; the person was asked to type a key instead: {error}',
+          {
+            component: 'api/admin/llm-models/available',
+            ...who(session),
+            modelConfigId: payload.modelConfigId,
+            label: row.label,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       }
     }
   }
@@ -156,13 +169,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : null,
   });
   if (!result.ok) {
-    logger.warn('Listing models failed for {provider} ({kind}): {error}', {
-      component: 'api/admin/llm-models/available',
-      provider: payload.provider,
-      kind: result.err.type,
-      error: result.err.message ?? result.err.type,
-    });
     const { message, status } = messageFor(result.err.type);
+    logger.warn(
+      '{actor} asked which models a {provider} connection can reach, but the provider did not list them ({kind}); the person was answered {status}: {error}',
+      {
+        component: 'api/admin/llm-models/available',
+        ...who(session),
+        provider: payload.provider,
+        kind: result.err.type,
+        status,
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: message }, { status });
   }
 

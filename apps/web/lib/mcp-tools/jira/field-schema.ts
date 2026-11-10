@@ -18,11 +18,13 @@
 
 import type { MCPToolContext } from '../common';
 import { logger } from '@/lib/logger';
+import { callerFields } from '../common';
 import { adfToMarkdown } from './adf';
 import { normalizeFieldId, renderFieldValue } from './fields';
 import { markdownToAdf } from './markdown';
 import { granularJiraScopes, type JiraAuth } from './jira-auth';
 import { createUserResolver, looksLikeAccountId } from './resolve-user';
+import { isRecord } from '@renkei/guards';
 
 /** Field/metadata reads that back every write — same scope regardless of caller. */
 const FIELD_SCHEMA_SCOPES = granularJiraScopes('jira_list_fields', true);
@@ -89,9 +91,6 @@ export function clearFieldSchemaCache(): void {
   requestTypeCache.clear();
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 /**
  * One `/rest/api/3/field` entry, or null when it is not one.
  *
@@ -147,11 +146,14 @@ export async function loadFieldSchema(
       : [];
 
     schemaCache.set(key, { fields, fetchedAt: Date.now() });
-    logger.debug('Loaded', {
-      component: 'jira/field-schema',
-      accountId: context.accountId,
-      fields: fields.length,
-    });
+    logger.debug(
+      'loaded the Jira field schema for {caller}: {fields} fields, cached for the site',
+      {
+        component: 'jira/field-schema',
+        ...callerFields(context),
+        fields: fields.length,
+      }
+    );
     return fields;
   })().finally(() => inFlight.delete(key));
 
@@ -921,10 +923,14 @@ export async function enrichFieldsWithAllowedValues(
     enrichmentCache.set(cacheKey, { options: allowedValuesByFieldId, fetchedAt: Date.now() });
     return mergeAllowedValues(fields, allowedValuesByFieldId);
   } catch (error) {
-    logger.debug('Error enriching fields with allowed values', {
-      component: 'jira/field-schema',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug(
+      "the allowed values of {caller}'s fields could not be read from Jira; the fields are used without them and Jira validates the values: {error}",
+      {
+        component: 'jira/field-schema',
+        ...callerFields(context),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     // Gracefully return fields without allowed values
     return fields;
   }
@@ -975,10 +981,14 @@ async function loadRequestTypeOptions(
     requestTypeCache.set(context.apiBaseUrl, { options, fetchedAt: Date.now() });
     return options;
   } catch (error) {
-    logger.debug('Could not list request types for field resolution', {
-      component: 'jira/field-schema',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.debug(
+      'the JSM request types could not be listed for {caller}, so a request-type value passes through for Jira to name: {error}',
+      {
+        component: 'jira/field-schema',
+        ...callerFields(context),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return [];
   }
 }

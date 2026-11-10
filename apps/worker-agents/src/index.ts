@@ -17,7 +17,11 @@
 
 import { checkDataStore, closeDataStore } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
-import { agentJobsQueue } from '@renkei/queue';
+import {
+  agentJobsQueue,
+  createSettledRetentionSweep,
+  SETTLED_RETENTION_SWEEP_MS,
+} from '@renkei/queue';
 import { schedulePeriodicSweep } from '@renkei/worker-loop';
 import { createAgentJobsConsumer } from './consumer';
 import { createDraftSweep, DRAFT_SWEEP_INTERVAL_MS } from './draft-sweep';
@@ -30,6 +34,7 @@ import {
 import { createOptimizationSweep, OPTIMIZATION_SWEEP_INTERVAL_MS } from './optimization-sweep';
 import { createScheduleSweep } from './schedule-sweep';
 import { createApprovalSweep, APPROVAL_SWEEP_MS } from './approval-sweep';
+import { createDeadRunSweep, DEAD_RUN_SWEEP_MS } from './dead-run-sweep';
 import {
   createUsageRetentionSweep,
   createNotificationRetentionSweep,
@@ -144,6 +149,28 @@ async function main(): Promise<void> {
       JANITOR_SWEEP_MS,
       createStuckRunJanitor()
     ),
+    // Finished agent_jobs rows past their window: the table used to grow
+    // for ever, and every by-run lookup in it slowed with it.
+    schedulePeriodicSweep(
+      logger,
+      'agent job retention',
+      'worker-agents/job-retention',
+      SETTLED_RETENTION_SWEEP_MS,
+      createSettledRetentionSweep({
+        tables: ['agent_jobs'],
+        logger,
+        component: 'worker-agents/job-retention',
+      })
+    ),
+    // Runs that will never finish: halted, so a stalled backlog clears
+    // itself. On its own timer, so it runs even when the consumer is stuck.
+    schedulePeriodicSweep(
+      logger,
+      'dead runs',
+      'worker-agents/dead-run-sweep',
+      DEAD_RUN_SWEEP_MS,
+      createDeadRunSweep()
+    ),
     // Hygiene on the turn stream's own heartbeat table — fixed age, no
     // per-tenant policy to read. Idempotent bounded delete like the sweeps
     // above.
@@ -192,12 +219,17 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  logger.info('started {application} {version} (agent_jobs queue)', {
-    component: 'worker-agents/loop',
-  });
+  logger.info(
+    'started {application} {version}; consuming the agent_jobs queue and running the sweeps',
+    {
+      component: 'worker-agents/loop',
+    }
+  );
   await consumer.loop.run();
   for (const stop of stopSweeps) stop();
-  logger.info('stopped', { component: 'worker-agents/loop' });
+  logger.info('stopped: the queue loop ended and every sweep was stopped', {
+    component: 'worker-agents/loop',
+  });
   await logger.flush();
   await closeDataStore();
 }

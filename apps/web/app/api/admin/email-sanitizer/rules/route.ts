@@ -10,14 +10,10 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { isEmailCategory, isClassifierMatchType } from '@/lib/email-sanitizer-guards';
 import { listClassifierRules, upsertClassifierRule } from '@renkei/email-sanitizer';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
+export async function GET(_request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -25,19 +21,20 @@ export async function GET(
 
   const result = await listClassifierRules();
   if (!result.ok) {
-    logger.error('Could not read classifier rules: {error}', {
-      component: 'api/admin/email-sanitizer/rules',
-      subject: access.subject,
-      error: result.err.message ?? result.err.type,
-    });
+    logger.error(
+      '{actor} opened the classifier rules, but they could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/email-sanitizer/rules',
+        ...who(access),
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read classifier rules' }, { status: 500 });
   }
   return NextResponse.json({ rules: result.val });
 }
 
-export async function POST(
-  request: NextRequest
-): Promise<NextResponse> {
+export async function POST(request: NextRequest): Promise<NextResponse> {
   const access = await checkAccess([ROLE_OPERATOR]);
   if (!access) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -87,11 +84,17 @@ export async function POST(
     enabled,
   });
   if (!result.ok) {
-    logger.error('Could not save the rule: {error}', {
-      component: 'api/admin/email-sanitizer/rules',
-      subject: access.subject,
-      error: result.err.message ?? result.err.type,
-    });
+    logger.error(
+      '{actor} added the classifier rule "{matchType}: {matchValue}" ({category}), but it was not saved: {error}',
+      {
+        component: 'api/admin/email-sanitizer/rules',
+        ...who(access),
+        category,
+        matchType,
+        matchValue,
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save the rule' }, { status: 500 });
   }
   return NextResponse.json({ id: result.val });

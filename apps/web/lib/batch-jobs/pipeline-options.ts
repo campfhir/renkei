@@ -20,10 +20,7 @@
 
 import type { ConnectedShare } from '@renkei/connector-fileshares';
 import type { AfterProcessing } from './start-document-ocr-pipeline';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 /** Absent means on. Anything but a boolean is refused rather than guessed. */
 export function parseSkipProcessed(value: unknown): boolean | null {

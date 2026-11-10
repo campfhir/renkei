@@ -30,7 +30,14 @@ import {
 } from '../../../../packages/provider-grants/src/fake-accounts';
 import { MEMORY_BASE_URL, SANDBOX_STUB_URL } from '../constants';
 import { askAndWait, createChat } from './code-host';
-import { addConnectors, connectThrough } from './connectors';
+import {
+  addConnectors,
+  connectThrough,
+  E2E_JSM_SCOPES,
+  JSM_REQUEST_TYPE_SCOPES,
+} from './connectors';
+
+export { JSM_REQUEST_TYPE_SCOPES };
 import { createPerson } from './person';
 import { toolStep, scripted } from './stub-model';
 
@@ -171,16 +178,10 @@ export async function proposeInChat(
   return id ?? '';
 }
 
-/** The "Set up request types" box's scopes (lib/atlassian-scopes.ts), off by default. */
-export const JSM_REQUEST_TYPE_SCOPES = [
-  'read:servicedesk:jira-service-management',
-  'read:requesttype:jira-service-management',
-  'write:requesttype:jira-service-management',
-];
-
 /**
  * The org's Jira Service Management app, on, with "Set up request types"
- * allowed beside its defaults (left on, as Jira Administration is).
+ * allowed beside its defaults (left on, as Jira Administration is), saved
+ * in one write with the scopes every spec registers it with.
  */
 export async function prepareJiraServiceManagement(request: APIRequestContext): Promise<void> {
   const operator = await createPerson(request, {
@@ -188,38 +189,25 @@ export async function prepareJiraServiceManagement(request: APIRequestContext): 
     displayName: 'Jira Service Management operator',
   });
   const route = `${MEMORY_BASE_URL}/api/admin/connectors/atlassian-jsm`;
-  const read = async (): Promise<Record<string, unknown>> => {
-    const current = await request.get(route, { headers: operator.headers });
-    expect(current.ok(), await current.text()).toBe(true);
-    const body: unknown = await current.json();
-    return typeof body === 'object' && body !== null ? { ...body } : {};
-  };
-  let current = await read();
-  const has = (scopes: unknown) =>
-    JSM_REQUEST_TYPE_SCOPES.every((scope) =>
-      String(scopes ?? '')
-        .split(' ')
-        .includes(scope)
-    );
-  if (current.enabled === true && current.hasClientSecret === true && has(current.scopes)) return;
-  const clientId = typeof current.clientId === 'string' ? current.clientId : 'e2e-jsm-client';
-  if (current.hasClientSecret !== true || typeof current.scopes !== 'string') {
-    // The defaults first, then the box beside them.
-    const saved = await request.put(route, {
-      headers: operator.headers,
-      data: { clientId, clientSecret: 'e2e-jsm-secret', enabled: true },
-    });
-    expect(saved.ok(), await saved.text()).toBe(true);
-    current = await read();
+  const current = await request.get(route, { headers: operator.headers });
+  expect(current.ok(), await current.text()).toBe(true);
+  const body: unknown = await current.json();
+  const config: Record<string, unknown> =
+    typeof body === 'object' && body !== null ? { ...body } : {};
+  if (
+    config.enabled === true &&
+    config.hasClientSecret === true &&
+    config.scopes === E2E_JSM_SCOPES
+  ) {
+    return;
   }
-  const scopes = [
-    ...new Set([...String(current.scopes ?? '').split(' '), ...JSM_REQUEST_TYPE_SCOPES]),
-  ]
-    .filter(Boolean)
-    .join(' ');
+  const clientId =
+    config.configured === true && typeof config.clientId === 'string' && config.clientId
+      ? config.clientId
+      : 'e2e-jsm-client';
   const saved = await request.put(route, {
     headers: operator.headers,
-    data: { clientId, clientSecret: 'e2e-jsm-secret', enabled: true, scopes },
+    data: { clientId, clientSecret: 'e2e-jsm-secret', enabled: true, scopes: E2E_JSM_SCOPES },
   });
   expect(saved.ok(), await saved.text()).toBe(true);
 }

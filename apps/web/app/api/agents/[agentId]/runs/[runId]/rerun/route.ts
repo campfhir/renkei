@@ -33,6 +33,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -108,19 +109,23 @@ export async function POST(
       ? { ...run.initialState }
       : undefined;
 
-  const created = await createAgentRun(agentJobsQueue().producer, {
-    agentId,
-    ownerSubject: agent.ownerSubject,
-    definition: agentDefinitionOf(agent),
-    llmModelId: agent.llmModelId,
-    // Not the original trigger row: this run was started by a person
-    // pressing a button, and the history should say so. The trigger's DATA
-    // rides along in initialState, which is what the run actually reads.
-    triggerId: null,
-    triggerKind: 'manual',
-    triggeredBySubject: session.subject,
-    ...(initialState ? { initialState } : {}),
-  });
+  const created = await createAgentRun(
+    agentJobsQueue().producer,
+    {
+      agentId,
+      ownerSubject: agent.ownerSubject,
+      definition: agentDefinitionOf(agent),
+      llmModelId: agent.llmModelId,
+      // Not the original trigger row: this run was started by a person
+      // pressing a button, and the history should say so. The trigger's DATA
+      // rides along in initialState, which is what the run actually reads.
+      triggerId: null,
+      triggerKind: 'manual',
+      triggeredBySubject: session.subject,
+      ...(initialState ? { initialState } : {}),
+    },
+    { log: (message, meta) => logger.debug(message, meta) }
+  );
   if (!created.ok) {
     const message =
       created.err.type === 'DAILY_RUN_CAP'
@@ -131,11 +136,15 @@ export async function POST(
     return NextResponse.json({ error: message }, { status: 409 });
   }
 
-  logger.info('run {runId} re-run as {newRunId} by {subject}', {
-    component: 'web/agents',
-    runId,
-    newRunId: created.val.runId,
-    subject: session.subject,
-  });
+  logger.info(
+    '{actor} re-ran run {runId} of agent "{agent}" on the same input, as run {newRunId}',
+    {
+      component: 'web/agents',
+      ...who(session),
+      ...(await whichAgentOf({ agentId, agentName: agent.name, ownerSubject: agent.ownerSubject })),
+      runId,
+      newRunId: created.val.runId,
+    }
+  );
   return NextResponse.json({ runId: created.val.runId });
 }

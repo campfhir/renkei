@@ -4,6 +4,8 @@
  * expand a filter selection server-side before acting on it).
  */
 
+import { isRecord } from '@renkei/guards';
+
 export interface MailSearchFilters {
   /** Folder id or well-known name; unset searches the whole mailbox. */
   folder?: string;
@@ -66,10 +68,6 @@ export function clientSideSelect(filters: MailSearchFilters, base: string): stri
   if (filters.to) need('toRecipients');
   if (filters.cc) need('ccRecipients');
   return fields.join(',');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 /**

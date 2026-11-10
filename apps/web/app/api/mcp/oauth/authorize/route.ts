@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
-import { getDataStore, type ConsentRequestRecord } from '@renkei/db';
+import { getDataStore, type ActorFields, type ConsentRequestRecord } from '@renkei/db';
 import { randomUUID } from 'crypto';
 import { getSessionFromRequest, type Session } from '@/lib/session';
 import { getOrigin } from '@/lib/get-origin';
@@ -63,6 +64,10 @@ function redirectWithError(
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const store = getDataStore().oauthConsents;
 
+  // Who is asking and which client for, once known — for the lines below,
+  // the catch-all included.
+  let requester: ActorFields | null = null;
+  let clientName = '(unknown client)';
   try {
     const searchParams = request.nextUrl.searchParams;
     const responseType = searchParams.get('response_type');
@@ -88,6 +93,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     if (!client) {
       return NextResponse.json({ error: 'invalid_client' }, { status: 401 });
     }
+    clientName = client.clientName ?? clientId;
 
     // Nothing is redirected anywhere until the redirect URI is known to be
     // the client's own: an error sent to an unverified URI is itself the
@@ -114,13 +120,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     // specific person, so it has to be bound to a signed-in browser. This
     // is a redirect flow: bounce through login and come back here.
     const session = await getSessionFromRequest(request);
+    requester = session ? who(session) : null;
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth-authorize',
-        subject: session?.subject,
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        '{asker} asked to authorize OAuth client "{clientName}", but the app origin could not be resolved; refused with server_error: {error}',
+        {
+          component: 'auth/oauth-authorize',
+          ...(requester ?? {}),
+          asker: requester?.actor ?? 'a browser with no session',
+          clientName,
+          clientId,
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'server_error' }, { status: 500 });
     }
     if (!session) {
@@ -154,10 +167,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     consentUrl.searchParams.set('request', requestId);
     return NextResponse.redirect(consentUrl, 303);
   } catch (error) {
-    logger.error('Error: {detail}', {
-      component: 'auth/oauth-authorize',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{asker} asked to authorize OAuth client "{clientName}", but the request failed with an unexpected error; refused with server_error: {error}',
+      {
+        component: 'auth/oauth-authorize',
+        ...(requester ?? {}),
+        asker: requester?.actor ?? 'a browser with no session',
+        clientName,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }
@@ -185,10 +204,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'auth/oauth-authorize',
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      'a consent answer arrived, but the app origin could not be resolved; refused with server_error before anyone was identified: {error}',
+      {
+        component: 'auth/oauth-authorize',
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
   if (!submittedFromThisOrigin(request, originResult.val)) {
@@ -212,11 +234,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const store = getDataStore().oauthConsents;
 
+  let answerer: ActorFields | null = null;
   try {
     const session = await getSessionFromRequest(request);
     if (!session) {
       return oauthError(401, 'invalid_request', 'Sign in before answering a consent request');
     }
+    answerer = who(session);
 
     // Spent on the first answer, whatever it is: a second POST with the same
     // id — a double click, a replay — finds nothing.
@@ -267,10 +291,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     callbackUrl.searchParams.set('state', pending.state);
     return NextResponse.redirect(callbackUrl.toString(), 303);
   } catch (error) {
-    logger.error('Consent error: {detail}', {
-      component: 'auth/oauth-authorize',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      "{asker}'s consent answer ({decision}) failed with an unexpected error; no code was issued and the request may be spent: {error}",
+      {
+        component: 'auth/oauth-authorize',
+        ...(answerer ?? {}),
+        asker: answerer?.actor ?? 'a browser with no session',
+        decision,
+        requestId,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

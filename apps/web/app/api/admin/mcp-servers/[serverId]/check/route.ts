@@ -13,22 +13,26 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { getOrigin } from '@/lib/get-origin';
 import { serverSummary } from '@/lib/mcp-servers/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ serverId: string }> }
 ): Promise<NextResponse> {
   const { serverId } = await params;
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const origin = await getOrigin(request);
   if (!origin.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/admin/mcp-servers/check',
-      serverId,
-      error: origin.err.message ?? origin.err.type,
-    });
+    logger.error(
+      '{actor} asked to check an MCP server, but the app origin could not be resolved; no check was run: {error}',
+      {
+        component: 'api/admin/mcp-servers/check',
+        ...who(session),
+        serverId,
+        error: origin.err.message ?? origin.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
 

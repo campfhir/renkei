@@ -342,7 +342,9 @@ describe('a cloned workspace', () => {
     git(workspaceDir(first), 'commit', '-m', 'only in one');
     expect(git(workspaceDir(first), 'log', '--format=%s', '-1').trim()).toBe('only in one');
     expect(git(workspaceDir(second), 'log', '--format=%s', '-1').trim()).not.toBe('only in one');
-    expect(git(workspaceDir(storageKey), 'log', '--format=%s', '-1').trim()).not.toBe('only in one');
+    expect(git(workspaceDir(storageKey), 'log', '--format=%s', '-1').trim()).not.toBe(
+      'only in one'
+    );
     expect(git(workspaceDir(storageKey), 'rev-parse', '--abbrev-ref', 'HEAD').trim()).toBe('HEAD'); // detached, so a worktree may check out main;
 
     await removeWorktree(storageKey, first, null);
@@ -360,6 +362,49 @@ describe('a cloned workspace', () => {
       branch: 'renkei/one',
     });
     await removeWorktree(storageKey, again, null);
+  });
+
+  it('starts a sub-agent’s worktree at the last commit of the chat’s own branch', async () => {
+    const chat = newWorkspaceStorageKey('subjecthash');
+    const sub = newWorkspaceStorageKey('subjecthash');
+    const base = { baseStorageKey: storageKey, identity: null } as const;
+    await addWorktree({ ...base, storageKey: chat, branch: 'renkei/chat' });
+    await writeFile(join(workspaceDir(chat), 'from-the-chat.txt'), 'x');
+    git(workspaceDir(chat), 'add', '-A');
+    git(workspaceDir(chat), 'commit', '-m', 'the chat’s work');
+    await writeFile(join(workspaceDir(chat), 'uncommitted.txt'), 'x');
+
+    expect(
+      await addWorktree({
+        ...base,
+        storageKey: sub,
+        branch: 'renkei/chat-sub-1',
+        startLocal: 'renkei/chat',
+      })
+    ).toEqual({ ok: true, branch: 'renkei/chat-sub-1' });
+    // What the chat committed is there; what it has not committed is not.
+    await stat(join(workspaceDir(sub), 'from-the-chat.txt'));
+    await expect(stat(join(workspaceDir(sub), 'uncommitted.txt'))).rejects.toThrow();
+
+    // Its commits are its branch's alone until the chat merges them.
+    await writeFile(join(workspaceDir(sub), 'from-the-sub-agent.txt'), 'x');
+    git(workspaceDir(sub), 'add', '-A');
+    git(workspaceDir(sub), 'commit', '-m', 'the sub-agent’s work');
+    await removeWorktree(storageKey, sub, null);
+    git(workspaceDir(chat), 'merge', '--no-edit', 'renkei/chat-sub-1');
+    await stat(join(workspaceDir(chat), 'from-the-sub-agent.txt'));
+
+    const missing = await addWorktree({
+      ...base,
+      storageKey: 'subjecthash/missing',
+      branch: 'renkei/other-sub',
+      startLocal: 'renkei/nowhere',
+    });
+    expect(missing).toEqual({
+      ok: false,
+      message: 'There is no local branch renkei/nowhere to start from.',
+    });
+    await removeWorktree(storageKey, chat, null);
   });
 
   it('reports a clone that fails without leaving a directory', async () => {

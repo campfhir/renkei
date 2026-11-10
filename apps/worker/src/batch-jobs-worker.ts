@@ -30,7 +30,9 @@ const SCHEDULE_SWEEP_MS = 30_000;
 function registerBatchJobHandlers(): void {
   registerHandler(BATCH_JOB_SOURCE, 'discover', createBatchDiscoverHandler(batchJobQueue.producer));
   registerHandler(BATCH_JOB_SOURCE, 'item', createBatchItemHandler());
-  logger.info('batch-job handlers registered', { component: 'worker/batch-jobs-loop' });
+  logger.info('registered the batch-job handlers (discover, item)', {
+    component: 'worker/batch-jobs-loop',
+  });
 }
 
 const loop = createEventLoop({
@@ -55,18 +57,20 @@ async function main(): Promise<void> {
     createBatchScheduleSweep(batchJobQueue.producer)
   );
 
-  logger.info('started {application} {version} (batch-job queue)', {
+  logger.info('started {application} {version}, consuming the batch-job queue', {
     component: 'worker/batch-jobs-loop',
   });
   await loop.run();
   stopSweep();
-  logger.info('stopped', { component: 'worker/batch-jobs-loop' });
+  logger.info('stopped: the batch-job queue is no longer consumed and the schedule sweep is off', {
+    component: 'worker/batch-jobs-loop',
+  });
   await logger.flush();
   await closeDataStore();
 }
 
 function shutdown(signal: string): void {
-  logger.info('{signal} received, finishing current event', {
+  logger.info('received {signal}; finishing the current event, then stopping', {
     component: 'worker/batch-jobs-loop',
     signal,
   });

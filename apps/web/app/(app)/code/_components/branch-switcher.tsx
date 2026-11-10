@@ -25,119 +25,93 @@
  * the failure's own `code` and, on 'dirty', offers "Discard changes and
  * switch" — …/code/projects/[id]/discard (git reset --hard + git clean
  * -fd on the sandbox), then the same switch retried automatically.
+ *
+ * What each answer leaves on screen — the refusal, the discard offer,
+ * the branch shown — is branch-switcher.model.ts.
  */
 
 import { codeProjectUrl } from '@/lib/code/urls';
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { Icon, ICONS } from '@/components/icons';
 import Modal from '@/components/modal';
-
-interface HostBranch {
-  name: string;
-  headSha: string;
-}
-
-function errorCodeOf(data: unknown): string | null {
-  return data && typeof data === 'object' && 'code' in data && typeof data.code === 'string'
-    ? data.code
-    : null;
-}
+import {
+  blockedNotice,
+  branchReducer,
+  canPick,
+  errorCodeOf,
+  initialBranch,
+  type HostBranch,
+} from './branch-switcher.model';
 
 /** The branch list + switch mechanics behind the modal picker. */
 function useBranchSwitch(base: string, discardBase: string, branch: string | null) {
   const router = useRouter();
-  const [branches, setBranches] = useState<HostBranch[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
-  const [switchError, setSwitchError] = useState<string | null>(null);
-  const [switchErrorCode, setSwitchErrorCode] = useState<string | null>(null);
-  const [pendingBranch, setPendingBranch] = useState<string | null>(null);
-  const [discarding, setDiscarding] = useState(false);
+  const [state, dispatch] = useReducer(branchReducer, branch, initialBranch);
   // Shown immediately on a successful switch, rather than waiting on the
   // server round-trip a router.refresh() triggers — the person just
   // watched it happen. Re-synced whenever the project's own idea of the
   // branch moves for some other reason (a new chat cloning fresh, say).
-  const [shown, setShown] = useState(branch);
-  useEffect(() => setShown(branch), [branch]);
+  useEffect(() => dispatch({ type: 'branchChanged', branch }), [branch]);
 
   const load = () => {
-    if (branches !== null) return;
+    if (state.branches !== null) return;
     void (async () => {
       const result = await getJson<{ branches: HostBranch[] }>(base);
-      if (result.data) setBranches(result.data.branches);
-      else setLoadError(result.error ?? 'Branches could not be read.');
+      if (result.data) dispatch({ type: 'loaded', branches: result.data.branches });
+      else dispatch({ type: 'loadFailed', error: result.error ?? 'Branches could not be read.' });
     })();
   };
 
   const pick = async (name: string): Promise<boolean> => {
-    if (name === shown || switching) return false;
-    setSwitching(true);
-    setSwitchError(null);
-    setSwitchErrorCode(null);
+    if (!canPick(state, name)) return false;
+    dispatch({ type: 'switchStarted' });
     const result = await sendJsonFull<{ branch: string }>(base, 'POST', { branch: name });
-    setSwitching(false);
     if (result.error) {
-      setSwitchError(result.error);
-      const code = errorCodeOf(result.data);
-      setSwitchErrorCode(code);
-      setPendingBranch(code === 'dirty' ? name : null);
+      dispatch({
+        type: 'switchRefused',
+        branch: name,
+        error: result.error,
+        code: errorCodeOf(result.data),
+      });
       return false;
     }
-    setShown(result.data?.branch ?? name);
-    setBranches(null);
-    setPendingBranch(null);
+    dispatch({ type: 'switched', branch: result.data?.branch ?? name });
     router.refresh();
     return true;
   };
 
   const discardAndRetry = async (): Promise<boolean> => {
-    if (!pendingBranch) return false;
-    setDiscarding(true);
+    const pending = state.pendingBranch;
+    if (!pending) return false;
+    dispatch({ type: 'discardStarted' });
     const result = await sendJsonFull(discardBase, 'POST');
-    setDiscarding(false);
     if (result.error) {
-      setSwitchError(result.error);
-      setSwitchErrorCode(errorCodeOf(result.data));
+      dispatch({ type: 'discardRefused', error: result.error, code: errorCodeOf(result.data) });
       return false;
     }
-    return pick(pendingBranch);
+    dispatch({ type: 'discarded' });
+    return pick(pending);
   };
 
-  return {
-    branches,
-    loadError,
-    switching,
-    switchError,
-    switchErrorCode,
-    pendingBranch,
-    discarding,
-    shown,
-    load,
-    pick,
-    discardAndRetry,
-  };
+  return { ...state, load, pick, discardAndRetry };
 }
 
 /** A switch's failure, and — on a dirty tree — the way through. */
 function SwitchBlockedNotice({
-  code,
-  message,
-  branchName,
+  notice,
   discarding,
   onDiscard,
 }: {
-  code: string;
-  message: string | null;
-  branchName: string | null;
+  notice: NonNullable<ReturnType<typeof blockedNotice>>;
   discarding: boolean;
   onDiscard: () => void;
 }) {
   return (
     <div className="space-y-2">
-      <p className="text-sm text-gray-700 dark:text-gray-300">{message}</p>
-      {code === 'dirty' && branchName ? (
+      <p className="text-sm text-gray-700 dark:text-gray-300">{notice.message}</p>
+      {notice.discard ? (
         <>
           <p className="text-xs text-gray-500">
             Discarding resets every tracked file to its last commit and removes every new,
@@ -149,7 +123,7 @@ function SwitchBlockedNotice({
             disabled={discarding}
             className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
           >
-            {discarding ? 'Discarding…' : `Discard changes and switch to ${branchName}`}
+            {notice.discard}
           </button>
         </>
       ) : null}
@@ -183,19 +157,19 @@ export function BranchPickerModal({
 }) {
   const base = `${codeProjectUrl(projectId, chatId)}/branch`;
   const discardBase = `${codeProjectUrl(projectId, chatId)}/discard`;
+  const switcher = useBranchSwitch(base, discardBase, branch);
   const {
     branches,
     loadError,
     switching,
-    switchError,
-    switchErrorCode,
     pendingBranch,
     discarding,
     shown,
     load,
     pick,
     discardAndRetry,
-  } = useBranchSwitch(base, discardBase, branch);
+  } = switcher;
+  const notice = blockedNotice(switcher);
   // Mount-once: the modal is unmounted (not just hidden) on close, so
   // there is no "reopened" case to re-key this on.
   useEffect(() => {
@@ -252,15 +226,13 @@ export function BranchPickerModal({
           ))
         )}
       </div>
-      {switchErrorCode ? (
+      {notice ? (
         <div
           role="alert"
           className="mt-3 rounded-md border border-red-200 bg-red-50 p-3 dark:border-red-900/60 dark:bg-red-950/40"
         >
           <SwitchBlockedNotice
-            code={switchErrorCode}
-            message={switchError}
-            branchName={pendingBranch}
+            notice={notice}
             discarding={discarding}
             onDiscard={() => void discardAndClose()}
           />

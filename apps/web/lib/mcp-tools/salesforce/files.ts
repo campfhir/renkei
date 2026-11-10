@@ -27,6 +27,7 @@ import {
 } from '@/lib/sandbox/service-client';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import { fileLine, targetOf } from '../sandbox/shared';
 import type { SalesforceAuth } from './salesforce-auth';
 import {
@@ -247,8 +248,9 @@ export function registerFileTools(
         staged += 1;
         lines.push(`Staged ${label}: ${fileLine(written.val)}`);
       }
-      logger.info('salesforce_download_file staged', {
+      logger.info('{caller} staged {staged} of {attempted} Salesforce file(s) in the sandbox', {
         component: 'mcp/tool',
+        ...callerFields(context),
         from,
         staged,
         attempted: versions.length,
@@ -347,11 +349,16 @@ export function registerFileTools(
             : `Not shared to ${entry.label}: ${linked.error}`
         );
       }
-      logger.info('salesforce_attach_file attached', {
-        component: 'mcp/tool',
-        record: first.id,
-        shared: more.length,
-      });
+      logger.info(
+        '{caller} attached "{filename}" to a Salesforce record and shared it to {shared} more',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          record: first.id,
+          filename: read.val.filename,
+          shared: more.length,
+        }
+      );
       return textResult(lines.join('\n'));
     }
   );

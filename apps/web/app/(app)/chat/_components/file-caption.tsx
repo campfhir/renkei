@@ -9,12 +9,7 @@
 
 import DownloadLink from '@/components/download-link';
 import { Icon, ICONS } from '@/components/icons';
-
-export function sizeOf(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
+import { sizeOf } from './file-caption.model';
 
 export default function FileCaption({
   href,

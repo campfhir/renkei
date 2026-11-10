@@ -14,7 +14,7 @@ import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import type { AuthedFetch } from '@renkei/delegate-client';
 import type { GraphAuth } from './graph-auth';
-import { withPresentationHint } from '../common';
+import { withPresentationHint, callerFields } from '../common';
 import {
   graphGet,
   graphPost,
@@ -299,11 +299,15 @@ export function registerDocumentTools(
         // that was never the problem. Blaming the deployment out loud is also
         // the only way the person who can fix it ever hears about it.
         if (extracted.err.type === 'PDF_BACKEND_UNAVAILABLE') {
-          logger.error('PDF extraction backend unavailable: {reason}', {
-            component: 'graph/documents',
-            subject: context.subject,
-            reason: extracted.err.message,
-          });
+          logger.error(
+            '{caller} asked to read "{fileName}", but the PDF extraction backend is unavailable on this deployment, so no PDF can be read: {reason}',
+            {
+              component: 'graph/documents',
+              ...callerFields(context),
+              fileName: resolved.item.name,
+              reason: extracted.err.message,
+            }
+          );
           return textResult(
             `Cannot read "${resolved.item.name}" — PDF support is not working on this Renkei ` +
               `deployment, so no PDF can be read right now. This is a server-side fault, not a ` +

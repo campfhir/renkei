@@ -1,8 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useReducer } from 'react';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  CATEGORIES,
+  initialOutlookPrefs,
+  isChecked,
+  outlookPrefsReducer,
+  prefsOf,
+  refusalNotice,
+  toggleEnabled,
+  toggleRequest,
+  type PrefKey,
+} from './outlook-indexing-prefs.model';
 
 /**
  * The per-user opt-ins for what Renkei does with Outlook in the background.
@@ -14,32 +25,12 @@ import { reportFetchFailure } from '@/lib/fetch-json';
  * Nothing in Outlook is indexed — it is all personal. The Mail toggle only
  * lets new mail wake the person's agents through the "An email arrives"
  * trigger; agents then read the message live, as this person. Calendar and
- * To Do have no toggle: they are neither indexed nor watched.
+ * To Do have no toggle: they are neither indexed nor watched. What the
+ * section decides is outlook-indexing-prefs.model.ts.
  */
 
-const CATEGORIES = [
-  {
-    key: 'mail' as const,
-    label: 'Mail',
-    hint:
-      'New mail can wake your agents through the "An email arrives" trigger. Messages are read ' +
-      'live as you and are never indexed.',
-  },
-];
-
-type Prefs = { mail: boolean };
-
-function noticeFor(on: boolean): string {
-  return on
-    ? 'New mail will start waking agents with an "An email arrives" trigger within a few minutes. ' +
-        'Nothing is indexed.'
-    : 'New mail no longer wakes your agents.';
-}
-
 export default function OutlookIndexingPrefs() {
-  const [prefs, setPrefs] = useState<Prefs | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(outlookPrefsReducer, initialOutlookPrefs);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,8 +46,8 @@ export default function OutlookIndexingPrefs() {
           );
           return;
         }
-        const data = await response.json().catch(() => ({}));
-        if (!cancelled && data.indexing) setPrefs(data.indexing);
+        const prefs = prefsOf(await response.json().catch(() => null));
+        if (!cancelled && prefs) dispatch({ type: 'loaded', prefs });
       } catch (error) {
         reportFetchFailure(
           'GET',
@@ -73,37 +64,26 @@ export default function OutlookIndexingPrefs() {
     };
   }, []);
 
-  async function toggle(key: keyof Prefs, on: boolean) {
-    if (!prefs) return;
-    const next = { ...prefs, [key]: on };
-    setPrefs(next);
-    setBusy(true);
-    setNotice(null);
+  async function toggle(key: PrefKey, on: boolean) {
+    const previous = state.prefs;
+    if (!previous) return;
+    dispatch({ type: 'toggled', key, on });
     try {
       const response = await fetch(`/api/microsoft/indexing`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(next),
+        body: JSON.stringify(toggleRequest(previous, key, on)),
       });
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        reportFetchFailure(
-          'PUT',
-          '/api/microsoft/indexing',
-          response.status,
-          data.error ?? 'Could not save.'
-        );
-        setPrefs(prefs);
-        setNotice(data.error ?? 'Could not save.');
+        const notice = refusalNotice(await response.json().catch(() => null));
+        reportFetchFailure('PUT', '/api/microsoft/indexing', response.status, notice);
+        dispatch({ type: 'failed', previous, notice });
         return;
       }
-      setNotice(noticeFor(on));
+      dispatch({ type: 'saved', on });
     } catch (error) {
       reportFetchFailure('PUT', '/api/microsoft/indexing', 0, 'Could not reach the server', error);
-      setPrefs(prefs);
-      setNotice('Could not reach the server.');
-    } finally {
-      setBusy(false);
+      dispatch({ type: 'failed', previous, notice: 'Could not reach the server.' });
     }
   }
 
@@ -122,8 +102,8 @@ export default function OutlookIndexingPrefs() {
           <label key={category.key} className="flex items-start gap-2 text-sm">
             <input
               type="checkbox"
-              checked={prefs?.[category.key] ?? false}
-              disabled={prefs === null || busy}
+              checked={isChecked(state, category.key)}
+              disabled={!toggleEnabled(state)}
               onChange={(event) => void toggle(category.key, event.target.checked)}
               className="mt-0.5"
             />
@@ -136,7 +116,9 @@ export default function OutlookIndexingPrefs() {
           </label>
         ))}
       </div>
-      {notice && <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{notice}</p>}
+      {state.notice && (
+        <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">{state.notice}</p>
+      )}
     </div>
   );
 }

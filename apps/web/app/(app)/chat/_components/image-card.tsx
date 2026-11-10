@@ -17,9 +17,12 @@
  *
  * A call for a .gif is an animation: the same card, worded as one, and the
  * GIF plays in place once it is made.
+ *
+ * What it shows in each state is image-card.model.ts (tested in node);
+ * this holds the element, its load events and the preview window.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import FileCaption from './file-caption';
 import ImagePreview from './image-preview';
@@ -27,19 +30,21 @@ import { chatClient } from '@/lib/chat/client';
 import { isAnimationCall, skeletonRatio } from '@/lib/chat/image-size';
 import type { ChatBlock } from '@/lib/chat/views';
 import type { AttachmentView } from '@/lib/chat/views';
+import {
+  formatDuration,
+  imageCardReducer,
+  imageCardView,
+  initImageCard,
+  type ImageCardState,
+} from './image-card.model';
+
+export type { ImageCardState } from './image-card.model';
 
 type CallBlock = Extract<ChatBlock, { type: 'tool_use' }>;
 type ResultBlock = Extract<ChatBlock, { type: 'tool_result' }>;
 
 /** The tallest the picture (or its outline) stands in the thread, in pixels. */
 const MAX_HEIGHT = 384;
-
-function formatDuration(ms: number): string {
-  const seconds = Math.round(ms / 1000);
-  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-}
-
-export type ImageCardState = 'waiting' | 'pending' | 'done' | 'failed';
 
 export default function ImageCard({
   call,
@@ -53,9 +58,8 @@ export default function ImageCard({
   /** The stored file this call kept, once there is one. */
   image: AttachmentView | null;
 }) {
-  const [loaded, setLoaded] = useState(false);
-  const [broken, setBroken] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [local, dispatch] = useReducer(imageCardReducer, undefined, initImageCard);
+  const { loaded, open } = local;
   const imgRef = useRef<HTMLImageElement>(null);
   // An image the server rendered (or the browser had cached) can finish
   // before React hydrates, and then onLoad never fires: ask the element.
@@ -63,8 +67,7 @@ export default function ImageCard({
   useEffect(() => {
     const element = imgRef.current;
     if (!element || !element.complete) return;
-    if (element.naturalWidth > 0) setLoaded(true);
-    else setBroken(true);
+    dispatch({ type: element.naturalWidth > 0 ? 'loaded' : 'broken' });
   }, [src]);
   const ratio = skeletonRatio(call.input, call.partialJson);
   // Width that makes the outline MAX_HEIGHT tall at most, and never wider than the thread.
@@ -73,18 +76,14 @@ export default function ImageCard({
     maxWidth: `min(100%, ${Math.round(MAX_HEIGHT * ratio)}px)`,
   } as const;
 
-  const animated = isAnimationCall(call.input, call.partialJson);
-  const noun = animated ? 'animation' : 'image';
-  const label =
-    state === 'waiting'
-      ? `Waiting for permission to generate an ${noun}`
-      : state === 'pending'
-        ? `Generating ${noun}`
-        : state === 'failed'
-          ? `${animated ? 'Animation' : 'Image'} could not be generated`
-          : `Generated ${noun}`;
-
-  const showImage = state === 'done' && src !== null && !broken;
+  const view = imageCardView({
+    state,
+    animated: isAnimationCall(call.input, call.partialJson),
+    hasImage: image !== null,
+    resultContent: result?.content ?? null,
+    local,
+  });
+  const { noun, label, showImage, showPicture } = view;
 
   return (
     <figure
@@ -107,28 +106,26 @@ export default function ImageCard({
         ) : null}
       </figcaption>
 
-      {state === 'waiting' ? null : state === 'failed' ? (
+      {view.body === 'none' ? null : view.body === 'error' ? (
         <p
           className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
           data-testid="image-card-error"
         >
-          {result?.content || 'The image tool failed.'}
+          {view.errorText}
         </p>
       ) : (
         <div
           className="relative w-full overflow-hidden rounded-lg border border-dashed border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-900"
           style={
-            showImage && loaded
-              ? { width: 'fit-content', maxWidth: '100%', borderStyle: 'solid' }
-              : outline
+            showPicture ? { width: 'fit-content', maxWidth: '100%', borderStyle: 'solid' } : outline
           }
-          data-testid={showImage && loaded ? 'image-card-picture' : 'image-card-skeleton'}
+          data-testid={showPicture ? 'image-card-picture' : 'image-card-skeleton'}
         >
-          {showImage ? (
+          {showImage && src ? (
             // A picture the model drew opens in a preview window, where it can be saved.
             <button
               type="button"
-              onClick={() => setOpen(true)}
+              onClick={() => dispatch({ type: 'opened' })}
               aria-label="Preview image"
               className="block cursor-zoom-in"
             >
@@ -136,8 +133,8 @@ export default function ImageCard({
                 ref={imgRef}
                 src={src}
                 alt={image?.filename ?? 'Generated image'}
-                onLoad={() => setLoaded(true)}
-                onError={() => setBroken(true)}
+                onLoad={() => dispatch({ type: 'loaded' })}
+                onError={() => dispatch({ type: 'broken' })}
                 className={
                   loaded
                     ? 'block h-auto w-auto max-w-full'
@@ -147,7 +144,7 @@ export default function ImageCard({
               />
             </button>
           ) : null}
-          {!(showImage && loaded) ? (
+          {!showPicture ? (
             <div
               className="absolute inset-0 flex items-center justify-center text-gray-400 motion-safe:animate-pulse dark:text-gray-500"
               aria-hidden={state === 'done'}
@@ -157,7 +154,7 @@ export default function ImageCard({
           ) : null}
         </div>
       )}
-      {showImage && loaded && image && src ? (
+      {showPicture && image && src ? (
         // Saved from right under the picture, the same line as every file a reply made.
         <FileCaption
           href={src}
@@ -171,15 +168,15 @@ export default function ImageCard({
         <ImagePreview
           src={src}
           filename={image?.filename ?? 'image.png'}
-          onClose={() => setOpen(false)}
+          onClose={() => dispatch({ type: 'closed' })}
         />
       ) : null}
-      {state === 'done' && broken ? (
+      {view.brokenNotice ? (
         <p className="mt-1 text-xs text-gray-500">
           The image could not be loaded. It is under this chat&apos;s Artifacts.
         </p>
       ) : null}
-      {state === 'done' && !image ? (
+      {view.missingNotice ? (
         <p className="mt-1 text-xs text-gray-500">
           The image was made but is not available to show here; look under this chat&apos;s
           Artifacts.

@@ -282,10 +282,13 @@ describe('registerOperationTools', () => {
     expect(preview.structuredContent).toMatchObject({
       kind: 'issue',
       title: 'Delete an alert',
-      subtitle: 'Prod · DELETE /api/alerts/a1',
+      subtitle: 'Prod · Delete an alert',
       confirmTool: 'mirth_delete_alert_confirm',
       confirmArgs: { instanceId: INSTANCE_ID, alertId: 'a1' },
     });
+    // The card names the alert (or says "An alert"); it never shows the id.
+    expect(JSON.stringify(preview.structuredContent?.fields)).toContain('An alert');
+    expect(JSON.stringify(preview.structuredContent?.fields)).not.toContain('a1"');
     expect(calls).toEqual([]);
 
     answer = { status: 204, contentType: null, body: '' };

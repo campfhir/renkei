@@ -19,6 +19,7 @@
 import type { LspServerCapabilities } from './protocol';
 import { clientLogger } from '@/lib/client-logger';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import { isRecord } from '@renkei/guards';
 
 export interface Cancellation {
   readonly isCancellationRequested: boolean;
@@ -315,7 +316,3 @@ export class LspClient {
 }
 
 export type LspClientState = 'connecting' | 'ready' | 'exited' | 'closed';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}

@@ -9,6 +9,8 @@
  * and client components alike, and be tested without a server.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** Every Mirth REST route lives under this prefix on the server. */
 export const MIRTH_API_PREFIX = '/api';
 
@@ -101,10 +103,6 @@ export function isDestructiveRequest(method: HttpMethod, path: string): boolean 
 // array. These helpers normalize all of that so a tool can reason about
 // plain arrays and records.
 // ---------------------------------------------------------------------------
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /** One element or an array of them, as an array; null/undefined/'' as empty. */
 export function asArray(value: unknown): unknown[] {

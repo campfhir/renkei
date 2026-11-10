@@ -56,7 +56,12 @@ export interface UserKeyStore {
 
   // ── The delegate instances themselves ───────────────────────────────
 
-  /** A new instance row with its public key; started and heartbeat now. */
+  /**
+   * The instance's row with its public key: inserted with start and
+   * heartbeat now, or — a persistent instance registering again after a
+   * restart, or from another replica — its heartbeat moved to now and its
+   * public key set, the row and the delegations sealed to it kept.
+   */
   registerInstance(id: string, publicKey: string): Promise<void>;
   /** The instance's heartbeat, moved to `at`. */
   heartbeatInstance(id: string, at: Date): Promise<void>;

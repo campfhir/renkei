@@ -18,6 +18,7 @@ import { renderFieldValue } from './fields';
 import { lookupField, type JiraField } from './field-schema';
 import { loadApprovalFieldSchema } from './approval-field-schema';
 import { ISSUE_PREVIEW_URI, newPreviewId } from '../widgets';
+import { isRecord } from '@renkei/guards';
 
 type EditKind = 'text' | 'text-array' | 'number' | 'select' | 'checkboxes';
 
@@ -36,9 +37,6 @@ interface EditableFieldRow {
     options: EditableFieldOption[];
   };
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 function resolveField(schema: JiraField[] | null, reference: string): JiraField | undefined {
   if (!schema) return undefined;

@@ -75,39 +75,27 @@ import {
   usableAtlassianBitbucketCeiling,
   usableAtlassianAdminCeiling,
 } from '@/lib/atlassian-scopes';
-import { resolveUserCatalog, type UserCatalog } from '@/lib/connectors/user-catalog';
+import { resolveUserCatalog } from '@/lib/connectors/user-catalog';
 import { resolveAudienceAllows } from '@/lib/connectors/audience';
 import { connectorEntryFor } from '@/lib/connector-catalog';
-
-/** The org's stored scopes string for a connector, from non-secret settings. */
-function storedScopes(settings: unknown): string | null {
-  if (typeof settings === 'object' && settings !== null && 'scopes' in settings) {
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- narrowing jsonb
-    const scopes = (settings as Record<string, unknown>).scopes;
-    if (typeof scopes === 'string' && scopes) return scopes;
-  }
-  return null;
-}
-
-/** The org's scope ceiling for a connector, from its non-secret settings. */
-function ceilingFrom(settings: unknown, fallback: string): string[] {
-  return (storedScopes(settings) ?? fallback).split(/\s+/);
-}
+import {
+  anyConnectorCard,
+  atlassianProducts,
+  catalogItems as catalogItemsOf,
+  ceilingFrom,
+  connectorCards,
+  microsoftShownKeys,
+  pageSections,
+  removableProducts,
+  storedScopes,
+  webexAllSpaces,
+  zoomMissingScopes,
+  type ConnectorCard,
+} from './connectors-page.model';
 
 /** The label the catalog gives a capability key, for the remove links. */
 function labelOf(capabilityKey: string): string {
   return connectorEntryFor(capabilityKey)?.label ?? capabilityKey;
-}
-
-/**
- * Under a card, the products on the page with nothing connected — the
- * ones a person may take back off. Connected products are not listed: they
- * have Disconnect, and hiding a live connection is not on offer.
- */
-function removable(catalog: UserCatalog, keys: string[]) {
-  return keys
-    .filter((key) => catalog.shown.has(key) && !catalog.connected.has(key))
-    .map((key) => ({ capabilityKey: key, label: labelOf(key) }));
 }
 
 /**
@@ -120,6 +108,9 @@ function removable(catalog: UserCatalog, keys: string[]) {
  * offered is what the org enabled, did not switch off, and — where an admin
  * scoped a connector to an audience — meant for this person. What exists in
  * the code but is not provisioned here is not this user's business.
+ *
+ * Which cards, in what order, which need setup, and what each hosts are
+ * connectors-page.model.ts's; this reads the store and draws.
  */
 export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const session = await getSessionFromCookies();
@@ -294,17 +285,12 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
   const onbaseAdminGrant = grants.get(ONBASE_ADMIN);
   const webexGrant = grants.get(WEBEX_USER);
 
-  // Jira and JSM share the 'jira' capability key. The Atlassian card hosts
-  // both, so "jira shown" means both products are on the page — the card
-  // itself hides a product the org has not provisioned.
+  // Jira and JSM share the 'jira' capability key: the Atlassian card hosts
+  // each only where the org registered its app (atlassianProducts).
   const enabledConfig = new Set(configs.map((c) => c.connector));
-  const jiraShown = shown.has('jira');
-
-  const catalogItems: CatalogItem[] = catalog.available.map((entry) => ({
-    entry,
-    added: catalog.added.includes(entry.capabilityKey),
-    connected: catalog.connected.has(entry.capabilityKey),
-  }));
+  const products = atlassianProducts(shown, enabledConfig);
+  const catalogItems: CatalogItem[] = catalogItemsOf(catalog);
+  const removable = (keys: readonly string[]) => removableProducts(catalog, keys, labelOf);
 
   // Remote MCP servers: the admin's list, every enabled one in this
   // person's audience. The server owns sign-in, so "connected" is simply
@@ -329,369 +315,265 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
           }))
       : [];
 
-  const microsoftKeys = ['microsoft', 'sharepoint', 'onedrive', 'teams', 'onenote'].filter((key) =>
-    shown.has(key)
-  );
-  const atlassianShown =
-    jiraShown ||
-    shown.has('jira-admin') ||
-    shown.has('atlassian-confluence') ||
-    shown.has('atlassian-bitbucket');
-  const hylandShown = shown.has('onbase') || shown.has('onbase-admin');
-  const anyCard =
-    atlassianShown ||
-    shown.has('webex') ||
-    microsoftKeys.length > 0 ||
-    shown.has('entra-developer') ||
-    shown.has('zoom') ||
-    shown.has('github') ||
-    shown.has('salesforce') ||
-    shown.has('salesforce-admin') ||
-    hylandShown ||
-    shown.has('fileshares') ||
-    shown.has('mirth') ||
-    shown.has('admanager') ||
-    mcpServerViews.length > 0;
+  const microsoftKeys = microsoftShownKeys(shown);
+  const anyCard = anyConnectorCard(shown, mcpServerViews.length);
 
   /**
    * Each card, tagged with whether it has something a person added but
-   * never finished connecting. Those float to their own section above
-   * everything else: a card you already use is a reference, but a card you
-   * started and abandoned is the one thing on this page that is actually
-   * blocking you, and it used to be wherever the DOM order happened to put
-   * it — often below several fully-connected cards a returning user has no
-   * reason to look at again.
-   *
-   * Microsoft is exempt from per-product attention: one consent covers
-   * every panel, so "needs attention" for it is simply "not connected at
-   * all", same as every other single-grant card.
+   * never finished connecting (connectors-page.model.ts). Those float to
+   * their own section above everything else: a card you already use is a
+   * reference, but a card you started and abandoned is the one thing on
+   * this page that is actually blocking you.
    */
-  const cards: Array<{ key: string; needsAttention: boolean; node: React.ReactNode }> = [];
+  const cards = connectorCards({
+    shown,
+    grants: new Set(grants.keys()),
+    enabledConfigs: enabledConfig,
+    salesforce: salesforceKinds.map(({ kind, connectors, connections }) => ({
+      kindKey: kind.key,
+      orgKeys: connectors.map((org) => org.key),
+      connectedOrgs: connections.map((c) => c.connector),
+    })),
+    fileshares: connectableShares.map((share) => ({ connected: share.connection !== null })),
+    mirth: connectableMirthInstances.map((instance) => ({
+      connected: instance.connection !== null,
+    })),
+    admanager: connectableAdManagerInstances.map((instance) => ({
+      connected: instance.connection !== null,
+    })),
+    mcpServers: mcpServerViews,
+    browserSecrets: browserSecrets !== null,
+  });
 
-  if (atlassianShown) {
-    cards.push({
-      key: 'atlassian',
-      needsAttention:
-        (jiraShown && enabledConfig.has('atlassian') && atlassianGrant === undefined) ||
-        (jiraShown && enabledConfig.has('atlassian-jsm') && jsmGrant === undefined) ||
-        (shown.has('jira-admin') && jiraAdminGrant === undefined) ||
-        (shown.has('atlassian-confluence') && confluenceGrant === undefined) ||
-        (shown.has('atlassian-bitbucket') && bitbucketGrant === undefined),
-      node: (
+  function renderCard(card: ConnectorCard): React.ReactNode {
+    if (card.kind === 'salesforce') {
+      const entry = salesforceKinds.find(({ kind }) => kind.key === card.kindKey);
+      const org = entry?.connectors.find((candidate) => candidate.key === card.orgKey);
+      if (!entry || !org) return null;
+      const { kind } = entry;
+      const connection = entry.connections.find((c) => c.connector === org.key);
+      return (
         <>
-          <AtlassianConnector
-            jira={
-              jiraShown && enabledConfig.has('atlassian')
-                ? {
-                    connected: atlassianGrant !== undefined,
-                    displayName: atlassianGrant?.displayName ?? null,
-                    ceiling: atlassianCeiling,
-                    priorScopes: atlassianGrant?.requestedScopes ?? null,
-                  }
-                : undefined
-            }
-            jsm={
-              jiraShown && enabledConfig.has('atlassian-jsm')
-                ? {
-                    connected: jsmGrant !== undefined,
-                    displayName: jsmGrant?.displayName ?? null,
-                    ceiling: jsmCeiling,
-                    priorScopes: jsmGrant?.requestedScopes ?? null,
-                  }
-                : undefined
-            }
-            jiraAdmin={
-              shown.has('jira-admin')
-                ? {
-                    connected: jiraAdminGrant !== undefined,
-                    displayName: jiraAdminGrant?.displayName ?? null,
-                    ceiling: jiraAdminCeiling,
-                    priorScopes: jiraAdminGrant?.requestedScopes ?? null,
-                    changesHref: `/jira-admin/changes`,
-                    templatesHref: `/jira-admin/templates`,
-                    pendingChanges: pendingJiraAdminChanges,
-                    apiTokenFor: jiraAdminToken?.displayName ?? null,
-                  }
-                : undefined
-            }
-            confluence={
-              shown.has('atlassian-confluence')
-                ? {
-                    connected: confluenceGrant !== undefined,
-                    displayName: confluenceGrant?.displayName ?? null,
-                    ceiling: confluenceCeiling,
-                    priorScopes: confluenceGrant?.requestedScopes ?? null,
-                  }
-                : undefined
-            }
-            bitbucket={
-              shown.has('atlassian-bitbucket')
-                ? {
-                    connected: bitbucketGrant !== undefined,
-                    displayName: bitbucketGrant?.displayName ?? null,
-                    ceiling: bitbucketCeiling,
-                    priorScopes: bitbucketGrant?.requestedScopes ?? null,
-                  }
-                : undefined
-            }
+          <SalesforceConnector
+            kind={kind}
+            connectorKey={org.key}
+            name={org.name}
+            sandbox={org.sandbox}
+            orgHost={org.host}
+            connected={connection !== undefined}
+            displayName={connection?.displayName ?? null}
+            username={connection?.username ?? null}
+            ceiling={kind.ceiling(org.scopes.join(' '))}
+            priorScopes={connection?.requestedScopes ?? null}
+            pendingChanges={salesforcePending.get(org.key) ?? 0}
+            takesChanges={takesChanges(org)}
           />
-          <RemovableProducts
-            products={removable(catalog, [
-              'jira',
-              'jira-admin',
-              'atlassian-confluence',
-              'atlassian-bitbucket',
-            ])}
-          />
+          {card.last && <RemovableProducts products={removable([kind.key])} />}
         </>
-      ),
-    });
-  }
-
-  if (shown.has('webex')) {
-    cards.push({
-      key: 'webex',
-      needsAttention: webexGrant === undefined,
-      node: (
-        <>
-          <WebexUserConnector
-            connected={webexGrant !== undefined}
-            displayName={webexGrant?.displayName ?? null}
-            allSpaces={
-              typeof webexGrant?.metadata === 'object' &&
-              webexGrant.metadata !== null &&
-              !Array.isArray(webexGrant.metadata) &&
-              'allSpaces' in webexGrant.metadata &&
-              webexGrant.metadata.allSpaces === true
-            }
-            ceiling={webexCeiling}
-            priorScopes={webexGrant?.requestedScopes ?? null}
-          />
-          <RemovableProducts products={removable(catalog, ['webex'])} />
-        </>
-      ),
-    });
-  }
-
-  if (microsoftKeys.length > 0) {
-    cards.push({
-      key: 'microsoft',
-      needsAttention: microsoftGrant === undefined,
-      node: (
-        <>
-          <MicrosoftConnector
-            connected={microsoftGrant !== undefined}
-            displayName={microsoftGrant?.displayName ?? null}
-            ceiling={microsoftCeiling}
-            priorScopes={microsoftGrant?.requestedScopes ?? null}
-            shownKeys={microsoftKeys}
-          />
-          <RemovableProducts products={removable(catalog, microsoftKeys)} />
-        </>
-      ),
-    });
-  }
-
-  if (shown.has('entra-developer')) {
-    // Its own card, not a panel in the Microsoft 365 one: a second Entra
-    // app registration and a second consent (entra-developer-connector.tsx).
-    cards.push({
-      key: 'entra-developer',
-      needsAttention: entraDeveloperGrant === undefined,
-      node: (
-        <>
-          <EntraDeveloperConnector
-            connected={entraDeveloperGrant !== undefined}
-            displayName={entraDeveloperGrant?.displayName ?? null}
-            ceiling={entraDeveloperCeiling}
-            priorScopes={entraDeveloperGrant?.requestedScopes ?? null}
-          />
-          <RemovableProducts products={removable(catalog, ['entra-developer'])} />
-        </>
-      ),
-    });
-  }
-
-  if (shown.has('zoom')) {
-    cards.push({
-      key: 'zoom',
-      needsAttention: zoomGrant === undefined,
-      node: (
-        <>
-          {/* Scope drift the Marketplace app hides: Zoom silently drops any
-              requested scope the app doesn't carry, and the only symptom is
-              tools quietly not registering. Surface the difference here. */}
-          <ZoomConnector
-            missingScopes={
-              zoomGrant?.grantedScopes
-                ? (zoomGrant.requestedScopes ?? []).filter(
-                    (scope) => !zoomGrant.grantedScopes?.includes(scope)
-                  )
-                : []
-            }
-            connected={zoomGrant !== undefined}
-            displayName={zoomGrant?.displayName ?? null}
-            ceiling={zoomCeiling}
-            priorScopes={zoomGrant?.requestedScopes ?? null}
-          />
-          <RemovableProducts products={removable(catalog, ['zoom'])} />
-        </>
-      ),
-    });
-  }
-
-  if (shown.has('github')) {
-    cards.push({
-      key: 'github',
-      needsAttention: githubGrant === undefined,
-      node: (
-        <>
-          <GitHubConnector
-            connected={githubGrant !== undefined}
-            displayName={githubGrant?.displayName ?? null}
-            ceiling={githubCeiling}
-            priorScopes={githubGrant?.requestedScopes ?? null}
-          />
-          <RemovableProducts products={removable(catalog, ['github'])} />
-        </>
-      ),
-    });
-  }
-
-  for (const { kind, connectors, connections } of salesforceKinds) {
-    for (const [index, org] of connectors.entries()) {
-      const connection = connections.find((c) => c.connector === org.key);
-      cards.push({
-        key: `${kind.key}:${org.key}`,
-        needsAttention: connection === undefined,
-        node: (
+      );
+    }
+    if (card.kind === 'salesforce-removed') {
+      const entry = salesforceKinds.find(({ kind }) => kind.key === card.kindKey);
+      if (!entry) return null;
+      return (
+        <SalesforceOrphanedConnections
+          kind={entry.kind}
+          connections={entry.connections.filter((c) => c.connector === null)}
+        />
+      );
+    }
+    switch (card.key) {
+      case 'atlassian':
+        return (
           <>
-            <SalesforceConnector
-              kind={kind}
-              connectorKey={org.key}
-              name={org.name}
-              sandbox={org.sandbox}
-              orgHost={org.host}
-              connected={connection !== undefined}
-              displayName={connection?.displayName ?? null}
-              username={connection?.username ?? null}
-              ceiling={kind.ceiling(org.scopes.join(' '))}
-              priorScopes={connection?.requestedScopes ?? null}
-              pendingChanges={salesforcePending.get(org.key) ?? 0}
-              takesChanges={takesChanges(org)}
+            <AtlassianConnector
+              jira={
+                products.jira
+                  ? {
+                      connected: atlassianGrant !== undefined,
+                      displayName: atlassianGrant?.displayName ?? null,
+                      ceiling: atlassianCeiling,
+                      priorScopes: atlassianGrant?.requestedScopes ?? null,
+                    }
+                  : undefined
+              }
+              jsm={
+                products.jsm
+                  ? {
+                      connected: jsmGrant !== undefined,
+                      displayName: jsmGrant?.displayName ?? null,
+                      ceiling: jsmCeiling,
+                      priorScopes: jsmGrant?.requestedScopes ?? null,
+                    }
+                  : undefined
+              }
+              jiraAdmin={
+                products.jiraAdmin
+                  ? {
+                      connected: jiraAdminGrant !== undefined,
+                      displayName: jiraAdminGrant?.displayName ?? null,
+                      ceiling: jiraAdminCeiling,
+                      priorScopes: jiraAdminGrant?.requestedScopes ?? null,
+                      changesHref: `/jira-admin/changes`,
+                      templatesHref: `/jira-admin/templates`,
+                      pendingChanges: pendingJiraAdminChanges,
+                      apiTokenFor: jiraAdminToken?.displayName ?? null,
+                    }
+                  : undefined
+              }
+              confluence={
+                products.confluence
+                  ? {
+                      connected: confluenceGrant !== undefined,
+                      displayName: confluenceGrant?.displayName ?? null,
+                      ceiling: confluenceCeiling,
+                      priorScopes: confluenceGrant?.requestedScopes ?? null,
+                    }
+                  : undefined
+              }
+              bitbucket={
+                products.bitbucket
+                  ? {
+                      connected: bitbucketGrant !== undefined,
+                      displayName: bitbucketGrant?.displayName ?? null,
+                      ceiling: bitbucketCeiling,
+                      priorScopes: bitbucketGrant?.requestedScopes ?? null,
+                    }
+                  : undefined
+              }
             />
-            {index === connectors.length - 1 && (
-              <RemovableProducts products={removable(catalog, [kind.key])} />
-            )}
+            <RemovableProducts
+              products={removable([
+                'jira',
+                'jira-admin',
+                'atlassian-confluence',
+                'atlassian-bitbucket',
+              ])}
+            />
           </>
-        ),
-      });
+        );
+      case 'webex':
+        return (
+          <>
+            <WebexUserConnector
+              connected={webexGrant !== undefined}
+              displayName={webexGrant?.displayName ?? null}
+              allSpaces={webexAllSpaces(webexGrant)}
+              ceiling={webexCeiling}
+              priorScopes={webexGrant?.requestedScopes ?? null}
+            />
+            <RemovableProducts products={removable(['webex'])} />
+          </>
+        );
+      case 'microsoft':
+        return (
+          <>
+            <MicrosoftConnector
+              connected={microsoftGrant !== undefined}
+              displayName={microsoftGrant?.displayName ?? null}
+              ceiling={microsoftCeiling}
+              priorScopes={microsoftGrant?.requestedScopes ?? null}
+              shownKeys={microsoftKeys}
+            />
+            <RemovableProducts products={removable(microsoftKeys)} />
+          </>
+        );
+      case 'entra-developer':
+        // Its own card, not a panel in the Microsoft 365 one: a second Entra
+        // app registration and a second consent (entra-developer-connector.tsx).
+        return (
+          <>
+            <EntraDeveloperConnector
+              connected={entraDeveloperGrant !== undefined}
+              displayName={entraDeveloperGrant?.displayName ?? null}
+              ceiling={entraDeveloperCeiling}
+              priorScopes={entraDeveloperGrant?.requestedScopes ?? null}
+            />
+            <RemovableProducts products={removable(['entra-developer'])} />
+          </>
+        );
+      case 'zoom':
+        return (
+          <>
+            {/* Scope drift the Marketplace app hides: Zoom silently drops any
+                requested scope the app doesn't carry, and the only symptom is
+                tools quietly not registering. Surface the difference here. */}
+            <ZoomConnector
+              missingScopes={zoomMissingScopes(zoomGrant)}
+              connected={zoomGrant !== undefined}
+              displayName={zoomGrant?.displayName ?? null}
+              ceiling={zoomCeiling}
+              priorScopes={zoomGrant?.requestedScopes ?? null}
+            />
+            <RemovableProducts products={removable(['zoom'])} />
+          </>
+        );
+      case 'github':
+        return (
+          <>
+            <GitHubConnector
+              connected={githubGrant !== undefined}
+              displayName={githubGrant?.displayName ?? null}
+              ceiling={githubCeiling}
+              priorScopes={githubGrant?.requestedScopes ?? null}
+            />
+            <RemovableProducts products={removable(['github'])} />
+          </>
+        );
+      case 'hyland':
+        return (
+          <>
+            <HylandConnector
+              onbase={
+                shown.has('onbase')
+                  ? {
+                      connected: onbaseGrant !== undefined,
+                      displayName: onbaseGrant?.displayName ?? null,
+                    }
+                  : undefined
+              }
+              onbaseAdmin={
+                shown.has('onbase-admin')
+                  ? {
+                      connected: onbaseAdminGrant !== undefined,
+                      displayName: onbaseAdminGrant?.displayName ?? null,
+                    }
+                  : undefined
+              }
+            />
+            <RemovableProducts products={removable(['onbase', 'onbase-admin'])} />
+          </>
+        );
+      case 'fileshares':
+        return (
+          <>
+            <FilesharesConnector shares={connectableShares} />
+            <RemovableProducts products={removable(['fileshares'])} />
+          </>
+        );
+      case 'mirth':
+        return (
+          <>
+            <MirthConnector instances={connectableMirthInstances} />
+            <RemovableProducts products={removable(['mirth'])} />
+          </>
+        );
+      case 'admanager':
+        return (
+          <>
+            <AdManagerConnector instances={connectableAdManagerInstances} />
+            <RemovableProducts products={removable(['admanager'])} />
+          </>
+        );
+      case 'mcp-servers':
+        return <McpServersConnector servers={mcpServerViews} />;
+      case 'browser-secrets':
+        // Not an "add and connect" surface: it never counts as needing setup.
+        return <SandboxSecrets secrets={browserSecrets?.ok ? browserSecrets.val : []} />;
     }
-    const orphaned = connections.filter((c) => c.connector === null);
-    if (orphaned.length > 0) {
-      cards.push({
-        key: `${kind.key}:removed`,
-        needsAttention: true,
-        node: <SalesforceOrphanedConnections kind={kind} connections={orphaned} />,
-      });
-    }
   }
 
-  if (hylandShown) {
-    cards.push({
-      key: 'hyland',
-      needsAttention:
-        (shown.has('onbase') && onbaseGrant === undefined) ||
-        (shown.has('onbase-admin') && onbaseAdminGrant === undefined),
-      node: (
-        <>
-          <HylandConnector
-            onbase={
-              shown.has('onbase')
-                ? {
-                    connected: onbaseGrant !== undefined,
-                    displayName: onbaseGrant?.displayName ?? null,
-                  }
-                : undefined
-            }
-            onbaseAdmin={
-              shown.has('onbase-admin')
-                ? {
-                    connected: onbaseAdminGrant !== undefined,
-                    displayName: onbaseAdminGrant?.displayName ?? null,
-                  }
-                : undefined
-            }
-          />
-          <RemovableProducts products={removable(catalog, ['onbase', 'onbase-admin'])} />
-        </>
-      ),
-    });
-  }
-
-  if (shown.has('fileshares')) {
-    cards.push({
-      key: 'fileshares',
-      needsAttention: connectableShares.some((share) => share.connection === null),
-      node: (
-        <>
-          <FilesharesConnector shares={connectableShares} />
-          <RemovableProducts products={removable(catalog, ['fileshares'])} />
-        </>
-      ),
-    });
-  }
-
-  if (shown.has('mirth')) {
-    cards.push({
-      key: 'mirth',
-      needsAttention: connectableMirthInstances.some((instance) => instance.connection === null),
-      node: (
-        <>
-          <MirthConnector instances={connectableMirthInstances} />
-          <RemovableProducts products={removable(catalog, ['mirth'])} />
-        </>
-      ),
-    });
-  }
-
-  if (shown.has('admanager')) {
-    cards.push({
-      key: 'admanager',
-      needsAttention: connectableAdManagerInstances.some(
-        (instance) => instance.connection === null
-      ),
-      node: (
-        <>
-          <AdManagerConnector instances={connectableAdManagerInstances} />
-          <RemovableProducts products={removable(catalog, ['admanager'])} />
-        </>
-      ),
-    });
-  }
-
-  if (mcpServerViews.length > 0) {
-    cards.push({
-      key: 'mcp-servers',
-      needsAttention: mcpServerViews.some(
-        (server) => server.authMode === 'oauth' && !server.connected
-      ),
-      node: <McpServersConnector servers={mcpServerViews} />,
-    });
-  }
-
-  if (browserSecrets) {
-    // Not an "add and connect" surface — it has nothing to be added-but-
-    // unconnected about — so it never counts as needing attention.
-    cards.push({
-      key: 'browser-secrets',
-      needsAttention: false,
-      node: <SandboxSecrets secrets={browserSecrets.ok ? browserSecrets.val : []} />,
-    });
-  }
-
-  const needsSetup = cards.filter((card) => card.needsAttention);
-  const settled = cards.filter((card) => !card.needsAttention);
+  const { needsSetup, settled, settledHeading } = pageSections(cards);
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -780,7 +662,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
                   id={`connector-${card.key}`}
                   className="mb-6 break-inside-avoid"
                 >
-                  {card.node}
+                  {renderCard(card)}
                 </div>
               ))}
             </div>
@@ -789,9 +671,9 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
 
         {settled.length > 0 && (
           <div>
-            {needsSetup.length > 0 && (
+            {settledHeading && (
               <h2 className="mb-3 text-sm font-semibold text-gray-700 dark:text-gray-300">
-                Connected
+                {settledHeading}
               </h2>
             )}
             <div className="-mb-6 lg:columns-2 lg:gap-6">
@@ -801,7 +683,7 @@ export default async function ConnectorsPage(): Promise<React.ReactNode> {
                   id={`connector-${card.key}`}
                   className="mb-6 break-inside-avoid"
                 >
-                  {card.node}
+                  {renderCard(card)}
                 </div>
               ))}
             </div>

@@ -1,10 +1,14 @@
 /**
- * A code project's Artifacts card, a page at a time: a project can hold
- * more files than fit on its page, so the card lists ten and pages through
- * the rest — the range and page shown, Previous and Next held at the
- * ends, a detach on the last page staying on what is left, and the pager
- * gone once everything fits on one page. Then the same card at phone
- * width.
+ * A code project's Artifacts card on the real page: more files than fit
+ * on one page, so the card lists ten with the pager under them, and a
+ * detach reaches the server and stays done after a reload. Then the same
+ * card at phone width, where the pager fits and still turns.
+ *
+ * The card's rules — ten at a time, the range and the page shown,
+ * Previous and Next held at the ends, a detach on the last page staying
+ * on what is left, the pager gone once everything fits, a second remove
+ * press sending nothing — are artifacts-card.model.test.ts, beside the
+ * component.
  *
  * Staged the way people make it: the person's code project through the
  * Code routes after connecting Bitbucket (e2e/support/code-host.ts), and
@@ -87,7 +91,7 @@ test.describe('a code project’s Artifacts card', () => {
     await removeModel(page.request, modelId);
   });
 
-  test('pages through the files, ten at a time', async ({ page }, testInfo) => {
+  test('lists ten with the pager, and a detach reaches the server', async ({ page }, testInfo) => {
     await openProject(page, projectId);
     const card = page.getByRole('main').getByRole('region', { name: 'Artifacts' });
     const rows = card.locator('li[data-artifact]');
@@ -96,54 +100,23 @@ test.describe('a code project’s Artifacts card', () => {
     await expect(card.getByText(`${FILES} attached`)).toBeVisible({ timeout: 30_000 });
     await expect(rows).toHaveCount(PAGE_SIZE);
     await expect(rows.first()).toContainText(nameOf(1));
-    await expect(rows.last()).toContainText(nameOf(PAGE_SIZE));
-    await expect(card.getByText(nameOf(11))).toBeHidden();
     await expect(pager.getByText(`1–${PAGE_SIZE} of ${FILES}`)).toBeVisible();
-    await expect(pager.getByText('Page 1 of 2')).toBeVisible();
-    await expect(pager.getByRole('button', { name: 'Previous page' })).toBeDisabled();
     await shot(page, testInfo, 'code-project-artifacts-01-page-1.png');
 
-    await pager.getByRole('button', { name: 'Next page' }).click();
-    await expect(rows).toHaveCount(FILES - PAGE_SIZE);
-    await expect(rows.first()).toContainText(nameOf(11));
-    await expect(card.getByText(nameOf(1), { exact: true })).toBeHidden();
-    await expect(pager.getByText(`11–${FILES} of ${FILES}`)).toBeVisible();
-    await expect(pager.getByText('Page 2 of 2')).toBeVisible();
-    await expect(pager.getByRole('button', { name: 'Next page' })).toBeDisabled();
-    await shot(page, testInfo, 'code-project-artifacts-02-page-2.png');
-
-    // A detach on the last page stays there with what is left.
-    const detached12 = page.waitForResponse(
+    const detached = page.waitForResponse(
       (response) =>
         response.request().method() === 'DELETE' &&
         response.url().includes(`/api/chat/projects/${projectId}/artifacts/`)
     );
-    await card.getByRole('button', { name: `Remove ${nameOf(12)} from` }).click();
-    const response12 = await detached12;
-    expect(response12.status(), await response12.text()).toBe(200);
+    await card.getByRole('button', { name: `Remove ${nameOf(1)} from` }).click();
+    const response = await detached;
+    expect(response.status(), await response.text()).toBe(200);
     await expect(card.getByText(`${FILES - 1} attached`)).toBeVisible();
-    await expect(rows).toHaveCount(1);
-    await expect(pager.getByText(`11–11 of ${FILES - 1}`)).toBeVisible();
-
-    // Down to one page's worth: the pager goes, and every file is listed.
-    const detached11 = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'DELETE' &&
-        response.url().includes(`/api/chat/projects/${projectId}/artifacts/`)
-    );
-    await card.getByRole('button', { name: `Remove ${nameOf(11)} from` }).click();
-    const response11 = await detached11;
-    expect(response11.status(), await response11.text()).toBe(200);
-    await expect(card.getByText(`${PAGE_SIZE} attached`)).toBeVisible();
-    await expect(pager).toBeHidden();
-    await expect(rows).toHaveCount(PAGE_SIZE);
-    await expect(rows.first()).toContainText(nameOf(1));
 
     // Back after a reload, the server's word agrees.
     await page.reload();
-    await expect(card.getByText(`${PAGE_SIZE} attached`)).toBeVisible({ timeout: 30_000 });
-    await expect(rows).toHaveCount(PAGE_SIZE);
-    await expect(pager).toBeHidden();
+    await expect(card.getByText(`${FILES - 1} attached`)).toBeVisible({ timeout: 30_000 });
+    await expect(card.getByText(nameOf(1), { exact: true })).toBeHidden();
   });
 
   test('at phone width the pager fits and still pages', async ({ page }, testInfo) => {

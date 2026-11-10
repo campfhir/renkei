@@ -13,27 +13,33 @@
  * like "warm" from a description.
  */
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useReducer, useRef, type ReactNode } from 'react';
 import type { VoiceInfo } from '@renkei/voice';
 import { Icon, ICONS } from '@/components/icons';
 import { useDismiss } from '@/lib/use-dismiss';
 import {
   groupLocales,
-  groupVoices,
   localeLabel,
   localeMatches,
   regionLabel,
   voiceGroupLabel,
-  voiceMatches,
 } from '@/lib/voice/catalog';
+import {
+  comboboxReducer,
+  flatItems,
+  initialCombobox,
+  rowKey,
+  selectedIndex,
+  shownGroups,
+  voiceDisplay,
+  voiceRowGroups,
+  voiceRowMatches,
+  DEFAULT_KEY,
+  type Group,
+  type VoiceRow,
+} from './voice-picker.model';
 
 export type PickerSize = 'sm' | 'md';
-
-interface Group<T> {
-  key: string;
-  label: string;
-  items: T[];
-}
 
 interface ComboboxProps<T> {
   /** For the button's label and the list's; also what a screen reader calls it. */
@@ -67,35 +73,21 @@ function Combobox<T>({
   size,
   disabled,
 }: ComboboxProps<T>) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState('');
-  const [active, setActive] = useState(0);
+  const [{ open, query, active }, dispatch] = useReducer(comboboxReducer, initialCombobox);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
-  const close = useCallback(() => setOpen(false), []);
+  const close = useCallback(() => dispatch({ type: 'close' }), []);
   useDismiss(open, ref, close);
 
-  const shown = useMemo(
-    () =>
-      groups
-        .map((group) => ({ ...group, items: group.items.filter((item) => matches(item, query)) }))
-        .filter((group) => group.items.length > 0),
-    [groups, matches, query]
-  );
-  const flat = useMemo(() => shown.flatMap((group) => group.items), [shown]);
+  const shown = useMemo(() => shownGroups(groups, matches, query), [groups, matches, query]);
+  const flat = useMemo(() => flatItems(shown), [shown]);
 
   // Opening: the search box takes the keyboard, and the choice is the
   // active row, so Enter keeps it and the list is scrolled to it.
-  const openList = () => {
-    setQuery('');
-    const index = groups
-      .flatMap((group) => group.items)
-      .findIndex((item) => keyOf(item) === selectedKey);
-    setActive(index >= 0 ? index : 0);
-    setOpen(true);
-  };
+  const openList = () =>
+    dispatch({ type: 'open', selectedIndex: selectedIndex(groups, keyOf, selectedKey) });
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
@@ -108,7 +100,7 @@ function Combobox<T>({
 
   const choose = (item: T) => {
     onSelect(item);
-    setOpen(false);
+    close();
   };
 
   const small = size === 'sm';
@@ -125,7 +117,7 @@ function Combobox<T>({
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         disabled={disabled}
-        onClick={() => (open ? setOpen(false) : openList())}
+        onClick={() => (open ? close() : openList())}
         onKeyDown={(event) => {
           if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && !open) {
             event.preventDefault();
@@ -149,19 +141,15 @@ function Combobox<T>({
             <input
               ref={inputRef}
               value={query}
-              onChange={(event) => {
-                setQuery(event.target.value);
-                setActive(0);
-              }}
+              onChange={(event) => dispatch({ type: 'search', query: event.target.value })}
               onKeyDown={(event) => {
                 if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                   event.preventDefault();
-                  if (flat.length === 0) return;
-                  setActive((current) =>
-                    event.key === 'ArrowDown'
-                      ? (current + 1) % flat.length
-                      : (current - 1 + flat.length) % flat.length
-                  );
+                  dispatch({
+                    type: 'move',
+                    by: event.key === 'ArrowDown' ? 1 : -1,
+                    count: flat.length,
+                  });
                 } else if (event.key === 'Enter') {
                   event.preventDefault();
                   const item = flat[active];
@@ -173,7 +161,7 @@ function Combobox<T>({
                   // immediate stop keeps the key from reaching it.
                   event.preventDefault();
                   event.nativeEvent.stopImmediatePropagation();
-                  setOpen(false);
+                  close();
                 }
               }}
               role="searchbox"
@@ -216,7 +204,7 @@ function Combobox<T>({
                         data-index={thisIndex}
                         role="option"
                         aria-selected={key === selectedKey}
-                        onMouseEnter={() => setActive(thisIndex)}
+                        onMouseEnter={() => dispatch({ type: 'hover', index: thisIndex })}
                         className={`flex items-center gap-1 rounded ${
                           isActive ? 'bg-blue-600 text-white' : 'text-gray-800 dark:text-gray-200'
                         }`}
@@ -320,15 +308,6 @@ export function LanguagePicker({
   );
 }
 
-/** A row of the voice list: a voice, or the org's default in its place. */
-type VoiceRow = { kind: 'default'; voice: VoiceInfo | null } | { kind: 'voice'; voice: VoiceInfo };
-
-const DEFAULT_KEY = '';
-
-function rowKey(row: VoiceRow): string {
-  return row.kind === 'default' ? DEFAULT_KEY : row.voice.id;
-}
-
 export function VoicePicker({
   voices,
   value,
@@ -354,36 +333,11 @@ export function VoicePicker({
   size: PickerSize;
   disabled?: boolean;
 }) {
-  const fallback = useMemo(
-    () => voices.find((voice) => voice.id === defaultVoice) ?? null,
-    [voices, defaultVoice]
-  );
-  const chosen = useMemo(
-    () => (value ? (voices.find((voice) => voice.id === value) ?? null) : null),
-    [voices, value]
-  );
   const groups = useMemo<Group<VoiceRow>[]>(
-    () => [
-      {
-        key: DEFAULT_KEY,
-        label: 'Organization default',
-        items: [{ kind: 'default', voice: fallback }],
-      },
-      ...groupVoices(voices, locale).map((group) => ({
-        key: group.locale,
-        label: group.label,
-        items: group.voices.map((voice): VoiceRow => ({ kind: 'voice', voice })),
-      })),
-    ],
-    [voices, locale, fallback]
+    () => voiceRowGroups(voices, locale, defaultVoice),
+    [voices, locale, defaultVoice]
   );
-  const matches = useCallback(
-    (row: VoiceRow, query: string) =>
-      row.kind === 'default'
-        ? !query.trim() || (row.voice !== null && voiceMatches(row.voice, query))
-        : voiceMatches(row.voice, query),
-    []
-  );
+  const shows = voiceDisplay({ voices, value, defaultVoice, locale });
   const small = size === 'sm';
   const describe = (voice: VoiceInfo, active: boolean, showLocale: boolean) => (
     <span className="block">
@@ -429,27 +383,25 @@ export function VoicePicker({
     <Combobox<VoiceRow>
       label="Voice"
       display={
-        value === null || !chosen ? (
+        shows.kind === 'default' ? (
           <>
-            Default{fallback ? ` · ${fallback.name}` : ` (${defaultVoice})`}
-            {value !== null && !chosen ? (
-              <span className="text-gray-500"> · {value} is not offered any more</span>
+            {shows.text}
+            {shows.missing !== null ? (
+              <span className="text-gray-500"> · {shows.missing} is not offered any more</span>
             ) : null}
           </>
         ) : (
           <>
-            {chosen.name}
-            {chosen.gender ? <span className="text-gray-500"> · {chosen.gender}</span> : null}
-            {chosen.locale !== locale ? (
-              <span className="text-gray-500"> · {chosen.locale}</span>
-            ) : null}
+            {shows.name}
+            {shows.gender ? <span className="text-gray-500"> · {shows.gender}</span> : null}
+            {shows.locale ? <span className="text-gray-500"> · {shows.locale}</span> : null}
           </>
         )
       }
       groups={groups}
       keyOf={rowKey}
       selectedKey={value ?? DEFAULT_KEY}
-      matches={matches}
+      matches={voiceRowMatches}
       renderItem={(row, active) =>
         row.kind === 'default' ? (
           <span className="block">

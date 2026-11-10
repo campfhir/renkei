@@ -14,9 +14,12 @@
  * working tree, so the tags are what the page knows, never a claim.
  * Unsaved edits are not on disk and so not in the commit: the dialog
  * says so and offers to save them first.
+ *
+ * What a commit sends or refuses, how the ticks follow the working tree,
+ * the tags and the buttons' words are commit-dialog.model.ts.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import Modal from '@/components/modal';
 import { Icon, ICONS } from '@/components/icons';
 import { getJson, sendJsonFull } from '@/lib/fetch-json';
@@ -24,18 +27,24 @@ import type { ChatNote } from '@/lib/code/note-text';
 import DiffView, { Counts } from './diff-view';
 import { LoadingLine } from '@/components/skeleton';
 import type { ChangedFile } from './use-code-pane';
+import {
+  askLabel,
+  commitButton,
+  commitReducer,
+  commitRequest,
+  filesHeading,
+  initialCommit,
+  selectedTotals,
+  unsavedNotice,
+  whoTag,
+  type Committed,
+} from './commit-dialog.model';
 
 export const PUSH_AND_PR_ASK =
   'Push the current branch and open a pull request that says what changed and why.';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
-
-interface Committed {
-  branch: string;
-  sha: string;
-  subject: string;
-}
 
 export default function CommitDialog({
   base,
@@ -64,89 +73,58 @@ export default function CommitDialog({
   /** Send the chat the push-and-pull-request ask; null when the person cannot. */
   onAsk: ((text: string) => Promise<boolean>) | null;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(changed.map((file) => file.path))
-  );
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
-  const [newBranch, setNewBranch] = useState(false);
-  const [branchName, setBranchName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [committed, setCommitted] = useState<Committed | null>(null);
-  const [pushed, setPushed] = useState<{ remoteBranch: string } | null>(null);
-  const [diffOpen, setDiffOpen] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(commitReducer, changed, initialCommit);
+  const {
+    selected,
+    subject,
+    body,
+    newBranch,
+    branchName,
+    busy,
+    error,
+    committed,
+    pushed,
+    diffOpen,
+  } = state;
   const [saving, setSaving] = useState(false);
 
   // Files that arrive after the dialog opened (a save while it is up) start selected too.
-  useEffect(() => {
-    setSelected((current) => {
-      const next = new Set(current);
-      for (const file of changed) if (!current.has(file.path)) next.add(file.path);
-      for (const path of current)
-        if (!changed.some((file) => file.path === path)) next.delete(path);
-      return next;
-    });
-  }, [changed]);
+  useEffect(() => dispatch({ type: 'changed', files: changed }), [changed]);
 
   const count = selected.size;
-  const all = changed.length > 0 && count === changed.length;
-  const totals = useMemo(
-    () =>
-      changed
-        .filter((file) => selected.has(file.path))
-        .reduce(
-          (sum, file) => ({ added: sum.added + file.added, deleted: sum.deleted + file.deleted }),
-          { added: 0, deleted: 0 }
-        ),
-    [changed, selected]
-  );
+  const totals = selectedTotals(state, changed);
+  const button = commitButton(state);
+  const unsaved = unsavedNotice(dirtyPaths);
 
   const commit = async () => {
-    const message = [subject.trim(), body.trim()].filter(Boolean).join('\n\n');
-    if (!subject.trim()) {
-      setError('Write a commit message.');
+    const plan = commitRequest(state, changed);
+    if (!plan.ok) {
+      dispatch({ type: 'refused', error: plan.error });
       return;
     }
-    if (count === 0) {
-      setError('Pick at least one file.');
-      return;
-    }
-    if (newBranch && !branchName.trim()) {
-      setError('Name the new branch.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const result = await sendJsonFull<Committed>(`${base}/commit`, 'POST', {
-      message,
-      ...(all ? {} : { paths: [...selected] }),
-      ...(newBranch ? { newBranch: branchName.trim() } : {}),
-    });
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const result = await sendJsonFull<Committed>(`${base}/commit`, 'POST', plan.body);
     if (result.error || !result.data) {
-      setError(result.error ?? 'The commit failed.');
+      dispatch({ type: 'failed', error: result.error ?? 'The commit failed.' });
       return;
     }
-    setCommitted(result.data);
+    dispatch({ type: 'committed', commit: result.data });
     onNote({ type: 'commit', ...result.data });
   };
 
   const push = async () => {
     if (!committed) return;
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull<{ branch: string; remoteBranch: string }>(
       `${base}/push`,
       'POST',
       {}
     );
-    setBusy(false);
     if (result.error || !result.data) {
-      setError(result.error ?? 'The push failed.');
+      dispatch({ type: 'failed', error: result.error ?? 'The push failed.' });
       return;
     }
-    setPushed({ remoteBranch: result.data.remoteBranch });
+    dispatch({ type: 'pushed', remoteBranch: result.data.remoteBranch });
     onNote({ type: 'push', branch: result.data.branch, remoteBranch: result.data.remoteBranch });
   };
 
@@ -198,9 +176,7 @@ export default function CommitDialog({
               }}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-900"
             >
-              {pushed
-                ? 'Ask the chat to open a pull request'
-                : 'Ask the chat to push and open a pull request'}
+              {askLabel(state)}
             </button>
           ) : null}
           <button
@@ -233,7 +209,7 @@ export default function CommitDialog({
             <input
               type="checkbox"
               checked={newBranch}
-              onChange={(event) => setNewBranch(event.target.checked)}
+              onChange={(event) => dispatch({ type: 'newBranch', on: event.target.checked })}
             />
             Create a new branch first
           </label>
@@ -241,7 +217,7 @@ export default function CommitDialog({
         {newBranch ? (
           <input
             value={branchName}
-            onChange={(event) => setBranchName(event.target.value)}
+            onChange={(event) => dispatch({ type: 'branchName', value: event.target.value })}
             placeholder="feature/what-this-changes"
             autoComplete="off"
             spellCheck={false}
@@ -250,13 +226,9 @@ export default function CommitDialog({
           />
         ) : null}
 
-        {dirtyPaths.length > 0 ? (
+        {unsaved ? (
           <div className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            <span className="flex-1">
-              {dirtyPaths.length === 1
-                ? '1 file has unsaved edits, which are not part of a commit.'
-                : `${dirtyPaths.length} files have unsaved edits, which are not part of a commit.`}
-            </span>
+            <span className="flex-1">{unsaved}</span>
             <button
               type="button"
               disabled={saving}
@@ -274,7 +246,7 @@ export default function CommitDialog({
         <div>
           <div className="mb-1 flex items-center text-xs text-gray-500">
             <span className="flex-1">
-              Files · {count} of {changed.length} selected
+              {filesHeading(state, changed)}
               {count > 0 ? (
                 <>
                   {' '}
@@ -284,7 +256,7 @@ export default function CommitDialog({
             </span>
             <button
               type="button"
-              onClick={() => setSelected(new Set(changed.map((file) => file.path)))}
+              onClick={() => dispatch({ type: 'all', files: changed })}
               className="hover:underline"
             >
               All
@@ -292,7 +264,7 @@ export default function CommitDialog({
             <span className="px-1.5">·</span>
             <button
               type="button"
-              onClick={() => setSelected(new Set())}
+              onClick={() => dispatch({ type: 'none' })}
               className="hover:underline"
             >
               None
@@ -309,28 +281,22 @@ export default function CommitDialog({
                     type="checkbox"
                     checked={selected.has(file.path)}
                     onChange={(event) =>
-                      setSelected((current) => {
-                        const next = new Set(current);
-                        if (event.target.checked) next.add(file.path);
-                        else next.delete(file.path);
-                        return next;
-                      })
+                      dispatch({ type: 'toggle', path: file.path, on: event.target.checked })
                     }
                     aria-label={`Include ${file.path}`}
                   />
                   <span className="min-w-0 flex-1 truncate font-mono text-xs" title={file.path}>
                     {file.path}
                   </span>
-                  {editedHere.has(file.path) ? (
-                    <Tag>edited here</Tag>
-                  ) : chatPaths.has(file.path) ? (
-                    <Tag>by the chat</Tag>
-                  ) : null}
+                  {(() => {
+                    const who = whoTag(file.path, editedHere, chatPaths);
+                    return who ? <Tag>{who}</Tag> : null;
+                  })()}
                   {file.status === 'untracked' ? <Tag>new</Tag> : null}
                   <Counts added={file.added} deleted={file.deleted} />
                   <button
                     type="button"
-                    onClick={() => setDiffOpen((open) => (open === file.path ? null : file.path))}
+                    onClick={() => dispatch({ type: 'diff', path: file.path })}
                     aria-label={`Show the diff of ${file.path}`}
                     aria-expanded={diffOpen === file.path}
                     className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-900 dark:hover:text-gray-200"
@@ -355,7 +321,7 @@ export default function CommitDialog({
           <input
             id="commit-subject"
             value={subject}
-            onChange={(event) => setSubject(event.target.value)}
+            onChange={(event) => dispatch({ type: 'subject', value: event.target.value })}
             placeholder="What this change does"
             maxLength={500}
             autoFocus
@@ -363,7 +329,7 @@ export default function CommitDialog({
           />
           <textarea
             value={body}
-            onChange={(event) => setBody(event.target.value)}
+            onChange={(event) => dispatch({ type: 'body', value: event.target.value })}
             placeholder="Why, if it is not obvious (optional)"
             rows={3}
             maxLength={3_400}
@@ -391,10 +357,10 @@ export default function CommitDialog({
             </button>
             <button
               type="submit"
-              disabled={busy || count === 0}
+              disabled={button.disabled}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
-              {busy ? 'Committing…' : `Commit ${count} file${count === 1 ? '' : 's'}`}
+              {button.label}
             </button>
           </div>
         </div>

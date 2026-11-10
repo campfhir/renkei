@@ -32,6 +32,8 @@ import {
 import type { EventHandler } from '../handlers';
 import { resolveWebexUserAccessBySubject } from './webex-linked-user';
 import { logger } from '../logger';
+import { whoIs } from '../log-actor';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'knowledge/webex-window';
 
@@ -171,10 +173,6 @@ export async function deleteLegacyMessageRows(roomId: string, day: string): Prom
   });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
@@ -214,12 +212,15 @@ export function createKnowledgeIngestWebexWindowHandler(
 
     const access = await resolveAccess(subject);
     if (!access) {
-      logger.info('no usable WebEx grant for {subject}; window {roomId}/{day} not rebuilt', {
-        component: COMPONENT,
-        subject,
-        roomId,
-        day,
-      });
+      logger.info(
+        '{actor} no longer has a usable WebEx grant; the transcript of room {roomId} for {day} was not rebuilt',
+        {
+          component: COMPONENT,
+          ...(await whoIs(subject)),
+          roomId,
+          day,
+        }
+      );
       return;
     }
     const client = makeClient(access.auth);
@@ -228,10 +229,15 @@ export function createKnowledgeIngestWebexWindowHandler(
     if (!room.ok) {
       const text = room.err.message ?? '';
       if (/WebEx API 40[34]/.test(text)) {
-        logger.info('watcher can no longer read room {roomId}; window not rebuilt', {
-          component: COMPONENT,
-          roomId,
-        });
+        logger.info(
+          '{actor} can no longer read WebEx room {roomId}; its transcript for {day} was not rebuilt and what the index holds is kept',
+          {
+            component: COMPONENT,
+            ...(await whoIs(subject)),
+            roomId,
+            day,
+          }
+        );
         return;
       }
       throw new Error(`could not read WebEx room ${roomId}: ${text}`);
@@ -284,12 +290,17 @@ export function createKnowledgeIngestWebexWindowHandler(
     }
     await deleteLegacy(roomId, day);
 
-    logger.debug('rebuilt window {roomId}/{day}: {messages} message(s), {chunks} chunk(s)', {
-      component: COMPONENT,
-      roomId,
-      day,
-      messages: spoken.length,
-      chunks: ingested.val.chunks,
-    });
+    logger.debug(
+      'rebuilt the transcript of WebEx space "{room}" for {day} with {actor}\'s grant: {messages} message(s) in {chunks} chunk(s)',
+      {
+        component: COMPONENT,
+        ...(await whoIs(subject)),
+        roomId,
+        room: room.val.title?.trim() || roomId,
+        day,
+        messages: spoken.length,
+        chunks: ingested.val.chunks,
+      }
+    );
   };
 }

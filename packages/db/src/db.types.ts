@@ -627,6 +627,36 @@ export interface ChatSummaries {
   through_seq: number;
 }
 
+export interface ChatTasks {
+  chat_id: string;
+  created_at: Generated<Timestamp>;
+  created_by: Generated<string>;
+  depends_on: Generated<Json>;
+  detail: string | null;
+  finished_at: Timestamp | null;
+  id: Generated<string>;
+  number: number;
+  parent_id: string | null;
+  progress: number | null;
+  progress_note: string | null;
+  result: string | null;
+  started_at: Timestamp | null;
+  status: Generated<string>;
+  title: string;
+  updated_at: Generated<Timestamp>;
+}
+
+export interface ChatTaskWaits {
+  chat_id: string;
+  created_at: Generated<Timestamp>;
+  deadline_at: Timestamp | null;
+  events: Json;
+  mode: string;
+  roles: Generated<Json>;
+  subject: string;
+  task_ids: Json;
+}
+
 export interface ChatTurns {
   cancel_requested_at: Timestamp | null;
   chat_id: string;
@@ -1266,6 +1296,7 @@ export interface PromptLibraries {
   name: string;
   owner_subject: string;
   published_to_org: Generated<boolean>;
+  scope: Generated<string>;
   updated_at: Generated<Timestamp>;
 }
 
@@ -1702,6 +1733,8 @@ export interface DB {
   chat_projects: ChatProjects;
   chat_subagent_runs: ChatSubagentRuns;
   chat_summaries: ChatSummaries;
+  chat_task_waits: ChatTaskWaits;
+  chat_tasks: ChatTasks;
   chat_turns: ChatTurns;
   chat_user_memories: ChatUserMemories;
   chat_widget_decisions: ChatWidgetDecisions;

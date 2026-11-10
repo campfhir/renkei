@@ -4,20 +4,7 @@ import { redirect } from 'next/navigation';
 import { getDataStore } from '@renkei/db';
 import AuditList, { type AuditEventRow } from './audit-list';
 import CoachTarget from '@/components/coach-marks/anchor';
-
-/**
- * The tenant's audit trail (migration 038): who signed in, connected or
- * disconnected what, created or disabled which agent. Platform actions
- * only — tool calls and searches are usage and live on the Tools page.
- *
- * This server component only fetches and joins names; the rendering —
- * sentences under day headings — lives in the AuditList client component,
- * because both the day buckets and the times must be the VIEWER's zone,
- * which the server does not know.
- */
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export default async function AuditPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {

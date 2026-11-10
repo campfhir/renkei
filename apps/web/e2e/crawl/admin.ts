@@ -13,6 +13,9 @@ export const adminPages: CrawlPage[] = [
   // connections add to them, so each is checked by its heading.
 
   { path: '/admin/sites', expectText: /^Sites$/ },
+  // Agent oversight, with its "Paused people" section (empty, or the test
+  // subjects whose agents cannot run): the section's heading is on either.
+  { path: '/admin/agents', expectText: 'Paused people' },
   { path: '/admin/storage', expectText: 'Storage' },
   { path: '/admin/grants', expectText: 'Access' },
   { path: '/admin/redaction', expectText: 'Sensitive data' },

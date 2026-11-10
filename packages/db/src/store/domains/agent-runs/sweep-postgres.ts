@@ -95,6 +95,36 @@ export function postgresAgentRunSweeps(db: () => Kysely<DB>): AgentRunSweepStore
       `.execute(db());
       return deleted.rows.length;
     },
+    async listDead({ clockBefore, waitDueBefore }, limit) {
+      const clock = sql<Date>`coalesce(resumed_at, created_at)`;
+      const rows = await db()
+        .selectFrom('agent_runs')
+        .select(['id', 'agent_id', 'owner_subject', 'status'])
+        .where((eb) =>
+          eb.or([
+            eb.and([eb('status', 'in', ['queued', 'running']), eb(clock, '<', clockBefore)]),
+            eb.and([eb('status', '=', 'waiting'), eb('waiting_until', '<', waitDueBefore)]),
+            // A run parked for its owner's sign-in (error_kind needs-sign-in)
+            // waits with no deadline on purpose: the next sign-in runs it.
+            eb.and([
+              eb('status', '=', 'waiting'),
+              eb('waiting_until', 'is', null),
+              eb.or([eb('error_kind', 'is', null), eb('error_kind', '!=', 'needs-sign-in')]),
+              eb(clock, '<', clockBefore),
+            ]),
+          ])
+        )
+        .orderBy('created_at')
+        .orderBy('id')
+        .limit(limit)
+        .execute();
+      return rows.map((row) => ({
+        id: row.id,
+        agentId: row.agent_id,
+        ownerSubject: row.owner_subject,
+        status: row.status,
+      }));
+    },
     async listStaleInProgress(createdBefore, limit) {
       const rows = await db()
         .selectFrom('agent_runs')
@@ -112,20 +142,25 @@ export function postgresAgentRunSweeps(db: () => Kysely<DB>): AgentRunSweepStore
         startedAt: row.started_at === null ? null : new Date(row.started_at),
       }));
     },
-    async failAbandoned(runId, { errorKind, error }) {
-      const result = await db()
+    async closeAbandoned(runId, { errorKind, error }) {
+      // Decided from the row being written, so a cancel request that lands
+      // between the janitor's read and this write still wins.
+      const requested = sql`cancel_requested_at IS NOT NULL`;
+      const row = await db()
         .updateTable('agent_runs')
         .set({
-          status: 'failed',
-          error_kind: errorKind,
-          error,
+          status: sql<string>`CASE WHEN ${requested} THEN 'canceled' ELSE 'failed' END`,
+          error_kind: sql<string | null>`CASE WHEN ${requested} THEN NULL ELSE ${errorKind} END`,
+          error: sql<string | null>`CASE WHEN ${requested} THEN NULL ELSE ${error} END`,
           finished_at: sql`NOW()`,
           updated_at: sql`NOW()`,
         })
         .where('id', '=', runId)
         .where('status', 'in', ['queued', 'running'])
+        .returning('status')
         .executeTakeFirst();
-      return Number(result.numUpdatedRows ?? 0) > 0;
+      if (!row) return null;
+      return row.status === 'canceled' ? 'canceled' : 'failed';
     },
   };
 }

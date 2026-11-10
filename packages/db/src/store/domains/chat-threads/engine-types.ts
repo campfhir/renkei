@@ -234,6 +234,25 @@ export interface ChatTurnEngineStore {
   ): Promise<void>;
   /** Every run of the turn still running ends interrupted with `error`. */
   interruptSubagentRuns(turnId: string, error: string): Promise<void>;
+  /**
+   * Runs left running by a process that died: still `running`, not
+   * touched since `idleSince` (the loop touches its row every few
+   * seconds), and of a turn that is itself no longer running — a
+   * background sub-agent, which outlives its turn; a running turn's runs
+   * are its recovery's. Each ends interrupted with `error`; the answer
+   * names them, by tool_use id.
+   */
+  interruptIdleSubagentRuns(
+    idleSince: Date,
+    error: string
+  ): Promise<{ chatId: string; turnId: string; toolUseId: string }[]>;
+  /**
+   * One run, asked to stop: still running, it ends interrupted with
+   * `error` and the answer is true; finished already (or not there), it
+   * is left as it is and the answer is false. The loop that runs it reads
+   * the row between steps and stops when it is no longer running.
+   */
+  stopSubagentRun(chatId: string, toolUseId: string, error: string): Promise<boolean>;
   /** One run by the chat and the tool_use id that started it, or null. */
   getSubagentRunByCall(chatId: string, toolUseId: string): Promise<ChatSubagentRunRecord | null>;
 }

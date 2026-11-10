@@ -16,6 +16,7 @@ import { recordAuditEvent } from '@/lib/audit-events';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { stopWatching } from '@/lib/mcp-servers/watch';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function DELETE(
   request: NextRequest,
@@ -30,12 +31,15 @@ export async function DELETE(
     'DB_ERROR' as const
   );
   if (!grants.ok) {
-    logger.error('Database error: {error}', {
-      component: 'mcp-servers',
-      subject: session.subject,
-      serverId,
-      error: grants.err.message ?? grants.err.type,
-    });
+    logger.error(
+      '{actor} asked to disconnect an MCP server, but their grants could not be read from the database; nothing was disconnected: {error}',
+      {
+        component: 'mcp-servers',
+        ...who(session),
+        serverId,
+        error: grants.err.message ?? grants.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Database error' }, { status: 500 });
   }
   const grantRow = grants.val[0];
@@ -46,10 +50,16 @@ export async function DELETE(
     accountId: grantRow.accountId,
   });
   if (!revoked.ok) {
-    logger.error('MCP grant could not be deleted: {reason}', {
-      component: 'mcp-servers',
-      reason: revoked.err.type,
-    });
+    logger.error(
+      '{actor} asked to disconnect an MCP server, but the delegate did not revoke the grant ({reason}); it is still connected',
+      {
+        component: 'mcp-servers',
+        ...who(session),
+        serverId,
+        accountId: grantRow.accountId,
+        reason: revoked.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not disconnect' }, { status: 500 });
   }
   stopWatching(serverId, session.subject);

@@ -15,10 +15,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const originResult = await getOrigin(request);
     if (!originResult.ok) {
-      logger.error('Could not resolve the app origin: {error}', {
-        component: 'auth/oauth-metadata',
-        error: originResult.err.message ?? originResult.err.type,
-      });
+      logger.error(
+        'An OAuth client asked for the authorization server metadata, but the app origin could not be resolved; it was answered with a config error: {error}',
+        {
+          component: 'auth/oauth-metadata',
+          error: originResult.err.message ?? originResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Config error' }, { status: 500 });
     }
     const issuer = `${originResult.val}/api/mcp`;
@@ -53,10 +56,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     return NextResponse.json(metadata);
   } catch (error) {
-    logger.error('Error: {detail}', {
-      component: 'auth/oauth-metadata',
-      detail: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'An OAuth client asked for the authorization server metadata, but building it failed; it was answered with server_error: {error}',
+      {
+        component: 'auth/oauth-metadata',
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'server_error' }, { status: 500 });
   }
 }

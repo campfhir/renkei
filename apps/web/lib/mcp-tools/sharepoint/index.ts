@@ -18,6 +18,7 @@ import type { MCPToolContext } from '../common';
 import { withScopeGate } from '../capability-gate';
 import { registerDocumentTools } from '../graph/documents';
 import type { GraphAuth } from '../graph/graph-auth';
+import { registerSharePointPreviewLookups } from './preview-lookups';
 import { registerSiteTools } from './sites';
 import { registerPageTools } from './pages';
 import { registerMetadataTools } from './metadata';
@@ -33,6 +34,7 @@ export async function registerSharePointTools(
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.graphScopes, (name) => sharepointScopeFor(name));
 
+  registerSharePointPreviewLookups(context, auth);
   registerSiteTools(server, context, auth);
   registerPageTools(server, context, auth);
   registerMetadataTools(server, context, auth);

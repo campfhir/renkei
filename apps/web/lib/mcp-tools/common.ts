@@ -14,6 +14,18 @@ import {
   isTimeoutError,
   timeoutSignal,
 } from './fetch-guard';
+import { isRecord } from '@renkei/guards';
+import {
+  actorFields,
+  actorFrom,
+  agentFields,
+  describeAccountActor,
+  describeActor,
+  type Actor,
+  type ActorFields,
+  type AgentActor,
+  type AgentFields,
+} from '@renkei/db';
 
 export interface MCPToolContext {
   accountId: string;
@@ -153,6 +165,15 @@ export interface MCPToolContext {
    * without loosening any owner-scoped check.
    */
   agent?: { agentId: string };
+  /**
+   * The caller described for log lines (docs/logging.md): the person whose
+   * subject and grants this call runs on — the run OWNER when an agent is
+   * calling. Resolved once where the context is built; `callerFields` falls
+   * back to the subject and the cached display name when it is absent.
+   */
+  actor?: Actor;
+  /** The acting agent, with its owner described, when `agent` is set. */
+  agentActor?: AgentActor;
   /**
    * The sandbox scratch space this caller stages in and reads from
    * (migration 169): a chat turn's token names its chat (`chat:<id>`) or
@@ -299,12 +320,64 @@ export function getCachedDisplayName(accountId: string): string | undefined {
 }
 
 /**
- * Pull a human-readable reason out of an Atlassian error body. Jira returns
- * `{errorMessages: [...], errors: {...}}`, JSM returns `{errorMessage: "..."}`,
- * and a removed endpoint may return HTML or nothing at all.
+ * What `callerFields` reads: an MCPToolContext, or any narrower context a
+ * vendor client takes (`{ subject }`, a GraphCallContext) — when such a
+ * context was built from the tool context, `actor` and `agentActor` ride
+ * along structurally.
  */
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+export interface CallerContext {
+  subject?: string;
+  accountId?: string;
+  userEmail?: string;
+  actor?: Actor;
+  agentActor?: AgentActor;
+}
+
+/** The person-and-agent attributes a tool call's log line carries. */
+export type CallerFields = ActorFields &
+  Partial<AgentFields> & {
+    /**
+     * The sentence subject for a message: `agent "{agent}" of {owner}` when an
+     * agent is calling (it is the one acting; the owner is whose grants it
+     * uses), else the person's `{actor}` label. Never empty.
+     */
+    caller: string;
+    accountId: string | undefined;
+  };
+
+/**
+ * The log attributes for a tool call's caller (docs/logging.md): who the
+ * person is (`subject`, `user`, `email`, `actor`), the agent when one is
+ * calling (`agentId`, `agent`, `owner…`), `caller` for the message, and
+ * the provider `accountId` the call rides on. Synchronous: a context the
+ * transport built already carries its actor; one that does not names the
+ * subject with whatever display name the Jira cache holds.
+ */
+export function callerFields(context: CallerContext): CallerFields {
+  const actor =
+    context.actor ??
+    actorFrom(
+      context.subject || context.accountId || '(none)',
+      context.accountId ? (getCachedDisplayName(context.accountId) ?? null) : null,
+      context.userEmail ?? null
+    );
+  const agent = context.agentActor ? agentFields(context.agentActor) : undefined;
+  return {
+    ...actorFields(actor),
+    ...(agent ?? {}),
+    caller: agent ? `agent "${agent.agent}" of ${agent.owner}` : actor.label,
+    accountId: context.accountId,
+  };
+}
+
+/**
+ * `callerFields`, resolving the person from the identity table when the
+ * context carries no actor (a vendor client called from a plain web route,
+ * a `{ subject }` scope). Cached for five minutes; never throws.
+ */
+export async function callerAttrs(context: CallerContext): Promise<CallerFields> {
+  if (context.actor || !context.subject) return callerFields(context);
+  return callerFields({ ...context, actor: await describeActor(context.subject) });
 }
 
 interface Failure {
@@ -326,9 +399,9 @@ async function describeFailure(response: Response): Promise<Failure> {
 
   try {
     const parsed: unknown = JSON.parse(body);
-    if (isPlainObject(parsed)) {
+    if (isRecord(parsed)) {
       const fieldErrors: Record<string, string> = {};
-      if (isPlainObject(parsed.errors)) {
+      if (isRecord(parsed.errors)) {
         for (const [field, message] of Object.entries(parsed.errors)) {
           fieldErrors[field] = String(message);
         }
@@ -387,13 +460,17 @@ export async function jiraFetch(
   options?: RequestInit
 ): Promise<Response> {
   const scope = grantScope(auth);
-  const displayName = scope.accountId ? getCachedDisplayName(scope.accountId) : undefined;
-  logger.debug('Request', {
+  const method = options?.method || 'GET';
+  // The person behind the grant, for every line about this exchange: the
+  // fetcher carries only its grant key, so the account is resolved (cached)
+  // to the person who connected it.
+  const who = actorFields(await describeAccountActor(scope.accountId));
+  logger.debug('{actor} is calling Jira: {method} {url}', {
     component: 'jira/fetch',
+    ...who,
     accountId: scope.accountId,
-    displayName,
     url,
-    method: options?.method || 'GET',
+    method,
   });
 
   // A FormData body must carry its own multipart boundary, so no Content-Type
@@ -428,10 +505,12 @@ export async function jiraFetch(
     }
     throw new JiraApiError('Could not reach the Jira API', 502);
   }
-  logger.debug('Response', {
+  logger.debug('Jira answered {status} to {actor} for {method} {url}', {
     component: 'jira/fetch',
+    ...who,
     accountId: scope.accountId,
     url,
+    method,
     status: response.status,
   });
 
@@ -440,12 +519,17 @@ export async function jiraFetch(
   // words the resolvers used to return, so a handler renders it unchanged.
   const refusal = delegateRefusal(response);
   if (refusal) {
-    logger.warn('Delegate refused the Jira call', {
-      component: 'jira/fetch',
-      accountId: scope.accountId,
-      url,
-      refusal,
-    });
+    logger.warn(
+      "the delegate refused {actor}'s Jira call ({refusal}) before it reached Atlassian; {method} {url} was not made",
+      {
+        component: 'jira/fetch',
+        ...who,
+        accountId: scope.accountId,
+        url,
+        method,
+        refusal,
+      }
+    );
     throw new JiraApiError(
       refusal === 'GRANT_REVOKED' ? 'GRANT_REVOKED' : grantRefusalText(refusal, 'Jira'),
       response.status,
@@ -462,12 +546,12 @@ export async function jiraFetch(
     // bodies are secure()-marked: they can carry user content (comments,
     // descriptions), so the console masks them, and the Postgres adapter
     // encrypts them at rest once encrypt/decrypt keys are configured.
-    logger.warn('Non-OK response', {
+    logger.warn("Jira refused {actor}'s {method} {url} with {status}: {reason}", {
       component: 'jira/fetch',
+      ...who,
       accountId: scope.accountId,
-      displayName,
       url,
-      method: options?.method || 'GET',
+      method,
       status: response.status,
       reason: failure.reason,
       requestBody: secureOrAbsent(describeRequestBody(options?.body)),
@@ -489,12 +573,12 @@ export async function jiraFetch(
   // failure path below keeps its bodies: a 4xx/5xx is rare, is what actually
   // needs diagnosing, and carries the provider's complaint rather than the
   // user's content.
-  logger.debug('OK response', {
+  logger.debug("Jira accepted {actor}'s {method} {url} with {status}", {
     component: 'jira/fetch',
+    ...who,
     accountId: scope.accountId,
-    displayName,
     url,
-    method: options?.method || 'GET',
+    method,
     status: response.status,
   });
 

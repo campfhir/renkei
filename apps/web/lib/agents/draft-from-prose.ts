@@ -483,21 +483,27 @@ export async function draftAgentFromProse(
     );
     if (completion === 'timeout') {
       if (usable) break;
-      logger.warn('prose draft failed: the model timed out', {
-        component: 'agents/draft',
-        ms: Date.now() - startedAt,
-      });
+      logger.warn(
+        'the agent draft from prose was not written: the model timed out after {ms}ms; the builder shows an error',
+        {
+          component: 'agents/draft',
+          ms: Date.now() - startedAt,
+        }
+      );
       return {
         error:
           'The model took over five minutes and was cut off — try again, or try a shorter description.',
       };
     }
     if (!completion.ok) {
-      logger.warn('prose draft failed: {kind} {message}', {
-        component: 'agents/draft',
-        kind: completion.err.type,
-        message: completion.err.message?.slice(0, 300) ?? '',
-      });
+      logger.warn(
+        'the agent draft from prose was not written: the model did not answer ({kind}); the builder shows an error: {message}',
+        {
+          component: 'agents/draft',
+          kind: completion.err.type,
+          message: completion.err.message?.slice(0, 300) ?? '',
+        }
+      );
       if (usable) break;
       const detail = typeof completion.err.cause === 'string' ? completion.err.cause : undefined;
       return errorFor(completion.err.type, completion.err.message, detail);

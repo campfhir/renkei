@@ -21,6 +21,7 @@ import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { API_SURFACES, SUPPORTED_PROVIDERS } from '@/lib/agents/llm-model-payload';
 import { checkServiceEndpoint } from '@/lib/service-endpoint';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /** The taxonomy, translated for the person watching the button spinner. */
 function messageFor(kind: TestConnectionError): { message: string; status: number } {
@@ -47,9 +48,8 @@ function messageFor(kind: TestConnectionError): { message: string; status: numbe
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== 'object' || body === null) {
@@ -90,10 +90,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (!keyResult.ok) {
-      logger.error('Could not load the token encryption key: {error}', {
-        component: 'api/admin/llm-models/test',
-        error: keyResult.err.message ?? keyResult.err.type,
-      });
+      logger.error(
+        '{actor} sent a test message through the LLM connection "{label}", but the token encryption key could not be loaded; no test was run: {error}',
+        {
+          component: 'api/admin/llm-models/test',
+          ...who(session),
+          modelConfigId: payload.modelConfigId,
+          label: row.label,
+          error: keyResult.err.message ?? keyResult.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
     }
     const secretsResult = row.encryptedSecrets
@@ -101,10 +107,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       : null;
     if (secretsResult && !secretsResult.ok) {
       logger.warn(
-        'Could not decrypt the stored API key for model config {modelConfigId}: {error}',
+        '{actor} sent a test message through the LLM connection "{label}", but its stored API key could not be decrypted; the person was asked to type a key instead: {error}',
         {
           component: 'api/admin/llm-models/test',
+          ...who(session),
           modelConfigId: payload.modelConfigId,
+          label: row.label,
           error: secretsResult.err.message ?? secretsResult.err.type,
         }
       );
@@ -115,11 +123,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (typeof secrets.apiKey === 'string') apiKey = secrets.apiKey;
       } catch (error) {
         // Malformed secrets fall through to the no-key answer below.
-        logger.warn('Stored secrets for model config {modelConfigId} are malformed: {error}', {
-          component: 'api/admin/llm-models/test',
-          modelConfigId: payload.modelConfigId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          '{actor} sent a test message through the LLM connection "{label}", but its stored secrets are malformed; the person was asked to type a key instead: {error}',
+          {
+            component: 'api/admin/llm-models/test',
+            ...who(session),
+            modelConfigId: payload.modelConfigId,
+            label: row.label,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
       }
     }
   }
@@ -165,13 +178,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : null,
   });
   if (!result.ok) {
-    logger.warn('Model connection test failed for {provider} ({kind}): {error}', {
-      component: 'api/admin/llm-models/test',
-      provider: payload.provider,
-      kind: result.err.type,
-      error: result.err.message ?? result.err.type,
-    });
     const { message, status } = messageFor(result.err.type);
+    logger.warn(
+      '{actor} sent a test message through a {provider} connection to "{model}", but the provider did not answer it ({kind}); the person was answered {status}: {error}',
+      {
+        component: 'api/admin/llm-models/test',
+        ...who(session),
+        provider: payload.provider,
+        model: payload.model.trim(),
+        kind: result.err.type,
+        status,
+        error: result.err.message ?? result.err.type,
+      }
+    );
     return NextResponse.json({ error: message }, { status });
   }
 

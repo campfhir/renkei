@@ -24,6 +24,7 @@
  */
 
 import { serviceDeskScopes, describeJsmAuthFailure, type JsmAuth } from './jsm-auth';
+import { isRecord } from '@renkei/guards';
 
 /**
  * The platform scope for reading a project's components.
@@ -43,10 +44,6 @@ export interface ComponentOption {
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export interface ResolvedDesk {

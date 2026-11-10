@@ -15,6 +15,7 @@ import { getMicrosoftApp, MICROSOFT_CONNECTOR } from '@/lib/microsoft-app';
 import { MICROSOFT_REQUIRED_SCOPES } from '@/lib/microsoft-scopes';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // The resulting grant is bound to whoever completes this flow, so the
@@ -29,11 +30,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/microsoft/authorize',
-      subject: session.subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      '{actor} asked to connect Microsoft 365, but the app origin could not be resolved; no sign-in was started: {error}',
+      {
+        component: 'api/microsoft/authorize',
+        ...who(session),
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getMicrosoftApp(originResult.val);

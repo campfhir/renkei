@@ -26,6 +26,8 @@ import { imageGenerationTool } from './image-tools';
 import { memoryTools } from './memory-tools';
 import { sandboxFileTools } from './sandbox-file-tools';
 import { userMemoryTools } from './user-memory-tools';
+import { platformToolsFor } from './platform-tools';
+import { CODE_HOSTS } from '@/lib/code/create-project';
 import type { LocalTool } from './local-tools';
 import {
   CHAT_OWN_TOOLS_KEY,
@@ -47,7 +49,7 @@ function actNamesOf(tools: LocalTool[]): ActToolEntry[] {
     .map((tool) => ({ name: tool.def.name, label: friendlyToolName(tool.def.name, null) }));
 }
 
-/** The chat's in-process act tools: files, memory, compaction, staging. */
+/** The chat's in-process act tools: files, memory, compaction, staging, and Renkei's own (platform-tools/). */
 export function chatOwnActTools(): ActToolEntry[] {
   // Listed by name whether or not this org has an image model: the catalog is of tools that exist.
   const imageTool = imageGenerationTool({ models: [{ id: '', label: '', model: '' }] });
@@ -59,6 +61,8 @@ export function chatOwnActTools(): ActToolEntry[] {
     ...actNamesOf(imageTool ? [imageTool] : []),
     ...actNamesOf(memoryTools()),
     ...actNamesOf(userMemoryTools()),
+    // Listed whether or not this person has a git host connected: the catalog is of tools that exist.
+    ...actNamesOf(platformToolsFor({ operator: false, codeHosts: CODE_HOSTS })),
   ]);
 }
 

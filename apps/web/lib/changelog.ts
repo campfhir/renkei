@@ -46,8 +46,440 @@ export interface ChangelogRelease {
 
 export const CHANGELOG: ChangelogRelease[] = [
   {
+    date: '2026-11-10',
+    entries: [
+      {
+        kind: 'added',
+        title: "The assistant can list your projects, and won't make one twice",
+        detail:
+          'Ask a chat what projects you have and it lists your chat projects and code projects, including ones shared with you, with a link to each. When it sets up a code project it now checks first: a repository you already have a project on is not given a second one unless you ask for that.',
+      },
+      {
+        kind: 'fixed',
+        title: 'The assistant knows what a confirmed card created',
+        detail:
+          "When you confirm a preview card, the assistant now receives what the action returned, such as a new Zoom meeting's id and join link or a created issue's key, so it can carry on (send the invite, link the issue) without asking you to paste it. The card still shows only its receipt.",
+      },
+      {
+        kind: 'added',
+        title: 'Ask a chat about Renkei itself',
+        detail:
+          "Every chat can now act in Renkei for you: give you a link to any page or setting, tell you how much you have used, read and change your preferences (ask it for dark mode or line numbers and the page switches as it answers), set up a chat project or, with Bitbucket or GitHub connected, a code project, and keep prompts in your prompt libraries. Anything that changes something asks first. Operators can also ask for the organization's usage.",
+      },
+      {
+        kind: 'added',
+        title: 'Code sub-agents can work in the background',
+        detail:
+          'A code chat can now start sub-agents in the background and keep working while they run, instead of sitting in one long step until they report. While it waits for them the chat is free, so you can write to it and get an answer.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A sub-agent cut off by a restart no longer looks like it is still working',
+        detail:
+          'If the service restarts while a background sub-agent is working, its card now shows it as interrupted within a couple of minutes and its task is marked failed with the reason, so the assistant is told and can start the work again.',
+      },
+      {
+        kind: 'added',
+        title: 'Stop a single sub-agent',
+        detail:
+          'A sub-agent that is still working can be stopped on its own: open it from its card in the thread and press Stop sub-agent, or ask the assistant in the chat to stop it. The rest of the reply and any other sub-agents carry on.',
+      },
+      {
+        kind: 'changed',
+        title: 'Sub-agents run side by side',
+        detail:
+          'When a chat hands several independent pieces of work to sub-agents in one reply, they now work at the same time, up to four at once, instead of one after another. In a code project each sub-agent that changes files works in its own copy of the repository on its own branch, so they cannot overwrite each other, and the chat merges each branch when its report is in.',
+      },
+      {
+        kind: 'changed',
+        title: 'Code projects commit and push as they work',
+        detail:
+          'A code chat now commits and pushes its branch as each piece of work stands instead of once at the end, and its sub-agents can commit and push their own work too (never a forced push). A restart of the sandbox or the server in the middle of a run no longer takes unpushed work with it.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Activity log cards wrap long lines on a phone',
+        detail:
+          'On a phone, a log card drew every line uppercase and bold and cut a long message off at the right edge. Only the level badge is uppercase now, and the message wraps.',
+      },
+      {
+        kind: 'fixed',
+        title: "A preview card's confirmation no longer repeats under the card",
+        detail:
+          "Confirming or cancelling a preview card used to add a small line under it repeating what the card already showed, link and all. The card's own receipt is the record now; the model still replies to the decision.",
+      },
+      {
+        kind: 'added',
+        title: "Test a Mirth connector's connection",
+        detail:
+          "Ask an assistant to test a channel's connectors the way the Mirth Administrator's Test Connection, Test Read and Test Write buttons do: a TCP, HTTP or Web Service Sender reaches its endpoint, a File Reader or Writer its directory, a Document Writer its folder, with Mirth's own verdict per connector. Name one connector or test the whole channel; it needs only the Read channels permission and changes nothing.",
+      },
+      {
+        kind: 'changed',
+        title: 'Log lines name the person and the agent',
+        detail:
+          'Every line in Activity and the log search now says who did what, by display name and email, and names an agent with its owner, so a review reads what happened without looking up ids. Ids stay as searchable attributes.',
+      },
+    ],
+  },
+  {
+    date: '2026-11-09',
+    entries: [
+      {
+        kind: 'changed',
+        title: 'Finished queue work is cleaned up',
+        detail:
+          'The queues behind agents, webhooks, embeddings and batch jobs now drop finished entries after two weeks and dead letters after thirty days, so the admin event monitor and the Agent queue panel stay quick however long Renkei has been running.',
+      },
+      {
+        kind: 'added',
+        title: 'Agent oversight shows whose agents are paused',
+        detail:
+          'A Paused people section at the top of Agent oversight lists everyone with an agent switched on whose agents cannot run while they are away, with why (their key is not delegated, they run only while signed in, they never set up a key), when they were last seen, how many agents they have on and how many runs are parked. A person fixes it by opening the app on a device that holds their key.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Your agents keep running after a Renkei restart',
+        detail:
+          "Every restart of the key service used to forget who had delegated their key to their agents, so the agents of anyone not in the app at the time paused as “Paused: sign in” until their next visit, and nothing said so. With the key service's new instance key configured, a restart keeps every delegation, and your agents carry on while you are away. A run that does pause for your sign-in now sends you a notification that links to it, once, and a paused run is no longer halted automatically after a day: it waits and runs when you next sign in.",
+      },
+      {
+        kind: 'changed',
+        title: 'Picking runs on the Agent queue starts with Select',
+        detail:
+          'The Agent queue shows no checkboxes until you press Select; until then, a press anywhere on a run opens it. After Select, a press anywhere on a run or card picks it instead, Select all is always there to pick every run the tab matches, and Done goes back to browsing. Halting one run is now Select, the run, then Halt 1 selected.',
+      },
+      {
+        kind: 'added',
+        title:
+          'Dead agent runs are halted automatically, and the Agent queue can halt every run at once',
+        detail:
+          'Every ten minutes, runs that will never finish on their own are halted: queued or running with no progress for a day, waiting more than an hour past their own deadline, or waiting with no deadline for a day. They show as Halted, and their owners see why. On the Agent queue page, ticking the box over a page now offers to pick every run the tab matches, not just the 50 shown, and Halt all halts them in batches while it counts up.',
+      },
+      {
+        kind: 'fixed',
+        title: "Canceling a queued run is instant, and you can see what is holding an agent's runs",
+        detail:
+          "Canceling a run that has not started now cancels it straight away, instead of waiting behind every job ahead of it in the agent's queue. An agent's runs page has a Queue panel that says which run is at the head of its queue and what state it is in (being worked on, retrying after an error, held by a worker that stopped, or not being picked up at all), with how many runs wait behind it, the last error, and anything the queue gave up on this week. Your Activity now shows when a run fails and will be retried, when a run is canceled, and when one is halted.",
+      },
+      {
+        kind: 'added',
+        title: "Operators can see every agent's queue at once, and clear it",
+        detail:
+          "Agent oversight has an Agent queue page (also linked from the Agents page for operators): every run in the organization that has not finished, oldest first, with its agent, its owner, its status and how long it has been in the queue. Halt one run from its row, or pick several and halt them together to clear a backlog. With the organization's log level set to debug, Activity also notes each run as it is queued.",
+      },
+    ],
+  },
+  {
+    date: '2026-11-08',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'No sliver of text above a day heading in the chat list',
+        detail:
+          'On a phone, as the chat list scrolled, a hairline of the row passing under the Today or This week heading could show above it. The heading now covers it.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A new chat shows in the menu as soon as you send its first message',
+        detail:
+          "A chat started with + New used to stay out of the menu's chat list until its first reply had finished, which on a long reply looked like the list never updated. It is now listed the moment the first message is sent, under a title taken from it.",
+      },
+      {
+        kind: 'added',
+        title: 'Halt stuck runs, and tables that keep their headings and pager in view',
+        detail:
+          "A run queued or running for over two hours can now be halted: from its own page, or all of an agent's stuck runs at once from its runs list, where a banner says how long they have been stuck, and a halted run says so on its status. The assistant can halt them too, and points to halting when you ask it to cancel a run that is stuck. A cancel only asks a running agent to stop, so it never reached a stuck run. The runs list has quick filters for Stuck, Halted and Paused (waiting on your sign-in) beside the plain statuses. The runs list and the In flight overview now scroll inside their own frame, with the column headings stuck to the top and the pager stuck to the bottom of the screen; on a phone they show as cards with the pager below. The pager always shows how many runs a tab holds, filtered or not.",
+      },
+      {
+        kind: 'added',
+        title: 'See what every agent has in flight, and page through all its runs',
+        detail:
+          "The Agents page opens with an In flight table: for each agent, how many runs are queued, running or waiting on you, how old the oldest is, and whether anything looks stuck (queued or running for over two hours). Stuck agents come first, and each row opens the runs behind it. On a phone the overview shows as cards. The overview and the agent cards each page ten at a time, holding their height so the page buttons stay put, and an agent's runs are now a table you can page through 50 at a time, with a Queued tab of its own.",
+      },
+      {
+        kind: 'fixed',
+        title: 'A stuck run you stopped shows as canceled',
+        detail:
+          'Stopping a run whose worker had already died used to leave it running until the cleanup sweep closed it as a failure. The sweep now closes it as canceled, the way you asked.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Agents no longer stall behind a run that stopped responding',
+        detail:
+          "A run whose worker crashed or hung could hold up every later run of the same agent for days, leaving them queued without ever starting. It is now set aside as failed once it has used its retries, and the agent's next run goes ahead. A run that is slow but still working keeps going instead of being started a second time beside itself.",
+      },
+      {
+        kind: 'changed',
+        title: 'Rename prompt libraries and change their description',
+        detail:
+          "A library's name and description can now be edited from its page, not only its scope.",
+      },
+      {
+        kind: 'added',
+        title: 'Refine and draft prompts with AI',
+        detail:
+          'In the prompt editor, Refine rewrites a prompt so it is clearer and asks for what changes each time, and Draft with AI writes one from a description. You see the original beside the recommendation and the questions it would ask, steer it and try again, then accept it before saving.',
+      },
+      {
+        kind: 'added',
+        title: 'Prompt libraries for code projects',
+        detail:
+          'A library can be offered in code projects only, so development prompts stay out of ordinary chats. The prompt picker groups prompts by library, folds long libraries, can filter to one, and works from the keyboard.',
+      },
+      {
+        kind: 'added',
+        title: 'Prompts that ask for their details',
+        detail:
+          'Put {{name}} or {{name:type}} in a library prompt and picking it opens a form for the values, with required answers, options and help set in a short block at the end of the prompt. You can also let the assistant ask in the chat instead.',
+      },
+      {
+        kind: 'added',
+        title: 'The assistant can ask you a form',
+        detail:
+          'When it needs several details from you, the assistant now asks in a form in the chat — radio buttons, checkboxes, text, number and date boxes — and carries on with your answers. Once answered, the form folds into one line you can open to see what was asked and said.',
+      },
+    ],
+  },
+  {
+    date: '2026-11-07',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Previews: open what a code chat built, in your browser',
+        detail:
+          "A code chat can start the project's own server (a dev server, an API, a site) and hand you a link to open it signed in, or a share link anyone can open for a few hours. A preview can expose several named ports, and the chat's menu offers Open preview while one is up.",
+      },
+      {
+        kind: 'added',
+        title: 'The rest of git in code chats',
+        detail:
+          'A chat in a code project can now read the history, fetch, work with branches, stash, rebase and merge (stopping on conflicts and naming the files to fix), reset, clean, and narrow a large repository to the directories it needs. After a rebase it can replace its own remote branch safely; a plain force push is still impossible.',
+      },
+      {
+        kind: 'changed',
+        title: 'A code chat is ready to work the moment you open it',
+        detail:
+          "The repository is checked out and the chat's own working copy prepared as soon as a code chat is created or opened, instead of on its first message. A message sent before that finishes gets a short reply, and the chat continues on its own as soon as the checkout is ready.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Renkei answers right after a deploy',
+        detail:
+          'After an update the app could take several minutes to start answering while every service restarted at once. It now answers as soon as it has started.',
+      },
+      {
+        kind: 'added',
+        title: 'Ask Mirth by the question, not the route',
+        detail:
+          'The agent can now read one alert in full by name, show which channels no enabled alert watches, list the channels feeding a collector, and find the channel listening on a port or sending to a host, URL or directory — whole answers in names instead of a clipped definitions dump.',
+      },
+    ],
+  },
+  {
+    date: '2026-11-06',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Download all your data',
+        detail:
+          'Preferences → Your data downloads every chat you own, your memory, projects and preferences as a zip, or a short profile of you to give another assistant such as ChatGPT, Claude or Gemini.',
+      },
+      {
+        kind: 'added',
+        title: 'Import chats and memories from ChatGPT, Claude or Gemini',
+        detail:
+          'Bring in a ChatGPT or Claude data export, Gemini activity from Google Takeout, or a pasted list of things about you. You see what was found before anything is added, and imported chats can be continued like any other.',
+      },
+      {
+        kind: 'changed',
+        title: 'Each preferences card saves on its own',
+        detail:
+          'The notification settings no longer share one Save at the bottom of the page: a card shows its own Save once you change something in it, and saving it leaves your unsaved changes in other cards alone.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Fewer stalled chat turns and clearer worker errors',
+        detail:
+          'Chat turns that ran several tools at once no longer hit a database error while reporting progress, and the connector workers now log the real reason a request failed instead of an internal logging error.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Old email-indexing jobs cleared out',
+        detail:
+          'Email jobs left over from before mail stopped being indexed are removed, so they no longer fail over and over in the background or sit in the queue holding copies of messages.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Searching the activity log from a chat finds what you ask for',
+        detail:
+          "Asking the assistant for errors or warnings now returns them instead of nothing, a search it can't run explains why, and a long result says there is more and where the next page starts.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Downloading OneDrive and SharePoint files',
+        detail:
+          'Getting a download link for a OneDrive or SharePoint file no longer fails with "Graph offered no download redirect" when Microsoft hands the link over only as a redirect, as it does for some workbooks, including ones shared from a colleague\'s OneDrive.',
+      },
+      {
+        kind: 'added',
+        title: 'Task lists in every chat',
+        detail:
+          "The assistant can plan multi-step work as tasks with subtasks and dependencies, hand tasks to sub-agents that work in the background, and pause until they finish — picking the conversation back up on its own when they report, fail or time out. Open Tasks from a chat's ⋯ menu to see what is under way, what is waiting and what has finished, or copy the list as Markdown.",
+      },
+    ],
+  },
+  {
+    date: '2026-11-05',
+    entries: [
+      {
+        kind: 'added',
+        title: 'Move a chat into a project from the chat itself',
+        detail:
+          "Move to project… is now in an open chat's ⋯ menu as well as the sidebar's, so a chat started on its own can join a project, or leave one, without going back to the list.",
+      },
+      {
+        kind: 'added',
+        title: "Refine a project's instructions",
+        detail:
+          "A Refine button beside a project's instructions shows a model's clearer, better organized rewrite next to your draft. Tell it what to change and try again, then Accept to put it in the field; Save keeps it.",
+      },
+    ],
+  },
+  {
+    date: '2026-11-02',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Asking for a Zoom note from a given day finds it',
+        detail:
+          "Agents now look up a Zoom note by the day it was created instead of by the meeting's name, which newer notes, titled by Zoom from what was said, often don't carry. When you ask for your notes they no longer reach for the meeting transcript instead.",
+      },
+    ],
+  },
+  {
+    date: '2026-11-01',
+    entries: [
+      {
+        kind: 'fixed',
+        title: 'Connect with every capability unticked no longer asks for all of them',
+        detail:
+          "On a connector's card, unticking every capability and pressing Connect used to take you to the vendor asking for everything your organization allows. Connect now stays off until at least one capability is ticked, and says so.",
+      },
+      {
+        kind: 'fixed',
+        title: 'A notification delete or Mark all as read the server refused no longer looks done',
+        detail:
+          'On the notifications page, a delete the server turned down used to hide the notifications anyway, and a refused Mark all as read hid the button as if everything were read. Now the delete dialog stays open to try again, and Mark all as read stays on screen.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Commit dialog: files you untick stay unticked',
+        detail:
+          "In the code pane's Commit dialog, a file you had unticked was ticked again whenever the list of changed files refreshed (a save, or the chat finishing a turn), so it could end up in a commit you meant to leave it out of. Only files that newly appear start ticked now.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Switch branch: a refused switch always says why',
+        detail:
+          "When switching a code chat's branch failed for a reason the server did not label (an error on its side, or no connection), the Switch branch dialog showed nothing and the branch simply stayed. It now shows the reason; a failed discard on a dirty checkout also keeps its message and the offer to try again.",
+      },
+      {
+        kind: 'fixed',
+        title: 'Deleting several artifacts again after a partial failure',
+        detail:
+          'When some of the files ticked for deletion could not be removed, pressing Delete again now retries only those files, instead of trying the ones already gone and reporting them as failures.',
+      },
+      {
+        kind: 'fixed',
+        title: 'A refused pull request subscription no longer looks saved',
+        detail:
+          "When subscribing to a pull request's pipeline outcomes (or turning on its fix or merge option) was refused, the checkbox stayed ticked beside the error as if it had worked. It now goes back to what is actually saved.",
+      },
+      {
+        kind: 'fixed',
+        title:
+          "Agent models: picking another model from the provider's list clears an earlier test result",
+        detail:
+          'On the Agent models form, choosing a different model id from "List available models" left the previous "Test connection" success on screen, as if the new model had answered. It now clears, the same as typing a new model id does.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Files added while the large-upload question is open wait for your answer',
+        detail:
+          'If you chose a few more files while Renkei was asking whether to go ahead with a large upload, they used to start uploading straight away. They now join the files waiting on your answer.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Event previews show the right end time in every time zone',
+        detail:
+          'An action preview for a calendar event now shortens the end to just its time only when the event starts and ends on the same day as written. Before, depending on your own time zone, an overnight event could lose its end date, or a same-day event could repeat it.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Mockup viewer: Fit to width always goes back to the top',
+        detail:
+          'After a zoom that could go no further (at 25% or 400%, or Reset at 100%), Fit to width or a new width button could leave the fullscreen mockup scrolled to an old spot instead of its top left. It now always starts from the top.',
+      },
+    ],
+  },
+  {
     date: '2026-10-31',
     entries: [
+      {
+        kind: 'fixed',
+        title: 'Deleting a knowledge note clears it from the selection',
+        detail:
+          "On an agent's Knowledge panel, deleting a note you had ticked no longer leaves the toolbar counting it as selected.",
+      },
+      {
+        kind: 'fixed',
+        title: 'The chat stays at the bottom as a preview card grows',
+        detail:
+          'When you are at the end of a chat, a preview card that grows to fit its form keeps the end of the chat in view, instead of the chat jumping later when the next message arrives.',
+      },
+      {
+        kind: 'changed',
+        title: 'Reduce motion is respected everywhere',
+        detail:
+          'With your device set to reduce motion, Renkei no longer slides, fades or spins anything: panels, toasts and preview cards appear in place, and jumping to a section no longer scrolls smoothly.',
+      },
+      {
+        kind: 'changed',
+        title: 'My usage charts the same breakdowns as Organization usage',
+        detail:
+          'My usage now shows your tokens by surface over time, an activity calendar, tokens by model, your top agents and your top tools, for the period you pick. It is only ever your own usage, with no rankings of other people.',
+      },
+      {
+        kind: 'changed',
+        title: 'Send later suggests the time you asked for',
+        detail:
+          'When the assistant drafts an email with a send time, the card fills in that date and time under Send later, and the button reads Schedule. Date and time are two fields, so they are easy to change on a phone.',
+      },
+      {
+        kind: 'fixed',
+        title: 'Email cards work on a phone',
+        detail:
+          'Fields on the email preview card are 16px, so iOS no longer zooms in when you tap one, and every field stays inside the card instead of spilling past its edge.',
+      },
+      {
+        kind: 'changed',
+        title: "Service desk request cards show the form's required fields",
+        detail:
+          "The create-request card now reads the request type's form and shows its required fields, components and priority as labelled pick lists (components as a search box with removable chips) instead of ids. A request missing a required field is refused with the accepted values named, and requests can carry participants.",
+      },
+      {
+        kind: 'changed',
+        title: 'Preview cards show names, not ids',
+        detail:
+          "Cards for Jira, Confluence, Microsoft 365, Teams, GitHub, Bitbucket, Salesforce, Mirth, OnBase and Zoom now show a sprint, page, folder, channel or document by its name instead of an internal id. When a name can't be found the card says so in words rather than showing an id.",
+      },
+      {
+        kind: 'added',
+        title: 'Schedule an email to send later',
+        detail:
+          'Outlook sends, replies and forwards can be scheduled for a later time, and the email preview card has a Send later picker. Outlook holds the message in its Outbox and sends it then; deleting it there cancels it.',
+      },
       {
         kind: 'fixed',
         title: "Salesforce Admin reports take a joined object's columns",
@@ -2597,4 +3029,34 @@ export const CHANGELOG: ChangelogRelease[] = [
 export function buildLabel(packageVersion: string): string {
   const commit = process.env.GIT_COMMIT;
   return commit ? `${packageVersion}+${commit}` : packageVersion;
+}
+
+const MONTHS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
+/**
+ * A release's heading on the About page: `2026-08-25` → `25 August 2026`,
+ * with no timezone in sight.
+ *
+ * Deliberately not LocalTime: a release date is a CALENDAR date, not an
+ * instant. Parsing it as midnight UTC and rendering it in the viewer's zone
+ * shows the day before for anyone west of Greenwich, which is both wrong and
+ * the kind of wrong nobody reports.
+ */
+export function releaseDate(iso: string): string {
+  const [year, month, day] = iso.split('-').map(Number);
+  const name = MONTHS[month - 1];
+  return name ? `${day} ${name} ${year}` : iso;
 }

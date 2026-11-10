@@ -3,10 +3,11 @@
 /**
  * A code project's open pull requests, read with the signed-in person's
  * own grant on whichever host the repository is on (repo-host.ts). Its
- * summary card on the project page is pulls-summary.tsx.
+ * summary card on the project page is pulls-summary.tsx; what each row
+ * shows is pulls-page.model.ts.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import BackLink from '@/components/back-link';
 import ExternalLink from '@/components/external-link';
 import LocalTime from '@/components/local-time';
@@ -14,36 +15,50 @@ import { getJson } from '@/lib/fetch-json';
 import type { HostPullRequest } from '@/lib/code/repo-host';
 import Pill from './pill';
 import PrSubscribe from './pr-subscribe';
+import {
+  initialPulls,
+  offersSubscribe,
+  pullBranches,
+  pullStatePill,
+  pullTitle,
+  pullsReducer,
+  pullsView,
+} from './pulls-page.model';
 
 function StatePill({ state }: { state: HostPullRequest['state'] }) {
-  if (state === 'merged') return <Pill tone="purple">Merged</Pill>;
-  if (state === 'declined' || state === 'closed') return <Pill tone="gray">Closed</Pill>;
-  return <Pill tone="green">Open</Pill>;
+  const { tone, label } = pullStatePill(state);
+  return <Pill tone={tone}>{label}</Pill>;
 }
 
-export default function PullsPage({ projectId, projectName, repoFullName }: {
+export default function PullsPage({
+  projectId,
+  projectName,
+  repoFullName,
+}: {
   projectId: string;
   projectName: string;
   repoFullName: string;
 }) {
   const url = `/api/code/projects/${projectId}/pulls`;
-  const [pullRequests, setPullRequests] = useState<HostPullRequest[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [state, dispatch] = useReducer(pullsReducer, initialPulls);
+  const { pullRequests, loadError, busy } = state;
 
   const reload = useCallback(async () => {
-    setBusy(true);
+    dispatch({ type: 'reading' });
     const result = await getJson<{ pullRequests: HostPullRequest[] }>(url);
-    setBusy(false);
-    if (result.data) {
-      setPullRequests(result.data.pullRequests);
-      setLoadError(null);
-    } else setLoadError(result.error ?? 'The pull requests could not be read.');
+    if (result.data) dispatch({ type: 'loaded', pullRequests: result.data.pullRequests });
+    else
+      dispatch({
+        type: 'loadFailed',
+        error: result.error ?? 'The pull requests could not be read.',
+      });
   }, [url]);
 
   useEffect(() => {
     void reload();
   }, [reload]);
+
+  const view = pullsView(state);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
@@ -66,13 +81,13 @@ export default function PullsPage({ projectId, projectName, repoFullName }: {
       </header>
 
       <div className="mx-auto max-w-4xl space-y-4 p-4">
-        {loadError ? (
+        {view === 'error' ? (
           <p role="alert" className="text-sm text-red-600 dark:text-red-400">
             {loadError}
           </p>
-        ) : pullRequests === null ? (
+        ) : view === 'reading' || pullRequests === null ? (
           <p className="text-sm text-gray-500">Reading…</p>
-        ) : pullRequests.length === 0 ? (
+        ) : view === 'empty' ? (
           <p className="text-sm text-gray-500">No open pull requests.</p>
         ) : (
           <>
@@ -84,29 +99,23 @@ export default function PullsPage({ projectId, projectName, repoFullName }: {
                       href={pr.url}
                       className="min-w-0 truncate font-medium hover:underline"
                     >
-                      #{pr.number} {pr.title}
+                      {pullTitle(pr)}
                     </ExternalLink>
                     <span className="ml-auto shrink-0">
                       <StatePill state={pr.state} />
                     </span>
                   </div>
-                  <div className="truncate font-mono text-xs text-gray-500">
-                    {pr.sourceBranch} → {pr.destinationBranch}
-                  </div>
+                  <div className="truncate font-mono text-xs text-gray-500">{pullBranches(pr)}</div>
                   <div className="text-xs text-gray-500">
                     {pr.author} · <LocalTime at={pr.updatedAt} />
                   </div>
-                  {pr.state === 'open' ? (
+                  {offersSubscribe(pr) ? (
                     <details className="pt-1">
                       <summary className="cursor-pointer text-xs text-blue-600 dark:text-blue-400">
                         Subscribe
                       </summary>
                       <div className="mt-1.5">
-                        <PrSubscribe
-                          projectId={projectId}
-                          prNumber={pr.number}
-                          prUrl={pr.url}
-                        />
+                        <PrSubscribe projectId={projectId} prNumber={pr.number} prUrl={pr.url} />
                       </div>
                     </details>
                   ) : null}
@@ -145,16 +154,14 @@ export default function PullsPage({ projectId, projectName, repoFullName }: {
                         className="block max-w-[24rem] truncate font-medium hover:underline"
                         title={pr.title}
                       >
-                        #{pr.number} {pr.title}
+                        {pullTitle(pr)}
                       </ExternalLink>
                     </td>
                     <td className="py-1.5 pr-2">
                       <StatePill state={pr.state} />
                     </td>
                     <td className="py-1.5 pr-2 font-mono text-xs">
-                      <span className="block max-w-[14rem] truncate">
-                        {pr.sourceBranch} → {pr.destinationBranch}
-                      </span>
+                      <span className="block max-w-[14rem] truncate">{pullBranches(pr)}</span>
                     </td>
                     <td className="hidden max-w-[10rem] truncate py-1.5 pr-2 text-xs text-gray-500 sm:table-cell">
                       {pr.author || '—'}
@@ -163,7 +170,7 @@ export default function PullsPage({ projectId, projectName, repoFullName }: {
                       <LocalTime at={pr.updatedAt} />
                     </td>
                     <td className="py-1.5 align-top">
-                      {pr.state === 'open' ? (
+                      {offersSubscribe(pr) ? (
                         <details>
                           <summary className="cursor-pointer text-xs text-blue-600 dark:text-blue-400">
                             Subscribe

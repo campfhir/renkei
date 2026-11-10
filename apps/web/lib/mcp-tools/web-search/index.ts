@@ -25,6 +25,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { logger } from '@/lib/logger';
 import type { MCPToolContext } from '../common';
+import { callerFields } from '../common';
 import {
   domainWithin,
   normalizeDomain,
@@ -201,9 +202,9 @@ export function registerWebSearchTools(
       if (!outcome.ok) {
         // The key is the org's, so an auth failure is for the admin, not
         // the caller — say so rather than echoing a bare 401.
-        logger.warn('web_search failed: {message}', {
+        logger.warn("{caller}'s web search failed ({kind}); no results were returned: {message}", {
           component: 'mcp/web-search',
-          subject: context.subject,
+          ...callerFields(context),
           kind: outcome.error.kind,
           message: outcome.error.message,
         });

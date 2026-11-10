@@ -469,6 +469,35 @@ export function memoryChatTurnEngine(tables: MemoryTables): ChatTurnEngineStore 
         finished_at: now,
       });
     },
+    async interruptIdleSubagentRuns(idleSince, error) {
+      const turnRunning = (turnId: string) =>
+        tables.first('chat_turns', (t) => t.id === turnId)?.status === 'running';
+      const now = new Date();
+      return tables
+        .update(
+          'chat_subagent_runs',
+          (r) =>
+            r.status === 'running' &&
+            r.updated_at.getTime() < idleSince.getTime() &&
+            !turnRunning(r.turn_id),
+          { status: 'interrupted', error, updated_at: now, finished_at: now }
+        )
+        .map((r) => ({ chatId: r.chat_id, turnId: r.turn_id, toolUseId: r.tool_use_id }))
+        .sort((a, b) => (a.toolUseId < b.toolUseId ? -1 : a.toolUseId > b.toolUseId ? 1 : 0));
+    },
+    async stopSubagentRun(chatId, toolUseId, error) {
+      const running = (r: { chat_id: string; tool_use_id: string; status: string }) =>
+        r.chat_id === chatId && r.tool_use_id === toolUseId && r.status === 'running';
+      if (!tables.first('chat_subagent_runs', running)) return false;
+      const now = new Date();
+      tables.update('chat_subagent_runs', running, {
+        status: 'interrupted',
+        error,
+        updated_at: now,
+        finished_at: now,
+      });
+      return true;
+    },
     async getSubagentRunByCall(chatId, toolUseId) {
       const chat = chatId;
       const row = tables.first(

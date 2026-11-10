@@ -16,10 +16,11 @@
  * list — the way the code pane opens a file as a tab. What the viewer
  * may do follows artifact-access.ts: an owner renames, replaces, shares,
  * hands over or deletes; a person it was shared with uses it, copies it
- * or takes it off their own list.
+ * or takes it off their own list. What the page decides from what is
+ * pressed and what the server answers is artifacts-index.model.ts.
  */
 
-import { useCallback, useEffect, useRef, useState, useTransition, type DragEvent } from 'react';
+import { useCallback, useEffect, useReducer, useRef, useTransition, type DragEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -39,12 +40,41 @@ import ShareModal from './share-modal';
 import AttachArtifactsPicker from './attach-to-project-modal';
 import { CopyArtifactModal, DeleteArtifactModal, RenameArtifactModal } from './artifact-dialogs';
 import { BulkAddModal, BulkDeleteModal } from './artifact-bulk-dialogs';
-import ArtifactUploadModal, { type UploadTransfer } from './artifact-upload-modal';
-import OcrPanel, { canRunOcr } from './artifact-ocr-panel';
+import ArtifactUploadModal from './artifact-upload-modal';
+import OcrPanel from './artifact-ocr-panel';
+import { ModeToggle, sizeOf, statusFor, TypeBadge } from './artifact-bits';
+import {
+  acts,
+  accessLine,
+  canAttach,
+  clampPage,
+  currentItem,
+  detachSends,
+  digestLabel,
+  emptyMessage,
+  failureLine,
+  filterStep,
+  filtersOf,
+  indexReducer,
+  initialIndex,
+  keepsReading,
+  keyOf,
+  originWord,
+  ownerLabel,
+  pager,
+  pickedItems as pickedOn,
+  rowOrigin,
+  rowPress,
+  rowProjects,
+  seenReading,
+  showsAbout,
+  toolbar,
+  usedInNowhere,
+  type IndexAction,
+} from './artifacts-index.model';
 
 /** How often the page is read again while an OCR run is in flight, to move its progress. */
 const OCR_POLL_MS = 3000;
-import { ModeToggle, sizeOf, statusFor, TypeBadge, isPicture } from './artifact-bits';
 
 /**
  * Below Tailwind's `md` the details open over the list instead of beside
@@ -60,31 +90,6 @@ const pagerButton =
   'flex h-7 w-7 items-center justify-center rounded-md border border-gray-300 text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-900';
 const smallButton =
   'rounded-md border border-gray-300 px-2 py-1 text-xs hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900';
-
-const filtersOf = (query: LibraryQuery): LibraryFilters => ({
-  show: query.show,
-  projectId: query.projectId,
-  query: query.query,
-});
-const keyOf = (filters: LibraryFilters) =>
-  `${filters.show}|${filters.projectId ?? ''}|${filters.query}`;
-
-/** What the digest's state says in the details, or null when it says nothing worth a line. */
-function digestLabel(status: string, picture: boolean): string | null {
-  switch (status) {
-    case 'pending':
-    case 'running':
-      return picture ? 'Describing the picture…' : 'Summary on its way…';
-    case 'failed':
-      return picture
-        ? 'No description could be written for this picture.'
-        : 'No summary could be written for this file.';
-    case 'none':
-      return picture ? 'Nothing to describe.' : 'No text to summarize.';
-    default:
-      return null;
-  }
-}
 
 export default function ArtifactsIndex({
   page,
@@ -111,10 +116,15 @@ export default function ArtifactsIndex({
   // The filters as typed: the URL follows them, debounced for the
   // search box, and they follow the URL when it changes under them (the
   // back button) — told apart by the key of the last navigation asked for.
-  const [filters, setFilters] = useState<LibraryFilters>(() => filtersOf(query));
+  const [state, dispatch] = useReducer(
+    indexReducer,
+    { query, items: page.artifacts, selectedId },
+    initialIndex
+  );
+  const { filters, selected, transfer, error, dialog, selecting, bulk, detaching } = state;
   const asked = useRef(keyOf(filtersOf(query)));
-  const latest = useRef(filters);
-  latest.current = filters;
+  const latest = useRef(state);
+  latest.current = state;
   const serverKey = keyOf(filtersOf(query));
   const served = useRef(query);
   served.current = query;
@@ -123,30 +133,9 @@ export default function ArtifactsIndex({
   useEffect(() => {
     if (serverKey !== asked.current) {
       asked.current = serverKey;
-      setFilters(filtersOf(served.current));
+      dispatch({ type: 'urlChanged', filters: filtersOf(served.current) });
     }
   }, [serverKey]);
-  const [selected, setSelected] = useState<string | null>(selectedId);
-  // The selected file as last seen, so its details stay while a page it
-  // is not on is shown — a filter that hides it, an upload's reveal in flight.
-  const [remembered, setRemembered] = useState<LibraryItem | null>(
-    () => page.artifacts.find((item) => item.id === selectedId) ?? null
-  );
-  const [dragging, setDragging] = useState(false);
-  /** The upload in flight, or null when none is: its progress shows in a modal. */
-  const [transfer, setTransfer] = useState<UploadTransfer | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<
-    'share' | 'delete' | 'copy' | 'rename' | 'attach' | 'replace' | null
-  >(null);
-  // Select mode shows a checkmark on every row, and a click on a row ticks
-  // it instead of opening its details. The rows ticked for a bulk act, and
-  // the one-at-a-time detach in flight ("file:project"), so a second click
-  // on it does nothing.
-  const [selecting, setSelecting] = useState(false);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [bulk, setBulk] = useState<'add' | 'delete' | null>(null);
-  const [detaching, setDetaching] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const replaceInput = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
@@ -172,17 +161,9 @@ export default function ArtifactsIndex({
   // estimate move. A finished read is digested after it (artifact-ocr.ts),
   // so a file seen being read here keeps the page reading until its summary
   // lands; it stops once nothing on the page is being read or summarized.
-  const readHere = useRef(new Set<string>());
-  for (const item of items) if (item.ocr !== null) readHere.current.add(item.id);
-  const ocrRunning = items.some((item) => item.ocr !== null);
-  const summaryAwaited =
-    digests &&
-    items.some(
-      (item) =>
-        readHere.current.has(item.id) &&
-        (item.digestStatus === 'pending' || item.digestStatus === 'running')
-    );
-  const polling = ocrRunning || summaryAwaited;
+  const readHere = useRef<Set<string>>(new Set());
+  readHere.current = seenReading(readHere.current, items);
+  const polling = keepsReading(items, digests, readHere.current);
   useEffect(() => {
     if (!polling) return;
     const timer = setInterval(reload, OCR_POLL_MS);
@@ -191,19 +172,21 @@ export default function ArtifactsIndex({
   // A new page of the library is the server's answer to a detach, so the
   // one in flight is over.
   useEffect(() => {
-    setDetaching(null);
+    dispatch({ type: 'pageArrived' });
   }, [page]);
 
   // A filter change starts over at the first page of what it shows; the
   // search box waits for typing to pause.
   const filter = (patch: Partial<LibraryFilters>) => {
-    const next = { ...latest.current, ...patch };
-    setFilters(next);
+    const step = filterStep(latest.current, patch);
+    dispatch({ type: 'filtered', patch });
+    // The next keystroke, before a re-render, builds on this one.
+    latest.current = { ...latest.current, filters: step.filters };
     if (searchTimer.current) clearTimeout(searchTimer.current);
-    if ('query' in patch) {
-      searchTimer.current = setTimeout(() => navigate(next, 1), SEARCH_DEBOUNCE_MS);
+    if (step.debounce) {
+      searchTimer.current = setTimeout(() => navigate(step.filters, step.page), SEARCH_DEBOUNCE_MS);
     } else {
-      navigate(next, 1);
+      navigate(step.filters, step.page);
     }
   };
   useEffect(
@@ -212,24 +195,29 @@ export default function ArtifactsIndex({
     },
     []
   );
-  const goTo = (toPage: number) =>
-    navigate(latest.current, Math.max(1, Math.min(page.pageCount, toPage)));
+  const goTo = (toPage: number) => navigate(latest.current.filters, clampPage(page, toPage));
   /** Selects a file and turns to the page it is on. */
   const reveal = (id: string) => {
-    setSelected(id);
-    navigate(latest.current, 1, id);
+    dispatch({ type: 'revealed', id });
+    navigate(latest.current.filters, 1, id);
   };
-  const select = (item: LibraryItem | null) => {
-    setSelected(item?.id ?? null);
-    if (item) setRemembered(item);
-  };
+  const select = (item: LibraryItem | null) => dispatch({ type: 'selected', item });
 
+  const current = currentItem(state, items);
   const onPage = items.find((item) => item.id === selected) ?? null;
-  const pickedItems = items.filter((item) => picked.includes(item.id));
-  const current = onPage ?? (remembered?.id === selected ? remembered : null);
+  const pickedItems = pickedOn(state, items);
   useEffect(() => {
-    if (onPage) setRemembered(onPage);
+    if (onPage) dispatch({ type: 'seenOnPage', item: onPage });
   }, [onPage]);
+
+  /** Runs one act on the server: its error, if any, in the error line; the page read again. */
+  const act = async (call: () => Promise<{ error: string | null }>, then?: IndexAction) => {
+    dispatch({ type: 'actSent' });
+    const result = await call();
+    dispatch({ type: 'actAnswered', error: result.error });
+    if (then) dispatch(then);
+    reload();
+  };
 
   /**
    * Sends each file in turn with a progress bar over all of them. The page
@@ -239,85 +227,63 @@ export default function ArtifactsIndex({
   const upload = async (list: FileList | File[] | null) => {
     const files = list ? [...list] : [];
     if (files.length === 0) return;
-    setError(null);
+    dispatch({ type: 'actSent' });
     const bytes = files.reduce((sum, file) => sum + file.size, 0);
     let sent = 0;
     const failures: string[] = [];
     for (const [index, file] of files.entries()) {
       const before = sent;
-      setTransfer({
-        count: files.length,
-        index: index + 1,
-        name: file.name,
-        loaded: before,
-        bytes,
+      dispatch({
+        type: 'transferMoved',
+        transfer: { count: files.length, index: index + 1, name: file.name, loaded: before, bytes },
       });
       const result = await chatClient.uploadArtifact({}, file, (loaded) => {
-        setTransfer((current) => current && { ...current, loaded: before + loaded });
+        dispatch({ type: 'transferProgress', loaded: before + loaded });
       });
       sent = before + file.size;
       if (result.error) failures.push(`${file.name}: ${result.error}`);
     }
-    setTransfer(null);
-    if (failures.length > 0) setError(failures.join('; '));
+    dispatch({ type: 'uploadsAnswered', failures });
     reload();
   };
 
   const replace = async (file: File | null) => {
     if (!file || !current) return;
-    setError(null);
-    const result = await chatClient.replaceArtifact(current.id, file);
-    if (result.error) setError(result.error);
-    reload();
+    await act(() => chatClient.replaceArtifact(current.id, file));
   };
 
-  const setMode = async (item: LibraryItem, projectId: string, mode: 'always' | 'on_demand') => {
-    setError(null);
-    const result = await chatClient.setArtifactMode(projectId, item.id, mode);
-    if (result.error) setError(result.error);
-    reload();
-  };
+  const setMode = (item: LibraryItem, projectId: string, mode: 'always' | 'on_demand') =>
+    act(() => chatClient.setArtifactMode(projectId, item.id, mode));
 
   const detach = async (item: LibraryItem, projectId: string) => {
     const key = `${item.id}:${projectId}`;
-    if (detaching === key) return;
-    setDetaching(key);
-    setError(null);
+    if (!detachSends(latest.current, key)) return;
+    dispatch({ type: 'detachSent', key });
+    latest.current = { ...latest.current, detaching: key };
     const result = await chatClient.detachArtifact(projectId, item.id);
-    if (result.error) {
-      setError(result.error);
-      setDetaching(null);
-    }
+    if (result.error) dispatch({ type: 'detachFailed', error: result.error });
     reload();
   };
 
-  const togglePick = (id: string) =>
-    setPicked((ids) => (ids.includes(id) ? ids.filter((other) => other !== id) : [...ids, id]));
-
   /** Asks for a read of each file in turn; each one then goes on in the background. */
   const runOcrOn = async (list: LibraryItem[]) => {
-    setError(null);
+    dispatch({ type: 'actSent' });
     const failures: string[] = [];
     for (const item of list) {
       const result = await chatClient.startArtifactOcr(item.id);
       if (result.error) failures.push(`${item.filename}: ${result.error}`);
     }
-    if (failures.length > 0) setError(failures.join('; '));
+    dispatch({ type: 'actAnswered', error: failureLine(failures) });
     reload();
   };
 
-  const leave = async (item: LibraryItem) => {
-    setError(null);
-    const result = await chatClient.deleteArtifact(item.id);
-    if (result.error) setError(result.error);
-    select(null);
-    reload();
-  };
+  const leave = (item: LibraryItem) =>
+    act(() => chatClient.deleteArtifact(item.id), { type: 'selected', item: null });
 
   const onDrop = (event: DragEvent<HTMLDivElement>) => {
     event.preventDefault();
     dragDepth.current = 0;
-    setDragging(false);
+    dispatch({ type: 'dragEnded' });
     if (uploads && event.dataTransfer.files?.length) void upload(event.dataTransfer.files);
   };
 
@@ -350,9 +316,8 @@ export default function ArtifactsIndex({
             {current.filename}
           </DownloadLink>
           <p className="text-xs text-gray-500">
-            {sizeOf(current.sizeBytes)} · {current.origin === 'model' ? 'generated' : 'uploaded'}{' '}
-            <LocalTime at={current.createdAt} format="date" /> ·{' '}
-            {current.via === 'owner' ? 'owned by you' : `${current.ownerName ?? 'someone'}’s`}
+            {sizeOf(current.sizeBytes)} · {originWord(current)}{' '}
+            <LocalTime at={current.createdAt} format="date" /> · {ownerLabel(current)}
           </p>
           <p className="mt-1 text-xs">
             {statusFor(current.extractStatus, current.contentType) ? (
@@ -378,7 +343,7 @@ export default function ArtifactsIndex({
         ) : null}
       </div>
 
-      {digests || current.summary || current.keywords.length > 0 ? (
+      {showsAbout(current, digests) ? (
         <section
           aria-label="About this file"
           className="border-t border-gray-100 px-4 py-3 dark:border-gray-900"
@@ -387,9 +352,7 @@ export default function ArtifactsIndex({
           {current.summary ? (
             <p className="text-sm text-gray-700 dark:text-gray-300">{current.summary}</p>
           ) : (
-            <p className="text-xs text-gray-500">
-              {digestLabel(current.digestStatus, isPicture(current.contentType))}
-            </p>
+            <p className="text-xs text-gray-500">{digestLabel(current)}</p>
           )}
           {current.keywords.length > 0 ? (
             <ul aria-label="Keywords" className="mt-2 flex flex-wrap gap-1">
@@ -419,23 +382,14 @@ export default function ArtifactsIndex({
           key={`${current.id}:${current.ocr?.startedAt ?? ''}`}
           item={current}
           digests={digests}
-          onStart={async (item) => {
-            setError(null);
-            const result = await chatClient.startArtifactOcr(item.id);
-            if (result.error) setError(result.error);
-            reload();
-          }}
+          onStart={(item) => act(() => chatClient.startArtifactOcr(item.id))}
         />
       ) : null}
 
       <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">Used in</h3>
         {current.projects.length === 0 ? (
-          <p className="text-xs text-gray-500">
-            {current.chat
-              ? 'In its chat only; it goes when the chat does unless a project takes it.'
-              : 'Not attached to a project.'}
-          </p>
+          <p className="text-xs text-gray-500">{usedInNowhere(current)}</p>
         ) : (
           <ul className="space-y-1.5">
             {current.projects.map((project) => (
@@ -478,10 +432,10 @@ export default function ArtifactsIndex({
             </Link>
           </p>
         ) : null}
-        {projects.length > 0 && (current.via === 'owner' || current.via === 'grant') ? (
+        {canAttach(current, projects.length) ? (
           <button
             type="button"
-            onClick={() => setDialog('attach')}
+            onClick={() => dispatch({ type: 'dialogOpened', dialog: 'attach' })}
             className="mt-2 text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
             + Attach to a project…
@@ -491,17 +445,11 @@ export default function ArtifactsIndex({
 
       <div className="border-t border-gray-100 px-4 py-3 dark:border-gray-900">
         <h3 className="mb-2 text-xs font-semibold text-gray-500">Access</h3>
-        <p className="text-xs text-gray-500">
-          {current.via === 'owner'
-            ? `You own it${current.sharedWith > 0 ? `; shared with ${current.sharedWith} ${current.sharedWith === 1 ? 'person' : 'people'}` : ''}. ${current.projects.length > 0 ? 'Everyone in the projects above reads it; their owners and editors may detach it.' : ''}`
-            : current.via === 'grant'
-              ? 'Shared with you: use it in your own projects, read it, copy it. Only its owner changes it.'
-              : 'You read it through a project or chat it is used in.'}
-        </p>
-        {current.via === 'owner' ? (
+        <p className="text-xs text-gray-500">{accessLine(current)}</p>
+        {acts(current).owner ? (
           <button
             type="button"
-            onClick={() => setDialog('share')}
+            onClick={() => dispatch({ type: 'dialogOpened', dialog: 'share' })}
             className={`mt-2 inline-flex items-center gap-1 ${smallButton}`}
           >
             <Icon path={ICONS.share} className="h-3.5 w-3.5" />
@@ -519,7 +467,7 @@ export default function ArtifactsIndex({
           <Icon path={ICONS.download} className="h-3.5 w-3.5" />
           Download
         </DownloadLink>
-        {current.via === 'owner' ? (
+        {acts(current).owner ? (
           <>
             <button
               type="button"
@@ -538,12 +486,16 @@ export default function ArtifactsIndex({
                 event.target.value = '';
               }}
             />
-            <button type="button" onClick={() => setDialog('rename')} className={smallButton}>
+            <button
+              type="button"
+              onClick={() => dispatch({ type: 'dialogOpened', dialog: 'rename' })}
+              className={smallButton}
+            >
               Rename
             </button>
             <button
               type="button"
-              onClick={() => setDialog('delete')}
+              onClick={() => dispatch({ type: 'dialogOpened', dialog: 'delete' })}
               className="ml-auto text-xs text-red-600 hover:underline dark:text-red-400"
             >
               Delete
@@ -553,13 +505,13 @@ export default function ArtifactsIndex({
           <>
             <button
               type="button"
-              onClick={() => setDialog('copy')}
+              onClick={() => dispatch({ type: 'dialogOpened', dialog: 'copy' })}
               className={`inline-flex items-center gap-1 ${smallButton}`}
             >
               <Icon path={ICONS.copy} className="h-3.5 w-3.5" />
               Make a copy I own
             </button>
-            {current.via === 'grant' ? (
+            {acts(current).leave ? (
               <button
                 type="button"
                 onClick={() => void leave(current)}
@@ -572,11 +524,7 @@ export default function ArtifactsIndex({
           </>
         )}
       </div>
-      <p className="px-4 pb-3 text-xs text-gray-500">
-        {current.via === 'owner'
-          ? 'Replacing keeps every attachment and re-reads the text. Deleting shows who loses it and offers to hand it over instead.'
-          : 'A copy is a separate file you own; the owner is told. Removing it keeps their file and their shares.'}
-      </p>
+      <p className="px-4 pb-3 text-xs text-gray-500">{acts(current).note}</p>
     </>
   ) : null;
 
@@ -588,7 +536,7 @@ export default function ArtifactsIndex({
           resourceId={current.id}
           title={`Share ${current.filename}`}
           onClose={() => {
-            setDialog(null);
+            dispatch({ type: 'dialogClosed' });
             reload();
           }}
         />
@@ -598,11 +546,15 @@ export default function ArtifactsIndex({
           items={pickedItems}
           projects={projects}
           onDone={reload}
-          onClose={() => setBulk(null)}
+          onClose={() => dispatch({ type: 'bulkClosed' })}
         />
       ) : null}
       {bulk === 'delete' && pickedItems.length > 0 ? (
-        <BulkDeleteModal items={pickedItems} onDone={reload} onClose={() => setBulk(null)} />
+        <BulkDeleteModal
+          items={pickedItems}
+          onDone={reload}
+          onClose={() => dispatch({ type: 'bulkClosed' })}
+        />
       ) : null}
       {transfer ? <ArtifactUploadModal transfer={transfer} /> : null}
       {dialog === 'delete' && current ? (
@@ -612,7 +564,7 @@ export default function ArtifactsIndex({
             select(null);
             reload();
           }}
-          onClose={() => setDialog(null)}
+          onClose={() => dispatch({ type: 'dialogClosed' })}
         />
       ) : null}
       {dialog === 'copy' && current ? (
@@ -620,18 +572,22 @@ export default function ArtifactsIndex({
           item={current}
           projects={projects}
           onDone={(artifactId) => reveal(artifactId)}
-          onClose={() => setDialog(null)}
+          onClose={() => dispatch({ type: 'dialogClosed' })}
         />
       ) : null}
       {dialog === 'rename' && current ? (
-        <RenameArtifactModal item={current} onDone={reload} onClose={() => setDialog(null)} />
+        <RenameArtifactModal
+          item={current}
+          onDone={reload}
+          onClose={() => dispatch({ type: 'dialogClosed' })}
+        />
       ) : null}
       {dialog === 'attach' && current ? (
         <AttachArtifactsPicker
           item={current}
           projects={projects}
           onDone={reload}
-          onClose={() => setDialog(null)}
+          onClose={() => dispatch({ type: 'dialogClosed' })}
         />
       ) : null}
     </>
@@ -669,9 +625,8 @@ export default function ArtifactsIndex({
     );
   }
 
-  const first = page.total === 0 ? 0 : (page.page - 1) * page.pageSize + 1;
-  const last = Math.min(page.total, page.page * page.pageSize);
-  const searching = filters.query.trim().length > 0;
+  const pages = pager(page);
+  const bar = toolbar(state, items);
 
   return (
     <div
@@ -679,12 +634,12 @@ export default function ArtifactsIndex({
       onDragEnter={(event) => {
         event.preventDefault();
         dragDepth.current += 1;
-        if (uploads) setDragging(true);
+        dispatch({ type: 'dragEntered', uploads });
       }}
       onDragOver={(event) => event.preventDefault()}
       onDragLeave={() => {
         dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) setDragging(false);
+        if (dragDepth.current === 0) dispatch({ type: 'dragEnded' });
       }}
       onDrop={onDrop}
     >
@@ -781,10 +736,7 @@ export default function ArtifactsIndex({
               <button
                 type="button"
                 aria-pressed={selecting}
-                onClick={() => {
-                  setSelecting(!selecting);
-                  setPicked([]);
-                }}
+                onClick={() => dispatch({ type: 'selectModeToggled' })}
                 className={smallButton}
               >
                 {selecting ? 'Done selecting' : 'Select'}
@@ -792,11 +744,7 @@ export default function ArtifactsIndex({
             </div>
             {items.length === 0 ? (
               <p className="p-4 text-sm text-gray-500">
-                {page.libraryCount === 0
-                  ? 'No artifacts yet. Upload a manual, a guide or a design doc, or drop one anywhere on this page; files your chats write land here on their own.'
-                  : searching && digests
-                    ? 'Nothing matches. Search looks at file names and at the summary and keywords written for each file.'
-                    : 'Nothing matches.'}
+                {emptyMessage(page.libraryCount, filters.query, digests)}
               </p>
             ) : (
               // Rows on a wide screen; cards, each a door to the file's
@@ -810,7 +758,8 @@ export default function ArtifactsIndex({
                     ? 'OCR running'
                     : statusFor(item.extractStatus, item.contentType);
                   const isSelected = item.id === selected;
-                  const ticked = picked.includes(item.id);
+                  const ticked = state.picked.includes(item.id);
+                  const shownProjects = rowProjects(item.projects);
                   // In select mode the whole row is the checkmark: a click
                   // ticks or unticks it and never opens the details.
                   const highlighted = selecting ? ticked : isSelected;
@@ -825,18 +774,14 @@ export default function ArtifactsIndex({
                           <input
                             type="checkbox"
                             checked={ticked}
-                            onChange={() => togglePick(item.id)}
+                            onChange={() => dispatch({ type: 'pickToggled', id: item.id })}
                             aria-label={`Select ${item.filename}`}
                             className="ml-3 h-4 w-4 shrink-0 rounded border-gray-300"
                           />
                         ) : null}
                         <button
                           type="button"
-                          onClick={() =>
-                            selecting
-                              ? togglePick(item.id)
-                              : select(isSelected && !narrow ? null : item)
-                          }
+                          onClick={() => dispatch(rowPress(state, item, narrow))}
                           aria-current={!selecting && isSelected ? 'true' : undefined}
                           aria-pressed={selecting ? ticked : undefined}
                           className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2.5 text-left text-sm hover:bg-gray-50 dark:hover:bg-gray-900 ${highlighted ? 'bg-blue-50 dark:bg-blue-950/30' : ''}`}
@@ -854,13 +799,7 @@ export default function ArtifactsIndex({
                                   </span>
                                 </>
                               ) : null}
-                              {item.origin === 'model'
-                                ? ' · generated'
-                                : item.chat
-                                  ? ' · uploaded'
-                                  : ''}
-                              {item.chat ? ` in “${item.chat.title ?? 'a chat'}”` : ''}
-                              {item.ownerName ? ` · shared by ${item.ownerName}` : ''}
+                              {rowOrigin(item)}
                               {' · '}
                               <LocalTime at={item.createdAt} format="date" />
                             </span>
@@ -884,7 +823,7 @@ export default function ArtifactsIndex({
                                 <span className="text-xs text-gray-400">Not attached</span>
                               )
                             ) : (
-                              item.projects.slice(0, 2).map((project) => (
+                              shownProjects.named.map((project) => (
                                 <span
                                   key={project.id}
                                   className="truncate rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900"
@@ -893,9 +832,9 @@ export default function ArtifactsIndex({
                                 </span>
                               ))
                             )}
-                            {item.projects.length > 2 ? (
+                            {shownProjects.more > 0 ? (
                               <span className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-xs dark:border-gray-700 dark:bg-gray-900">
-                                +{item.projects.length - 2}
+                                +{shownProjects.more}
                               </span>
                             ) : null}
                           </span>
@@ -918,46 +857,42 @@ export default function ArtifactsIndex({
                 aria-label="Selected artifacts"
                 className="flex shrink-0 flex-wrap items-center gap-2 border-t border-gray-200 px-3 py-2 text-sm dark:border-gray-800"
               >
-                <span className="font-medium">
-                  {pickedItems.length > 0
-                    ? `${pickedItems.length} selected`
-                    : 'Tap files to select'}
-                </span>
+                <span className="font-medium">{bar.label}</span>
                 <button
                   type="button"
-                  disabled={pickedItems.length === 0}
-                  onClick={() => setBulk('add')}
+                  disabled={!bar.anyPicked}
+                  onClick={() => dispatch({ type: 'bulkOpened', bulk: 'add' })}
                   className={`${smallButton} disabled:opacity-40`}
                 >
                   Add to project…
                 </button>
                 <button
                   type="button"
-                  disabled={!pickedItems.some(canRunOcr)}
-                  onClick={() => void runOcrOn(pickedItems.filter(canRunOcr))}
+                  disabled={bar.ocrTargets.length === 0}
+                  onClick={() => void runOcrOn(bar.ocrTargets)}
                   className={`${smallButton} disabled:opacity-40`}
                 >
                   Run OCR
                 </button>
                 <button
                   type="button"
-                  disabled={pickedItems.length === 0}
-                  onClick={() => setBulk('delete')}
+                  disabled={!bar.anyPicked}
+                  onClick={() => dispatch({ type: 'bulkOpened', bulk: 'delete' })}
                   className={`${smallButton} disabled:opacity-40`}
                 >
                   Delete…
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPicked(items.map((item) => item.id))}
+                  onClick={() => dispatch({ type: 'pickedAll', ids: items.map((item) => item.id) })}
                   className="text-xs text-gray-500 hover:underline"
                 >
                   Select all on this page
                 </button>
                 <button
                   type="button"
-                  onClick={() => setPicked([])}
-                  disabled={pickedItems.length === 0}
+                  onClick={() => dispatch({ type: 'pickCleared' })}
+                  disabled={!bar.anyPicked}
                   className="ml-auto text-xs text-gray-500 hover:underline disabled:opacity-40 disabled:hover:no-underline"
                 >
                   Clear
@@ -971,29 +906,25 @@ export default function ArtifactsIndex({
                   Drop files anywhere on this page to add them · any type
                 </span>
               ) : null}
-              {page.total > 0 ? (
+              {pages.range !== null ? (
                 <nav aria-label="Pages" className="ml-auto flex items-center gap-2">
-                  <span>
-                    {first}–{last} of {page.total}
-                  </span>
-                  {page.pageCount > 1 ? (
+                  <span>{pages.range}</span>
+                  {pages.pageLabel !== null ? (
                     <>
                       <button
                         type="button"
                         onClick={() => goTo(page.page - 1)}
-                        disabled={page.page <= 1 || isPending}
+                        disabled={pages.previousDisabled || isPending}
                         aria-label="Previous page"
                         className={pagerButton}
                       >
                         <Icon path={ICONS.chevronLeft} className="h-4 w-4" />
                       </button>
-                      <span>
-                        Page {page.page} of {page.pageCount}
-                      </span>
+                      <span>{pages.pageLabel}</span>
                       <button
                         type="button"
                         onClick={() => goTo(page.page + 1)}
-                        disabled={page.page >= page.pageCount || isPending}
+                        disabled={pages.nextDisabled || isPending}
                         aria-label="Next page"
                         className={pagerButton}
                       >
@@ -1022,7 +953,7 @@ export default function ArtifactsIndex({
         ) : null}
       </div>
 
-      {dragging && uploads ? (
+      {state.dragging && uploads ? (
         <div className="pointer-events-none absolute inset-2 z-10 flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-blue-500 bg-blue-50/95 text-blue-700 dark:bg-blue-950/90 dark:text-blue-300">
           <Icon path={ICONS.upload} className="h-8 w-8" />
           <p className="text-lg font-semibold">Drop to add to your artifacts</p>

@@ -10,7 +10,103 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CALENDAR_ONLY_FIELDS, CLEANER_FIELDS, CLEANER_TYPES } from './cleaner-types';
+import ts from 'typescript';
+import {
+  CALENDAR_ONLY_FIELDS,
+  CLEANER_FIELDS,
+  CLEANER_IGNORED_DIAGNOSTICS,
+  CLEANER_TYPES,
+} from './cleaner-types';
+
+const SCRIPT_FILE = '/renkei/cleaner-script.ts';
+const TYPES_FILE = '/renkei/cleaner-email.d.ts';
+
+/**
+ * The errors the script editor underlines for `script`: TypeScript over the
+ * script and `CLEANER_TYPES`, with the editor's options (script-editor.tsx).
+ */
+function editorErrors(script: string): string[] {
+  const options: ts.CompilerOptions = {
+    target: ts.ScriptTarget.ES2020,
+    lib: ['lib.es2020.d.ts'],
+    strict: true,
+    noEmit: true,
+    allowNonTsExtensions: true,
+  };
+  const host = ts.createCompilerHost(options);
+  const files: Record<string, string> = { [SCRIPT_FILE]: script, [TYPES_FILE]: CLEANER_TYPES };
+  const getSourceFile = host.getSourceFile.bind(host);
+  host.getSourceFile = (fileName, languageVersion, ...rest) =>
+    fileName in files
+      ? ts.createSourceFile(fileName, files[fileName], languageVersion)
+      : getSourceFile(fileName, languageVersion, ...rest);
+  const fileExists = host.fileExists.bind(host);
+  host.fileExists = (fileName) => fileName in files || fileExists(fileName);
+  const program = ts.createProgram([SCRIPT_FILE, TYPES_FILE], options, host);
+  const sourceFile = program.getSourceFile(SCRIPT_FILE);
+  return [
+    ...program.getSyntacticDiagnostics(sourceFile),
+    ...program.getSemanticDiagnostics(sourceFile),
+  ]
+    .filter((diagnostic) => !CLEANER_IGNORED_DIAGNOSTICS.includes(diagnostic.code))
+    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+}
+
+describe('what the script editor underlines', () => {
+  it('underlines nothing in a script that reads a field the email has', () => {
+    expect(
+      editorErrors('function clean(email: CleanerEmail): string {\n  return email.text.trim();\n}')
+    ).toEqual([]);
+  });
+
+  it('underlines a field the email does not have', () => {
+    const errors = editorErrors(
+      'function clean(email: CleanerEmail): string {\n  return email.nope;\n}'
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("'nope'");
+  });
+
+  it('underlines a field read as the wrong type', () => {
+    const errors = editorErrors(
+      'function clean(email: CleanerEmail): string {\n  const n: number = email.subject;\n  return email.text;\n}'
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("'string' is not assignable to type 'number'");
+  });
+
+  it('lets a calendar script reach the invite fields', () => {
+    expect(
+      editorErrors(
+        "function clean(event: CleanerEvent): string {\n  return event.attendees.join(', ');\n}"
+      )
+    ).toEqual([]);
+  });
+
+  it('keeps the invite fields from a message script', () => {
+    // `attendees` on an email is always an empty array, so a script reading
+    // it would silently do nothing: narrowing makes that loud.
+    const errors = editorErrors(
+      "function clean(email: CleanerMessage): string {\n  return email.attendees.join(', ');\n}"
+    );
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("'attendees'");
+  });
+
+  it('narrows a script for several kinds on its kind', () => {
+    expect(
+      editorErrors(
+        "function clean(item: CleanerItem): string {\n  if (item.kind !== 'evt') return item.text;\n  return item.attendees.join(', ');\n}"
+      )
+    ).toEqual([]);
+  });
+
+  it('underlines nothing for the declared unused function or the ambient item', () => {
+    expect(
+      editorErrors('const script: CleanerScript = (email) => email.text + item.subject;')
+    ).toEqual([]);
+  });
+});
 
 const RUNNER = join(__dirname, '../../../../packages/email-sanitizer/src/scripts/run.ts');
 

@@ -1,16 +1,19 @@
 /**
- * The code pane's tree: creating, renaming and deleting a file (the
- * per-row "⋯" menu and the "New file" button inline with the tree's own
- * "Files" heading, against …/files — POST create, PATCH rename, DELETE
- * remove), a deleted file staying in the tree as a struck-through
- * "ghost" row tagged D rather than vanishing (clicking it opens its
- * diff — there is nothing left to open in the editor, and the working
- * tree's changes are marks in the tree itself, not a list of their
- * own), and a gitignored entry (node_modules, seeded by the stub) drawn
- * dimmed rather than hidden. Real routes and the real (stubbed) sandbox
- * worker throughout — sandbox-stub.mjs's ls/rm/mv/git-diff verbs carry
- * the same overlay a real checkout would, so this exercises the whole
- * path, not a page.route double of it.
+ * The code pane's tree in a browser: a gitignored entry (node_modules,
+ * seeded by the stub) drawn dimmed, one New file created through the
+ * dialog and showing in the tree, and a tracked file deleted through its
+ * row's "⋯" menu staying in the tree as a struck-through "ghost" row
+ * tagged D, which opens its diff when clicked. desktop-dark walks it at
+ * a phone's width, through the Code tab. Real routes and the real
+ * (stubbed) sandbox worker throughout.
+ *
+ * The rules moved out: what the New file / Rename dialog sends or refuses
+ * (".." refused before anything leaves, a trailing "/" and nested paths
+ * sent as typed), the row menu's items, the dimming of everything inside
+ * an ignored folder, which ghosts a folder shows and where a move lands
+ * are app/(app)/code/_components/repo-tree.model.test.ts; that a trailing
+ * "/" makes a folder, a nested path its parents, and a taken name is
+ * refused are app/api/code/projects/[projectId]/files/route.test.ts.
  *
  * The project and chat are the test's own person's, made through the Code
  * routes after connecting Bitbucket (e2e/support/code-host.ts); a first
@@ -73,7 +76,7 @@ test.describe('code pane file management', () => {
     await removeModel(page.request, ids.modelId);
   });
 
-  test('new file, rename, delete — a deleted file ghosts in as D, node_modules stays dimmed', async ({
+  test('new file, delete — a deleted file ghosts in as D, node_modules stays dimmed', async ({
     page,
   }, testInfo) => {
     // The phone width the old `mobile` project gave, as a resized viewport on one project.
@@ -117,28 +120,9 @@ test.describe('code pane file management', () => {
     await expect(tree.getByRole('button', { name: /^notes\.md/ })).toBeVisible();
     await shot(page, testInfo, 'code-tree-new-file-created.png');
 
-    // ── Rename it, through the row's "⋯" menu ──
-    await tree.getByRole('button', { name: 'More for notes.md' }).click();
-    await page.getByRole('menu').getByRole('menuitem', { name: 'Rename' }).click();
-    const renameDialog = page.getByRole('dialog', { name: 'Rename' });
-    await expect(renameDialog.getByLabel('New name')).toHaveValue('notes.md');
-    await renameDialog.getByLabel('New name').fill('notes-renamed.md');
-    await renameDialog.getByRole('button', { name: 'Rename' }).click();
-    await expect(renameDialog).toHaveCount(0);
-    await expect(tree.getByRole('button', { name: /^notes\.md/ })).toHaveCount(0);
-    await expect(tree.getByRole('button', { name: /^notes-renamed\.md/ })).toBeVisible();
-    await shot(page, testInfo, 'code-tree-renamed.png');
-
-    // ── Delete it — the tree simply loses the row (never committed, no
-    //    ghost for a file that never existed on a branch) ──
-    await tree.getByRole('button', { name: 'More for notes-renamed.md' }).click();
-    page.once('dialog', (dialog) => void dialog.accept());
-    await page.getByRole('menu').getByRole('menuitem', { name: 'Delete' }).click();
-    await expect(tree.getByRole('button', { name: /^notes-renamed\.md/ })).toHaveCount(0);
-
-    // ── Deleting a tracked file instead leaves a struck-through "D" ghost
-    //    row in its place — the working tree's changes are marks in the
-    //    tree, not a separate list ──
+    // ── Deleting a tracked file leaves a struck-through "D" ghost row in
+    //    its place — the working tree's changes are marks in the tree,
+    //    not a separate list ──
     await tree.getByRole('button', { name: 'More for README.md' }).click();
     page.once('dialog', (dialog) => void dialog.accept());
     await page.getByRole('menu').getByRole('menuitem', { name: 'Delete' }).click();
@@ -163,101 +147,5 @@ test.describe('code pane file management', () => {
     //    opens its diff instead ──
     await ghost.click();
     await expect(page.getByRole('dialog', { name: 'Changes to README.md' })).toBeVisible();
-  });
-
-  test('a gitignored folder dims its whole subtree, not just its own row', async ({
-    page,
-  }, testInfo) => {
-    // The phone width the old `mobile` project gave, as a resized viewport on one project.
-    const mobile = testInfo.project.name === 'desktop-dark';
-    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
-    const main = page.getByRole('main');
-
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
-      timeout: 30_000,
-    });
-    if (mobile) {
-      const tabs = main.getByRole('tablist', { name: 'Chat or code' });
-      await tabs.getByRole('tab', { name: /Code/ }).click();
-    }
-    const tree = main.getByRole('tree', { name: 'Files' });
-    await expect(tree.getByText('package.json')).toBeVisible({ timeout: 30_000 });
-
-    // node_modules itself is flagged ignored by the (stubbed) host.
-    const nodeModulesRow = tree.getByRole('button', { name: 'node_modules', exact: true });
-    await expect(nodeModulesRow.locator('xpath=..')).toHaveCSS('opacity', '0.5');
-    await nodeModulesRow.click();
-
-    // left-pad, one level down, is deliberately NOT flagged ignored by the
-    // stub's own listing for node_modules — it dims anyway, because an
-    // ignored ancestor's whole subtree is meant to read as ghosted,
-    // whatever a per-directory listing does or doesn't repeat.
-    const leftPadRow = tree.getByRole('button', { name: 'left-pad', exact: true });
-    await expect(leftPadRow).toBeVisible();
-    await expect(leftPadRow.locator('xpath=..')).toHaveCSS('opacity', '0.5');
-    await shot(page, testInfo, 'code-tree-ignored-subtree-dir.png');
-
-    // Its own child, two levels down and also unflagged, dims the same way.
-    await leftPadRow.click();
-    const indexRow = tree.getByRole('button', { name: /^index\.js/ });
-    await expect(indexRow).toBeVisible();
-    await expect(indexRow.locator('xpath=..')).toHaveCSS('opacity', '0.5');
-    await shot(page, testInfo, 'code-tree-ignored-subtree-file.png');
-  });
-
-  test('a trailing slash creates a folder, a nested path mkdir -ps its parents, and ".." is refused', async ({
-    page,
-  }, testInfo) => {
-    // The phone width the old `mobile` project gave, as a resized viewport on one project.
-    const mobile = testInfo.project.name === 'desktop-dark';
-    if (mobile) await page.setViewportSize(MOBILE_VIEWPORT);
-    const main = page.getByRole('main');
-
-    await page.goto(`/chat/${ids.chatId}`);
-    await expect(page.getByRole('heading', { name: ids.chatTitle })).toBeVisible({
-      timeout: 30_000,
-    });
-    if (mobile) {
-      const tabs = main.getByRole('tablist', { name: 'Chat or code' });
-      await tabs.getByRole('tab', { name: /Code/ }).click();
-    }
-    const tree = main.getByRole('tree', { name: 'Files' });
-    await expect(tree.getByText('package.json')).toBeVisible({ timeout: 30_000 });
-
-    // ── ".." is refused before any request leaves the dialog ──
-    await main.getByRole('button', { name: 'New file', exact: true }).click();
-    const newFileDialog = page.getByRole('dialog', { name: 'New file' });
-    await expect(newFileDialog.getByText(/End the name with/)).toBeVisible();
-    await newFileDialog.getByLabel('File name').fill('../escape.txt');
-    await newFileDialog.getByRole('button', { name: 'Create' }).click();
-    await expect(newFileDialog.getByText(/cannot leave the workspace/)).toBeVisible();
-    await expect(newFileDialog).toHaveCount(1);
-    await expect(tree.getByRole('button', { name: /^escape\.txt/ })).toHaveCount(0);
-
-    // ── A name ending in "/" creates an empty folder, not a file ──
-    await newFileDialog.getByLabel('File name').fill('assets/');
-    await newFileDialog.getByRole('button', { name: 'Create' }).click();
-    await expect(newFileDialog).toHaveCount(0);
-    const assetsRow = tree.getByRole('button', { name: 'assets', exact: true });
-    await expect(assetsRow).toBeVisible();
-    await shot(page, testInfo, 'code-tree-new-folder.png');
-    await assetsRow.click();
-    await expect(tree.getByText('Empty.')).toBeVisible();
-
-    // ── A nested path with missing intermediate folders creates them all,
-    //    the same "New file" dialog used throughout ──
-    await main.getByRole('button', { name: 'New file', exact: true }).click();
-    await newFileDialog.getByLabel('File name').fill('generated/nested/deep.txt');
-    await newFileDialog.getByRole('button', { name: 'Create' }).click();
-    await expect(newFileDialog).toHaveCount(0);
-    const generatedRow = tree.getByRole('button', { name: 'generated', exact: true });
-    await expect(generatedRow).toBeVisible();
-    await generatedRow.click();
-    const nestedRow = tree.getByRole('button', { name: 'nested', exact: true });
-    await expect(nestedRow).toBeVisible();
-    await nestedRow.click();
-    await expect(tree.getByRole('button', { name: /^deep\.txt/ })).toBeVisible();
-    await shot(page, testInfo, 'code-tree-mkdir-p.png');
   });
 });

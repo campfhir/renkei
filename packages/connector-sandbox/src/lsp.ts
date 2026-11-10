@@ -17,6 +17,8 @@
  * refused message is refused the same way on both sides.
  */
 
+import { isRecord } from '@renkei/guards';
+
 /** A server the image may carry; `lsp/languages` says which ones this worker actually has. */
 export interface LanguageServerSpec {
   /** The id the wire and the pane use. */
@@ -172,10 +174,6 @@ export interface JsonRpcMessage {
   params?: unknown;
   result?: unknown;
   error?: unknown;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

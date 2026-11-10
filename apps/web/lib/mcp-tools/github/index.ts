@@ -22,6 +22,7 @@ import { registerRepositoryTools } from './repositories';
 import { registerPullRequestTools } from './pullrequests';
 import { registerActionsTools } from './actions';
 import { registerPermissionTools } from './permissions';
+import { registerGitHubPreviewLookups } from './preview-lookups';
 
 export const GITHUB_MCP_CONNECTOR = 'github';
 
@@ -32,6 +33,7 @@ export async function registerGitHubTools(
 ): Promise<void> {
   const server = withScopeGate(rawServer, context.githubScopes, (name) => githubScopeFor(name));
 
+  registerGitHubPreviewLookups(context, auth);
   await registerRepositoryTools(server, context, auth);
   await registerPullRequestTools(server, context, auth);
   await registerActionsTools(server, context, auth);

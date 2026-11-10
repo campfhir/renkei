@@ -11,7 +11,7 @@ import type { LlmProvider, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import type { LlmCallModel } from '@renkei/agents/runs';
 import { textResult, type LocalTool, type LocalToolContext } from '@/lib/chat/local-tools';
 import type { SubagentRecorder } from '@/lib/chat/subagent-runs';
-import { retryDelayMs } from '@/lib/chat/subagent';
+import { SUBAGENT_HEARTBEAT_MS, retryDelayMs } from '@/lib/chat/subagent';
 import {
   DELEGATE_AUTO_DEFAULT_STEPS,
   DELEGATE_AUTO_MAX_STEPS,
@@ -23,6 +23,9 @@ import {
   DELEGATE_WALL_CLOCK_MS,
   codeDelegateTool,
   matchSubagentModel,
+  subagentBranchName,
+  subagentPushTool,
+  type OpenSubagentCheckout,
   type SubagentModelChoice,
 } from './delegate';
 import { resourceCipher } from '@/lib/chat/content-crypto';
@@ -70,9 +73,11 @@ const readTool: LocalTool = {
     return textResult(`contents of ${String(input.path)}`);
   },
 };
+const pushes: Record<string, unknown>[] = [];
 const pushTool: LocalTool = {
   def: { name: 'code_git_push', description: 'push', inputSchema: { type: 'object' } },
-  async execute() {
+  async execute(input) {
+    pushes.push(input);
     return textResult('pushed');
   },
 };
@@ -436,7 +441,8 @@ describe('code_delegate', () => {
     expect(result.content[0]?.text).toMatch(/rejected/);
   });
 
-  it('runs without a recorder, and withholds pushing from the sub-agent', async () => {
+  it('runs without a recorder, and lets the sub-agent push its own work', async () => {
+    pushes.length = 0;
     const llm = llmOf(
       provider([
         {
@@ -445,7 +451,7 @@ describe('code_delegate', () => {
           usage: { inputTokens: 1, outputTokens: 1 },
         },
         {
-          content: [{ type: 'text', text: 'Could not push.' }],
+          content: [{ type: 'text', text: 'Committed and pushed.' }],
           stopReason: 'end_turn',
           usage: { inputTokens: 1, outputTokens: 1 },
         },
@@ -454,6 +460,231 @@ describe('code_delegate', () => {
     const tool = codeDelegateTool([readTool, pushTool]);
     const result = await tool.execute({ task: 'push it' }, context({ llm, toolUseId: 'd2' }));
     expect(result.isError).toBe(false);
-    expect(result.content[0]?.text).toContain('Could not push.');
+    expect(result.content[0]?.text).toContain('Committed and pushed.');
+    expect(pushes).toEqual([{}]);
+  });
+
+  it('refuses a sub-agent a forced push, and a read-only one any push', async () => {
+    pushes.length = 0;
+    const forced = await subagentPushTool(pushTool).execute({ forceWithLease: true }, context({}));
+    expect(forced.isError).toBe(true);
+    expect(forced.content[0]?.text).toMatch(/does not replace a remote branch/);
+    expect(pushes).toEqual([]);
+
+    const llm = llmOf(
+      provider([
+        {
+          content: [{ type: 'tool_use', id: 'u1', name: 'code_git_push', input: {} }],
+          stopReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+        {
+          content: [{ type: 'text', text: 'Nothing to push with.' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        },
+      ])
+    );
+    const tool = codeDelegateTool([readTool, pushTool]);
+    await tool.execute({ task: 'look', readOnly: true }, context({ llm, toolUseId: 'd3' }));
+    expect(pushes).toEqual([]);
+  });
+
+  describe('a worktree of its own', () => {
+    const edits: string[] = [];
+    const editIn = (where: string): LocalTool => ({
+      def: { name: 'code_edit_file', description: 'edit', inputSchema: { type: 'object' } },
+      async execute() {
+        edits.push(where);
+        return textResult('edited');
+      },
+    });
+    const editThenReport = () =>
+      llmOf(
+        provider([
+          {
+            content: [{ type: 'tool_use', id: 'u1', name: 'code_edit_file', input: {} }],
+            stopReason: 'tool_use',
+            usage: { inputTokens: 1, outputTokens: 1 },
+          },
+          done('Changed a.ts.'),
+        ])
+      );
+    function fakeCheckout() {
+      const opened: string[] = [];
+      const closed: string[] = [];
+      const open: OpenSubagentCheckout = async (_context, key) => {
+        opened.push(key);
+        return {
+          ok: true,
+          checkout: {
+            tools: [editIn('its own worktree')],
+            branch: 'renkei/abc-sub-d5',
+            from: 'renkei/abc',
+            async close() {
+              closed.push(key);
+              return 'Merge renkei/abc-sub-d5.';
+            },
+          },
+        };
+      };
+      return { open, opened, closed };
+    }
+
+    it('is where a sub-agent that changes things works, and is put away with its branch named', async () => {
+      edits.length = 0;
+      const { open, opened, closed } = fakeCheckout();
+      let system = '';
+      const llm = editThenReport();
+      const complete = llm.provider.complete.bind(llm.provider);
+      llm.provider.complete = async (request) => {
+        system = String(request.system);
+        return complete(request);
+      };
+      const tool = codeDelegateTool([editIn('the chat’s checkout')], { checkout: open });
+      const result = await tool.execute({ task: 'change a.ts' }, context({ llm, toolUseId: 'd5' }));
+      expect(edits).toEqual(['its own worktree']);
+      expect(opened).toEqual(['d5']);
+      expect(closed).toEqual(['d5']);
+      expect(system).toContain('renkei/abc-sub-d5');
+      expect(system).toContain('a git worktree of your own');
+      const text = result.content.map((block) => block.text).join('\n');
+      expect(text).toContain('Changed a.ts.');
+      expect(text).toContain('Merge renkei/abc-sub-d5.');
+    });
+
+    it('is not made for a read-only sub-agent, nor for one asked to work in place', async () => {
+      edits.length = 0;
+      const { open, opened } = fakeCheckout();
+      const tool = codeDelegateTool([readTool, editIn('the chat’s checkout')], { checkout: open });
+      await tool.execute(
+        { task: 'look', readOnly: true },
+        context({ llm: llmOf(provider([done('Looked.')])), toolUseId: 'd6' })
+      );
+      await tool.execute(
+        { task: 'change a.ts', inPlace: true },
+        context({ llm: editThenReport(), toolUseId: 'd7' })
+      );
+      expect(opened).toEqual([]);
+      expect(edits).toEqual(['the chat’s checkout']);
+    });
+
+    it('falls back to the chat’s checkout, saying why, when one cannot be made', async () => {
+      edits.length = 0;
+      const tool = codeDelegateTool([editIn('the chat’s checkout')], {
+        checkout: async () => ({
+          ok: false,
+          reason: 'this checkout is not on a branch right now.',
+        }),
+      });
+      const result = await tool.execute(
+        { task: 'change a.ts' },
+        context({ llm: editThenReport(), toolUseId: 'd8' })
+      );
+      expect(edits).toEqual(['the chat’s checkout']);
+      expect(result.content.map((block) => block.text).join('\n')).toContain(
+        'a worktree of its own could not be made — this checkout is not on a branch right now.'
+      );
+    });
+
+    it('names a branch beside the chat’s, from the delegation’s id', () => {
+      expect(subagentBranchName('renkei/abc123', 'toolu_01AbCdEfGh')).toBe(
+        'renkei/abc123-sub-abcdefgh'
+      );
+      expect(subagentBranchName('feature/x', '')).toBe('feature/x-sub-agent');
+    });
+  });
+
+  it('stops before its next model call once it was asked to, and its run ends interrupted with who asked', async () => {
+    let modelCalls = 0;
+    const llm = llmOf({
+      async complete() {
+        modelCalls += 1;
+        return ok({
+          content: [{ type: 'tool_use', id: `u${modelCalls}`, name: 'code_read_file', input: {} }],
+          stopReason: 'tool_use',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      },
+    });
+    const finished: { status: string; error: string | null }[] = [];
+    const recorder: SubagentRecorder = {
+      start: async () => 'run-1',
+      progress: async () => {},
+      // Asked after its first model call: the second is never made.
+      stopped: async () => (modelCalls >= 1 ? 'stopped by Ann' : null),
+      finish: async (_runId, outcome) => {
+        finished.push({ status: outcome.status, error: outcome.error });
+      },
+    };
+    const result = await codeDelegateTool([readTool]).execute(
+      { task: 'read everything', readOnly: true },
+      context({ llm, toolUseId: 'd9', subagents: recorder })
+    );
+    expect(modelCalls).toBe(1);
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('The sub-agent was stopped: stopped by Ann.');
+    expect(finished).toEqual([{ status: 'interrupted', error: 'stopped by Ann' }]);
+  });
+
+  it('touches its run while a step takes long, so it is not taken for one whose process died', async () => {
+    jest.useFakeTimers();
+    try {
+      let answer: (reply: LlmResponse) => void = () => {};
+      const llm = llmOf({
+        complete: () =>
+          new Promise((resolve) => {
+            answer = (reply) => resolve(ok(reply));
+          }),
+      });
+      const beats: number[] = [];
+      const recorder: SubagentRecorder = {
+        start: async () => 'run-1',
+        progress: async (_runId, state) => {
+          beats.push(state.usage.inputTokens + state.usage.outputTokens);
+        },
+        finish: async () => {},
+      };
+      const running = codeDelegateTool([readTool]).execute(
+        { task: 'think for a long while', readOnly: true },
+        context({ llm, toolUseId: 'd10', subagents: recorder })
+      );
+      await jest.advanceTimersByTimeAsync(SUBAGENT_HEARTBEAT_MS * 3);
+      // Three heartbeats, none adding tokens.
+      expect(beats).toEqual([0, 0, 0]);
+      answer(done('Done thinking.'));
+      await running;
+      const afterEnd = beats.length;
+      await jest.advanceTimersByTimeAsync(SUBAGENT_HEARTBEAT_MS * 3);
+      expect(beats.length).toBe(afterEnd);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('is a tool whose calls in one reply run side by side', () => {
+    expect(codeDelegateTool([readTool]).concurrent).toBe(true);
+  });
+
+  it('tells the sub-agent to commit and push as it goes', async () => {
+    let system = '';
+    const llm = llmOf({
+      async complete(request) {
+        system =
+          typeof request.system === 'string' ? request.system : JSON.stringify(request.system);
+        return ok({
+          content: [{ type: 'text', text: 'Done.' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 1, outputTokens: 1 },
+        });
+      },
+    } as LlmProvider);
+    await codeDelegateTool([readTool, pushTool]).execute(
+      { task: 'do it' },
+      context({ llm, toolUseId: 'd4' })
+    );
+    expect(system).toContain('code_git_commit');
+    expect(system).toContain('code_git_push');
+    expect(system).toContain('whatever was never pushed is lost');
   });
 });

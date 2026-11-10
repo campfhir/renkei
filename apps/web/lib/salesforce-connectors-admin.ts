@@ -34,10 +34,7 @@ import {
   type SalesforceOrg,
 } from '@renkei/connector-salesforce';
 import type { SalesforceKind } from '@/lib/salesforce-kinds';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 async function load(
   kind: SalesforceKind

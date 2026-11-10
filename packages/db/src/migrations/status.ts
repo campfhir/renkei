@@ -194,7 +194,11 @@ export const EXPECTED_MIGRATIONS = [
   '168-document-usage',
   '169-sandbox-scope',
   '170-temporary-chats',
-  '171-audit-events-append-only',
+  '171-chat-tasks',
+  '172-drop-email-ingest-jobs',
+  '173-prompt-library-scope',
+  '174-queue-job-indexes',
+  '175-audit-events-append-only',
 ];
 
 export interface MigrationStatus {

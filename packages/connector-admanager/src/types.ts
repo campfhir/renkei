@@ -14,6 +14,7 @@
  */
 
 import type { AdManagerPermission } from './permissions';
+import { isRecord } from '@renkei/guards';
 
 /** An instance as operators register it — connection details only, no credentials. */
 export interface AdManagerInstanceSummary {
@@ -61,10 +62,6 @@ export function isTemplateName(value: unknown): value is string {
     value.length <= MAX_TEMPLATE_NAME_LENGTH &&
     !/[\r\n\t]/.test(value)
   );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function readInstanceSettings(settings: unknown): AdManagerInstanceSettings {

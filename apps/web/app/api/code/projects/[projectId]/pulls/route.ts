@@ -13,6 +13,7 @@ import { codeProjectContext } from '@/lib/code/route-access';
 import { hostAdapterFor } from '@/lib/code/repo-host';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(
   request: NextRequest,
@@ -27,18 +28,24 @@ export async function GET(
     subject: session.subject,
     origin: origin.ok ? origin.val : '',
   });
-  if (!adapter) return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
+  if (!adapter)
+    return jsonError(409, 'unsupported-host', 'This repository’s host is not supported.');
   const listed = await adapter.listPullRequests(project.repo!.fullName, {
     state: 'open',
     max: 25,
   });
   if (!listed.ok) {
-    logger.warn('Could not list pull requests from the code host: {error}', {
-      component: 'api/code/projects/pulls',
-      subject: session.subject,
-      projectId,
-      error: listed.error,
-    });
+    logger.warn(
+      '{actor} opened the pull requests of the project "{project}" ({repository}), but the code host did not list them; the page showed the error: {error}',
+      {
+        component: 'api/code/projects/pulls',
+        ...who(session),
+        projectId,
+        project: project.name,
+        repository: project.repo!.fullName,
+        error: listed.error,
+      }
+    );
     return jsonError(502, 'host', listed.error);
   }
   if (request.nextUrl.searchParams.get('view') === 'summary') {

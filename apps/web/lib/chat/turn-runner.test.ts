@@ -11,7 +11,7 @@
 import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { LlmContentBlock, LlmProvider, LlmResponse, ResolvedLlm } from '@renkei/agent-llm';
 import type { McpClient } from '@renkei/mcp-client';
-import { createLocalToolSet, textResult, type LocalTool } from './local-tools';
+import { createLocalToolSet, END_TURN_META, textResult, type LocalTool } from './local-tools';
 import { openTurnChannel, resetTurnChannels, type TurnChannel } from './turn-events';
 import {
   attachmentBlocksOfMeta,
@@ -263,6 +263,15 @@ describe('toolGroups', () => {
       ['r3', 'r4'],
       ['r5'],
     ]);
+  });
+
+  it('batches consecutive concurrent acts together, apart from the reads around them', () => {
+    const isConcurrent = (use: string) => use.startsWith('d');
+    expect(
+      toolGroups(['r1', 'd1', 'd2', 'r2', 'a1', 'd3', 'd4', 'd5'], isRead, 2, isConcurrent)
+    ).toEqual([['r1'], ['d1', 'd2'], ['r2'], ['a1'], ['d3', 'd4'], ['d5']]);
+    expect(toolGroups(['d1', 'd2'], isRead, 1, isConcurrent)).toEqual([['d1'], ['d2']]);
+    expect(toolGroups(['d1', 'd2'], isRead, 4)).toEqual([['d1'], ['d2']]);
   });
 
   it('runs everything alone at width 1 or with nothing vouched for', () => {
@@ -604,6 +613,55 @@ describe('runChatTurn', () => {
     expect(
       rows[1].blocks.map((block) => (block.type === 'tool_result' ? block.toolUseId : ''))
     ).toEqual(['tu_a', 'tu_b', 'tu_c', 'tu_d']);
+  });
+
+  it('runs several sub-agents started in one reply side by side', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-2e');
+    const gates = new Map<string, () => void>();
+    const delegate: LocalTool = {
+      def: { name: 'code_delegate', description: 'delegate', inputSchema: { type: 'object' } },
+      concurrent: true,
+      async execute(input) {
+        const piece = String(input.task);
+        await new Promise<void>((resolve) => gates.set(piece, resolve));
+        return textResult(`report on ${piece}`);
+      },
+    };
+    const localTools = createLocalToolSet([delegate]);
+    const reply: LlmResponse = {
+      content: [
+        { type: 'tool_use', id: 'tu_a', name: 'code_delegate', input: { task: 'a' } },
+        { type: 'tool_use', id: 'tu_b', name: 'code_delegate', input: { task: 'b' } },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 20, outputTokens: 8 },
+    };
+    const run = runChatTurn(
+      {
+        llm: llmOf(provider([reply, text('Done')])),
+        tools: [],
+        mcp: null,
+        localTools,
+        localContext,
+        concurrentTools: new Set(localTools.concurrentNames()),
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-2e')
+    );
+    // Both are at work before either reports.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect([...gates.keys()].sort()).toEqual(['a', 'b']);
+    gates.get('b')!();
+    gates.get('a')!();
+    const outcome = await run;
+    expect(outcome.status).toBe('completed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(
+      rows[1].blocks.map((block) => (block.type === 'tool_result' ? block.content : ''))
+    ).toEqual(['report on a', 'report on b']);
   });
 
   it('keeps the files a tool hands back and announces them on the stream', async () => {
@@ -954,6 +1012,87 @@ describe('runChatTurn', () => {
         durationMs: expect.any(Number),
       },
     ]);
+  });
+});
+
+describe('runChatTurn suspending on tasks', () => {
+  it('ends the turn once the round of a call that suspends is written, without asking the model again', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-suspend');
+    const watched = watch(channel);
+    let asked = 0;
+    const base = provider([toolCall('chat_task_wait', {}), text('should never be asked')]);
+    const counting: LlmProvider = {
+      ...base,
+      complete: (...args) => {
+        asked += 1;
+        return base.complete(...args);
+      },
+    };
+    const wait: LocalTool = {
+      def: { name: 'chat_task_wait', description: 'suspend', inputSchema: { type: 'object' } },
+      readOnly: true,
+      execute: async () =>
+        textResult('Suspended until all of #1 finish.', { [END_TURN_META]: true }),
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(counting),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([wait]),
+        localContext,
+        readOnlyTools: new Set(['chat_task_wait']),
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-suspend')
+    );
+    expect(outcome.status).toBe('completed');
+    expect(asked).toBe(1);
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    // The call and its answer are kept; no fresh assistant row is opened after them.
+    expect(rows.map((row) => row.kind)).toEqual(['assistant', 'tool_results']);
+    expect(rows[1]?.blocks).toEqual([
+      expect.objectContaining({
+        toolUseId: 'tu_chat_task_wait',
+        content: 'Suspended until all of #1 finish.',
+      }),
+    ]);
+    expect(watched.events.at(-1)).toMatchObject({ type: 'turn_end', status: 'completed' });
+  });
+
+  it('an errored suspend does not end the turn', async () => {
+    const fake = fakeStore();
+    const channel = openTurnChannel('turn-suspend-error');
+    const wait: LocalTool = {
+      def: { name: 'chat_task_wait', description: 'suspend', inputSchema: { type: 'object' } },
+      readOnly: true,
+      execute: async () => ({
+        content: [{ type: 'text', text: 'No open tasks to wait on.' }],
+        isError: true,
+        meta: { [END_TURN_META]: true },
+      }),
+    };
+    const outcome = await runChatTurn(
+      {
+        llm: llmOf(
+          provider([toolCall('chat_task_wait', {}), text('Nothing to wait for, so here it is.')])
+        ),
+        tools: [],
+        mcp: null,
+        localTools: createLocalToolSet([wait]),
+        localContext,
+        channel,
+        store: fake.store,
+        limits: { flushMs: 5 },
+      },
+      inputFor('turn-suspend-error')
+    );
+    expect(outcome.status).toBe('completed');
+    const rows = [...fake.rows.values()].sort((a, b) => a.seq - b.seq);
+    expect(rows.map((row) => row.kind)).toEqual(['assistant', 'tool_results', 'assistant']);
   });
 });
 

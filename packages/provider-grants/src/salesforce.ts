@@ -23,6 +23,7 @@ import { ok, err } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import type { ProviderAdapter, RefreshedTokens, RefreshError } from './types';
 import { causeOf, oauthErrorSuffix } from './oauth-error';
+import { asRecord } from '@renkei/guards';
 
 /** The CRM connector's grant provider. */
 export const SALESFORCE = 'salesforce';
@@ -143,9 +144,4 @@ export function readSalesforceMetadata(metadata: Record<string, unknown>): {
     instanceUrl: str(metadata.instanceUrl),
     username: str(metadata.username),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
-  return { ...value };
 }

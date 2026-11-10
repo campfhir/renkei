@@ -41,6 +41,7 @@ import { getDataStore } from '@renkei/db';
 import type { ResourceKey, ResourceKeyKind, ResourceRef } from '@renkei/user-keys';
 import { delegateClient, type KeyOpError } from '@renkei/delegate-client';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 import {
   resourceCipher,
   unavailableCipher,
@@ -61,8 +62,22 @@ const ref = (kind: KeyedKind, resourceId: string): ResourceRef => ({
   resourceId,
 });
 
-function warn(message: string, fields: Record<string, unknown>): void {
-  logger.warn(message, { component: 'chat/keys', ...fields });
+/** A key failure, about the resource's owner (and the other person, when one is involved). */
+async function warn(
+  message: string,
+  ownerSubject: string,
+  fields: Record<string, unknown>,
+  otherSubject?: string
+): Promise<void> {
+  const other = otherSubject ? await whoIs(otherSubject) : null;
+  logger.warn(message, {
+    component: 'chat/keys',
+    ...(await whoIs(ownerSubject)),
+    ...(other
+      ? { grantee: other.actor, granteeSubject: other.subject, granteeEmail: other.email }
+      : {}),
+    ...fields,
+  });
 }
 
 /** Why content is unavailable, from the key op's verdict: not delegated, not enrolled, the delegate out of reach, or no key. */
@@ -104,23 +119,22 @@ async function ensureKey(
   if (before.err.type !== 'NO_KEY') return before.err.type;
   const created = await keys.ensureResourceKey(target, resource.ownerSubject);
   if (!created.ok) {
-    warn('key could not be created: {reason}', {
-      kind,
-      resourceId: resource.id,
-      subject: resource.ownerSubject,
-      reason: created.err.type,
-    });
+    await warn(
+      'the {kind} key of {actor} could not be created ({reason}); its content stays unavailable',
+      resource.ownerSubject,
+      { kind, resourceId: resource.id, reason: created.err.type }
+    );
     return created.err.type;
   }
   for (const grantee of await activeGrantees(kind, resource.id)) {
     const shared = await keys.shareResourceKey(target, resource.ownerSubject, grantee);
     if (!shared.ok) {
-      warn('key could not be wrapped for an existing viewer: {reason}', {
-        kind,
-        resourceId: resource.id,
-        subject: resource.ownerSubject,
-        reason: shared.err.type,
-      });
+      await warn(
+        'the {kind} key of {actor} could not be wrapped for {grantee}, who already had access ({reason}); they cannot open it',
+        resource.ownerSubject,
+        { kind, resourceId: resource.id, reason: shared.err.type },
+        grantee
+      );
     }
   }
   return created.val;
@@ -161,14 +175,17 @@ export async function wrapKeyUnder(
     parent
   );
   if (!wrapped.ok) {
-    warn('{kind} key could not be wrapped under its parent: {reason}', {
-      kind,
-      resourceId: resource.id,
-      subject: resource.ownerSubject,
-      parentKind: parent.kind,
-      parentId: parent.resourceId,
-      reason: wrapped.err.type,
-    });
+    await warn(
+      'the {kind} key of {actor} could not be wrapped under its {parentKind} ({reason}); it cannot be opened through the parent',
+      resource.ownerSubject,
+      {
+        kind,
+        resourceId: resource.id,
+        parentKind: parent.kind,
+        parentId: parent.resourceId,
+        reason: wrapped.err.type,
+      }
+    );
   }
   return wrapped.ok;
 }
@@ -183,12 +200,11 @@ export async function createKey(
     resource.ownerSubject
   );
   if (created.ok) return created.val;
-  warn('key could not be created: {reason}', {
-    kind,
-    resourceId: resource.id,
-    subject: resource.ownerSubject,
-    reason: created.err.type,
-  });
+  await warn(
+    'the {kind} key of {actor} could not be created ({reason}); the new {kind} has no key',
+    resource.ownerSubject,
+    { kind, resourceId: resource.id, reason: created.err.type }
+  );
   return null;
 }
 
@@ -327,12 +343,12 @@ export async function shareKey(
     granteeSubject
   );
   if (!shared.ok) {
-    warn('key could not be shared: {reason}', {
-      kind,
-      resourceId: resource.id,
-      subject: resource.ownerSubject,
-      reason: shared.err.type,
-    });
+    await warn(
+      'the {kind} key of {actor} could not be shared with {grantee} ({reason}); they cannot open it',
+      resource.ownerSubject,
+      { kind, resourceId: resource.id, reason: shared.err.type },
+      granteeSubject
+    );
   }
   return shared.ok;
 }

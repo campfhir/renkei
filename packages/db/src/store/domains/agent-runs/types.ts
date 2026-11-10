@@ -19,6 +19,32 @@ export interface RunSummaryRecord {
   resumedAt: Date | null;
 }
 
+/** How many of an agent's runs are in one live status, and the oldest one's age. */
+export interface AgentLiveRunsRecord {
+  agentId: string;
+  status: string;
+  count: number;
+  oldestCreatedAt: Date;
+}
+
+/** A live run anywhere in the organization, for the operator's queue view. */
+export interface OrgLiveRunRecord {
+  id: string;
+  agentId: string;
+  agentName: string;
+  ownerSubject: string;
+  /** The owner's email, when an identity row has one. */
+  ownerEmail: string | null;
+  status: string;
+  /** Why a waiting run waits, when it says: `needs-sign-in` for a run parked for its owner's key. */
+  errorKind: string | null;
+  triggerKind: string;
+  createdAt: Date;
+  startedAt: Date | null;
+  resumedAt: Date | null;
+  cancelRequestedAt: Date | null;
+}
+
 /** One agent_run_steps row; `detail` as stored (its content half sealed). */
 export interface RunStepRecord {
   stepId: string;
@@ -157,10 +183,44 @@ export interface AgentRunStore extends AgentRunSweepStore {
     ownerSubject: string | null;
     audience: RunAudience;
     status?: string;
+    /** Any of these statuses (with `status`, both must hold). */
+    statuses?: readonly string[];
+    /** Only runs whose error kind is one of these. */
+    errorKinds?: readonly string[];
+    /** Leave out runs whose error kind is one of these (a run with none stays). */
+    excludeErrorKinds?: readonly string[];
+    /**
+     * Only runs whose clock started before this: the latest resume when
+     * there was one, else creation — the stuck-run rule's clock.
+     */
+    clockStartedBefore?: Date;
     q?: string;
     matchId?: string;
     limit: number;
+    /** Rows to skip first, for paging through the same order. Default 0. */
+    offset?: number;
   }): Promise<RunSummaryRecord[]>;
+  /**
+   * The live runs (queued, running, waiting) of these agents, one row per
+   * agent and status: how many, and when the oldest of them was created.
+   * By agent id, then status; an agent with no live run has no row. For
+   * the agents page's overview of what is in flight and what is stuck —
+   * content-free, so the caller's access check on the agents is enough.
+   */
+  summarizeLive(agentIds: readonly string[]): Promise<AgentLiveRunsRecord[]>;
+  /**
+   * Every live run (queued, running, waiting) in the organization, or only
+   * those in `statuses`, with its agent's name and its owner: oldest first
+   * (created, then id). Content-free, for the operator's queue view; the
+   * caller checks the operator role.
+   */
+  listLiveForOrg(options: {
+    statuses?: readonly string[];
+    limit: number;
+    offset?: number;
+  }): Promise<OrgLiveRunRecord[]>;
+  /** How many live runs the organization has in each live status, by status. */
+  countLiveForOrg(): Promise<{ status: string; count: number }[]>;
   /** One run with its turns and batches, or null (scoped like `list`). */
   findDetail(options: {
     agentId: string;
@@ -194,6 +254,13 @@ export interface AgentRunStore extends AgentRunSweepStore {
     runId: string;
     ownerSubject: string;
   }): Promise<RunRestartSourceRecord | null>;
+  /**
+   * Cancel a run that has not started: canceled and finished now, the
+   * cancel request recorded (kept when one was already there) — only while
+   * it is still queued. False when it had left queued (a worker started it
+   * in the meantime, or it had already finished).
+   */
+  cancelQueued(runId: string, bySubject: string): Promise<boolean>;
   /**
    * The operator's override: a live run straight to canceled with the
    * given error, the cancel request recorded (kept when one was already

@@ -46,6 +46,16 @@ import {
   type SubagentModelChoice,
 } from './subagent';
 import { MOCKUP_TOOL } from '@/lib/mockups/request';
+import { ASK_FORM_TOOL } from './ask-form';
+import type { ChatTaskView } from './tasks/graph';
+import { subagentTaskTools } from './tasks/tools';
+import {
+  namesTask,
+  settleLinkedTask,
+  startInBackground,
+  startLinkedTask,
+  taskNote,
+} from './subagent-tasks';
 import { CHAT_DELEGATE_TOOL } from './subagent-tools';
 import { FIND_TOOLS_NAME, findToolsTool } from './tool-discovery';
 import type { DiscoverableTool } from './tool-surface';
@@ -69,6 +79,7 @@ const PREVIEW_SUFFIX = '_preview';
 
 const SUB_AGENT_BRIEF = `You are a sub-agent working on behalf of an assistant that is talking with a person in their organization's workspace. The assistant gave you one task and will read your report; the person never sees this conversation. Use the tools to do the task yourself — search, read, compare, count — and answer from what comes back rather than from memory. Every tool here only reads: you cannot create, change or send anything, or ask anyone, so do not try; note what would need doing and leave it to the assistant. Do not ask questions — decide, act, and report. Your final message is your report: what you found, with the identifiers, names, dates and figures the assistant will need to answer (issue keys, page titles, who said what, links the tools gave), what you looked at, and anything you could not find or are unsure of. Be concrete and brief.`;
 
+/** What a sub-agent working one of the chat's tasks is told about it (tasks/tools.ts). */
 const DISCOVERY_NOTE = `More of the organization's connectors are available than the tools listed: call ${FIND_TOOLS_NAME} with a few words for what you need, or a connector name, and matching tools become callable at once.`;
 
 /** What the turn resolved for the chat, as far as a reading sub-agent needs it. */
@@ -118,9 +129,13 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
   const local = options.localTools.filter(
     (tool) =>
       tool.readOnly === true &&
+      // What the chat itself reaches only through find_tools is not an errand's.
+      tool.deferred !== true &&
       tool.def.name !== CHAT_DELEGATE_TOOL &&
       // A sub-agent has no thread to draw the card in; its mockup would be seen by no one.
-      tool.def.name !== MOCKUP_TOOL
+      tool.def.name !== MOCKUP_TOOL &&
+      // Nor a form: its answers go to the person's thread, which a sub-agent is not in.
+      tool.def.name !== ASK_FORM_TOOL
   );
   const discovery = surface.mcp ? findToolsTool(discoverable) : null;
   if (eager.length === 0 && discovery === null && local.length === 0) return null;
@@ -163,6 +178,16 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
           maximum: CHAT_DELEGATE_MAX_STEPS,
           description: `Model calls the sub-agent may make (default ${CHAT_DELEGATE_DEFAULT_STEPS}).`,
         },
+        task_id: {
+          type: ['string', 'integer'],
+          description:
+            'A task of this chat’s task list (its number or id) that this sub-agent works: it goes in progress, the sub-agent can add subtasks and progress to it, and the report completes it (or fails it).',
+        },
+        background: {
+          type: 'boolean',
+          description:
+            'Needs task_id. Return at once and let the sub-agent work while you carry on; its task completes when it reports. Wait for it with chat_task_wait.',
+        },
         ...modelArgumentSchema(models),
       },
       required: ['task'],
@@ -187,7 +212,21 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
       );
       if (!picked.ok) return picked.error;
       const instructions = str(input.instructions).trim();
-      const set = createLocalToolSet(discovery ? [...local, discovery] : local);
+      // The task this sub-agent works, when the call names one: it must be
+      // open and free to start, and it goes in progress now.
+      let linked: ChatTaskView | null = null;
+      if (namesTask(input.task_id)) {
+        const started = await startLinkedTask(context, input.task_id);
+        if (!started.ok) return started.error;
+        linked = started.task;
+      }
+      const background = input.background === true;
+      if (background && !linked)
+        return errorResult(
+          'A background sub-agent needs a task to report to: create one with chat_task_create and pass its number as task_id.'
+        );
+      const taskTools = linked ? subagentTaskTools() : [];
+      const set = createLocalToolSet([...local, ...taskTools, ...(discovery ? [discovery] : [])]);
       // The connector tools callable right now: what was offered up front,
       // plus what find_tools surfaces as the run goes.
       const connector = new Map(eager.map((tool) => [tool.name, tool]));
@@ -202,6 +241,7 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
             toolUseId,
             // A sub-agent's own tools record nothing further: one run, one record.
             subagents: undefined,
+            taskActor: 'subagent',
           });
           // Only reads were searchable, so anything found is a read.
           for (const found of discoveredToolsOfMeta(outcome.meta)) connector.set(found.name, found);
@@ -224,21 +264,31 @@ export function chatDelegateTool(options: ChatDelegateOptions): LocalTool | null
         SUB_AGENT_BRIEF +
         `\n\nNow is about ${new Date().toISOString()} (UTC). For an exact time, a weekday or a date relative to today, call resolve_date when it is among your tools rather than working it out.` +
         (discovery ? `\n\n${DISCOVERY_NOTE}` : '') +
+        (linked ? `\n\n${taskNote(linked)}` : '') +
         (instructions ? `\n\nInstructions from the assistant:\n${instructions}` : '');
-      return runSubagent({
-        llm: picked.llm,
-        system,
-        task,
-        instructions: instructions || null,
-        readOnly: true,
-        maxSteps: stepsOf(input.maxSteps, CHAT_DELEGATE_DEFAULT_STEPS, CHAT_DELEGATE_MAX_STEPS),
-        wallClockMs: CHAT_DELEGATE_WALL_CLOCK_MS,
-        tools: {
-          defs: () => [...set.defs(), ...connector.values()],
-          run,
-        },
-        context,
-      });
+      const go = (runContext: LocalToolContext) =>
+        runSubagent({
+          llm: picked.llm,
+          system,
+          task,
+          instructions: instructions || null,
+          readOnly: true,
+          maxSteps: stepsOf(input.maxSteps, CHAT_DELEGATE_DEFAULT_STEPS, CHAT_DELEGATE_MAX_STEPS),
+          wallClockMs: CHAT_DELEGATE_WALL_CLOCK_MS,
+          tools: {
+            defs: () => [...set.defs(), ...connector.values()],
+            run: (name, args, toolUseId) => run(name, args, toolUseId),
+          },
+          context: runContext,
+        });
+      if (!linked) return go(context);
+      const taskId = linked.id;
+      if (!background) {
+        const outcome = await go(context);
+        await settleLinkedTask(context, taskId, outcome);
+        return outcome;
+      }
+      return startInBackground(context, linked, go);
     },
   };
 }

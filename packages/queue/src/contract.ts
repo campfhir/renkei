@@ -91,13 +91,32 @@ export interface QueueProducer {
  */
 export type CompletionOutcome = 'processed' | 'skipped';
 
+/**
+ * Settling a message (complete, fail) applies only while this consumer
+ * still holds its lease — the row is processing at the delivery's
+ * `attempts`. A consumer whose lease expired, and whose message another
+ * consumer reclaimed, settles nothing: otherwise its late ack or nack would
+ * unlock the newer delivery, and its ordering key, while that one still
+ * runs.
+ */
 export interface QueueConsumer {
-  /** The oldest deliverable message, or null when there is none. */
+  /**
+   * The oldest deliverable message, or null when there is none. An expired
+   * lease on a message that has used its attempt budget is dead-lettered
+   * here rather than delivered again, so a consumer that keeps dying on a
+   * message cannot hold its ordering key forever.
+   */
   claim(): Promise<ClaimedMessage | null>;
   /** Ack: the message is done and will never be delivered again. */
   complete(message: ClaimedMessage, outcome?: CompletionOutcome): Promise<void>;
   /** Nack: retry per policy, or move to the dead-letter store. */
   fail(message: ClaimedMessage, error: string): Promise<Disposition>;
+  /**
+   * Renew the lease on a message this consumer is still working, so a
+   * slow-but-alive handler is not mistaken for a dead one and reclaimed
+   * while it runs. False when the lease is already lost.
+   */
+  extend(message: ClaimedMessage): Promise<boolean>;
   /**
    * Hand the message back untouched: pending again, deliverable at once,
    * and this delivery not counted against its attempt budget. For a

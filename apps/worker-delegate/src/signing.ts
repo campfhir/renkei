@@ -66,10 +66,13 @@ export async function loadOrCreateSigningKey(
   const publicKey = Buffer.from(row.publicKey, 'base64');
   if (privateKey.byteLength !== 32 || publicKey.byteLength !== 32) return null;
   const fingerprint = deviceCodeOf(new Uint8Array(publicKey));
-  logger.info('delegate signing key {fingerprint} loaded', {
-    component: 'worker-delegate/signing',
-    fingerprint,
-  });
+  logger.info(
+    'the delegate signing key with fingerprint {fingerprint} was loaded; instance lists are signed with it',
+    {
+      component: 'worker-delegate/signing',
+      fingerprint,
+    }
+  );
   return {
     publicKey: row.publicKey,
     fingerprint,

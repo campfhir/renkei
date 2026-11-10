@@ -11,18 +11,26 @@
  * leaderboards a person's own page has no reason to show.
  */
 
-import { useState, useTransition } from 'react';
+import { useReducer, useTransition } from 'react';
 import Link from 'next/link';
 import { getOrgUsageReport, type OrgUsageReport } from './actions';
+import { ORG_USAGE_PERIODS, formatTokens, periodCaption, type RankedUserRow } from './window';
 import {
-  ORG_USAGE_PERIODS,
-  activeSummary,
-  activeUserPercent,
-  formatTokens,
-  periodCaption,
-  type OrgBucket,
-  type RankedUserRow,
-} from './window';
+  addressFor,
+  blocked,
+  init,
+  isHourly,
+  modelLine,
+  periodOf,
+  personName as personNameOf,
+  pickerPeople as pickerPeopleOf,
+  reducer,
+  requestFor,
+  statTiles,
+  topUsersBoard,
+  topUsersHint,
+  type UsageChange,
+} from './usage-viewer.model';
 import type {
   EfficientAgentRow,
   ModelTokenRow,
@@ -41,166 +49,12 @@ import {
   formatBytes,
   type RankedImageUserRow,
 } from '@/lib/usage/image-window';
+import { UsageChart, USAGE_SERIES } from '@/components/usage-chart';
 import { ActivityCalendar } from '@/components/activity-calendar';
 import LocalTime from '@/components/local-time';
 import { LoadingLine } from '@/components/skeleton';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { clientLogger } from '@/lib/client-logger';
-
-type Series = 'tokens' | 'runs' | 'tools';
-
-const SERIES: { key: Series; label: string }[] = [
-  { key: 'tokens', label: 'Tokens' },
-  { key: 'runs', label: 'Agent runs' },
-  { key: 'tools', label: 'Tool calls' },
-];
-
-const TOKEN_SEGMENTS: {
-  key:
-    | 'chatTokens'
-    | 'chatProjectTokens'
-    | 'codeProjectTokens'
-    | 'agentTokens'
-    | 'imageTokens'
-    | 'documentTokens';
-  label: string;
-  className: string;
-}[] = [
-  { key: 'chatTokens', label: 'Chat', className: 'bg-blue-500' },
-  { key: 'chatProjectTokens', label: 'Chat projects', className: 'bg-teal-500' },
-  { key: 'codeProjectTokens', label: 'Code projects', className: 'bg-amber-500' },
-  { key: 'agentTokens', label: 'Agents', className: 'bg-purple-500' },
-  // Pink, distinct from the Agents purple; the breakdown's Images row and the leaderboard match.
-  { key: 'imageTokens', label: 'Images', className: 'bg-pink-500' },
-  // Summaries and picture descriptions the model wrote; green, apart from the rest.
-  { key: 'documentTokens', label: 'Documents', className: 'bg-emerald-500' },
-];
-
-interface Segment {
-  label: string;
-  value: number;
-  className: string;
-  /** Said beside the figure in the tooltip — for images, how many and how big. */
-  detail?: string;
-}
-
-function legendFor(series: Series): { label: string; className: string }[] {
-  if (series === 'tokens')
-    return TOKEN_SEGMENTS.map(({ label, className }) => ({ label, className }));
-  if (series === 'runs')
-    return [
-      { label: 'Succeeded', className: 'bg-blue-500' },
-      { label: 'Failed', className: 'bg-red-500' },
-    ];
-  return [
-    { label: 'OK', className: 'bg-blue-500' },
-    { label: 'Failed', className: 'bg-red-500' },
-  ];
-}
-
-function segmentsOf(bucket: OrgBucket, series: Series): Segment[] {
-  if (series === 'tokens') {
-    return TOKEN_SEGMENTS.map((seg) => ({
-      label: seg.label,
-      value: bucket[seg.key],
-      className: seg.className,
-      ...(seg.key === 'imageTokens' && bucket.images > 0
-        ? {
-            detail: `${bucket.images.toLocaleString('en-US')} ${bucket.images === 1 ? 'image' : 'images'}, ${formatBytes(bucket.imageBytes)}`,
-          }
-        : {}),
-    }));
-  }
-  if (series === 'runs') {
-    return [
-      {
-        label: 'Succeeded',
-        value: Math.max(0, bucket.runs - bucket.failures),
-        className: 'bg-blue-500',
-      },
-      { label: 'Failed', value: bucket.failures, className: 'bg-red-500' },
-    ];
-  }
-  return [
-    {
-      label: 'OK',
-      value: Math.max(0, bucket.toolCalls - bucket.toolErrors),
-      className: 'bg-blue-500',
-    },
-    { label: 'Failed', value: bucket.toolErrors, className: 'bg-red-500' },
-  ];
-}
-
-/**
- * Stacked bars, one series at a time, no chart dependency — the same
- * inline-CSS shape every usage surface in this app already uses. Segments
- * are drawn in reverse order (last first in the DOM) so `justify-end`
- * anchors the base of the stack to the bar's bottom and the first-listed
- * category ends up on top, which is where its rounded corner belongs.
- */
-function Chart({ points, series }: { points: OrgBucket[]; series: Series }) {
-  const legend = legendFor(series);
-  const rows = points.map((point) => segmentsOf(point, series));
-  const totals = rows.map((segments) => segments.reduce((sum, seg) => sum + seg.value, 0));
-  const peak = Math.max(1, ...totals);
-  if (points.length === 0 || totals.every((total) => total === 0)) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Nothing in this period.</p>;
-  }
-  return (
-    <div>
-      <div
-        className="flex h-40 items-end gap-px"
-        role="img"
-        aria-label={`${legend.map((entry) => entry.label).join(', ')} over time`}
-      >
-        {points.map((point, index) => {
-          const segments = rows[index]!;
-          const total = totals[index]!;
-          const height = (total / peak) * 100;
-          const tooltip = `${point.label}: ${segments
-            .filter((seg) => seg.value > 0)
-            .map(
-              (seg) =>
-                `${seg.label} ${seg.value.toLocaleString('en-US')}${seg.detail ? ` (${seg.detail})` : ''}`
-            )
-            .join(', ')}`;
-          return (
-            <div
-              key={point.bucket}
-              className="group relative flex-1"
-              style={{ height: '100%' }}
-              title={tooltip || point.label}
-            >
-              <div
-                className="absolute inset-x-0 bottom-0 flex flex-col justify-end"
-                style={{ height: '100%' }}
-              >
-                {[...segments].reverse().map((seg, idx) => (
-                  <div
-                    key={seg.label}
-                    className={`w-full ${seg.className} ${idx === 0 ? 'rounded-t-sm' : ''}`}
-                    style={{ height: `${total > 0 ? (seg.value / total) * height : 0}%` }}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <div className="mt-2 flex justify-between text-xs text-gray-500">
-        <span>{points[0]?.label}</span>
-        <span>{points[points.length - 1]?.label}</span>
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
-        {legend.map((entry) => (
-          <span key={entry.label} className="inline-flex items-center gap-1.5">
-            <span className={`h-2 w-2 rounded-sm ${entry.className}`} /> {entry.label}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
@@ -301,49 +155,55 @@ function PersonCard({ subject, person }: { subject: string; person: PersonProfil
 }
 
 /** Keep the address in step with the view so a person's usage can be linked to. */
-function syncUrl(periodKey: string, subject: string | null): void {
+function syncUrl(report: OrgUsageReport): void {
   if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  url.searchParams.set('period', periodKey);
-  if (subject) url.searchParams.set('user', subject);
-  else url.searchParams.delete('user');
-  window.history.replaceState(window.history.state, '', url);
+  window.history.replaceState(window.history.state, '', addressFor(window.location.href, report));
 }
 
 export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport }) {
-  const [report, setReport] = useState(initial);
-  const [series, setSeries] = useState<Series>('tokens');
-  const [includeAgents, setIncludeAgents] = useState(initial.includeAgentsInTopUsers);
+  const [state, dispatch] = useReducer(reducer, initial, init);
+  const { report, series, includeAgents } = state;
   const [pending, startTransition] = useTransition();
   const periodAnchor = useCoachAnchor('admin-usage-period');
   const personAnchor = useCoachAnchor('admin-usage-person');
 
-  function refresh(periodKey: string, nextIncludeAgents: boolean, subject: string | null) {
+  function refresh(change: UsageChange) {
+    const request = requestFor(state, change);
+    if (change.kind === 'includeAgents') {
+      dispatch({ type: 'includeAgentsPicked', includeAgents: change.includeAgents });
+    }
     startTransition(async () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-      const next = await getOrgUsageReport(periodKey, timeZone, nextIncludeAgents, subject);
+      const next = await getOrgUsageReport(
+        request.periodKey,
+        timeZone,
+        request.includeAgents,
+        request.subject
+      );
       if (next.error && !next.signedOut && !next.forbidden) {
-        clientLogger.warn('admin/usage', 'usage report failed', next.error, { periodKey });
+        clientLogger.warn('admin/usage', 'usage report failed', next.error, {
+          periodKey: request.periodKey,
+        });
       }
-      setReport(next);
-      syncUrl(next.periodKey, next.subject);
+      dispatch({ type: 'reportArrived', report: next });
+      syncUrl(next);
     });
   }
+  const scopeTo = (person: string) => refresh({ kind: 'person', subject: person });
 
-  if (report.forbidden || report.signedOut) {
+  const stop = blocked(report);
+  if (stop) {
     return (
       <div className="mx-auto max-w-lg">
-        <h2 className="mb-2 text-lg font-semibold">
-          {report.signedOut ? 'Sign in required' : 'Operator access required'}
-        </h2>
-        <p className="text-sm text-gray-600 dark:text-gray-400">{report.error}</p>
+        <h2 className="mb-2 text-lg font-semibold">{stop.heading}</h2>
+        <p className="text-sm text-gray-600 dark:text-gray-400">{stop.message}</p>
       </div>
     );
   }
 
-  const { tokens, activity, subject } = report;
+  const { tokens, subject } = report;
   const scoped = subject !== null;
-  const personName = report.person?.name ?? subject ?? '';
+  const personName = personNameOf(report);
   const listeners = boardRows(report.topListeners, report.selectedListener);
   const speakers = boardRows(report.topSpeakers, report.selectedSpeaker);
   const imagers = imageBoardRows(report.topImageUsers, report.selectedImageUser);
@@ -355,7 +215,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
       <button
         type="button"
         disabled={pending}
-        onClick={() => refresh(report.periodKey, includeAgents, row.subject)}
+        onClick={() => scopeTo(row.subject)}
         className="truncate text-left text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
       >
         {row.label}
@@ -369,50 +229,16 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
       <button
         type="button"
         disabled={pending}
-        onClick={() => refresh(report.periodKey, includeAgents, row.subject)}
+        onClick={() => scopeTo(row.subject)}
         className="truncate text-left text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
       >
         {row.label}
       </button>
     );
-  const totalTokens = (
-    ['chat', 'chatProjects', 'codeProjects', 'agents', 'images'] as const
-  ).reduce((sum, key) => sum + tokens[key].input + tokens[key].output, 0);
-  const failureRate = activity.runs > 0 ? (activity.failures / activity.runs) * 100 : 0;
-  const toolErrorRate =
-    activity.toolCalls > 0 ? (activity.toolErrors / activity.toolCalls) * 100 : 0;
-  const activePct = activeUserPercent(activity.activeUsers, activity.totalUsers);
-  const period = ORG_USAGE_PERIODS.find((candidate) => candidate.key === report.periodKey) ?? {
-    key: report.periodKey,
-    label: `${report.days} days`,
-    days: report.days,
-    endOffsetDays: 0,
-  };
-  const hourly = report.days <= 1;
-  const active = activeSummary(report.cells);
-  const modelTotal = report.byModel.reduce(
-    (sum, row) => sum + row.inputTokens + row.outputTokens,
-    0
-  );
-
-  // The top few, then — below a gap — the selected person's own row when
-  // they rank outside them. Inside the top they are simply highlighted.
-  const selected = report.selectedUser;
-  const selectedInTop =
-    selected !== null && report.topUsers.some((row) => row.rank === selected.rank);
-  const userRows: RankedUserRow[] =
-    selected !== null && !selectedInTop ? [...report.topUsers, selected] : report.topUsers;
-  // An ellipsis only when ranks are actually skipped: #6 straight after #5 needs none.
-  const skipsRanks =
-    selected !== null && !selectedInTop && selected.rank > report.topUsers.length + 1;
-  // The picker knows everyone who signed in; a subject reached by link may
-  // not be among them (a grant or agent owner who never did), so it is
-  // listed too rather than snapping the picker back to "Everyone".
-  const pickerPeople = report.people.some((person) => person.subject === subject)
-    ? report.people
-    : subject
-      ? [{ subject, label: personName }, ...report.people]
-      : report.people;
+  const period = periodOf(report);
+  const hourly = isHourly(report);
+  const usersBoard = topUsersBoard(report);
+  const pickerPeople = pickerPeopleOf(report);
 
   return (
     <div className="flex flex-col gap-5" data-wide-page>
@@ -442,7 +268,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
               key={option.key}
               type="button"
               disabled={pending}
-              onClick={() => refresh(option.key, includeAgents, subject)}
+              onClick={() => refresh({ kind: 'period', periodKey: option.key })}
               aria-pressed={report.periodKey === option.key}
               className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-50 ${
                 report.periodKey === option.key
@@ -459,9 +285,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
           <select
             value={subject ?? ''}
             disabled={pending}
-            onChange={(event) =>
-              refresh(report.periodKey, includeAgents, event.target.value || null)
-            }
+            onChange={(event) => refresh({ kind: 'person', subject: event.target.value })}
             className="max-w-xs rounded-lg border border-gray-300 bg-white px-2 py-1.5 text-sm disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950"
           >
             <option value="">Everyone</option>
@@ -478,50 +302,9 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
       {scoped && <PersonCard subject={subject} person={report.person} />}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat
-          label="Tokens"
-          value={formatTokens(totalTokens)}
-          hint={`${formatTokens(tokens.agents.input + tokens.agents.output)} in agents`}
-        />
-        {scoped ? (
-          <Stat
-            label={hourly ? 'Active hours' : 'Active days'}
-            value={`${active.active.toLocaleString('en-US')} / ${active.total.toLocaleString('en-US')}`}
-            hint={
-              active.active > 0
-                ? `${hourly ? 'hours' : 'days'} with a token, a run or a tool call`
-                : `nothing in this period`
-            }
-          />
-        ) : (
-          <Stat
-            label="Active users"
-            value={`${activity.activeUsers.toLocaleString('en-US')} / ${activity.totalUsers.toLocaleString('en-US')}`}
-            hint={`${activePct}% used at least one token`}
-          />
-        )}
-        <Stat
-          label="Agent runs"
-          value={activity.runs.toLocaleString('en-US')}
-          hint={
-            activity.failures > 0
-              ? `${activity.failures.toLocaleString('en-US')} failed (${failureRate.toFixed(0)}%)`
-              : activity.runs > 0
-                ? 'none failed'
-                : undefined
-          }
-        />
-        <Stat
-          label="Tool calls"
-          value={activity.toolCalls.toLocaleString('en-US')}
-          hint={
-            activity.toolErrors > 0
-              ? `${activity.toolErrors.toLocaleString('en-US')} failed (${toolErrorRate.toFixed(1)}%)`
-              : activity.toolCalls > 0
-                ? 'none failed'
-                : undefined
-          }
-        />
+        {statTiles(report).map((tile) => (
+          <Stat key={tile.label} label={tile.label} value={tile.value} hint={tile.hint} />
+        ))}
       </section>
 
       {scoped && (
@@ -547,11 +330,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
           keyOf={(row) => `${row.provider ?? ''}:${row.model ?? ''}`}
           labelOf={(row) => modelLabel(row.provider, row.model)}
           valueOf={(row) => row.inputTokens + row.outputTokens}
-          formatValue={(row) => {
-            const total = row.inputTokens + row.outputTokens;
-            const share = modelTotal > 0 ? Math.round((total / modelTotal) * 100) : 0;
-            return `${formatTokens(total)} · ${share}% · ${row.calls.toLocaleString('en-US')} calls`;
-          }}
+          formatValue={(row) => modelLine(row, report.byModel)}
           barClassName="bg-indigo-500"
         />
       </div>
@@ -642,11 +421,11 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
             {periodCaption(period)}
           </span>
           <span className="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-300 dark:border-gray-700">
-            {SERIES.map((option) => (
+            {USAGE_SERIES.map((option) => (
               <button
                 key={option.key}
                 type="button"
-                onClick={() => setSeries(option.key)}
+                onClick={() => dispatch({ type: 'seriesPicked', series: option.key })}
                 aria-pressed={series === option.key}
                 className={`px-3 py-1 text-xs ${
                   series === option.key
@@ -659,7 +438,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
             ))}
           </span>
         </figcaption>
-        <Chart points={report.series} series={series} />
+        <UsageChart points={report.series} series={series} />
       </figure>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -679,10 +458,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
                   key={String(option.key)}
                   type="button"
                   disabled={pending}
-                  onClick={() => {
-                    setIncludeAgents(option.key);
-                    refresh(report.periodKey, option.key, subject);
-                  }}
+                  onClick={() => refresh({ kind: 'includeAgents', includeAgents: option.key })}
                   aria-pressed={includeAgents === option.key}
                   className={`px-2 py-1 disabled:opacity-50 ${
                     includeAgents === option.key
@@ -697,18 +473,8 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
           </div>
           <Leaderboard<RankedUserRow>
             heading="By tokens spent"
-            hint={
-              scoped && selected === null
-                ? `${personName} spent no tokens in this period. ${
-                    includeAgents
-                      ? 'Chat, chat-project, code-project and agent tokens combined.'
-                      : 'Chat, chat-project and code-project tokens — toggle above to fold in their agents.'
-                  }`
-                : includeAgents
-                  ? 'Chat, chat-project, code-project and agent tokens combined. Pick a name to scope the page to that person.'
-                  : 'Chat, chat-project and code-project tokens — toggle above to fold in their agents. Pick a name to scope the page to that person.'
-            }
-            rows={userRows}
+            hint={topUsersHint(state)}
+            rows={usersBoard.rows}
             empty="Nobody has spent any tokens in this period."
             keyOf={(row) => row.subject}
             labelOf={(row) =>
@@ -718,7 +484,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
                 <button
                   type="button"
                   disabled={pending}
-                  onClick={() => refresh(report.periodKey, includeAgents, row.subject)}
+                  onClick={() => scopeTo(row.subject)}
                   className="truncate text-left text-blue-600 hover:underline disabled:opacity-50 dark:text-blue-400"
                 >
                   {row.label}
@@ -729,7 +495,7 @@ export default function OrgUsageViewer({ initial }: { initial: OrgUsageReport })
             formatValue={(row) => formatTokens(row.totalTokens)}
             rankOf={(row) => row.rank}
             highlightOf={(row) => row.subject === subject}
-            gapBefore={(row) => skipsRanks && row.rank === selected!.rank}
+            gapBefore={(row) => row.rank === usersBoard.gapAtRank}
           />
         </div>
 

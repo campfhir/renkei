@@ -24,31 +24,30 @@ import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { togglableConnectors } from '@/lib/connector-catalog';
 import { invalidateToolCatalogCache } from '@/lib/mcp-tools/tool-catalog';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
-export async function GET(
-  _request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export async function GET(_request: NextRequest): Promise<NextResponse> {
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Could not read org settings: {error}', {
-      component: 'api/admin/connector-availability',
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} opened the connector on/off switches, but the org settings could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/connector-availability',
+        ...who(session),
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read org settings' }, { status: 500 });
   }
   return NextResponse.json({ disabledConnectors: settings.val.disabledConnectors });
 }
 
-export async function PUT(
-  request: NextRequest
-): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+export async function PUT(request: NextRequest): Promise<NextResponse> {
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
   if (typeof body !== 'object' || body === null || Array.isArray(body)) {
@@ -71,10 +70,16 @@ export async function PUT(
 
   const saved = await setOrgSettings({ disabledConnectors });
   if (!saved.ok) {
-    logger.error('Could not save org settings: {error}', {
-      component: 'api/admin/connector-availability',
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} set the switched-off connectors to "{disabled}", but the org settings were not saved; nothing changed: {error}',
+      {
+        component: 'api/admin/connector-availability',
+        ...who(session),
+        disabledConnectors,
+        disabled: disabledConnectors.join(', ') || 'none',
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save org settings' }, { status: 500 });
   }
   // Org-wide, not one caller's own — every cached catalog in this tenant

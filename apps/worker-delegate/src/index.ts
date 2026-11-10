@@ -2,11 +2,12 @@
  * The Renkei delegate — the one process that holds a key
  * (docs/delegate-key-design.md).
  *
- * Nothing here is derived. At boot this process generates an X25519
- * keypair and registers itself as a delegate instance; a signed-in
- * browser seals its person's user key (and their automation key, for the
- * window they chose) to that public key, and this process opens those
- * delegations, does the work, and drops the key. The web app and the
+ * At boot this process takes its X25519 keypair — derived from
+ * DELEGATE_INSTANCE_KEY, so a restart is the same instance; generated and
+ * held in memory only without it — and registers itself as a delegate
+ * instance; a signed-in browser seals its person's user key (and their
+ * automation key, for the window they chose) to that public key, and this
+ * process opens those delegations, does the work, and drops the key. The web app and the
  * other workers reach it over bearer-authenticated HTTP and receive
  * exactly what the request they are serving needs: one resource's data
  * key, a value opened or sealed under a person's key, a provider's answer
@@ -20,6 +21,12 @@
  *     separated keys that all count as the `web` caller. One of the two is
  *     required; the development default is refused under NODE_ENV=production.
  *   DELEGATE_WORKER_PORT     — listen port, default 8096.
+ *   DELEGATE_INSTANCE_KEY    — the secret this instance's keypair is derived
+ *     from (instance.ts). Set, a restart or a second replica is the same
+ *     instance and every delegation sealed to it stays open: people's
+ *     agents keep running while they are away. Unset, the keypair lives in
+ *     memory only and a restart pauses the agents of everyone who does not
+ *     open the app again. The development default is refused in production.
  *   TOKEN_ENCRYPTION_KEY     — the org-wide secrets key: the OAuth client
  *     secrets in connector_configs that a token refresh needs.
  *   DATABASE_URL             — the shared Postgres: public keys, wrapped
@@ -34,7 +41,7 @@
 import { enrollmentCensus, legacyMasterAvailable } from '@renkei/user-keys';
 import { runWorker } from '@renkei/worker-kit';
 import { createDelegateServer } from './server';
-import { registerInstance } from './instance';
+import { developmentInstanceKeyRefusal, registerInstance } from './instance';
 import { logger, attachPersistentLogging } from './logger';
 import { CALLER_OPS, developmentKeyRefusal } from './callers';
 import { standInViolations } from './providers';
@@ -62,7 +69,7 @@ void runWorker({
   logger,
   attachPersistentLogging,
   createServer: ({ encryptionKey, apiKeys, namedApiKeys }) => {
-    const refusal = developmentKeyRefusal(apiKeys);
+    const refusal = developmentKeyRefusal(apiKeys) ?? developmentInstanceKeyRefusal();
     if (refusal) {
       console.error(`FATAL [worker-delegate]: ${refusal}`);
       process.exit(1);
@@ -105,10 +112,13 @@ void runWorker({
     // The deployment's signing key: made on the first boot, read on every
     // later one, so a browser can accept a new instance's key on its say-so.
     const signer = loadOrCreateSigningKey(encryptionKey, logger).catch((error: unknown) => {
-      logger.error('the delegate signing key could not be loaded: {error}', {
-        component: 'worker-delegate/signing',
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.error(
+        'the delegate signing key could not be loaded; instance lists go unsigned until the next boot: {error}',
+        {
+          component: 'worker-delegate/signing',
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return null;
     });
     return createDelegateServer({ encryptionKey, apiKeys: namedApiKeys, logger, signer });

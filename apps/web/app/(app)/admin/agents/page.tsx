@@ -1,4 +1,5 @@
 import React from 'react';
+import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getOrgSettings, DEFAULT_ORG_SETTINGS } from '@renkei/settings';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
@@ -11,6 +12,8 @@ import {
 } from '@/lib/agents/agent-usage';
 import { RetentionForm } from './retention-form';
 import OversightCards from './oversight-cards';
+import PausedOwners from './paused-owners';
+import { listPausedOwners } from '@/lib/agents/paused-owners';
 
 /**
  * Agent oversight: every agent in the org, owner-attributed, with run,
@@ -38,11 +41,13 @@ export default async function AdminAgentsPage(): Promise<React.ReactNode> {
   // Run and failure buckets over the durable run log (migration 083), cut
   // on the database session's calendar — the numbers exist to be read
   // against the per-day cap.
-  const [tallies, tokenTotals, tokensByAgent, tokensByModel] = await Promise.all([
+  const [tallies, tokenTotals, tokensByAgent, tokensByModel, pausedOwners] = await Promise.all([
     getRunTallies(),
     getTenantTokenUsage(),
     getTokenUsageByAgent(),
     getTokenUsageByModel(null),
+    // Whose agents cannot run right now, and why (lib/agents/paused-owners.ts).
+    listPausedOwners(),
   ]);
   const totals = tallies.totals.runs;
   const failureTotals = tallies.totals.failures;
@@ -61,12 +66,25 @@ export default async function AdminAgentsPage(): Promise<React.ReactNode> {
   return (
     <div className="mx-auto max-w-4xl">
       <h1 className="mb-1 text-xl font-bold">Agent oversight</h1>
-      <p className="mb-6 text-sm text-gray-600 dark:text-gray-400">
+      <p className="mb-2 text-sm text-gray-600 dark:text-gray-400">
         Every user-drafted agent in this organization. You can view run statuses (step content only
         for failures), see its usage, and turn an agent off or back on; editing stays with its
         owner. Pick a period, then sort the agents by it; an agent&apos;s page breaks its tokens
         down by model and by step.
       </p>
+      <p className="mb-6 text-sm">
+        <Link
+          href="/admin/agents/queue"
+          className="font-medium text-blue-700 hover:underline dark:text-blue-400"
+        >
+          Agent queue →
+        </Link>{' '}
+        <span className="text-gray-600 dark:text-gray-400">
+          every unfinished run across the organization, to see and clear a backlog
+        </span>
+      </p>
+
+      <PausedOwners owners={pausedOwners} now={Date.now()} />
 
       <OversightCards
         agents={agents}

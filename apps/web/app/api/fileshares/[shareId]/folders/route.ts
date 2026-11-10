@@ -9,10 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/session';
 import { clientFailure, fsMakeFolder } from '@/lib/file-shares/service-client';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export async function POST(
   request: NextRequest,
@@ -32,14 +29,17 @@ export async function POST(
   if (!made.ok) {
     const failure = clientFailure(made.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('File share request failed ({status}): {error}', {
-        component: 'api/fileshares/folders',
-        subject: session.subject,
-        shareId,
-        operation: 'made',
-        status: failure.status,
-        error: 'message' in made.err && made.err.message ? made.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        'File share request failed ({status}): {error}',
+        {
+          component: 'api/fileshares/folders',
+          subject: session.subject,
+          shareId,
+          operation: 'made',
+          status: failure.status,
+          error: 'message' in made.err && made.err.message ? made.err.message : failure.message,
+        }
+      );
     }
     return NextResponse.json({ error: failure.message }, { status: failure.status });
   }

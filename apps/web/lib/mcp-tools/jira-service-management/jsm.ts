@@ -8,13 +8,7 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/server';
 import type { MCPToolContext } from '../common';
 import { actMeta } from '@renkei/tool-outcomes';
-import {
-  JiraApiError,
-  getCachedDisplayName,
-  issueUrl,
-  requestUrl,
-  withPresentationHint,
-} from '../common';
+import { JiraApiError, issueUrl, requestUrl, withPresentationHint, callerFields } from '../common';
 import { logger } from '@/lib/logger';
 import {
   APP_ONLY_META,
@@ -35,6 +29,16 @@ import {
   resolveRequestType,
   resolveServiceDesk,
 } from './components';
+import {
+  describeForm,
+  describeMissing,
+  formCardRows,
+  formFieldOf,
+  isFilled,
+  missingRequired,
+  shapeFormValue,
+} from './request-form';
+import { previewUserLabel } from '../jira/user-label';
 import { resolveUserId } from '../jira/resolve-user';
 import { collectExtraFields, extraFieldSchema } from '../jira/write';
 import { writeWithFieldFallback } from '../jira/field-write';
@@ -77,11 +81,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_service_desks invoked', {
+      logger.debug('{caller} called jsm_list_service_desks', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_service_desks',
       });
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
@@ -142,11 +145,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_request_types invoked', {
+      logger.debug('{caller} called jsm_list_request_types', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_request_types',
       });
       try {
         const { serviceDeskId } = args;
@@ -222,11 +224,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_requests invoked', {
+      logger.debug('{caller} called jsm_list_requests', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_requests',
       });
       try {
         const maxResults = Math.min(args.maxResults || 25, 100);
@@ -391,11 +392,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_get_request invoked', {
+      logger.debug('{caller} called jsm_get_request', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_get_request',
       });
       try {
         const { issueKey } = args;
@@ -465,11 +465,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_components invoked', {
+      logger.debug('{caller} called jsm_list_components', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_components',
       });
       try {
         const desk = await resolveServiceDesk(auth, str(args.serviceDeskId));
@@ -569,13 +568,28 @@ export async function registerJsmTools(
           'this request type accepts. Names are matched case-insensitively.'
       )
       .optional(),
+    requestParticipants: z
+      .array(z.string())
+      .describe(
+        'Emails or accountIds of people to add as request participants at creation. ' +
+          'Dropped with a note if Jira refuses them.'
+      )
+      .optional(),
+    formFields: z
+      .record(z.string(), z.unknown())
+      .describe(
+        "The request type's OTHER form fields, keyed by field id as jsm_get_request_type_fields " +
+          'shows them (e.g. {"customfield_10010": "High impact"}). Required fields of the form ' +
+          'MUST be set here or the request is refused. For a pick-list field pass the option ' +
+          'label or id (an array for a multi-select); for a person pass an email or accountId.'
+      )
+      .optional(),
   });
   const createRequestHandler = async (args: Record<string, any>) => {
-    const displayName = getCachedDisplayName(context.accountId);
-    logger.debug('jsm_create_request invoked', {
+    logger.debug('{caller} called jsm_create_request', {
       component: 'mcp/tool',
-      accountId: context.accountId,
-      displayName,
+      ...callerFields(context),
+      tool: 'jsm_create_request',
     });
     try {
       const { serviceDeskId, requestTypeId, summary, description, components } = args;
@@ -634,8 +648,26 @@ export async function registerJsmTools(
       let priorityValue: { id: string } | null = null;
       let priorityViaEdit = false;
       const notes: string[] = [];
-      if (wanted.length > 0 || priorityWanted) {
-        const form = await loadRequestTypeForm(auth, deskId, typeId);
+      const formFields: Record<string, unknown> =
+        typeof args.formFields === 'object' && args.formFields !== null
+          ? (args.formFields as Record<string, unknown>)
+          : {};
+      const participants: string[] = [];
+      for (const raw of Array.isArray(args.requestParticipants) ? args.requestParticipants : []) {
+        const person = String(raw).trim();
+        if (!person) continue;
+        // The API wants accountIds; an email is looked up, and one that
+        // cannot be found costs that participant, not the request.
+        const resolved = await resolveUserId(auth, person);
+        if (resolved.ok) participants.push(resolved.id);
+        else notes.push(`Participant "${person}" was not added — ${resolved.reason}.`);
+      }
+      const extraValues: Record<string, unknown> = {};
+      // The form is ALWAYS read: its required fields decide whether this
+      // create can succeed at all, and a refusal that names them beats the
+      // API's bare 400.
+      const form = await loadRequestTypeForm(auth, deskId, typeId);
+      {
         if (!form.ok) {
           if (wanted.length > 0) notes.push(`Components were not set — ${form.message}`);
           // The form being unreadable does not decide whether priority can
@@ -677,6 +709,34 @@ export async function registerJsmTools(
               }
             }
           }
+
+          // The rest of the form: each value shaped to its field's schema.
+          // A value the form cannot take is a note unless the field is
+          // required — then the request would be refused, so say so here.
+          const described = describeForm(form.fields);
+          const supplied = new Set<string>();
+          for (const [fieldId, value] of Object.entries(formFields)) {
+            if (!isFilled(value)) continue;
+            const field = formFieldOf(described, fieldId);
+            if (!field) {
+              notes.push(`${fieldId} was not set — this request type's form has no such field.`);
+              continue;
+            }
+            const shaped = await shapeFormValue(field, value, (raw) => resolveUserId(auth, raw));
+            if (shaped.ok) {
+              extraValues[fieldId] = shaped.value;
+              supplied.add(fieldId);
+            } else {
+              notes.push(`${field.name} was not set — ${shaped.reason}.`);
+            }
+          }
+          const missing = missingRequired(described, formFields, supplied);
+          if (missing.length > 0) {
+            return errText(
+              `Nothing was created: this request type requires ${describeMissing(missing)}. ` +
+                `Pass them in formFields (keyed by field id), then try again.`
+            );
+          }
         }
       }
 
@@ -703,7 +763,9 @@ export async function registerJsmTools(
             ...(description ? { description: markdownToAdf(description) } : {}),
             ...(componentValues.length > 0 ? { components: componentValues } : {}),
             ...(priorityValue ? { priority: priorityValue } : {}),
+            ...extraValues,
           },
+          ...(participants.length > 0 ? { requestParticipants: participants } : {}),
         };
         return auth.fetch(
           serviceDeskScopes('jsm_create_request', false),
@@ -945,8 +1007,11 @@ export async function registerJsmTools(
         'Create a customer request in a service desk. Prefer this over jira_create_issue ' +
         'whenever the target project is a service desk (see jsm_list_service_desks) — a plain ' +
         'issue in a service desk project skips its request types and SLAs. Reporter, assignee, ' +
-        'priority, and components are their own inputs here — pass them as fields, never as ' +
-        'lines inside the description text.',
+        'priority, components, and requestParticipants are their own inputs here — pass them as ' +
+        'fields, never as lines inside the description text. The request type may REQUIRE ' +
+        'other form fields (see jsm_get_request_type_fields, marked [REQUIRED]); set them in ' +
+        'formFields by field id, using option labels or ids — a create missing one is refused ' +
+        'with the list of what it accepts.',
       annotations: { readOnlyHint: false },
       inputSchema: createRequestSchema,
     },
@@ -978,10 +1043,27 @@ export async function registerJsmTools(
         return errText('serviceDeskId, requestTypeId, and summary are required');
       }
 
+      // A request type typed as a name is its own label; an id is not wording.
+      const typeLabel = /^\d+$/.test(requestTypeId) ? 'The selected request type' : requestTypeId;
+      const readUser = async (accountId: string): Promise<unknown> => {
+        const response = await auth.fetch(
+          serviceDeskScopes('jsm_list_service_desks', true),
+          `/rest/api/3/user?accountId=${encodeURIComponent(accountId)}`
+        );
+        return response.ok ? response.json() : null;
+      };
+      const reporter = str(args.reporter)
+        ? await previewUserLabel(readUser, str(args.reporter), 'The selected person')
+        : '';
+      const assignee = str(args.assignee)
+        ? await previewUserLabel(readUser, str(args.assignee), 'The selected person')
+        : '';
+
       // Best-effort: name the desk and request type like the portal would
       // rather than showing bare ids. A failed read costs the labels only.
       let deskName = '';
       let typeName = '';
+      let formRows: ReturnType<typeof formCardRows> = [];
       try {
         const deskResponse = await auth.fetch(
           serviceDeskScopes('jsm_list_service_desks', true),
@@ -1012,9 +1094,25 @@ export async function registerJsmTools(
             typeName = str(requestType?.name);
           }
         }
+        // The form decides which rows the card needs: every required field,
+        // plus components and priority as pick lists. Ids stay in
+        // confirmArgs; the card shows labels.
+        if (type.ok) {
+          const form = await loadRequestTypeForm(auth, deskId, type.requestType.id);
+          if (form.ok) formRows = formCardRows(describeForm(form.fields), args);
+        }
       } catch {
         // preview renders with ids
       }
+      const shownPeople = async (values: unknown): Promise<string> => {
+        const list = Array.isArray(values) ? values.map(String).filter(Boolean) : [];
+        const labels = await Promise.all(
+          list.map((value) => previewUserLabel(readUser, value, 'The selected person'))
+        );
+        return labels.join(', ');
+      };
+      const participantsLabel = await shownPeople(args.requestParticipants);
+      const formHas = new Set(formRows.map((row) => row.editable?.path[0]));
 
       return {
         content: [
@@ -1031,22 +1129,32 @@ export async function registerJsmTools(
           kind: 'issue',
           previewId: newPreviewId(),
           title: 'Create service desk request',
-          subtitle: `${deskName || `desk ${serviceDeskId}`} · ${typeName || `type ${requestTypeId}`}`,
+          subtitle: `${deskName || 'Service desk'} · ${typeName || typeLabel}`,
           confirmTool: 'jsm_create_request_confirm',
           confirmLabel: 'Create request',
           confirmArgs: args,
           editable: { summaryKey: 'summary', descriptionKey: 'description' },
           fields: [
-            { label: 'Service desk', value: deskName || serviceDeskId },
-            { label: 'Request type', value: typeName || requestTypeId },
+            { label: 'Service desk', value: deskName || 'The selected service desk' },
+            { label: 'Request type', value: typeName || typeLabel },
             // Only when asked for. A card row reading "Components: —" on
             // every request would be noise; the point of showing these is
             // that somebody approving the card can see who it is for, who
             // gets it, and where it will be filed.
-            ...(str(args.reporter) ? [{ label: 'Reporter', value: str(args.reporter) }] : []),
-            ...(str(args.assignee) ? [{ label: 'Assignee', value: str(args.assignee) }] : []),
-            ...(str(args.priority) ? [{ label: 'Priority', value: str(args.priority) }] : []),
-            ...(Array.isArray(args.components) && args.components.length > 0
+            ...(reporter ? [{ label: 'Reporter', value: reporter }] : []),
+            ...(assignee ? [{ label: 'Assignee', value: assignee }] : []),
+            ...(participantsLabel
+              ? [{ label: 'Request participants', value: participantsLabel }]
+              : []),
+            // The form's own rows (pick lists with labels, required fields)
+            // win; the plain rows below cover a form that could not be read.
+            ...formRows,
+            ...(!formHas.has('priority') && str(args.priority)
+              ? [{ label: 'Priority', value: str(args.priority) }]
+              : []),
+            ...(!formHas.has('components') &&
+            Array.isArray(args.components) &&
+            args.components.length > 0
               ? [{ label: 'Components', value: args.components.map(String).join(', ') }]
               : []),
           ],
@@ -1086,11 +1194,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_add_request_comment invoked', {
+      logger.debug('{caller} called jsm_add_request_comment', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_add_request_comment',
       });
       try {
         const { issueKey, comment, isInternal = false } = args;
@@ -1152,11 +1259,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_request_transitions invoked', {
+      logger.debug('{caller} called jsm_list_request_transitions', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_request_transitions',
       });
       try {
         const { issueKey } = args;
@@ -1207,11 +1313,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_transition_request invoked', {
+      logger.debug('{caller} called jsm_transition_request', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_transition_request',
       });
       try {
         const { issueKey, transitionName } = args;
@@ -1294,11 +1399,10 @@ export async function registerJsmTools(
       }),
     },
     async (args: Record<string, any>) => {
-      const displayName = getCachedDisplayName(context.accountId);
-      logger.debug('jsm_list_customers invoked', {
+      logger.debug('{caller} called jsm_list_customers', {
         component: 'mcp/tool',
-        accountId: context.accountId,
-        displayName,
+        ...callerFields(context),
+        tool: 'jsm_list_customers',
       });
       try {
         const { serviceDeskId, maxResults = 10 } = args;

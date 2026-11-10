@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { isRecord } from '@renkei/guards';
 
 /**
  * The bearer-authenticated JSON-over-HTTP shape every egress worker speaks
@@ -20,10 +21,6 @@ export function sendJson(response: ServerResponse, status: number, body: unknown
     'content-length': Buffer.byteLength(payload),
   });
   response.end(payload);
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function str(value: unknown): string {

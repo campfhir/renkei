@@ -38,15 +38,16 @@ export interface GitHubApp {
 export async function getGitHubApp(origin: string): Promise<GitHubApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/github',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the GitHub registration cannot be read; no GitHub flow can start',
+      { component: 'connectors/github' }
+    );
     return null;
   }
 
   const configResult = await readConnectorConfigCached(GITHUB_CONNECTOR, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read github connector config', {
+    logger.error('the GitHub connector config could not be read; no GitHub flow can start', {
       component: 'connectors/github',
     });
     return null;
@@ -57,9 +58,10 @@ export async function getGitHubApp(origin: string): Promise<GitHubApp | null> {
   const clientId = config.settings.clientId;
   const clientSecret = config.secrets.clientSecret;
   if (typeof clientId !== 'string' || !clientId || !clientSecret) {
-    logger.warn('github connector config missing clientId or clientSecret', {
-      component: 'connectors/github',
-    });
+    logger.warn(
+      'the GitHub connector is switched on but its config lacks a client id or client secret; no GitHub flow can start',
+      { component: 'connectors/github' }
+    );
     return null;
   }
 

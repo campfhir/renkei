@@ -32,9 +32,10 @@ export { VOICE_CONNECTOR };
 export async function resolveVoiceConfig(): Promise<VoiceConfig | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'voice/config',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the voice configuration cannot be read; voice is unavailable',
+      { component: 'voice/config' }
+    );
     return null;
   }
   const configResult = await readConnectorConfigCached(VOICE_CONNECTOR, keyResult.val);
@@ -49,8 +50,10 @@ export async function voiceConfigured(): Promise<boolean> {
 }
 
 /** The provider for the org, or null when voice is not provisioned. */
-export async function resolveVoiceProvider(
-): Promise<{ config: VoiceConfig; provider: VoiceProvider } | null> {
+export async function resolveVoiceProvider(): Promise<{
+  config: VoiceConfig;
+  provider: VoiceProvider;
+} | null> {
   const config = await resolveVoiceConfig();
   if (!config) return null;
   return { config, provider: createVoiceProvider(config) };
@@ -76,9 +79,10 @@ function fingerprintOf(config: VoiceConfig): string {
  * cached — a vendor outage must not be remembered as "no voices" — and a
  * failure hands back the error so the picker can say why it is empty.
  */
-export async function listVoicesCached(
-  resolved: { config: VoiceConfig; provider: VoiceProvider }
-): Promise<VoiceOutcome<VoiceInfo[]>> {
+export async function listVoicesCached(resolved: {
+  config: VoiceConfig;
+  provider: VoiceProvider;
+}): Promise<VoiceOutcome<VoiceInfo[]>> {
   const fingerprint = fingerprintOf(resolved.config);
   if (
     voicesCache &&

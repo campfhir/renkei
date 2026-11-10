@@ -16,7 +16,15 @@
  * chooses which states the list shows.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -27,16 +35,18 @@ import { chatClient } from '@/lib/chat/client';
 import type { ChatSidebarData, ProjectListItem } from '@/lib/chat/sidebar';
 import type { ChatListItem } from '@/lib/chat/views';
 import ShareModal from './share-modal';
-
-function dayGroup(iso: string, now: Date): string {
-  const date = new Date(iso);
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const day = 86_400_000;
-  if (date.getTime() >= startOfToday) return 'Today';
-  if (date.getTime() >= startOfToday - day) return 'Yesterday';
-  if (date.getTime() >= startOfToday - 7 * day) return 'This week';
-  return 'Earlier';
-}
+import MoveChatDialog from './move-chat-dialog';
+import {
+  canLoadMore,
+  chatListReducer,
+  chatListView,
+  initialChatListState,
+  isCustomFilter,
+  listedChats,
+  rowActions,
+  stateCounts,
+  type ChatStates,
+} from './chat-nav.model';
 
 const rowClass =
   'group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-900';
@@ -44,78 +54,45 @@ const activeClass = 'bg-gray-100 font-medium dark:bg-gray-900';
 
 export function ChatList({ data }: { data: ChatSidebarData }) {
   const currentPath = usePathname();
-  // Which states the list shows; active only, until the funnel says otherwise.
-  const [states, setStates] = useState<{ active: boolean; archived: boolean }>({
-    active: true,
-    archived: false,
-  });
   /*
     The server only loads activity from the last CHAT_SIDEBAR_ACTIVE_DAYS
     (see lib/chat/sidebar.ts) into `data`. "Load more" pages older owned
-    chats in on top of that, kept here rather than in `data` because a
-    server refresh (any mutation below, or anything else on the page that
-    calls router.refresh()) only ever re-fetches that same recent window.
-    A chat touched again — renamed, archived, moved — falls back inside
-    the window and reappears in `data.chats` on the next refresh, at which
-    point it's dropped from here so the fresh copy wins; one deleted while
-    it lived only here is dropped by `onDeleted` since no refresh can do
-    that for us.
+    chats in on top of that, kept in the model rather than in `data`
+    because a server refresh only ever re-fetches that same recent window
+    (chat-nav.model.ts says what the list holds after one).
   */
-  const [extraChats, setExtraChats] = useState<ChatListItem[]>([]);
-  const [moreBefore, setMoreBefore] = useState(data.moreChatsBefore);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [state, dispatch] = useReducer(chatListReducer, data, initialChatListState);
+  const { states, moreBefore, loadingMore } = state;
   useEffect(() => {
-    // Only follow the server's cursor while nothing has been paged in yet —
-    // once "Load more" has advanced it, a fresh `data` prop (the window
-    // never moves) must not rewind it back and re-offer already-loaded rows.
-    if (extraChats.length === 0) setMoreBefore(data.moreChatsBefore);
-  }, [data.moreChatsBefore, extraChats.length]);
-  const windowChats = useMemo(() => {
-    const freshIds = new Set(data.chats.map((chat) => chat.id));
-    return [...data.chats, ...extraChats.filter((chat) => !freshIds.has(chat.id))];
-  }, [data.chats, extraChats]);
+    dispatch({ type: 'serverCursor', moreChatsBefore: data.moreChatsBefore });
+  }, [data.moreChatsBefore, state.extraChats.length]);
+  const allChats = useMemo(() => listedChats(data.chats, state), [data.chats, state]);
   const removeExtraChat = useCallback((chatId: string) => {
-    setExtraChats((current) => current.filter((chat) => chat.id !== chatId));
+    dispatch({ type: 'chatDeleted', chatId });
   }, []);
   const loadMore = useCallback(async () => {
-    if (!moreBefore || loadingMore) return;
-    setLoadingMore(true);
+    if (!canLoadMore(state) || !moreBefore) return;
+    dispatch({ type: 'loadMoreStarted' });
     const result = await chatClient.moreChats(moreBefore);
-    setLoadingMore(false);
     if (result.data) {
-      setExtraChats((current) => [...current, ...result.data!.chats]);
-      setMoreBefore(result.data.nextBefore);
+      dispatch({
+        type: 'loadMoreAnswered',
+        chats: result.data.chats,
+        nextBefore: result.data.nextBefore,
+      });
+    } else {
+      dispatch({ type: 'loadMoreFailed' });
     }
-  }, [moreBefore, loadingMore]);
-  const allChats = windowChats;
-  const counts = useMemo(
-    () => ({
-      active: allChats.filter((chat) => !chat.archived).length,
-      archived: allChats.filter((chat) => chat.archived).length,
-    }),
-    [allChats]
+  }, [state, moreBefore]);
+  const counts = useMemo(() => stateCounts(allChats), [allChats]);
+  const setStates = useCallback(
+    (next: ChatStates) => dispatch({ type: 'statesChanged', states: next }),
+    []
   );
-  const shown = useCallback(
-    (chat: ChatListItem) => (chat.archived ? states.archived : states.active),
-    [states]
+  const { groups, shared, empty } = useMemo(
+    () => chatListView(allChats, state, new Date()),
+    [allChats, state]
   );
-  const mine = useMemo(
-    () => allChats.filter((chat) => chat.via === 'owner' && shown(chat)),
-    [allChats, shown]
-  );
-  const shared = useMemo(
-    () => allChats.filter((chat) => chat.via !== 'owner' && shown(chat)),
-    [allChats, shown]
-  );
-  const groups = useMemo(() => {
-    const now = new Date();
-    const out = new Map<string, ChatListItem[]>();
-    for (const chat of mine) {
-      const key = dayGroup(chat.updatedAt, now);
-      out.set(key, [...(out.get(key) ?? []), chat]);
-    }
-    return [...out.entries()];
-  }, [mine]);
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col border-t border-gray-200 pt-2 dark:border-gray-800">
@@ -124,17 +101,7 @@ export function ChatList({ data }: { data: ChatSidebarData }) {
         <StateFilter states={states} onChange={setStates} counts={counts} />
       </div>
       <nav aria-label="Chats" className="min-h-0 flex-1 overflow-y-auto">
-        {groups.length === 0 && shared.length === 0 ? (
-          <p className="px-2 text-xs text-gray-500">
-            {allChats.length === 0 && moreBefore === null
-              ? 'Your chats will appear here.'
-              : !states.active && !states.archived
-                ? 'Nothing to show — pick Active or Archived.'
-                : states.active
-                  ? 'No active chats.'
-                  : 'No archived chats.'}
-          </p>
-        ) : null}
+        {empty ? <p className="px-2 text-xs text-gray-500">{empty}</p> : null}
         {groups.map(([label, dayChats]) => (
           <div key={label} className="mb-3">
             <SectionTitle>{label}</SectionTitle>
@@ -188,15 +155,15 @@ function StateFilter({
   onChange,
   counts,
 }: {
-  states: { active: boolean; archived: boolean };
-  onChange: (states: { active: boolean; archived: boolean }) => void;
+  states: ChatStates;
+  onChange: (states: ChatStates) => void;
   counts: { active: number; archived: number };
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setOpen(false), []);
   useDismiss(open, ref, close);
-  const custom = !states.active || states.archived;
+  const custom = isCustomFilter(states);
   const option = (key: 'active' | 'archived', label: string) => (
     <button
       type="button"
@@ -262,10 +229,19 @@ function kindOf(chat: ChatListItem): {
 /**
  * A day's heading. It sticks to the top of the list while that day's chats
  * scroll past, and the next day's heading takes its place.
+ *
+ * Stuck, its box starts where the list's clip edge is — but the two are
+ * snapped to device pixels separately, and on a phone (three device pixels
+ * per CSS pixel, fractional scroll offsets) the box can land a fraction
+ * below the edge, leaving a hairline of the row scrolling under it showing
+ * above the heading. The `before` strip paints the heading's own background
+ * a few pixels further up, into the clip, so no seam opens whichever way
+ * the rounding goes; in its resting place the strip covers only the gap
+ * above the heading.
  */
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <div className="sticky top-0 z-10 mb-1 bg-white px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-950">
+    <div className="sticky top-0 z-10 bg-white px-2 pt-1 pb-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500 before:absolute before:inset-x-0 before:-top-1 before:h-1 before:bg-inherit dark:bg-gray-950">
       {children}
     </div>
   );
@@ -307,13 +283,7 @@ function ChatRow({
   }, [menuOpen]);
   const isOwner = chat.via === 'owner';
   const mark = kindOf(chat);
-  // A chat in a code project belongs to its repository: it is not moved
-  // into a chat project from here.
-  const actions: ('rename' | 'move' | 'share' | 'archive' | 'delete')[] =
-    // A temporary chat stands outside projects (lib/chat/temporary.ts).
-    mark.kind === 'code' || chat.temporary
-      ? ['rename', 'share', 'archive', 'delete']
-      : ['rename', 'move', 'share', 'archive', 'delete'];
+  const actions = rowActions(chat);
 
   const run = async (action: () => Promise<{ error: string | null }>) => {
     setBusy(true);
@@ -442,33 +412,16 @@ function ChatRow({
         </Modal>
       ) : null}
       {dialog === 'move' ? (
-        <Modal title="Move to project" onClose={() => setDialog(null)}>
-          <div className="space-y-1">
-            <button
-              type="button"
-              disabled={busy || chat.projectId === null}
-              onClick={() => void run(() => chatClient.moveChat(chat.id, null))}
-              className="block w-full rounded-md px-3 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
-            >
-              No project
-            </button>
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                disabled={busy || chat.projectId === project.id}
-                onClick={() => void run(() => chatClient.moveChat(chat.id, project.id))}
-                className="block w-full rounded-md px-3 py-1.5 text-left text-sm hover:bg-gray-100 disabled:opacity-50 dark:hover:bg-gray-800"
-              >
-                {project.name}
-              </button>
-            ))}
-            {projects.length === 0 ? (
-              <p className="px-3 text-sm text-gray-500">You have no projects yet.</p>
-            ) : null}
-            {error ? <p className="px-3 text-sm text-red-600">{error}</p> : null}
-          </div>
-        </Modal>
+        <MoveChatDialog
+          chatId={chat.id}
+          currentProjectId={chat.projectId}
+          projects={projects}
+          onMoved={() => {
+            setDialog(null);
+            router.refresh();
+          }}
+          onClose={() => setDialog(null)}
+        />
       ) : null}
       {dialog === 'share' ? (
         <ShareModal

@@ -23,7 +23,7 @@ const RESULTS = path.join(import.meta.dirname, '..', 'test-results');
 // Adding a model to the roster is an operator's.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
 
-test('Run now runs the agent to the end, and its page shows the finished run', async ({
+test('Run now runs the agent to the end, and its page shows the finished run @smoke', async ({
   page,
   person: _person,
 }, testInfo) => {

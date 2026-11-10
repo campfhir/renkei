@@ -515,7 +515,10 @@ services:
   # are never in a command's environment; the route is only the network's.
   # The other workers stay off both networks. SANDBOX_ENV_SECRETS_KEY in .env
   # (`openssl rand -base64 32`) seals the environment variables people hand
-  # their commands; it falls back to TOKEN_ENCRYPTION_KEY.
+  # their commands; it falls back to TOKEN_ENCRYPTION_KEY. A code project's
+  # previews (its own server, served through the web app) listen on ports
+  # from this container's own pool, SANDBOX_PREVIEW_PORTS as `low-high`
+  # (10000-10050 unless set); nothing is published, the web app relays.
   #
   # Scripts (sandbox_run_python in every chat with a scratch space, for an
   # organization that has turned them on): Python the

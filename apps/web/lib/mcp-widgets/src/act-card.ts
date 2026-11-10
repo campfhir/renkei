@@ -109,6 +109,8 @@ export type CommentBody = {
   anchor?: { file?: string; line?: number; text?: string };
   /** The comment being edited, deleted or resolved. */
   commentId?: string;
+  /** What a person calls that comment ("by Ann: “Looks good”") — the id is never shown. */
+  commentLabel?: string;
 };
 
 export type VerdictBody = {
@@ -139,6 +141,8 @@ export type WorklogBody = {
   duration?: string;
   started?: string;
   worklogId?: string;
+  /** What a person calls that worklog ("2h by Ann") — the id is never shown. */
+  worklogLabel?: string;
   bodyKey?: string;
   body?: string;
 };
@@ -152,6 +156,8 @@ export type LinkBody = {
   /** An external page rather than another item. */
   url?: { href: string; title: string };
   linkId?: string;
+  /** What a person calls that link ("PROJ-1 blocks PROJ-2") — the id is never shown. */
+  linkLabel?: string;
 };
 
 export type AccessBody = {

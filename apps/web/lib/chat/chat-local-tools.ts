@@ -5,6 +5,8 @@
  * person across every chat they own, recalling their other chats,
  * showing a mockup inline (mockup-tools.ts), settling its preview cards
  * on the person's word (widget-state-tools.ts),
+ * acting in Renkei itself for the person (platform-tools/: links, usage,
+ * preferences, projects, prompt libraries),
  * and compacting its own history (chat_compact, offered unconditionally —
  * see below). Each of the others is registered only when it can do something — no project, no
  * project memory tools; a chat in a project, no personal memory or recall
@@ -25,6 +27,7 @@ import { chartTools } from './chart-tools';
 import { chatRenameTool } from './chat-title-tools';
 import { fileTools } from './file-tools';
 import { memoryTools } from './memory-tools';
+import { askFormTools } from './ask-form-tool';
 import { mockupTools } from './mockup-tools';
 import { userMemoryTools } from './user-memory-tools';
 import { recallTools } from './recall-tools';
@@ -34,7 +37,9 @@ import { getImagePrefs } from '@renkei/user-prefs';
 import { imageGenerationTool } from './image-tools';
 import { listImageModels } from './models';
 import { widgetStateTools } from './widget-state-tools';
+import { platformTools } from './platform-tools';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export async function chatLocalTools(
   context: LocalToolContext,
@@ -50,6 +55,9 @@ export async function chatLocalTools(
   // worker and no project — every chat, a code project's included, can
   // show one (mockup-tools.ts).
   tools.push(...mockupTools());
+  // A form of questions drawn in the thread, answered as the person's next
+  // message (ask-form-tool.ts): asking changes nothing, so every chat has it.
+  tools.push(...askFormTools());
   // A file of the chat's own, or one its project holds.
   const hasFiles =
     (await getDataStore().artifacts.listByChat(context.chatId)).length > 0 ||
@@ -79,12 +87,16 @@ export async function chatLocalTools(
     // without one in the org the tool is simply not offered. A failed
     // lookup costs the turn this one tool, not the turn.
     const [imageModels, imagePrefs] = await Promise.all([
-      listImageModels().catch((error: unknown) => {
-        logger.warn('image models could not be listed; image tool not offered: {error}', {
-          component: 'chat/tools',
-          subject: context.subject,
-          error: error instanceof Error ? error.message : String(error),
-        });
+      listImageModels().catch(async (error: unknown) => {
+        logger.warn(
+          "{actor}'s chat could not list the image models; the image tool is not offered this turn: {error}",
+          {
+            component: 'chat/tools',
+            ...(await whoIs(context.subject)),
+            chatId: context.chatId,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
         return [];
       }),
       getImagePrefs(context.subject),
@@ -113,5 +125,9 @@ export async function chatLocalTools(
   // answerable ("no cards"), and marking one decided writes only the
   // chat's own decision row — the tool refuses under read-only itself.
   tools.push(...widgetStateTools());
+  // Renkei itself (platform-tools/): links into the app, the person's usage
+  // and preferences up front; projects, prompt libraries and the
+  // organization's usage behind find_tools. Every chat has them.
+  tools.push(...(await platformTools(context)));
   return tools;
 }

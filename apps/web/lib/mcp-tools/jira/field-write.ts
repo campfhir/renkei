@@ -19,8 +19,7 @@
  * issue that cannot be identified is not worth creating.
  */
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+import { isRecord } from '@renkei/guards';
 
 export interface FieldWritePlan {
   /** Sent on every attempt. A failure here is a real failure. */

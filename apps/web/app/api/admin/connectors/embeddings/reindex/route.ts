@@ -35,6 +35,7 @@ import type { ReindexKind } from '@renkei/knowledge';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 /** Runs listed back, newest first — enough to show each kind's latest. */
 const RECENT_RUNS = 12;
@@ -167,11 +168,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
     if (!enqueued.ok) {
       await runs.markFailed(runId, 'could not enqueue the resumed batch');
-      logger.error('Could not resume the reindex: {error}', {
-        component: 'api/admin/connectors/embeddings/reindex',
-        subject: access.subject,
-        error: enqueued.err.message ?? enqueued.err.type,
-      });
+      logger.error(
+        '{actor} resumed the {kind} knowledge reindex (run {runId}), but its next batch was not queued; the run is marked failed: {error}',
+        {
+          component: 'api/admin/connectors/embeddings/reindex',
+          ...who(access),
+          kind,
+          runId,
+          error: enqueued.err.message ?? enqueued.err.type,
+        }
+      );
       return NextResponse.json({ error: 'Could not resume the reindex.' }, { status: 500 });
     }
 
@@ -203,11 +209,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   });
   if (!enqueued.ok) {
     await runs.markFailed(newRunId, 'could not enqueue the first batch');
-    logger.error('Could not start the reindex: {error}', {
-      component: 'api/admin/connectors/embeddings/reindex',
-      subject: access.subject,
-      error: enqueued.err.message ?? enqueued.err.type,
-    });
+    logger.error(
+      '{actor} started a {kind} knowledge reindex (run {runId}), but its first batch was not queued; the run is marked failed: {error}',
+      {
+        component: 'api/admin/connectors/embeddings/reindex',
+        ...who(access),
+        kind,
+        runId: newRunId,
+        error: enqueued.err.message ?? enqueued.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not start the reindex.' }, { status: 500 });
   }
 

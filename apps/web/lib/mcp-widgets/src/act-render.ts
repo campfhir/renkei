@@ -34,6 +34,7 @@ import type {
   VerdictBody,
   WorklogBody,
 } from './act-card';
+import { eventSpan, formatWhen, whenParts } from './act-preview.model';
 import { avatar, el, str } from './ui';
 
 /* ------------------------------------------------------------------ */
@@ -88,7 +89,7 @@ const STYLE = `
 .a-words { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
 .a-words.is-clamped { max-height: 11em; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .a-more { align-self: flex-start; }
-.a-words-edit { width: 100%; font: inherit; color: inherit; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 7px 9px; resize: vertical; }
+.a-words-edit { width: 100%; font: inherit; font-size: 16px; color: inherit; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 6px; padding: 7px 9px; resize: vertical; }
 textarea.a-words-edit { min-height: 84px; }
 .a-words-edit:focus { outline: 2px solid var(--card-accent); outline-offset: -1px; }
 .a-anchor { border: 1px solid var(--card-border); border-left: 3px solid var(--card-accent); border-radius: 6px; padding: 6px 10px; background: var(--card-field-bg); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-wrap: anywhere; }
@@ -261,36 +262,6 @@ function tableRow(label: string, ...content: Node[]): HTMLElement {
   return row;
 }
 
-/** "2026-10-21T14:00:00" → "Wed, 21 Oct · 14:00", as written, with no zone conversion. */
-const WHEN = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/;
-function whenParts(text: string): { date: Date; hasTime: boolean } | null {
-  const match = WHEN.exec(text);
-  if (!match) return null;
-  const [, y, mo, d, h, mi] = match;
-  return {
-    date: new Date(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h ?? 0), Number(mi ?? 0))),
-    hasTime: h !== undefined,
-  };
-}
-export function formatWhen(text: string): string {
-  const parts = whenParts(text);
-  if (!parts) return text;
-  const day = parts.date.toLocaleDateString('en', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-  if (!parts.hasTime) return day;
-  const time = parts.date.toLocaleTimeString('en', {
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: 'UTC',
-  });
-  return `${day} · ${time}`;
-}
-
 /* ------------------------------------------------------------------ */
 /* The context a renderer draws in                                      */
 /* ------------------------------------------------------------------ */
@@ -365,7 +336,7 @@ function renderComment(body: CommentBody, ctx: RenderContext): HTMLElement {
     const line = el('div', 'a-flow');
     line.append(
       icon(body.mode === 'delete' ? 'trash' : 'check'),
-      el('span', undefined, body.commentId ? `Comment ${body.commentId}` : 'The comment')
+      el('span', undefined, body.commentLabel ? `Comment ${body.commentLabel}` : 'The comment')
     );
     if (body.mode !== 'delete') {
       line.append(
@@ -472,7 +443,7 @@ function renderWorklog(body: WorklogBody, ctx: RenderContext): HTMLElement {
       el(
         'span',
         undefined,
-        `Worklog ${str(body.worklogId)} will be removed and its time taken back off the issue.`
+        `${body.worklogLabel ? `The worklog (${body.worklogLabel})` : 'The worklog'} will be removed and its time taken back off the issue.`
       )
     );
     root.append(line);
@@ -495,7 +466,11 @@ function renderLink(body: LinkBody): HTMLElement {
     const line = el('div', 'a-flow');
     line.append(
       icon('trash'),
-      el('span', undefined, `Link ${str(body.linkId)} will be removed from both issues.`)
+      el(
+        'span',
+        undefined,
+        `${body.linkLabel ? `The link (${body.linkLabel})` : 'The link'} will be removed from both issues.`
+      )
     );
     root.append(line);
     return root;
@@ -780,8 +755,9 @@ function renderSprint(body: SprintBody): HTMLElement {
   const root = el('div', 'a-body');
   const sprint = body.sprint;
   if (sprint && (sprint.name || sprint.id)) {
+    // The id is the confirm call's handle, never wording for a person.
     const card = el('div', 'a-sprint-card');
-    card.append(el('div', 'a-sprint-name', sprint.name || `Sprint ${str(sprint.id)}`));
+    card.append(el('div', 'a-sprint-name', sprint.name || 'The sprint'));
     const dates = [
       sprint.start ? formatWhen(sprint.start) : '',
       sprint.end ? formatWhen(sprint.end) : '',
@@ -843,15 +819,7 @@ function renderEvent(body: EventBody, ctx: RenderContext): HTMLElement {
   if (body.subject !== undefined)
     text.append(el('div', 'a-event-title', body.subject || '(no title)'));
   if (body.start) {
-    const end = body.end ? whenParts(body.end) : null;
-    const startText = formatWhen(body.start);
-    const endText =
-      end && start && end.hasTime && end.date.toDateString() === start.date.toDateString()
-        ? end.date.toLocaleTimeString('en', { hour: 'numeric', minute: '2-digit', timeZone: 'UTC' })
-        : body.end
-          ? formatWhen(body.end)
-          : '';
-    text.append(el('div', undefined, endText ? `${startText} – ${endText}` : startText));
+    text.append(el('div', undefined, eventSpan(body.start, body.end)));
     if (body.timezone) text.append(el('div', 'a-meta', body.timezone));
   }
   if (body.where) text.append(el('div', 'a-meta', body.where));

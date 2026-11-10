@@ -1,94 +1,76 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+/**
+ * The person's remote MCP servers on the Connectors page. What each card
+ * shows and what an answer leaves on it is mcp-servers-list.model.ts's;
+ * this makes the calls and draws.
+ */
+
+import { useEffect, useReducer } from 'react';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
+import {
+  cardButtons,
+  init,
+  listsOnFirstSight,
+  loadsOnToggle,
+  reducer,
+  statusBadge,
+  toolList,
+  transportLabel,
+  type McpServerView,
+  type ToolView,
+} from './mcp-servers-list.model';
 
-export interface McpServerView {
-  id: string;
-  slug: string;
-  name: string;
-  host: string;
-  transport: 'streamable_http' | 'sse';
-  authMode: 'oauth' | 'none';
-  context: string;
-  connected: boolean;
-  toolCount: number;
-}
-
-interface ToolView {
-  name: string;
-  description: string;
-  readOnly: boolean;
-}
+export type { McpServerView } from './mcp-servers-list.model';
 
 const buttonClass =
   'rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900';
 
 function ServerRow({ initial }: { initial: McpServerView }) {
-  const [server, setServer] = useState(initial);
-  const [tools, setTools] = useState<ToolView[] | null>(null);
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const usable = server.authMode === 'none' || server.connected;
+  const [state, dispatch] = useReducer(reducer, initial, init);
+  const { server, busy, error } = state;
+  const toolsUrl = `/api/mcp-servers/${server.id}/tools`;
 
   const loadTools = async () => {
-    const { data, error: loadError } = await getJson<{ tools: ToolView[] }>(
-      `/api/mcp-servers/${server.id}/tools`
-    );
-    if (loadError) setError(loadError);
-    else setTools(data?.tools ?? []);
+    const { data, error: loadError } = await getJson<{ tools: ToolView[] }>(toolsUrl);
+    if (loadError) dispatch({ type: 'toolsLoadFailed', error: loadError });
+    else dispatch({ type: 'toolsLoaded', tools: data?.tools ?? [] });
   };
 
   const toggle = async () => {
-    const next = !open;
-    setOpen(next);
-    if (next && tools === null) await loadTools();
+    const load = loadsOnToggle(state);
+    dispatch({ type: 'toolsToggled' });
+    if (load) await loadTools();
   };
 
   const refresh = async (reveal = true) => {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'refreshStarted' });
     const { data, error: refreshError } = await sendJsonFull<{ tools: ToolView[] }>(
-      `/api/mcp-servers/${server.id}/tools`,
+      toolsUrl,
       'POST',
       {}
     );
-    setBusy(false);
-    if (refreshError || !data) {
-      setError(refreshError ?? 'The server did not answer.');
-      return;
-    }
-    setTools(data.tools);
-    setServer((current) => ({
-      ...current,
-      toolCount: data.tools.length,
-      connected: current.authMode === 'oauth' ? true : current.connected,
-    }));
-    if (reveal) setOpen(true);
+    if (refreshError || !data) dispatch({ type: 'refreshFailed', error: refreshError });
+    else dispatch({ type: 'refreshed', tools: data.tools, reveal });
   };
 
   // An open server has no connect step to list its tools after, so the
   // first look at the card asks it.
   useEffect(() => {
-    if (initial.authMode === 'none' && initial.toolCount === 0) void refresh(false);
+    if (listsOnFirstSight(initial)) void refresh(false);
     // Once per card, on mount only.
   }, []);
 
   const disconnect = async () => {
-    setBusy(true);
-    setError(null);
+    dispatch({ type: 'disconnectStarted' });
     const disconnectError = await sendJson(`/api/mcp-servers/${server.id}/grant`, 'DELETE');
-    setBusy(false);
-    if (disconnectError) {
-      setError(disconnectError);
-      return;
-    }
-    setTools(null);
-    setOpen(false);
-    setServer((current) => ({ ...current, connected: false, toolCount: 0 }));
+    if (disconnectError) dispatch({ type: 'disconnectFailed', error: disconnectError });
+    else dispatch({ type: 'disconnected' });
   };
+
+  const badge = statusBadge(server);
+  const buttons = cardButtons(state);
+  const list = state.open ? toolList(state) : null;
 
   return (
     <li
@@ -100,11 +82,11 @@ function ServerRow({ initial }: { initial: McpServerView }) {
           <p className="text-sm font-medium">
             {server.name}
             <span className="ml-2 rounded-full border border-gray-300 px-2 py-0.5 text-xs font-normal text-gray-600 dark:border-gray-700 dark:text-gray-400">
-              {server.transport === 'sse' ? 'SSE' : 'Streamable HTTP'}
+              {transportLabel(server)}
             </span>
-            {usable ? (
+            {badge ? (
               <span className="ml-2 rounded-full border border-green-300 px-2 py-0.5 text-xs font-normal text-green-700 dark:border-green-800 dark:text-green-400">
-                {server.authMode === 'none' ? 'open' : 'connected'}
+                {badge}
               </span>
             ) : null}
           </p>
@@ -116,7 +98,7 @@ function ServerRow({ initial }: { initial: McpServerView }) {
           ) : null}
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
-          {usable ? (
+          {buttons.kind === 'usable' ? (
             <>
               <button
                 type="button"
@@ -124,7 +106,7 @@ function ServerRow({ initial }: { initial: McpServerView }) {
                 onClick={() => void toggle()}
                 className={buttonClass}
               >
-                {open ? 'Hide tools' : `Tools (${server.toolCount})`}
+                {buttons.toolsLabel}
               </button>
               <button
                 type="button"
@@ -132,9 +114,9 @@ function ServerRow({ initial }: { initial: McpServerView }) {
                 onClick={() => void refresh()}
                 className={buttonClass}
               >
-                {busy ? 'Working…' : 'Refresh tools'}
+                {buttons.refreshLabel}
               </button>
-              {server.authMode === 'oauth' ? (
+              {buttons.disconnect ? (
                 <button
                   type="button"
                   disabled={busy}
@@ -147,7 +129,7 @@ function ServerRow({ initial }: { initial: McpServerView }) {
             </>
           ) : (
             <a
-              href={`/api/mcp-servers/${server.id}/authorize`}
+              href={buttons.href}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
             >
               Connect
@@ -156,28 +138,24 @@ function ServerRow({ initial }: { initial: McpServerView }) {
         </div>
       </div>
 
-      {open ? (
-        tools === null ? (
-          <p className="mt-2 text-sm text-gray-500">Loading…</p>
-        ) : tools.length === 0 ? (
-          <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
-            The server lists no tools for you.
-          </p>
-        ) : (
-          <ul className="mt-2 space-y-1">
-            {tools.map((tool) => (
-              <li key={tool.name} className="text-sm">
-                <code className="text-xs">{`${server.slug}__${tool.name}`}</code>
-                <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">
-                  {tool.readOnly ? 'read' : 'act'}
-                </span>
-                {tool.description ? (
-                  <span className="ml-2 text-gray-600 dark:text-gray-400">{tool.description}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )
+      {list?.kind === 'loading' ? (
+        <p className="mt-2 text-sm text-gray-500">Loading…</p>
+      ) : list?.kind === 'empty' ? (
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          The server lists no tools for you.
+        </p>
+      ) : list?.kind === 'tools' ? (
+        <ul className="mt-2 space-y-1">
+          {list.tools.map((tool) => (
+            <li key={tool.key} className="text-sm">
+              <code className="text-xs">{tool.name}</code>
+              <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">{tool.access}</span>
+              {tool.description ? (
+                <span className="ml-2 text-gray-600 dark:text-gray-400">{tool.description}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       ) : null}
 
       {error ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{error}</p> : null}

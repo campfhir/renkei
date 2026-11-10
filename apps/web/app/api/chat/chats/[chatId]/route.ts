@@ -4,7 +4,7 @@
  */
 
 import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextResponse, after } from 'next/server';
 import { isUuid } from '@/lib/uuid';
 import {
   chatRequestContext,
@@ -16,6 +16,8 @@ import { resolveChatAccess } from '@/lib/chat/access';
 import { loadChatView } from '@/lib/chat/chat-view';
 import { deleteChat, getChatForOwner, updateChat, type ChatPatch } from '@/lib/chat/store';
 import { deleteChatWorktree } from '@/lib/code/projects';
+import { startCheckoutPreparation } from '@/lib/code/checkout';
+import { getOrigin } from '@/lib/get-origin';
 import { parseToolConfig } from '@/lib/chat/tool-config';
 import { TEMPORARY_ONLY_WHEN_EMPTY, TEMPORARY_OUTSIDE_PROJECTS } from '@/lib/chat/temporary';
 
@@ -31,6 +33,18 @@ export async function GET(
   const { session } = ready.context;
   const access = await resolveChatAccess(session.subject, chatId);
   if (!access) return jsonError(404, 'not-found', 'No such chat');
+  // Opening a code chat prepares its checkout behind the answer — the
+  // owner's own grant clones; a chat already prepared costs one read.
+  if (access.role === 'owner' && access.chat.projectId) {
+    const origin = await getOrigin(request);
+    after(() =>
+      startCheckoutPreparation({
+        chatId,
+        subject: session.subject,
+        ...(origin.ok ? { origin: origin.val } : {}),
+      })
+    );
+  }
   return NextResponse.json(await loadChatView(access, session.subject));
 }
 

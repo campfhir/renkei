@@ -53,10 +53,21 @@ export default [
   {
     files: ['**/*.ts', '**/*.tsx'],
     languageOptions: {
+      // No type information (no parserOptions.project): no rule enabled
+      // here reads it. The type-aware rules are safe-functions' `result/*`,
+      // and they are not on: the `rules` key below replaces the
+      // recommended config's `rules`, so only its plugin registration
+      // survives the spread. Building the programs anyway cost ~9GB and
+      // ~2.5 minutes for no finding (one TS program per package tsconfig,
+      // each re-checking the workspace packages it imports from source).
+      //
+      // Turning `result/*` on means bringing types back. Do it with one
+      // shared lint program (a root tsconfig.eslint.json over the Node-only
+      // packages) plus their own tsconfig for the packages that type
+      // differently (apps/web: Next's globals and JSX; worker-sandbox,
+      // voice, delegate-client: the DOM lib; the cleaner payloads), not
+      // with `project: true`: ~6GB instead of 9GB+.
       parser: tseslint.parser,
-      parserOptions: {
-        project: true,
-      },
     },
     ...safeFunctions.configs.recommended,
     plugins: {

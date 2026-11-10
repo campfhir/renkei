@@ -11,12 +11,20 @@
  *
  * Owns its own error notice, shown right under its own buttons rather than
  * lifted to the top of the card: a failed disconnect and the control that
- * caused it belong together.
+ * caused it belong together. Its states and what a refusal shows are
+ * disconnect-control.model.ts's.
  */
 
-import { useState } from 'react';
+import { useReducer } from 'react';
 import { useRouter } from 'next/navigation';
 import { reportFetchFailure } from '@/lib/fetch-json';
+import {
+  UNREACHABLE,
+  confirmLabel,
+  disconnectReducer,
+  disconnectRefusal,
+  initialDisconnectState,
+} from './disconnect-control.model';
 
 export default function DisconnectControl({
   endpoint,
@@ -39,55 +47,46 @@ export default function DisconnectControl({
   errorFields?: readonly string[];
 }) {
   const router = useRouter();
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(disconnectReducer, initialDisconnectState);
 
   async function disconnect() {
-    setBusy(true);
-    setNotice(null);
+    dispatch({ type: 'sent' });
     try {
       const response = await fetch(endpoint, { method: 'DELETE' });
       const data: unknown = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const body: Record<string, unknown> =
-          typeof data === 'object' && data !== null ? Object.fromEntries(Object.entries(data)) : {};
-        const message = errorFields
-          .map((field) => body[field])
-          .find((value): value is string => typeof value === 'string' && value.length > 0);
-        reportFetchFailure('DELETE', endpoint, response.status, message ?? 'Could not disconnect');
-        setNotice(message ?? 'Could not disconnect');
+        const notice = disconnectRefusal(data, errorFields);
+        reportFetchFailure('DELETE', endpoint, response.status, notice);
+        dispatch({ type: 'failed', notice });
         return;
       }
-      setConfirming(false);
+      dispatch({ type: 'disconnected' });
       router.refresh();
     } catch (error) {
-      reportFetchFailure('DELETE', endpoint, 0, 'Could not reach the server', error);
-      setNotice('Could not reach the server');
-    } finally {
-      setBusy(false);
+      reportFetchFailure('DELETE', endpoint, 0, UNREACHABLE, error);
+      dispatch({ type: 'failed', notice: UNREACHABLE });
     }
   }
 
   return (
     <>
-      {notice && (
-        <p className="mt-3 rounded-md bg-gray-100 p-2 text-sm dark:bg-gray-900">{notice}</p>
+      {state.notice && (
+        <p className="mt-3 rounded-md bg-gray-100 p-2 text-sm dark:bg-gray-900">{state.notice}</p>
       )}
-      {confirming ? (
+      {state.confirming ? (
         <div className="mt-3 rounded-lg border border-red-300 p-3 dark:border-red-800">
           <p className="mb-3 text-sm">{confirmText}</p>
           <div className="flex gap-3">
             <button
               onClick={() => void disconnect()}
-              disabled={busy}
+              disabled={state.busy}
               className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
             >
-              {busy ? 'Disconnecting…' : 'Yes, disconnect'}
+              {confirmLabel(state)}
             </button>
             <button
-              onClick={() => setConfirming(false)}
-              disabled={busy}
+              onClick={() => dispatch({ type: 'kept' })}
+              disabled={state.busy}
               className="flex-1 rounded-lg border border-gray-300 px-4 py-2 text-sm dark:border-gray-700"
             >
               Keep it
@@ -96,7 +95,7 @@ export default function DisconnectControl({
         </div>
       ) : (
         <button
-          onClick={() => setConfirming(true)}
+          onClick={() => dispatch({ type: 'asked' })}
           className="mt-3 rounded-lg border border-red-300 px-4 py-2 text-sm text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
         >
           {buttonLabel}

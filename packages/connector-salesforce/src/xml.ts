@@ -9,10 +9,9 @@
  * own, well-formed. Pure.
  */
 
-type Json = Record<string, unknown>;
+import { isRecord } from '@renkei/guards';
 
-const isRecord = (value: unknown): value is Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+type Json = Record<string, unknown>;
 
 interface XmlNode {
   name: string;

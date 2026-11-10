@@ -30,7 +30,6 @@ export {
   asArray,
   isDestructiveRequest,
   isHttpMethod,
-  isRecord,
   parseBaseUrl,
   textOf,
   unwrapList,

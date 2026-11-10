@@ -20,6 +20,7 @@
 
 import { granularJiraScopes, type JiraAuth } from './jira-auth';
 import { issueUrl, requestUrl } from '../common';
+import { isRecord } from '@renkei/guards';
 
 interface CacheEntry {
   serviceDesk: boolean;
@@ -33,10 +34,6 @@ const cache = new Map<string, CacheEntry>();
 export function projectKeyOf(issueKey: string): string {
   const dash = issueKey.lastIndexOf('-');
   return dash > 0 ? issueKey.slice(0, dash) : issueKey;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

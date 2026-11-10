@@ -148,9 +148,9 @@ export const voiceClient = {
     }
   },
 
-  /** Save this person's voice preferences (the whole document). */
-  savePrefs: (prefs: VoicePrefs) =>
-    sendJsonFull<{ voice: VoicePrefs }>(`/api/preferences`, 'PUT', {
-      voice: prefs,
+  /** Change some of this person's voice preferences: only the fields given. */
+  savePrefs: (patch: Partial<VoicePrefs>) =>
+    sendJsonFull<{ voice: VoicePrefs }>(`/api/preferences`, 'PATCH', {
+      voice: patch,
     }),
 };

@@ -25,7 +25,7 @@ import {
   type AuthedFetch,
 } from '@renkei/delegate-client';
 import { logger, secure } from '@/lib/logger';
-import type { MCPToolContext } from '../common';
+import { callerAttrs, type CallerContext, type MCPToolContext } from '../common';
 import { grantRefusalText } from '@/lib/grant-refusals';
 import { REQUEST_TIMEOUT_MS, isTimeoutError, timeoutSignal } from '../fetch-guard';
 
@@ -71,9 +71,7 @@ export async function resolveGitHubAccess(
   };
 }
 
-interface GitHubLogScope {
-  subject?: string;
-}
+type GitHubLogScope = CallerContext;
 
 /** Cap a logged body: enough to diagnose, bounded against megabyte payloads. */
 function truncateForLog(text: string): string {
@@ -111,13 +109,17 @@ export async function githubRequest(
     });
   } catch (error) {
     const timedOut = isTimeoutError(error);
-    logger.warn('GitHub API unreachable', {
-      component: 'github/fetch',
-      subject: scope.subject,
-      path: pathAndQuery,
-      method: init?.method ?? 'GET',
-      timedOut,
-    });
+    logger.warn(
+      "{caller}'s {method} {path} did not reach GitHub ({why}); the tool reported it as unreachable",
+      {
+        component: 'github/fetch',
+        ...(await callerAttrs(scope)),
+        path: pathAndQuery,
+        method: init?.method ?? 'GET',
+        timedOut,
+        why: timedOut ? 'timed out' : 'connection failed',
+      }
+    );
     return {
       ok: false,
       error: timedOut
@@ -129,12 +131,15 @@ export async function githubRequest(
   if (refusal) {
     // The delegate's own refusal never reached GitHub — the resolver's
     // words, not a GitHub status.
-    logger.warn('Delegate refused the GitHub call', {
-      component: 'github/fetch',
-      subject: scope.subject,
-      path: pathAndQuery,
-      refusal,
-    });
+    logger.warn(
+      "the delegate refused {caller}'s GitHub call ({refusal}) before it reached GitHub; {path} was not made",
+      {
+        component: 'github/fetch',
+        ...(await callerAttrs(scope)),
+        path: pathAndQuery,
+        refusal,
+      }
+    );
     return { ok: false, error: grantRefusalText(refusal, 'GitHub') };
   }
   if (!response.ok) {
@@ -142,9 +147,9 @@ export async function githubRequest(
       .clone()
       .text()
       .catch(() => '');
-    logger.warn('GitHub API non-OK response', {
+    logger.warn("GitHub answered {status} to {caller}'s {method} {path}", {
       component: 'github/fetch',
-      subject: scope.subject,
+      ...(await callerAttrs(scope)),
       path: pathAndQuery,
       method: init?.method ?? 'GET',
       status: response.status,

@@ -17,6 +17,8 @@ function deleteChatRows(tables: MemoryTables, chatIds: Set<string>): void {
     'chat_queued_sends',
     'chat_subagent_runs',
     'chat_summaries',
+    'chat_task_waits',
+    'chat_tasks',
     'chat_turns',
     'chat_widget_decisions',
   ] as const) {

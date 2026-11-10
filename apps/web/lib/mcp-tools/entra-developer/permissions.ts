@@ -471,12 +471,12 @@ export async function registerPermissionTools(
         action: 'Add API permissions',
         tone: 'positive',
         title: `Request ${toAdd.length} ${resource.displayName} permission${toAdd.length === 1 ? '' : 's'} for ${str(app.displayName)}`,
-        subtitle: `Microsoft Entra · app registration ${str(app.appId)}`,
-        person: { name: str(app.displayName), detail: `Application (client) id ${str(app.appId)}` },
+        subtitle: 'Microsoft Entra · app registration',
+        person: { name: str(app.displayName), detail: 'App registration' },
         secondaryPerson: {
           label: 'API',
           name: resource.displayName,
-          detail: `appId ${resource.appId}`,
+          detail: 'Resource API',
         },
         fields:
           consent.length > 0
@@ -606,12 +606,12 @@ export async function registerPermissionTools(
         action: 'Remove API permissions',
         tone: 'caution',
         title: `Stop requesting ${toRemove.length} ${resource.displayName} permission${toRemove.length === 1 ? '' : 's'} for ${str(app.displayName)}`,
-        subtitle: `Microsoft Entra · app registration ${str(app.appId)}`,
-        person: { name: str(app.displayName), detail: `Application (client) id ${str(app.appId)}` },
+        subtitle: 'Microsoft Entra · app registration',
+        person: { name: str(app.displayName), detail: 'App registration' },
         secondaryPerson: {
           label: 'API',
           name: resource.displayName,
-          detail: `appId ${resource.appId}`,
+          detail: 'Resource API',
         },
         groupLists: [
           {
@@ -760,8 +760,8 @@ export async function registerPermissionTools(
         action: 'Expose a scope',
         tone: 'positive',
         title: `Expose ${args.value} on ${str(app.displayName)}`,
-        subtitle: `Microsoft Entra · app registration ${str(app.appId)}`,
-        person: { name: str(app.displayName), detail: `Application (client) id ${str(app.appId)}` },
+        subtitle: 'Microsoft Entra · app registration',
+        person: { name: str(app.displayName), detail: 'App registration' },
         fields: [
           { label: 'Full scope', value: `${uri}/${args.value}` },
           ...(identifierUris.length === 0
@@ -898,12 +898,12 @@ export async function registerPermissionTools(
         action: 'Remove exposed scope',
         tone: 'caution',
         title: `Remove ${str(scope.value)} from ${str(app.displayName)}`,
-        subtitle: `Microsoft Entra · app registration ${str(app.appId)}`,
-        person: { name: str(app.displayName), detail: `Application (client) id ${str(app.appId)}` },
+        subtitle: 'Microsoft Entra · app registration',
+        person: { name: str(app.displayName), detail: 'App registration' },
         fields: [
           {
             label: 'Scope',
-            value: `${str(scope.value)} — ${str(scope.adminConsentDisplayName)} (id ${str(scope.id)})`,
+            value: `${str(scope.value)} — ${str(scope.adminConsentDisplayName)}`,
           },
         ],
         confirmTool: 'entra_remove_api_scope_confirm',

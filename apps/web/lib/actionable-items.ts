@@ -14,6 +14,8 @@ import { delegateGrants, grantFetch } from '@renkei/delegate-client';
 import { jiraFetch } from '@/lib/mcp-tools/common';
 import { markdownToAdf } from '@/lib/mcp-tools/jira/markdown';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 export interface CreateIssueArgs {
   summary: string;
@@ -23,10 +25,6 @@ export interface CreateIssueArgs {
 
 export type ExecutionResult =
   { ok: true; issueKey: string; url: string } | { ok: false; error: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Narrow a stored suggested_action to jira_create_issue args. The pipeline wrote
@@ -88,19 +86,27 @@ export async function executeCreateIssue(
     const issueKey = isRecord(created) && typeof created.key === 'string' ? created.key : null;
     if (!issueKey) return { ok: false, error: 'Jira did not return an issue key' };
 
-    logger.info('Issue created from approved card', {
-      component: 'cards/execute',
-      subject,
-      issueKey,
-    });
+    logger.info(
+      '{actor} approved a card and Jira issue {issueKey} was created in project {projectKey}',
+      {
+        component: 'cards/execute',
+        ...(await whoIs(subject)),
+        issueKey,
+        projectKey,
+      }
+    );
     return { ok: true, issueKey, url: `${site.siteUrl}/browse/${issueKey}` };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn('Issue creation failed', {
-      component: 'cards/execute',
-      subject,
-      error: message,
-    });
+    logger.warn(
+      '{actor} approved a card, but the Jira issue was not created in project {projectKey}; the card shows the error: {error}',
+      {
+        component: 'cards/execute',
+        ...(await whoIs(subject)),
+        projectKey,
+        error: message,
+      }
+    );
     return { ok: false, error: message };
   }
 }

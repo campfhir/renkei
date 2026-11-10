@@ -9,29 +9,31 @@ import { getOrgSettings, setOrgSettings } from '@renkei/settings';
 import { recordAuditEvent } from '@/lib/audit-events';
 import { checkAccess, ROLE_OPERATOR } from '@/lib/access';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 const ALLOWED_DAYS = [7, 14, 30, 90];
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const settings = await getOrgSettings();
   if (!settings.ok) {
-    logger.error('Settings unavailable: {error}', {
-      component: 'api/admin/agents/retention',
-      error: settings.err.message ?? settings.err.type,
-    });
+    logger.error(
+      '{actor} opened the agent-run retention setting, but the org settings could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/agents/retention',
+        ...who(session),
+        error: settings.err.message ?? settings.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Settings unavailable' }, { status: 500 });
   }
   return NextResponse.json({ agentRunRetentionDays: settings.val.agentRunRetentionDays });
 }
 
 export async function PUT(request: NextRequest): Promise<NextResponse> {
-  const access = await checkAccess([ROLE_OPERATOR]);
-  if (!access) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const body: unknown = await request.json().catch(() => null);
   const payload: { agentRunRetentionDays?: unknown } =
@@ -46,14 +48,19 @@ export async function PUT(request: NextRequest): Promise<NextResponse> {
 
   const saved = await setOrgSettings({ agentRunRetentionDays: days });
   if (!saved.ok) {
-    logger.error('Could not save: {error}', {
-      component: 'api/admin/agents/retention',
-      error: saved.err.message ?? saved.err.type,
-    });
+    logger.error(
+      '{actor} set agent-run retention to {days} days, but the org settings were not saved: {error}',
+      {
+        component: 'api/admin/agents/retention',
+        ...who(session),
+        days,
+        error: saved.err.message ?? saved.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not save' }, { status: 500 });
   }
   recordAuditEvent({
-    actorSubject: access.subject,
+    actorSubject: session.subject,
     action: 'settings.updated',
     targetKind: 'settings',
     targetLabel: 'agent run retention',

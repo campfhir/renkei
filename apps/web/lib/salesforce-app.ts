@@ -62,14 +62,15 @@ export async function getSalesforceConnector(
 ): Promise<SalesforceConnectorApp | null> {
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'connectors/salesforce',
-    });
+    logger.error(
+      'TOKEN_ENCRYPTION_KEY is missing or malformed, so the {type} registration cannot be read; no Salesforce flow can start',
+      { component: 'connectors/salesforce', type: kind.key }
+    );
     return null;
   }
   const configResult = await readConnectorConfigCached(kind.key, keyResult.val);
   if (!configResult.ok) {
-    logger.error('Could not read salesforce connector config', {
+    logger.error('the {type} connector config could not be read; no Salesforce flow can start', {
       component: 'connectors/salesforce',
       type: kind.key,
     });
@@ -81,11 +82,14 @@ export async function getSalesforceConnector(
   if (!org || !org.enabled) return null;
   const clientSecret = config.secrets[orgSecretName(org.key)];
   if (!clientSecret) {
-    logger.warn('salesforce connector has no consumer secret', {
-      component: 'connectors/salesforce',
-      type: kind.key,
-      connector: org.key,
-    });
+    logger.warn(
+      'the Salesforce connector {connector} ({type}) is switched on but has no consumer secret; no flow to that org can start',
+      {
+        component: 'connectors/salesforce',
+        type: kind.key,
+        connector: org.key,
+      }
+    );
     return null;
   }
   const redirectUri =

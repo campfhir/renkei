@@ -92,7 +92,7 @@ import {
 } from '@renkei/agents';
 import { countAgentMemory, forgetAgentMemory, readAgentMemory } from '@renkei/agents/memory';
 import { createAgentRun, findInProgressRun, resumeAgentRun } from '@renkei/agents/runs';
-import { keywordsFieldSchema, type MCPToolContext } from '../common';
+import { callerFields, keywordsFieldSchema, type MCPToolContext } from '../common';
 import { listAgents, type TriggerPayload } from '@/lib/agents/store';
 import {
   resolveAgentAccess,
@@ -140,12 +140,16 @@ import {
   type PendingApproval,
   type PendingQuestion,
 } from '@/lib/agents/approvals';
+import { RUN_VIEWS, isRunView, runViewFilter } from '@/lib/agents/run-views';
 import { requestRunCancellation } from '@/lib/agents/run-cancellation';
+import { MAX_HALTED_PER_REQUEST, findHaltCandidate, haltStuckRuns } from '@/lib/agents/run-halt';
+import { isStuckRun } from '@/lib/agents/stuck';
 import { listAvailableTools, type ToolDescriptor } from '@/lib/mcp-tools/tool-catalog';
 import { DEFAULT_ORG_SETTINGS, getOrgSettings, type ActApprovalPolicy } from '@renkei/settings';
 import { agentJobsQueue } from '@renkei/queue';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { whichAgentOf } from '@/lib/log-actor';
 
 /** The connector key the agents capabilities register under. */
 export const AGENTS_CONNECTOR = 'agents';
@@ -879,10 +883,12 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               'wait ran out and it was treated as declined.'
           );
         case 'decided': {
-          logger.info('agent_approval_decide decided a staged batch', {
+          logger.info('{caller} {did} the staged batch of run {runId}', {
             component: 'mcp/tool',
+            ...callerFields(context),
             runId: result.runId,
             decision: result.decision,
+            did: result.decision === 'approve' ? 'approved' : 'declined',
           });
           return textResult(
             [
@@ -1011,9 +1017,11 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               'wait ran out and the run treated it as unanswered.'
           );
         case 'answered': {
-          logger.info('agent_question_answer answered a paused run', {
+          logger.info('{caller} answered the question run {runId} was paused on{resumed}', {
             component: 'mcp/tool',
+            ...callerFields(context),
             runId: result.runId,
+            resumed: result.resumed ? '; it was queued to resume' : '',
           });
           return textResult(
             [
@@ -1035,16 +1043,25 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       description:
         "One of your agents' (or one shared with you) recent runs: status (including " +
         "'waiting' for staged changes or a question), " +
-        'what failed, trigger, timing, and the tokens each run spent. Use ' +
-        'agent_run_get on a runId for the full story; agent_usage_get for the agent as a whole.',
+        'what failed, trigger, timing, and the tokens each run spent. Filter by a status or a ' +
+        "quick filter: 'stuck' (queued or running for over two hours — what agent_run_halt " +
+        "clears), 'halted', 'paused' (waiting on the owner's sign-in). Page past the first " +
+        'runs with offset. Use agent_run_get on a runId for the full story; agent_usage_get for ' +
+        'the agent as a whole.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({
         agentId: z.string().min(1).describe('From agent_list'),
         status: z
-          .enum(['succeeded', 'failed', 'stopped', 'waiting', 'running', 'queued', 'canceled'])
+          .enum(RUN_VIEWS)
           .optional()
-          .describe('Only runs in this state'),
+          .describe('Only runs in this state, or under this quick filter'),
         limit: z.number().int().min(1).max(50).optional().describe('Max runs (default 20)'),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Skip this many of the newest matching runs first (paging)'),
       }),
     },
     async (args: Record<string, unknown>) => {
@@ -1055,19 +1072,13 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       const limit =
         typeof args.limit === 'number' ? Math.min(Math.max(Math.trunc(args.limit), 1), 50) : 20;
-      const status =
-        args.status === 'succeeded' ||
-        args.status === 'failed' ||
-        args.status === 'stopped' ||
-        args.status === 'waiting' ||
-        args.status === 'running' ||
-        args.status === 'queued' ||
-        args.status === 'canceled'
-          ? args.status
-          : undefined;
+      const view = isRunView(args.status) ? args.status : undefined;
+      const offset =
+        typeof args.offset === 'number' && args.offset > 0 ? Math.trunc(args.offset) : 0;
       const runs = await listRunsForOwner(access.ownerSubject, agent.id, {
-        status,
+        ...(view ? { filter: runViewFilter(view, Date.now()) } : {}),
         limit,
+        ...(offset ? { offset } : {}),
       });
       if (runs.length === 0) return textResult('No runs match.');
 
@@ -1266,9 +1277,10 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       title: 'Agents · Act — Stop a run',
       description:
         'Stop a run of one of your agents (or one shared with you) that has not finished — ' +
-        'queued, waiting on you, or actively running. This only REQUESTS the stop: a queued ' +
-        'or waiting run cancels within a moment, but a running one finishes the call it is ' +
-        'making first and stops before the next — agent_run_get shows when it lands. Refuses ' +
+        'queued, waiting on you, or actively running. A queued run is canceled at once (it has ' +
+        'not started). Otherwise this REQUESTS the stop: a waiting run cancels within a moment, ' +
+        'a running one finishes the call it is making first and stops before the next — ' +
+        'agent_run_get shows when it lands. Refuses ' +
         'agent-run callers, same as agent_run_now: stopping runs outside the chain is a ' +
         'human/API decision, not one an agent makes for itself or another run mid-chain.',
       annotations: { readOnlyHint: false },
@@ -1307,10 +1319,105 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
               ? 'That run was already canceled.'
               : `That run already ${result.status} — nothing to stop.`
           );
-        case 'canceling':
+        case 'canceled':
+          return textResult('Canceled. It had not started yet, so nothing of it ran.');
+        case 'canceling': {
+          // A cancel only asks, and a stuck run is never reached to be asked:
+          // say so, and name what does clear it, rather than promise a cancel
+          // that will never land.
+          const candidate = await findHaltCandidate(access.agent.id, access.ownerSubject, runId);
+          const stuck = candidate !== null && isStuckRun(candidate, Date.now());
           return textResult(
-            'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
+            stuck
+              ? 'Cancellation requested — but this run has been queued or running for over two ' +
+                  'hours, so it is stuck and the request will likely never land. agent_run_halt ' +
+                  'on this runId closes it out now.'
+              : 'Cancellation requested. agent_run_get on this runId will show "canceled" once it lands.'
           );
+        }
+      }
+    }
+  );
+
+  server.registerTool(
+    'agent_run_halt',
+    {
+      title: 'Agents · Act — Halt stuck runs',
+      description:
+        'Halt runs that are stuck: queued or running for over two hours, which a cancel never ' +
+        'reaches (a cancel only asks, and a stuck run has no worker to ask). Halting closes the ' +
+        'run out at once as Halted and clears its queued jobs; it cannot be undone or resumed. ' +
+        'Pass runId to halt one run, or agentId to halt every stuck run of that agent (up to ' +
+        `${MAX_HALTED_PER_REQUEST} at a time — call again for more). A run younger than two ` +
+        'hours is refused: use agent_run_cancel. Find stuck runs with agent_runs_list ' +
+        "status 'stuck'. Your agents or ones shared with you; refuses agent-run callers, same " +
+        'as agent_run_cancel.',
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      inputSchema: z.object({
+        runId: z.string().min(1).optional().describe('One run to halt (from agent_runs_list)'),
+        agentId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Halt every stuck run of this agent instead (from agent_list)'),
+      }),
+    },
+    async (args: Record<string, unknown>) => {
+      if (!context.subject) return errText(NO_SUBJECT);
+      if (context.agent) {
+        return errText('Agent runs cannot halt runs from here — that is a human/API decision.');
+      }
+      const runId = typeof args.runId === 'string' ? args.runId.trim() : '';
+      const agentIdArg = typeof args.agentId === 'string' ? args.agentId.trim() : '';
+      if ((runId === '') === (agentIdArg === '')) {
+        return errText('Pass exactly one of runId (one run) or agentId (all its stuck runs).');
+      }
+
+      let agentId = agentIdArg;
+      if (runId) {
+        if (!isUuid(runId)) return errText('No run of yours has that id.');
+        // The run says which agent it belongs to; access is checked on that.
+        const runRow = await getDataStore().agentRuns.findRunAgent(runId);
+        if (!runRow) return errText('No run of yours has that id.');
+        agentId = runRow.agentId;
+      }
+      const access = await resolveAgentAccess(context.subject, agentId);
+      if (!access) return errText(runId ? 'No run of yours has that id.' : NOT_FOUND);
+
+      const result = await haltStuckRuns({
+        agentId: access.agent.id,
+        ownerSubject: access.ownerSubject,
+        bySubject: context.subject,
+        ...(runId ? { runId } : {}),
+        nowMs: Date.now(),
+      });
+      switch (result.outcome) {
+        case 'not-found':
+          return errText(runId ? 'No run of yours has that id.' : NOT_FOUND);
+        case 'not-stuck':
+          return errText(
+            result.status === 'queued' || result.status === 'running'
+              ? 'That run has not been stuck for two hours yet — use agent_run_cancel instead.'
+              : `That run is ${result.status}, not stuck — nothing to halt.`
+          );
+        case 'halted': {
+          if (runId) {
+            return textResult(
+              result.runIds.length > 0
+                ? 'Halted. The run is closed out and will not go any further.'
+                : 'That run finished on its own before it could be halted.'
+            );
+          }
+          const count = result.runIds.length;
+          if (count === 0) return textResult(`“${access.agent.name}” has no stuck runs to halt.`);
+          return textResult(
+            `Halted ${count} stuck run${count === 1 ? '' : 's'} of “${access.agent.name}”` +
+              (count >= MAX_HALTED_PER_REQUEST
+                ? ' — the most one call halts; call again for any that remain.'
+                : '.') +
+              `\n\n${result.runIds.map((id) => `- ${id}`).join('\n')}`
+          );
+        }
       }
     }
   );
@@ -1387,11 +1494,21 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
       }
 
-      logger.info('agent_run_resume resumed a failed run', {
-        component: 'mcp/tool',
-        agentId: agent.id,
-        runId: resumed.val.runId,
-      });
+      logger.info(
+        '{caller} resumed failed run {runId} of agent "{agent}" of {owner}{withGuidance}',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          ...(await whichAgentOf({
+            agentId: agent.id,
+            agentName: agent.name,
+            ownerSubject: access.ownerSubject,
+          })),
+          runId: resumed.val.runId,
+          withGuidance:
+            typeof args.guidance === 'string' && args.guidance.trim() ? ' with guidance' : '',
+        }
+      );
       return textResult(
         [
           `Resumed run ${runId} of "${agent.name}" where it stopped, with a fresh budget.`,
@@ -1559,23 +1676,32 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
 
       // Recorded as the manual run it is (trigger_id stays null) — the owner
       // started it, so it is not an externally triggered run for approvals.
-      const result = await createAgentRun(agentJobsQueue().producer, {
-        agentId: agent.id,
-        ownerSubject: access.ownerSubject,
-        definition: agentDefinitionOf(agent),
-        llmModelId: agent.llmModelId,
-        triggerId: null,
-        triggerKind: 'manual',
-        triggeredBySubject: context.subject,
-        initialState,
-      });
+      const result = await createAgentRun(
+        agentJobsQueue().producer,
+        {
+          agentId: agent.id,
+          ownerSubject: access.ownerSubject,
+          definition: agentDefinitionOf(agent),
+          llmModelId: agent.llmModelId,
+          triggerId: null,
+          triggerKind: 'manual',
+          triggeredBySubject: context.subject,
+          initialState,
+        },
+        { log: (message, meta) => logger.debug(message, meta) }
+      );
       if (!result.ok) {
         return errText(result.err.message ?? `The run could not be started (${result.err.type}).`);
       }
 
-      logger.info('agent_run_now started an agent by hand', {
+      logger.info('{caller} started agent "{agent}" of {owner} by hand; run {runId} was queued', {
         component: 'mcp/tool',
-        agentId: agent.id,
+        ...callerFields(context),
+        ...(await whichAgentOf({
+          agentId: agent.id,
+          agentName: agent.name,
+          ownerSubject: access.ownerSubject,
+        })),
         runId: result.val.runId,
         viaApiTrigger: hasApiTrigger,
       });
@@ -1726,12 +1852,21 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         }
         const result = await forgetAgentMemory(agent.id, { kind: 'all' });
         // Memory does not come back, so the wipe leaves a trace somewhere.
-        logger.info('agent_memory_forget cleared an agent memory', {
-          component: 'mcp/tool',
-          agentId: agent.id,
-          entriesDeleted: result.entriesDeleted,
-          summaryCleared: result.summaryCleared,
-        });
+        logger.info(
+          '{caller} cleared all of agent "{agent}" of {owner}\'s memory: {entriesDeleted} entries{andSummary} forgotten',
+          {
+            component: 'mcp/tool',
+            ...callerFields(context),
+            ...(await whichAgentOf({
+              agentId: agent.id,
+              agentName: agent.name,
+              ownerSubject: access.ownerSubject,
+            })),
+            entriesDeleted: result.entriesDeleted,
+            summaryCleared: result.summaryCleared,
+            andSummary: result.summaryCleared ? ' and the rolling summary' : '',
+          }
+        );
         return textResult(
           `Cleared "${agent.name}"'s memory: ${entryCount(result.entriesDeleted)}` +
             `${result.summaryCleared ? ' and the rolling summary' : ''} forgotten.`
@@ -2200,11 +2335,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
       if (settings.ok) policy = settings.val.agentActStepsRequireApproval;
       kinds = new Map(catalog.map((tool) => [tool.name, tool.kind]));
     } catch (error) {
-      logger.warn('agent save hints could not be read: {error}', {
-        component: 'mcp/agents',
-        subject: context.subject,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      logger.warn(
+        "the approval hints for {caller}'s agent save could not be read (org settings or the tool catalog); the reply omits them: {error}",
+        {
+          component: 'mcp/agents',
+          ...callerFields(context),
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return [];
     }
     const acts = draft.tools.filter((tool) => kinds.get(tool) !== 'read');
@@ -2279,9 +2417,14 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      logger.info('agent_create persisted a new agent', {
+      logger.info('{caller} created agent "{agent}" (disabled until reviewed in the builder)', {
         component: 'mcp/tool',
-        agentId: result.agentId,
+        ...callerFields(context),
+        ...(await whichAgentOf({
+          agentId: result.agentId,
+          agentName: result.normalized.name,
+          ownerSubject: context.subject,
+        })),
       });
       return textResult(
         [
@@ -2530,9 +2673,15 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      logger.info('agent_patch changed an agent definition', {
+      logger.info('{caller} changed agent "{agent}" of {owner}: {changed}', {
         component: 'mcp/tool',
-        agentId: result.agentId,
+        ...callerFields(context),
+        ...(await whichAgentOf({
+          agentId: result.agentId,
+          agentName: result.normalized.name,
+          ownerSubject: access.ownerSubject,
+        })),
+        changed,
       });
       return textResult(
         [
@@ -2619,10 +2768,19 @@ export function registerAgentTools(server: McpServer, context: MCPToolContext): 
         );
       }
 
-      logger.info('agent_update rewrote an agent definition', {
-        component: 'mcp/tool',
-        agentId: result.agentId,
-      });
+      logger.info(
+        '{caller} rewrote the definition of agent "{agent}" of {owner}; it stays {state}',
+        {
+          component: 'mcp/tool',
+          ...callerFields(context),
+          ...(await whichAgentOf({
+            agentId: result.agentId,
+            agentName: result.normalized.name,
+            ownerSubject: access.ownerSubject,
+          })),
+          state: enabled ? 'enabled' : 'disabled',
+        }
+      );
       return textResult(
         [
           `Updated "${result.normalized.name}" (${enabled ? 'still enabled' : 'disabled'}).`,

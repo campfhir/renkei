@@ -26,6 +26,7 @@ export default {
     '^@renkei/worker-delegate/embedded$': '<rootDir>/../../apps/worker-delegate/src/embedded.ts',
     '^@renkei/worker-kit$': '<rootDir>/../../packages/worker-kit/src/index.ts',
     '^@renkei/crypto$': '<rootDir>/../../packages/crypto/src/index.ts',
+    '^@renkei/guards$': '<rootDir>/../../packages/guards/src/index.ts',
     '^@renkei/notifications$': '<rootDir>/../../packages/notifications/src/index.ts',
     '^@renkei/email-sanitizer$': '<rootDir>/../../packages/email-sanitizer/src/index.ts',
     '^@renkei/provider-grants$': '<rootDir>/../../packages/provider-grants/src/index.ts',

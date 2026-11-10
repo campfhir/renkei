@@ -18,6 +18,7 @@
 
 import type { AttemptView, RunDetail } from '@/lib/agents/runs-view';
 import { toolResultText } from '@/lib/agents/tool-result';
+import { isRecord } from '@renkei/guards';
 
 export interface RunAction {
   /** Position in the run, 1-based — the number the UI shows. */
@@ -50,10 +51,6 @@ export interface RunActivity {
 
 function str(value: unknown): string | null {
   return typeof value === 'string' && value ? value : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function callsOf(attempt: AttemptView): Record<string, unknown>[] {

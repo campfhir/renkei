@@ -5,6 +5,7 @@ import {
   createLogAdapter,
   createMemoryDataStore,
   memoryDataStoreRequested,
+  migrateLogTables,
   registerDataStore,
 } from '@renkei/db';
 import { developmentDelegateKeyRefusal } from '@renkei/delegate-client';
@@ -25,7 +26,9 @@ export async function register() {
     // application/version/commit ride on every line as global attrs (see
     // lib/logger.ts) — this boot line just makes the plain-English
     // announcement, first, before anything that could fail.
-    logger.info('booting {application} {version}', { component: 'web/instrumentation' });
+    logger.info('the web app is booting: {application} {version}', {
+      component: 'web/instrumentation',
+    });
 
     // The delegate key is this process's identity to the key service; the
     // compose file's development default is a key everyone has, so a
@@ -54,9 +57,10 @@ export async function register() {
       startMemoryWorkers();
       watchLogLevel(logger);
       globalMarks.__renkeiPgLogAdapterAttached = true;
-      logger.warn('Running on the IN-MEMORY data store: nothing is persisted', {
-        component: 'web/instrumentation',
-      });
+      logger.warn(
+        'the web app is running on the IN-MEMORY data store: nothing is persisted and no log table is attached',
+        { component: 'web/instrumentation' }
+      );
       return;
     }
 
@@ -80,10 +84,13 @@ export async function register() {
 
     const ready = checkDataStore();
     if (!ready.ok) {
-      logger.error('Failed to initialize database for bored-logs', {
-        component: 'web/instrumentation',
-        error: String(ready.err),
-      });
+      logger.error(
+        'the data store is not ready, so the log table was not attached; log lines go to the console only: {error}',
+        {
+          component: 'web/instrumentation',
+          error: String(ready.err),
+        }
+      );
       return;
     }
 
@@ -102,38 +109,32 @@ export async function register() {
       process.exit(1);
     }
 
-    // The adapter rides @renkei/db's own connection: this process never
-    // holds the handle.
-    const built = await createLogAdapter({
-      level: 'info',
-      encrypt: cipher.encrypt,
-      decrypt: cipher.decrypt,
-      onWarning(w) {
-        if (w.type === 'attr_keys_truncated') {
-          logger.warn('attribute keys truncated', { component: 'logging/adapter' });
-        } else if (w.type === 'attr_value_truncated') {
-          logger.warn('attribute value truncated', { component: 'logging/adapter' });
-        }
-      },
-    });
-    if (!built.ok) {
-      logger.error('Failed to initialize database for bored-logs', {
-        component: 'web/instrumentation',
-        error: String(built.err),
-      });
-      return;
-    }
-    const adapter = built.val;
-
-    // Idempotent (CREATE IF NOT EXISTS) — brings a table set created by an
-    // older bored-logs up to the current schema on every boot.
-    await adapter.migrate();
-    logger.addAdapter(adapter);
-
+    // The log table and the schema check need the database, and register()
+    // must finish before Next serves a single request — health checks
+    // included. So they run beside the server rather than ahead of it: a
+    // slow or locked database delays when log lines reach the table (they
+    // are on the console meanwhile), never when the app answers.
     globalMarks.__renkeiPgLogAdapterAttached = true;
-    logger.info('PostgresAdapter registered', { component: 'web/instrumentation' });
-
-    await reportSchemaDrift();
+    void attachLogTable(cipher)
+      .catch((error: unknown) =>
+        logger.error(
+          'the Postgres log adapter could not be attached; log lines go to the console only: {error}',
+          {
+            component: 'web/instrumentation',
+            error: error instanceof Error ? error.message : String(error),
+          }
+        )
+      )
+      .then(reportSchemaDrift)
+      .catch((error: unknown) =>
+        logger.error(
+          'the migration status could not be checked at boot; a schema behind this build would go unreported: {error}',
+          {
+            component: 'web/instrumentation',
+            error: error instanceof Error ? error.message : String(error),
+          }
+        )
+      );
 
     // Shutdown and recovery for the chat turns this process runs. Next's
     // own SIGTERM/SIGINT handler stays: it waits for after() work, and
@@ -144,10 +145,13 @@ export async function register() {
     const { installShutdownHandlers } = await import('@/lib/shutdown');
     const { startTurnRecovery } = await import('@/lib/chat/turn-recovery');
     installShutdownHandlers((signal) =>
-      logger.info('{signal} received: suspending running chat turns', {
-        component: 'web/instrumentation',
-        signal,
-      })
+      logger.info(
+        '{signal} received: the web app is shutting down and suspending its running chat turns',
+        {
+          component: 'web/instrumentation',
+          signal,
+        }
+      )
     );
     startTurnRecovery();
 
@@ -176,19 +180,68 @@ export const onRequestError: Instrumentation.onRequestError = (error, request, c
     typeof error === 'object' && error !== null && 'digest' in error
       ? String(error.digest)
       : undefined;
-  logger.error('Unhandled {routeType} error on {routePath}: {message}', {
-    component: 'web/request-error',
-    message: error instanceof Error ? error.message : String(error),
-    name: error instanceof Error ? error.name : undefined,
-    stack: error instanceof Error ? error.stack : undefined,
-    digest,
-    method: request.method,
-    path: request.path,
-    routePath: context.routePath,
-    routeType: context.routeType,
-    renderSource: context.renderSource,
-  });
+  logger.error(
+    'an unhandled error escaped the {routeType} {routePath} ({method} {path}); the person saw the error page: {message}',
+    {
+      component: 'web/request-error',
+      message: error instanceof Error ? error.message : String(error),
+      name: error instanceof Error ? error.name : undefined,
+      stack: error instanceof Error ? error.stack : undefined,
+      digest,
+      method: request.method,
+      path: request.path,
+      routePath: context.routePath,
+      routeType: context.routeType,
+      renderSource: context.renderSource,
+    }
+  );
 };
+
+/**
+ * The bored-logs Postgres adapter, its tables brought current, added to the
+ * logger. Throws when the tables cannot be brought current.
+ */
+async function attachLogTable(cipher: LogCipher): Promise<void> {
+  // The adapter rides @renkei/db's own connection: this process never
+  // holds the handle.
+  const built = await createLogAdapter({
+    level: 'info',
+    encrypt: cipher.encrypt,
+    decrypt: cipher.decrypt,
+    onWarning(w) {
+      if (w.type === 'attr_keys_truncated') {
+        logger.warn(
+          'a log line carried more attribute keys than the log table keeps; the extra keys were dropped',
+          { component: 'logging/adapter' }
+        );
+      } else if (w.type === 'attr_value_truncated') {
+        logger.warn('a log attribute value was longer than the log table keeps; it was cut short', {
+          component: 'logging/adapter',
+        });
+      }
+    },
+  });
+  if (!built.ok) {
+    logger.error(
+      'the log table adapter could not be built; log lines go to the console only: {error}',
+      {
+        component: 'web/instrumentation',
+        error: String(built.err),
+      }
+    );
+    return;
+  }
+  const adapter = built.val;
+
+  // DDL only when a table or index is missing: the "idempotent" CREATE ...
+  // IF NOT EXISTS still queues for a table lock behind every other
+  // process's log inserts (see migrateLogTables).
+  await migrateLogTables(adapter);
+  logger.addAdapter(adapter);
+  logger.info('log lines are now written to the log table as well as the console', {
+    component: 'web/instrumentation',
+  });
+}
 
 /**
  * Say loudly, once, at startup if the schema is behind the code.
@@ -202,25 +255,34 @@ async function reportSchemaDrift(): Promise<void> {
   const status = await getMigrationStatus();
 
   if (status.error) {
-    logger.error('Could not check migration status: {error}', {
-      component: 'web/instrumentation',
-      error: status.error,
-    });
+    logger.error(
+      'the migration status could not be read; a schema behind this build would go unreported: {error}',
+      {
+        component: 'web/instrumentation',
+        error: status.error,
+      }
+    );
     return;
   }
 
   if (status.pending.length === 0) {
-    logger.info('Schema up to date', { component: 'web/instrumentation', applied: status.applied });
+    logger.info('the database schema is up to date with this build', {
+      component: 'web/instrumentation',
+      applied: status.applied,
+    });
     return;
   }
 
-  logger.error('DATABASE SCHEMA IS BEHIND THIS BUILD — {count} migration(s) pending', {
-    component: 'web/instrumentation',
-    count: status.pending.length,
-    pending: status.pending.join(', '),
-    applied: status.applied,
-    action: MIGRATION_COMMAND,
-    consequence:
-      'Requests touching the new schema will fail until this is run. /api/health reports 503.',
-  });
+  logger.error(
+    'DATABASE SCHEMA IS BEHIND THIS BUILD: {count} migration(s) pending; requests touching the new schema fail and /api/health answers 503 until {action} is run',
+    {
+      component: 'web/instrumentation',
+      count: status.pending.length,
+      pending: status.pending.join(', '),
+      applied: status.applied,
+      action: MIGRATION_COMMAND,
+      consequence:
+        'Requests touching the new schema will fail until this is run. /api/health reports 503.',
+    }
+  );
 }

@@ -7,16 +7,14 @@
  * reconnects, never a guess at what was meant.
  */
 
+import { isRecord } from '@renkei/guards';
+
 export interface MirthCredentials {
   username: string;
   password: string;
 }
 
 export type CredentialError = 'DECRYPTION_ERROR' | 'MALFORMED_CREDENTIALS';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Validate an untrusted value into a credential, or null. Exposed for the

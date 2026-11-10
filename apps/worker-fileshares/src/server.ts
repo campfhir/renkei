@@ -27,7 +27,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { getOrgSettings } from '@renkei/settings';
-import { authorized, isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { authorized, readBody, sendJson, str } from '@renkei/worker-kit';
 import {
   parseShareCredentials,
   type ShareCredentials,
@@ -43,7 +43,9 @@ import {
   serviceWriteFile,
 } from '@renkei/connector-fileshares';
 import type { ServiceDeps, ServiceError, SubjectTarget } from '@renkei/connector-fileshares';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
+import { isRecord } from '@renkei/guards';
 
 export interface FileshareServerDeps {
   /** Accepted bearer keys; empty means every request is refused. */
@@ -102,12 +104,24 @@ function sendServiceError(
   context: { op: string; shareId: string; subject?: string; path?: string }
 ): void {
   if (!UNLOGGED_SERVICE_ERRORS.has(error.type)) {
-    const log = error.type === 'store' ? logger.error : logger.warn;
-    log('fileshare {op} failed ({type}): {error}', {
-      component: COMPONENT,
-      ...context,
-      type: error.type,
-      error: error.message ?? error.type,
+    const log = error.type === 'store' ? logger.error.bind(logger) : logger.warn.bind(logger);
+    // Synchronous on purpose (every handler returns through here); the
+    // name lookup is cached and never throws, so the line follows at once.
+    const subject = context.subject;
+    void actorAttrs(subject).then((who) => {
+      log(
+        'the file share {op} request of {forWhom}{onPath} failed ({type}); the caller got {status}: {error}',
+        {
+          component: COMPONENT,
+          ...context,
+          ...(subject ? who : {}),
+          forWhom: subject ? who.actor : 'an unnamed caller',
+          onPath: context.path ? ` for ${context.path}` : '',
+          type: error.type,
+          status: statusForServiceError(error.type),
+          error: error.message ?? error.type,
+        }
+      );
     });
   }
   sendJson(response, statusForServiceError(error.type), {
@@ -412,7 +426,7 @@ export function createFileshareServer(deps: FileshareServerDeps): Server {
 
   return createServer((request, response) => {
     void handle(request, response).catch((error: unknown) => {
-      logger.error('unhandled fileshare op failure: {error}', {
+      logger.error('a file share op threw before it answered; the caller got a 500: {error}', {
         component: COMPONENT,
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,

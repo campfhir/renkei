@@ -1,16 +1,23 @@
 /**
- * A code project's Services from the person's side: the card on the
- * project page (none yet, how many images are allowed) opening the
- * project's Services page, where a Postgres is started from the form
- * with its container variables and an export, listed running with its
- * address and the variables it sets, its lines in the combined tail
- * that follows as it writes, then stopped —
- * and the page at phone width. The sandbox worker is the stub in
- * sandbox-stub.mjs (no engine: a start reads running at a made-up
- * address at once), which seeds the same allowed images migration 121
- * does. The project is the test's own person's, connected to Bitbucket
- * and made through the Code routes (e2e/support/code-host.ts), so no two
- * tests share a service.
+ * A code project's Services from the person's side, in a browser: the
+ * card on the project page (none yet, how many images are allowed)
+ * opening the project's Services page, which renders the allowed images
+ * on the real server; one press through — a Postgres started from the
+ * form with its container variables and an export, the request reaching
+ * the worker, the service listed running with its address and the
+ * variables it sets; its lines in the combined tail, a later line
+ * arriving while Follow is on; the card reflecting it; the page at phone
+ * width; and, stopped through the route the page calls, the empty states
+ * drawn. The sandbox worker is the stub in sandbox-stub.mjs (no engine: a
+ * start reads running at a made-up address at once), which seeds the same
+ * allowed images migration 121 does. The project is the test's own
+ * person's, connected to Bitbucket and made through the Code routes
+ * (e2e/support/code-host.ts), so no two tests share a service.
+ *
+ * Where its rules went: what the form opens with and sends, when Start can
+ * be pressed, a refusal keeping the form, what Stop asks, the variables a
+ * service sets, the tail's filter, Clear and pause, what it keeps and what
+ * it says when empty — app/(app)/code/_components/services-page.model.test.ts.
  */
 
 import path from 'node:path';
@@ -60,7 +67,9 @@ test.describe('Code project services', () => {
     ids = await stage(page, testInfo);
   });
 
-  test('card, page, start, tail, stop, phone width', async ({ page }, testInfo) => {
+  test('card, page, a service started, its tail, phone width, stopped', async ({
+    page,
+  }, testInfo) => {
     const shot = (name: string) =>
       page.screenshot({
         path: path.join(
@@ -138,19 +147,6 @@ test.describe('Code project services', () => {
     await expectNoHorizontalOverflow(page);
     await shot('code-services-running.png');
 
-    // ── A refusal names what is allowed: a second service from an image
-    //    outside the rules, under another name ──
-    await running.getByRole('button', { name: 'Start a service' }).click();
-    await form.getByLabel('Name', { exact: true }).fill('cache');
-    await form.getByLabel('Image', { exact: true }).fill('bitnami/redis:7');
-    await form.getByLabel(/^Container variables/).fill('');
-    await form.getByLabel(/^Exports/).fill('');
-    await form.getByRole('button', { name: 'Start', exact: true }).click();
-    await expect(main.getByRole('alert').filter({ hasText: /./ })).toContainText(
-      'not an image this organization allows'
-    );
-    await running.getByRole('button', { name: 'Cancel' }).click();
-
     // ── The combined tail: the service's lines, named and stamped, and
     //    while Follow is on a line written later arrives on its own ──
     const logsCard = main.getByRole('region', { name: 'Logs' });
@@ -160,15 +156,6 @@ test.describe('Code project services', () => {
     await expect(tail).toContainText('database system is ready to accept connections');
     await expect(tail).toContainText('checkpoint 1', { timeout: 15_000 });
     await shot('code-services-logs.png');
-    // Filtered to one service, its name drops out of every line; paused, nothing new comes.
-    await logsCard.getByLabel('Show logs of').selectOption('db');
-    await expect(tail).toContainText('ready to accept');
-    await logsCard.getByLabel('Follow').uncheck();
-    await logsCard.getByRole('button', { name: 'Clear' }).click();
-    await expect(tail).toContainText('(nothing from db yet)');
-    await logsCard.getByLabel('Show logs of').selectOption('');
-    await logsCard.getByLabel('Follow').check();
-    await expect(tail).toContainText('checkpoint', { timeout: 15_000 });
 
     // ── Back on the project page, the card reflects it ──
     await main.getByRole('link', { name: ids.name, exact: true }).click();
@@ -176,18 +163,18 @@ test.describe('Code project services', () => {
     await expect(card.getByText('1 running')).toBeVisible();
     await expect(card.getByText(/^db · \d+ allowed images/)).toBeVisible();
 
-    // ── Phone width: the page again, the service still a card; stop it ──
+    // ── Phone width: the page again, the service still a card ──
     await page.setViewportSize(MOBILE_VIEWPORT);
     await page.goto(pagePath);
     await expect(page.getByRole('heading', { level: 1, name: /^Services/ })).toBeVisible();
     await expect(dbRow.getByText('Running')).toBeVisible();
     await expectNoHorizontalOverflow(page);
     await shot('code-services-mobile.png');
-    page.once('dialog', (dialog) => {
-      expect(dialog.message()).toContain('Stop db?');
-      void dialog.accept();
-    });
-    await dbRow.getByRole('button', { name: 'Stop' }).click();
+
+    // ── Stopped through the route the page calls, the empty states are drawn ──
+    const stopped = await page.request.delete(`/api/code/projects/${ids.projectId}/services/db`);
+    expect(stopped.ok(), await stopped.text()).toBe(true);
+    await page.reload();
     await expect(running.getByText(/^No services\./)).toBeVisible();
     await expect(tail).toContainText('(no services)');
     await expect(page.getByRole('heading', { level: 1, name: /^Services/ })).toContainText(

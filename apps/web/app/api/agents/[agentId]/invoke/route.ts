@@ -28,6 +28,7 @@ import { digestsMatch, getBearerToken } from '@/lib/mcp-token';
 import { hasActiveGrant } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { whoIs, whichAgentOf } from '@/lib/log-actor';
 import { checkInboundLimit } from '@/lib/inbound-rate-limit';
 
 const MAX_STATE_BYTES = 64 * 1024;
@@ -160,22 +161,31 @@ export async function POST(
     }
   }
 
-  const result = await createAgentRun(agentJobsQueue().producer, {
-    agentId,
-    ownerSubject: agent.ownerSubject,
-    definition: agentDefinitionOf(agent),
-    llmModelId: agent.llmModelId,
-    triggerId,
-    triggerKind: triggerId ? 'api' : 'manual',
-    triggeredBySubject: triggeredBy,
-    initialState: state,
-  });
+  const result = await createAgentRun(
+    agentJobsQueue().producer,
+    {
+      agentId,
+      ownerSubject: agent.ownerSubject,
+      definition: agentDefinitionOf(agent),
+      llmModelId: agent.llmModelId,
+      triggerId,
+      triggerKind: triggerId ? 'api' : 'manual',
+      triggeredBySubject: triggeredBy,
+      initialState: state,
+    },
+    { log: (message, meta) => logger.debug(message, meta) }
+  );
   if (!result.ok) {
     if (result.err.type === 'DB_ERROR') {
-      logger.error('The run could not be started: {error}', {
+      logger.error('{actor} asked agent "{agent}" to run ({how}), but no run was queued: {error}', {
         component: 'api/agents/invoke',
-        subject: triggeredBy ?? agent.ownerSubject,
-        agentId,
+        ...(await whoIs(triggeredBy ?? agent.ownerSubject)),
+        ...(await whichAgentOf({
+          agentId,
+          agentName: agent.name,
+          ownerSubject: agent.ownerSubject,
+        })),
+        how: triggerId ? 'through an API key' : 'with Run now',
         error: result.err.message ?? result.err.type,
       });
     }

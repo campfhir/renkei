@@ -10,6 +10,7 @@ import { loadKeyring } from '@renkei/crypto';
 import { getVapidKeys } from '@renkei/notifications';
 import { getSessionFromRequest } from '@/lib/session';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await getSessionFromRequest(request);
@@ -17,9 +18,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
   if (!keyResult.ok) {
-    logger.error('TOKEN_ENCRYPTION_KEY is missing or malformed', {
-      component: 'api/push/public-key',
-    });
+    logger.error(
+      '{actor} asked for the push public key, but TOKEN_ENCRYPTION_KEY is missing or malformed; push is not configured and the browser cannot subscribe',
+      {
+        component: 'api/push/public-key',
+        ...who(session),
+      }
+    );
     return NextResponse.json({ error: 'Push is not configured' }, { status: 500 });
   }
 
@@ -27,10 +32,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { publicKey } = await getVapidKeys(keyResult.val);
     return NextResponse.json({ publicKey });
   } catch (error) {
-    logger.error('could not read VAPID keys', {
-      component: 'api/push/public-key',
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      '{actor} asked for the push public key, but the VAPID keys could not be read; the browser cannot subscribe: {error}',
+      {
+        component: 'api/push/public-key',
+        ...who(session),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return NextResponse.json({ error: 'Push is not configured' }, { status: 500 });
   }
 }

@@ -27,6 +27,7 @@ import { getOnBaseApp, onbaseAuthorizeScopes, ONBASE_CONNECTOR } from '@/lib/onb
 import { obDiscover, onbaseClientFailure } from '@/lib/onbase/service-client';
 import { getOrigin } from '@/lib/get-origin';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   // The resulting grant is bound to whoever completes this flow, so the
@@ -41,11 +42,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const originResult = await getOrigin(request);
   if (!originResult.ok) {
-    logger.error('Could not resolve the app origin: {error}', {
-      component: 'api/onbase/authorize',
-      subject: session.subject,
-      error: originResult.err.message ?? originResult.err.type,
-    });
+    logger.error(
+      '{actor} started connecting OnBase, but the app origin could not be resolved; nothing was started and they saw a config error: {error}',
+      {
+        component: 'api/onbase/authorize',
+        ...who(session),
+        error: originResult.err.message ?? originResult.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Config error' }, { status: 500 });
   }
   const app = await getOnBaseApp(originResult.val);
@@ -63,13 +67,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   if (!discovered.ok) {
     const failure = onbaseClientFailure(discovered.err);
     if (failure.status !== 400 && failure.status !== 404) {
-      logger[failure.status >= 500 ? 'error' : 'warn']('OnBase request failed ({status}): {error}', {
-        component: 'api/onbase/authorize',
-        subject: session.subject,
-        operation: 'discovered',
-        status: failure.status,
-        error: 'message' in discovered.err && discovered.err.message ? discovered.err.message : failure.message,
-      });
+      logger[failure.status >= 500 ? 'error' : 'warn'](
+        "{actor} started connecting OnBase, but the Hyland IdP's discovery through the worker failed ({status}); nothing was started: {error}",
+        {
+          component: 'api/onbase/authorize',
+          ...who(session),
+          operation: 'discovered',
+          status: failure.status,
+          error:
+            'message' in discovered.err && discovered.err.message
+              ? discovered.err.message
+              : failure.message,
+        }
+      );
     }
     return NextResponse.json(
       { error: `Could not reach the Hyland IdP: ${failure.message}` },
@@ -104,6 +114,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   authUrl.searchParams.append('code_challenge', codeChallenge);
   authUrl.searchParams.append('code_challenge_method', 'S256');
 
+  logger.info(
+    '{actor} started connecting OnBase; sent to the Hyland IdP at {issuer} to authorize',
+    {
+      component: 'api/onbase/authorize',
+      ...who(session),
+      issuer: app.idpIssuer,
+      scopes,
+      clientId: app.clientId,
+    }
+  );
   // Bound to this browser: the callback requires the cookie this sets.
   return await redirectToConsent(authUrl, state);
 }

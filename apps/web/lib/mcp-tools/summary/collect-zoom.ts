@@ -29,12 +29,9 @@ import {
   type SummaryPeriod,
   type SummarySection,
 } from './types';
+import { isRecord } from '@renkei/guards';
 
 const ZOOM_API = 'https://api.zoom.us/v2';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

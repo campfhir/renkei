@@ -1,10 +1,14 @@
 /** Prompt libraries and their prompts (migration 093): plaintext templates people share. */
 
+/** Where a library's prompts are offered: every chat's picker, or a code project's chat only. */
+export type PromptLibraryScope = 'any' | 'code';
+
 export interface PromptLibraryRecord {
   id: string;
   ownerSubject: string;
   name: string;
   description: string | null;
+  scope: PromptLibraryScope;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -31,11 +35,13 @@ export interface PromptLibraryStore {
     ownerSubject: string;
     name: string;
     description: string | null;
+    /** Defaults to 'any'. */
+    scope?: PromptLibraryScope;
   }): Promise<string>;
   /** Change a library by id, bumping `updatedAt`; false when there is none. */
   update(
     libraryId: string,
-    patch: { name?: string; description?: string | null }
+    patch: { name?: string; description?: string | null; scope?: PromptLibraryScope }
   ): Promise<boolean>;
   /** Delete one of the owner's libraries (its prompts cascade). */
   delete(ownerSubject: string, libraryId: string): Promise<boolean>;

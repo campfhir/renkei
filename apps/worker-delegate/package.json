@@ -21,6 +21,7 @@
     "@renkei/connector-sandbox": "workspace:*",
     "@renkei/crypto": "workspace:*",
     "@renkei/db": "workspace:*",
+    "@renkei/guards": "workspace:*",
     "@renkei/provider-grants": "workspace:*",
     "@renkei/settings": "workspace:*",
     "@renkei/user-keys": "workspace:*",

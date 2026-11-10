@@ -14,11 +14,9 @@
  */
 
 import { metadataFileName } from './metadata-xml';
+import { isRecord } from '@renkei/guards';
 
 type Json = Record<string, unknown>;
-
-const isRecord = (value: unknown): value is Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const str = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
 

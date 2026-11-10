@@ -203,4 +203,16 @@ describe('resolveApplyAccess', () => {
       'Jira Administration is not connected.'
     );
   });
+
+  it('refuses an operator whose connection is on another Jira site than the proposal', async () => {
+    // Someone else proposed it in their own site (jira-admin-changes.spec.ts did this through a page).
+    expect(await resolveApplyAccess('operator', change({ cloudId: 'cloud-2' }))).toBe(
+      'Your Jira Administration connection is on a different Jira site than the one this ' +
+        'change was proposed for, so it was not applied.'
+    );
+  });
+
+  it('runs on the operator’s own connection when it is on the proposal’s site', async () => {
+    expect(await resolveApplyAccess('operator', change())).toMatchObject({ access: ACCESS });
+  });
 });

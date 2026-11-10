@@ -22,6 +22,7 @@ import { getSessionFromRequest } from '@/lib/session';
 import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { isUuid } from '@/lib/uuid';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -98,21 +99,35 @@ export async function POST(
           { status: 409 }
         );
       case 'DB_ERROR':
-        logger.error('The run could not be resumed: {error}', {
-          component: 'web/agents',
-          subject: session.subject,
-          agentId,
-          runId,
-          error: resumed.err.message ?? resumed.err.type,
-        });
+        logger.error(
+          '{actor} tried to resume run {runId} of agent "{agent}", but it was not resumed: {error}',
+          {
+            component: 'web/agents',
+            ...who(session),
+            ...(await whichAgentOf({
+              agentId,
+              agentName: access.agent.name,
+              ownerSubject: access.ownerSubject,
+            })),
+            runId,
+            error: resumed.err.message ?? resumed.err.type,
+          }
+        );
         return NextResponse.json({ error: 'The run could not be resumed.' }, { status: 500 });
     }
   }
 
-  logger.info('run {runId} resumed by {subject}', {
+  logger.info('{actor} resumed run {runId} of agent "{agent}"{withGuidance}', {
     component: 'web/agents',
+    ...who(session),
+    ...(await whichAgentOf({
+      agentId,
+      agentName: access.agent.name,
+      ownerSubject: access.ownerSubject,
+    })),
     runId,
-    subject: session.subject,
+    withGuidance: guidance ? ' with guidance' : '',
+    guidance,
   });
   return NextResponse.json({ runId });
 }

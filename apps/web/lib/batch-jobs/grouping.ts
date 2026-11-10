@@ -5,10 +5,7 @@
  */
 
 import type { DocumentGrouping } from './start-document-ocr-pipeline';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 export function parseGrouping(value: unknown): DocumentGrouping | null {
   if (!isRecord(value)) return null;

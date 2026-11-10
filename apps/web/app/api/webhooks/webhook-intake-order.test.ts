@@ -7,7 +7,10 @@
  * per-account routes answer 500, so the sender retries rather than drops.
  */
 
-jest.mock('@renkei/db', () => ({ getDataStore: jest.fn() }));
+jest.mock('@renkei/db', () => ({
+  ...jest.requireActual<Record<string, unknown>>('@renkei/db'),
+  getDataStore: jest.fn(),
+}));
 jest.mock('@renkei/queue', () => ({
   webhookEventsQueue: () => ({ producer: { enqueue: jest.fn() } }),
 }));

@@ -10,7 +10,8 @@ import { createServer, type Server } from 'node:http';
 import { Readable } from 'node:stream';
 import { createMemoryDataStore, registerDataStore, resetDataStore } from '@renkei/db';
 import { GITHUB } from '@renkei/provider-grants';
-import { isRecord, readBody } from '@renkei/worker-kit';
+import { isRecord } from '@renkei/guards';
+import { readBody } from '@renkei/worker-kit';
 import { GitTickets, repoKey, type GitDialer } from './git';
 import { Grants, silentDelegateLogger } from './grants';
 

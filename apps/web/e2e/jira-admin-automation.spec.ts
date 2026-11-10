@@ -1,20 +1,24 @@
 /**
  * Automation rules on an Atlassian API token, end to end in a browser:
  *
- * - the Jira Administration card takes the person's API token; one the
- *   stand-in Atlassian (e2e/sandbox-stub.mjs, through
- *   JIRA_AUTOMATION_API_BASE_URL) refuses is not kept, one it accepts is
- *   saved — and the delegate sent it as HTTP Basic, email:token;
+ * - the Jira Administration card takes the person's API token, which is
+ *   saved — and the delegate sent it to the stand-in Atlassian
+ *   (e2e/sandbox-stub.mjs, through JIRA_AUTOMATION_API_BASE_URL) as HTTP
+ *   Basic, email:token;
  * - an automation change request (disabling a rule) is reviewed, then
  *   applied on that token, and the stand-in's rule is disabled;
- * - the token is removed from the card again;
- * - without a token, the review page says so in place of Apply.
+ * - the token is removed from the card again.
+ *
+ * A token Atlassian refuses is not kept (app/api/atlassian-admin/token/route.test.ts),
+ * and without a token the review page says so in place of Apply
+ * (lib/jira-admin/apply.test.ts for the reason, change-actions.model.test.ts
+ * beside the review page for the button).
  *
  * The person connects Jira Administration through its real connect flow
  * (the in-memory app's fake OAuth, e2e/support/jira-admin.ts), and the
  * proposal is their assistant's: a chat turn on the stand-in model calling
  * jira_admin_propose_automation_rule_state, which reads the rules on the
- * token. The audit trail's row is not read back: no page lists it.
+ * token.
  *
  * Each person works in a Jira site of their own: the stub keeps each
  * site's rules apart.
@@ -114,26 +118,17 @@ async function proposeDisable(page: Page): Promise<string> {
   });
 }
 
-test('an API token is refused, then saved and sent as Basic; a rule is disabled on it; the token is removed', async ({
+test('an API token is saved and sent as Basic; a rule is disabled on it; the token is removed', async ({
   page,
   person,
 }, testInfo) => {
-  // --- The card takes the token; one Atlassian refuses is not kept. ---
+  // --- The card takes the token. ---
   await page.goto(`/connectors`);
   const panel = page.locator('[data-coach="card-jira-admin"]').filter({ visible: true });
   await expect(panel.getByText('Connected as')).toBeVisible();
   const tokenBox = panel.getByTestId('jira-admin-api-token');
   await expect(tokenBox.getByText('Automation rules: an Atlassian API token')).toBeVisible();
-  await saveToken(page, 'nope');
-  await expect(tokenBox.getByRole('alert')).toContainText(
-    'Atlassian refused that token, so it was not kept.'
-  );
-  await page.reload();
-  await expect(tokenBox.getByRole('button', { name: 'Save API token' })).toBeVisible();
-  await expect(tokenBox.getByTestId('jira-admin-api-token-saved')).toHaveCount(0);
-  await shot(page, testInfo, 'jira-admin-automation-01-refused');
-
-  // One it accepts is saved — and reached it as Basic, email:token.
+  // It is saved — and reached Atlassian as Basic, email:token.
   await saveToken(page, TOKEN);
   await expect(tokenBox.getByTestId('jira-admin-api-token-saved')).toContainText(
     `API token saved for ${EMAIL}.`,
@@ -186,34 +181,4 @@ test('an API token is refused, then saved and sent as Basic; a rule is disabled 
   await page.reload();
   await expect(tokenBox.getByTestId('jira-admin-api-token-saved')).toHaveCount(0);
   await shot(page, testInfo, 'jira-admin-automation-06-removed');
-});
-
-test('without a token, the review page says so in place of Apply', async ({
-  page,
-  person: _person,
-}, testInfo) => {
-  // The proposal reads the rules on the token; then the token goes.
-  await page.goto(`/connectors`);
-  const tokenBox = page
-    .locator('[data-coach="card-jira-admin"]')
-    .filter({ visible: true })
-    .getByTestId('jira-admin-api-token');
-  await saveToken(page, TOKEN);
-  await expect(tokenBox.getByTestId('jira-admin-api-token-saved')).toBeVisible({
-    timeout: 30_000,
-  });
-  const id = await proposeDisable(page);
-  await page.goto(`/connectors`);
-  await tokenBox.getByRole('button', { name: 'Remove API token' }).click();
-  await tokenBox.getByRole('button', { name: 'Yes, remove it' }).click();
-  await expect(tokenBox.getByRole('button', { name: 'Save API token' })).toBeVisible({
-    timeout: 30_000,
-  });
-
-  await page.goto(`/jira-admin/changes/${id}`);
-  await expect(page.getByRole('button', { name: 'Apply this change to Jira' })).toBeDisabled();
-  await expect(main(page)).toContainText(
-    'No Atlassian API token is saved. Automation rules are read and changed with one'
-  );
-  await shot(page, testInfo, 'jira-admin-automation-07-no-token');
 });

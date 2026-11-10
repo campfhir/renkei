@@ -145,6 +145,186 @@ export const queueScenarios: Scenario<DataStore>[] = [
   },
   ...consumerScenarios(),
   {
+    method: 'queues.pruneSettled',
+    name: 'settled rows before the cut go oldest first within the limit; live rows stay however old',
+    fixture: {
+      agent_jobs: [
+        message(41, 'run', { runId: 'a' }, { source: 'agents:a', status: 'processed', minute: 1 }),
+        message(42, 'run', { runId: 'b' }, { source: 'agents:a', status: 'skipped', minute: 2 }),
+        message(43, 'run', { runId: 'c' }, { source: 'agents:a', status: 'processed', minute: 50 }),
+        message(44, 'run', { runId: 'd' }, { source: 'agents:a', minute: 1 }),
+        {
+          ...message(
+            45,
+            'run',
+            { runId: 'e' },
+            { source: 'agents:a', status: 'processing', minute: 1 }
+          ),
+          locked_at: at(1),
+        },
+      ],
+      events: [message(46, 'thing', { n: 1 }, { source: 'webex', status: 'processed', minute: 1 })],
+    },
+    run: async (store) => {
+      const cut = new Date(at(10));
+      const remaining = async () =>
+        (await Promise.all([41, 42, 43, 44, 45].map((n) => store.queues.find('agent_jobs', id(n)))))
+          .filter((row) => row !== null)
+          .map((row) => row.id);
+      return [
+        await store.queues.pruneSettled('agent_jobs', cut, 1),
+        await remaining(),
+        await store.queues.pruneSettled('agent_jobs', cut, 10),
+        await remaining(),
+        await store.queues.pruneSettled('agent_jobs', cut, 10),
+        // Another table's rows are not this call's.
+        (await store.queues.find('events', id(46)))?.status ?? null,
+      ];
+    },
+  },
+  {
+    method: 'queues.pruneDeadLetters',
+    name: 'dead letters older than the cut go oldest first within the limit; newer and other tables stay',
+    fixture: {
+      agent_jobs_dead_letters: [
+        {
+          id: id(51),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'a' },
+          attempts: 3,
+          created_at: at(1),
+          dead_at: at(5),
+        },
+        {
+          id: id(52),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'b' },
+          attempts: 3,
+          created_at: at(1),
+          dead_at: at(3),
+        },
+        {
+          id: id(53),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'c' },
+          attempts: 3,
+          created_at: at(1),
+          dead_at: at(50),
+        },
+      ],
+      events_dead_letters: [
+        {
+          id: id(54),
+          source: 'webex',
+          type: 'thing',
+          payload: { n: 1 },
+          attempts: 5,
+          created_at: at(1),
+          dead_at: at(2),
+        },
+      ],
+    },
+    run: async (store) => {
+      const cut = new Date(at(10));
+      const left = async () =>
+        (await store.queues.listDeadLetters('agent_jobs', 10)).map((d) => d.id);
+      return [
+        await store.queues.pruneDeadLetters('agent_jobs', cut, 1),
+        await left(),
+        await store.queues.pruneDeadLetters('agent_jobs', cut, 10),
+        await left(),
+        await store.queues.pruneDeadLetters('agent_jobs', cut, 10),
+        (await store.queues.listDeadLetters('events', 10)).map((d) => d.id),
+      ];
+    },
+  },
+  {
+    method: 'queues.listAgentJobs',
+    name: 'one agent’s pending and processing jobs, oldest first, ties by id, limited',
+    fixture: {
+      agent_jobs: [
+        {
+          ...live(201, 'agents:a', {
+            minute: 1,
+            status: 'processing',
+            attempts: 47,
+            locked_at: PAST,
+            payload: { runId: 'run-1' },
+          }),
+          type: 'run',
+          last_error: 'stuck',
+        },
+        { ...live(202, 'agents:a', { minute: 2, payload: { runId: 'run-2' } }), type: 'run' },
+        {
+          ...live(203, 'agents:a', { minute: 2, run_after: FUTURE, payload: { batchId: 'b-1' } }),
+          type: 'actions',
+        },
+        { ...live(204, 'agents:a', { minute: 3, status: 'processed' }), type: 'run' },
+        { ...live(205, 'agents:b', { minute: 0, payload: { runId: 'run-9' } }), type: 'run' },
+      ],
+    },
+    run: async (store) => [
+      await store.queues.listAgentJobs('a', 10),
+      await store.queues.listAgentJobs('a', 1),
+      await store.queues.listAgentJobs('nobody', 10),
+    ],
+  },
+  {
+    method: 'queues.listAgentDeadLetters',
+    name: 'one agent’s dead letters, most recently dead first, ties by id descending',
+    fixture: {
+      agent_jobs_dead_letters: [
+        {
+          id: id(211),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'run-1' },
+          attempts: 3,
+          last_error: 'key service unavailable',
+          created_at: at(1),
+          dead_at: at(20),
+        },
+        {
+          id: id(212),
+          source: 'agents:a',
+          type: 'actions',
+          payload: { batchId: 'b-1' },
+          attempts: 5,
+          last_error: 'gave up',
+          created_at: at(2),
+          dead_at: at(20),
+        },
+        {
+          id: id(213),
+          source: 'agents:a',
+          type: 'run',
+          payload: { runId: 'run-2' },
+          attempts: 3,
+          last_error: null,
+          created_at: at(3),
+          dead_at: at(10),
+        },
+        {
+          id: id(214),
+          source: 'agents:b',
+          type: 'run',
+          payload: { runId: 'run-9' },
+          attempts: 3,
+          last_error: null,
+          created_at: at(4),
+          dead_at: at(30),
+        },
+      ],
+    },
+    run: async (store) => [
+      await store.queues.listAgentDeadLetters('a', 10),
+      await store.queues.listAgentDeadLetters('a', 2),
+    ],
+  },
+  {
     method: 'queues.hasLiveAgentRunJob',
     name: 'pending or processing rows of the run only',
     fixture: {
@@ -276,6 +456,87 @@ function consumerScenarios(): Scenario<DataStore>[] {
       },
     },
     {
+      method: 'queues.claim',
+      name: 'a lease that expired on its last allowed delivery is dead-lettered, freeing its key',
+      fixture: {
+        agent_jobs: [
+          // Its consumer died on delivery 3 of 3 and never failed it.
+          live(141, 'agents:a', {
+            minute: 1,
+            status: 'processing',
+            locked_at: PAST,
+            attempts: 3,
+            ordering_key: 'agent:a',
+          }),
+          // The agent's next run, held behind it by the key until now.
+          live(142, 'agents:a', { minute: 2, ordering_key: 'agent:a' }),
+          // Expired too, but with deliveries left: reclaimed as before.
+          live(143, 'agents:b', { minute: 3, status: 'processing', locked_at: PAST, attempts: 2 }),
+          // Spent, but outside the claim's sources: left for its own consumer.
+          live(144, 'agents:c', { minute: 4, status: 'processing', locked_at: PAST, attempts: 3 }),
+        ],
+      },
+      run: async (store) => {
+        const budget = { ...STALE, maxAttempts: 3, sources: ['agents:a', 'agents:b'] };
+        const claims = [
+          await store.queues.claim('agent_jobs', budget),
+          await store.queues.claim('agent_jobs', budget),
+          await store.queues.claim('agent_jobs', budget),
+        ];
+        return {
+          claims,
+          dead: (await store.queues.listDeadLetters('agent_jobs', 10)).map(
+            ({ deadAt: _deadAt, ...rest }) => rest
+          ),
+          outsideSources: await state(store, 'agent_jobs', 144),
+          // Without a budget, a stale lease is reclaimed however often it expired.
+          unbudgeted: await store.queues.claim('agent_jobs', STALE),
+        };
+      },
+    },
+    {
+      method: 'queues.complete',
+      name: 'with attempts, only the delivery still holding the lease is acked',
+      fixture: {
+        events: [
+          live(151, 'webex', { status: 'processing', locked_at: FUTURE, attempts: 2 }),
+          // Reclaimed by another consumer since the late ack's delivery.
+          live(152, 'webex', { status: 'processing', locked_at: FUTURE, attempts: 3 }),
+          live(153, 'webex', { attempts: 1 }),
+        ],
+      },
+      run: async (store) => [
+        await store.queues.complete('events', id(151), 'processed', { attempts: 2 }),
+        await store.queues.complete('events', id(152), 'processed', { attempts: 2 }),
+        await store.queues.complete('events', id(153), 'skipped', { attempts: 1 }),
+        await store.queues.complete('events', id(199), 'processed', { attempts: 1 }),
+        await state(store, 'events', 151),
+        await state(store, 'events', 152),
+        await state(store, 'events', 153),
+      ],
+    },
+    {
+      method: 'queues.extendLease',
+      name: 'renewed only while held at that attempt count; a renewed lease is not reclaimed',
+      fixture: {
+        events: [
+          live(161, 'webex', { minute: 1, status: 'processing', locked_at: PAST, attempts: 2 }),
+          live(162, 'webex', { minute: 2, status: 'processing', locked_at: PAST, attempts: 3 }),
+          live(163, 'webex', { minute: 3, attempts: 2, run_after: FUTURE }),
+        ],
+      },
+      run: async (store) => [
+        await store.queues.extendLease('events', id(161), 2),
+        await store.queues.extendLease('events', id(162), 2),
+        await store.queues.extendLease('events', id(163), 2),
+        await store.queues.extendLease('events', id(199), 1),
+        await state(store, 'events', 163),
+        // 161's lease is fresh again; 162's is still expired.
+        await store.queues.claim('events', STALE),
+        await store.queues.claim('events', STALE),
+      ],
+    },
+    {
       method: 'queues.complete',
       name: 'processed or skipped, unlocked, payload blanked only when asked',
       fixture: {
@@ -335,6 +596,47 @@ function consumerScenarios(): Scenario<DataStore>[] {
           await store.queues.claim('events', STALE),
         ];
       },
+    },
+    {
+      method: 'queues.retry',
+      name: 'with attempts, a consumer that lost its lease cannot put the row back to pending',
+      fixture: {
+        events: [
+          live(171, 'webex', { status: 'processing', locked_at: FUTURE, attempts: 2 }),
+          live(172, 'webex', { status: 'processing', locked_at: FUTURE, attempts: 3 }),
+        ],
+      },
+      run: async (store) => [
+        await store.queues.retry('events', id(171), 'slow upstream', 60, { attempts: 2 }),
+        await store.queues.retry('events', id(172), 'late nack', 60, { attempts: 2 }),
+        await state(store, 'events', 171),
+        await state(store, 'events', 172),
+      ],
+    },
+    {
+      method: 'queues.deadLetter',
+      name: 'with attempts, a consumer that lost its lease cannot move the row or free its key',
+      fixture: {
+        events: [
+          live(181, 'webex', {
+            minute: 1,
+            status: 'processing',
+            locked_at: FUTURE,
+            attempts: 3,
+            ordering_key: 'k',
+          }),
+          live(182, 'webex', { minute: 2, ordering_key: 'k' }),
+          live(183, 'webex', { minute: 3, status: 'processing', locked_at: FUTURE, attempts: 1 }),
+        ],
+      },
+      run: async (store) => [
+        await store.queues.deadLetter('events', id(181), 'late nack', { attempts: 2 }),
+        await store.queues.deadLetter('events', id(183), 'gave up', { attempts: 1 }),
+        await state(store, 'events', 181),
+        (await store.queues.listDeadLetters('events', 10)).map((d) => [d.id, d.lastError]),
+        // 181 still holds key k, so 182 waits.
+        await store.queues.claim('events', STALE),
+      ],
     },
     {
       method: 'queues.deadLetter',

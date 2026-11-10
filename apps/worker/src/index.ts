@@ -27,6 +27,7 @@ import { createUploadSlotsSweep, UPLOAD_SLOTS_SWEEP_INTERVAL_MS } from './health
 import { createAgentFiringsSweep, AGENT_FIRINGS_SWEEP_INTERVAL_MS } from './health/agent-firings';
 import { createWebexSentSweep, WEBEX_SENT_SWEEP_INTERVAL_MS } from './health/webex-sent';
 import { withSweepLock } from './health/sweep-lock';
+import { createSettledRetentionSweep, SETTLED_RETENTION_SWEEP_MS } from '@renkei/queue';
 import { sweepWebexWebhooks, WEBHOOK_HEALTH_INTERVAL_MS } from './health/webex-webhooks';
 import { sweepContentWatches, CONTENT_WATCH_INTERVAL_MS } from './health/content-watches';
 import { sweepWebexWindows, WEBEX_WINDOW_SWEEP_INTERVAL_MS } from './health/webex-windows';
@@ -63,7 +64,12 @@ async function main(): Promise<void> {
   registerConnectorHandlers();
   // application/version/commit ride on every line as global attrs (see
   // logger.ts) — this boot line just makes the plain-English announcement.
-  logger.info('started {application} {version}', { component: 'worker/loop' });
+  logger.info(
+    'started {application} {version}, consuming the events queue and running the health sweeps',
+    {
+      component: 'worker/loop',
+    }
+  );
   // Independent of the poll loop below — see schedulePeriodicSweep's doc
   // comment for why. Stopped only once event processing has wound down, so
   // "stopped" in the log means everything actually stopped.
@@ -105,6 +111,21 @@ async function main(): Promise<void> {
       'logs/retention-sweep',
       LOG_RETENTION_SWEEP_INTERVAL_MS,
       withSweepLock('log-retention', sweepLogRetention)
+    ),
+    // Finished rows of the queues this process and its siblings consume,
+    // past their window (the agents worker prunes agent_jobs the same way).
+    schedulePeriodicSweep(
+      'queue retention',
+      'queue/retention-sweep',
+      SETTLED_RETENTION_SWEEP_MS,
+      withSweepLock(
+        'queue-retention',
+        createSettledRetentionSweep({
+          tables: ['events', 'embedding_jobs', 'batch_job_messages'],
+          logger,
+          component: 'queue/retention-sweep',
+        })
+      )
     ),
     // Deletes are idempotent, but one runner per pass keeps the log line
     // per deleted grant single, so the advisory lock rides along.
@@ -149,7 +170,9 @@ async function main(): Promise<void> {
 
   await loop.run();
   stopSweeps.forEach((stop) => stop());
-  logger.info('stopped', { component: 'worker/loop' });
+  logger.info('stopped: the events queue is no longer consumed and the sweeps are off', {
+    component: 'worker/loop',
+  });
   // Drain the adapters — the HttpAdapter's queue especially — while the
   // database and event loop are still alive to receive them.
   await logger.flush();
@@ -157,7 +180,10 @@ async function main(): Promise<void> {
 }
 
 function shutdown(signal: string): void {
-  logger.info('{signal} received, finishing current event', { component: 'worker/loop', signal });
+  logger.info('received {signal}; finishing the current event, then stopping', {
+    component: 'worker/loop',
+    signal,
+  });
   loop.stop();
 }
 

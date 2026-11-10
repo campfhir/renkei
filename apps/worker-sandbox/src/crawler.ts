@@ -39,6 +39,7 @@ import {
   type LinkHarvestLimits,
 } from './crawl-page-script';
 import type { CrawlRow, CrawlStore, CrawlTarget, PageSummary, QueuedPage } from './crawl-store';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
 
 /** Crawls running at once across this worker. */
@@ -211,13 +212,19 @@ export class Crawler {
       const next = this.waiting.shift()!;
       this.running.add(next);
       void this.run(next)
-        .catch((error: unknown) => {
-          logger.error('crawl {crawlId} failed: {error}', {
-            component: 'worker-sandbox/crawler',
-            crawlId: next,
-            error: firstLine(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          });
+        .catch(async (error: unknown) => {
+          // The crawl row names its person; read for the line, best effort.
+          const crawl = await this.store.getById(next).catch(() => null);
+          logger.error(
+            'the web crawl of {actor} crashed; it is marked failed with the reason: {error}',
+            {
+              component: 'worker-sandbox/crawler',
+              ...(await actorAttrs(crawl?.subject)),
+              crawlId: next,
+              error: firstLine(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            }
+          );
           return this.store.transition(next, ['queued', 'running'], 'failed', firstLine(error));
         })
         .finally(() => {
@@ -301,13 +308,16 @@ export class Crawler {
             }
           }
         } else {
-          logger.warn('crawl {crawlId} page {url} failed: {error}', {
-            component: 'worker-sandbox/crawler',
-            crawlId,
-            url: next.url,
-            subject: crawl.subject,
-            error: found.error,
-          });
+          logger.warn(
+            'the web crawl of {actor} could not fetch {url}; the page is recorded as failed and the crawl goes on: {error}',
+            {
+              component: 'worker-sandbox/crawler',
+              ...(await actorAttrs(crawl.subject)),
+              crawlId,
+              url: next.url,
+              error: found.error,
+            }
+          );
           summary.status = 'failed';
           summary.error = found.error;
           await this.store.putPage(crawlId, summary, null, crawl.subject);

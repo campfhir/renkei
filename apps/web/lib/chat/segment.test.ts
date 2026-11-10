@@ -140,6 +140,34 @@ describe('segment', () => {
     expect(out.filter((part) => part.kind === 'subagent')).toHaveLength(2);
   });
 
+  describe('forms the model asked (chat_ask_form)', () => {
+    const input = {
+      intro: 'Two things first.',
+      questions: [
+        { question: 'Which file?' },
+        { question: 'How urgent?', type: 'choice', options: ['low', 'high'] },
+      ],
+    };
+    const done = new Map([['f1', toolResult('f1', 'Asked the person 2 questions.')]]);
+
+    it('lifts a finished call out of the fold as a card with its intro and questions', () => {
+      const out = segment([assistantMessage('m1', [toolUse('f1', 'chat_ask_form', input)])], done);
+      const cards = out.filter((part) => part.kind === 'form');
+      expect(cards).toHaveLength(1);
+      expect(cards[0]).toMatchObject({ request: { intro: 'Two things first.' } });
+      expect(out.filter((part) => part.kind === 'work')).toHaveLength(0);
+    });
+
+    it('stays in the fold while pending, when refused, and when its questions do not parse', () => {
+      const call = [assistantMessage('m1', [toolUse('f1', 'chat_ask_form', input)])];
+      expect(segment(call, new Map()).some((part) => part.kind === 'form')).toBe(false);
+      const refused = new Map([['f1', { ...toolResult('f1', 'no'), isError: true }]]);
+      expect(segment(call, refused).some((part) => part.kind === 'form')).toBe(false);
+      const broken = [assistantMessage('m1', [toolUse('f1', 'chat_ask_form', { questions: [] })])];
+      expect(segment(broken, done).some((part) => part.kind === 'form')).toBe(false);
+    });
+  });
+
   describe('mockups', () => {
     const input = { title: 'Login', format: 'html', source: '<p>hi</p>' };
 
@@ -173,6 +201,25 @@ describe('segment', () => {
       ];
       const out = segment(messages, new Map([['k1', toolResult('k1', 'ok')]]));
       expect(out.filter((part) => part.kind === 'mockup')).toHaveLength(1);
+    });
+  });
+
+  describe("the person's own rows", () => {
+    function userRow(kind: ChatMessageView['kind'], text: string): ChatMessageView {
+      return { ...assistantMessage('u1', [{ type: 'text', text }]), role: 'user', kind };
+    }
+
+    it("draws a code-pane note as the person's line", () => {
+      const out = segment([userRow('note', 'You edited a.ts')], new Map());
+      expect(out).toEqual([{ kind: 'person', text: 'You edited a.ts' }]);
+    });
+
+    it("draws nothing for a preview card's decision: the card's receipt already shows it", () => {
+      const out = segment(
+        [userRow('decision', 'The user confirmed "Create Jira issue" on the preview card.')],
+        new Map()
+      );
+      expect(out).toEqual([]);
     });
   });
 });

@@ -6,6 +6,7 @@ import { getDataStore } from '@renkei/db';
 import { readAtlassianMetadata } from '@renkei/provider-grants';
 import CoachTarget from '@/components/coach-marks/anchor';
 import ExternalLink from '@/components/external-link';
+import { isRecord } from '@renkei/guards';
 
 /**
  * Every external place this org's Renkei reaches, in two kinds:
@@ -34,10 +35,6 @@ const WATCH_KIND: Record<string, string> = {
   space: 'Confluence space',
   drive: 'SharePoint / OneDrive library',
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 export default async function SitesPage(): Promise<React.ReactNode> {
   if (!(await checkAccess([ROLE_OPERATOR]))) {

@@ -34,6 +34,7 @@ import { getOrgSettings } from '@renkei/settings';
 import { loadKeyring } from '@renkei/crypto';
 import { sendPush, wasRecentlyWatchingChat } from '@renkei/notifications';
 import { logger } from '@/lib/logger';
+import { whoIs } from '@/lib/log-actor';
 
 export function notifyChatReplyDesktop(input: {
   /** The chat's owner — the only one who can send it a message. */
@@ -41,6 +42,12 @@ export function notifyChatReplyDesktop(input: {
   chatId: string;
   chatTitle: string | null;
 }): void {
+  const about = async () => ({
+    component: 'chat/reply-notification',
+    ...(await whoIs(input.ownerSubject)),
+    chatId: input.chatId,
+    chat: input.chatTitle || 'New chat',
+  });
   void (async () => {
     // fresh: a person who just turned this on (or off) expects the very
     // next reply to reflect it, not whatever the last minute cached.
@@ -84,6 +91,7 @@ export function notifyChatReplyDesktop(input: {
     // service's own latency must never add to the turn it describes.
     const keyResult = loadKeyring('TOKEN_ENCRYPTION_KEY');
     if (keyResult.ok) {
+      const fields = await about();
       void sendPush(
         input.ownerSubject,
         keyResult.val,
@@ -99,14 +107,16 @@ export function notifyChatReplyDesktop(input: {
           // that exact chat is the page on screen.
           quiet: true,
         },
-        { log: (message, meta) => logger.warn(message, meta) }
+        { log: (message, meta) => logger.warn(message, { ...fields, ...meta }) }
       );
     }
-  })().catch((error: unknown) => {
-    logger.warn('chat-reply desktop notification not recorded', {
-      component: 'chat/reply-notification',
-      chatId: input.chatId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  })().catch(async (error: unknown) => {
+    logger.warn(
+      '{actor}\'s chat "{chat}" got a reply, but the desktop notification about it was not recorded; they were not told: {error}',
+      {
+        ...(await about()),
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
   });
 }

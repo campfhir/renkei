@@ -119,6 +119,15 @@ export type ChatStreamEvent =
    * something already handled.
    */
   | { type: 'widget_decided'; turnId: string; stateKey: string; state: WidgetDecisionState }
+  /**
+   * The model changed the person's preferences on their word
+   * (renkei_set_preferences, platform-tools/preferences.ts): the documents
+   * that moved, by the names PATCH /api/preferences uses ('theme',
+   * 'voice', …, and 'defaultTools'). Nothing of the thread changes; the
+   * page hears it and re-renders what those preferences decide
+   * (lib/preferences-events.ts).
+   */
+  | { type: 'preferences_changed'; turnId: string; documents: string[] }
   | {
       type: 'snapshot';
       turn: TurnView;
@@ -337,6 +346,9 @@ export function applyStreamEvent(state: ThreadState, event: ChatStreamEvent): Th
           return changed ? { ...message, blocks } : message;
         }),
       };
+    // Nothing of the thread: the page re-renders its preferences off it.
+    case 'preferences_changed':
+      return state;
     case 'compaction_progress':
       return {
         ...state,

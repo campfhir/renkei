@@ -119,7 +119,7 @@ function redactResult(result: unknown, context: RedactionContext): unknown {
   // Counts only — the labels and how many, never a value. A log line naming
   // what was redacted would put it back in exactly the place this exists to
   // keep it out of.
-  logger.debug('redacted tool result: {summary}', {
+  logger.debug('the tool result was redacted before it left the server: {summary}', {
     component: 'mcp/redaction',
     summary: Object.entries(counts)
       .map(([label, n]) => `${label}=${n}`)
@@ -152,11 +152,14 @@ export function withRedaction(server: McpServer, context: RedactionContext): Mcp
               // caller cannot tell the difference and would read raw PHI as
               // filtered. Returning the tool's own error shape keeps the call
               // alive and says plainly that this result was withheld.
-              logger.error('redaction failed, withholding tool result: {error}', {
-                component: 'mcp/redaction',
-                tool: name,
-                error: error instanceof Error ? error.message : String(error),
-              });
+              logger.error(
+                'redaction of the result of {tool} failed, so the result was withheld from the caller: {error}',
+                {
+                  component: 'mcp/redaction',
+                  tool: name,
+                  error: error instanceof Error ? error.message : String(error),
+                }
+              );
               return {
                 content: [
                   {

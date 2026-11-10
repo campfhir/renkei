@@ -6,6 +6,23 @@ import type { MCPToolContext } from '../common';
 // here — the same fake the sibling suites use.
 const jiraFetchMock = jest.fn();
 jest.mock('../common', () => ({
+  // The caller's log attributes (docs/logging.md), as the real helper shapes them.
+  callerFields: () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
+  callerAttrs: async () => ({
+    subject: 'tester',
+    user: 'Tester',
+    email: null,
+    actor: 'Tester',
+    caller: 'Tester',
+    accountId: 'acct-1',
+  }),
   cacheUserDisplayName: () => undefined,
   getCachedDisplayName: () => 'Tester',
   withPresentationHint: (body: string, suggestion: string) =>
@@ -33,7 +50,7 @@ async function registerTools(payload: unknown): Promise<Map<string, ToolHandler>
     kind: 'oauth',
     fetch: (_scopes: unknown, path: string) => jiraFetchMock(path),
   } as unknown as JiraAuth;
-  await registerUserTools(server, { } as unknown as MCPToolContext, auth);
+  await registerUserTools(server, {} as unknown as MCPToolContext, auth);
   return tools;
 }
 

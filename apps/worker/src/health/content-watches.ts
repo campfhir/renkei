@@ -21,7 +21,7 @@
  */
 
 import { getDataStore } from '@renkei/db';
-import { actorForAccount } from '../log-actor';
+import { actorFields, actorForAccount } from '../log-actor';
 import { summariseTitles } from '../log-titles';
 import { getOrgSettings } from '@renkei/settings';
 import { ATLASSIAN, ATLASSIAN_CONFLUENCE } from '@renkei/provider-grants';
@@ -74,10 +74,13 @@ export async function sweepContentWatches(): Promise<void> {
       })
     );
   } catch (error) {
-    logger.error('could not list due watches: {error}', {
-      component: COMPONENT,
-      error: error instanceof Error ? error.message : String(error),
-    });
+    logger.error(
+      'the content watches due for polling could not be listed; this pass polled nothing: {error}',
+      {
+        component: COMPONENT,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    );
     return;
   }
 
@@ -105,12 +108,19 @@ export async function sweepContentWatches(): Promise<void> {
   }
 
   if (watches.length === 0) return;
-  logger.debug('polling {count} content watch(es)', {
+  logger.debug('polling {count} content watch(es) that are due', {
     component: COMPONENT,
     count: watches.length,
   });
 
   for (const watch of watches) {
+    // The NAME, not the id: "349536260" tells a reader nothing, and the
+    // watch row already carries the label the UI shows. The id stays in
+    // the metadata, where searching for it still works.
+    const scope = watch.scope_label ?? watch.scope_key;
+    // The grant behind this watch names the person whose credential it
+    // polls with — the one the indexed content is attributable to.
+    const actor = await actorForAccount(watch.account_id);
     try {
       if (watch.provider === 'sharepoint') {
         const access = await resolveMicrosoftAccess(watch.account_id);
@@ -122,20 +132,13 @@ export async function sweepContentWatches(): Promise<void> {
         grantProviderFor(watch.provider)
       );
       const result = await runWatchSync(access, watch);
-      // The NAME, not the id: "349536260" tells a reader nothing, and the
-      // watch row already carries the label the UI shows. The id stays in
-      // the metadata, where searching for it still works.
-      const scope = watch.scope_label ?? watch.scope_key;
-      // The grant behind this watch names the person whose credential it
-      // polls with — the one the indexed content is attributable to.
-      const actor = await actorForAccount(watch.account_id);
       const fields = {
         component: COMPONENT,
         provider: watch.provider,
         scope,
         scopeKey: watch.scope_key,
-        userName: actor.displayName,
-        subject: actor.subject,
+        ...actorFields(actor),
+        accountId: watch.account_id,
         items: result.items,
         // What was taken in, by name. A count and a space label cannot
         // answer "did my page make it in?"; the titles can, and the handler
@@ -145,23 +148,28 @@ export async function sweepContentWatches(): Promise<void> {
       };
       if (result.items > 0) {
         logger.info(
-          'indexed {items} item(s) from {provider} {scope} for {userName}: {documents}',
+          '{actor}\'s {provider} watch on "{scope}" took in {items} item(s): {documents}',
           fields
         );
       } else {
         // A poll that found nothing is the normal case and says nothing;
         // at info it drowns the log in rows nobody can act on.
-        logger.debug('no new items from {provider} {scope} for {userName}', fields);
+        logger.debug('{actor}\'s {provider} watch on "{scope}" found nothing new', fields);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.warn('watch sync failed for {provider} {scope}: {error}', {
-        component: COMPONENT,
-        provider: watch.provider,
-        scope: watch.scope_key,
-        accountId: watch.account_id,
-        error: message,
-      });
+      logger.warn(
+        '{actor}\'s {provider} watch on "{scope}" could not be polled; the failure is recorded on the watch and it is tried again next interval: {error}',
+        {
+          component: COMPONENT,
+          provider: watch.provider,
+          scope,
+          scopeKey: watch.scope_key,
+          ...actorFields(actor),
+          accountId: watch.account_id,
+          error: message,
+        }
+      );
       // Record the failure ON THE ROW so it surfaces in the connectors UI
       // rather than living only in worker logs an end user never sees.
       // last_synced_at advances even on failure, so one persistently broken
@@ -170,12 +178,18 @@ export async function sweepContentWatches(): Promise<void> {
         await store.contentWatches.recordSyncFailure(watch.id, message.slice(0, 500));
       } catch (recordError) {
         // The row update failing is not worth failing the sweep over.
-        logger.warn('watch {scope} sync failure could not be recorded: {error}', {
-          component: COMPONENT,
-          scope: watch.scope_key,
-          accountId: watch.account_id,
-          error: recordError instanceof Error ? recordError.message : String(recordError),
-        });
+        logger.warn(
+          'the failure of {actor}\'s {provider} watch on "{scope}" could not be recorded on the watch; the connectors page will not show it: {error}',
+          {
+            component: COMPONENT,
+            provider: watch.provider,
+            scope,
+            scopeKey: watch.scope_key,
+            ...actorFields(actor),
+            accountId: watch.account_id,
+            error: recordError instanceof Error ? recordError.message : String(recordError),
+          }
+        );
       }
     }
   }

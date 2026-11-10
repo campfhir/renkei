@@ -15,18 +15,22 @@ import {
 } from '@/lib/insecure-transport';
 import { parseInstancePayload } from '@/lib/admanager/parse';
 import { logger } from '@/lib/logger';
+import { who } from '@/lib/log-actor';
 
 export async function GET(_request: NextRequest): Promise<NextResponse> {
-  if (!(await checkAccess([ROLE_OPERATOR]))) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const session = await checkAccess([ROLE_OPERATOR]);
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   const instances = await listInstances();
   if (!instances.ok) {
-    logger.error('Could not read instances: {error}', {
-      component: 'api/admin/admanager',
-      error: instances.err.message ?? instances.err.type,
-    });
+    logger.error(
+      '{actor} opened the ADManager Plus instances, but the list could not be read; the page got a 500: {error}',
+      {
+        component: 'api/admin/admanager',
+        ...who(session),
+        error: instances.err.message ?? instances.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not read instances' }, { status: 500 });
   }
 
@@ -62,11 +66,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (created.err.type === 'DUPLICATE_NAME') {
       return NextResponse.json({ error: 'An instance with that name exists' }, { status: 409 });
     }
-    logger.error('Could not create the instance: {error}', {
-      component: 'api/admin/admanager',
-      subject: session.subject,
-      error: created.err.message ?? created.err.type,
-    });
+    logger.error(
+      '{actor} added the ADManager Plus instance "{name}" ({environment}, {baseUrl}), but it was not created: {error}',
+      {
+        component: 'api/admin/admanager',
+        ...who(session),
+        name: parsed.input.name,
+        environment: parsed.input.environment,
+        baseUrl: parsed.input.baseUrl,
+        error: created.err.message ?? created.err.type,
+      }
+    );
     return NextResponse.json({ error: 'Could not create the instance' }, { status: 500 });
   }
 

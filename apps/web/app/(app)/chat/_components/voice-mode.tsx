@@ -44,13 +44,12 @@
  * how it is interrupted, does it stay open throughout.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { Icon, ICONS } from '@/components/icons';
 import type { ToolPermissionDecision } from '@/lib/chat/views';
-import { spokenActivity, spokenAsk } from '@/lib/voice/activity';
+import { spokenAsk } from '@/lib/voice/activity';
 import {
   beginUtterance,
-  closeUtterance,
   holdUtterance,
   holdWorthJudging,
   type AssistantState,
@@ -58,7 +57,6 @@ import {
 } from '@/lib/voice/barge-in';
 import { localeLabel } from '@/lib/voice/catalog';
 import { UtteranceRecorder } from '@/lib/voice/recorder';
-import { spokenDecision } from '@/lib/voice/spoken-decision';
 import { LIVE_REPLY_OWNER } from '@/lib/voice/use-reply-speech';
 import { voiceClient } from '@/lib/voice/client';
 import type { SpeechQueue, SpeechQueueState } from '@/lib/voice/speech-queue';
@@ -66,6 +64,33 @@ import { speakableText } from '@/lib/voice/speech-text';
 import { LevelEmitter } from '@/lib/voice/levels';
 import VoiceWave, { type WaveAccent, type WaveTone } from './voice-wave';
 import type { PermissionPrompt } from './message-list';
+import {
+  ASK_AGAIN,
+  announceActivity,
+  askNarration,
+  correctionFor,
+  decisionNarration,
+  hintOf,
+  initialVoiceMode,
+  isResponding,
+  keyAction,
+  labelOf,
+  microphoneWhileBusy,
+  phaseOf,
+  queuedLine,
+  recorderMuted,
+  replyExcerpt,
+  routeUtterance,
+  stillWorkingDue,
+  takePress,
+  talkEnabled,
+  toneOf,
+  voiceModeReducer,
+  workingLine,
+  type VoiceActivity,
+} from './voice-mode.model';
+
+export type { VoiceActivity } from './voice-mode.model';
 
 /**
  * What a sent utterance can later be corrected by: the message it became,
@@ -87,32 +112,13 @@ interface Recognition {
   detection: ReturnType<typeof voiceClient.transcribe> | null;
 }
 
-/** The language of a locale, so `en-GB` and `en-US` are the same one. */
-function languageOf(locale: string): string {
-  return locale.split('-')[0].toLowerCase();
-}
-
-/** A tool call in flight, for the activity line and its announcement. */
-export interface VoiceActivity {
-  id: string;
-  name: string;
-  /** What the model wrote just before the call — its own account of it, read aloud already. */
-  said: string | null;
-}
-
-/** The last sentence of what the model said, for the line under the wave. */
-function lastSentence(text: string): string {
-  const sentences = text.match(/[^.!?]+[.!?]*/g);
-  const last = sentences?.[sentences.length - 1]?.trim();
-  return (last && last.length > 0 ? last : text).replace(/[.!?]+$/, '');
-}
-
-/** Quiet this long while a reply is worked out earns a "still working on it". */
-const STILL_WORKING_AFTER_MS = 20_000;
-
-type Phase =
-  'starting' | 'listening' | 'recording' | 'transcribing' | 'thinking' | 'speaking' | 'error';
-
+/**
+ * The session's rules — phases, labels, what an utterance becomes, when a
+ * correction applies, when the microphone is released — are
+ * voice-mode.model.ts's; this component holds the recorder, the
+ * recognizer's calls, the speaker and the timers, and dispatches what
+ * they report.
+ */
 export default function VoiceMode({
   locale,
   detectLanguage,
@@ -181,24 +187,11 @@ export default function VoiceMode({
   onInterrupt: () => void;
   onClose: () => void;
 }) {
-  const [phase, setPhase] = useState<Phase>('starting');
-  const [error, setError] = useState<string | null>(null);
-  const [muted, setMuted] = useState(false);
-  // Push-to-talk: a take is open, between Talk and Done; and the moment
-  // before, while the microphone is opening for it.
-  const [recording, setRecording] = useState(false);
-  const [opening, setOpening] = useState(false);
+  const [state, dispatch] = useReducer(voiceModeReducer, initialVoiceMode);
+  const phase = phaseOf(state, { queueState, running });
   // The microphone's loudness reaches the wave by subscription, never
   // through state: a render per reading would redraw the whole overlay.
   const micLevels = useRef(new LevelEmitter());
-  const [transcript, setTranscript] = useState<string | null>(null);
-  // The language the last utterance was heard in, when it was not the set one.
-  const [heard, setHeard] = useState<string | null>(null);
-  const [transcribing, setTranscribing] = useState(false);
-  // The utterance is words and on its way to being a turn: between the
-  // transcript landing and the turn starting, so the wave does not fall
-  // back to "Listening" for the length of the Send request.
-  const [sending, setSending] = useState(false);
   const recorder = useRef<UtteranceRecorder | null>(null);
   // The recognition started at the utterance's pause (recorder.ts's
   // onSpeechPause), for the close to take rather than start its own —
@@ -208,13 +201,8 @@ export default function VoiceMode({
   // newer one went out corrects nothing: resending the older would drop
   // the newer.
   const lastSentSeq = useRef<number | null>(null);
-  // The assistant is reading its answer: words of the reply are sounding
-  // (or queued to), with no tool call in flight. Not a narration — "still
-  // working on it", the sentence before a call — and not the model
-  // thinking: those are the reply being worked out, which talking over
-  // does not cut (lib/voice/barge-in.ts).
   const spokenReply = replyText ? speakableText(replyText) : '';
-  const responding = queueState !== 'idle' && spokenReply.length > 0 && activity.length === 0;
+  const responding = isResponding({ queueState, spokenReply, activityCount: activity.length });
   // The latest values, for callbacks the recorder holds across renders.
   const latest = useRef({
     queueState,
@@ -225,6 +213,7 @@ export default function VoiceMode({
     onCorrect,
     onHeard,
     permission,
+    announced: state.announced,
   });
   latest.current = {
     queueState,
@@ -235,6 +224,7 @@ export default function VoiceMode({
     onCorrect,
     onHeard,
     permission,
+    announced: state.announced,
   };
   const assistantState = (): AssistantState => ({
     responding: latest.current.responding,
@@ -245,13 +235,8 @@ export default function VoiceMode({
   // that comes back after it has closed is left to the close.
   const utterance = useRef<Utterance>(beginUtterance({ responding: false, asking: false }));
   const utteranceSeq = useRef(0);
-  // What the assistant is doing, as last announced; and when the voice
-  // last had something to say, for the dead-air check.
-  const [activityLine, setActivityLine] = useState<string | null>(null);
-  const announced = useRef(new Set<string>());
+  // When the voice last had something to say, for the dead-air check.
   const lastVoiceAt = useRef(Date.now());
-  const [deciding, setDeciding] = useState<ToolPermissionDecision | null>(null);
-  const [decisionError, setDecisionError] = useState<string | null>(null);
 
   /**
    * Say something in the reply's own stream, so it lands in order with
@@ -272,17 +257,10 @@ export default function VoiceMode({
     async (decision: ToolPermissionDecision) => {
       const ask = latest.current.permission;
       if (!ask || !ask.canDecide) return;
-      setDeciding(decision);
-      setDecisionError(null);
+      dispatch({ type: 'deciding', decision });
       const failure = await ask.onDecide(ask.pending.toolUseId, decision);
-      setDeciding(null);
-      if (failure) {
-        setDecisionError(failure);
-        return;
-      }
-      narrate(
-        decision === 'deny' ? 'Denied.' : decision === 'always' ? 'Always allowed.' : 'Allowed.'
-      );
+      dispatch({ type: 'decided', failure });
+      if (!failure) narrate(decisionNarration(decision));
     },
     [narrate]
   );
@@ -303,7 +281,7 @@ export default function VoiceMode({
       onSpeechStart: () => {
         // A take was interrupted by the press that opened it (toggleTake).
         if (pushToTalk) {
-          setRecording(true);
+          dispatch({ type: 'take-started' });
           return;
         }
         // A sound. Nothing is cut yet: a cough is not an interruption.
@@ -311,12 +289,9 @@ export default function VoiceMode({
         utterance.current = beginUtterance(assistantState());
       },
       onSpeechHeld: (wav) => {
-        // Enough sound to judge. Only over a reply being read is there
-        // anything to decide — over one still being worked out nothing is
-        // ever cut, what is said queues; an answer to an ask cuts nothing
-        // either — so only then is the sound so far sent to be recognised.
-        // Words silence the reply and drop the turn; anything else waits
-        // for the utterance to close and be judged whole.
+        // Enough sound to judge (lib/voice/barge-in.ts): only over a reply
+        // being read is the sound so far sent to be recognised, and words
+        // silence the reply and drop the turn.
         if (pushToTalk || !holdWorthJudging(assistantState())) return;
         const current = utterance.current;
         const seq = utteranceSeq.current;
@@ -351,68 +326,58 @@ export default function VoiceMode({
           sameAsPause && early.current?.seq === seq ? early.current.result : recognise(wav);
         early.current = null;
         void (async () => {
-          setTranscribing(true);
+          dispatch({ type: 'transcribing' });
           const result = await pending.quick;
-          setTranscribing(false);
+          dispatch({ type: 'transcribed' });
           if (result.error) {
-            setError(result.error);
+            dispatch({ type: 'recognition-failed', message: result.error });
             return;
           }
           const text = result.data?.text.trim() ?? '';
-          if (!text) return;
-          // Under the assistant's voice, only words are a message: a
-          // "yeah" or the reply's own echo is dropped, and words that
-          // became words only now cut the reply here. (A take is always
-          // a message: a button was pressed for it.)
-          const decision = pushToTalk
-            ? 'send'
-            : closeUtterance(closed, assistantState(), text, latest.current.spokenReply);
-          if (decision === 'drop') return;
-          if (decision === 'interrupt') latest.current.onInterrupt();
-          setError(null);
-          setTranscript(text);
+          const route = routeUtterance({
+            text,
+            pushToTalk,
+            closed,
+            assistant: assistantState(),
+            spokenReply: latest.current.spokenReply,
+          });
+          if (route.kind === 'drop') return;
+          if (route.interrupt) latest.current.onInterrupt();
           const heardIn = result.data?.locale ?? null;
-          setHeard(heardIn && heardIn !== locale ? heardIn : null);
+          dispatch({ type: 'utterance-heard', text, heardIn, locale });
           if (heardIn) latest.current.onHeard(heardIn);
-          // While an ask is open, what is said is the answer to it.
-          if (latest.current.permission) {
-            const decision = spokenDecision(text);
-            if (decision) await decide(decision);
-            else narrate('Say allow, always allow, or deny.');
+          if (route.kind === 'answer') {
+            if (route.decision) await decide(route.decision);
+            else narrate(ASK_AGAIN);
             return;
           }
-          setSending(true);
-          let ticket: VoiceSendTicket | null;
+          dispatch({ type: 'sending' });
+          let ticket: VoiceSendTicket | null = null;
           try {
             ticket = await latest.current.onSend(text);
           } finally {
-            setSending(false);
+            dispatch({ type: 'sent', ok: ticket !== null });
           }
-          if (!ticket) {
-            setError('The message could not be sent.');
-            return;
-          }
+          if (!ticket) return;
           lastSentSeq.current = seq;
           if (!pending.detection) return;
-          // The slower answer: which language it was. The same language
-          // (whatever the region) leaves the words sent as they are;
-          // another means they were heard wrong, and the words heard in
-          // that language replace them — unless something newer has
-          // gone out since. An error here is no one's problem: the
-          // words went out already, in the set language.
           const detected = await pending.detection;
-          const detectedIn = detected.data?.locale ?? null;
-          const words = detected.data?.text.trim() ?? '';
-          if (!detectedIn || !words || lastSentSeq.current !== seq) return;
-          latest.current.onHeard(detectedIn);
-          if (languageOf(detectedIn) === languageOf(locale)) return;
-          setTranscript(words);
-          setHeard(detectedIn);
-          latest.current.onCorrect(ticket, words);
+          const outcome = correctionFor({
+            detectedIn: detected.data?.locale ?? null,
+            text: detected.data?.text ?? '',
+            locale,
+            seq,
+            lastSentSeq: lastSentSeq.current,
+          });
+          if (outcome.kind === 'none') return;
+          latest.current.onHeard(outcome.locale);
+          if (outcome.kind !== 'correct') return;
+          dispatch({ type: 'corrected', text: outcome.text, locale: outcome.locale });
+          latest.current.onCorrect(ticket, outcome.text);
         })();
       },
       onSpeechEnd: () => {
-        setRecording(false);
+        dispatch({ type: 'take-ended' });
         // Push-to-talk: the microphone is only open for the take.
         if (pushToTalk) {
           instance.stop();
@@ -421,53 +386,37 @@ export default function VoiceMode({
       },
       onLevel: (next) => micLevels.current.emit(next),
       onError: (message) => {
-        setError(message);
         // Without a microphone there is no voice mode — unless it is only
         // wanted per take, when the next Talk can try again.
-        if (!pushToTalk) setPhase('error');
+        dispatch({ type: 'microphone-failed', message, pushToTalk });
       },
     });
     recorder.current = instance;
     if (pushToTalk) {
-      setPhase('listening');
+      dispatch({ type: 'microphone-ready' });
     } else {
       void instance.start().then((ok) => {
-        if (ok) setPhase('listening');
+        if (ok) dispatch({ type: 'microphone-ready' });
       });
     }
     return () => {
       instance.stop();
       recorder.current = null;
       early.current = null;
-      setRecording(false);
-      setOpening(false);
+      dispatch({ type: 'recorder-reset' });
     };
     // decide and narrate are stable for the queue's lifetime.
   }, [locale, detectLanguage, echoCancellation, microphone, pushToTalk]);
 
-  // The line under the wave says what is being done right now: the
-  // model's own sentence about the call when it wrote one (a voice turn
-  // is asked to), else the page's. A call the model did not introduce
-  // is announced as it starts — the newest only, when several start at
-  // once, so a burst of lookups is one sentence.
+  // The line under the wave says what is being done right now, and a
+  // call the model did not introduce is announced as it starts.
   useEffect(() => {
-    const fresh = activity.filter((call) => !announced.current.has(call.id));
-    for (const call of fresh) announced.current.add(call.id);
-    const current = activity[activity.length - 1];
-    const lineOf = (call: VoiceActivity) =>
-      call.said ? lastSentence(call.said) : spokenActivity(call.name);
-    if (fresh.length > 0) {
-      const newest = fresh[fresh.length - 1];
-      setActivityLine(lineOf(newest));
-      if (!newest.said) narrate(`${spokenActivity(newest.name)}.`);
-    } else if (current) {
-      setActivityLine(lineOf(current));
-    } else {
-      setActivityLine(null);
-    }
+    const { narration } = announceActivity(latest.current.announced, activity);
+    dispatch({ type: 'activity-changed', activity });
+    if (narration) narrate(narration);
   }, [activity, narrate]);
   useEffect(() => {
-    if (!running) announced.current.clear();
+    if (!running) dispatch({ type: 'turn-finished' });
   }, [running]);
 
   // A long quiet while the reply is worked out gets a word, so a slow
@@ -478,8 +427,7 @@ export default function VoiceMode({
   useEffect(() => {
     if (!running || permission) return;
     const timer = setInterval(() => {
-      if (latest.current.queueState !== 'idle') return;
-      if (Date.now() - lastVoiceAt.current < STILL_WORKING_AFTER_MS) return;
+      if (!stillWorkingDue(latest.current.queueState, lastVoiceAt.current, Date.now())) return;
       narrate('Still working on it.');
     }, 5_000);
     return () => clearInterval(timer);
@@ -489,29 +437,32 @@ export default function VoiceMode({
   const askId = permission?.pending.toolUseId ?? null;
   useEffect(() => {
     if (!askId || !permission) return;
-    setDecisionError(null);
-    narrate(
-      `Permission needed. The assistant wants to ${spokenAsk(permission.pending.name)}. Say allow, always allow, or deny.`
-    );
+    dispatch({ type: 'ask-raised' });
+    narrate(askNarration(permission.pending.name));
     // Spoken once per ask, not on every re-render carrying it.
   }, [askId, narrate]);
 
-  // Without echo cancellation the microphone has no use while the
-  // assistant works — it is closed to speech anyway — so its track is
-  // released for that time and opened again after, which is what lets a
-  // headset play the reply in stereo. Stop makes "after" now.
+  // Without echo cancellation the microphone is released while the
+  // assistant works, so a headset can play the reply in stereo. Stop
+  // makes "after" now.
   const busy = running || queueState !== 'idle';
-  const releaseWhileBusy = !pushToTalk && !echoCancellation;
   useEffect(() => {
     const instance = recorder.current;
-    if (!releaseWhileBusy || !instance || phase === 'starting' || phase === 'error') return;
-    if (busy) {
+    if (!instance) return;
+    const action = microphoneWhileBusy({
+      pushToTalk,
+      echoCancellation,
+      phase,
+      busy,
+      active: instance.active,
+    });
+    if (action === 'stop') {
       instance.stop();
       micLevels.current.emit(0);
-    } else if (!instance.active) {
+    } else if (action === 'start') {
       void instance.start();
     }
-  }, [releaseWhileBusy, busy, phase]);
+  }, [pushToTalk, echoCancellation, busy, phase]);
 
   // The speaker stays open for the whole conversation, so a reply's first
   // word is not lost to a headset waking up (lib/voice/speech-queue.ts).
@@ -523,21 +474,15 @@ export default function VoiceMode({
   useEffect(() => {
     recorder.current?.holdWhileSpeaking(queueState === 'speaking');
   }, [queueState]);
-  // Push-to-talk needs no such guard: nothing starts without a press.
+  const muteRecorder = recorderMuted({
+    muted: state.muted,
+    pushToTalk,
+    echoCancellation,
+    queueState,
+  });
   useEffect(() => {
-    recorder.current?.setMuted(
-      muted || (!pushToTalk && !echoCancellation && queueState === 'speaking')
-    );
-  }, [muted, echoCancellation, pushToTalk, queueState]);
-
-  useEffect(() => {
-    if (phase === 'error' || phase === 'starting') return;
-    if (recording) setPhase('recording');
-    else if (queueState === 'speaking') setPhase('speaking');
-    else if (transcribing) setPhase('transcribing');
-    else if (running || sending || queueState === 'loading') setPhase('thinking');
-    else setPhase('listening');
-  }, [phase, recording, queueState, running, sending, transcribing]);
+    recorder.current?.setMuted(muteRecorder);
+  }, [muteRecorder]);
 
   const close = useCallback(() => {
     recorder.current?.stop();
@@ -545,40 +490,42 @@ export default function VoiceMode({
     onClose();
   }, [queue, onClose]);
 
-  /**
-   * Push-to-talk: Talk interrupts a reply being read, opens the
-   * microphone and a take; Done closes and sends it, and the microphone
-   * closes with it. Over a reply still being worked out Talk interrupts
-   * nothing: the take queues behind it, as spoken words would.
-   */
+  /** Push-to-talk's Talk/Done (voice-mode.model.ts's takePress). */
+  const opening = state.opening;
   const toggleTake = useCallback(() => {
     const instance = recorder.current;
-    if (!instance || opening) return;
-    if (instance.taking) {
+    if (!instance) return;
+    const press = takePress({
+      opening,
+      taking: instance.taking,
+      responding: latest.current.responding,
+      asking: latest.current.permission !== null,
+    });
+    if (!press) return;
+    if (press.kind === 'end') {
       instance.endTake();
       return;
     }
-    const { responding: reading, onInterrupt: interrupt, permission: ask } = latest.current;
-    if (!ask && reading) interrupt();
-    setError(null);
-    setOpening(true);
+    if (press.interrupt) latest.current.onInterrupt();
+    dispatch({ type: 'take-opening' });
     void instance.start().then((ok) => {
-      setOpening(false);
+      dispatch({ type: 'take-opened' });
       if (ok && recorder.current === instance) instance.beginTake();
     });
   }, [opening]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-      // Space is Talk/Done, unless a control has the keyboard already.
-      if (event.key === ' ' && pushToTalk && phase !== 'starting' && phase !== 'error') {
-        if (
+      const action = keyAction({
+        key: event.key,
+        pushToTalk,
+        phase,
+        onControl:
           event.target instanceof Element &&
-          event.target.closest('button, input, select, textarea, a')
-        ) {
-          return;
-        }
+          event.target.closest('button, input, select, textarea, a') !== null,
+      });
+      if (action === 'close') close();
+      if (action === 'take') {
         event.preventDefault();
         toggleTake();
       }
@@ -587,47 +534,22 @@ export default function VoiceMode({
     return () => document.removeEventListener('keydown', onKey);
   }, [close, pushToTalk, phase, toggleTake]);
 
-  const label =
-    phase === 'starting'
-      ? 'Opening the microphone…'
-      : phase === 'error'
-        ? 'Voice mode could not start'
-        : permission
-          ? 'Permission needed — say allow, always allow, or deny'
-          : muted
-            ? 'Muted — unmute to talk'
-            : opening
-              ? 'Opening the microphone…'
-              : phase === 'recording'
-                ? 'Recording — press Done when you have finished'
-                : phase === 'listening'
-                  ? pushToTalk
-                    ? 'Press Talk to speak'
-                    : 'Listening'
-                  : phase === 'transcribing'
-                    ? 'Heard you…'
-                    : phase === 'thinking'
-                      ? 'Thinking…'
-                      : pushToTalk
-                        ? 'Speaking — press Talk to interrupt'
-                        : echoCancellation
-                          ? 'Speaking — talk to interrupt'
-                          : 'Speaking — press Stop to talk';
-  const tone: WaveTone =
-    phase === 'speaking'
-      ? 'speaking'
-      : phase === 'thinking' || phase === 'transcribing'
-        ? 'thinking'
-        : (phase === 'recording' || (phase === 'listening' && !pushToTalk)) && !muted
-          ? 'listening'
-          : 'idle';
+  const { muted, recording, deciding, decisionError, error, transcript, heard } = state;
+  const asking = permission !== null;
+  const label = labelOf(phase, state, { pushToTalk, echoCancellation, asking });
+  const tone: WaveTone = toneOf(phase, muted, pushToTalk);
   // Whose sound the wave follows: the speaker's, the microphone's, or none.
   const waveLevels = tone === 'speaking' ? queue : tone === 'listening' ? micLevels.current : null;
+  const working = workingLine({
+    running,
+    asking,
+    phase,
+    activityLine: state.activityLine,
+    thinking,
+  });
   // What waits behind this reply, said once so the person knows they were heard.
-  const queuedLine =
-    queued === 1
-      ? 'Your next message is queued — it goes out when this reply is done.'
-      : `${queued} messages are queued — they go out one at a time when this reply is done.`;
+  const queuedNote = queuedLine(queued, busy);
+  const hint = hintOf({ phase, transcript, spokenReply, pushToTalk });
 
   return (
     <div
@@ -665,14 +587,14 @@ export default function VoiceMode({
         <p className="text-base font-medium" aria-live="polite">
           {label}
         </p>
-        {running && !permission && (activityLine || phase === 'thinking') ? (
+        {working ? (
           <p className="-mt-4 text-sm text-gray-500" aria-live="polite">
-            {activityLine ? `${activityLine}…` : thinking ? 'Thinking it through…' : 'Working…'}
+            {working}
           </p>
         ) : null}
-        {queued > 0 && busy ? (
+        {queuedNote ? (
           <p className="-mt-4 text-sm text-gray-500" aria-live="polite" data-voice-queued>
-            {queuedLine}
+            {queuedNote}
           </p>
         ) : null}
         {permission ? (
@@ -747,16 +669,10 @@ export default function VoiceMode({
           ) : null}
           {spokenReply ? (
             <p className="max-h-40 overflow-y-auto rounded-2xl rounded-bl-sm bg-gray-100 px-4 py-2 text-gray-800 dark:bg-gray-900 dark:text-gray-200">
-              {spokenReply.length > 700 ? `…${spokenReply.slice(-700)}` : spokenReply}
+              {replyExcerpt(spokenReply)}
             </p>
           ) : null}
-          {!transcript && !spokenReply && phase === 'listening' ? (
-            <p className="text-center text-gray-500">
-              {pushToTalk
-                ? 'Press Talk, say what you want, then press Done. Ten seconds of silence ends it too. Press Talk over a reply to interrupt it; while the reply is still being worked out, a take waits its turn.'
-                : 'Say something. Pause when you are done, and the reply is read to you. A few words over it interrupt it; while it is still being worked out, what you say waits its turn.'}
-            </p>
-          ) : null}
+          {hint ? <p className="text-center text-gray-500">{hint}</p> : null}
         </div>
       </div>
 
@@ -765,7 +681,7 @@ export default function VoiceMode({
           <button
             type="button"
             onClick={toggleTake}
-            disabled={phase === 'starting' || phase === 'error' || opening}
+            disabled={!talkEnabled(phase, opening)}
             aria-pressed={recording}
             aria-keyshortcuts="Space"
             title={recording ? 'Stop recording and send (Space)' : 'Start recording (Space)'}
@@ -782,7 +698,7 @@ export default function VoiceMode({
         {pushToTalk ? null : (
           <button
             type="button"
-            onClick={() => setMuted((value) => !value)}
+            onClick={() => dispatch({ type: 'mute-toggled' })}
             aria-pressed={muted}
             className={`flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-medium ${
               muted

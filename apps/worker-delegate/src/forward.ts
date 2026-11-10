@@ -37,8 +37,10 @@ import {
   type ShareCredentials,
 } from '@renkei/connector-fileshares';
 import { openForSubject } from '@renkei/user-keys';
-import { isRecord, readBody, sendJson, str } from '@renkei/worker-kit';
+import { readBody, sendJson, str } from '@renkei/worker-kit';
 import { silentDelegateLogger, type DelegateLogger, type Grants } from './grants';
+import { isRecord } from '@renkei/guards';
+import { pseudonym } from './access-log';
 
 const COMPONENT = 'worker-delegate/forward';
 const MAX_JSON_BYTES = 16 * 1_048_576;
@@ -159,7 +161,7 @@ export class Forwarder {
     const worker = workerConfig(spec.envPrefix);
     if (!worker) {
       this.logger.error(
-        '{connector} {op} not forwarded: {envPrefix}_URL and _API_KEY are not set',
+        'a {connector} {op} request was not forwarded: {envPrefix}_URL and _API_KEY are not set on the delegate; the caller got 503',
         {
           component: COMPONENT,
           connector,
@@ -260,12 +262,17 @@ export class Forwarder {
           ? await readAdManagerCiphertext(id, subject)
           : await readShareCiphertext(id, subject);
     if (!ciphertext.ok) {
-      this.logger.error('{connector} credential for {id} could not be read: {error}', {
-        component: COMPONENT,
-        connector,
-        id,
-        error: ciphertext.err.message ?? ciphertext.err.type,
-      });
+      this.logger.error(
+        'the {connector} credential of {actor} for {kind} {id} could not be read; the request was not forwarded: {error}',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          connector,
+          kind: connector === 'fileshares' ? 'share' : 'instance',
+          id,
+          error: ciphertext.err.message ?? ciphertext.err.type,
+        }
+      );
       return { ok: false, status: 500, type: 'store' };
     }
     if (ciphertext.val === null) return { ok: false, status: 403, type: 'not_connected' };
@@ -278,11 +285,16 @@ export class Forwarder {
           ? parseAdManagerCredentials(opened.value)
           : parseShareCredentials(opened.value);
     if (!credentials) {
-      this.logger.warn('{connector} credential for {id} is not a usable credential', {
-        component: COMPONENT,
-        connector,
-        id,
-      });
+      this.logger.warn(
+        'the {connector} credential of {actor} for {kind} {id} opened but is not a usable credential; the request was not forwarded and they must reconnect',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          connector,
+          kind: connector === 'fileshares' ? 'share' : 'instance',
+          id,
+        }
+      );
       return { ok: false, status: 503, type: 'bad_credentials' };
     }
     body.credentials = credentials;
@@ -311,20 +323,28 @@ export class Forwarder {
           message: 'Your key is not available to Renkei right now; sign in again to continue.',
         };
       }
-      this.logger.warn('{connector} credential could not be opened: {error}', {
-        component: COMPONENT,
-        connector,
-        error: opened.err.type,
-      });
+      this.logger.warn(
+        'the {connector} credential of {actor} could not be opened with their key; the request was not forwarded: {error}',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          connector,
+          error: opened.err.type,
+        }
+      );
       return { ok: false, status: 503, type: 'bad_credentials' };
     }
     try {
       return { ok: true, value: JSON.parse(opened.val) };
     } catch {
-      this.logger.warn('{connector} credential opened but is not JSON', {
-        component: COMPONENT,
-        connector,
-      });
+      this.logger.warn(
+        'the {connector} credential of {actor} opened but is not JSON; the request was not forwarded and they must reconnect',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          connector,
+        }
+      );
       return { ok: false, status: 503, type: 'bad_credentials' };
     }
   }
@@ -340,11 +360,16 @@ export class Forwarder {
     if (!shareId || !subject) return fail(response, 400, 'bad_request');
     const ciphertext = await readShareCiphertext(shareId, subject);
     if (!ciphertext.ok) {
-      this.logger.error('fileshares credential for {id} could not be read: {error}', {
-        component: COMPONENT,
-        id: shareId,
-        error: ciphertext.err.message ?? ciphertext.err.type,
-      });
+      this.logger.error(
+        'the file share credential of {actor} for share {id} could not be read; the write was not forwarded: {error}',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          connector: 'fileshares',
+          id: shareId,
+          error: ciphertext.err.message ?? ciphertext.err.type,
+        }
+      );
       return fail(response, 500, 'store');
     }
     if (ciphertext.val === null) return fail(response, 403, 'not_connected');
@@ -352,11 +377,15 @@ export class Forwarder {
     if (!opened.ok) return fail(response, opened.status, opened.type, opened.message);
     const credentials: ShareCredentials | null = parseShareCredentials(opened.value);
     if (!credentials) {
-      this.logger.warn('{connector} credential for {id} is not a usable credential', {
-        component: COMPONENT,
-        connector: 'fileshares',
-        id: shareId,
-      });
+      this.logger.warn(
+        'the file share credential of {actor} for share {id} opened but is not a usable credential; the write was not forwarded and they must reconnect',
+        {
+          component: COMPONENT,
+          ...pseudonym(subject),
+          connector: 'fileshares',
+          id: shareId,
+        }
+      );
       return fail(response, 503, 'bad_credentials');
     }
     const bytes = await readBody(request, MAX_RAW_BYTES);
@@ -422,11 +451,16 @@ export class Forwarder {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.name === 'TimeoutError';
-      this.logger.error('connector worker {op} failed: {error}', {
-        component: COMPONENT,
-        op: opAndQuery.split('?', 1)[0],
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.error(
+        'the connector worker did not answer a forwarded {op} request ({outcome}); the caller gets {status}: {error}',
+        {
+          component: COMPONENT,
+          op: opAndQuery.split('?', 1)[0],
+          outcome: timedOut ? 'it timed out' : 'it could not be reached',
+          status: timedOut ? 504 : 502,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return fail(
         response,
         timedOut ? 504 : 502,

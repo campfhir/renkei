@@ -1,75 +1,32 @@
 'use client';
 
 import { anchorId } from '@/lib/hash-scroll';
-import { formatByteSize, parseByteSize } from '@/lib/byte-size';
-import { useState } from 'react';
+import { useReducer, useState } from 'react';
 import { sendJsonFull } from '@/lib/fetch-json';
 import CoachTarget, { useCoachAnchor } from '@/components/coach-marks/anchor';
 import type { CoachAnchor } from '@/lib/coach-marks/anchors';
+import {
+  ACT_APPROVAL_POLICIES,
+  LOG_LEVELS,
+  byteSizeField,
+  canSave,
+  gbToBytes,
+  initSettings,
+  isActApprovalPolicy,
+  isLogLevel,
+  mbToBytes,
+  saveLabel,
+  saveRequest,
+  settingsReducer,
+  showsUnsaved,
+  toGb,
+  toMb,
+  typedBytes,
+  type EditableSettings,
+  type NumericSetting,
+} from './settings-form.model';
 
-// Mirrors @renkei/settings' LOG_LEVELS — kept local rather than imported so
-// this client component never pulls in that package's @renkei/db (pg)
-// dependency. The API route is the source of truth for validation.
-const LOG_LEVELS = ['critical', 'error', 'warn', 'info', 'debug'] as const;
-type LogLevel = (typeof LOG_LEVELS)[number];
-
-// Mirrors @renkei/settings' ACT_APPROVAL_POLICIES, kept local for the same
-// reason; the labels are this page's words for each value.
-const ACT_APPROVAL_POLICIES = [
-  { value: 'externally_triggered', label: 'Runs started by an event or webhook' },
-  { value: 'all', label: 'Every run' },
-  { value: 'off', label: 'No run (auto-accept is always honored)' },
-] as const;
-type ActApprovalPolicy = (typeof ACT_APPROVAL_POLICIES)[number]['value'];
-
-export interface EditableSettings {
-  organizationName: string;
-  readOnly: boolean;
-  coachMarksEnabled: boolean;
-  phiConnectorsRequireCoveredModel: boolean;
-  artifactDigestEnabled: boolean;
-  enableDcr: boolean;
-  sandboxBrowserEnabled: boolean;
-  sandboxChartsEnabled: boolean;
-  sandboxWorkspacesEnabled: boolean;
-  sandboxServicesEnabled: boolean;
-  sandboxScriptsEnabled: boolean;
-  sandboxScriptsAllowNetwork: boolean;
-  logLevel: LogLevel;
-  maxJqlResults: number;
-  maxAttachmentBytes: number;
-  massUploadThreshold: number;
-  rateLimitPerUserPerMinute: number;
-  accessTokenTtlMinutes: number;
-  authorizationCodeTtlSeconds: number;
-  refreshTokenTtlDays: number;
-  sessionIdleTimeoutMinutes: number;
-  agentMaxChainDepth: number;
-  agentRunTimeoutMinutes: number;
-  agentRunToolCallBudget: number;
-  agentMaxRunsPerDay: number;
-  agentApprovalMaxWaitDays: number;
-  agentActStepsRequireApproval: ActApprovalPolicy;
-  contentPollMinutes: number;
-  webexWebhookHealthMinutes: number;
-  logRetentionDays: number;
-  agentNotificationRetentionDays: number;
-  agentUsageRetentionDays: number;
-  chatRetentionDays: number;
-  agentOptimizerWindowDays: number;
-  knowledgeKeywordEnrichment: boolean;
-  knowledgeKeywordMinChars: number;
-  chatReplyPresenceWindowSeconds: number;
-  sandboxWorkspaceMaxBytes: number;
-  sandboxScriptMemoryBytes: number;
-  sandboxServiceMemoryBytes: number;
-  sandboxServicePids: number;
-  sandboxWorkspacesDebug: boolean;
-  admanagerProductName: string;
-}
-
-const GB = 1_073_741_824;
-const MB = 1_048_576;
+export type { EditableSettings } from './settings-form.model';
 
 const inputClass =
   'w-28 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm tabular-nums dark:border-gray-700 dark:bg-gray-900';
@@ -91,17 +48,17 @@ function ByteSizeInput({
   range: string;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
-  const invalid = draft !== null && parseByteSize(draft) === null;
+  const { text, invalid } = byteSizeField(draft, value);
   return (
     <span className="flex items-center gap-2">
       <input
         type="text"
         aria-label={label}
         aria-invalid={invalid}
-        value={draft ?? formatByteSize(value)}
+        value={text}
         onChange={(event) => {
           setDraft(event.target.value);
-          const bytes = parseByteSize(event.target.value);
+          const bytes = typedBytes(event.target.value);
           if (bytes !== null) onChange(bytes);
         }}
         onBlur={() => setDraft(null)}
@@ -197,36 +154,20 @@ function Toggle({
  * The settings that have no more specific home, grouped by what they
  * protect. One Save for the whole page: these are numbers an operator
  * adjusts a few at a time, and eleven separate save buttons would be
- * eleven chances to forget one.
+ * eleven chances to forget one. What the form decides is
+ * settings-form.model.ts.
  */
-/** The fields of `after` that differ from `before`. */
-function changedFields<T extends object>(before: T, after: T): Partial<T> {
-  const changed: Partial<T> = {};
-  for (const key in after) {
-    if (after[key] !== before[key]) changed[key] = after[key];
-  }
-  return changed;
-}
-
 export function SettingsForm({ initial }: { initial: EditableSettings }) {
-  const [values, setValues] = useState(initial);
-  const [saved, setSaved] = useState(initial);
-  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [error, setError] = useState<string | null>(null);
-
-  const dirty = JSON.stringify(values) !== JSON.stringify(saved);
+  const [state, dispatch] = useReducer(settingsReducer, initial, initSettings);
+  const { values } = state;
 
   function set<K extends keyof EditableSettings>(key: K, value: EditableSettings[K]) {
-    setValues((previous) => ({ ...previous, [key]: value }));
-    setState('idle');
+    const patch: Partial<EditableSettings> = {};
+    patch[key] = value;
+    dispatch({ type: 'changed', patch });
   }
 
-  function numberInput(
-    key: {
-      [K in keyof EditableSettings]: EditableSettings[K] extends number ? K : never;
-    }[keyof EditableSettings],
-    range: string
-  ) {
+  function numberInput(key: NumericSetting, range: string) {
     return (
       <span className="flex items-center gap-2">
         <input
@@ -246,10 +187,9 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
       <select
         aria-label="logLevel"
         value={values.logLevel}
-        onChange={(event) =>
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the select only offers LogLevel values
-          set('logLevel', event.target.value as LogLevel)
-        }
+        onChange={(event) => {
+          if (isLogLevel(event.target.value)) set('logLevel', event.target.value);
+        }}
         className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
       >
         {LOG_LEVELS.map((level) => (
@@ -266,10 +206,11 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
       <select
         aria-label="agentActStepsRequireApproval"
         value={values.agentActStepsRequireApproval}
-        onChange={(event) =>
-          // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- the select only offers ActApprovalPolicy values
-          set('agentActStepsRequireApproval', event.target.value as ActApprovalPolicy)
-        }
+        onChange={(event) => {
+          if (isActApprovalPolicy(event.target.value)) {
+            set('agentActStepsRequireApproval', event.target.value);
+          }
+        }}
         className="rounded-md border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-900"
       >
         {ACT_APPROVAL_POLICIES.map((policy) => (
@@ -282,26 +223,17 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
   }
 
   async function save() {
-    setState('saving');
-    setError(null);
-    // Only what this form changed: the settings are the whole organization's,
-    // and sending every field would write another operator's concurrent save
-    // back to what this form last loaded.
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull<{ settings: EditableSettings }>(
       `/api/admin/org-settings`,
       'PUT',
-      changedFields(saved, values)
+      saveRequest(state)
     );
     if (result.error || !result.data) {
-      setState('error');
-      setError(result.error ?? 'Save failed');
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
-    // The server clamps; adopting its answer keeps the form honest about
-    // what was actually stored.
-    setValues(result.data.settings);
-    setSaved(result.data.settings);
-    setState('saved');
+    dispatch({ type: 'stored', settings: result.data.settings });
   }
 
   const saveAnchor = useCoachAnchor('admin-settings-save');
@@ -623,8 +555,8 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
               min={1}
               max={64}
               step={1}
-              value={Math.round(values.sandboxWorkspaceMaxBytes / GB)}
-              onChange={(event) => set('sandboxWorkspaceMaxBytes', Number(event.target.value) * GB)}
+              value={toGb(values.sandboxWorkspaceMaxBytes)}
+              onChange={(event) => set('sandboxWorkspaceMaxBytes', gbToBytes(event.target.value))}
               className={inputClass}
             />
             <span className="w-20 text-xs text-gray-400 dark:text-gray-600">1GB–64GB</span>
@@ -641,8 +573,8 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
               min={64}
               max={65536}
               step={64}
-              value={Math.round(values.sandboxScriptMemoryBytes / MB)}
-              onChange={(event) => set('sandboxScriptMemoryBytes', Number(event.target.value) * MB)}
+              value={toMb(values.sandboxScriptMemoryBytes)}
+              onChange={(event) => set('sandboxScriptMemoryBytes', mbToBytes(event.target.value))}
               className={inputClass}
             />
             <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
@@ -659,10 +591,8 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
               min={64}
               max={65536}
               step={64}
-              value={Math.round(values.sandboxServiceMemoryBytes / MB)}
-              onChange={(event) =>
-                set('sandboxServiceMemoryBytes', Number(event.target.value) * MB)
-              }
+              value={toMb(values.sandboxServiceMemoryBytes)}
+              onChange={(event) => set('sandboxServiceMemoryBytes', mbToBytes(event.target.value))}
               className={inputClass}
             />
             <span className="w-20 text-xs text-gray-400 dark:text-gray-600">64MB–64GB</span>
@@ -718,17 +648,17 @@ export function SettingsForm({ initial }: { initial: EditableSettings }) {
         <button
           {...saveAnchor}
           type="button"
-          disabled={state === 'saving' || !dirty}
+          disabled={!canSave(state)}
           onClick={() => void save()}
           className="rounded-md bg-blue-600 px-4 py-1.5 text-sm font-medium text-white disabled:opacity-50"
         >
-          {state === 'saving' ? 'Saving…' : 'Save settings'}
+          {saveLabel(state)}
         </button>
-        {state === 'saved' && <span className="text-xs text-green-600">Saved.</span>}
-        {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
-        {dirty && state !== 'saving' && (
-          <span className="text-xs text-gray-500">Unsaved changes</span>
+        {state.phase === 'saved' && <span className="text-xs text-green-600">Saved.</span>}
+        {state.error && (
+          <span className="text-xs text-red-600 dark:text-red-400">{state.error}</span>
         )}
+        {showsUnsaved(state) && <span className="text-xs text-gray-500">Unsaved changes</span>}
       </div>
     </div>
   );

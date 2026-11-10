@@ -19,10 +19,7 @@ import type {
   AdManagerPermission,
   InstanceInput,
 } from '@renkei/connector-admanager';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 function cleanString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';

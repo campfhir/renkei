@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@renkei/crypto": "workspace:*",
-    "@renkei/db": "workspace:*"
+    "@renkei/db": "workspace:*",
+    "@renkei/guards": "workspace:*"
   },
   "devDependencies": {
     "@types/jest": "^30.0.0",

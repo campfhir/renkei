@@ -52,6 +52,16 @@ export interface OperationRuntime {
   exposureRefusal(instanceId: string, permission: MirthPermission): Promise<string | null>;
   instanceName(instanceId: string): Promise<string>;
   /**
+   * The name of what a reference argument (REF_ARGS) points at, for a card;
+   * null when it cannot be told. A card never shows the id.
+   */
+  refName?(
+    instanceId: string,
+    argName: string,
+    value: string,
+    args: Record<string, unknown>
+  ): Promise<string | null>;
+  /**
    * Called after a successful call with the operation's `tool` name and
    * the validated arguments — index.ts records the PHI access trail for
    * the message operations and ignores the rest. Must not throw.
@@ -327,18 +337,50 @@ function descriptionFor(operation: OperationSpec): string {
 const BODY_PREVIEW_CHARS = 800;
 
 /** What a destructive card shows: the request, every argument given, the body. */
-function cardFields(
+/** Arguments that point at one record Mirth never names (a message, an event…): said, not shown. */
+const UNNAMED_RECORDS: Record<string, string> = {
+  messageId: 'One message',
+  eventId: 'One event',
+  attachmentId: 'One attachment',
+  serverId: 'One server',
+  patientId: 'One patient',
+};
+
+async function cardFields(
   operation: OperationSpec,
   args: Record<string, unknown>,
-  instanceName: string
-): { label: string; value: string }[] {
+  instanceName: string,
+  runtime: OperationRuntime
+): Promise<{ label: string; value: string }[]> {
   const fields = [
     { label: 'Instance', value: instanceName },
-    { label: 'Operation', value: `${operation.method} /api${operation.path}` },
+    { label: 'Operation', value: operation.title },
   ];
+  const instanceId = typeof args.instanceId === 'string' ? args.instanceId : '';
   for (const param of operation.params) {
     const value = args[param.name];
     if (value === undefined || value === null || value === '') continue;
+    const kind = REF_ARGS[param.name];
+    if (kind) {
+      const list = Array.isArray(value) ? value : [value];
+      const shown = await Promise.all(
+        list.map(async (item) => {
+          const named = await runtime
+            .refName?.(instanceId, param.name, textOf(item), args)
+            .catch(() => null);
+          if (named) return named;
+          const noun = kind.replace(/_/g, ' ');
+          return `${/^[aeiou]/.test(noun) ? 'An' : 'A'} ${noun}`;
+        })
+      );
+      fields.push({ label: param.name, value: shown.join(', ') });
+      continue;
+    }
+    const unnamed = UNNAMED_RECORDS[param.name];
+    if (unnamed) {
+      fields.push({ label: param.name, value: unnamed });
+      continue;
+    }
     fields.push({
       label: param.name,
       value: Array.isArray(value) ? value.map(String).join(', ') : textOf(value),
@@ -440,11 +482,11 @@ export function registerOperationTools(
             kind: 'issue',
             previewId: newPreviewId(),
             title: operation.title,
-            subtitle: `${instanceName} · ${operation.method} /api${built.request.path}`,
+            subtitle: `${instanceName} · ${operation.title}`,
             confirmTool: `${name}_confirm`,
             confirmLabel: 'Run it',
             confirmArgs: args,
-            fields: cardFields(operation, args, instanceName),
+            fields: await cardFields(operation, args, instanceName, runtime),
           },
         };
       }

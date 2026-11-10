@@ -10,9 +10,13 @@
  * nothing here shows a value again); the instructions start from a
  * developer's brief. Nothing is cloned yet: the first chat in the
  * project does that.
+ *
+ * What each choice does to the rest of the form, what Create sends and
+ * where it goes, which listing a search reads and what "Create
+ * repository" makes are new-code-project.model.ts.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useReducer, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Icon, ICONS } from '@/components/icons';
@@ -20,79 +24,69 @@ import { getJson, sendJsonFull } from '@/lib/fetch-json';
 import { DEFAULT_CODE_INSTRUCTIONS } from '@/lib/code/default-instructions';
 import { CODE_PROJECT_CONNECTORS } from '@/lib/chat/tool-config';
 import ToolsDialog from '../../chat/_components/tools-dialog';
-import { repoSlugFromName } from '@/lib/code/repo-slug';
 import type { BrowseProject, BrowseWorkspace, RepoChoice } from '@/lib/code/bitbucket-browse';
 import type { GitHubAccount } from '@/lib/code/github-browse';
 import type { CodeProjectTemplate } from '@/lib/code/project-templates';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
-
-/** A code project's repository provider, as provider_grants and repo_provider name it. */
-type RepoProvider = 'atlassian-bitbucket' | 'github';
+import {
+  branchPlaceholder,
+  canCreate,
+  createdUrl,
+  createRepository,
+  createRequest,
+  hostLabel,
+  initialNewProject,
+  isConnected,
+  newProjectReducer,
+  repoListUrl,
+  showsHostSwitch,
+  showsTemplates,
+  type RepoProvider,
+} from './new-code-project.model';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-export default function NewCodeProject({ bitbucketConnected, githubConnected }: {
+export default function NewCodeProject({
+  bitbucketConnected,
+  githubConnected,
+}: {
   bitbucketConnected: boolean;
   githubConnected: boolean;
 }) {
   const router = useRouter();
-  const [name, setName] = useState('');
   const instructionsAnchor = useCoachAnchor('code-instructions');
-  // Defaults to whichever host is connected; both connected starts on
-  // Bitbucket and lets the person switch.
-  const [provider, setProvider] = useState<RepoProvider>(
-    bitbucketConnected || !githubConnected ? 'atlassian-bitbucket' : 'github'
+  const hosts = { bitbucketConnected, githubConnected };
+  const [state, dispatch] = useReducer(
+    newProjectReducer,
+    { ...hosts, instructions: DEFAULT_CODE_INSTRUCTIONS },
+    initialNewProject
   );
-  const connected = provider === 'github' ? githubConnected : bitbucketConnected;
-  const [repoMode, setRepoMode] = useState<'choose' | 'create'>('choose');
-  const [chosen, setChosen] = useState<RepoChoice | null>(null);
-  const [branch, setBranch] = useState('');
-  const [env, setEnv] = useState('');
-  const [instructions, setInstructions] = useState(DEFAULT_CODE_INSTRUCTIONS);
-  const [templates, setTemplates] = useState<CodeProjectTemplate[] | null>(null);
-  // Tracks the picker's own selection, separate from `instructions` —
-  // once picked, the text is free to diverge as it is edited, and the
-  // picker should not silently snap back to matching it.
-  const [templateId, setTemplateId] = useState('');
-  // null: the project inherits your default for code projects (else the
-  // code default) when it is made; a list is this project's own choice.
-  const [connectors, setConnectors] = useState<string[] | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const { provider, repoMode, chosen, name, branch, env, instructions, templates, templateId } =
+    state;
+  const { connectors, busy, error } = state;
+  const connected = isConnected(state, hosts);
 
   useEffect(() => {
-    void getJson<{ templates: CodeProjectTemplate[] }>(
-      `/api/code/project-templates`
-    ).then((result) => setTemplates(result.data?.templates ?? []));
+    void getJson<{ templates: CodeProjectTemplate[] }>(`/api/code/project-templates`).then(
+      (result) => dispatch({ type: 'templatesLoaded', templates: result.data?.templates ?? [] })
+    );
   }, []);
 
   const create = async () => {
-    if (!chosen) return;
-    setBusy(true);
-    setError(null);
+    const body = createRequest(state);
+    if (!body) return;
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull<{ projectId: string; envProblems: string[] }>(
       `/api/code/projects`,
       'POST',
-      {
-        name: name.trim() || chosen.name,
-        provider,
-        repository: chosen.fullName,
-        branch: branch.trim(),
-        env,
-        instructions: instructions.trim(),
-        ...(connectors ? { toolConfig: { connectors } } : {}),
-      }
+      body
     );
-    setBusy(false);
     if (result.error || !result.data) {
-      setError(result.error ?? 'The project could not be created.');
+      dispatch({ type: 'failed', error: result.error ?? 'The project could not be created.' });
       return;
     }
-    const problems = result.data.envProblems;
-    router.push(
-      `/code/${result.data.projectId}${problems.length ? `?envProblems=${encodeURIComponent(problems.join('\n'))}` : ''}`
-    );
+    router.push(createdUrl(result.data.projectId, result.data.envProblems));
     router.refresh();
   };
 
@@ -116,7 +110,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
         }}
         className="mx-auto max-w-3xl space-y-4 p-4"
       >
-        {bitbucketConnected && githubConnected ? (
+        {showsHostSwitch(hosts) ? (
           <div role="tablist" aria-label="Git host" className="flex gap-1">
             {(
               [
@@ -129,12 +123,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
                 type="button"
                 role="tab"
                 aria-selected={provider === value}
-                onClick={() => {
-                  if (provider === value) return;
-                  setProvider(value);
-                  setChosen(null);
-                  setBranch('');
-                }}
+                onClick={() => dispatch({ type: 'provider', provider: value })}
                 className={`rounded-md px-2 py-1 text-xs font-medium ${
                   provider === value
                     ? 'bg-blue-600 text-white'
@@ -149,7 +138,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
 
         {!connected ? (
           <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            Connect {provider === 'github' ? 'GitHub' : 'Bitbucket'} first —{' '}
+            Connect {hostLabel(provider)} first —{' '}
             <Link href={`/connectors`} className="underline">
               on the Connectors page
             </Link>
@@ -168,10 +157,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
               ) : null}
               <button
                 type="button"
-                onClick={() => {
-                  setChosen(null);
-                  setBranch('');
-                }}
+                onClick={() => dispatch({ type: 'chooseAnother' })}
                 className="text-xs font-medium text-blue-600 hover:underline dark:text-blue-400"
               >
                 Choose another
@@ -186,7 +172,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
                     type="button"
                     role="tab"
                     aria-selected={repoMode === tab}
-                    onClick={() => setRepoMode(tab)}
+                    onClick={() => dispatch({ type: 'repoMode', mode: tab })}
                     className={`rounded-md px-2 py-1 text-xs font-medium ${
                       repoMode === tab
                         ? 'bg-blue-600 text-white'
@@ -202,24 +188,14 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
                   key={provider}
                   provider={provider}
                   enabled={connected}
-                  onChoose={(repo) => {
-                    setChosen(repo);
-                    // The repository names the project until the person
-                    // types over it — an initial value, not a placeholder,
-                    // so it is part of what gets created and stays theirs
-                    // to rename.
-                    setName((current) => current || repo.name);
-                  }}
+                  onChoose={(repo) => dispatch({ type: 'chosen', repo })}
                 />
               ) : (
                 <CreateRepository
                   key={provider}
                   provider={provider}
                   enabled={connected}
-                  onCreated={(repo) => {
-                    setChosen(repo);
-                    setName((current) => current || repo.name);
-                  }}
+                  onCreated={(repo) => dispatch({ type: 'chosen', repo })}
                 />
               )}
             </div>
@@ -232,7 +208,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
           </span>
           <input
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => dispatch({ type: 'name', value: event.target.value })}
             placeholder={chosen?.name ?? ''}
             maxLength={200}
             className={inputClass}
@@ -244,8 +220,8 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
             <span className="mb-1 block text-xs font-medium text-gray-500">Branch (optional)</span>
             <input
               value={branch}
-              onChange={(event) => setBranch(event.target.value)}
-              placeholder={chosen.mainBranch ?? 'main branch'}
+              onChange={(event) => dispatch({ type: 'branch', value: event.target.value })}
+              placeholder={branchPlaceholder(state)}
               autoComplete="off"
               spellCheck={false}
               className={`font-mono ${inputClass}`}
@@ -262,7 +238,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
           </span>
           <textarea
             value={env}
-            onChange={(event) => setEnv(event.target.value)}
+            onChange={(event) => dispatch({ type: 'env', value: event.target.value })}
             rows={6}
             spellCheck={false}
             placeholder={'NPM_TOKEN=…\nDATABASE_URL=postgres://…\nAPI_BASE_URL=https://…'}
@@ -282,7 +258,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
           <div className="flex flex-wrap items-center gap-3">
             <ToolsDialog
               selected={connectors}
-              onChange={setConnectors}
+              onChange={(next) => dispatch({ type: 'connectors', connectors: next })}
               context="project"
               kind="code"
               locked={CODE_PROJECT_CONNECTORS}
@@ -296,19 +272,14 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
           </div>
         </div>
 
-        {templates && templates.length > 0 ? (
+        {templates && showsTemplates(state) ? (
           <label className="block text-sm">
             <span className="mb-1 block text-xs font-medium text-gray-500">
               Start from a template
             </span>
             <select
               value={templateId}
-              onChange={(event) => {
-                const next = event.target.value;
-                setTemplateId(next);
-                const template = templates.find((entry) => entry.id === next);
-                if (template) setInstructions(template.instructions);
-              }}
+              onChange={(event) => dispatch({ type: 'template', templateId: event.target.value })}
               className={inputClass}
             >
               <option value="">Pick a template…</option>
@@ -327,7 +298,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
           </span>
           <textarea
             value={instructions}
-            onChange={(event) => setInstructions(event.target.value)}
+            onChange={(event) => dispatch({ type: 'instructions', value: event.target.value })}
             rows={12}
             maxLength={20_000}
             placeholder="How to run the tests, the conventions to keep, what not to touch…"
@@ -335,7 +306,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
             {...instructionsAnchor}
           />
           <span className="mt-1 block text-xs text-gray-500">
-            {templates && templates.length > 0
+            {showsTemplates(state)
               ? 'Pick a starting point above, then make it this project’s own — add how this repository runs its tests, the conventions to keep, what not to touch.'
               : 'A developer’s standing brief to start from — change it here or on the project’s page later; add how this repository runs its tests, the conventions to keep, what not to touch.'}
           </span>
@@ -356,7 +327,7 @@ export default function NewCodeProject({ bitbucketConnected, githubConnected }: 
           </Link>
           <button
             type="submit"
-            disabled={busy || !connected || !chosen}
+            disabled={!canCreate(state, hosts)}
             className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             {busy ? 'Creating…' : 'Create project'}
@@ -462,7 +433,8 @@ function RepositoryBrowser({
   // typist makes one request.
   useEffect(() => {
     if (!enabled) return;
-    if (!owner && !query.trim()) {
+    const url = repoListUrl({ provider, owner, project: bitbucket.project, query });
+    if (!url) {
       setRepos(null);
       return;
     }
@@ -474,20 +446,7 @@ function RepositoryBrowser({
       void (async () => {
         setLoading(true);
         setError(null);
-        const parts = isGitHub
-          ? [
-              owner ? `account=${encodeURIComponent(owner)}` : '',
-              query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
-            ]
-          : [
-              owner ? `workspace=${encodeURIComponent(owner)}` : '',
-              bitbucket.project ? `project=${encodeURIComponent(bitbucket.project)}` : '',
-              query.trim() ? `q=${encodeURIComponent(query.trim())}` : '',
-            ];
-        const path = isGitHub ? `${base}/github/repos` : `${base}/repos`;
-        const listed = await getJson<{ repos: RepoChoice[] }>(
-          `${path}?${parts.filter(Boolean).join('&')}`
-        );
+        const listed = await getJson<{ repos: RepoChoice[] }>(url);
         if (stale) return;
         setLoading(false);
         if (listed.data) setRepos(listed.data.repos);
@@ -497,9 +456,9 @@ function RepositoryBrowser({
     return () => {
       stale = true;
     };
-  }, [base, enabled, isGitHub, owner, bitbucket.project, query]);
+  }, [enabled, provider, owner, bitbucket.project, query]);
 
-  const hostLabel = isGitHub ? 'GitHub' : 'Bitbucket';
+  const host = hostLabel(provider);
 
   return (
     <div className="space-y-2 rounded-md border border-gray-300 p-3 dark:border-gray-700">
@@ -511,9 +470,13 @@ function RepositoryBrowser({
           <select
             value={owner}
             onChange={(event) =>
-              isGitHub ? github.setAccount(event.target.value) : bitbucket.setWorkspace(event.target.value)
+              isGitHub
+                ? github.setAccount(event.target.value)
+                : bitbucket.setWorkspace(event.target.value)
             }
-            disabled={!enabled || (isGitHub ? github.accounts === null : bitbucket.workspaces === null)}
+            disabled={
+              !enabled || (isGitHub ? github.accounts === null : bitbucket.workspaces === null)
+            }
             className={inputClass}
           >
             <option value="">
@@ -574,12 +537,12 @@ function RepositoryBrowser({
       {repos === null ? (
         <p className="text-xs text-gray-500">
           {loading
-            ? `Searching ${hostLabel}…`
+            ? `Searching ${host}…`
             : `Pick ${isGitHub ? 'an account' : 'a workspace'}, or search every one by name.`}
         </p>
       ) : repos.length === 0 ? (
         <p className="text-xs text-gray-500">
-          {loading ? `Searching ${hostLabel}…` : 'No repositories match.'}
+          {loading ? `Searching ${host}…` : 'No repositories match.'}
         </p>
       ) : (
         <ul
@@ -637,23 +600,17 @@ function CreateRepository({
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const slug = repoSlugFromName(name);
-  const canCreate = isGitHub ? Boolean(owner && slug) : Boolean(owner && bitbucket.project && slug);
+  const plan = createRepository({ provider, owner, project: bitbucket.project, name });
 
   const create = async () => {
-    if (!canCreate) return;
+    if (!plan.canCreate) return;
     setBusy(true);
     setError(null);
-    const result = isGitHub
-      ? await sendJsonFull<{ repo: RepoChoice }>(`${base}/github/repos`, 'POST', {
-          account: owner,
-          name: name.trim(),
-        })
-      : await sendJsonFull<{ repo: RepoChoice }>(`${base}/bitbucket/repos`, 'POST', {
-          workspace: owner,
-          project: bitbucket.project,
-          name: name.trim(),
-        });
+    const result = await sendJsonFull<{ repo: RepoChoice }>(
+      plan.request.url,
+      'POST',
+      plan.request.body
+    );
     setBusy(false);
     if (result.error || !result.data) {
       setError(result.error ?? 'The repository could not be created.');
@@ -672,9 +629,13 @@ function CreateRepository({
           <select
             value={owner}
             onChange={(event) =>
-              isGitHub ? github.setAccount(event.target.value) : bitbucket.setWorkspace(event.target.value)
+              isGitHub
+                ? github.setAccount(event.target.value)
+                : bitbucket.setWorkspace(event.target.value)
             }
-            disabled={!enabled || (isGitHub ? github.accounts === null : bitbucket.workspaces === null)}
+            disabled={
+              !enabled || (isGitHub ? github.accounts === null : bitbucket.workspaces === null)
+            }
             className={inputClass}
           >
             <option value="">
@@ -726,11 +687,7 @@ function CreateRepository({
           disabled={!enabled}
           className={`font-mono ${inputClass}`}
         />
-        <span className="mt-1 block text-xs text-gray-500">
-          {name.trim() && owner
-            ? `Creates ${owner}/${slug || '…'} — empty and private.`
-            : 'An empty, private repository — the first chat clones it once it has something to work with.'}
-        </span>
+        <span className="mt-1 block text-xs text-gray-500">{plan.hint}</span>
       </label>
       {error || browseError ? (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">
@@ -741,7 +698,7 @@ function CreateRepository({
         <button
           type="button"
           onClick={() => void create()}
-          disabled={busy || !enabled || !canCreate}
+          disabled={busy || !enabled || !plan.canCreate}
           className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
         >
           {busy ? 'Creating…' : 'Create repository'}

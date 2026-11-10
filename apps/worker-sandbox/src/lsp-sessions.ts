@@ -48,7 +48,9 @@ import {
   type ExecIdentity,
   type RunInput,
 } from './workspaces';
+import { actorAttrs } from '@renkei/db';
 import { logger } from './logger';
+import { isRecord } from '@renkei/guards';
 
 const COMPONENT = 'worker-sandbox/lsp';
 const REAP_INTERVAL_MS = 30_000;
@@ -155,10 +157,6 @@ export function frame(body: string): Buffer {
     Buffer.from(`Content-Length: ${bytes.byteLength}\r\n\r\n`, 'ascii'),
     bytes,
   ]);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**
@@ -433,8 +431,9 @@ export class LspSessions {
       return { ok: false, status: 502, type: 'server_failed', message: initialized.message };
     }
     session.state = 'ready';
-    logger.info('language server {server} started for workspace {workspaceId} ({session})', {
+    logger.info('{actor} started the {server} language server on a workspace of theirs', {
       component: COMPONENT,
+      ...(await actorAttrs(input.owner.subject)),
       server: input.server,
       workspaceId: input.workspaceId,
       session: id,
@@ -450,10 +449,18 @@ export class LspSessions {
       try {
         bodies = reader.push(chunk);
       } catch (error) {
-        logger.warn('language server {session} sent an unreadable frame: {error}', {
-          component: COMPONENT,
-          session: session.id,
-          error: error instanceof Error ? error.message : String(error),
+        // A stream handler, so the (cached, never-throwing) lookup is not awaited.
+        void actorAttrs(session.owner.subject).then((who) => {
+          logger.warn(
+            'the {server} language server of {actor} sent an unreadable frame; it was killed and the editor is told it exited: {error}',
+            {
+              component: COMPONENT,
+              ...who,
+              server: session.server,
+              session: session.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
         });
         this.kill(session, 'SIGKILL');
         return;
@@ -482,12 +489,19 @@ export class LspSessions {
         params: { code, signal, stderr: session.stderrTail.trim() },
       });
       if (wasReady) {
-        logger.info('language server {server} exited ({session}): code {code} signal {signal}', {
-          component: COMPONENT,
-          server: session.server,
-          session: session.id,
-          code,
-          signal,
+        void actorAttrs(session.owner.subject).then((who) => {
+          logger.info(
+            'the {server} language server of {actor} exited ({how}); the editor is told',
+            {
+              component: COMPONENT,
+              ...who,
+              server: session.server,
+              session: session.id,
+              how: signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`,
+              code,
+              signal,
+            }
+          );
         });
       }
     });

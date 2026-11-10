@@ -19,6 +19,7 @@ import { ok, err, wrapAsync } from '@campfhir/safe-functions/helpers';
 import type { Result } from '@campfhir/safe-functions/types';
 import { normalizePermissions, type MirthPermission } from './permissions';
 import type { InstanceConnection, MirthInstanceSummary } from './types';
+import { isRecord } from '@renkei/guards';
 
 export type StoreError = 'DB_ERROR' | 'MALFORMED_ROW';
 
@@ -29,10 +30,6 @@ export interface InstanceRow {
   settings: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function summaryFromRecord(row: MirthInstanceRecord): MirthInstanceSummary {

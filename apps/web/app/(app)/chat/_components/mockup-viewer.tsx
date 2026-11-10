@@ -17,37 +17,42 @@
  * Portalled to <body> like the house modal (components/modal.tsx), for the
  * same reasons, and closes on Escape or its own button — not on a click
  * beside it, since a stray click while panning must not throw the view away.
+ *
+ * What it decides — which keys zoom, the zoom ladder and its ends, Fit,
+ * the width buttons, what the frame's messages do — is its model,
+ * mockup-viewer.model.ts; this keeps the stage's scroll, the anchor a zoom
+ * holds, the clipboard and the event wiring.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { Icon, ICONS } from '@/components/icons';
 import type { MockupRequest } from '@/lib/mockups/request';
-import { clampFrameHeight, useFrameMessages, type FrameMessage } from './mockup-frame';
+import { useFrameMessages, type FrameMessage } from './mockup-frame';
+import {
+  PAD,
+  commandForFrameMessage,
+  commandForKey,
+  copyText,
+  initViewer,
+  movesZoom,
+  stageLayout,
+  viewerReducer,
+  wheelZooms,
+  widthButtons,
+  zoomLabel,
+  type ViewerCommand,
+} from './mockup-viewer.model';
 import SvgSaveButtons from './svg-save-buttons';
 import { clientLogger } from '@/lib/client-logger';
-
-const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3, 4];
-const ZOOM_MIN = ZOOM_STEPS[0];
-const ZOOM_MAX = ZOOM_STEPS[ZOOM_STEPS.length - 1];
-/** Space kept around the frame on the stage, in screen pixels. */
-const PAD = 24;
-const INITIAL_FRAME_HEIGHT = 600;
-
-const PRESETS = [
-  { label: 'Desktop', width: 1280 },
-  { label: 'Tablet', width: 768 },
-  { label: 'Phone', width: 390 },
-];
-
-function clampZoom(zoom: number): number {
-  return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
-}
-
-function stepped(zoom: number, direction: -1 | 1): number {
-  if (direction > 0) return ZOOM_STEPS.find((step) => step > zoom + 0.001) ?? ZOOM_MAX;
-  return [...ZOOM_STEPS].reverse().find((step) => step < zoom - 0.001) ?? ZOOM_MIN;
-}
 
 function ToolButton({
   label,
@@ -86,15 +91,13 @@ export default function MockupViewer({
   onClose: () => void;
 }) {
   const [mounted, setMounted] = useState(false);
-  const [viewWidth, setViewWidth] = useState(request.width);
-  const [zoom, setZoom] = useState(1);
-  const [reported, setReported] = useState<number | null>(null);
-  const [pan, setPan] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [state, dispatch] = useReducer(viewerReducer, request, initViewer);
+  const { zoom, viewWidth, pan, copied } = state;
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const sizerRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  // The zoom as drawn: what the stage's scroll is measured against.
   const zoomRef = useRef(1);
   zoomRef.current = zoom;
   // The point of the design, in its own pixels, that sat at the middle of
@@ -102,7 +105,7 @@ export default function MockupViewer({
   const anchor = useRef<{ x: number; y: number } | null>(null);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
 
-  const frameHeight = request.height ?? reported ?? INITIAL_FRAME_HEIGHT;
+  const layout = stageLayout(state);
 
   useEffect(() => {
     setMounted(true);
@@ -138,19 +141,25 @@ export default function MockupViewer({
     };
   }, []);
 
-  const applyZoom = useCallback(
-    (next: number) => {
+  // Every zoom from a button, key, wheel or the frame comes through here,
+  // and holds the middle of the view; Escape from the frame or a key closes.
+  const run = useCallback(
+    (command: ViewerCommand) => {
+      if (command.type === 'close') {
+        onClose();
+        return;
+      }
       const stage = stageRef.current;
-      if (stage) {
+      if (stage && movesZoom(command)) {
         const offset = frameOffset(stage);
         anchor.current = {
           x: (stage.scrollLeft + stage.clientWidth / 2 - offset.left - PAD) / zoomRef.current,
           y: (stage.scrollTop + stage.clientHeight / 2 - offset.top - PAD) / zoomRef.current,
         };
       }
-      setZoom(clampZoom(next));
+      dispatch(command);
     },
-    [frameOffset]
+    [frameOffset, onClose]
   );
 
   useLayoutEffect(() => {
@@ -166,36 +175,21 @@ export default function MockupViewer({
   const fit = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    setZoom(clampZoom(Math.min(1, (stage.clientWidth - PAD * 2) / viewWidth)));
+    // Fit goes to the top left, not to where an earlier zoom was held: a
+    // zoom that changed nothing (already at the end of the ladder) leaves
+    // its anchor unspent, and it must not pull the fitted view away.
+    anchor.current = null;
+    dispatch({ type: 'fit', stageWidth: stage.clientWidth });
     stage.scrollTo({ left: 0, top: 0 });
-  }, [viewWidth]);
+  }, []);
   // On open, and whenever the width being viewed changes: what fits.
   useLayoutEffect(() => {
     if (mounted) fit();
-  }, [mounted, fit]);
-
-  const zoomByStep = useCallback(
-    (direction: -1 | 0 | 1) => {
-      if (direction === 0) applyZoom(1);
-      else applyZoom(stepped(zoomRef.current, direction));
-    },
-    [applyZoom]
-  );
-
-  const zoomByWheel = useCallback(
-    (deltaY: number) => applyZoom(zoomRef.current * Math.exp(-deltaY * 0.0025)),
-    [applyZoom]
-  );
+  }, [mounted, viewWidth, fit]);
 
   const onFrameMessage = useCallback(
-    (message: FrameMessage) => {
-      if (message.type === 'size') {
-        if (request.height === null) setReported(clampFrameHeight(message.height));
-      } else if (message.type === 'zoom') zoomByWheel(message.deltaY);
-      else if (message.type === 'zoom-step') zoomByStep(message.direction);
-      else onClose();
-    },
-    [request.height, zoomByWheel, zoomByStep, onClose]
+    (message: FrameMessage) => run(commandForFrameMessage(message)),
+    [run]
   );
   useFrameMessages(frameRef, onFrameMessage);
 
@@ -205,43 +199,34 @@ export default function MockupViewer({
   useEffect(() => {
     if (!mounted) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-      else if (event.ctrlKey || event.metaKey || event.altKey) return;
-      else if (event.key === '+' || event.key === '=') zoomByStep(1);
-      else if (event.key === '-') zoomByStep(-1);
-      else if (event.key === '0') zoomByStep(0);
+      const command = commandForKey(event);
+      if (command) run(command);
     };
     window.addEventListener('keydown', onKey);
     const stage = stageRef.current;
     const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
+      if (!wheelZooms(event)) return;
       event.preventDefault();
-      zoomByWheel(event.deltaY);
+      run({ type: 'wheel', deltaY: event.deltaY });
     };
     stage?.addEventListener('wheel', onWheel, { passive: false });
     return () => {
       window.removeEventListener('keydown', onKey);
       stage?.removeEventListener('wheel', onWheel);
     };
-  }, [mounted, onClose, zoomByStep, zoomByWheel]);
+  }, [mounted, run]);
 
   const copySource = () => {
-    const text = request.css ? `${request.source}\n\n/* css */\n${request.css}` : request.source;
-    void navigator.clipboard.writeText(text).then(
+    void navigator.clipboard.writeText(copyText(request)).then(
       () => {
-        setCopied(true);
-        window.setTimeout(() => setCopied(false), 1500);
+        dispatch({ type: 'copied' });
+        window.setTimeout(() => dispatch({ type: 'copy-reset' }), 1500);
       },
       (error: unknown) => clientLogger.warn('chat/mockup', 'could not copy the source', error)
     );
   };
 
   if (!mounted) return null;
-
-  const presets = [{ label: 'As designed', width: request.width }, ...PRESETS].filter(
-    (preset, index, all) =>
-      index === 0 || all.findIndex((other) => other.width === preset.width) === index
-  );
 
   return createPortal(
     <div
@@ -257,12 +242,12 @@ export default function MockupViewer({
           {request.title}
         </h2>
         <div role="group" aria-label="Width" className="flex items-center gap-0.5">
-          {presets.map((preset) => (
+          {widthButtons(state).map((preset) => (
             <ToolButton
               key={`${preset.label}-${preset.width}`}
-              label={`${preset.label}, ${preset.width}px wide`}
-              pressed={viewWidth === preset.width}
-              onClick={() => setViewWidth(preset.width)}
+              label={preset.name}
+              pressed={preset.pressed}
+              onClick={() => dispatch({ type: 'width', width: preset.width })}
             >
               {preset.label}
               <span className="text-gray-400">{preset.width}</span>
@@ -270,21 +255,28 @@ export default function MockupViewer({
           ))}
         </div>
         <div role="group" aria-label="Zoom" className="flex items-center gap-0.5">
-          <ToolButton label="Zoom out" onClick={() => zoomByStep(-1)}>
+          <ToolButton label="Zoom out" onClick={() => run({ type: 'zoom-step', direction: -1 })}>
             <Icon path={ICONS.zoomOut} className="h-4 w-4" />
           </ToolButton>
-          <ToolButton label="Reset zoom to 100%" onClick={() => zoomByStep(0)}>
+          <ToolButton
+            label="Reset zoom to 100%"
+            onClick={() => run({ type: 'zoom-step', direction: 0 })}
+          >
             <span data-testid="mockup-zoom" className="w-10 tabular-nums">
-              {Math.round(zoom * 100)}%
+              {zoomLabel(state)}
             </span>
           </ToolButton>
-          <ToolButton label="Zoom in" onClick={() => zoomByStep(1)}>
+          <ToolButton label="Zoom in" onClick={() => run({ type: 'zoom-step', direction: 1 })}>
             <Icon path={ICONS.zoomIn} className="h-4 w-4" />
           </ToolButton>
           <ToolButton label="Fit to width" onClick={fit}>
             <Icon path={ICONS.group} className="h-4 w-4" />
           </ToolButton>
-          <ToolButton label="Drag to pan" pressed={pan} onClick={() => setPan((on) => !on)}>
+          <ToolButton
+            label="Drag to pan"
+            pressed={pan}
+            onClick={() => dispatch({ type: 'toggle-pan' })}
+          >
             <Icon path={ICONS.hand} className="h-4 w-4" />
           </ToolButton>
         </div>
@@ -308,7 +300,7 @@ export default function MockupViewer({
         <div
           ref={sizerRef}
           className="relative mx-auto shrink-0"
-          style={{ width: viewWidth * zoom + PAD * 2, height: frameHeight * zoom + PAD * 2 }}
+          style={{ width: layout.boxWidth, height: layout.boxHeight }}
         >
           <iframe
             ref={frameRef}
@@ -319,8 +311,8 @@ export default function MockupViewer({
               position: 'absolute',
               left: PAD,
               top: PAD,
-              width: viewWidth,
-              height: frameHeight,
+              width: layout.frameWidth,
+              height: layout.frameHeight,
               border: 0,
               background: '#fff',
               transform: `scale(${zoom})`,

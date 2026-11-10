@@ -16,14 +16,13 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { agentJobsQueue } from '@renkei/queue';
+import { getDataStore } from '@renkei/db';
 import { getSessionFromRequest } from '@/lib/session';
 import { decideApproval } from '@/lib/agents/approvals';
 import { MAX_QUESTION_ANSWER_CHARS } from '@renkei/agents';
 import { logger } from '@/lib/logger';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { who, whichAgent } from '@/lib/log-actor';
+import { isRecord } from '@renkei/guards';
 
 export async function POST(
   request: NextRequest,
@@ -74,12 +73,20 @@ export async function POST(
     case 'decided': {
       const status = result.decision === 'approve' ? 'approved' : 'declined';
       if (!result.resumed) {
-        logger.warn('Approval saved but run {runId} could not be woken; the sweep will resume it', {
-          component: 'api/actionable-items/approval',
-          subject: session.subject,
-          itemId,
-          runId: result.runId,
-        });
+        const run = await getDataStore()
+          .agentRuns.findRunAgent(result.runId)
+          .catch(() => null);
+        logger.warn(
+          '{actor} {status} the approval card, but run {runId} of agent "{agent}" of {owner} could not be woken; the decision is saved and the approval sweep will resume the run',
+          {
+            component: 'api/actionable-items/approval',
+            ...who(session),
+            ...(await whichAgent(run?.agentId)),
+            itemId,
+            runId: result.runId,
+            status,
+          }
+        );
       }
       return result.resumed
         ? NextResponse.json({ status })

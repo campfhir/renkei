@@ -1,12 +1,20 @@
 /**
- * Entra Developer, end to end in a browser: an operator registers the
- * second Entra app through the real admin form and save route, a person
- * finds its own card on the connectors page, narrows its directory-wide
- * scopes in the live picker, and the authorize route turns that into a
- * Microsoft consent request carrying exactly those scopes — and refuses
- * a scope beyond what the org allows. Then the person connects for real,
- * beside a connected Microsoft 365 card, and disconnects Entra Developer
- * alone: separate apps, separate grants.
+ * Entra Developer, end to end in a browser: the second Entra app's admin
+ * page renders on the real server; the registration is staged through
+ * the admin save route the form calls, with the org holding group lookups
+ * back; a person finds its own card on the connectors page, narrows its
+ * directory-wide scopes in the live picker, and the authorize route turns
+ * that into a Microsoft consent request carrying exactly those scopes —
+ * and refuses a scope beyond what the org allows. Then the person
+ * connects for real, beside a connected Microsoft 365 card, and
+ * disconnects Entra Developer alone: separate apps, separate grants.
+ *
+ * Where the admin form's rules went: which boxes start ticked, what Save
+ * sends (the directory, the ceiling without a held-back box, the required
+ * scopes always in, a blank secret kept) and how a stored secret reads
+ * are app/(app)/admin/connectors/forms/app-registration-form.model.test.ts;
+ * what the save route stores and refuses, and that GET never shows the
+ * secret, are app/api/admin/connectors/entra-developer/route.test.ts.
  *
  * Nothing here reaches Microsoft: on the in-memory app the authorize
  * route's consent is the app's own fake OAuth
@@ -76,41 +84,22 @@ test('entra developer: register the app, connect with narrowed scopes', async ({
     await addConnectors(page.request, ['microsoft']);
     await connectThrough(page, '/api/microsoft/authorize');
 
-    // --- The operator registers the second Entra app. ---
+    // --- The operator's page renders; the registration is staged through its route. ---
     await page.goto(`/admin/connectors/entra-developer`);
     await expect(page.getByRole('heading', { name: 'Entra Developer', level: 1 })).toBeVisible();
     const form = page.locator('[data-coach="admin-connector-form"]');
     // The one thing an operator must not miss: it is a separate app, and
     // its permissions need an admin's consent.
     await expect(form.getByText(/separate/)).toBeVisible();
-    await expect(form.getByText('Read applications')).toBeVisible();
     await expect(form.getByText('Assign people and groups to app roles')).toBeVisible();
-    // Every box starts ticked; this org holds group lookups back, so its
-    // people cannot pick them (below) until an admin ticks it here.
-    const groups = form.getByRole('checkbox', { name: /Find groups/ });
-    await expect(groups).toBeChecked();
-    await groups.uncheck();
-
-    await form.getByLabel('Client ID').fill('e2e-entra-client');
-    await form.getByLabel('Directory (tenant) ID').fill(DIRECTORY_ID);
-    await form.getByLabel('Client secret').fill('e2e-entra-secret');
-    // On, whatever an earlier run left it at.
-    await form.getByRole('checkbox', { name: 'Enabled', exact: true }).check();
-    await form.getByRole('button', { name: 'Save' }).click();
-    await expect(form.getByText('Saved')).toBeVisible({ timeout: 30_000 });
-    await shot(page, testInfo, 'entra-developer-01-registered');
-
-    // Saved for real: a reload shows the stored secret as stored, never its value.
-    await page.reload();
-    await expect(form.getByLabel('Client secret')).toHaveAttribute(
-      'placeholder',
-      'Stored — leave blank to keep'
-    );
-    const stored = await connectorConfig(page.request, 'entra-developer');
-    expect(stored.enabled).toBe(true);
-    expect(stored.directoryTenantId).toBe(DIRECTORY_ID);
-    expect(String(stored.scopes).split(' ').sort()).toEqual(
-      [
+    // What the form's Save sends with group lookups held back, so this
+    // org's people cannot pick them (below) until an admin ticks the box.
+    await saveConnectorConfig(page.request, 'entra-developer', {
+      clientId: 'e2e-entra-client',
+      directoryTenantId: DIRECTORY_ID,
+      clientSecret: 'e2e-entra-secret',
+      enabled: true,
+      scopes: [
         'Application.Read.All',
         'Application.ReadWrite.All',
         'AppRoleAssignment.ReadWrite.All',
@@ -120,8 +109,15 @@ test('entra developer: register the app, connect with narrowed scopes', async ({
         'email',
         'offline_access',
         'User.Read',
-      ].sort()
+      ].join(' '),
+    });
+    await page.reload();
+    await expect(form.getByLabel('Client secret')).toHaveAttribute(
+      'placeholder',
+      'Stored — leave blank to keep'
     );
+    await expect(form.getByRole('checkbox', { name: /Find groups/ })).not.toBeChecked();
+    await shot(page, testInfo, 'entra-developer-01-registered');
 
     // --- The person connects it from its own card. ---
     await addConnectors(page.request, ['entra-developer']);

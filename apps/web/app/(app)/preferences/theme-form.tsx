@@ -16,6 +16,8 @@ import { applyThemeMode, setStoredThemeMode } from '@/lib/theme';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { reportFetchFailure } from '@/lib/fetch-json';
 import { logFailedResponse } from '@/lib/client-logger';
+import { changedFields } from '@/lib/prefs-patch';
+import { announcePreferencesChanged } from '@/lib/preferences-events';
 
 const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] = [
   { value: 'auto', label: 'Auto', hint: 'Matches your system, and follows it if it changes.' },
@@ -23,11 +25,7 @@ const THEME_MODES: readonly { value: ThemeMode; label: string; hint: string }[] 
   { value: 'dark', label: 'Dark', hint: '' },
 ];
 
-export default function ThemeForm({
-  initial,
-}: {
-  initial: ThemePrefs;
-}) {
+export default function ThemeForm({ initial }: { initial: ThemePrefs }) {
   const [prefs, setPrefs] = useState<ThemePrefs>(initial);
   const [saved, setSaved] = useState<ThemePrefs>(initial);
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
@@ -48,19 +46,23 @@ export default function ThemeForm({
     setStatus('saving');
     try {
       const response = await fetch(`/api/preferences`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: prefs }),
+        // Only what changed: the mode is also set from the shell's own menu.
+        body: JSON.stringify({ theme: changedFields(saved, prefs) }),
       });
       if (response.ok) {
         setSaved(prefs);
         setStatus('saved');
+        // The shell, and every other tab, renders from the saved theme:
+        // the line-number gutter follows now rather than on the next load.
+        announcePreferencesChanged({ documents: ['theme'] });
       } else {
         await logFailedResponse('preferences', 'could not save the theme', response);
         setStatus('failed');
       }
     } catch (error) {
-      reportFetchFailure('PUT', '/api/preferences', 0, 'Could not reach the server', error);
+      reportFetchFailure('PATCH', '/api/preferences', 0, 'Could not reach the server', error);
       setStatus('failed');
     }
   }

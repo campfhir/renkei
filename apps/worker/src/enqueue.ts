@@ -121,11 +121,16 @@ export async function enqueueKnowledgeEvent(
   if (encrypted === null) {
     const message = 'content encryption key unavailable';
     if (options.strict) throw new Error(`knowledge job ${type} not enqueued: ${message}`);
-    logger.error('knowledge job {type} not enqueued: {error}', {
-      component: 'worker/enqueue',
-      type,
-      error: message,
-    });
+    logger.error(
+      'a {type} knowledge job was not enqueued because the content encryption key is unavailable; the index misses it until the next capture or sweep of the object: {error}',
+      {
+        component: 'worker/enqueue',
+        type,
+        provider: typeof payload.provider === 'string' ? payload.provider : undefined,
+        refId: typeof payload.refId === 'string' ? payload.refId : undefined,
+        error: message,
+      }
+    );
     return;
   }
 
@@ -145,10 +150,15 @@ export async function enqueueKnowledgeEvent(
     if (options.strict) {
       throw new Error(`knowledge job ${type} not enqueued: ${enqueued.err.message ?? 'unknown'}`);
     }
-    logger.error('knowledge job {type} not enqueued: {error}', {
-      component: 'worker/enqueue',
-      type,
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      'a {type} knowledge job was not enqueued; the index misses it until the next capture or sweep of the object: {error}',
+      {
+        component: 'worker/enqueue',
+        type,
+        provider: provider ?? undefined,
+        refId: typeof payload.refId === 'string' ? payload.refId : undefined,
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
   }
 }

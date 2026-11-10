@@ -1,11 +1,23 @@
 /**
- * The global keyboard shortcuts, end to end: the key caps match the OS
- * (⌘ on a Mac, Ctrl elsewhere — the browser's platform is faked both ways),
- * the quick-chat modal (`c`) starts a chat from any page with Enter, the
- * recent-chats switcher (⌘/Ctrl J) walks the list and opens a
- * chat, the `c` key stands down in a text field and over a dialog, the ⌥/Alt
- * and ⌘/Ctrl chords go to pages from anywhere, and the shortcuts coach marks follow the welcome tour on
- * the home page.
+ * The global keyboard shortcuts, in a browser: a real key reaching the
+ * page brings up the right dialog or page — the quick chat (`c`), the
+ * recent-chats switcher (⌘/Ctrl J), a page chord from inside a text field
+ * — with the browser's platform faked both ways; the quick chat is the
+ * thread's own composer, takes the cursor, and its first turn reaches the
+ * server and is answered; closing it unsent deletes the chat it made; it
+ * fits a phone; the switcher opens on the chat before this one and Enter
+ * goes there; and the shortcuts coach marks follow the welcome tour.
+ *
+ * What a key means and when it stands down (a modifier held, in a field,
+ * over a dialog, the Organization chord only for operators, Control J not
+ * the Mac chord), the switcher's order, opening place and walk (the chord
+ * again, Shift, the arrows), and what the quick chat sends are
+ * global-shortcuts.model.test.ts's; the key caps per OS and the chord
+ * matching are lib/shortcuts.test.ts's.
+ *
+ * Each test presses once the page says its keys are listened for
+ * (`data-shortcuts` on the root, naming the keyboard it read), never in a
+ * retry loop.
  *
  * The quick chat's first turn runs for real on the stand-in model
  * (e2e/llm-stub.mjs), staged on the org's roster for the test and removed
@@ -20,14 +32,14 @@
 
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { Locator, Page, TestInfo } from '@playwright/test';
+import type { Page, TestInfo } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { LLM_STUB_REPLY } from './constants';
 import { addStubModel, removeModel } from './support/stub-model';
 import { createPerson, signIn } from './support/person';
 import { holdShared } from './support/org-lock';
 import { painted, settled } from './support/settle';
-import { createChat } from './support/tool-cards';
+import { askAndWait, createChat } from './support/code-host';
 
 // Control+Alt+Shift+, goes to the operator console.
 test.use({ roles: ['renkei-user', 'renkei-operator'] });
@@ -40,39 +52,23 @@ async function shot(page: Page, testInfo: TestInfo, name: string): Promise<void>
   });
 }
 
+type FakePlatform = 'MacIntel' | 'Win32';
+
 /** Pretend to be a Mac (or not) before any page script runs. */
-async function fakePlatform(page: Page, platform: 'MacIntel' | 'Win32'): Promise<void> {
+async function fakePlatform(page: Page, platform: FakePlatform): Promise<void> {
   await page.addInitScript((value) => {
     Object.defineProperty(navigator, 'platform', { get: () => value });
     Object.defineProperty(navigator, 'userAgentData', { get: () => undefined });
   }, platform);
 }
 
-/**
- * Type keys until what they do shows — the first press can land before the
- * page has hydrated. `settle` is how long one try waits for the effect (a
- * bare `c` waits half a second in case an `h` follows).
- */
-async function pressUntil(
-  page: Page,
-  keys: string[],
-  seen: () => Promise<void>,
-  settle = 1500
-): Promise<void> {
-  await expect(async () => {
-    for (const key of keys) await page.keyboard.press(key);
-    await seen();
-  }).toPass({ timeout: 20_000, intervals: [settle] });
-}
-
-/** Press a shortcut until its dialog is up. */
-async function pressUntilOpen(
-  page: Page,
-  key: string,
-  dialog: Locator,
-  settle = 1500
-): Promise<void> {
-  await pressUntil(page, [key], () => expect(dialog).toBeVisible({ timeout: settle }), settle);
+/** The page has hydrated and listens for the shortcuts of this keyboard. */
+async function keysReady(page: Page, platform: FakePlatform): Promise<void> {
+  await expect(page.locator('html')).toHaveAttribute(
+    'data-shortcuts',
+    platform === 'MacIntel' ? 'mac' : 'other',
+    { timeout: 30_000 }
+  );
 }
 
 /** The composer's model list narrowed to one model: the real answer, filtered. */
@@ -90,16 +86,9 @@ async function onlyModel(page: Page, modelId: string): Promise<void> {
 
 /** A chat something was said in (the switcher lists only those), titled. */
 async function makeChat(page: Page, modelId: string, title: string): Promise<string> {
-  const chatId = await createChat(page.request, { modelId, title });
-  const asked = await page.request.post(`/api/chat/chats/${chatId}/turns`, {
-    data: { text: `About: ${title}`, llmModelId: modelId },
-  });
-  expect(asked.status(), await asked.text()).toBe(202);
-  // Once the reply is in, the chat takes its title back (a first reply may name it).
-  await expect(async () => {
-    await page.goto(`/chat/${chatId}`);
-    await expect(page.getByText(LLM_STUB_REPLY)).toBeVisible({ timeout: 2_000 });
-  }).toPass({ timeout: 45_000 });
+  const chatId = await createChat(page.request, { llmModelId: modelId });
+  await askAndWait(page.request, chatId, { text: `About: ${title}`, llmModelId: modelId });
+  // After the reply, which may have named the chat.
   const renamed = await page.request.patch(`/api/chat/chats/${chatId}`, { data: { title } });
   expect(renamed.ok()).toBe(true);
   return chatId;
@@ -107,16 +96,11 @@ async function makeChat(page: Page, modelId: string, title: string): Promise<str
 
 const tagOf = (testInfo: TestInfo) => `${testInfo.project.name}-${randomUUID().slice(0, 6)}`;
 
-test('the search hint shows the key for this OS', async ({ page, person: _person }, testInfo) => {
+test('the search hint shows the key for a Mac', async ({ page, person: _person }, testInfo) => {
   await fakePlatform(page, 'MacIntel');
   await page.goto(`/agents`);
   await expect(page.locator('kbd', { hasText: '⌘ K' })).toBeVisible();
   await shot(page, testInfo, 'shortcuts-hint-mac');
-
-  const other = await page.context().newPage();
-  await fakePlatform(other, 'Win32');
-  await other.goto(`/agents`);
-  await expect(other.locator('kbd', { hasText: 'Ctrl K' })).toBeVisible();
 });
 
 test('quick chat is the thread composer: attachments, model, prompts, and Enter to start', async ({
@@ -137,23 +121,18 @@ test('quick chat is the thread composer: attachments, model, prompts, and Enter 
     });
 
     await page.goto(`/agents`);
+    await keysReady(page, 'Win32');
     const dialog = page.getByRole('dialog', { name: 'New chat' });
+    await page.keyboard.press('c');
     // A cold dev server compiles the chat routes on this first hit.
-    await expect(async () => {
-      await page.keyboard.press('c');
-      await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 2500 });
-    }).toPass({ timeout: 40_000, intervals: [2500] });
     const box = dialog.getByLabel('Message');
+    await expect(box).toBeVisible({ timeout: 40_000 });
     await expect(box).toBeFocused();
     // The composer's own controls, not a lookalike.
     await expect(dialog.getByRole('button', { name: 'Attach a file' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Insert a prompt' })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Model' })).toContainText(tag);
     await shot(page, testInfo, 'shortcuts-quick-chat');
-
-    // Enter with nothing typed does nothing.
-    await page.keyboard.press('Enter');
-    await expect(dialog).toBeVisible();
 
     // The prompt picker opens over the box; Escape closes it and only it.
     await dialog.getByRole('button', { name: 'Insert a prompt' }).click();
@@ -202,6 +181,7 @@ test('closing quick chat without sending leaves no empty chat behind', async ({
 }) => {
   await fakePlatform(page, 'Win32');
   await page.goto(`/agents`);
+  await keysReady(page, 'Win32');
   const dialog = page.getByRole('dialog', { name: 'New chat' });
   // The chat the modal makes up front, as its own create call answers it.
   const made = page.waitForResponse(
@@ -209,10 +189,8 @@ test('closing quick chat without sending leaves no empty chat behind', async ({
       response.request().method() === 'POST' &&
       new URL(response.url()).pathname === '/api/chat/chats'
   );
-  await expect(async () => {
-    await page.keyboard.press('c');
-    await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 2500 });
-  }).toPass({ timeout: 20_000, intervals: [2500] });
+  await page.keyboard.press('c');
+  await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 20_000 });
   const { chatId } = await (await made).json();
   expect((await page.request.get(`/api/chat/chats/${chatId}`)).status()).toBe(200);
   await page.keyboard.press('Escape');
@@ -222,7 +200,7 @@ test('closing quick chat without sending leaves no empty chat behind', async ({
     .toBe(404);
 });
 
-test('chords use the Command key on a Mac, and quick chat works at phone width', async ({
+test('chords use the Command and Option keys on a Mac, and quick chat works at phone width', async ({
   page,
   person: _person,
 }, testInfo) => {
@@ -234,26 +212,21 @@ test('chords use the Command key on a Mac, and quick chat works at phone width',
     await onlyModel(page, modelId);
     await page.setViewportSize(MOBILE_VIEWPORT);
     await page.goto(`/agents`);
+    await keysReady(page, 'MacIntel');
     const switcher = page.getByRole('dialog', { name: 'Recent chats' });
-    await pressUntilOpen(page, 'Meta+j', switcher);
+    await page.keyboard.press('Meta+j');
+    await expect(switcher).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(switcher).toHaveCount(0);
-    // Control+J is not the Mac chord.
-    await page.keyboard.press('Control+j');
-    await painted(page);
-    await expect(switcher).toHaveCount(0);
 
-    // Option is the Mac's Alt: ⌥ H is Home.
-    await pressUntil(page, ['Alt+h'], () => expect(page).toHaveURL(/\/$/, { timeout: 1500 }));
+    // Option is the Mac's Alt: ⌥ H is Home (the key types "˙", the code is H's).
+    await page.keyboard.press('Alt+h');
+    await expect(page).toHaveURL(/\/$/);
+    await painted(page);
 
     const dialog = page.getByRole('dialog', { name: 'New chat' });
-    // The home page is still loading from the chord: press until it answers.
-    await pressUntil(
-      page,
-      ['c'],
-      () => expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 2500 }),
-      2500
-    );
+    await page.keyboard.press('c');
+    await expect(dialog.getByLabel('Message')).toBeVisible({ timeout: 20_000 });
     const panel = await dialog.locator('> div').boundingBox();
     expect(panel?.x ?? -1).toBeGreaterThanOrEqual(0);
     expect((panel?.x ?? 0) + (panel?.width ?? Infinity)).toBeLessThanOrEqual(MOBILE_VIEWPORT.width);
@@ -271,11 +244,13 @@ test('chords use the Command key on a Mac, and quick chat works at phone width',
 test('the `c` key stands down in a field and over a dialog', async ({ page, person: _person }) => {
   await fakePlatform(page, 'Win32');
   await page.goto(`/agents`);
+  await keysReady(page, 'Win32');
   const quick = page.getByRole('dialog', { name: 'New chat' });
   const switcher = page.getByRole('dialog', { name: 'Recent chats' });
 
   // Over a dialog the bare key does nothing.
-  await pressUntilOpen(page, 'Control+j', switcher);
+  await page.keyboard.press('Control+j');
+  await expect(switcher).toBeVisible();
   await page.keyboard.press('c');
   await painted(page);
   await expect(quick).toHaveCount(0);
@@ -289,81 +264,50 @@ test('the `c` key stands down in a field and over a dialog', async ({ page, pers
   await painted(page);
   await expect(search).toHaveValue('chat c');
   await expect(page.getByRole('dialog')).toHaveCount(0);
-
-  // Held with a modifier it is not the shortcut either.
-  await page.keyboard.press('Escape');
-  await search.blur();
-  await page.keyboard.press('Alt+c');
-  await painted(page);
-  await expect(quick).toHaveCount(0);
 });
 
-test('the page chords work from a text field, with Alt on Windows and Linux', async ({
-  page,
-  person: _person,
-}) => {
-  test.setTimeout(120_000);
+test('the page chords work from a text field', async ({ page, person: _person }) => {
   await fakePlatform(page, 'Win32');
   await page.goto(`/agents`);
+  await keysReady(page, 'Win32');
   const search = page.getByRole('searchbox', { name: 'Search Renkei' });
   await search.click();
 
-  const to = (keys: string, url: RegExp) =>
-    pressUntil(page, [keys], () => expect(page).toHaveURL(url, { timeout: 1500 }));
-  await to('Alt+p', /\/chat\/projects$/);
-  await to('Alt+a', /\/chat\/artifacts$/);
-  await to('Alt+Shift+1', /\/notifications$/);
-  await to('Alt+,', /\/preferences$/);
-  await to('Control+Shift+/', /\/tutorials$/);
-  await to('Control+`', /\/code$/);
-  await to('Alt+h', /\/$/);
-  await to('Control+Alt+Shift+,', /\/admin$/);
+  await page.keyboard.press('Alt+p');
+  await expect(page).toHaveURL(/\/chat\/projects$/);
+  // The operator's console: the role reaches the keys from the server.
+  await page.getByRole('searchbox', { name: 'Search Renkei' }).click();
+  await page.keyboard.press('Control+Alt+Shift+,');
+  await expect(page).toHaveURL(/\/admin$/);
 });
 
-test('the switcher opens on the previous chat, walks the list and opens one', async ({
+test('the switcher opens on the previous chat, and Enter opens it', async ({
   page,
   person: _person,
 }, testInfo) => {
-  // Opens several pages on a dev server that compiles each on first use.
-  test.setTimeout(240_000);
+  test.setTimeout(180_000);
   const modelId = await addStubModel(page.request, tagOf(testInfo));
   try {
-    // Oldest first: each one spoken in after the last.
-    const oldest = await makeChat(page, modelId, 'Onboarding checklist');
-    const middle = await makeChat(page, modelId, 'Expense policy question');
+    // Older first: the second is spoken in after the first.
+    const older = await makeChat(page, modelId, 'Expense policy question');
     const newest = await makeChat(page, modelId, 'Quarterly report draft');
 
     await fakePlatform(page, 'Win32');
     await page.goto(`/chat/${newest}`);
+    await keysReady(page, 'Win32');
     const dialog = page.getByRole('dialog', { name: 'Recent chats' });
-    await pressUntilOpen(page, 'Control+j', dialog);
+    await page.keyboard.press('Control+j');
+    await expect(dialog).toBeVisible();
     const options = dialog.getByRole('option');
     await expect(options.nth(0)).toContainText('Quarterly report draft');
     await expect(options.nth(0)).toContainText('Current');
-    // On a chat, the switcher opens on the one before it.
     await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
     await expect(options.nth(1)).toContainText('Expense policy question');
     await shot(page, testInfo, 'shortcuts-switcher');
 
-    // Again moves on; Shift goes back.
-    await page.keyboard.press('Control+j');
-    await expect(options.nth(2)).toHaveAttribute('aria-selected', 'true');
-    await page.keyboard.press('Control+Shift+J');
-    await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
-    await page.keyboard.press('ArrowDown');
-    await expect(options.nth(2)).toHaveAttribute('aria-selected', 'true');
-
     await page.keyboard.press('Enter');
-    await expect(page).toHaveURL(new RegExp(`/chat/${oldest}$`));
+    await expect(page).toHaveURL(new RegExp(`/chat/${older}$`));
     await expect(dialog).toHaveCount(0);
-
-    // From a page that is not a chat, it opens on the most recent one.
-    await page.goto(`/agents`);
-    await pressUntilOpen(page, 'Control+j', dialog);
-    await expect(dialog.getByRole('option').first()).toHaveAttribute('aria-selected', 'true');
-    await expect(dialog.getByRole('option').first()).toContainText('Quarterly report draft');
-    await dialog.getByRole('option', { name: /Expense policy/ }).click();
-    await expect(page).toHaveURL(new RegExp(`/chat/${middle}$`));
   } finally {
     await removeModel(page.request, modelId);
   }

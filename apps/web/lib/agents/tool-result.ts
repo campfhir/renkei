@@ -10,10 +10,7 @@
  */
 
 import { unfenceUntrusted } from '@renkei/agents';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
+import { isRecord } from '@renkei/guards';
 
 /** A tool_result's content as text: a string, or its text blocks joined. */
 function contentText(content: unknown): string | null {

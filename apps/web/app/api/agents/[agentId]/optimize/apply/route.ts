@@ -18,6 +18,7 @@ import { resolveAgentAccess } from '@/lib/agents/access-grants';
 import { createDraft, deleteDraft } from '@/lib/agents/draft-store';
 import { getOptimization, markOptimizationApplied } from '@/lib/agents/optimization-store';
 import { logger } from '@/lib/logger';
+import { who, whichAgentOf } from '@/lib/log-actor';
 
 export async function POST(
   request: NextRequest,
@@ -82,11 +83,21 @@ export async function POST(
     orderingKey: `draft:${session.subject}`,
   });
   if (!enqueued.ok) {
-    logger.error('could not enqueue optimizer draft {draftId}: {error}', {
-      component: 'api/agents-optimize-apply',
-      draftId,
-      error: enqueued.err.message ?? 'unknown',
-    });
+    logger.error(
+      '{actor} asked to draft the analysis\'s changes to agent "{agent}", but the drafting job was not queued; the draft was discarded: {error}',
+      {
+        component: 'api/agents-optimize-apply',
+        ...who(session),
+        ...(await whichAgentOf({
+          agentId,
+          agentName: agent.name,
+          ownerSubject: access.ownerSubject,
+        })),
+        optimizationId,
+        draftId,
+        error: enqueued.err.message ?? 'unknown',
+      }
+    );
     await deleteDraft(draftId);
     return NextResponse.json(
       { error: 'Could not start drafting. Try again in a moment.' },

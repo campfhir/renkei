@@ -1,17 +1,18 @@
 /**
  * The audience control on a connector's admin page (admin → Connectors →
- * <connector>, "Who … is for") says where groups come from — and, when no
- * groups claim is configured, that nobody is in any group, so a
- * restricted audience closes the connector to everyone.
+ * <connector>, "Who … is for") as it renders on the real server and at a
+ * phone's width, in the state the memory server is always in: no identity
+ * provider, so no groups claim, so the control says nobody is in any
+ * group and a restricted audience closes the connector to everyone.
+ * Read-only.
  *
- * The memory server has no identity provider (see setup.spec.ts: the only
- * route that stores one first fetches the provider's discovery document,
- * and none answers in e2e), so there is no groups claim, and the page
- * shows exactly the "nobody is in a group" state. The named-claim half of
- * the old Postgres spec — PUT /api/admin/oidc-claims, the hint naming the
- * claim, the identity form on admin → Settings — needs a provider row to
- * hang the claim on (the route answers 409 "Sign-in is not configured
- * yet" without one) and is not reachable here. Read-only.
+ * Where its rules went: what the hint says with and without a claim, what
+ * each choice saves and what a save says are
+ * app/(app)/admin/connectors/[configKey]/audience-control.model.test.ts;
+ * that no provider means no claim (GET configured: false, PUT 409) is
+ * app/api/admin/oidc-claims/route.test.ts; what the audience route stores
+ * is app/api/admin/connector-audience/[capabilityKey]/route.test.ts.
+ *
  * Pinned Chromium; mobile is a viewport resize.
  */
 
@@ -34,14 +35,6 @@ test('with no groups claim, the audience control says nobody is in a group', asy
   page,
   person: _person,
 }, testInfo) => {
-  // No provider, so no claim: what the control reads.
-  const claims = await (await page.request.get('/api/admin/oidc-claims')).json();
-  expect(claims.configured).toBe(false);
-  const refused = await page.request.put('/api/admin/oidc-claims', {
-    data: { groupsClaim: 'e2e-member-of' },
-  });
-  expect(refused.status()).toBe(409);
-
   await page.goto('/admin/connectors/atlassian-bitbucket');
   const control = page
     .locator('section', { has: page.getByRole('heading', { name: /^Who .* is for$/ }) })

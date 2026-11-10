@@ -8,59 +8,31 @@
  * never read back.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { getJson, sendJson, sendJsonFull } from '@/lib/fetch-json';
+import {
+  canSave,
+  credentialNote,
+  imageRulesReducer,
+  initialImageRules,
+  saveRequest,
+  shapeOf,
+  type RuleRow,
+} from './image-rule-forms.model';
 
 const inputClass =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm dark:border-gray-700 dark:bg-gray-900';
 
-interface RuleRow {
-  id: string;
-  pattern: string;
-  note: string | null;
-  registryUsername: string | null;
-}
-
-interface Draft {
-  id: string | null;
-  pattern: string;
-  note: string;
-  registryUsername: string;
-  registrySecret: string;
-  /** Editing a rule that carries a credential: keep it unless a new pair or a clear says otherwise. */
-  hasCredential: boolean;
-  clearCredential: boolean;
-}
-
-const EMPTY_DRAFT: Draft = {
-  id: null,
-  pattern: '',
-  note: '',
-  registryUsername: '',
-  registrySecret: '',
-  hasCredential: false,
-  clearCredential: false,
-};
-
-/** What a rule's shape says at a glance. */
-function shapeOf(pattern: string): string {
-  if (pattern.endsWith('/*')) return 'namespace';
-  return pattern.includes('/') ? 'repository' : 'whole registry';
-}
-
 export default function ImageRuleForms() {
-  const [rules, setRules] = useState<RuleRow[]>([]);
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [state, dispatch] = useReducer(imageRulesReducer, initialImageRules);
+  const { rules, draft, busy, error, notice } = state;
 
   const load = useCallback(async () => {
     const { data, error: loadError } = await getJson<{ rules: RuleRow[] }>(
       `/api/admin/code-services/rules`
     );
-    if (loadError) setError(loadError);
-    else setRules(data?.rules ?? []);
+    if (loadError) dispatch({ type: 'load-failed', error: loadError });
+    else dispatch({ type: 'loaded', rules: data?.rules ?? [] });
   }, []);
 
   useEffect(() => {
@@ -68,79 +40,48 @@ export default function ImageRuleForms() {
   }, [load]);
 
   const save = async () => {
-    if (!draft || !draft.pattern.trim()) return;
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const payload = {
-      pattern: draft.pattern.trim(),
-      note: draft.note.trim() || null,
-      ...(draft.registryUsername.trim()
-        ? { registryUsername: draft.registryUsername.trim(), registrySecret: draft.registrySecret }
-        : {}),
-      ...(draft.clearCredential ? { clearCredential: true } : {}),
-    };
-    const result = draft.id
-      ? await sendJsonFull<{ dropped: string | null }>(
-          `/api/admin/code-services/rules/${draft.id}`,
-          'PUT',
-          payload
-        )
-      : await sendJsonFull<{ dropped: string | null }>(
-          `/api/admin/code-services/rules`,
-          'POST',
-          payload
-        );
-    setBusy(false);
+    if (!draft || !canSave(state)) return;
+    dispatch({ type: 'sent' });
+    const request = saveRequest(draft);
+    const result = await sendJsonFull<{ dropped: string | null }>(
+      request.url,
+      request.method,
+      request.body
+    );
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
-    if (result.data?.dropped) {
-      setNotice(`Saved without ${result.data.dropped}: a rule allows a repository at any tag.`);
-    }
-    setDraft(null);
+    dispatch({ type: 'saved', dropped: result.data?.dropped ?? null });
     await load();
   };
 
   const remove = async (ruleId: string) => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    const removeError = await sendJson(
-      `/api/admin/code-services/rules/${ruleId}`,
-      'DELETE'
-    );
-    setBusy(false);
+    dispatch({ type: 'sent' });
+    const removeError = await sendJson(`/api/admin/code-services/rules/${ruleId}`, 'DELETE');
     if (removeError) {
-      setError(removeError);
+      dispatch({ type: 'failed', error: removeError });
       return;
     }
-    if (draft?.id === ruleId) setDraft(null);
+    dispatch({ type: 'removed', ruleId });
     await load();
   };
 
   const restore = async () => {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
+    dispatch({ type: 'sent' });
     const result = await sendJsonFull<{ added: number }>(
       `/api/admin/code-services/rules/restore`,
       'POST'
     );
-    setBusy(false);
     if (result.error) {
-      setError(result.error);
+      dispatch({ type: 'failed', error: result.error });
       return;
     }
-    const added = result.data?.added ?? 0;
-    setNotice(
-      added === 0
-        ? 'The default images are all in the list already.'
-        : `Put ${added} default ${added === 1 ? 'image' : 'images'} back.`
-    );
+    dispatch({ type: 'restored', added: result.data?.added ?? 0 });
     await load();
   };
+
+  const note = draft ? credentialNote(draft) : null;
 
   return (
     <div className="space-y-4">
@@ -168,17 +109,7 @@ export default function ImageRuleForms() {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() =>
-                    setDraft({
-                      id: rule.id,
-                      pattern: rule.pattern,
-                      note: rule.note ?? '',
-                      registryUsername: '',
-                      registrySecret: '',
-                      hasCredential: rule.registryUsername !== null,
-                      clearCredential: false,
-                    })
-                  }
+                  onClick={() => dispatch({ type: 'edit', rule })}
                   className="text-sm text-blue-600 hover:underline dark:text-blue-400"
                 >
                   Edit
@@ -211,7 +142,9 @@ export default function ImageRuleForms() {
               value={draft.pattern}
               maxLength={512}
               placeholder="myorg.azurecr.io, myorg.azurecr.io/platform/*, or postgres"
-              onChange={(event) => setDraft({ ...draft, pattern: event.target.value })}
+              onChange={(event) =>
+                dispatch({ type: 'draft', patch: { pattern: event.target.value } })
+              }
             />
           </label>
           <label className="block text-sm font-medium">
@@ -221,33 +154,33 @@ export default function ImageRuleForms() {
               value={draft.note}
               maxLength={300}
               placeholder="Our platform team's registry"
-              onChange={(event) => setDraft({ ...draft, note: event.target.value })}
+              onChange={(event) => dispatch({ type: 'draft', patch: { note: event.target.value } })}
             />
           </label>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">
               Registry credential (optional — for a private registry)
             </legend>
-            {draft.hasCredential && !draft.clearCredential ? (
+            {note === 'carries' ? (
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 This rule carries a credential. Enter a new pair to replace it, or{' '}
                 <button
                   type="button"
                   className="text-red-600 hover:underline dark:text-red-400"
-                  onClick={() => setDraft({ ...draft, clearCredential: true })}
+                  onClick={() => dispatch({ type: 'clear-credential' })}
                 >
                   remove it
                 </button>
                 .
               </p>
             ) : null}
-            {draft.clearCredential ? (
+            {note === 'removing' ? (
               <p className="text-xs text-amber-700 dark:text-amber-300">
                 The credential is removed on save.{' '}
                 <button
                   type="button"
                   className="hover:underline"
-                  onClick={() => setDraft({ ...draft, clearCredential: false })}
+                  onClick={() => dispatch({ type: 'keep-credential' })}
                 >
                   Keep it
                 </button>
@@ -262,11 +195,7 @@ export default function ImageRuleForms() {
                 autoComplete="off"
                 placeholder="A service principal id, or a token name"
                 onChange={(event) =>
-                  setDraft({
-                    ...draft,
-                    registryUsername: event.target.value,
-                    clearCredential: false,
-                  })
+                  dispatch({ type: 'draft', patch: { registryUsername: event.target.value } })
                 }
               />
             </label>
@@ -280,7 +209,7 @@ export default function ImageRuleForms() {
                 autoComplete="new-password"
                 placeholder="Sealed on the sandbox worker; never shown again"
                 onChange={(event) =>
-                  setDraft({ ...draft, registrySecret: event.target.value, clearCredential: false })
+                  dispatch({ type: 'draft', patch: { registrySecret: event.target.value } })
                 }
               />
             </label>
@@ -288,11 +217,7 @@ export default function ImageRuleForms() {
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={
-                busy ||
-                !draft.pattern.trim() ||
-                Boolean(draft.registryUsername.trim()) !== Boolean(draft.registrySecret)
-              }
+              disabled={!canSave(state)}
               onClick={() => void save()}
               className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
             >
@@ -300,7 +225,7 @@ export default function ImageRuleForms() {
             </button>
             <button
               type="button"
-              onClick={() => setDraft(null)}
+              onClick={() => dispatch({ type: 'cancel' })}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-900"
             >
               Cancel
@@ -311,7 +236,7 @@ export default function ImageRuleForms() {
         <div className="flex flex-wrap gap-4">
           <button
             type="button"
-            onClick={() => setDraft(EMPTY_DRAFT)}
+            onClick={() => dispatch({ type: 'new' })}
             className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
           >
             + New rule

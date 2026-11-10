@@ -18,6 +18,7 @@
  */
 
 import type { HttpMethod, MirthCredentials } from '@renkei/connector-mirth';
+import { isRecord } from '@renkei/guards';
 
 export type MirthClientError =
   /** DELEGATE_WORKER_URL / _API_KEY are not set. */
@@ -57,10 +58,6 @@ export interface MirthApiRequest {
 }
 
 const REQUEST_TIMEOUT_MS = 90_000;
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function str(value: unknown): string {
   return typeof value === 'string' ? value : '';

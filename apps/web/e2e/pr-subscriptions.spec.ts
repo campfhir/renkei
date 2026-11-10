@@ -1,18 +1,26 @@
 /**
- * A person's own opt-in to a pull request's pipeline outcome: the
- * project page's own condensed row (pr-subscribe.tsx's `compact`
- * layout, on the Pulls card's most-recent PR) and the full Pulls
- * page's per-row disclosure — both backed by the same real POST/DELETE
- * against .../pr-subscriptions (no external host call in that route, so
- * nothing to mock there), and the outcome line of an already-subscribed
- * PR. The project's own `pulls` route is mocked (AGENTS.md: a call that
- * would hit a real vendor is mocked at the browser edge), and so is the
- * one thing only a background process writes: the recorded pipeline
- * outcome (pr_pipeline_events), which the worker's webhook handler
+ * A person's own opt-in to a pull request's pipeline outcome, in a
+ * browser: the project page's own condensed row (pr-subscribe.tsx's
+ * `compact` layout, on the Pulls card's most-recent PR) pressed once —
+ * the real POST reaching .../pr-subscriptions — and the full Pulls page's
+ * per-row disclosure reading the same subscription back, then an
+ * already-subscribed PR's outcome line drawn, and both at phone width
+ * (desktop-light only; the spec is in DARK_SPECS for that reason). The
+ * project's own `pulls` route is mocked (AGENTS.md: a call that would hit
+ * a real vendor is mocked at the browser edge), and so is the one thing
+ * only a background process writes: the recorded pipeline outcome
+ * (pr_pipeline_events), which the worker's webhook handler
  * (apps/worker/src/handlers/pr-pipeline-events.ts) records after
  * re-reading the run at the code host's own API. The subscription itself
  * is the real one, made through the route; only its `lastEvent` is added
  * to the route's real answer.
+ *
+ * Where its rules went: Fix and Merge enabled only while subscribed,
+ * unsubscribing clearing them, what each change sends, a refusal putting
+ * the boxes back, which outcome line shows when —
+ * app/(app)/code/_components/pr-subscribe.model.test.ts; what the route
+ * keeps and whose it is — app/api/code/projects/[projectId]/
+ * pr-subscriptions/route.test.ts.
  *
  * The project is the test's own person's, on Bitbucket (connected through
  * the real connect flow, e2e/support/code-host.ts).
@@ -167,7 +175,9 @@ test.describe('PR pipeline subscriptions', () => {
     await connectBitbucket(page);
   });
 
-  test('subscribe, its checkboxes, and a recorded outcome line', async ({ page }, testInfo) => {
+  test('subscribe once, read back on the Pulls page, and a recorded outcome line', async ({
+    page,
+  }, testInfo) => {
     const ids = await stage(page, testInfo);
     // The phone pass runs once, on a resized viewport.
     const mobile = testInfo.project.name === 'desktop-light';
@@ -183,16 +193,17 @@ test.describe('PR pipeline subscriptions', () => {
     });
     await expect(pullsCard.getByText(`#${OPEN_PR.number} No opt-in yet`)).toBeVisible();
     const subscribeCompact = pullsCard.getByLabel('Subscribe', { exact: true });
-    const fixCompact = pullsCard.getByLabel('Fix', { exact: true });
-    const mergeCompact = pullsCard.getByLabel('Merge', { exact: true });
     await expect(subscribeCompact).not.toBeChecked();
-    await expect(fixCompact).toBeDisabled();
-    await expect(mergeCompact).toBeDisabled();
 
+    // The one press through: the real POST reaches the route.
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().endsWith(`/api/code/projects/${ids.projectId}/pr-subscriptions`) &&
+        response.request().method() === 'POST'
+    );
     await subscribeCompact.check();
-    await expect(fixCompact).toBeEnabled();
-    await expect(mergeCompact).toBeEnabled();
-    await fixCompact.check();
+    expect((await saved).ok()).toBe(true);
+    await expect(pullsCard.getByLabel('Fix', { exact: true })).toBeEnabled();
     await shot(page, testInfo, 'pr-subscribe-compact.png');
 
     // ── The full Pulls page reports the same subscription back — one
@@ -202,13 +213,9 @@ test.describe('PR pipeline subscriptions', () => {
     const row90 = subscribeBlock(page, OPEN_PR.number);
     await row90.getByText('Subscribe', { exact: true }).click();
     await expect(row90.getByLabel('Subscribe to pipeline outcomes')).toBeChecked();
-    await expect(row90.getByLabel('Note a failure in this chat')).toBeChecked();
+    await expect(row90.getByLabel('Note a failure in this chat')).not.toBeChecked();
     await expect(row90.getByLabel('Merge automatically on success')).not.toBeChecked();
     await shot(page, testInfo, 'pr-subscribe-checked.png');
-
-    // Unsubscribing clears the auto-fix/auto-merge state too.
-    await row90.getByLabel('Subscribe to pipeline outcomes').uncheck();
-    await expect(row90.getByLabel('Note a failure in this chat')).toBeDisabled();
 
     // ── PR #91: already subscribed, with a recorded outcome ──
     const row91 = subscribeBlock(page, SEEDED_PR.number);

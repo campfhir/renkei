@@ -7,6 +7,8 @@
  * exactly what moved. Pure.
  */
 
+import { isRecord } from '@renkei/guards';
+
 type Json = Record<string, unknown>;
 
 export type FieldBehavior = 'Edit' | 'Required' | 'Readonly';
@@ -29,9 +31,6 @@ export interface LayoutChanges {
     fields?: { field: string; behavior?: FieldBehavior }[];
   }[];
 }
-
-const isRecord = (value: unknown): value is Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const list = (value: unknown): Json[] => (Array.isArray(value) ? value.filter(isRecord) : []);
 

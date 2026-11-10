@@ -35,6 +35,7 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import type { Readable } from 'node:stream';
 import { getDataStore } from '@renkei/db';
+import { pseudonym } from './access-log';
 import { ATLASSIAN_BITBUCKET, GITHUB } from '@renkei/provider-grants';
 import { sendJson, str } from '@renkei/worker-kit';
 import type { DelegateLogger, Grants } from './grants';
@@ -202,6 +203,8 @@ export class GitTickets {
       subject: ticket.subject,
     });
     if (!access.ok) return refuse(response, statusForGrantError(access.error), access.error);
+    // Resolved once here: the stream's error handler below has no async context.
+    const who = pseudonym(ticket.subject);
     const user = Object.prototype.hasOwnProperty.call(HOSTS, ticket.provider)
       ? HOSTS[ticket.provider].user
       : 'x-access-token';
@@ -223,13 +226,19 @@ export class GitTickets {
       });
     } catch (error) {
       const timedOut = error instanceof Error && error.message === 'timeout';
-      this.logger.warn('git {verb} to {host} for {provider} failed: {error}', {
-        component: 'worker-delegate/git',
-        verb,
-        host,
-        provider: ticket.provider,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      this.logger.warn(
+        'the git {verb} of {actor} to {host} through their {provider} grant did not get through ({outcome}); git sees {status}: {error}',
+        {
+          component: 'worker-delegate/git',
+          ...who,
+          verb,
+          host,
+          provider: ticket.provider,
+          outcome: timedOut ? 'it timed out' : 'the host could not be reached',
+          status: timedOut ? 504 : 502,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
       return refuse(response, timedOut ? 504 : 502, timedOut ? 'timeout' : 'unreachable');
     }
     response.statusCode = upstream.status;
@@ -238,13 +247,17 @@ export class GitTickets {
       response.setHeader(name, value);
     }
     upstream.body.on('error', (error) => {
-      this.logger.warn('git {verb} from {host} broke off mid-stream: {error}', {
-        component: 'worker-delegate/git',
-        verb,
-        host,
-        provider: ticket.provider,
-        error: error.message,
-      });
+      this.logger.warn(
+        'the git {verb} of {actor} from {host} broke off mid-stream; git sees a dropped connection: {error}',
+        {
+          component: 'worker-delegate/git',
+          ...who,
+          verb,
+          host,
+          provider: ticket.provider,
+          error: error.message,
+        }
+      );
       response.destroy();
     });
     upstream.body.pipe(response);

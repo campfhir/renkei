@@ -70,6 +70,11 @@ const NON_SESSION_AUTH: Record<string, string> = {
     'the x-renkei-seed-token header matches RENKEI_MEMORY_SEED_TOKEN; it is the memory UI ' +
     "suite's sign-in, and on Postgres it never answers",
   'api/upload/[slotId]/route.ts': 'opaque per-slot bearer, single-use claim, expiring',
+  'api/code/preview/[token]/[[...path]]/route.ts':
+    'a preview port’s share link: an opaque 32-byte token minted when the preview was started ' +
+    'public (lib/code/previews.ts), checked for shape here and answered by the sandbox worker ' +
+    'only while it holds that token; it dies with the preview (docs/sandbox-workspaces-design.md, ' +
+    '“Share links”)',
   'api/webhooks/microsoft/[accountId]/route.ts':
     'per-subscription clientState secret matched against webhook_subscriptions',
   'api/webhooks/webex/user/[accountId]/route.ts':

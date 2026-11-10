@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useReducer } from 'react';
 import {
   ENTRA_DEVELOPER_SCOPE_GROUPS,
   ENTRA_DEVELOPER_SCOPE_OPTIONS,
@@ -8,7 +8,14 @@ import {
 } from '@/lib/entra-developer-scopes';
 import ScopePicker from '@/components/scope-picker';
 import ExternalLink from '@/components/external-link';
-import { optionWithin, scopesOfOptions } from '@/lib/scope-catalog';
+import {
+  appRegistrationReducer,
+  initialAppRegistration,
+  saveBody,
+  secretField,
+  type AppRegistrationConfig,
+  type AppRegistrationSpec,
+} from './app-registration-form.model';
 import {
   useConnectorConfig,
   putJson,
@@ -24,14 +31,12 @@ import { LoadingRegion, SkeletonForm } from '@/components/skeleton';
 
 /* ----------------------------------------------------------------------- */
 
-interface EntraDeveloperConfig {
-  configured: boolean;
-  enabled: boolean;
-  clientId: string | null;
-  directoryTenantId: string | null;
-  scopes: string | null;
-  hasClientSecret: boolean;
-}
+const SPEC: AppRegistrationSpec = {
+  options: ENTRA_DEVELOPER_SCOPE_OPTIONS,
+  alwaysScopes: ENTRA_DEVELOPER_REQUIRED_SCOPES,
+  directory: true,
+};
+const reducer = appRegistrationReducer(SPEC);
 
 /**
  * The Entra Developer app registration — the microsoft-form.tsx shape for
@@ -41,70 +46,23 @@ interface EntraDeveloperConfig {
  */
 export function EntraDeveloperForm({ origin }: { origin: string | null }) {
   const url = `/api/admin/connectors/entra-developer`;
-  const [state, reload] = useConnectorConfig<EntraDeveloperConfig>(url);
-  const [clientId, setClientId] = useState('');
-  const [directoryTenantId, setDirectoryTenantId] = useState('');
-  const [clientSecret, setClientSecret] = useState('');
-  const [checkedIds, setCheckedIds] = useState<Set<string>>(
-    () =>
-      new Set(
-        ENTRA_DEVELOPER_SCOPE_OPTIONS.filter((option) => option.defaultChecked).map((o) => o.id)
-      )
-  );
-  const [enabled, setEnabled] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [state, reload] = useConnectorConfig<AppRegistrationConfig>(url);
+  const [form, dispatch] = useReducer(reducer, SPEC, initialAppRegistration);
+  const { fields, busy, notice, error } = form;
 
   useEffect(() => {
-    if (!state.data) return;
-    setClientId(state.data.clientId ?? '');
-    setDirectoryTenantId(state.data.directoryTenantId ?? '');
-    if (state.data.configured && state.data.scopes) {
-      const stored = new Set(state.data.scopes.split(/\s+/));
-      const matching = ENTRA_DEVELOPER_SCOPE_OPTIONS.filter((option) =>
-        optionWithin(option, stored)
-      );
-      if (matching.length > 0) setCheckedIds(new Set(matching.map((option) => option.id)));
-    }
-    setEnabled(state.data.configured ? state.data.enabled : true);
+    if (state.data) dispatch({ type: 'loaded', config: state.data });
   }, [state.data]);
-
-  function toggleOption(optionId: string, on: boolean) {
-    setCheckedIds((current) => {
-      const next = new Set(current);
-      if (on) next.add(optionId);
-      else next.delete(optionId);
-      return next;
-    });
-  }
 
   async function save(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setNotice(null);
-    setError(null);
-    const scopes = [
-      ...new Set([
-        ...scopesOfOptions(ENTRA_DEVELOPER_SCOPE_OPTIONS, checkedIds),
-        ...ENTRA_DEVELOPER_REQUIRED_SCOPES,
-      ]),
-    ].join(' ');
-    const failure = await putJson(url, {
-      clientId: clientId.trim(),
-      directoryTenantId: directoryTenantId.trim(),
-      // Blank means keep the stored secret — omit it from the payload.
-      ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}),
-      enabled,
-      scopes,
-    });
-    setBusy(false);
+    dispatch({ type: 'saving' });
+    const failure = await putJson(url, saveBody(SPEC, fields));
     if (failure) {
-      setError(failure);
+      dispatch({ type: 'save-failed', error: failure });
       return;
     }
-    setClientSecret('');
-    setNotice('Saved');
+    dispatch({ type: 'saved' });
     reload();
   }
 
@@ -124,6 +82,7 @@ export function EntraDeveloperForm({ origin }: { origin: string | null }) {
     );
   }
   const config = state.data;
+  const secret = secretField(Boolean(config?.hasClientSecret));
 
   return (
     <Card
@@ -156,8 +115,8 @@ export function EntraDeveloperForm({ origin }: { origin: string | null }) {
           <input
             id="entra-dev-client-id"
             required
-            value={clientId}
-            onChange={(e) => setClientId(e.target.value)}
+            value={fields.clientId}
+            onChange={(e) => dispatch({ type: 'edit', patch: { clientId: e.target.value } })}
             className={`${inputClass} font-mono`}
           />
         </div>
@@ -168,8 +127,10 @@ export function EntraDeveloperForm({ origin }: { origin: string | null }) {
           <input
             id="entra-dev-directory-id"
             required
-            value={directoryTenantId}
-            onChange={(e) => setDirectoryTenantId(e.target.value)}
+            value={fields.directoryTenantId}
+            onChange={(e) =>
+              dispatch({ type: 'edit', patch: { directoryTenantId: e.target.value } })
+            }
             className={`${inputClass} font-mono`}
           />
           <p className={hintClass}>
@@ -185,13 +146,13 @@ export function EntraDeveloperForm({ origin }: { origin: string | null }) {
           <input
             id="entra-dev-client-secret"
             type="password"
-            required={!config?.hasClientSecret}
-            value={clientSecret}
-            onChange={(e) => setClientSecret(e.target.value)}
-            placeholder={config?.hasClientSecret ? 'Stored — leave blank to keep' : ''}
+            required={secret.required}
+            value={fields.clientSecret}
+            onChange={(e) => dispatch({ type: 'edit', patch: { clientSecret: e.target.value } })}
+            placeholder={secret.placeholder}
             className={`${inputClass} font-mono`}
           />
-          {config?.hasClientSecret && (
+          {secret.storedHint && (
             <p className={hintClass}>A secret is stored but never shown; leave blank to keep it.</p>
           )}
         </div>
@@ -200,8 +161,8 @@ export function EntraDeveloperForm({ origin }: { origin: string | null }) {
           <ScopePicker
             groups={ENTRA_DEVELOPER_SCOPE_GROUPS}
             options={ENTRA_DEVELOPER_SCOPE_OPTIONS}
-            checked={checkedIds}
-            onToggle={toggleOption}
+            checked={fields.checkedIds}
+            onToggle={(optionId, on) => dispatch({ type: 'toggle', optionId, on })}
           />
           <p className={hintClass}>
             This is the ceiling: users can narrow it when they connect, never widen it. Every
@@ -214,7 +175,11 @@ export function EntraDeveloperForm({ origin }: { origin: string | null }) {
           </p>
         </fieldset>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={fields.enabled}
+            onChange={(e) => dispatch({ type: 'edit', patch: { enabled: e.target.checked } })}
+          />
           Enabled
         </label>
         <SaveRow busy={busy} notice={notice} error={error} />

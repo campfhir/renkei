@@ -76,6 +76,12 @@ export interface SubagentRecorder {
     runId: string,
     state: { steps: number; toolCalls: number; lastTool: string | null; usage: LlmUsage }
   ): Promise<void>;
+  /**
+   * Whether the run was stopped from outside since it started — the
+   * person's Stop on it (subagent-stops.ts), or its turn ending — and
+   * why; null while it is still its own to run. Asked before each model call.
+   */
+  stopped?(runId: string): Promise<string | null>;
   /** The end: the whole transcript, the report the chat gets, and how it ended. */
   finish(
     runId: string,
@@ -298,6 +304,19 @@ export function createSubagentRecorder(
           finishedAt: null,
         });
       }
+    },
+    async stopped(runId) {
+      const run = known.get(runId);
+      if (!run) return null;
+      let reason: string | null = null;
+      await quietly('stopped', async () => {
+        const row = await getDataStore().chatThreads.getSubagentRunByCall(
+          scope.chatId,
+          run.toolUseId
+        );
+        if (row && row.status !== 'running') reason = row.error ?? 'stopped';
+      });
+      return reason;
     },
     async finish(runId, outcome) {
       await quietly('finish', () => finishSubagentRun(runId, outcome, scope.cipher));
