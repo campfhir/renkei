@@ -51,8 +51,8 @@ test('the Code page searches, pages, and describes projects from their README', 
   // Paging: ten a page, the pager riding the bottom edge of the frame.
   const frame = main.getByRole('group', { name: 'Code projects', exact: true });
   const rows = frame.locator('tbody tr:not([aria-hidden])');
-  await expect(rows).toHaveCount(10);
-  await expect(frame.getByText('Projects 1–10 of 13')).toBeVisible();
+  await expect(rows).toHaveCount(5);
+  await expect(frame.getByText('Projects 1–5 of 13')).toBeVisible();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/1b-pager.png`, caret: 'initial' });
   // Chrome sends a press by what it last drew; wait until the link hears the pointer.
   const next = frame.getByRole('link', { name: 'Next →' });
@@ -60,9 +60,11 @@ test('the Code page searches, pages, and describes projects from their README', 
   await pointerReaches(page, next);
   await next.click();
   await expect(page).toHaveURL(/\/code\?page=2$/);
-  await expect(rows).toHaveCount(3);
-  await expect(frame.getByText('Projects 11–13 of 13')).toBeVisible();
+  await expect(rows).toHaveCount(5);
+  await expect(frame.getByText('Projects 6–10 of 13')).toBeVisible();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/2-page-two.png`, caret: 'initial' });
+
+  const fullHeight = (await frame.boundingBox())!.height;
 
   // Search by the hand-typed description: in the URL, back on page one.
   const search = main.getByRole('searchbox', { name: 'Search code projects' });
@@ -70,6 +72,8 @@ test('the Code page searches, pages, and describes projects from their README', 
   await expect(page).toHaveURL(/\/code\?q=invoicing$/);
   await expect(rows).toHaveCount(1);
   await expect(rows.getByText(names[0]!)).toBeVisible();
+  // Fixed height: one result fills the same frame five did.
+  expect((await frame.boundingBox())!.height).toBeCloseTo(fullHeight, 0);
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/3-search.png`, caret: 'initial' });
 
   // Nothing matching says so.
@@ -78,10 +82,10 @@ test('the Code page searches, pages, and describes projects from their README', 
 
   // Phone width: cards, not a table, the pager still at the bottom.
   await search.fill('');
-  await expect(rows).toHaveCount(10);
+  await expect(rows).toHaveCount(5);
   await page.setViewportSize({ width: 390, height: 844 });
   const cards = frame.getByRole('list', { name: 'Code projects', exact: true }).locator('li:not([aria-hidden])');
-  await expect(cards).toHaveCount(10);
+  await expect(cards).toHaveCount(5);
   await expect(frame.locator('table')).toBeHidden();
   await frame.getByRole('navigation', { name: 'Code projects pages' }).scrollIntoViewIfNeeded();
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/4-phone.png`, caret: 'initial' });

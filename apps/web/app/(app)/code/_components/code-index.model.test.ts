@@ -8,6 +8,7 @@ import {
   codeIndexHref,
   codeIndexQuery,
   codeIndexView,
+  fillerCount,
   matchingProjects,
   ownerLabel,
 } from './code-index.model';
@@ -78,18 +79,32 @@ describe('the two tables', () => {
     );
   });
 
-  it('pages each table ten at a time, on its own', () => {
-    const shared = many(25).map((p) => ({ ...p, id: `s${p.id}`, role: 'member' as const }));
-    const all = [...many(12), ...shared];
-    const view = codeIndexView(all, codeIndexQuery({ page: '2', shared: '3' }));
-    expect(ids(view.mine.paging.rows)).toEqual(['p11', 'p12']);
-    expect(view.mine.paging.range).toBe('11–12 of 12');
-    expect(view.shared.paging.rows).toHaveLength(5);
-    expect(view.shared.paging.range).toBe('21–25 of 25');
+  it('pages five of mine and three shared with me, each on its own', () => {
+    const shared = many(8).map((p) => ({ ...p, id: `s${p.id}`, role: 'member' as const }));
+    const all = [...many(7), ...shared];
+    const first = codeIndexView(all, codeIndexQuery({}));
+    expect(first.mine.paging.rows).toHaveLength(5);
+    expect(first.mine.paging.range).toBe('1–5 of 7');
+    expect(first.shared.paging.rows).toHaveLength(3);
+    expect(first.shared.paging.range).toBe('1–3 of 8');
+    const turned = codeIndexView(all, codeIndexQuery({ page: '2', shared: '3' }));
+    expect(ids(turned.mine.paging.rows)).toEqual(['p6', 'p7']);
+    expect(ids(turned.shared.paging.rows)).toEqual(['sp7', 'sp8']);
+    expect(turned.shared.paging.range).toBe('7–8 of 8');
+  });
+
+  it('pads a short page, even the only one, to the full height — and an empty table not at all', () => {
+    const view = codeIndexView(many(2), codeIndexQuery({}));
+    expect(fillerCount(view.mine)).toBe(3);
+    expect(fillerCount(view.shared)).toBe(0);
+    const full = codeIndexView(many(5), codeIndexQuery({}));
+    expect(fillerCount(full.mine)).toBe(0);
+    const last = codeIndexView(many(7), codeIndexQuery({ page: '2' }));
+    expect(fillerCount(last.mine)).toBe(3);
   });
 
   it('a page past the end shows the last, and a bad page the first', () => {
-    expect(codeIndexView(many(25), codeIndexQuery({ page: '9' })).mine.paging.page).toBe(3);
+    expect(codeIndexView(many(25), codeIndexQuery({ page: '9' })).mine.paging.page).toBe(5);
     expect(codeIndexView(many(25), codeIndexQuery({ page: 'x' })).mine.paging.page).toBe(1);
   });
 

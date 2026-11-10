@@ -4,9 +4,9 @@ import Link from 'next/link';
 import type { ProjectListItem } from '@/lib/chat/sidebar';
 import { useCoachAnchor } from '@/components/coach-marks/anchor';
 import { DataFrame, DataTable, Pager, Th } from '@/components/data-table';
-import { fillerRows } from '../../agents/agents-page.model';
 import {
   codeIndexHref,
+  fillerCount,
   ownerLabel,
   type CodeIndexGroup,
   type CodeIndexQuery,
@@ -101,7 +101,7 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
   hrefFor: (page: number) => string;
 }) {
   const { paging } = group;
-  const fillers = Array.from({ length: fillerRows(paging) }, (_, index) => index);
+  const fillers = Array.from({ length: fillerCount(group) }, (_, index) => index);
   const columns = showOwner ? 3 : 2;
   return (
     <section aria-label={title}>
@@ -110,7 +110,7 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
         label={label}
         empty={
           group.empty ? (
-            <p className="p-4 text-sm text-gray-500">
+            <p className={`p-4 text-sm text-gray-500 ${showOwner ? EMPTY_SHARED : EMPTY_MINE}`}>
               {group.empty === 'no-match' ? 'No projects match your search.' : empty}
             </p>
           ) : undefined
@@ -166,6 +166,9 @@ function ProjectTable({ title, label, group, showOwner, empty, hrefFor }: {
  * under it holds its place; short last pages are padded to match.
  */
 const ROW_HEIGHT = 'h-14';
+/** An empty table is as tall as a full one: heading (~2.1rem) plus its rows (3.5rem each). */
+const EMPTY_MINE = 'min-h-[19.6rem]';
+const EMPTY_SHARED = 'min-h-[12.6rem]';
 const CARD_HEIGHT = 'h-[5.75rem]';
 
 /** One project as a table row: from the `sm` breakpoint up. */
