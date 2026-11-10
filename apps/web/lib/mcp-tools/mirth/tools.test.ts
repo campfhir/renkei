@@ -367,6 +367,124 @@ describe('names in place of ids', () => {
   });
 });
 
+describe('mirth_test_connector', () => {
+  const channelXml =
+    '<channel version="4.5.2"><id>c1</id><name>ADT In</name>' +
+    '<sourceConnector><metaDataId>0</metaDataId><name>sourceConnector</name>' +
+    '<properties class="com.mirth.connect.connectors.tcp.TcpReceiverProperties" version="4.5.2"><listenerConnectorProperties><port>6661</port></listenerConnectorProperties></properties>' +
+    '<transportName>TCP Listener</transportName><enabled>true</enabled></sourceConnector>' +
+    '<destinationConnectors><connector><metaDataId>1</metaDataId><name>To Lab</name>' +
+    '<properties class="com.mirth.connect.connectors.tcp.TcpDispatcherProperties" version="4.5.2"><remoteAddress>lab</remoteAddress><remotePort>8888</remotePort></properties>' +
+    '<transportName>TCP Sender</transportName><enabled>true</enabled></connector>' +
+    '<connector><metaDataId>2</metaDataId><name>Drop</name>' +
+    '<properties class="com.mirth.connect.connectors.file.FileDispatcherProperties" version="4.5.2"><scheme>FILE</scheme><host>/out</host></properties>' +
+    '<transportName>File Writer</transportName><enabled>true</enabled></connector>' +
+    '</destinationConnectors></channel>';
+  const verdict = (type: string, message: string) =>
+    answer(200, { 'com.mirth.connect.util.ConnectionTestResponse': { type, message } });
+
+  it("posts the named connector's properties to its test route and reads the verdict", async () => {
+    mirthApi
+      .mockResolvedValueOnce(answer(200, channelXml, 'application/xml'))
+      .mockResolvedValueOnce(verdict('SUCCESS', 'Successfully connected to host: lab:8888'));
+    const result = await register().get('mirth_test_connector')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'ADT In',
+      metaDataId: 'To Lab',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result)).toBe(
+      'Connection test on channel "ADT In" (id c1):\n' +
+        'destination 1 "To Lab" (TCP Sender): SUCCESS trying to open a TCP connection to lab:8888 — Successfully connected to host: lab:8888'
+    );
+    expect(mirthApi).toHaveBeenNthCalledWith(1, TARGET, {
+      method: 'GET',
+      path: '/channels/c1',
+      accept: 'application/xml',
+    });
+    expect(mirthApi).toHaveBeenNthCalledWith(2, TARGET, {
+      method: 'POST',
+      path: '/connectors/tcp/_testConnection',
+      query: { channelId: 'c1', channelName: 'ADT In' },
+      body: '<com.mirth.connect.connectors.tcp.TcpDispatcherProperties version="4.5.2"><remoteAddress>lab</remoteAddress><remotePort>8888</remotePort></com.mirth.connect.connectors.tcp.TcpDispatcherProperties>',
+      contentType: 'application/xml',
+      accept: 'application/json',
+    });
+  });
+
+  it('tests every testable connector when none is named, and says which have no test', async () => {
+    mirthApi
+      .mockResolvedValueOnce(answer(200, channelXml, 'application/xml'))
+      .mockResolvedValueOnce(verdict('TIME_OUT', 'Timed out connecting to lab:8888'))
+      .mockResolvedValueOnce(verdict('FAILURE', 'Directory /out does not exist'));
+    const result = await register().get('mirth_test_connector')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(textOf(result).split('\n')).toEqual([
+      'Connection tests on channel "ADT In" (id c1) — 2 of 3 connector(s) testable:',
+      'source "sourceConnector" (TCP Listener): not testable — Mirth has no connection test for a TCP Listener (it offers one for TCP Sender, HTTP Sender, Web Service Sender, File Reader, File Writer and Document Writer).',
+      'destination 1 "To Lab" (TCP Sender): TIMED OUT trying to open a TCP connection to lab:8888 — Timed out connecting to lab:8888',
+      'destination 2 "Drop" (File Writer): FAILED trying to write to /out — Directory /out does not exist',
+    ]);
+    expect(mirthApi).toHaveBeenCalledTimes(3);
+    expect(mirthApi).toHaveBeenNthCalledWith(
+      3,
+      TARGET,
+      expect.objectContaining({ path: '/connectors/file/_testWrite' })
+    );
+  });
+
+  it('refuses a connector Mirth cannot test, and one the channel does not have, before posting', async () => {
+    const tools = register();
+    mirthApi.mockResolvedValueOnce(answer(200, channelXml, 'application/xml'));
+    const listener = await tools.get('mirth_test_connector')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      metaDataId: 0,
+    });
+    expect(listener.isError).toBe(true);
+    expect(textOf(listener)).toContain(
+      'source "sourceConnector" (TCP Listener): Mirth has no connection test for a TCP Listener'
+    );
+
+    mirthApi.mockResolvedValueOnce(answer(200, channelXml, 'application/xml'));
+    const missing = await tools.get('mirth_test_connector')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      metaDataId: 7,
+    });
+    expect(missing.isError).toBe(true);
+    expect(textOf(missing)).toBe(
+      'Channel "ADT In" has no connector 7; it has source "sourceConnector" (TCP Listener), destination 1 "To Lab" (TCP Sender), destination 2 "Drop" (File Writer).'
+    );
+    expect(mirthApi).toHaveBeenCalledTimes(2);
+  });
+
+  it('phrases an upstream failure of the test itself', async () => {
+    mirthApi
+      .mockResolvedValueOnce(answer(200, channelXml, 'application/xml'))
+      .mockResolvedValueOnce(answer(500, 'boom', 'text/plain'));
+    const result = await register().get('mirth_test_connector')!({
+      instanceId: INSTANCE_ID,
+      channelId: 'c1',
+      metaDataId: 1,
+    });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe(
+      'Mirth answered 500 trying to test destination 1 "To Lab" (TCP Sender): boom'
+    );
+  });
+
+  it('requires only the channel read permission', () => {
+    expect([...register(connectionOf(READS)).keys()]).toContain('mirth_test_connector');
+    expect([
+      ...register(connectionOf(['messages.read']), { permissions: ['messages.read'] }).keys(),
+    ]).not.toContain('mirth_test_connector');
+  });
+});
+
 describe('refusals', () => {
   it('phrases worker refusals and upstream verdicts for the model', async () => {
     const tools = register();
