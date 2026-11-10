@@ -40,7 +40,7 @@ import { chatDelegateTool } from './chat-delegate';
 import { listChatModels } from './models';
 import { tenantBlobStoreConfigured } from '@renkei/blob-store';
 import { logger } from '@/lib/logger';
-import { whoIs } from '@/lib/log-actor';
+import { who, whoIs } from '@/lib/log-actor';
 import { getIdentityDisplay } from '@/lib/identity';
 import { isUuid } from '@/lib/uuid';
 import { resolveChatAccess } from './access';
@@ -753,6 +753,7 @@ async function executeTurnBody(
     const chatSummary = await latestChatSummary(input.chat.id, input.cipher);
     const localContext = {
       subject: input.session.subject,
+      actor: who(input.session),
       roles: input.session.roles,
       holdTurn,
       chatId: input.chat.id,
