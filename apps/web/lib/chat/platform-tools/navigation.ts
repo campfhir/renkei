@@ -306,7 +306,7 @@ export function navigationTools(): LocalTool[] {
         );
         if (unique.length === 0) {
           return errorResult(
-            `Nothing in Renkei matched "${query}". Try fewer or different words, or call ${LINK_TOOL} with no input to list the main pages.`
+            `Nothing in Renkei matched "${query}". Try fewer or different words, or call ${LINK_TOOL} with no input to list the main pages. To see every project this person has, find renkei_list_projects with find_tools rather than trying names one by one.`
           );
         }
         return textResult(

@@ -13,7 +13,7 @@ import { isRecord } from '@renkei/guards';
 import { grantResourceAccess } from '../access';
 import { resourceCipher } from '../content-crypto';
 import { createLocalToolSet, type LocalToolContext } from '../local-tools';
-import { getProjectRow } from '../projects';
+import { createProject, getProjectRow } from '../projects';
 import { getLibrary, listPrompts } from '../prompts';
 import { getDefaultChatTools } from '../tool-prefs';
 import { findToolsTool, recallDiscoveredTools } from '../tool-discovery';
@@ -92,6 +92,7 @@ describe('which platform tools a turn has', () => {
       'renkei_create_code_project',
       'renkei_create_prompt_library',
       'renkei_delete_prompt',
+      'renkei_list_projects',
       'renkei_list_prompt_libraries',
       'renkei_org_usage',
       'renkei_save_prompt',
@@ -125,6 +126,7 @@ describe('which platform tools a turn has', () => {
     expect(reads).toEqual([
       'renkei_get_preferences',
       'renkei_link',
+      'renkei_list_projects',
       'renkei_list_prompt_libraries',
       'renkei_my_usage',
       'renkei_org_usage',
@@ -140,7 +142,7 @@ describe('finding the deferred tools', () => {
 
   it('find_tools names the group and finds a tool by what it does', async () => {
     const tool = findToolsTool(discoverable());
-    expect(tool?.def.description).toContain(`${PLATFORM_LABEL} (5)`);
+    expect(tool?.def.description).toContain(`${PLATFORM_LABEL} (6)`);
     const found = await tool!.execute({ query: 'prompt library' }, contextFor());
     expect(found.isError).toBe(false);
     const discovered: unknown = found.meta?.discoveredTools;
@@ -333,6 +335,104 @@ describe('projects', () => {
     });
     expect(refused.isError).toBe(true);
     expect(refused.text).toContain('Nothing was made');
+  });
+});
+
+describe('listing projects, and not making one twice', () => {
+  const codeProject = (ownerSubject: string, fullName: string) =>
+    createProject({
+      ownerSubject,
+      name: fullName.split('/')[1] ?? fullName,
+      description: null,
+      instructions: null,
+      toolConfig: null,
+      repo: { provider: 'github', fullName, branch: 'main' },
+    });
+
+  it('lists the person’s chat and code projects with their links and repositories, and no one else’s', async () => {
+    await call('renkei_create_chat_project', { name: 'Hiring', description: 'Interview loops' });
+    const codeId = await codeProject(ME, 'acme/site');
+    await codeProject('grace', 'acme/secret');
+
+    const listed = await call('renkei_list_projects', {});
+    expect(listed.isError).toBe(false);
+    expect(listed.text).toContain('Hiring');
+    expect(listed.text).toContain('chat project; theirs; Interview loops');
+    expect(listed.text).toContain(`[site](${ORIGIN}/code/${codeId})`);
+    expect(listed.text).toContain('code project on acme/site (GitHub, branch main)');
+    expect(listed.text).not.toContain('secret');
+  });
+
+  it('includes a project shared with the person, and says who shares it', async () => {
+    const sharedId = await codeProject('grace', 'acme/shared');
+    await grantResourceAccess('grace', 'chat_project', sharedId ?? '', {
+      granteeSubject: ME,
+      role: 'editor',
+      expiresAt: null,
+    });
+    const listed = await call('renkei_list_projects', { kind: 'code' });
+    expect(listed.text).toContain(`${ORIGIN}/code/${sharedId}`);
+    expect(listed.text).toContain('shared by grace');
+  });
+
+  it('narrows by kind and by words in the name or repository', async () => {
+    await call('renkei_create_chat_project', { name: 'Hiring' });
+    await codeProject(ME, 'acme/site');
+    await codeProject(ME, 'acme/billing');
+    const chatOnly = await call('renkei_list_projects', { kind: 'chat' });
+    expect(chatOnly.text).toContain('Hiring');
+    expect(chatOnly.text).not.toContain('acme/');
+    const found = await call('renkei_list_projects', { query: 'billing' });
+    expect(found.text).toContain('acme/billing');
+    expect(found.text).not.toContain('acme/site');
+    expect((await call('renkei_list_projects', { query: 'nothing-like-it' })).text).toContain(
+      'No project'
+    );
+  });
+
+  it('says so when the person has none', async () => {
+    expect((await call('renkei_list_projects', {})).text).toContain('has no projects yet');
+  });
+
+  it('refuses a second code project on a repository the person already has one on, and links the first', async () => {
+    const existingId = await codeProject(ME, 'acme/site');
+    const refused = await call('renkei_create_code_project', {
+      provider: 'github',
+      repository: 'Acme/Site',
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('already has a code project on acme/site');
+    expect(refused.text).toContain(`${ORIGIN}/code/${existingId}`);
+    expect(refused.text).toContain('Nothing was made');
+    expect((await call('renkei_list_projects', { kind: 'code' })).text).toContain('1 code project');
+  });
+
+  it('counts a code project shared with the person as already there', async () => {
+    const sharedId = await codeProject('grace', 'acme/shared');
+    await grantResourceAccess('grace', 'chat_project', sharedId ?? '', {
+      granteeSubject: ME,
+      role: 'editor',
+      expiresAt: null,
+    });
+    const refused = await call('renkei_create_code_project', {
+      provider: 'github',
+      repository: 'acme/shared',
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('shared by grace');
+  });
+
+  it('refuses a second chat project under a name already used, unless a second one was asked for', async () => {
+    await call('renkei_create_chat_project', { name: 'Hiring' });
+    const refused = await call('renkei_create_chat_project', { name: 'hiring' });
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('already has a chat project called "hiring"');
+    const second = await call('renkei_create_chat_project', {
+      name: 'Hiring',
+      allowDuplicate: true,
+    });
+    expect(second.isError).toBe(false);
+    expect((await call('renkei_list_projects', { kind: 'chat' })).text).toContain('2 chat project');
   });
 });
 

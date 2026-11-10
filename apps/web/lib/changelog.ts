@@ -49,6 +49,12 @@ export const CHANGELOG: ChangelogRelease[] = [
     date: '2026-11-10',
     entries: [
       {
+        kind: 'added',
+        title: "The assistant can list your projects, and won't make one twice",
+        detail:
+          'Ask a chat what projects you have and it lists your chat projects and code projects, including ones shared with you, with a link to each. When it sets up a code project it now checks first: a repository you already have a project on is not given a second one unless you ask for that.',
+      },
+      {
         kind: 'fixed',
         title: 'The assistant knows what a confirmed card created',
         detail:

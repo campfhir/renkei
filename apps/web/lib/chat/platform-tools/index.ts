@@ -12,7 +12,8 @@
  *   changing their preferences (preferences.ts). Small, and the ones a
  *   person asks for in passing.
  * - **Behind find_tools** (`deferred`): the organization's usage, for
- *   operators; making a chat project or a code project (projects.ts); and
+ *   operators; listing the person's projects and making a chat project or
+ *   a code project (projects.ts); and
  *   the prompt libraries (prompt-libraries.ts). Their schemas reach the
  *   model only once it searches for them, so a chat about anything else
  *   does not carry them on every request.
@@ -28,7 +29,7 @@ import { CODE_HOSTS } from '@/lib/code/create-project';
 import type { LocalTool, LocalToolContext } from '../local-tools';
 import { navigationTools } from './navigation';
 import { preferenceTools } from './preferences';
-import { chatProjectTool, codeProjectTool, type CodeHost } from './projects';
+import { chatProjectTool, codeProjectTool, listProjectsTool, type CodeHost } from './projects';
 import { promptLibraryTools } from './prompt-libraries';
 import { isOperator } from './shared';
 import { myUsageTool, orgUsageTool } from './usage';
@@ -49,6 +50,7 @@ export function platformToolsFor(options: PlatformToolOptions): LocalTool[] {
     myUsageTool(),
     ...preferenceTools(),
     ...(options.operator ? [orgUsageTool()] : []),
+    listProjectsTool(),
     chatProjectTool(),
     ...(options.codeHosts.length > 0 ? [codeProjectTool(options.codeHosts)] : []),
     ...promptLibraryTools(),
